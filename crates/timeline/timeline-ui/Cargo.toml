@@ -34,10 +34,13 @@ shrimply-tts = { path = "../../audio/tts" }
 shrimply-tts-ui = { path = "../../audio/tts-ui" }
 shrimply-ui-foundation = { path = "../../ui/ui-foundation" }
 shrimply-video = { path = "../../video/rendering" }
-shrimply-video-recording = { path = "../../video/video-recording" }
+shrimply-video-recording = { path = "../../video/video-recording", optional = true }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 shrimply-math-color = { path = "../../math/color", features = ["gdk"] }
 shrimply-skia-adw-ui = { path = "../../ui/skia-adw-ui" }
 skia-safe = { workspace = true, features = ["gl", "textlayout"] }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
+
+[features]
+screen-recording = ["dep:shrimply-video-recording"]

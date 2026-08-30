@@ -397,26 +397,33 @@ impl ModifierModules {
 impl ModifierModule {
     pub(crate) fn image(self) -> &'static [u8] {
         match self {
+            #[cfg(target_os = "linux")]
             Self::General => include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../../.oxide-artifacts/cuda/sm_86/modifiers.cubin"
             )),
+            #[cfg(target_os = "linux")]
             Self::Blur => include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../../.oxide-artifacts/cuda/sm_86/modifiers-blur.cubin"
             )),
+            #[cfg(target_os = "linux")]
             Self::Geometry => include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../../.oxide-artifacts/cuda/sm_86/modifiers-geometry.cubin"
             )),
+            #[cfg(target_os = "linux")]
             Self::Matte => include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../../.oxide-artifacts/cuda/sm_86/modifiers-matte.cubin"
             )),
+            #[cfg(target_os = "linux")]
             Self::Stabilization => include_bytes!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
                 "/../../../.oxide-artifacts/cuda/sm_86/stabilization.cubin"
             )),
+            #[cfg(not(target_os = "linux"))]
+            _ => &[],
         }
     }
 

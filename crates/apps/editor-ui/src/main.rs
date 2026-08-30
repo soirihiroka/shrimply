@@ -85,6 +85,7 @@ fn main() -> glib::ExitCode {
 
 fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     // Finish GDK's lazy Vulkan initialization before the video worker can initialize Vulkan too.
+    #[cfg(target_os = "linux")]
     drop(gtk::prelude::WidgetExt::display(window).dmabuf_formats());
     let playback_performance = shrimply_playback_performance::open(Arc::new(project.clone()));
     let project = Rc::new(RefCell::new(project));

@@ -74,6 +74,11 @@ fn main() {
     let models = out.join("res/sphinx");
     let patched_recognizer = out.join("pocketSphinxTools.cpp");
 
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        println!("cargo:warning=Rhubarb lip-sync native bridge is only built for Linux; lip-sync is disabled on this target");
+        return;
+    }
+
     assert!(
         rhubarb.join("rhubarb/CMakeLists.txt").is_file(),
         "Rhubarb submodule is missing; run `git submodule update --init --recursive`"

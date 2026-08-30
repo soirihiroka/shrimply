@@ -1,5 +1,4 @@
 use std::env;
-use std::path::{Path, PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -8,16 +7,21 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_HOME");
     println!("cargo:rerun-if-env-changed=CUDA_TOOLKIT_PATH");
 
-    let optix = env::var_os("OPTIX_ROOT")
-        .map(PathBuf::from)
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        println!("cargo:warning=OptiX denoiser bridge is only built for Linux; OptiX acceleration is disabled on this target");
+        return;
+    }
+
+    let optix_root = env::var_os("OPTIX_ROOT")
         .expect("OPTIX_ROOT must point to an NVIDIA optix-dev checkout");
+    let optix = std::path::PathBuf::from(optix_root);
     let optix_include = optix.join("include");
     require_header(&optix_include, "optix.h", "OPTIX_ROOT");
 
     let cuda = env::var_os("CUDA_HOME")
         .or_else(|| env::var_os("CUDA_TOOLKIT_PATH"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/usr/local/cuda"));
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/usr/local/cuda"));
     let cuda_include = cuda.join("include");
     require_header(&cuda_include, "cuda.h", "CUDA_HOME");
 
@@ -36,7 +40,7 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=dl");
 }
 
-fn require_header(directory: &Path, name: &str, variable: &str) {
+fn require_header(directory: &std::path::Path, name: &str, variable: &str) {
     let header = directory.join(name);
     assert!(
         header.is_file(),

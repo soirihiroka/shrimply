@@ -24,5 +24,10 @@ tracing.workspace = true
 typos.workspace = true
 typos-dict.workspace = true
 unicase.workspace = true
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
 wayland-client = { workspace = true, features = ["system"] }
 wayland-protocols = { workspace = true, features = ["client", "unstable"] }

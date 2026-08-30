@@ -15,10 +15,13 @@ use types::{AlphaParams, ConvolutionParams, ConvolutionTerm, ImageDescriptor, MA
 const UPSCALE_CNN_X2_M: &[u8] = include_bytes!("../models/upscale_cnn_x2_m.bin");
 const RESTORE_GAN_UUL: &[u8] = include_bytes!("../models/restore_gan_uul.bin");
 const UPSCALE_GAN_X4_UUL: &[u8] = include_bytes!("../models/upscale_gan_x4_uul.bin");
+#[cfg(target_os = "linux")]
 const ANIME4K_CUBIN: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../.oxide-artifacts/cuda/sm_86/anime4k.cubin"
 ));
+#[cfg(not(target_os = "linux"))]
+const ANIME4K_CUBIN: &[u8] = &[];
 
 impl ImageDescriptor {
     const EMPTY: Self = Self {

@@ -10,7 +10,10 @@ fn main() {
         println!("cargo:rerun-if-env-changed={variable}");
     }
     println!("cargo:rerun-if-env-changed={TOOLKIT_TARGET_DIR_ENV}");
-    let header = cuda_header().unwrap_or_else(|| panic!("could not locate CUDA header cuda.h"));
+    let Some(header) = cuda_header() else {
+        println!("cargo:warning=CUDA toolkit not found; building gpu-memory with legacy allocation cfg (CUDA acceleration disabled)");
+        return;
+    };
     println!("cargo:rerun-if-changed={}", header.display());
     let source = std::fs::read_to_string(&header)
         .unwrap_or_else(|error| panic!("read CUDA header {}: {error}", header.display()));

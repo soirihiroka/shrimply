@@ -1,5 +1,8 @@
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::c_void;
 use std::ptr::NonNull;
+
+#[cfg(target_os = "linux")]
+use std::ffi::{CStr, c_char, c_int};
 
 use cuda_core::{CudaContext, CudaStream, sys};
 
@@ -74,28 +77,36 @@ impl OpticalFlow {
         height: u32,
         settings: Settings,
     ) -> Result<Self, String> {
-        context
-            .bind_to_thread()
-            .map_err(|error| format!("bind CUDA context for NVIDIA optical flow: {error:?}"))?;
-        let mut error = [0; ERROR_CAPACITY];
-        let raw = unsafe {
-            shrimply_nvof_create(
-                context.cu_ctx(),
-                stream.cu_stream(),
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (context, stream, width, height, settings);
+            return Err("NVIDIA optical flow requires Linux with an NVIDIA CUDA driver".to_string());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            context
+                .bind_to_thread()
+                .map_err(|error| format!("bind CUDA context for NVIDIA optical flow: {error:?}"))?;
+            let mut error = [0; ERROR_CAPACITY];
+            let raw = unsafe {
+                shrimply_nvof_create(
+                    context.cu_ctx(),
+                    stream.cu_stream(),
+                    width,
+                    height,
+                    settings.quality as u32,
+                    settings.output_grid as u32,
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            };
+            Ok(Self {
+                raw: NonNull::new(raw).ok_or_else(|| bridge_error(&error))?,
                 width,
                 height,
-                settings.quality as u32,
-                settings.output_grid as u32,
-                error.as_mut_ptr(),
-                error.len(),
-            )
-        };
-        Ok(Self {
-            raw: NonNull::new(raw).ok_or_else(|| bridge_error(&error))?,
-            width,
-            height,
-            settings,
-        })
+                settings,
+            })
+        }
     }
 
     pub fn matches(&self, width: u32, height: u32, settings: Settings) -> bool {
@@ -108,57 +119,68 @@ impl OpticalFlow {
         reference: sys::CUdeviceptr,
         reset_temporal_hints: bool,
     ) -> Result<FlowField, String> {
-        let grid_size = self.settings.output_grid as u32;
-        let width = self.width.div_ceil(grid_size) as usize;
-        let height = self.height.div_ceil(grid_size) as usize;
-        let len = width
-            .checked_mul(height)
-            .ok_or_else(|| "NVIDIA optical flow dimensions overflow".to_string())?;
-        let mut field = FlowField {
-            forward: vec![FlowVector::default(); len],
-            backward: vec![FlowVector::default(); len],
-            forward_cost: vec![0; len],
-            backward_cost: vec![0; len],
-            width,
-            height,
-            grid_size,
-        };
-        let mut error = [0; ERROR_CAPACITY];
-        let result = unsafe {
-            shrimply_nvof_estimate(
-                self.raw.as_ptr(),
-                input,
-                reference,
-                c_int::from(self.settings.temporal_hints),
-                c_int::from(reset_temporal_hints),
-                field.forward.as_mut_ptr(),
-                field.backward.as_mut_ptr(),
-                field.forward_cost.as_mut_ptr(),
-                field.backward_cost.as_mut_ptr(),
-                error.as_mut_ptr(),
-                error.len(),
-            )
-        };
-        if result == 0 {
-            Ok(field)
-        } else {
-            Err(bridge_error(&error))
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (self, input, reference, reset_temporal_hints);
+            return Err("NVIDIA optical flow requires Linux with an NVIDIA CUDA driver".to_string());
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let grid_size = self.settings.output_grid as u32;
+            let width = self.width.div_ceil(grid_size) as usize;
+            let height = self.height.div_ceil(grid_size) as usize;
+            let len = width
+                .checked_mul(height)
+                .ok_or_else(|| "NVIDIA optical flow dimensions overflow".to_string())?;
+            let mut field = FlowField {
+                forward: vec![FlowVector::default(); len],
+                backward: vec![FlowVector::default(); len],
+                forward_cost: vec![0; len],
+                backward_cost: vec![0; len],
+                width,
+                height,
+                grid_size,
+            };
+            let mut error = [0; ERROR_CAPACITY];
+            let result = unsafe {
+                shrimply_nvof_estimate(
+                    self.raw.as_ptr(),
+                    input,
+                    reference,
+                    c_int::from(self.settings.temporal_hints),
+                    c_int::from(reset_temporal_hints),
+                    field.forward.as_mut_ptr(),
+                    field.backward.as_mut_ptr(),
+                    field.forward_cost.as_mut_ptr(),
+                    field.backward_cost.as_mut_ptr(),
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            };
+            if result == 0 {
+                Ok(field)
+            } else {
+                Err(bridge_error(&error))
+            }
         }
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for OpticalFlow {
     fn drop(&mut self) {
         unsafe { shrimply_nvof_destroy(self.raw.as_ptr()) };
     }
 }
 
+#[cfg(target_os = "linux")]
 fn bridge_error(error: &[c_char]) -> String {
     unsafe { CStr::from_ptr(error.as_ptr()) }
         .to_string_lossy()
         .into_owned()
 }
 
+#[cfg(target_os = "linux")]
 unsafe extern "C" {
     fn shrimply_nvof_create(
         context: sys::CUcontext,

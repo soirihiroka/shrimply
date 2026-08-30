@@ -9,14 +9,20 @@ use shrimply_render_core::LayerCompositeParams;
 
 pub(crate) use shrimply_render_core::{LayerKind, Nv12LayerParams};
 
+#[cfg(target_os = "linux")]
 const PREVIEW_CUBIN: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../.oxide-artifacts/cuda/sm_86/preview.cubin"
 ));
+#[cfg(not(target_os = "linux"))]
+const PREVIEW_CUBIN: &[u8] = &[];
+#[cfg(target_os = "linux")]
 const EXPORT_CUBIN: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../../.oxide-artifacts/cuda/sm_86/export.cubin"
 ));
+#[cfg(not(target_os = "linux"))]
+const EXPORT_CUBIN: &[u8] = &[];
 
 pub(crate) struct PreviewModule(Arc<CudaModule>);
 pub(crate) struct ExportModule(Arc<CudaModule>);

@@ -217,6 +217,7 @@ pub(super) struct ActiveVideoRecording {
     pub(super) key: TrackKey,
     pub(super) start: Time,
     pub(super) stop_at: Option<Time>,
+    #[cfg(feature = "screen-recording")]
     pub(super) recording: video_recording::ScreenRecording,
     pub(super) ready: bool,
     pub(super) stopping: bool,

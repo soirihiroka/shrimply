@@ -341,6 +341,7 @@ pub(super) fn handle_audio_recording(
     false
 }
 
+#[cfg(feature = "screen-recording")]
 pub(super) fn handle_video_recording(
     area: &gtk::GLArea,
     project: &Rc<RefCell<Project>>,
@@ -421,6 +422,20 @@ pub(super) fn handle_video_recording(
     }
 }
 
+#[cfg(not(feature = "screen-recording"))]
+pub(super) fn handle_video_recording(
+    area: &gtk::GLArea,
+    project: &Rc<RefCell<Project>>,
+    player_state: &SharedPlayerState,
+    runtime_shared: &Rc<RefCell<TimelineRuntime>>,
+    runtime: &mut TimelineRuntime,
+    key: TrackKey,
+) -> bool {
+    let _ = (area, project, player_state, runtime_shared, runtime, key);
+    false
+}
+
+#[cfg(feature = "screen-recording")]
 fn poll_video_recording(
     area: &gtk::GLArea,
     project: Rc<RefCell<Project>>,
@@ -509,6 +524,7 @@ fn poll_video_recording(
     });
 }
 
+#[cfg(feature = "screen-recording")]
 fn finish_video_recording(
     area: &gtk::GLArea,
     project: &Rc<RefCell<Project>>,
@@ -635,6 +651,7 @@ pub(super) fn stop_before_backward_seek(
         return;
     }
 
+    #[cfg(feature = "screen-recording")]
     if let Some(active) = runtime.active_video_recording.as_mut()
         && !active.stopping
     {

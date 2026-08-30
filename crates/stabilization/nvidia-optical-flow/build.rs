@@ -1,9 +1,15 @@
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_HOME");
     println!("cargo:rerun-if-env-changed=CUDA_PATH");
+
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux") {
+        println!("cargo:warning=NVIDIA optical flow bridge is only built for Linux; CUDA acceleration is disabled on this target");
+        return;
+    }
 
     let cuda_include = env::var_os("CUDA_HOME")
         .or_else(|| env::var_os("CUDA_PATH"))

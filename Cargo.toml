@@ -157,7 +157,7 @@ serde_bytes = "0.11"
 serde_json = "1"
 serde-value = "0.7"
 schemars = "1"
-skia-safe = { version = "0.99", features = ["all-linux"] }
+skia-safe = { version = "0.99", features = ["all-macos"] }
 sourceview5 = "0.11"
 tempfile = "3"
 tracing = "0.1"
@@ -172,7 +172,7 @@ uuid = "1"
 vtracer = { path = "external/vtracer/crates/vtracer" }
 wayland-client = "0.31"
 wayland-protocols = "0.32"
-wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "wgsl"] }
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "metal", "spirv", "wgsl"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [profile.dev]

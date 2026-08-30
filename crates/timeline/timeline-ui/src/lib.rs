@@ -24,6 +24,7 @@ pub mod export {
 
 use shrimply_math_media as math;
 use shrimply_playback_performance as playback_performance;
+#[cfg(feature = "screen-recording")]
 use shrimply_video_recording as video_recording;
 
 use crate::audio::SharedAudioLevels;
@@ -277,6 +278,7 @@ pub fn new(
                 if runtime.active_audio_recording.is_some() {
                     ensure_recording_duration(&recording_player_state_for_idle, snapshot.position);
                 }
+                #[cfg(feature = "screen-recording")]
                 if let Some(active) = runtime.active_video_recording.as_mut()
                     && active.ready
                     && !active.stopping
@@ -297,6 +299,7 @@ pub fn new(
                 }
                 return;
             }
+            #[cfg(feature = "screen-recording")]
             if let Some(active) = recording_runtime
                 .borrow_mut()
                 .active_video_recording
@@ -413,7 +416,9 @@ pub fn new(
         } else {
             false
         };
+        #[cfg(feature = "screen-recording")]
         let pending_video_record = runtime.pending_video_record.take();
+        #[cfg(feature = "screen-recording")]
         let pause_for_video_recording = if let Some(key) = pending_video_record {
             handle_video_recording(
                 area,
@@ -424,6 +429,11 @@ pub fn new(
                 key,
             )
         } else {
+            false
+        };
+        #[cfg(not(feature = "screen-recording"))]
+        let pause_for_video_recording = {
+            let _ = runtime.pending_video_record.take();
             false
         };
         let pending_track_toggle = runtime.pending_track_toggle.take();
