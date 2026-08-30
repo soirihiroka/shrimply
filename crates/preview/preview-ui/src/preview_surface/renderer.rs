@@ -79,6 +79,7 @@ impl VideoRenderer {
     pub fn render(
         &mut self,
         surface: IVec2,
+        pixels_per_point: f32,
         frame: Option<&CompositedVideoFrame>,
         appearance: Appearance,
         draw_overlay: impl FnOnce(&TimelinePainter),
@@ -100,10 +101,10 @@ impl VideoRenderer {
             );
             self.gl.uniform_4_f32(
                 self.content_rect_uniform.as_ref(),
-                appearance.content_rect.left(),
-                appearance.content_rect.top(),
-                appearance.content_rect.width(),
-                appearance.content_rect.height(),
+                appearance.content_rect.left() * pixels_per_point,
+                appearance.content_rect.top() * pixels_per_point,
+                appearance.content_rect.width() * pixels_per_point,
+                appearance.content_rect.height() * pixels_per_point,
             );
             self.gl.uniform_4_f32(
                 self.background_color_uniform.as_ref(),
@@ -114,7 +115,7 @@ impl VideoRenderer {
             );
             self.gl.uniform_1_f32(
                 self.shadow_size_uniform.as_ref(),
-                appearance.shadow_size_px as f32,
+                appearance.shadow_size_px as f32 * pixels_per_point,
             );
             self.gl.active_texture(glow::TEXTURE0);
             self.gl
@@ -135,7 +136,10 @@ impl VideoRenderer {
         }
         let painter = self
             .overlay_renderer
-            .begin_overlay_frame(glam::UVec2::new(width as u32, height as u32), 1.0)?;
+            .begin_overlay_frame(
+                glam::UVec2::new(width as u32, height as u32),
+                pixels_per_point,
+            )?;
         draw_overlay(&painter);
         self.overlay_renderer.end_frame()
     }

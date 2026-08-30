@@ -965,7 +965,11 @@ fn attach_render(
             tracing::error!("Video GLArea error: {error}");
             return glib::Propagation::Stop;
         }
-        let surface = IVec2::new(area.width().max(1), area.height().max(1));
+        let surface_scale = area.scale_factor().max(1) as f32;
+        let surface = IVec2::new(
+            (area.width().max(1) as f32 * surface_scale) as i32,
+            (area.height().max(1) as f32 * surface_scale) as i32,
+        );
         let project = project.borrow();
         let player = player_state::snapshot(&player_state);
         let position = player.position;
@@ -1046,6 +1050,7 @@ fn attach_render(
             .expect("preview renderer was initialized")
             .render(
                 surface,
+                surface_scale,
                 frame.as_ref(),
                 Appearance {
                     content_rect,
