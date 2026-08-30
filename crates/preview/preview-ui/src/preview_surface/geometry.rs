@@ -29,6 +29,37 @@ pub(super) fn video_content_rect(
     )
 }
 
+pub(super) fn display_content_rect(
+    surface_width: i32,
+    surface_height: i32,
+    canvas_width: u32,
+    canvas_height: u32,
+    padding_px: u32,
+    zoom: f32,
+    pan: (f32, f32),
+) -> Rect {
+    let fit = video_content_rect(
+        surface_width,
+        surface_height,
+        canvas_width,
+        canvas_height,
+        padding_px,
+    );
+    if zoom <= 1.0 {
+        return fit;
+    }
+    let width = fit.width() * zoom;
+    let height = fit.height() * zoom;
+    let center = vec2(
+        surface_width.max(1) as f32 * 0.5 + pan.0,
+        surface_height.max(1) as f32 * 0.5 + pan.1,
+    );
+    Rect::from_min_size(
+        vec2(center.x - width * 0.5, center.y - height * 0.5),
+        vec2(width, height),
+    )
+}
+
 pub(super) fn surface_viewport(
     area: &gtk::GLArea,
     project: &Project,
@@ -39,12 +70,14 @@ pub(super) fn surface_viewport(
             project.canvas_size.width.max(1) as f32,
             project.canvas_size.height.max(1) as f32,
         ),
-        video_content_rect(
+        display_content_rect(
             area.width().max(1),
             area.height().max(1),
             project.canvas_size.width,
             project.canvas_size.height,
             state.padding_px(),
+            state.preview_zoom,
+            state.preview_pan,
         ),
     )
 }
