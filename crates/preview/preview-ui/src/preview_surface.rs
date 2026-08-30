@@ -93,6 +93,9 @@ struct VideoSurfaceState {
     caption_bottom_inset: f32,
     caption_font_size: f32,
     caption_split_hover: Option<GlamVec2>,
+    preview_zoom: f32,
+    preview_pan: (f32, f32),
+    preview_drag_base_pan: Option<(f32, f32)>,
     preview_padding_px: u32,
     preview_shadow_size_px: u32,
     preview_upsample_method: preferences_store::PreviewUpsampleMethod,
@@ -191,6 +194,9 @@ impl PreviewController {
             caption_bottom_inset: 0.0,
             caption_font_size: preference.caption_font_size,
             caption_split_hover: None,
+            preview_zoom: 1.0,
+            preview_pan: (0.0, 0.0),
+            preview_drag_base_pan: None,
             preview_padding_px: preference.preview_padding_px,
             preview_shadow_size_px: preference.preview_shadow_size_px,
             preview_upsample_method: preference.preview_upsample_method,
@@ -292,6 +298,68 @@ impl PreviewController {
         style.connect_dark_notify(move |_| dark_area.queue_render());
         let contrast_area = area.clone();
         style.connect_high_contrast_notify(move |_| contrast_area.queue_render());
+
+        let zoom_scroll = gtk::EventControllerScroll::new(
+            gtk::EventControllerScrollFlags::VERTICAL,
+        );
+        let zoom_area = area.clone();
+        let zoom_state = state.clone();
+        zoom_scroll.connect_scroll(move |_, _, delta_y| {
+            let mut state = zoom_state.borrow_mut();
+            let previous_zoom = state.preview_zoom;
+            state.preview_zoom = (previous_zoom * (1.0 - 0.1 * delta_y as f32)).clamp(1.0, 8.0);
+            let ratio = state.preview_zoom / previous_zoom;
+            let cursor_x = zoom_area.width() as f32 * 0.5;
+            let cursor_y = zoom_area.height() as f32 * 0.5;
+            state.preview_pan = (
+                cursor_x - (cursor_x - state.preview_pan.0) * ratio,
+                cursor_y - (cursor_y - state.preview_pan.1) * ratio,
+            );
+            if state.preview_zoom <= 1.0 {
+                state.preview_pan = (0.0, 0.0);
+            }
+            drop(state);
+            zoom_area.queue_render();
+            glib::Propagation::Stop
+        });
+        area.add_controller(zoom_scroll);
+
+        let pan_drag = gtk::GestureDrag::builder()
+            .button(gdk::BUTTON_MIDDLE)
+            .build();
+        let pan_drag_base = state.clone();
+        pan_drag.connect_drag_begin(move |_, _, _| {
+            let mut state = pan_drag_base.borrow_mut();
+            state.preview_drag_base_pan = Some(state.preview_pan);
+        });
+        let pan_drag_update = state.clone();
+        let pan_drag_update_area = area.clone();
+        pan_drag.connect_drag_update(move |_, offset_x, offset_y| {
+            let mut state = pan_drag_update.borrow_mut();
+            let Some((base_x, base_y)) = state.preview_drag_base_pan else {
+                return;
+            };
+            if state.preview_zoom <= 1.0 {
+                return;
+            }
+            state.preview_pan = (base_x + offset_x as f32, base_y + offset_y as f32);
+            drop(state);
+            pan_drag_update_area.queue_render();
+        });
+        let pan_drag_end = state.clone();
+        let pan_drag_end_area = area.clone();
+        pan_drag.connect_drag_end(move |_, offset_x, offset_y| {
+            let mut state = pan_drag_end.borrow_mut();
+            if offset_x.abs() + offset_y.abs() < 3.0 {
+                state.preview_zoom = 1.0;
+                state.preview_pan = (0.0, 0.0);
+                drop(state);
+                pan_drag_end_area.queue_render();
+            } else {
+                state.preview_drag_base_pan = None;
+            }
+        });
+        area.add_controller(pan_drag);
 
         Self {
             surface: VideoSurface { area, state },
@@ -986,12 +1054,14 @@ fn attach_render(
             }
         }
         let padding_px = state.padding_px();
-        let content_rect = video_content_rect(
-            surface.x,
-            surface.y,
+        let content_rect = geometry::display_content_rect(
+            area.width().max(1),
+            area.height().max(1),
             project.canvas_size.width,
             project.canvas_size.height,
             padding_px,
+            state.preview_zoom,
+            state.preview_pan,
         );
         let viewport = PreviewViewport::new(
             GlamVec2::new(
@@ -1058,7 +1128,7 @@ fn attach_render(
                 |timeline_painter| {
                     let surface_rect = Rect::from_min_size(
                         vec2(0.0, 0.0),
-                        vec2(surface.x as f32, surface.y as f32),
+                        vec2(area.width() as f32, area.height() as f32),
                     );
                     draw_captions(
                         timeline_painter,

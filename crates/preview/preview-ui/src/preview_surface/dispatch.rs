@@ -80,9 +80,14 @@ pub(super) fn caption_split_at_pointer(
     let address = selection_state::focused_item_address(selection_state, &project)?;
     let player = player_state::snapshot(player_state);
     let state = state.borrow();
-    let preview_rect = Rect::from_min_size(
-        vec2(0.0, 0.0),
-        vec2(area.width().max(1) as f32, area.height().max(1) as f32),
+    let preview_rect = geometry::display_content_rect(
+        area.width().max(1),
+        area.height().max(1),
+        project.canvas_size.width,
+        project.canvas_size.height,
+        state.padding_px(),
+        state.preview_zoom,
+        state.preview_pan,
     );
     let text_byte = captions::split_at_position(
         &project,
