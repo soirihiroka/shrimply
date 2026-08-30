@@ -9,6 +9,7 @@ ja = "吸音"
 "zh-CN" = "吸收"
 "zh-TW" = "吸收"
 "ko" = "흡수"
+"ru" = "Поглощение"
 pt = "Absorção"
 
 ["Accurate Render Method"]
@@ -20,6 +21,7 @@ ja = "高精度レンダリング方式"
 "zh-CN" = "精确渲染方法"
 "zh-TW" = "精確算繪方式"
 "ko" = "정확한 렌더링 방법"
+"ru" = "Точный метод рендеринга"
 pt = "Método de renderização preciso"
 
 ["Actions"]
@@ -31,6 +33,7 @@ ja = "操作"
 "zh-CN" = "操作"
 "zh-TW" = "操作"
 "ko" = "작업"
+"ru" = "Действия"
 pt = "Ações"
 
 ["Adaptive weights"]
@@ -42,6 +45,7 @@ ja = "適応ウェイト"
 "zh-CN" = "自适应权重"
 "zh-TW" = "自適應權重"
 "ko" = "적응형 가중치"
+"ru" = "Адаптивные веса"
 pt = "Pesos adaptativos"
 
 ["Add"]
@@ -53,6 +57,7 @@ ja = "追加"
 "zh-CN" = "添加"
 "zh-TW" = "新增"
 "ko" = "추가"
+"ru" = "Добавить"
 pt = "Adicionar"
 
 ["Add color"]
@@ -64,6 +69,7 @@ ja = "色を追加"
 "zh-CN" = "添加颜色"
 "zh-TW" = "新增顏色"
 "ko" = "색상 추가"
+"ru" = "Добавить цвет"
 pt = "Adicionar cor"
 
 ["Add font"]
@@ -75,6 +81,7 @@ ja = "フォントを追加"
 "zh-CN" = "添加字体"
 "zh-TW" = "新增字型"
 "ko" = "글꼴 추가"
+"ru" = "Добавить шрифт"
 pt = "Adicionar fonte"
 
 ["Add keyframe at playhead"]
@@ -86,6 +93,7 @@ ja = "再生位置にキーフレームを追加"
 "zh-CN" = "在播放头位置添加关键帧"
 "zh-TW" = "在播放磁頭位置新增關鍵影格"
 "ko" = "재생 헤드 위치에 키프레임 추가"
+"ru" = "Добавить ключевой кадр на позиции курсора воспроизведения"
 pt = "Adicionar quadro-chave no indicador de reprodução"
 
 ["Add modifier"]
@@ -97,6 +105,7 @@ ja = "モディファイアを追加"
 "zh-CN" = "添加修改器"
 "zh-TW" = "新增修改器"
 "ko" = "수정자 추가"
+"ru" = "Добавить модификатор"
 pt = "Adicionar modificador"
 
 ["Addressing"]
@@ -108,6 +117,7 @@ ja = "アドレッシング"
 "zh-CN" = "寻址"
 "zh-TW" = "尋址"
 "ko" = "어드레싱"
+"ru" = "Адресация"
 pt = "Endereçamento"
 
 ["Aggressiveness"]
@@ -119,6 +129,7 @@ ja = "強度"
 "zh-CN" = "强度"
 "zh-TW" = "強度"
 "ko" = "강도"
+"ru" = "Агрессивность"
 pt = "Agressividade"
 
 ["Align"]
@@ -130,6 +141,7 @@ ja = "整列"
 "zh-CN" = "对齐"
 "zh-TW" = "對齊"
 "ko" = "정렬"
+"ru" = "Выровнять"
 pt = "Alinhar"
 
 ["Alpha Mask Stream"]
@@ -141,6 +153,7 @@ ja = "アルファマスクストリーム"
 "zh-CN" = "Alpha 掩模流"
 "zh-TW" = "Alpha 遮罩串流"
 "ko" = "알파 마스크 스트림"
+"ru" = "Поток альфа-маски"
 pt = "Fluxo de máscara alfa"
 
 ["Amount"]
@@ -152,6 +165,7 @@ ja = "量"
 "zh-CN" = "数量"
 "zh-TW" = "數量"
 "ko" = "양"
+"ru" = "Величина"
 pt = "Quantidade"
 
 ["Amplitude"]
@@ -163,6 +177,7 @@ ja = "振幅"
 "zh-CN" = "振幅"
 "zh-TW" = "振幅"
 "ko" = "진폭"
+"ru" = "Амплитуда"
 pt = "Amplitude"
 
 ["Analysis FPS"]
@@ -174,6 +189,7 @@ ja = "解析FPS"
 "zh-CN" = "分析 FPS"
 "zh-TW" = "分析 FPS"
 "ko" = "분석 FPS"
+"ru" = "FPS анализа"
 pt = "FPS de análise"
 
 ["Analysis status"]
@@ -185,6 +201,7 @@ ja = "解析状態"
 "zh-CN" = "分析状态"
 "zh-TW" = "分析狀態"
 "ko" = "분석 상태"
+"ru" = "Статус анализа"
 pt = "Status da análise"
 
 ["Analyze"]
@@ -196,6 +213,7 @@ ja = "解析"
 "zh-CN" = "分析"
 "zh-TW" = "分析"
 "ko" = "분석"
+"ru" = "Анализировать"
 pt = "Analisar"
 
 ["Analyze Again"]
@@ -207,6 +225,7 @@ ja = "再解析"
 "zh-CN" = "再次分析"
 "zh-TW" = "再次分析"
 "ko" = "다시 분석"
+"ru" = "Анализировать заново"
 pt = "Analisar novamente"
 
 ["Analyze this clip for beat-grid snapping"]
@@ -218,6 +237,7 @@ ja = "ビートグリッドへのスナップ用にクリップを解析"
 "zh-CN" = "分析此剪辑以启用节拍网格吸附"
 "zh-TW" = "分析此剪輯以啟用節拍格線吸附"
 "ko" = "비트 그리드 스냅을 사용하도록 이 클립 분석"
+"ru" = "Проанализировать этот клип для привязки к сетке битов"
 pt = "Analisar este clipe para encaixe na grade de batidas"
 
 ["Analyzing source motion…"]
@@ -229,6 +249,7 @@ ja = "ソースの動きを解析中…"
 "zh-CN" = "分析源运动…"
 "zh-TW" = "分析源運動…"
 "ko" = "소스 모션 분석 중…"
+"ru" = "Анализ движения источника…"
 pt = "Analisando movimento de origem…"
 
 ["Analyzing…"]
@@ -240,6 +261,7 @@ ja = "解析中…"
 "zh-CN" = "正在分析…"
 "zh-TW" = "正在分析…"
 "ko" = "분석 중…"
+"ru" = "Анализ…"
 pt = "Analisando…"
 
 ["Anchor"]
@@ -251,6 +273,7 @@ ja = "アンカー"
 "zh-CN" = "锚点"
 "zh-TW" = "錨點"
 "ko" = "기준점"
+"ru" = "Якорь"
 pt = "Âncora"
 
 ["Angle"]
@@ -262,6 +285,7 @@ ja = "角度"
 "zh-CN" = "角度"
 "zh-TW" = "角度"
 "ko" = "각도"
+"ru" = "Угол"
 pt = "Ângulo"
 
 ["Angular radius"]
@@ -273,6 +297,7 @@ ja = "角半径"
 "zh-CN" = "角半径"
 "zh-TW" = "角半徑"
 "ko" = "각도 반경"
+"ru" = "Угловой радиус"
 pt = "Raio angular"
 
 ["Angular randomness"]
@@ -284,6 +309,7 @@ ja = "角度のランダム性"
 "zh-CN" = "角度随机性"
 "zh-TW" = "角度隨機性"
 "ko" = "각도 무작위성"
+"ru" = "Случайность угла"
 pt = "Aleatoriedade angular"
 
 ["Animated"]
@@ -295,6 +321,7 @@ ja = "アニメーション"
 "zh-CN" = "动画"
 "zh-TW" = "動畫"
 "ko" = "애니메이션"
+"ru" = "Анимированный"
 pt = "Animado"
 
 ["Anti-aliasing"]
@@ -306,6 +333,7 @@ ja = "アンチエイリアス"
 "zh-CN" = "抗锯齿"
 "zh-TW" = "抗鋸齒"
 "ko" = "앤티앨리어싱"
+"ru" = "Сглаживание"
 pt = "Anti-aliasing"
 
 ["Aperture"]
@@ -317,6 +345,7 @@ ja = "絞り"
 "zh-CN" = "光圈"
 "zh-TW" = "光圈"
 "ko" = "조리개"
+"ru" = "Диафрагма"
 pt = "Abertura"
 
 ["Arm thickness"]
@@ -328,6 +357,7 @@ ja = "アームの太さ"
 "zh-CN" = "臂厚度"
 "zh-TW" = "臂部厚度"
 "ko" = "팔 두께"
+"ru" = "Толщина лучей"
 pt = "Espessura do braço"
 
 ["Attack"]
@@ -339,6 +369,7 @@ ja = "アタック"
 "zh-CN" = "起音"
 "zh-TW" = "起音"
 "ko" = "어택"
+"ru" = "Атака"
 pt = "Ataque"
 
 ["Audio Stream"]
@@ -350,6 +381,7 @@ ja = "オーディオストリーム"
 "zh-CN" = "音频流"
 "zh-TW" = "音訊串流"
 "ko" = "오디오 스트림"
+"ru" = "Аудиопоток"
 pt = "Fluxo de áudio"
 
 ["Audio stream %{number}"]
@@ -361,6 +393,7 @@ ja = "オーディオストリーム %{number}"
 "zh-CN" = "音频流 %{number}"
 "zh-TW" = "音訊串流 %{number}"
 "ko" = "오디오 스트림 %{number}"
+"ru" = "Аудиопоток %{number}"
 pt = "Fluxo de áudio %{number}"
 
 ["Auto level"]
@@ -372,6 +405,7 @@ ja = "自動レベル"
 "zh-CN" = "自动电平"
 "zh-TW" = "自動位準"
 "ko" = "자동 레벨"
+"ru" = "Автоуровень"
 pt = "Nível automático"
 
 ["B&W threshold"]
@@ -383,6 +417,7 @@ ja = "白黒しきい値"
 "zh-CN" = "黑白阈值"
 "zh-TW" = "黑白閾值"
 "ko" = "흑백 임계값"
+"ru" = "Порог Ч/Б"
 pt = "Limiar P&B"
 
 ["Background color"]
@@ -394,6 +429,7 @@ ja = "背景色"
 "zh-CN" = "背景颜色"
 "zh-TW" = "背景顏色"
 "ko" = "배경색"
+"ru" = "Цвет фона"
 pt = "Cor de fundo"
 
 ["Background distance"]
@@ -405,6 +441,7 @@ ja = "背景の距離"
 "zh-CN" = "背景距离"
 "zh-TW" = "背景距離"
 "ko" = "배경 거리"
+"ru" = "Расстояние до фона"
 pt = "Distância do fundo"
 
 ["Background fill"]
@@ -416,6 +453,7 @@ ja = "背景の塗り"
 "zh-CN" = "背景填充"
 "zh-TW" = "背景填充"
 "ko" = "배경 채우기"
+"ru" = "Заливка фона"
 pt = "Preenchimento do fundo"
 
 ["Background intensity"]
@@ -427,6 +465,7 @@ ja = "背景の強度"
 "zh-CN" = "背景强度"
 "zh-TW" = "背景強度"
 "ko" = "배경 강도"
+"ru" = "Интенсивность фона"
 pt = "Intensidade do fundo"
 
 ["Background padding"]
@@ -438,6 +477,7 @@ ja = "背景の余白"
 "zh-CN" = "背景内边距"
 "zh-TW" = "背景內距"
 "ko" = "배경 안쪽 여백"
+"ru" = "Отступ фона"
 pt = "Preenchimento do fundo"
 
 ["Background plane"]
@@ -449,6 +489,7 @@ ja = "背景平面"
 "zh-CN" = "背景平面"
 "zh-TW" = "背景平面"
 "ko" = "배경 평면"
+"ru" = "Плоскость фона"
 pt = "Plano de fundo"
 
 ["Background roundness"]
@@ -460,6 +501,7 @@ ja = "背景の丸み"
 "zh-CN" = "背景圆角程度"
 "zh-TW" = "背景圓角程度"
 "ko" = "배경 모서리 둥글기"
+"ru" = "Скругление фона"
 pt = "Arredondamento do fundo"
 
 ["Background tiling"]
@@ -471,6 +513,7 @@ ja = "背景のタイリング"
 "zh-CN" = "背景平铺"
 "zh-TW" = "背景平鋪"
 "ko" = "배경 타일링"
+"ru" = "Замощение фона"
 pt = "Mosaico do fundo"
 
 ["Bake"]
@@ -482,6 +525,7 @@ ja = "ベイク"
 "zh-CN" = "烘焙"
 "zh-TW" = "烘焙"
 "ko" = "베이크"
+"ru" = "Запечь"
 pt = "Pré-computar"
 
 ["Baking…"]
@@ -493,6 +537,7 @@ ja = "ベイク中…"
 "zh-CN" = "正在烘焙…"
 "zh-TW" = "正在烘焙…"
 "ko" = "베이크 중…"
+"ru" = "Запекание…"
 pt = "Pré-computando…"
 
 ["Balanced"]
@@ -504,6 +549,7 @@ ja = "バランス"
 "zh-CN" = "均衡"
 "zh-TW" = "均衡"
 "ko" = "균형 잡힌"
+"ru" = "Сбалансированный"
 pt = "Equilibrado"
 
 ["Band count"]
@@ -515,6 +561,7 @@ ja = "バンド数"
 "zh-CN" = "频带数"
 "zh-TW" = "頻帶數"
 "ko" = "밴드 수"
+"ru" = "Количество полос"
 pt = "Número de bandas"
 
 ["Band width"]
@@ -526,6 +573,7 @@ ja = "バンド幅"
 "zh-CN" = "带宽"
 "zh-TW" = "頻寬"
 "ko" = "대역폭"
+"ru" = "Ширина полосы"
 pt = "Largura da banda"
 
 ["Bands"]
@@ -537,6 +585,7 @@ ja = "バンド"
 "zh-CN" = "频带"
 "zh-TW" = "頻帶"
 "ko" = "밴드"
+"ru" = "Полосы"
 pt = "Bandas"
 
 ["Base angle"]
@@ -548,6 +597,7 @@ ja = "基準角度"
 "zh-CN" = "基础角度"
 "zh-TW" = "基礎角度"
 "ko" = "기본 각도"
+"ru" = "Базовый угол"
 pt = "Ângulo base"
 
 ["Base color"]
@@ -559,6 +609,7 @@ ja = "ベースカラー"
 "zh-CN" = "基色"
 "zh-TW" = "基色"
 "ko" = "베이스 컬러"
+"ru" = "Базовый цвет"
 pt = "Cor base"
 
 ["Beat Detection"]
@@ -570,6 +621,7 @@ ja = "ビート検出"
 "zh-CN" = "节拍检测"
 "zh-TW" = "節拍檢測"
 "ko" = "비트 감지"
+"ru" = "Обнаружение битов"
 pt = "Detecção de batidas"
 
 ["Bevel"]
@@ -581,6 +633,7 @@ ja = "ベベル"
 "zh-CN" = "倒角"
 "zh-TW" = "倒角"
 "ko" = "베벨"
+"ru" = "Фаска"
 pt = "Bisel"
 
 ["Blend curve"]
@@ -592,6 +645,7 @@ ja = "ブレンド曲線"
 "zh-CN" = "混合曲线"
 "zh-TW" = "混合曲線"
 "ko" = "블렌드 커브"
+"ru" = "Кривая смешивания"
 pt = "Curva de mesclagem"
 
 ["Blend mode"]
@@ -603,6 +657,7 @@ ja = "ブレンドモード"
 "zh-CN" = "混合模式"
 "zh-TW" = "混合模式"
 "ko" = "블렌드 모드"
+"ru" = "Режим наложения"
 pt = "Modo de mesclagem"
 
 ["Block height"]
@@ -614,6 +669,7 @@ ja = "ブロックの高さ"
 "zh-CN" = "块高度"
 "zh-TW" = "塊高度"
 "ko" = "블록 높이"
+"ru" = "Высота блока"
 pt = "Altura do bloco"
 
 ["Block width"]
@@ -625,6 +681,7 @@ ja = "ブロックの幅"
 "zh-CN" = "块宽度"
 "zh-TW" = "區塊寬度"
 "ko" = "블록 폭"
+"ru" = "Ширина блока"
 pt = "Largura do bloco"
 
 ["Blur"]
@@ -636,6 +693,7 @@ ja = "ぼかし"
 "zh-CN" = "模糊"
 "zh-TW" = "模糊"
 "ko" = "흐림"
+"ru" = "Размытие"
 pt = "Desfoque"
 
 ["Bottom"]
@@ -647,6 +705,7 @@ ja = "下"
 "zh-CN" = "底部"
 "zh-TW" = "底部"
 "ko" = "맨 아래"
+"ru" = "Низ"
 pt = "Inferior"
 
 ["Bottom left"]
@@ -658,6 +717,7 @@ ja = "左下"
 "zh-CN" = "左下角"
 "zh-TW" = "左下角"
 "ko" = "왼쪽 하단"
+"ru" = "Снизу слева"
 pt = "Inferior esquerdo"
 
 ["Bottom right"]
@@ -669,6 +729,7 @@ ja = "右下"
 "zh-CN" = "右下角"
 "zh-TW" = "右下角"
 "ko" = "오른쪽 하단"
+"ru" = "Снизу справа"
 pt = "Inferior direito"
 
 ["Box"]
@@ -680,6 +741,7 @@ ja = "ボックス"
 "zh-CN" = "方框"
 "zh-TW" = "方框"
 "ko" = "상자"
+"ru" = "Квадрат"
 pt = "Caixa"
 
 ["Brightness"]
@@ -691,6 +753,7 @@ ja = "明るさ"
 "zh-CN" = "亮度"
 "zh-TW" = "亮度"
 "ko" = "밝기"
+"ru" = "Яркость"
 pt = "Brilho"
 
 ["Camera"]
@@ -702,6 +765,7 @@ ja = "カメラ"
 "zh-CN" = "相机"
 "zh-TW" = "相機"
 "ko" = "카메라"
+"ru" = "Камера"
 pt = "Câmera"
 
 ["Camera model"]
@@ -713,6 +777,7 @@ ja = "カメラモデル"
 "zh-CN" = "相机模型"
 "zh-TW" = "相機模型"
 "ko" = "카메라 모델"
+"ru" = "Модель камеры"
 pt = "Modelo da câmera"
 
 ["Camera source"]
@@ -724,6 +789,7 @@ ja = "カメラソース"
 "zh-CN" = "相机来源"
 "zh-TW" = "相機來源"
 "ko" = "카메라 소스"
+"ru" = "Источник камеры"
 pt = "Origem da câmera"
 
 ["Cancelling"]
@@ -735,6 +801,7 @@ ja = "キャンセル中"
 "zh-CN" = "正在取消"
 "zh-TW" = "正在取消"
 "ko" = "취소 중"
+"ru" = "Отмена"
 pt = "Cancelando"
 
 ["Caption text color"]
@@ -746,6 +813,7 @@ ja = "字幕テキストの色"
 "zh-CN" = "字幕文字颜色"
 "zh-TW" = "字幕文字顏色"
 "ko" = "자막 텍스트 색상"
+"ru" = "Цвет текста субтитров"
 pt = "Cor do texto da legenda"
 
 ["Ceiling"]
@@ -757,6 +825,7 @@ ja = "上限"
 "zh-CN" = "上限"
 "zh-TW" = "上限"
 "ko" = "상한"
+"ru" = "Верхний предел"
 pt = "Teto"
 
 ["Cell size"]
@@ -768,6 +837,7 @@ ja = "セルサイズ"
 "zh-CN" = "单元格大小"
 "zh-TW" = "儲存格大小"
 "ko" = "셀 크기"
+"ru" = "Размер ячейки"
 pt = "Tamanho da célula"
 
 ["Center"]
@@ -779,6 +849,7 @@ ja = "中央"
 "zh-CN" = "中心"
 "zh-TW" = "中心"
 "ko" = "센터"
+"ru" = "Центр"
 pt = "Centro"
 
 ["Center X"]
@@ -790,6 +861,7 @@ ja = "中心 X"
 "zh-CN" = "中心 X"
 "zh-TW" = "中心 X"
 "ko" = "센터 X"
+"ru" = "Центр X"
 pt = "Centro X"
 
 ["Center Y"]
@@ -801,6 +873,7 @@ ja = "中心 Y"
 "zh-CN" = "中心 Y"
 "zh-TW" = "中心 Y"
 "ko" = "센터 Y"
+"ru" = "Центр Y"
 pt = "Centro Y"
 
 ["Chamfer"]
@@ -812,6 +885,7 @@ ja = "面取り"
 "zh-CN" = "倒角"
 "zh-TW" = "倒角"
 "ko" = "모따기"
+"ru" = "Фаска"
 pt = "Chanfro"
 
 ["Change all at once"]
@@ -823,6 +897,7 @@ ja = "一度にすべて変更"
 "zh-CN" = "一次更改全部"
 "zh-TW" = "一次變更全部"
 "ko" = "모두 한 번에 변경"
+"ru" = "Изменить всё сразу"
 pt = "Alterar tudo de uma vez"
 
 ["Change Project Settings?"]
@@ -834,6 +909,7 @@ ja = "プロジェクト設定を変更しますか？"
 "zh-CN" = "更改项目设置？"
 "zh-TW" = "變更專案設定？"
 "ko" = "프로젝트 설정을 변경할까요?"
+"ru" = "Изменить настройки проекта?"
 pt = "Alterar configurações do projeto?"
 
 ["Changing the frame rate or resolution can affect timing, visual layout, and rendered output. Existing media and effects may no longer match the project."]
@@ -845,6 +921,7 @@ ja = "フレームレートや解像度を変更すると、タイミング、�
 "zh-CN" = "更改帧率或分辨率可能会影响时间、视觉布局和渲染输出。现有媒体和效果可能不再与项目匹配。"
 "zh-TW" = "變更影格率或解析度可能會影響時間、視覺配置和算繪輸出。現有媒體和效果可能不再符合專案。"
 "ko" = "프레임 속도나 해상도를 변경하면 타이밍, 시각적 레이아웃 및 렌더링 결과에 영향을 줄 수 있습니다. 기존 미디어와 효과가 프로젝트와 더 이상 맞지 않을 수 있습니다."
+"ru" = "Изменение частоты кадров или разрешения может повлиять на тайминг, визуальную компоновку и результат рендеринга. Существующие медиа и эффекты могут больше не соответствовать проекту."
 pt = "Alterar a taxa de quadros ou a resolução pode afetar a sincronização, o layout visual e a saída renderizada. As mídias e efeitos existentes podem não corresponder mais ao projeto."
 
 ["Channel angle offset"]
@@ -856,6 +933,7 @@ ja = "チャンネル角度オフセット"
 "zh-CN" = "通道角度偏移"
 "zh-TW" = "通道角度偏移"
 "ko" = "채널 각도 오프셋"
+"ru" = "Угловое смещение каналов"
 pt = "Deslocamento angular de canais"
 
 ["Channel offset"]
@@ -867,6 +945,7 @@ ja = "チャンネルオフセット"
 "zh-CN" = "通道偏移"
 "zh-TW" = "通道偏移"
 "ko" = "채널 오프셋"
+"ru" = "Смещение каналов"
 pt = "Deslocamento de canais"
 
 ["Choose font"]
@@ -878,6 +957,7 @@ ja = "フォントを選択"
 "zh-CN" = "选择字体"
 "zh-TW" = "選擇字型"
 "ko" = "글꼴 선택"
+"ru" = "Выбрать шрифт"
 pt = "Escolher fonte"
 
 ["Choose item…"]
@@ -889,6 +969,7 @@ ja = "項目を選択…"
 "zh-CN" = "选择项目…"
 "zh-TW" = "選擇項目…"
 "ko" = "항목 선택…"
+"ru" = "Выбрать элемент…"
 pt = "Escolher item…"
 
 ["Circular"]
@@ -900,6 +981,7 @@ ja = "円形"
 "zh-CN" = "圆形"
 "zh-TW" = "圓形"
 "ko" = "원형"
+"ru" = "Круглый"
 pt = "Circular"
 
 ["Classic"]
@@ -911,6 +993,7 @@ ja = "クラシック"
 "zh-CN" = "经典"
 "zh-TW" = "經典"
 "ko" = "클래식"
+"ru" = "Классический"
 pt = "Clássico"
 
 ["Clear and rewrite the whole text"]
@@ -922,6 +1005,7 @@ ja = "テキスト全体を消去して書き直す"
 "zh-CN" = "清除并重写整个文本"
 "zh-TW" = "清除並重寫整個文字"
 "ko" = "전체 텍스트를 지우고 다시 작성"
+"ru" = "Очистить и переписать весь текст"
 pt = "Limpar e reescrever todo o texto"
 
 ["Clear image"]
@@ -933,6 +1017,7 @@ ja = "画像をクリア"
 "zh-CN" = "清除图像"
 "zh-TW" = "清除影像"
 "ko" = "이미지 지우기"
+"ru" = "Очистить изображение"
 pt = "Remover imagem"
 
 ["Clear mask source"]
@@ -944,6 +1029,7 @@ ja = "マスクソースをクリア"
 "zh-CN" = "清除掩模源"
 "zh-TW" = "清除掩模來源"
 "ko" = "마스크 소스 지우기"
+"ru" = "Очистить источник маски"
 pt = "Remover origem da máscara"
 
 ["Clear model"]
@@ -955,6 +1041,7 @@ ja = "モデルをクリア"
 "zh-CN" = "清除模型"
 "zh-TW" = "清除模型"
 "ko" = "모델 지우기"
+"ru" = "Очистить модель"
 pt = "Remover modelo"
 
 ["Clear texture"]
@@ -966,6 +1053,7 @@ ja = "テクスチャをクリア"
 "zh-CN" = "清除纹理"
 "zh-TW" = "清除紋理"
 "ko" = "텍스처 지우기"
+"ru" = "Очистить текстуру"
 pt = "Remover textura"
 
 ["Clearcoat"]
@@ -977,6 +1065,7 @@ ja = "クリアコート"
 "zh-CN" = "清漆"
 "zh-TW" = "清漆"
 "ko" = "클리어코트"
+"ru" = "Лак"
 pt = "Verniz"
 
 ["Clockwise"]
@@ -988,6 +1077,7 @@ ja = "時計回り"
 "zh-CN" = "顺时针"
 "zh-TW" = "順時針"
 "ko" = "시계방향"
+"ru" = "По часовой стрелке"
 pt = "Sentido horário"
 
 ["Coalesce"]
@@ -999,6 +1089,7 @@ ja = "結合"
 "zh-CN" = "合并"
 "zh-TW" = "合併"
 "ko" = "병합"
+"ru" = "Объединить"
 pt = "Unificar"
 
 ["Collapse"]
@@ -1010,6 +1101,7 @@ ja = "折りたたむ"
 "zh-CN" = "折叠"
 "zh-TW" = "收合"
 "ko" = "접기"
+"ru" = "Свернуть"
 pt = "Recolher"
 
 ["Color"]
@@ -1021,6 +1113,7 @@ ja = "色"
 "zh-CN" = "颜色"
 "zh-TW" = "顏色"
 "ko" = "색상"
+"ru" = "Цвет"
 pt = "Cor"
 
 ["Color A"]
@@ -1032,6 +1125,7 @@ ja = "色 A"
 "zh-CN" = "颜色A"
 "zh-TW" = "顏色A"
 "ko" = "색상 A"
+"ru" = "Цвет A"
 pt = "Cor A"
 
 ["Color B"]
@@ -1043,6 +1137,7 @@ ja = "色 B"
 "zh-CN" = "颜色B"
 "zh-TW" = "顏色B"
 "ko" = "색상 B"
+"ru" = "Цвет B"
 pt = "Cor B"
 
 ["Color mode"]
@@ -1054,6 +1149,7 @@ ja = "カラーモード"
 "zh-CN" = "色彩模式"
 "zh-TW" = "色彩模式"
 "ko" = "컬러 모드"
+"ru" = "Режим цвета"
 pt = "Modo de cor"
 
 ["Color position"]
@@ -1065,6 +1161,7 @@ ja = "色の位置"
 "zh-CN" = "颜色位置"
 "zh-TW" = "顏色位置"
 "ko" = "색상 위치"
+"ru" = "Положение цвета"
 pt = "Posição da cor"
 
 ["Color precision"]
@@ -1076,6 +1173,7 @@ ja = "色精度"
 "zh-CN" = "色彩精度"
 "zh-TW" = "色彩精準度"
 "ko" = "색상 정밀도"
+"ru" = "Точность цвета"
 pt = "Precisão da cor"
 
 ["Color %{number}"]
@@ -1087,6 +1185,7 @@ ja = "色 %{number}"
 "zh-CN" = "颜色 %{number}"
 "zh-TW" = "顏色 %{number}"
 "ko" = "색상 %{number}"
+"ru" = "Цвет %{number}"
 pt = "Cor %{number}"
 
 ["Coloring"]
@@ -1098,6 +1197,7 @@ ja = "カラーリング"
 "zh-CN" = "着色"
 "zh-TW" = "著色"
 "ko" = "색상 지정"
+"ru" = "Раскрашивание"
 pt = "Coloração"
 
 ["Completion"]
@@ -1109,6 +1209,7 @@ ja = "進行度"
 "zh-CN" = "完成度"
 "zh-TW" = "完成度"
 "ko" = "완료도"
+"ru" = "Завершённость"
 pt = "Conclusão"
 
 ["Complexity"]
@@ -1120,6 +1221,7 @@ ja = "複雑さ"
 "zh-CN" = "复杂"
 "zh-TW" = "複雜"
 "ko" = "복잡성"
+"ru" = "Сложность"
 pt = "Complexidade"
 
 ["Composite"]
@@ -1131,6 +1233,7 @@ ja = "合成"
 "zh-CN" = "合成"
 "zh-TW" = "合成"
 "ko" = "합성"
+"ru" = "Композиция"
 pt = "Composição"
 
 ["Composite background"]
@@ -1142,6 +1245,7 @@ ja = "背景を合成"
 "zh-CN" = "合成背景"
 "zh-TW" = "合成背景"
 "ko" = "합성 배경"
+"ru" = "Компоновать фон"
 pt = "Compor fundo"
 
 ["Compositing"]
@@ -1153,6 +1257,7 @@ ja = "コンポジット"
 "zh-CN" = "合成"
 "zh-TW" = "合成"
 "ko" = "합성"
+"ru" = "Композитинг"
 pt = "Composição"
 
 ["Constant high"]
@@ -1164,6 +1269,7 @@ ja = "常に高"
 "zh-CN" = "恒定高值"
 "zh-TW" = "恆定高值"
 "ko" = "고정 높음"
+"ru" = "Постоянный высокий"
 pt = "Constante alto"
 
 ["Constant low"]
@@ -1175,6 +1281,7 @@ ja = "常に低"
 "zh-CN" = "恒定低值"
 "zh-TW" = "恆定低值"
 "ko" = "고정 낮음"
+"ru" = "Постоянный низкий"
 pt = "Constante baixo"
 
 ["Constant-acceleration weight"]
@@ -1186,6 +1293,7 @@ ja = "等加速度ウェイト"
 "zh-CN" = "恒定加速度权重"
 "zh-TW" = "恆定加速度權重"
 "ko" = "등가속도 가중치"
+"ru" = "Вес постоянного ускорения"
 pt = "Peso de aceleração constante"
 
 ["Constant-motion weight"]
@@ -1197,6 +1305,7 @@ ja = "等速運動ウェイト"
 "zh-CN" = "恒定运动权重"
 "zh-TW" = "恆定運動權重"
 "ko" = "등속 운동 가중치"
+"ru" = "Вес постоянного движения"
 pt = "Peso de movimento constante"
 
 ["Continuous"]
@@ -1208,6 +1317,7 @@ ja = "連続"
 "zh-CN" = "连续"
 "zh-TW" = "連續"
 "ko" = "연속"
+"ru" = "Непрерывный"
 pt = "Contínuo"
 
 ["Contrast"]
@@ -1219,6 +1329,7 @@ ja = "コントラスト"
 "zh-CN" = "对比度"
 "zh-TW" = "對比度"
 "ko" = "대비"
+"ru" = "Контраст"
 pt = "Contraste"
 
 ["Copies X"]
@@ -1230,6 +1341,7 @@ ja = "コピー数 X"
 "zh-CN" = "副本 X"
 "zh-TW" = "副本 X"
 "ko" = "사본 X"
+"ru" = "Копий по X"
 pt = "Cópias X"
 
 ["Copies Y"]
@@ -1241,6 +1353,7 @@ ja = "コピー数 Y"
 "zh-CN" = "副本 Y"
 "zh-TW" = "副本 Y"
 "ko" = "사본 Y"
+"ru" = "Копий по Y"
 pt = "Cópias Y"
 
 ["Copy JSON"]
@@ -1252,6 +1365,7 @@ ja = "JSONをコピー"
 "zh-CN" = "复制 JSON"
 "zh-TW" = "複製 JSON"
 "ko" = "JSON 복사"
+"ru" = "Копировать JSON"
 pt = "Copiar JSON"
 
 ["Corner radius"]
@@ -1263,6 +1377,7 @@ ja = "角の半径"
 "zh-CN" = "圆角半径"
 "zh-TW" = "圓角半徑"
 "ko" = "코너 반경"
+"ru" = "Радиус углов"
 pt = "Raio do canto"
 
 ["Corner rounding"]
@@ -1274,6 +1389,7 @@ ja = "角の丸み"
 "zh-CN" = "圆角"
 "zh-TW" = "圓角"
 "ko" = "코너 라운딩"
+"ru" = "Скругление углов"
 pt = "Arredondamento dos cantos"
 
 ["Corner threshold"]
@@ -1285,6 +1401,7 @@ ja = "コーナーしきい値"
 "zh-CN" = "拐角阈值"
 "zh-TW" = "轉角閾值"
 "ko" = "모서리 임계값"
+"ru" = "Порог углов"
 pt = "Limiar de canto"
 
 ["Counterclockwise"]
@@ -1296,6 +1413,7 @@ ja = "反時計回り"
 "zh-CN" = "逆时针"
 "zh-TW" = "逆時針"
 "ko" = "시계 반대방향"
+"ru" = "Против часовой стрелки"
 pt = "Sentido anti-horário"
 
 ["Create"]
@@ -1307,6 +1425,7 @@ ja = "作成"
 "zh-CN" = "创建"
 "zh-TW" = "建立"
 "ko" = "만들기"
+"ru" = "Создать"
 pt = "Criar"
 
 ["Crop ratio"]
@@ -1318,6 +1437,7 @@ ja = "クロップ率"
 "zh-CN" = "裁剪比例"
 "zh-TW" = "裁切比例"
 "ko" = "자르기 비율"
+"ru" = "Соотношение кадрирования"
 pt = "Proporção de corte"
 
 ["Cross"]
@@ -1329,6 +1449,7 @@ ja = "十字"
 "zh-CN" = "十字形"
 "zh-TW" = "十字形"
 "ko" = "십자형"
+"ru" = "Крест"
 pt = "Cruz"
 
 ["Crosshatch"]
@@ -1340,6 +1461,7 @@ ja = "クロスハッチ"
 "zh-CN" = "交叉排线"
 "zh-TW" = "交叉排線"
 "ko" = "크로스해칭"
+"ru" = "Перекрёстная штриховка"
 pt = "Hachura cruzada"
 
 ["Curvature"]
@@ -1351,6 +1473,7 @@ ja = "曲率"
 "zh-CN" = "曲率"
 "zh-TW" = "曲率"
 "ko" = "곡률"
+"ru" = "Кривизна"
 pt = "Curvatura"
 
 ["Curve"]
@@ -1362,6 +1485,7 @@ ja = "カーブ"
 "zh-CN" = "曲线"
 "zh-TW" = "曲線"
 "ko" = "곡선"
+"ru" = "Кривая"
 pt = "Curva"
 
 ["Cutoff"]
@@ -1373,6 +1497,7 @@ ja = "カットオフ"
 "zh-CN" = "截止值"
 "zh-TW" = "截止值"
 "ko" = "컷오프"
+"ru" = "Срез"
 pt = "Corte"
 
 ["Damping"]
@@ -1384,6 +1509,7 @@ ja = "ダンピング"
 "zh-CN" = "阻尼"
 "zh-TW" = "阻尼"
 "ko" = "감쇠"
+"ru" = "Затухание"
 pt = "Amortecimento"
 
 ["Darkest tone"]
@@ -1395,6 +1521,7 @@ ja = "最暗部"
 "zh-CN" = "最深的色调"
 "zh-TW" = "最深的色調"
 "ko" = "가장 어두운 톤"
+"ru" = "Самый тёмный тон"
 pt = "Tom mais escuro"
 
 ["Dash gap"]
@@ -1406,6 +1533,7 @@ ja = "破線の間隔"
 "zh-CN" = "短划线间隙"
 "zh-TW" = "短劃線間隙"
 "ko" = "대시 갭"
+"ru" = "Промежуток штриха"
 pt = "Espaço do tracejado"
 
 ["Dash length"]
@@ -1417,6 +1545,7 @@ ja = "破線の長さ"
 "zh-CN" = "划线长度"
 "zh-TW" = "劃線長度"
 "ko" = "대시 길이"
+"ru" = "Длина штриха"
 pt = "Comprimento do traço"
 
 ["Dash position"]
@@ -1428,6 +1557,7 @@ ja = "破線の位置"
 "zh-CN" = "虚线位置"
 "zh-TW" = "虛線位置"
 "ko" = "대시 위치"
+"ru" = "Положение штриха"
 pt = "Posição do tracejado"
 
 ["Decay"]
@@ -1439,6 +1569,7 @@ ja = "減衰"
 "zh-CN" = "衰减"
 "zh-TW" = "衰減"
 "ko" = "감쇠"
+"ru" = "Спад"
 pt = "Decaimento"
 
 ["Default outline color"]
@@ -1450,6 +1581,7 @@ ja = "既定のアウトライン色"
 "zh-CN" = "默认轮廓颜色"
 "zh-TW" = "預設輪廓顏色"
 "ko" = "기본 윤곽선 색상"
+"ru" = "Цвет контура по умолчанию"
 pt = "Cor de contorno padrão"
 
 ["Delay"]
@@ -1461,6 +1593,7 @@ ja = "ディレイ"
 "zh-CN" = "延迟"
 "zh-TW" = "延遲"
 "ko" = "지연"
+"ru" = "Задержка"
 pt = "Atraso"
 
 ["Delete selected keyframe"]
@@ -1472,6 +1605,7 @@ ja = "選択したキーフレームを削除"
 "zh-CN" = "删除选定的关键帧"
 "zh-TW" = "刪除選定的關鍵影格"
 "ko" = "선택한 키프레임 삭제"
+"ru" = "Удалить выбранный ключевой кадр"
 pt = "Excluir quadro-chave selecionado"
 
 ["Depth"]
@@ -1483,6 +1617,7 @@ ja = "深度"
 "zh-CN" = "深度"
 "zh-TW" = "深度"
 "ko" = "깊이"
+"ru" = "Глубина"
 pt = "Profundidade"
 
 ["Depth edge roundness"]
@@ -1494,6 +1629,7 @@ ja = "深度エッジの丸み"
 "zh-CN" = "深度边缘圆角程度"
 "zh-TW" = "深度邊緣圓角程度"
 "ko" = "깊이 가장자리 둥글기"
+"ru" = "Скругление краёв глубины"
 pt = "Arredondamento de borda de profundidade"
 
 ["Depth threshold"]
@@ -1505,6 +1641,7 @@ ja = "深度しきい値"
 "zh-CN" = "深度阈值"
 "zh-TW" = "深度閾值"
 "ko" = "깊이 임계값"
+"ru" = "Порог глубины"
 pt = "Limiar de profundidade"
 
 ["Detail"]
@@ -1516,6 +1653,7 @@ ja = "ディテール"
 "zh-CN" = "细节"
 "zh-TW" = "細節"
 "ko" = "세부 사항"
+"ru" = "Детализация"
 pt = "Detalhe"
 
 ["Diamond"]
@@ -1527,6 +1665,7 @@ ja = "ひし形"
 "zh-CN" = "菱形"
 "zh-TW" = "菱形"
 "ko" = "마름모"
+"ru" = "Ромб"
 pt = "Losango"
 
 ["Diffusion"]
@@ -1538,6 +1677,7 @@ ja = "拡散"
 "zh-CN" = "扩散"
 "zh-TW" = "擴散"
 "ko" = "확산"
+"ru" = "Диффузия"
 pt = "Difusão"
 
 ["Dimensions"]
@@ -1549,6 +1689,7 @@ ja = "寸法"
 "zh-CN" = "尺寸"
 "zh-TW" = "尺寸"
 "ko" = "치수"
+"ru" = "Размеры"
 pt = "Dimensões"
 
 ["Direction"]
@@ -1560,6 +1701,7 @@ ja = "方向"
 "zh-CN" = "方向"
 "zh-TW" = "方向"
 "ko" = "방향"
+"ru" = "Направление"
 pt = "Direção"
 
 ["Disable modifier"]
@@ -1571,6 +1713,7 @@ ja = "モディファイアを無効化"
 "zh-CN" = "禁用修改器"
 "zh-TW" = "停用修改器"
 "ko" = "수정자 비활성화"
+"ru" = "Отключить модификатор"
 pt = "Desabilitar modificador"
 
 ["Discard and reanalyze the current source-time chunk"]
@@ -1582,6 +1725,7 @@ ja = "現在のソース時間チャンクを破棄して再解析"
 "zh-CN" = "丢弃并重新分析当前源时间片段"
 "zh-TW" = "捨棄並重新分析目前的來源時間區段"
 "ko" = "현재 소스 시간 구간을 버리고 다시 분석합니다."
+"ru" = "Отбросить и заново проанализировать текущий фрагмент исходного времени"
 pt = "Descartar e reanalisar o trecho temporal de origem atual"
 
 ["Distance"]
@@ -1593,6 +1737,7 @@ ja = "距離"
 "zh-CN" = "距离"
 "zh-TW" = "距離"
 "ko" = "거리"
+"ru" = "Расстояние"
 pt = "Distância"
 
 ["Distortion"]
@@ -1604,6 +1749,7 @@ ja = "歪み"
 "zh-CN" = "失真"
 "zh-TW" = "失真"
 "ko" = "왜곡"
+"ru" = "Искажение"
 pt = "Distorção"
 
 ["Distribution"]
@@ -1615,6 +1761,7 @@ ja = "分布"
 "zh-CN" = "分布"
 "zh-TW" = "分佈"
 "ko" = "분포"
+"ru" = "Распределение"
 pt = "Distribuição"
 
 ["Distribution randomness"]
@@ -1626,6 +1773,7 @@ ja = "分布のランダム性"
 "zh-CN" = "分布随机性"
 "zh-TW" = "分佈隨機性"
 "ko" = "분포 무작위성"
+"ru" = "Случайность распределения"
 pt = "Aleatoriedade da distribuição"
 
 ["Dot density"]
@@ -1637,6 +1785,7 @@ ja = "ドット密度"
 "zh-CN" = "网点密度"
 "zh-TW" = "網點密度"
 "ko" = "도트 밀도"
+"ru" = "Плотность точек"
 pt = "Densidade de pontos"
 
 ["Dot size"]
@@ -1648,6 +1797,7 @@ ja = "ドットサイズ"
 "zh-CN" = "网点尺寸"
 "zh-TW" = "網點尺寸"
 "ko" = "도트 크기"
+"ru" = "Размер точек"
 pt = "Tamanho do ponto"
 
 ["Dots"]
@@ -1659,6 +1809,7 @@ ja = "ドット"
 "zh-CN" = "点"
 "zh-TW" = "點"
 "ko" = "도트"
+"ru" = "Точки"
 pt = "Pontos"
 
 ["Downloading font family…"]
@@ -1670,6 +1821,7 @@ ja = "フォントファミリーをダウンロード中…"
 "zh-CN" = "正在下载字体系列…"
 "zh-TW" = "正在下載字型系列…"
 "ko" = "글꼴 모음 다운로드 중…"
+"ru" = "Загрузка семейства шрифта…"
 pt = "Baixando família de fontes…"
 
 ["Drag onto a visual clip in the timeline"]
@@ -1681,6 +1833,7 @@ ja = "タイムライン上のビジュアルクリップにドラッグ"
 "zh-CN" = "拖到时间线中的视觉片段上"
 "zh-TW" = "拖曳至時間軸中的視覺片段"
 "ko" = "타임라인의 비주얼 클립으로 드래그"
+"ru" = "Перетащите на визуальный клип на таймлайне"
 pt = "Arraste sobre um clipe visual na linha do tempo"
 
 ["Drag onto a visual clip…"]
@@ -1692,6 +1845,7 @@ ja = "ビジュアルクリップにドラッグ…"
 "zh-CN" = "拖到视觉片段上…"
 "zh-TW" = "拖曳至視覺片段…"
 "ko" = "비주얼 클립으로 드래그…"
+"ru" = "Перетащите на визуальный клип…"
 pt = "Arraste sobre um clipe visual…"
 
 ["Drawing"]
@@ -1703,6 +1857,7 @@ ja = "描画"
 "zh-CN" = "绘图"
 "zh-TW" = "繪圖"
 "ko" = "드로잉"
+"ru" = "Рисование"
 pt = "Desenho"
 
 ["Drive"]
@@ -1714,6 +1869,7 @@ ja = "ドライブ"
 "zh-CN" = "驱动"
 "zh-TW" = "驅動"
 "ko" = "드라이브"
+"ru" = "Драйв"
 pt = "Drive"
 
 ["Duration"]
@@ -1725,6 +1881,7 @@ ja = "長さ"
 "zh-CN" = "持续时间"
 "zh-TW" = "持續時間"
 "ko" = "지속 시간"
+"ru" = "Длительность"
 pt = "Duração"
 
 ["Edge"]
@@ -1736,6 +1893,7 @@ ja = "エッジ"
 "zh-CN" = "边缘"
 "zh-TW" = "邊緣"
 "ko" = "가장자리"
+"ru" = "Край"
 pt = "Borda"
 
 ["Edge color"]
@@ -1747,6 +1905,7 @@ ja = "エッジ色"
 "zh-CN" = "边缘颜色"
 "zh-TW" = "邊緣顏色"
 "ko" = "가장자리 색상"
+"ru" = "Цвет края"
 pt = "Cor da borda"
 
 ["Edge softness"]
@@ -1758,6 +1917,7 @@ ja = "エッジの柔らかさ"
 "zh-CN" = "边缘柔软度"
 "zh-TW" = "邊緣柔軟度"
 "ko" = "가장자리 부드러움"
+"ru" = "Мягкость краёв"
 pt = "Suavidade da borda"
 
 ["Edge width"]
@@ -1769,6 +1929,7 @@ ja = "エッジ幅"
 "zh-CN" = "边缘宽度"
 "zh-TW" = "邊緣寬度"
 "ko" = "가장자리 너비"
+"ru" = "Ширина края"
 pt = "Largura da borda"
 
 ["Edit after the shared beginning"]
@@ -1780,6 +1941,7 @@ ja = "共通の冒頭以降を編集"
 "zh-CN" = "在共享开头后进行编辑"
 "zh-TW" = "在共享開頭後進行編輯"
 "ko" = "공유 시작 후 편집"
+"ru" = "Редактировать после общего начала"
 pt = "Editar após o início compartilhado"
 
 ["Edit between the shared ends"]
@@ -1791,6 +1953,7 @@ ja = "共通部分の間を編集"
 "zh-CN" = "在共享端之间编辑"
 "zh-TW" = "在共享端之間編輯"
 "ko" = "공유 끝 사이에서 편집"
+"ru" = "Редактировать между общими концами"
 pt = "Editar entre as extremidades compartilhadas"
 
 ["Edit only the changed characters"]
@@ -1802,6 +1965,7 @@ ja = "変更された文字だけを編集"
 "zh-CN" = "仅编辑已更改的字符"
 "zh-TW" = "僅編輯已變更的字元"
 "ko" = "변경된 문자만 편집"
+"ru" = "Редактировать только изменённые символы"
 pt = "Editar apenas os caracteres alterados"
 
 ["Effect strength"]
@@ -1813,6 +1977,7 @@ ja = "エフェクト強度"
 "zh-CN" = "效果强度"
 "zh-TW" = "效果強度"
 "ko" = "효과 강도"
+"ru" = "Сила эффекта"
 pt = "Intensidade do efeito"
 
 ["Ellipse"]
@@ -1824,6 +1989,7 @@ ja = "楕円"
 "zh-CN" = "椭圆"
 "zh-TW" = "橢圓"
 "ko" = "타원"
+"ru" = "Эллипс"
 pt = "Elipse"
 
 ["Enable layout"]
@@ -1835,6 +2001,7 @@ ja = "レイアウトを有効化"
 "zh-CN" = "启用布局"
 "zh-TW" = "啟用版面配置"
 "ko" = "레이아웃 활성화"
+"ru" = "Включить макет"
 pt = "Habilitar layout"
 
 ["Enable modifier"]
@@ -1846,6 +2013,7 @@ ja = "モディファイアを有効化"
 "zh-CN" = "启用修改器"
 "zh-TW" = "啟用修改器"
 "ko" = "수정자 활성화"
+"ru" = "Включить модификатор"
 pt = "Habilitar modificador"
 
 ["Enable styling"]
@@ -1857,6 +2025,7 @@ ja = "スタイルを有効化"
 "zh-CN" = "启用样式设置"
 "zh-TW" = "啟用樣式設定"
 "ko" = "스타일링 활성화"
+"ru" = "Включить стилизацию"
 pt = "Habilitar estilização"
 
 ["Enabled"]
@@ -1868,6 +2037,7 @@ ja = "有効"
 "zh-CN" = "启用"
 "zh-TW" = "啟用"
 "ko" = "활성화됨"
+"ru" = "Включено"
 pt = "Habilitado"
 
 ["End cap"]
@@ -1879,6 +2049,7 @@ ja = "終端キャップ"
 "zh-CN" = "端盖"
 "zh-TW" = "端蓋"
 "ko" = "엔드캡"
+"ru" = "Концевой колпачок"
 pt = "Extremidade final"
 
 ["End taper"]
@@ -1890,6 +2061,7 @@ ja = "終端テーパー"
 "zh-CN" = "端部锥度"
 "zh-TW" = "端部錐度"
 "ko" = "엔드 테이퍼"
+"ru" = "Сужение на конце"
 pt = "Afilamento final"
 
 ["End taper distance"]
@@ -1901,6 +2073,7 @@ ja = "終端テーパー距離"
 "zh-CN" = "端锥距"
 "zh-TW" = "端錐距"
 "ko" = "끝 테이퍼 거리"
+"ru" = "Расстояние сужения на конце"
 pt = "Distância do afilamento final"
 
 ["Engine"]
@@ -1912,6 +2085,7 @@ ja = "エンジン"
 "zh-CN" = "引擎"
 "zh-TW" = "引擎"
 "ko" = "엔진"
+"ru" = "Движок"
 pt = "Motor"
 
 ["Enter a Google font family name"]
@@ -1923,6 +2097,7 @@ ja = "Google Fontsのファミリー名を入力"
 "zh-CN" = "输入 Google 字体系列名称"
 "zh-TW" = "輸入 Google 字型系列名稱"
 "ko" = "Google 글꼴 모음 이름을 입력하세요."
+"ru" = "Введите название семейства шрифта Google"
 pt = "Digite o nome de uma família do Google Fonts"
 
 ["Environment"]
@@ -1934,6 +2109,7 @@ ja = "環境"
 "zh-CN" = "环境"
 "zh-TW" = "環境"
 "ko" = "환경"
+"ru" = "Окружение"
 pt = "Ambiente"
 
 ["Environment images"]
@@ -1945,6 +2121,7 @@ ja = "環境画像"
 "zh-CN" = "环境图像"
 "zh-TW" = "環境影像"
 "ko" = "환경 이미지"
+"ru" = "Изображения окружения"
 pt = "Imagens de ambiente"
 
 ["Evolution"]
@@ -1956,6 +2133,7 @@ ja = "変化"
 "zh-CN" = "演化"
 "zh-TW" = "演化"
 "ko" = "진화"
+"ru" = "Эволюция"
 pt = "Evolução"
 
 ["Evolve seed"]
@@ -1967,6 +2145,7 @@ ja = "シードを変化"
 "zh-CN" = "演化种子"
 "zh-TW" = "演化種子"
 "ko" = "시드 변경"
+"ru" = "Эволюция сида"
 pt = "Evoluir semente"
 
 ["Expand"]
@@ -1978,6 +2157,7 @@ ja = "展開"
 "zh-CN" = "展开"
 "zh-TW" = "展開"
 "ko" = "펼치기"
+"ru" = "Развернуть"
 pt = "Expandir"
 
 ["Exposure"]
@@ -1989,6 +2169,7 @@ ja = "露出"
 "zh-CN" = "曝光"
 "zh-TW" = "曝光"
 "ko" = "노출"
+"ru" = "Экспозиция"
 pt = "Exposição"
 
 ["Expression"]
@@ -2000,6 +2181,7 @@ ja = "式"
 "zh-CN" = "表达式"
 "zh-TW" = "運算式"
 "ko" = "표현식"
+"ru" = "Выражение"
 pt = "Expressão"
 
 ["Extend edge"]
@@ -2011,6 +2193,7 @@ ja = "エッジを拡張"
 "zh-CN" = "延伸边缘"
 "zh-TW" = "延伸邊緣"
 "ko" = "가장자리 확장"
+"ru" = "Расширить край"
 pt = "Estender borda"
 
 ["FOV"]
@@ -2022,6 +2205,7 @@ ja = "視野角"
 "zh-CN" = "视场角 (FOV)"
 "zh-TW" = "視野 (FOV)"
 "ko" = "시야각 (FOV)"
+"ru" = "Угол обзора (FOV)"
 pt = "Campo de visão"
 
 ["FPS"]
@@ -2033,6 +2217,7 @@ ja = "FPS"
 "zh-CN" = "FPS"
 "zh-TW" = "FPS"
 "ko" = "FPS"
+"ru" = "FPS"
 pt = "FPS"
 
 ["Fade"]
@@ -2044,6 +2229,7 @@ ja = "フェード"
 "zh-CN" = "淡入淡出"
 "zh-TW" = "淡入淡出"
 "ko" = "페이드"
+"ru" = "Плавный переход"
 pt = "Esmaecimento"
 
 ["Fade length"]
@@ -2055,6 +2241,7 @@ ja = "フェード長"
 "zh-CN" = "淡入淡出长度"
 "zh-TW" = "淡入淡出長度"
 "ko" = "페이드 길이"
+"ru" = "Длина перехода"
 pt = "Duração do esmaecimento"
 
 ["Fade one by one"]
@@ -2066,6 +2253,7 @@ ja = "1つずつフェード"
 "zh-CN" = "逐个淡入淡出"
 "zh-TW" = "逐個淡入淡出"
 "ko" = "하나씩 페이드"
+"ru" = "Переход по одному"
 pt = "Esmaecer um por um"
 
 ["Fade opacity"]
@@ -2077,6 +2265,7 @@ ja = "フェード不透明度"
 "zh-CN" = "淡入淡出不透明度"
 "zh-TW" = "淡入淡出不透明度"
 "ko" = "페이드 불투명도"
+"ru" = "Непрозрачность перехода"
 pt = "Opacidade do esmaecimento"
 
 ["Fade together"]
@@ -2088,6 +2277,7 @@ ja = "まとめてフェード"
 "zh-CN" = "同时淡入淡出"
 "zh-TW" = "同時淡入淡出"
 "ko" = "함께 페이드"
+"ru" = "Общий переход"
 pt = "Esmaecer juntos"
 
 ["Fade-through color"]
@@ -2099,6 +2289,7 @@ ja = "中間フェード色"
 "zh-CN" = "过渡颜色"
 "zh-TW" = "過渡色彩"
 "ko" = "페이드 스루 색상"
+"ru" = "Цвет промежуточного перехода"
 pt = "Cor do esmaecimento"
 
 ["Feather"]
@@ -2110,6 +2301,7 @@ ja = "フェザー"
 "zh-CN" = "羽化"
 "zh-TW" = "羽化"
 "ko" = "페더"
+"ru" = "Растушёвка"
 pt = "Difusão"
 
 ["Feedback"]
@@ -2121,6 +2313,7 @@ ja = "フィードバック"
 "zh-CN" = "反馈"
 "zh-TW" = "回饋"
 "ko" = "피드백"
+"ru" = "Обратная связь"
 pt = "Realimentação"
 
 ["File Location"]
@@ -2132,6 +2325,7 @@ ja = "ファイルの場所"
 "zh-CN" = "文件位置"
 "zh-TW" = "檔案位置"
 "ko" = "파일 위치"
+"ru" = "Расположение файла"
 pt = "Local do arquivo"
 
 ["Fill"]
@@ -2143,6 +2337,7 @@ ja = "塗り"
 "zh-CN" = "填充"
 "zh-TW" = "填滿"
 "ko" = "채우기"
+"ru" = "Заливка"
 pt = "Preenchimento"
 
 ["Fill color %{number}"]
@@ -2154,6 +2349,7 @@ ja = "塗りの色 %{number}"
 "zh-CN" = "填充颜色%{number}"
 "zh-TW" = "填滿顏色%{number}"
 "ko" = "채우기 색상 %{number}"
+"ru" = "Цвет заливки %{number}"
 pt = "Cor de preenchimento %{number}"
 
 ["Flipped"]
@@ -2165,6 +2361,7 @@ ja = "反転"
 "zh-CN" = "翻转"
 "zh-TW" = "翻轉"
 "ko" = "뒤집힌"
+"ru" = "Отражённый"
 pt = "Invertido"
 
 ["Focal length"]
@@ -2176,6 +2373,7 @@ ja = "焦点距離"
 "zh-CN" = "焦距"
 "zh-TW" = "焦距"
 "ko" = "초점 거리"
+"ru" = "Фокусное расстояние"
 pt = "Distância focal"
 
 ["Focus distance (0 = off)"]
@@ -2187,6 +2385,7 @@ ja = "焦点距離（0 = オフ）"
 "zh-CN" = "对焦距离（0 = 关闭）"
 "zh-TW" = "對焦距離（0 = 關閉）"
 "ko" = "초점 거리(0 = 꺼짐)"
+"ru" = "Фокусное расстояние (0 = выкл.)"
 pt = "Distância de foco (0 = desativado)"
 
 ["Fold depth"]
@@ -2198,6 +2397,7 @@ ja = "折り深さ"
 "zh-CN" = "折叠深度"
 "zh-TW" = "折疊深度"
 "ko" = "접기 깊이"
+"ru" = "Глубина складывания"
 pt = "Profundidade da dobra"
 
 ["Fold size"]
@@ -2209,6 +2409,7 @@ ja = "折りサイズ"
 "zh-CN" = "折叠大小"
 "zh-TW" = "折疊大小"
 "ko" = "접기 크기"
+"ru" = "Размер складывания"
 pt = "Tamanho da dobra"
 
 ["Folded Sequence"]
@@ -2220,6 +2421,7 @@ ja = "折りたたみシーケンス"
 "zh-CN" = "已折叠序列"
 "zh-TW" = "已收合序列"
 "ko" = "접힌 시퀀스"
+"ru" = "Свёрнутая последовательность"
 pt = "Sequência recolhida"
 
 ["Font"]
@@ -2231,6 +2433,7 @@ ja = "フォント"
 "zh-CN" = "字体"
 "zh-TW" = "字型"
 "ko" = "글꼴"
+"ru" = "Шрифт"
 pt = "Fonte"
 
 ["Font size"]
@@ -2242,6 +2445,7 @@ ja = "フォントサイズ"
 "zh-CN" = "字体大小"
 "zh-TW" = "字型大小"
 "ko" = "글꼴 크기"
+"ru" = "Размер шрифта"
 pt = "Tamanho da fonte"
 
 ["Font weight"]
@@ -2253,6 +2457,7 @@ ja = "フォントウェイト"
 "zh-CN" = "字体粗细"
 "zh-TW" = "字型粗細"
 "ko" = "글꼴 두께"
+"ru" = "Насыщенность шрифта"
 pt = "Peso da fonte"
 
 ["Fonts"]
@@ -2264,6 +2469,7 @@ ja = "フォント"
 "zh-CN" = "字体"
 "zh-TW" = "字型"
 "ko" = "글꼴"
+"ru" = "Шрифты"
 pt = "Fontes"
 
 ["Formant shift"]
@@ -2275,6 +2481,7 @@ ja = "フォルマントシフト"
 "zh-CN" = "共振峰位移"
 "zh-TW" = "共振峰位移"
 "ko" = "포먼트 시프트"
+"ru" = "Сдвиг формант"
 pt = "Deslocamento de formantes"
 
 ["Frequency"]
@@ -2286,6 +2493,7 @@ ja = "周波数"
 "zh-CN" = "频率"
 "zh-TW" = "頻率"
 "ko" = "주파수"
+"ru" = "Частота"
 pt = "Frequência"
 
 ["Fresnel contour"]
@@ -2297,6 +2505,7 @@ ja = "フレネル輪郭"
 "zh-CN" = "菲涅耳轮廓"
 "zh-TW" = "菲涅耳輪廓"
 "ko" = "프레넬 윤곽"
+"ru" = "Контур Френеля"
 pt = "Contorno de Fresnel"
 
 ["From inside"]
@@ -2308,6 +2517,7 @@ ja = "内側から"
 "zh-CN" = "从里面"
 "zh-TW" = "從裡面"
 "ko" = "내부에서"
+"ru" = "Изнутри"
 pt = "De dentro"
 
 ["From outside"]
@@ -2319,6 +2529,7 @@ ja = "外側から"
 "zh-CN" = "从外面"
 "zh-TW" = "從外面"
 "ko" = "외부에서"
+"ru" = "Снаружи"
 pt = "De fora"
 
 ["Gamma"]
@@ -2330,6 +2541,7 @@ ja = "ガンマ"
 "zh-CN" = "伽玛"
 "zh-TW" = "伽瑪"
 "ko" = "감마"
+"ru" = "Гамма"
 pt = "Gama"
 
 ["Generator"]
@@ -2341,6 +2553,7 @@ ja = "ジェネレーター"
 "zh-CN" = "生成器"
 "zh-TW" = "生成器"
 "ko" = "생성기"
+"ru" = "Генератор"
 pt = "Gerador"
 
 ["Glow / outline"]
@@ -2352,6 +2565,7 @@ ja = "グロー / アウトライン"
 "zh-CN" = "发光/轮廓"
 "zh-TW" = "發光/輪廓"
 "ko" = "글로우/윤곽"
+"ru" = "Свечение / контур"
 pt = "Brilho / contorno"
 
 ["Gradient step"]
@@ -2363,6 +2577,7 @@ ja = "グラデーション段階"
 "zh-CN" = "梯度步长"
 "zh-TW" = "梯度步長"
 "ko" = "그라데이션 단계"
+"ru" = "Шаг градиента"
 pt = "Passo do gradiente"
 
 ["Grain size"]
@@ -2374,6 +2589,7 @@ ja = "粒子サイズ"
 "zh-CN" = "粒度"
 "zh-TW" = "粒徑"
 "ko" = "입자 크기"
+"ru" = "Размер зерна"
 pt = "Tamanho do grão"
 
 ["Ground intensity"]
@@ -2385,6 +2601,7 @@ ja = "地面の強度"
 "zh-CN" = "地面强度"
 "zh-TW" = "地面強度"
 "ko" = "지면 강도"
+"ru" = "Интенсивность земли"
 pt = "Intensidade do chão"
 
 ["H align"]
@@ -2396,6 +2613,7 @@ ja = "水平揃え"
 "zh-CN" = "水平对齐"
 "zh-TW" = "水平對齊"
 "ko" = "가로 정렬"
+"ru" = "Выравнивание по горизонтали"
 pt = "Alinhamento H"
 
 ["Hard shadow"]
@@ -2407,6 +2625,7 @@ ja = "ハードシャドウ"
 "zh-CN" = "硬阴影"
 "zh-TW" = "硬陰影"
 "ko" = "하드 섀도"
+"ru" = "Жёсткая тень"
 pt = "Sombra dura"
 
 ["Head length"]
@@ -2418,6 +2637,7 @@ ja = "先端の長さ"
 "zh-CN" = "箭头长度"
 "zh-TW" = "箭頭長度"
 "ko" = "화살촉 길이"
+"ru" = "Длина наконечника"
 pt = "Comprimento da ponta"
 
 ["Heart"]
@@ -2429,6 +2649,7 @@ ja = "ハート"
 "zh-CN" = "心形"
 "zh-TW" = "心形"
 "ko" = "하트"
+"ru" = "Сердце"
 pt = "Coração"
 
 ["Hexagon"]
@@ -2440,6 +2661,7 @@ ja = "六角形"
 "zh-CN" = "六边形"
 "zh-TW" = "六邊形"
 "ko" = "육각형"
+"ru" = "Шестиугольник"
 pt = "Hexágono"
 
 ["Hierarchy"]
@@ -2451,6 +2673,7 @@ ja = "階層"
 "zh-CN" = "层级"
 "zh-TW" = "階層"
 "ko" = "계층"
+"ru" = "Иерархия"
 pt = "Hierarquia"
 
 ["High"]
@@ -2462,6 +2685,7 @@ ja = "高"
 "zh-CN" = "高"
 "zh-TW" = "高"
 "ko" = "높음"
+"ru" = "Высокое"
 pt = "Alto"
 
 ["High color"]
@@ -2473,6 +2697,7 @@ ja = "高域色"
 "zh-CN" = "高值颜色"
 "zh-TW" = "高值顏色"
 "ko" = "높은 값 색상"
+"ru" = "Цвет верха"
 pt = "Cor alta"
 
 ["High-pass"]
@@ -2484,6 +2709,7 @@ ja = "ハイパス"
 "zh-CN" = "高通"
 "zh-TW" = "高通"
 "ko" = "하이패스"
+"ru" = "Высокие частоты"
 pt = "Passa-altas"
 
 ["Highlight color"]
@@ -2495,6 +2721,7 @@ ja = "ハイライト色"
 "zh-CN" = "亮部颜色"
 "zh-TW" = "亮部顏色"
 "ko" = "하이라이트 색상"
+"ru" = "Цвет бликов"
 pt = "Cor de destaque"
 
 ["Horizontal"]
@@ -2506,6 +2733,7 @@ ja = "水平"
 "zh-CN" = "水平"
 "zh-TW" = "水平"
 "ko" = "수평"
+"ru" = "Горизонтальный"
 pt = "Horizontal"
 
 ["Horizontal alignment"]
@@ -2517,6 +2745,7 @@ ja = "水平揃え"
 "zh-CN" = "水平对齐"
 "zh-TW" = "水平對齊"
 "ko" = "수평 정렬"
+"ru" = "Горизонтальное выравнивание"
 pt = "Alinhamento horizontal"
 
 ["Hue position"]
@@ -2528,6 +2757,7 @@ ja = "色相位置"
 "zh-CN" = "色相位置"
 "zh-TW" = "色相位置"
 "ko" = "색조 위치"
+"ru" = "Положение тона"
 pt = "Posição do matiz"
 
 ["Image"]
@@ -2539,6 +2769,7 @@ ja = "画像"
 "zh-CN" = "图像"
 "zh-TW" = "影像"
 "ko" = "이미지"
+"ru" = "Изображение"
 pt = "Imagem"
 
 ["Images"]
@@ -2550,6 +2781,7 @@ ja = "画像"
 "zh-CN" = "图像"
 "zh-TW" = "影像"
 "ko" = "이미지"
+"ru" = "Изображения"
 pt = "Imagens"
 
 ["Immediate"]
@@ -2561,6 +2793,7 @@ ja = "即時"
 "zh-CN" = "立即"
 "zh-TW" = "立即"
 "ko" = "즉시"
+"ru" = "Немедленно"
 pt = "Imediato"
 
 ["Include this track in playback and export"]
@@ -2572,6 +2805,7 @@ ja = "再生と書き出しにこのトラックを含める"
 "zh-CN" = "在播放和导出中包含该轨道"
 "zh-TW" = "在播放和匯出中包含該軌道"
 "ko" = "재생 및 내보내기에 이 트랙을 포함합니다."
+"ru" = "Включать эту дорожку в воспроизведение и экспорт"
 pt = "Incluir esta faixa na reprodução e exportação"
 
 ["Index of refraction"]
@@ -2583,6 +2817,7 @@ ja = "屈折率"
 "zh-CN" = "折射率"
 "zh-TW" = "折射率"
 "ko" = "굴절률"
+"ru" = "Показатель преломления"
 pt = "Índice de refração"
 
 ["Infinite"]
@@ -2594,6 +2829,7 @@ ja = "無限"
 "zh-CN" = "无限"
 "zh-TW" = "無限"
 "ko" = "무한"
+"ru" = "Бесконечный"
 pt = "Infinito"
 
 ["Inner radius"]
@@ -2605,6 +2841,7 @@ ja = "内半径"
 "zh-CN" = "内半径"
 "zh-TW" = "內半徑"
 "ko" = "내부 반경"
+"ru" = "Внутренний радиус"
 pt = "Raio interno"
 
 ["Intensity"]
@@ -2616,6 +2853,7 @@ ja = "強度"
 "zh-CN" = "强度"
 "zh-TW" = "強度"
 "ko" = "강도"
+"ru" = "Интенсивность"
 pt = "Intensidade"
 
 ["Intro"]
@@ -2627,6 +2865,7 @@ ja = "イントロ"
 "zh-CN" = "开场"
 "zh-TW" = "開場"
 "ko" = "인트로"
+"ru" = "Интро"
 pt = "Introdução"
 
 ["Invert"]
@@ -2638,6 +2877,7 @@ ja = "反転"
 "zh-CN" = "反转"
 "zh-TW" = "反轉"
 "ko" = "반전"
+"ru" = "Инвертировать"
 pt = "Inverter"
 
 ["Iris"]
@@ -2649,6 +2889,7 @@ ja = "アイリス"
 "zh-CN" = "光圈"
 "zh-TW" = "光圈"
 "ko" = "조리개"
+"ru" = "Ирис"
 pt = "Íris"
 
 ["Italic"]
@@ -2660,6 +2901,7 @@ ja = "斜体"
 "zh-CN" = "斜体"
 "zh-TW" = "斜體"
 "ko" = "이탤릭체"
+"ru" = "Курсив"
 pt = "Itálico"
 
 ["Items"]
@@ -2671,6 +2913,7 @@ ja = "項目"
 "zh-CN" = "项目"
 "zh-TW" = "項目"
 "ko" = "항목"
+"ru" = "Элементы"
 pt = "Itens"
 
 ["Jitter"]
@@ -2682,6 +2925,7 @@ ja = "ジッター"
 "zh-CN" = "抖动"
 "zh-TW" = "抖動"
 "ko" = "지터"
+"ru" = "Джиттер"
 pt = "Instabilidade"
 
 ["Key color"]
@@ -2693,6 +2937,7 @@ ja = "キーカラー"
 "zh-CN" = "抠像颜色"
 "zh-TW" = "去背色彩"
 "ko" = "키 색상"
+"ru" = "Ключевой цвет"
 pt = "Cor-chave"
 
 ["Keyframes"]
@@ -2704,6 +2949,7 @@ ja = "キーフレーム"
 "zh-CN" = "关键帧"
 "zh-TW" = "關鍵影格"
 "ko" = "키프레임"
+"ru" = "Ключевые кадры"
 pt = "Quadros-chave"
 
 ["Kind"]
@@ -2715,6 +2961,7 @@ ja = "種類"
 "zh-CN" = "类型"
 "zh-TW" = "種類"
 "ko" = "종류"
+"ru" = "Вид"
 pt = "Tipo"
 
 ["Kuwahara radius"]
@@ -2726,6 +2973,7 @@ ja = "Kuwahara半径"
 "zh-CN" = "Kuwahara 半径"
 "zh-TW" = "Kuwahara 半徑"
 "ko" = "Kuwahara 반경"
+"ru" = "Радиус Kuwahara"
 pt = "Raio Kuwahara"
 
 ["Kuwahara strength"]
@@ -2737,6 +2985,7 @@ ja = "Kuwahara強度"
 "zh-CN" = "Kuwahara 强度"
 "zh-TW" = "Kuwahara 強度"
 "ko" = "Kuwahara 강도"
+"ru" = "Сила Kuwahara"
 pt = "Intensidade Kuwahara"
 
 ["Lacunarity"]
@@ -2748,6 +2997,7 @@ ja = "ラキュナリティ"
 "zh-CN" = "间隙度"
 "zh-TW" = "空隙度"
 "ko" = "라쿠나리티"
+"ru" = "Лакунарность"
 pt = "Lacunaridade"
 
 ["Layered Image"]
@@ -2759,6 +3009,7 @@ ja = "レイヤー画像"
 "zh-CN" = "分层图像"
 "zh-TW" = "分層影像"
 "ko" = "계층화된 이미지"
+"ru" = "Многослойное изображение"
 pt = "Imagem em camadas"
 
 ["Layers"]
@@ -2770,6 +3021,7 @@ ja = "レイヤー"
 "zh-CN" = "图层"
 "zh-TW" = "圖層"
 "ko" = "레이어"
+"ru" = "Слои"
 pt = "Camadas"
 
 ["Layout"]
@@ -2781,6 +3033,7 @@ ja = "レイアウト"
 "zh-CN" = "布局"
 "zh-TW" = "版面配置"
 "ko" = "레이아웃"
+"ru" = "Макет"
 pt = "Layout"
 
 ["Language"]
@@ -2792,6 +3045,7 @@ ja = "言語"
 "zh-CN" = "语言"
 "zh-TW" = "語言"
 ko = "언어"
+"ru" = "Язык"
 pt = "Idioma"
 
 ["Left"]
@@ -2803,6 +3057,7 @@ ja = "左"
 "zh-CN" = "左边"
 "zh-TW" = "左邊"
 "ko" = "왼쪽"
+"ru" = "Слева"
 pt = "Esquerda"
 
 ["Length randomness"]
@@ -2814,6 +3069,7 @@ ja = "長さのランダム性"
 "zh-CN" = "长度随机性"
 "zh-TW" = "長度隨機性"
 "ko" = "길이 무작위성"
+"ru" = "Случайность длины"
 pt = "Aleatoriedade do comprimento"
 
 ["Length timing"]
@@ -2825,6 +3081,7 @@ ja = "長さのタイミング"
 "zh-CN" = "长度计时"
 "zh-TW" = "長度計時"
 "ko" = "길이 타이밍"
+"ru" = "Тайминг длины"
 pt = "Temporização do comprimento"
 
 ["Letter"]
@@ -2836,6 +3093,7 @@ ja = "文字"
 "zh-CN" = "字母"
 "zh-TW" = "字母"
 "ko" = "문자"
+"ru" = "Буква"
 pt = "Letra"
 
 ["Level"]
@@ -2847,6 +3105,7 @@ ja = "レベル"
 "zh-CN" = "等级"
 "zh-TW" = "等級"
 "ko" = "수준"
+"ru" = "Уровень"
 pt = "Nível"
 
 ["Levels"]
@@ -2858,6 +3117,7 @@ ja = "レベル"
 "zh-CN" = "级别"
 "zh-TW" = "等級"
 "ko" = "레벨"
+"ru" = "Уровни"
 pt = "Níveis"
 
 ["Light bands"]
@@ -2869,6 +3129,7 @@ ja = "明部バンド"
 "zh-CN" = "光带"
 "zh-TW" = "光帶"
 "ko" = "라이트 밴드"
+"ru" = "Светлые полосы"
 pt = "Faixas claras"
 
 ["Line count"]
@@ -2880,6 +3141,7 @@ ja = "ライン数"
 "zh-CN" = "线条数"
 "zh-TW" = "線條數"
 "ko" = "선 수"
+"ru" = "Количество линий"
 pt = "Número de linhas"
 
 ["Line density"]
@@ -2891,6 +3153,7 @@ ja = "ライン密度"
 "zh-CN" = "线密度"
 "zh-TW" = "線密度"
 "ko" = "선밀도"
+"ru" = "Плотность линий"
 pt = "Densidade de linhas"
 
 ["Line direction"]
@@ -2902,6 +3165,7 @@ ja = "ライン方向"
 "zh-CN" = "线条方向"
 "zh-TW" = "線條方向"
 "ko" = "선 방향"
+"ru" = "Направление линий"
 pt = "Direção das linhas"
 
 ["Line height"]
@@ -2913,6 +3177,7 @@ ja = "行の高さ"
 "zh-CN" = "行高"
 "zh-TW" = "行高"
 "ko" = "줄 높이"
+"ru" = "Высота строки"
 pt = "Altura da linha"
 
 ["Line length"]
@@ -2924,6 +3189,7 @@ ja = "ライン長"
 "zh-CN" = "线长"
 "zh-TW" = "線長"
 "ko" = "줄 길이"
+"ru" = "Длина линии"
 pt = "Comprimento da linha"
 
 ["Line offset"]
@@ -2935,6 +3201,7 @@ ja = "ラインオフセット"
 "zh-CN" = "线偏移"
 "zh-TW" = "線偏移"
 "ko" = "라인 오프셋"
+"ru" = "Смещение линий"
 pt = "Deslocamento de linha"
 
 ["Line style"]
@@ -2946,6 +3213,7 @@ ja = "ラインスタイル"
 "zh-CN" = "线条样式"
 "zh-TW" = "線條樣式"
 "ko" = "선 스타일"
+"ru" = "Стиль линии"
 pt = "Estilo de linha"
 
 ["Line width"]
@@ -2957,6 +3225,7 @@ ja = "線幅"
 "zh-CN" = "线宽"
 "zh-TW" = "線寬"
 "ko" = "선 너비"
+"ru" = "Ширина линии"
 pt = "Largura da linha"
 
 ["Linear"]
@@ -2968,6 +3237,7 @@ ja = "線形"
 "zh-CN" = "线性"
 "zh-TW" = "線性"
 "ko" = "선형"
+"ru" = "Линейный"
 pt = "Linear"
 
 ["Lines"]
@@ -2979,6 +3249,7 @@ ja = "ライン"
 "zh-CN" = "线条"
 "zh-TW" = "線條"
 "ko" = "선"
+"ru" = "Линии"
 pt = "Linhas"
 
 ["Link stereo channels"]
@@ -2990,6 +3261,7 @@ ja = "ステレオチャンネルをリンク"
 "zh-CN" = "链接立体声通道"
 "zh-TW" = "連結立體聲聲道"
 "ko" = "스테레오 채널 연결"
+"ru" = "Связать стереоканалы"
 pt = "Vincular canais estéreo"
 
 ["Loading cached font…"]
@@ -3001,6 +3273,7 @@ ja = "キャッシュ済みフォントを読み込み中…"
 "zh-CN" = "正在加载缓存字体…"
 "zh-TW" = "正在載入快取字型…"
 "ko" = "캐시된 글꼴 로드 중…"
+"ru" = "Загрузка шрифта из кэша…"
 pt = "Carregando fonte em cache…"
 
 ["Loading cameras…"]
@@ -3012,6 +3285,7 @@ ja = "カメラを読み込み中…"
 "zh-CN" = "正在加载相机…"
 "zh-TW" = "正在載入相機…"
 "ko" = "카메라 로드 중…"
+"ru" = "Загрузка камер…"
 pt = "Carregando câmeras…"
 
 ["Loading installed fonts…"]
@@ -3023,6 +3297,7 @@ ja = "インストール済みフォントを読み込み中…"
 "zh-CN" = "正在加载已安装的字体…"
 "zh-TW" = "正在載入已安裝的字型…"
 "ko" = "설치된 글꼴 로드 중…"
+"ru" = "Загрузка установленных шрифтов…"
 pt = "Carregando fontes instaladas…"
 
 ["Loading scenes..."]
@@ -3034,6 +3309,7 @@ ja = "シーンを読み込み中..."
 "zh-CN" = "正在加载场景…"
 "zh-TW" = "正在載入場景…"
 "ko" = "장면 로드 중…"
+"ru" = "Загрузка сцен..."
 pt = "Carregando cenas..."
 
 ["Loading scenes…"]
@@ -3045,6 +3321,7 @@ ja = "シーンを読み込み中…"
 "zh-CN" = "加载场景…"
 "zh-TW" = "載入場景…"
 "ko" = "장면 로드 중…"
+"ru" = "Загрузка сцен…"
 pt = "Carregando cenas…"
 
 ["Loading tracking model"]
@@ -3056,6 +3333,7 @@ ja = "トラッキングモデルを読み込み中"
 "zh-CN" = "加载跟踪模型"
 "zh-TW" = "載入追蹤模型"
 "ko" = "추적 모델 로드 중"
+"ru" = "Загрузка модели отслеживания"
 pt = "Carregando modelo de rastreamento"
 
 ["Loading view layers…"]
@@ -3067,6 +3345,7 @@ ja = "ビューレイヤーを読み込み中…"
 "zh-CN" = "正在加载视图图层…"
 "zh-TW" = "正在載入視圖圖層…"
 "ko" = "뷰 레이어 로드 중…"
+"ru" = "Загрузка слоёв просмотра…"
 pt = "Carregando camadas de visualização…"
 
 ["Low"]
@@ -3078,6 +3357,7 @@ ja = "低"
 "zh-CN" = "低"
 "zh-TW" = "低"
 "ko" = "낮음"
+"ru" = "Низкое"
 pt = "Baixo"
 
 ["Low color"]
@@ -3089,6 +3369,7 @@ ja = "低域色"
 "zh-CN" = "低值颜色"
 "zh-TW" = "低值顏色"
 "ko" = "낮은 값 색상"
+"ru" = "Цвет низа"
 pt = "Cor baixa"
 
 ["Low latency"]
@@ -3100,6 +3381,7 @@ ja = "低レイテンシ"
 "zh-CN" = "低延迟"
 "zh-TW" = "低延遲"
 "ko" = "낮은 대기 시간"
+"ru" = "Низкая задержка"
 pt = "Baixa latência"
 
 ["Low-pass"]
@@ -3111,6 +3393,7 @@ ja = "ローパス"
 "zh-CN" = "低通"
 "zh-TW" = "低通"
 "ko" = "로우패스"
+"ru" = "Низкие частоты"
 pt = "Passa-baixas"
 
 ["Maintain pitch while changing speed"]
@@ -3122,6 +3405,7 @@ ja = "速度変更時にピッチを維持"
 "zh-CN" = "改变速度时保持音高"
 "zh-TW" = "變更速度時保持音高"
 "ko" = "속도 변경 시 피치 유지"
+"ru" = "Сохранять высоту тона при изменении скорости"
 pt = "Manter o tom ao alterar a velocidade"
 
 ["Makeup"]
@@ -3133,6 +3417,7 @@ ja = "メイクアップ"
 "zh-CN" = "补偿增益"
 "zh-TW" = "補償增益"
 "ko" = "메이크업 게인"
+"ru" = "Компенсация"
 pt = "Compensação"
 
 ["Mask"]
@@ -3144,6 +3429,7 @@ ja = "マスク"
 "zh-CN" = "蒙版"
 "zh-TW" = "遮罩"
 "ko" = "마스크"
+"ru" = "Маска"
 pt = "Máscara"
 
 ["Mask strength"]
@@ -3155,6 +3441,7 @@ ja = "マスク強度"
 "zh-CN" = "蒙版强度"
 "zh-TW" = "遮罩強度"
 "ko" = "마스크 강도"
+"ru" = "Сила маски"
 pt = "Intensidade da máscara"
 
 ["Material Preview"]
@@ -3166,6 +3453,7 @@ ja = "マテリアルプレビュー"
 "zh-CN" = "材质预览"
 "zh-TW" = "材質預覽"
 "ko" = "재료 미리보기"
+"ru" = "Предпросмотр материала"
 pt = "Pré-visualização de material"
 
 ["Max iterations"]
@@ -3177,6 +3465,7 @@ ja = "最大反復回数"
 "zh-CN" = "最大迭代次数"
 "zh-TW" = "最大迭代次數"
 "ko" = "최대 반복"
+"ru" = "Макс. итераций"
 pt = "Iterações máximas"
 
 ["Maximum block size"]
@@ -3188,6 +3477,7 @@ ja = "最大ブロックサイズ"
 "zh-CN" = "最大块大小"
 "zh-TW" = "最大塊大小"
 "ko" = "최대 블록 크기"
+"ru" = "Максимальный размер блока"
 pt = "Tamanho máximo de bloco"
 
 ["Maximum directions"]
@@ -3199,6 +3489,7 @@ ja = "最大方向数"
 "zh-CN" = "最大方向"
 "zh-TW" = "最大方向"
 "ko" = "최대 방향"
+"ru" = "Максимум направлений"
 pt = "Direções máximas"
 
 ["Maximum gap"]
@@ -3210,6 +3501,7 @@ ja = "最大間隔"
 "zh-CN" = "最大间隙"
 "zh-TW" = "最大間隙"
 "ko" = "최대 간격"
+"ru" = "Максимальный зазор"
 pt = "Espaço máximo"
 
 ["Maximum radius"]
@@ -3221,6 +3513,7 @@ ja = "最大半径"
 "zh-CN" = "最大半径"
 "zh-TW" = "最大半徑"
 "ko" = "최대 반경"
+"ru" = "Максимальный радиус"
 pt = "Raio máximo"
 
 ["Mesh columns"]
@@ -3232,6 +3525,7 @@ ja = "メッシュ列"
 "zh-CN" = "网格列"
 "zh-TW" = "網格欄"
 "ko" = "메시 열"
+"ru" = "Столбцы сетки"
 pt = "Colunas da malha"
 
 ["Mesh rows"]
@@ -3243,6 +3537,7 @@ ja = "メッシュ行"
 "zh-CN" = "网格行"
 "zh-TW" = "網格列"
 "ko" = "메시 행"
+"ru" = "Строки сетки"
 pt = "Linhas da malha"
 
 ["Metallic"]
@@ -3254,6 +3549,7 @@ ja = "メタリック"
 "zh-CN" = "金属度"
 "zh-TW" = "金屬度"
 "ko" = "메탈릭"
+"ru" = "Металличность"
 pt = "Metálico"
 
 ["Method"]
@@ -3265,6 +3561,7 @@ ja = "方式"
 "zh-CN" = "方法"
 "zh-TW" = "方法"
 "ko" = "방법"
+"ru" = "Метод"
 pt = "Método"
 
 ["Metric"]
@@ -3276,6 +3573,7 @@ ja = "メトリック"
 "zh-CN" = "度量标准"
 "zh-TW" = "度量標準"
 "ko" = "측정 기준"
+"ru" = "Метрика"
 pt = "Métrica"
 
 ["Mid"]
@@ -3287,6 +3585,7 @@ ja = "中域"
 "zh-CN" = "中"
 "zh-TW" = "中"
 "ko" = "중간"
+"ru" = "Середина"
 pt = "Médios"
 
 ["Middle"]
@@ -3298,6 +3597,7 @@ ja = "中央"
 "zh-CN" = "中间"
 "zh-TW" = "中間"
 "ko" = "가운데"
+"ru" = "Середина"
 pt = "Meio"
 
 ["Middle padding"]
@@ -3309,6 +3609,7 @@ ja = "中央余白"
 "zh-CN" = "中间填充"
 "zh-TW" = "中間填充"
 "ko" = "중간 패딩"
+"ru" = "Средний отступ"
 pt = "Preenchimento central"
 
 ["Midpoint"]
@@ -3320,6 +3621,7 @@ ja = "中間点"
 "zh-CN" = "中点"
 "zh-TW" = "中點"
 "ko" = "중간점"
+"ru" = "Средняя точка"
 pt = "Ponto médio"
 
 ["Mirror"]
@@ -3331,6 +3633,7 @@ ja = "ミラー"
 "zh-CN" = "镜像"
 "zh-TW" = "鏡像"
 "ko" = "미러"
+"ru" = "Зеркало"
 pt = "Espelhar"
 
 ["Mix"]
@@ -3342,6 +3645,7 @@ ja = "ミックス"
 "zh-CN" = "混合"
 "zh-TW" = "混合"
 "ko" = "혼합"
+"ru" = "Смесь"
 pt = "Mistura"
 
 ["Mode"]
@@ -3353,6 +3657,7 @@ ja = "モード"
 "zh-CN" = "模式"
 "zh-TW" = "模式"
 "ko" = "모드"
+"ru" = "Режим"
 pt = "Modo"
 
 ["Morph"]
@@ -3364,6 +3669,7 @@ ja = "モーフ"
 "zh-CN" = "变形"
 "zh-TW" = "變形"
 "ko" = "모프"
+"ru" = "Морфинг"
 pt = "Morph"
 
 ["Morph by"]
@@ -3375,6 +3681,7 @@ ja = "モーフ単位"
 "zh-CN" = "变形为"
 "zh-TW" = "變形為"
 "ko" = "모핑 기준"
+"ru" = "Морфить по"
 pt = "Transformar por"
 
 ["Motion amount"]
@@ -3386,6 +3693,7 @@ ja = "モーション量"
 "zh-CN" = "运动量"
 "zh-TW" = "運動量"
 "ko" = "모션 양"
+"ru" = "Величина движения"
 pt = "Quantidade de movimento"
 
 ["Motion blur"]
@@ -3397,6 +3705,7 @@ ja = "モーションブラー"
 "zh-CN" = "运动模糊"
 "zh-TW" = "運動模糊"
 "ko" = "모션 블러"
+"ru" = "Размытие в движении"
 pt = "Desfoque de movimento"
 
 ["Motion position"]
@@ -3408,6 +3717,7 @@ ja = "モーション位置"
 "zh-CN" = "运动位置"
 "zh-TW" = "運動位置"
 "ko" = "모션 위치"
+"ru" = "Положение движения"
 pt = "Posição do movimento"
 
 ["Motion-dependent temporal smoothing model"]
@@ -3419,6 +3729,7 @@ ja = "動きに応じた時間平滑化モデル"
 "zh-CN" = "运动相关时间平滑模型"
 "zh-TW" = "運動相關時間平滑模型"
 "ko" = "모션 의존형 시간 평활화 모델"
+"ru" = "Модель временного сглаживания с учётом движения"
 pt = "Modelo de suavização temporal dependente de movimento"
 
 ["Move down"]
@@ -3430,6 +3741,7 @@ ja = "下へ移動"
 "zh-CN" = "下移"
 "zh-TW" = "下移"
 "ko" = "아래로 이동"
+"ru" = "Переместить вниз"
 pt = "Mover para baixo"
 
 ["Move up"]
@@ -3441,6 +3753,7 @@ ja = "上へ移動"
 "zh-CN" = "向上移动"
 "zh-TW" = "向上移動"
 "ko" = "위로 이동"
+"ru" = "Переместить вверх"
 pt = "Mover para cima"
 
 ["Name"]
@@ -3452,6 +3765,7 @@ ja = "名前"
 "zh-CN" = "名称"
 "zh-TW" = "名稱"
 "ko" = "이름"
+"ru" = "Имя"
 pt = "Nome"
 
 ["Natural Duration"]
@@ -3463,6 +3777,7 @@ ja = "元の長さ"
 "zh-CN" = "原始时长"
 "zh-TW" = "原始長度"
 "ko" = "원본 길이"
+"ru" = "Естественная длительность"
 pt = "Duração natural"
 
 ["Neighboring frames considered on each side"]
@@ -3474,6 +3789,7 @@ ja = "両側で考慮する隣接フレーム"
 "zh-CN" = "每侧均考虑相邻帧"
 "zh-TW" = "每側均考慮相鄰影格"
 "ko" = "각 측면에서 고려되는 인접 프레임"
+"ru" = "Соседние кадры, учитываемые с каждой стороны"
 pt = "Quadros vizinhos considerados em cada lado"
 
 ["Next keyframe"]
@@ -3485,6 +3801,7 @@ ja = "次のキーフレーム"
 "zh-CN" = "下一个关键帧"
 "zh-TW" = "下一個關鍵影格"
 "ko" = "다음 키프레임"
+"ru" = "Следующий ключевой кадр"
 pt = "Próximo quadro-chave"
 
 ["Noise evolution"]
@@ -3496,6 +3813,7 @@ ja = "ノイズ変化"
 "zh-CN" = "噪声演化"
 "zh-TW" = "雜訊演化"
 "ko" = "노이즈 변화"
+"ru" = "Эволюция шума"
 pt = "Evolução do ruído"
 
 ["Noise seed"]
@@ -3507,6 +3825,7 @@ ja = "ノイズシード"
 "zh-CN" = "噪声种子"
 "zh-TW" = "雜訊種子"
 "ko" = "노이즈 시드"
+"ru" = "Сид шума"
 pt = "Semente do ruído"
 
 ["Normal"]
@@ -3518,6 +3837,7 @@ ja = "標準"
 "zh-CN" = "正常"
 "zh-TW" = "正常"
 "ko" = "일반"
+"ru" = "Обычный"
 pt = "Normal"
 
 ["Normal angle"]
@@ -3529,6 +3849,7 @@ ja = "法線角度"
 "zh-CN" = "法线角度"
 "zh-TW" = "法線角度"
 "ko" = "법선 각도"
+"ru" = "Угол нормали"
 pt = "Ângulo da normal"
 
 ["Normals"]
@@ -3540,6 +3861,7 @@ ja = "法線"
 "zh-CN" = "法线"
 "zh-TW" = "法線"
 "ko" = "법선"
+"ru" = "Нормали"
 pt = "Normais"
 
 ["Not analyzed"]
@@ -3551,6 +3873,7 @@ ja = "未解析"
 "zh-CN" = "未分析"
 "zh-TW" = "未分析"
 "ko" = "분석되지 않음"
+"ru" = "Не проанализировано"
 pt = "Não analisado"
 
 ["Number of independently moving cell columns"]
@@ -3562,6 +3885,7 @@ ja = "独立して動くセル列の数"
 "zh-CN" = "独立移动的网格单元列数"
 "zh-TW" = "獨立移動的儲存格欄數"
 "ko" = "독립적으로 움직이는 셀 열 수"
+"ru" = "Количество независимо движущихся столбцов ячеек"
 pt = "Número de colunas de células com movimento independente"
 
 ["Number of independently moving cell rows"]
@@ -3573,6 +3897,7 @@ ja = "独立して動くセル行の数"
 "zh-CN" = "独立移动的网格单元行数"
 "zh-TW" = "獨立移動的儲存格列數"
 "ko" = "독립적으로 움직이는 셀 행 수"
+"ru" = "Количество независимо движущихся строк ячеек"
 pt = "Número de linhas de células com movimento independente"
 
 ["Octagon"]
@@ -3584,6 +3909,7 @@ ja = "八角形"
 "zh-CN" = "八边形"
 "zh-TW" = "八邊形"
 "ko" = "팔각형"
+"ru" = "Восьмиугольник"
 pt = "Octógono"
 
 ["Octaves"]
@@ -3595,6 +3921,7 @@ ja = "オクターブ"
 "zh-CN" = "八度"
 "zh-TW" = "八度"
 "ko" = "옥타브"
+"ru" = "Октавы"
 pt = "Oitavas"
 
 ["Off"]
@@ -3606,6 +3933,7 @@ ja = "オフ"
 "zh-CN" = "关"
 "zh-TW" = "關"
 "ko" = "꺼짐"
+"ru" = "Выкл."
 pt = "Desativado"
 
 ["Offset"]
@@ -3617,6 +3945,7 @@ ja = "オフセット"
 "zh-CN" = "偏移"
 "zh-TW" = "偏移"
 "ko" = "오프셋"
+"ru" = "Смещение"
 pt = "Deslocamento"
 
 ["Offset axis"]
@@ -3628,6 +3957,7 @@ ja = "オフセット軸"
 "zh-CN" = "偏移轴"
 "zh-TW" = "偏移軸"
 "ko" = "오프셋 축"
+"ru" = "Ось смещения"
 pt = "Eixo de deslocamento"
 
 ["Offset frequency"]
@@ -3639,6 +3969,7 @@ ja = "オフセット周波数"
 "zh-CN" = "偏移频率"
 "zh-TW" = "偏移頻率"
 "ko" = "오프셋 주파수"
+"ru" = "Частота смещения"
 pt = "Frequência de deslocamento"
 
 ["Offset randomness"]
@@ -3650,6 +3981,7 @@ ja = "オフセットのランダム性"
 "zh-CN" = "偏移随机性"
 "zh-TW" = "偏移隨機性"
 "ko" = "오프셋 무작위성"
+"ru" = "Случайность смещения"
 pt = "Aleatoriedade de deslocamento"
 
 ["Offset variation"]
@@ -3661,6 +3993,7 @@ ja = "オフセット変化"
 "zh-CN" = "偏移变化"
 "zh-TW" = "偏移變化"
 "ko" = "오프셋 변형"
+"ru" = "Изменение смещения"
 pt = "Variação de deslocamento"
 
 ["On"]
@@ -3672,6 +4005,7 @@ ja = "オン"
 "zh-CN" = "开"
 "zh-TW" = "開"
 "ko" = "켜짐"
+"ru" = "Вкл."
 pt = "Ativado"
 
 ["Opacity"]
@@ -3683,6 +4017,7 @@ ja = "不透明度"
 "zh-CN" = "不透明度"
 "zh-TW" = "不透明度"
 "ko" = "불투명도"
+"ru" = "Непрозрачность"
 pt = "Opacidade"
 
 ["Open larger editor"]
@@ -3694,6 +4029,7 @@ ja = "大きなエディターを開く"
 "zh-CN" = "打开更大的编辑器"
 "zh-TW" = "打開更大的編輯器"
 "ko" = "더 큰 편집기 열기"
+"ru" = "Открыть редактор крупнее"
 pt = "Abrir editor ampliado"
 
 ["Operation"]
@@ -3705,6 +4041,7 @@ ja = "処理"
 "zh-CN" = "操作"
 "zh-TW" = "操作"
 "ko" = "작업"
+"ru" = "Операция"
 pt = "Operação"
 
 ["Optimization iterations"]
@@ -3716,6 +4053,7 @@ ja = "最適化の反復回数"
 "zh-CN" = "优化迭代"
 "zh-TW" = "最佳化迭代"
 "ko" = "최적화 반복"
+"ru" = "Итерации оптимизации"
 pt = "Iterações de otimização"
 
 ["Ordering"]
@@ -3727,6 +4065,7 @@ ja = "順序"
 "zh-CN" = "顺序"
 "zh-TW" = "順序"
 "ko" = "순서"
+"ru" = "Порядок"
 pt = "Ordenação"
 
 ["Original"]
@@ -3738,6 +4077,7 @@ ja = "オリジナル"
 "zh-CN" = "原始"
 "zh-TW" = "原始"
 "ko" = "원본"
+"ru" = "Оригинал"
 pt = "Original"
 
 ["Orthographic height"]
@@ -3749,6 +4089,7 @@ ja = "平行投影の高さ"
 "zh-CN" = "正交高度"
 "zh-TW" = "正交高度"
 "ko" = "직교 높이"
+"ru" = "Ортографическая высота"
 pt = "Altura ortográfica"
 
 ["Out of date"]
@@ -3760,6 +4101,7 @@ ja = "期限切れ"
 "zh-CN" = "已过时"
 "zh-TW" = "已過時"
 "ko" = "업데이트 필요"
+"ru" = "Устарело"
 pt = "Desatualizado"
 
 ["Outline"]
@@ -3771,6 +4113,7 @@ ja = "アウトライン"
 "zh-CN" = "轮廓"
 "zh-TW" = "輪廓"
 "ko" = "윤곽선"
+"ru" = "Контур"
 pt = "Contorno"
 
 ["Outline method"]
@@ -3782,6 +4125,7 @@ ja = "アウトライン方式"
 "zh-CN" = "轮廓方法"
 "zh-TW" = "輪廓方法"
 "ko" = "윤곽선 방식"
+"ru" = "Метод контура"
 pt = "Método de contorno"
 
 ["Outline opacity"]
@@ -3793,6 +4137,7 @@ ja = "アウトライン不透明度"
 "zh-CN" = "轮廓不透明度"
 "zh-TW" = "輪廓不透明度"
 "ko" = "윤곽선 불투명도"
+"ru" = "Непрозрачность контура"
 pt = "Opacidade do contorno"
 
 ["Outline quality"]
@@ -3804,6 +4149,7 @@ ja = "アウトライン品質"
 "zh-CN" = "轮廓质量"
 "zh-TW" = "輪廓品質"
 "ko" = "윤곽선 품질"
+"ru" = "Качество контура"
 pt = "Qualidade do contorno"
 
 ["Outline width"]
@@ -3815,6 +4161,7 @@ ja = "アウトライン幅"
 "zh-CN" = "轮廓宽度"
 "zh-TW" = "輪廓寬度"
 "ko" = "외곽선 너비"
+"ru" = "Ширина контура"
 pt = "Largura do contorno"
 
 ["Outro"]
@@ -3826,6 +4173,7 @@ ja = "アウトロ"
 "zh-CN" = "结尾"
 "zh-TW" = "結尾"
 "ko" = "아웃트로"
+"ru" = "Аутро"
 pt = "Encerramento"
 
 ["Padding randomness"]
@@ -3837,6 +4185,7 @@ ja = "余白のランダム性"
 "zh-CN" = "内边距随机性"
 "zh-TW" = "內距隨機性"
 "ko" = "안쪽 여백 무작위성"
+"ru" = "Случайность отступа"
 pt = "Aleatoriedade de preenchimento"
 
 ["Page"]
@@ -3848,6 +4197,7 @@ ja = "ページ"
 "zh-CN" = "页"
 "zh-TW" = "頁"
 "ko" = "페이지"
+"ru" = "Страница"
 pt = "Página"
 
 ["Palette levels"]
@@ -3859,6 +4209,7 @@ ja = "パレットレベル"
 "zh-CN" = "调色板级别"
 "zh-TW" = "調色板級別"
 "ko" = "팔레트 레벨"
+"ru" = "Уровни палитры"
 pt = "Níveis da paleta"
 
 ["Parameters"]
@@ -3870,6 +4221,7 @@ ja = "パラメーター"
 "zh-CN" = "参数"
 "zh-TW" = "參數"
 "ko" = "매개변수"
+"ru" = "Параметры"
 pt = "Parâmetros"
 
 ["Partial mode"]
@@ -3881,6 +4233,7 @@ ja = "部分モード"
 "zh-CN" = "部分模式"
 "zh-TW" = "部分模式"
 "ko" = "부분 모드"
+"ru" = "Частичный режим"
 pt = "Modo parcial"
 
 ["Paste Modifier"]
@@ -3892,6 +4245,7 @@ ja = "モディファイアを貼り付け"
 "zh-CN" = "粘贴修改器"
 "zh-TW" = "貼上修改器"
 "ko" = "수정자 붙여넣기"
+"ru" = "Вставить модификатор"
 pt = "Colar modificador"
 
 ["Path mode"]
@@ -3903,6 +4257,7 @@ ja = "パスモード"
 "zh-CN" = "路径模式"
 "zh-TW" = "路徑模式"
 "ko" = "경로 모드"
+"ru" = "Режим пути"
 pt = "Modo de caminho"
 
 ["Path precision"]
@@ -3914,6 +4269,7 @@ ja = "パス精度"
 "zh-CN" = "路径精度"
 "zh-TW" = "路徑精度"
 "ko" = "경로 정밀도"
+"ru" = "Точность пути"
 pt = "Precisão do caminho"
 
 ["Pattern"]
@@ -3925,6 +4281,7 @@ ja = "パターン"
 "zh-CN" = "图案"
 "zh-TW" = "圖樣"
 "ko" = "패턴"
+"ru" = "Узор"
 pt = "Padrão"
 
 ["Pattern softness"]
@@ -3936,6 +4293,7 @@ ja = "パターンの柔らかさ"
 "zh-CN" = "图案柔和度"
 "zh-TW" = "圖樣柔和度"
 "ko" = "패턴 부드러움"
+"ru" = "Мягкость узора"
 pt = "Suavidade do padrão"
 
 ["Pentagon"]
@@ -3947,6 +4305,7 @@ ja = "五角形"
 "zh-CN" = "五边形"
 "zh-TW" = "五邊形"
 "ko" = "오각형"
+"ru" = "Пятиугольник"
 pt = "Pentágono"
 
 ["Percentage"]
@@ -3958,6 +4317,7 @@ ja = "割合"
 "zh-CN" = "百分比"
 "zh-TW" = "百分比"
 "ko" = "백분율"
+"ru" = "Процент"
 pt = "Porcentagem"
 
 ["Persistence"]
@@ -3969,6 +4329,7 @@ ja = "持続性"
 "zh-CN" = "持久性"
 "zh-TW" = "持久性"
 "ko" = "지속성"
+"ru" = "Персистентность"
 pt = "Persistência"
 
 ["Perspective"]
@@ -3980,6 +4341,7 @@ ja = "透視投影"
 "zh-CN" = "透视"
 "zh-TW" = "透視"
 "ko" = "원근"
+"ru" = "Перспектива"
 pt = "Perspectiva"
 
 ["Phase"]
@@ -3991,6 +4353,7 @@ ja = "位相"
 "zh-CN" = "相位"
 "zh-TW" = "相位"
 "ko" = "위상"
+"ru" = "Фаза"
 pt = "Fase"
 
 ["Picture"]
@@ -4002,6 +4365,7 @@ ja = "ピクチャー"
 "zh-CN" = "图片"
 "zh-TW" = "圖片"
 "ko" = "그림"
+"ru" = "Картинка"
 pt = "Imagem"
 
 ["Ping-pong"]
@@ -4013,6 +4377,7 @@ ja = "ピンポン"
 "zh-CN" = "往返"
 "zh-TW" = "往返"
 "ko" = "핑퐁"
+"ru" = "Пинг-понг"
 pt = "Pingue-pongue"
 
 ["Pitch"]
@@ -4024,6 +4389,7 @@ ja = "ピッチ"
 "zh-CN" = "音高"
 "zh-TW" = "音高"
 "ko" = "피치"
+"ru" = "Высота тона"
 pt = "Pitch"
 
 ["Pitch offset"]
@@ -4035,6 +4401,7 @@ ja = "ピッチオフセット"
 "zh-CN" = "音高偏移"
 "zh-TW" = "音高偏移"
 "ko" = "피치 오프셋"
+"ru" = "Смещение высоты тона"
 pt = "Deslocamento de pitch"
 
 ["Pixel size"]
@@ -4046,6 +4413,7 @@ ja = "ピクセルサイズ"
 "zh-CN" = "像素大小"
 "zh-TW" = "像素大小"
 "ko" = "픽셀 크기"
+"ru" = "Размер пикселя"
 pt = "Tamanho do pixel"
 
 ["Pixelate"]
@@ -4057,6 +4425,7 @@ ja = "ピクセル化"
 "zh-CN" = "像素化"
 "zh-TW" = "像素化"
 "ko" = "픽셀화"
+"ru" = "Пикселизация"
 pt = "Pixelizar"
 
 ["Pixels"]
@@ -4068,6 +4437,7 @@ ja = "ピクセル"
 "zh-CN" = "像素"
 "zh-TW" = "像素"
 "ko" = "픽셀"
+"ru" = "Пиксели"
 pt = "Pixels"
 
 ["Playback"]
@@ -4079,6 +4449,7 @@ ja = "再生"
 "zh-CN" = "播放"
 "zh-TW" = "播放"
 "ko" = "재생"
+"ru" = "Воспроизведение"
 pt = "Reprodução"
 
 ["Point type"]
@@ -4090,6 +4461,7 @@ ja = "ポイント種別"
 "zh-CN" = "点类型"
 "zh-TW" = "點類型"
 "ko" = "포인트 유형"
+"ru" = "Тип точки"
 pt = "Tipo de ponto"
 
 ["Point %{number}"]
@@ -4101,6 +4473,7 @@ ja = "ポイント %{number}"
 "zh-CN" = "点 %{number}"
 "zh-TW" = "點 %{number}"
 "ko" = "포인트 %{number}"
+"ru" = "Точка %{number}"
 pt = "Ponto %{number}"
 
 ["Points"]
@@ -4112,6 +4485,7 @@ ja = "ポイント"
 "zh-CN" = "点"
 "zh-TW" = "點"
 "ko" = "포인트"
+"ru" = "Точки"
 pt = "Pontos"
 
 ["Polygon"]
@@ -4123,6 +4497,7 @@ ja = "多角形"
 "zh-CN" = "多边形"
 "zh-TW" = "多邊形"
 "ko" = "다각형"
+"ru" = "Многоугольник"
 pt = "Polígono"
 
 ["Position"]
@@ -4134,6 +4509,7 @@ ja = "位置"
 "zh-CN" = "位置"
 "zh-TW" = "位置"
 "ko" = "위치"
+"ru" = "Положение"
 pt = "Posição"
 
 ["Position X"]
@@ -4145,6 +4521,7 @@ ja = "位置 X"
 "zh-CN" = "位置 X"
 "zh-TW" = "位置 X"
 "ko" = "위치 X"
+"ru" = "Положение X"
 pt = "Posição X"
 
 ["Position Y"]
@@ -4156,6 +4533,7 @@ ja = "位置 Y"
 "zh-CN" = "位置 Y"
 "zh-TW" = "位置 Y"
 "ko" = "위치 Y"
+"ru" = "Положение Y"
 pt = "Posição Y"
 
 ["Pre-delay"]
@@ -4167,6 +4545,7 @@ ja = "プリディレイ"
 "zh-CN" = "预延迟"
 "zh-TW" = "預延遲"
 "ko" = "사전 지연"
+"ru" = "Предзадержка"
 pt = "Pré-atraso"
 
 ["Precompute compact CPU mask frames so normal playback does not run SAM2"]
@@ -4178,6 +4557,7 @@ ja = "通常再生でSAM2を実行しないようCPUマスクを事前計算"
 "zh-CN" = "预先计算紧凑的 CPU 掩码帧，使正常播放无需运行 SAM2"
 "zh-TW" = "預先計算精簡的 CPU 遮罩影格，讓一般播放無需執行 SAM2"
 "ko" = "일반 재생 중 SAM2를 실행하지 않도록 간결한 CPU 마스크 프레임을 미리 계산"
+"ru" = "Заранее вычислять компактные кадры маски на CPU, чтобы SAM2 не выполнялся при обычном воспроизведении"
 pt = "Pré-computar quadros de máscara compactos na CPU para que a reprodução normal não execute SAM2"
 
 ["Precompute exact one-bit transparency masks for every frame"]
@@ -4189,6 +4569,7 @@ ja = "全フレームの正確な1ビット透明マスクを事前計算"
 "zh-CN" = "为每一帧预先计算精确的一位透明度蒙版"
 "zh-TW" = "為每個影格預先計算精確的一位元透明遮罩"
 "ko" = "모든 프레임에 대해 정확한 1비트 투명도 마스크를 미리 계산합니다."
+"ru" = "Заранее вычислять точные однобитные маски прозрачности для каждого кадра"
 pt = "Pré-computar máscaras de transparência exatas de um bit para cada quadro"
 
 ["Preference for a steady camera velocity"]
@@ -4200,6 +4581,7 @@ ja = "一定のカメラ速度を優先"
 "zh-CN" = "偏好稳定的相机速度"
 "zh-TW" = "偏好穩定的相機速度"
 "ko" = "일정한 카메라 속도 선호"
+"ru" = "Предпочтение стабильной скорости камеры"
 pt = "Preferência por velocidade constante da câmera"
 
 ["Preference for frames with no camera motion"]
@@ -4211,6 +4593,7 @@ ja = "カメラが動かないフレームを優先"
 "zh-CN" = "偏好相机静止的帧"
 "zh-TW" = "偏好相機靜止的影格"
 "ko" = "카메라 움직임이 없는 프레임 선호"
+"ru" = "Предпочтение кадров без движения камеры"
 pt = "Preferência por quadros sem movimento da câmera"
 
 ["Preference for smoothly changing camera motion"]
@@ -4222,6 +4605,7 @@ ja = "滑らかに変化するカメラ動作を優先"
 "zh-CN" = "偏好平滑变化的相机运动"
 "zh-TW" = "偏好平順變化的相機運動"
 "ko" = "부드럽게 변하는 카메라 움직임 선호"
+"ru" = "Предпочтение плавного изменения движения камеры"
 pt = "Preferência por transições suaves de movimento da câmera"
 
 ["Preserve formants"]
@@ -4233,6 +4617,7 @@ ja = "フォルマントを維持"
 "zh-CN" = "保留共振峰"
 "zh-TW" = "保留共振峰"
 "ko" = "포먼트 보존"
+"ru" = "Сохранять форманты"
 pt = "Preservar formantes"
 
 ["Preserve pitch"]
@@ -4244,6 +4629,7 @@ ja = "ピッチを維持"
 "zh-CN" = "保持音高"
 "zh-TW" = "保持音高"
 "ko" = "피치 유지"
+"ru" = "Сохранять высоту тона"
 pt = "Preservar tom"
 
 ["Preview Downsampling"]
@@ -4255,6 +4641,7 @@ ja = "プレビューのダウンサンプリング"
 "zh-CN" = "预览降采样"
 "zh-TW" = "預覽降取樣"
 "ko" = "미리보기 다운샘플링"
+"ru" = "Даунсемплинг предпросмотра"
 pt = "Redução da pré-visualização"
 
 ["Preview Render Method"]
@@ -4266,6 +4653,7 @@ ja = "プレビューのレンダリング方式"
 "zh-CN" = "预览渲染方法"
 "zh-TW" = "預覽算繪方式"
 "ko" = "미리보기 렌더링 방법"
+"ru" = "Метод рендеринга предпросмотра"
 pt = "Método de renderização da pré-visualização"
 
 ["Previous keyframe"]
@@ -4277,6 +4665,7 @@ ja = "前のキーフレーム"
 "zh-CN" = "上一个关键帧"
 "zh-TW" = "上一個關鍵影格"
 "ko" = "이전 키프레임"
+"ru" = "Предыдущий ключевой кадр"
 pt = "Quadro-chave anterior"
 
 ["Project"]
@@ -4288,6 +4677,7 @@ ja = "プロジェクト"
 "zh-CN" = "项目"
 "zh-TW" = "專案"
 "ko" = "프로젝트"
+"ru" = "Проект"
 pt = "Projeto"
 
 ["Project File"]
@@ -4299,6 +4689,7 @@ ja = "プロジェクトファイル"
 "zh-CN" = "项目文件"
 "zh-TW" = "專案檔案"
 "ko" = "프로젝트 파일"
+"ru" = "Файл проекта"
 pt = "Arquivo do projeto"
 
 ["Projection"]
@@ -4310,6 +4701,7 @@ ja = "投影"
 "zh-CN" = "投影"
 "zh-TW" = "投影"
 "ko" = "투영"
+"ru" = "Проекция"
 pt = "Projeção"
 
 ["Pulse width"]
@@ -4321,6 +4713,7 @@ ja = "パルス幅"
 "zh-CN" = "脉冲宽度"
 "zh-TW" = "脈衝寬度"
 "ko" = "펄스 폭"
+"ru" = "Ширина импульса"
 pt = "Largura do pulso"
 
 ["Quality"]
@@ -4332,6 +4725,7 @@ ja = "品質"
 "zh-CN" = "质量"
 "zh-TW" = "品質"
 "ko" = "품질"
+"ru" = "Качество"
 pt = "Qualidade"
 
 ["Queued"]
@@ -4343,6 +4737,7 @@ ja = "待機中"
 "zh-CN" = "已排队"
 "zh-TW" = "已排隊"
 "ko" = "대기 중"
+"ru" = "В очереди"
 pt = "Na fila"
 
 ["Radius"]
@@ -4354,6 +4749,7 @@ ja = "半径"
 "zh-CN" = "半径"
 "zh-TW" = "半徑"
 "ko" = "반지름"
+"ru" = "Радиус"
 pt = "Raio"
 
 ["Range"]
@@ -4365,6 +4761,7 @@ ja = "範囲"
 "zh-CN" = "范围"
 "zh-TW" = "範圍"
 "ko" = "범위"
+"ru" = "Диапазон"
 pt = "Intervalo"
 
 ["Rate"]
@@ -4376,6 +4773,7 @@ ja = "レート"
 "zh-CN" = "速率"
 "zh-TW" = "速率"
 "ko" = "속도"
+"ru" = "Скорость"
 pt = "Taxa"
 
 ["Ratio"]
@@ -4387,6 +4785,7 @@ ja = "比率"
 "zh-CN" = "比率"
 "zh-TW" = "比率"
 "ko" = "비율"
+"ru" = "Соотношение"
 pt = "Proporção"
 
 ["Ready (%{sample_count} samples)"]
@@ -4398,6 +4797,7 @@ ja = "準備完了（%{sample_count}サンプル）"
 "zh-CN" = "就绪（%{sample_count} 个样本）"
 "zh-TW" = "就緒（%{sample_count} 個樣本）"
 "ko" = "준비됨(%{sample_count}개 샘플)"
+"ru" = "Готово (%{sample_count} сэмплов)"
 pt = "Pronto (%{sample_count} amostras)"
 
 ["Reanalyze"]
@@ -4409,6 +4809,7 @@ ja = "再解析"
 "zh-CN" = "重新分析"
 "zh-TW" = "重新分析"
 "ko" = "재분석"
+"ru" = "Проанализировать заново"
 pt = "Reanalisar"
 
 ["Rebake"]
@@ -4420,6 +4821,7 @@ ja = "再ベイク"
 "zh-CN" = "重新烘烤"
 "zh-TW" = "重新烘烤"
 "ko" = "리베이크"
+"ru" = "Перезапечь"
 pt = "Pré-computar novamente"
 
 ["Rebuild"]
@@ -4431,6 +4833,7 @@ ja = "再構築"
 "zh-CN" = "重建"
 "zh-TW" = "重建"
 "ko" = "재구축"
+"ru" = "Пересобрать"
 pt = "Reconstruir"
 
 ["Rectangle"]
@@ -4442,6 +4845,7 @@ ja = "長方形"
 "zh-CN" = "矩形"
 "zh-TW" = "矩形"
 "ko" = "직사각형"
+"ru" = "Прямоугольник"
 pt = "Retângulo"
 
 ["Reduction"]
@@ -4453,6 +4857,7 @@ ja = "低減"
 "zh-CN" = "缩减"
 "zh-TW" = "縮減"
 "ko" = "감소"
+"ru" = "Сокращение"
 pt = "Redução"
 
 ["Reflection opacity"]
@@ -4464,6 +4869,7 @@ ja = "反射の不透明度"
 "zh-CN" = "反射不透明度"
 "zh-TW" = "反射不透明度"
 "ko" = "반사 불투명도"
+"ru" = "Непрозрачность отражения"
 pt = "Opacidade do reflexo"
 
 ["Refresh interval"]
@@ -4475,6 +4881,7 @@ ja = "更新間隔"
 "zh-CN" = "刷新间隔"
 "zh-TW" = "重新整理間隔"
 "ko" = "새로 고침 간격"
+"ru" = "Интервал обновления"
 pt = "Intervalo de atualização"
 
 ["Release"]
@@ -4486,6 +4893,7 @@ ja = "リリース"
 "zh-CN" = "释放"
 "zh-TW" = "釋放"
 "ko" = "릴리스"
+"ru" = "Релиз"
 pt = "Liberação"
 
 ["Reload Blender file and scene metadata"]
@@ -4497,6 +4905,7 @@ ja = "Blenderファイルとシーンメタデータを再読み込み"
 "zh-CN" = "重新加载 Blender 文件和场景元数据"
 "zh-TW" = "重新載入 Blender 檔案和場景中繼資料"
 "ko" = "Blender 파일 및 장면 메타데이터 다시 로드"
+"ru" = "Перезагрузить файл Blender и метаданные сцены"
 pt = "Recarregar arquivo do Blender e metadados da cena"
 
 ["Reload Python source and rebuild Manim scene states"]
@@ -4508,6 +4917,7 @@ ja = "Pythonソースを再読み込みしてManimシーン状態を再構築"
 "zh-CN" = "重新加载 Python 源并重建 Manim 场景状态"
 "zh-TW" = "重新載入 Python 來源並重建 Manim 場景狀態"
 "ko" = "Python 소스를 다시 로드하고 Manim 장면 상태를 다시 빌드합니다."
+"ru" = "Перезагрузить исходный код Python и пересобрать состояния сцен Manim"
 pt = "Recarregar código Python e reconstruir estados da cena do Manim"
 
 ["Remove"]
@@ -4519,6 +4929,7 @@ ja = "削除"
 "zh-CN" = "移除"
 "zh-TW" = "移除"
 "ko" = "제거"
+"ru" = "Удалить"
 pt = "Remover"
 
 ["Remove box"]
@@ -4530,6 +4941,7 @@ ja = "ボックスを削除"
 "zh-CN" = "移除方框"
 "zh-TW" = "移除方框"
 "ko" = "상자 제거"
+"ru" = "Удалить квадрат"
 pt = "Remover caixa"
 
 ["Remove color"]
@@ -4541,6 +4953,7 @@ ja = "色を削除"
 "zh-CN" = "删除颜色"
 "zh-TW" = "移除顏色"
 "ko" = "색상 제거"
+"ru" = "Удалить цвет"
 pt = "Remover cor"
 
 ["Remove point"]
@@ -4552,6 +4965,7 @@ ja = "ポイントを削除"
 "zh-CN" = "删除点"
 "zh-TW" = "刪除點"
 "ko" = "포인트 삭제"
+"ru" = "Удалить точку"
 pt = "Remover ponto"
 
 ["Replace"]
@@ -4563,6 +4977,7 @@ ja = "置換"
 "zh-CN" = "替换"
 "zh-TW" = "取代"
 "ko" = "바꾸기"
+"ru" = "Заменить"
 pt = "Substituir"
 
 ["Replace image"]
@@ -4574,6 +4989,7 @@ ja = "画像を置換"
 "zh-CN" = "替换图像"
 "zh-TW" = "取代影像"
 "ko" = "이미지 교체"
+"ru" = "Заменить изображение"
 pt = "Substituir imagem"
 
 ["Replace model"]
@@ -4585,6 +5001,7 @@ ja = "モデルを置換"
 "zh-CN" = "替换模型"
 "zh-TW" = "取代模型"
 "ko" = "모델 교체"
+"ru" = "Заменить модель"
 pt = "Substituir modelo"
 
 ["Reset"]
@@ -4596,6 +5013,7 @@ ja = "リセット"
 "zh-CN" = "重置"
 "zh-TW" = "重設"
 "ko" = "초기화"
+"ru" = "Сбросить"
 pt = "Redefinir"
 
 ["Resolution"]
@@ -4607,6 +5025,7 @@ ja = "解像度"
 "zh-CN" = "分辨率"
 "zh-TW" = "解析度"
 "ko" = "해상도"
+"ru" = "Разрешение"
 pt = "Resolução"
 
 ["Resonance"]
@@ -4618,6 +5037,7 @@ ja = "レゾナンス"
 "zh-CN" = "谐振"
 "zh-TW" = "諧振"
 "ko" = "공명"
+"ru" = "Резонанс"
 pt = "Ressonância"
 
 ["Right"]
@@ -4629,6 +5049,7 @@ ja = "右"
 "zh-CN" = "右侧"
 "zh-TW" = "右側"
 "ko" = "오른쪽"
+"ru" = "Справа"
 pt = "Direita"
 
 ["Rim power"]
@@ -4640,6 +5061,7 @@ ja = "リムパワー"
 "zh-CN" = "轮廓光指数"
 "zh-TW" = "邊緣光指數"
 "ko" = "림 파워"
+"ru" = "Степень контурного света"
 pt = "Potência do contorno"
 
 ["Rim strength"]
@@ -4651,6 +5073,7 @@ ja = "リム強度"
 "zh-CN" = "轮廓光强度"
 "zh-TW" = "邊緣光強度"
 "ko" = "림 강도"
+"ru" = "Сила контурного света"
 pt = "Intensidade do contorno"
 
 ["Rim tint"]
@@ -4662,6 +5085,7 @@ ja = "リム色"
 "zh-CN" = "轮廓光色调"
 "zh-TW" = "邊緣光色調"
 "ko" = "림 틴트"
+"ru" = "Оттенок контурного света"
 pt = "Tonalidade do contorno"
 
 ["Room capture"]
@@ -4673,6 +5097,7 @@ ja = "ルームキャプチャー"
 "zh-CN" = "房间捕获"
 "zh-TW" = "空間擷取"
 "ko" = "룸 캡처"
+"ru" = "Захват помещения"
 pt = "Captura de sala"
 
 ["Room scale"]
@@ -4684,6 +5109,7 @@ ja = "部屋の規模"
 "zh-CN" = "房间缩放"
 "zh-TW" = "空間縮放"
 "ko" = "공간 배율"
+"ru" = "Масштаб помещения"
 pt = "Escala da sala"
 
 ["Rotation"]
@@ -4695,6 +5121,7 @@ ja = "回転"
 "zh-CN" = "旋转"
 "zh-TW" = "旋轉"
 "ko" = "회전"
+"ru" = "Поворот"
 pt = "Rotação"
 
 ["Rotation order"]
@@ -4706,6 +5133,7 @@ ja = "回転順序"
 "zh-CN" = "旋转顺序"
 "zh-TW" = "旋轉順序"
 "ko" = "회전 순서"
+"ru" = "Порядок поворота"
 pt = "Ordem de rotação"
 
 ["Roughness"]
@@ -4717,6 +5145,7 @@ ja = "粗さ"
 "zh-CN" = "粗糙度"
 "zh-TW" = "粗糙度"
 "ko" = "거칠기"
+"ru" = "Шероховатость"
 pt = "Rugosidade"
 
 ["Rounded"]
@@ -4728,6 +5157,7 @@ ja = "角丸"
 "zh-CN" = "圆角"
 "zh-TW" = "圓角"
 "ko" = "둥근 모서리"
+"ru" = "Скруглённый"
 pt = "Arredondado"
 
 ["Rounding"]
@@ -4739,6 +5169,7 @@ ja = "丸み"
 "zh-CN" = "圆角"
 "zh-TW" = "圓角"
 "ko" = "둥글기"
+"ru" = "Скругление"
 pt = "Arredondamento"
 
 ["Roundness"]
@@ -4750,6 +5181,7 @@ ja = "丸み"
 "zh-CN" = "圆角程度"
 "zh-TW" = "圓角程度"
 "ko" = "둥글기"
+"ru" = "Скруглённость"
 pt = "Arredondamento"
 
 ["Row offset"]
@@ -4761,6 +5193,7 @@ ja = "行オフセット"
 "zh-CN" = "行偏移"
 "zh-TW" = "行偏移"
 "ko" = "행 오프셋"
+"ru" = "Смещение строк"
 pt = "Deslocamento de linha"
 
 ["Sample Rate"]
@@ -4772,6 +5205,7 @@ ja = "サンプルレート"
 "zh-CN" = "采样率"
 "zh-TW" = "取樣率"
 "ko" = "샘플링 속도"
+"ru" = "Частота дискретизации"
 pt = "Taxa de amostragem"
 
 ["Sample rate"]
@@ -4783,6 +5217,7 @@ ja = "サンプルレート"
 "zh-CN" = "采样率"
 "zh-TW" = "取樣率"
 "ko" = "샘플링 속도"
+"ru" = "Частота дискретизации"
 pt = "Taxa de amostragem"
 
 ["Samples"]
@@ -4794,6 +5229,7 @@ ja = "サンプル"
 "zh-CN" = "样本"
 "zh-TW" = "樣本"
 "ko" = "샘플"
+"ru" = "Сэмплы"
 pt = "Amostras"
 
 ["Saturation"]
@@ -4805,6 +5241,7 @@ ja = "彩度"
 "zh-CN" = "饱和度"
 "zh-TW" = "飽和度"
 "ko" = "채도"
+"ru" = "Насыщенность"
 pt = "Saturação"
 
 ["Scale"]
@@ -4816,6 +5253,7 @@ ja = "スケール"
 "zh-CN" = "缩放"
 "zh-TW" = "縮放"
 "ko" = "배율"
+"ru" = "Масштаб"
 pt = "Escala"
 
 ["Scene"]
@@ -4827,6 +5265,7 @@ ja = "シーン"
 "zh-CN" = "场景"
 "zh-TW" = "場景"
 "ko" = "장면"
+"ru" = "Сцена"
 pt = "Cena"
 
 ["Scene Renderer"]
@@ -4838,6 +5277,7 @@ ja = "シーンレンダラー"
 "zh-CN" = "场景渲染器"
 "zh-TW" = "場景算繪器"
 "ko" = "장면 렌더러"
+"ru" = "Рендерер сцены"
 pt = "Renderizador de cena"
 
 ["Scramble, resize, then reveal the new text"]
@@ -4849,6 +5289,7 @@ ja = "並べ替えとサイズ変更後に新しいテキストを表示"
 "zh-CN" = "打乱、调整大小，然后显示新文本"
 "zh-TW" = "打亂、調整大小，然後顯示新文字"
 "ko" = "스크램블하고 크기를 조정한 다음 새 텍스트를 표시합니다."
+"ru" = "Перемешать, изменить размер, затем показать новый текст"
 pt = "Embaralhar, redimensionar e revelar o novo texto"
 
 ["Search fonts or paste a Google Fonts specimen URL"]
@@ -4860,6 +5301,7 @@ ja = "フォントを検索、またはGoogle FontsのURLを貼り付け"
 "zh-CN" = "搜索字体或粘贴 Google Fonts 样本 URL"
 "zh-TW" = "搜尋字型或貼上 Google Fonts 樣本 URL"
 "ko" = "글꼴을 검색하거나 Google Fonts 견본 URL을 붙여넣으세요."
+"ru" = "Ищите шрифты или вставьте URL образца Google Fonts"
 pt = "Pesquisar fontes ou colar URL de amostra do Google Fonts"
 
 ["Search interpolations"]
@@ -4871,6 +5313,7 @@ ja = "補間を検索"
 "zh-CN" = "搜索插值"
 "zh-TW" = "搜尋插值"
 "ko" = "보간 검색"
+"ru" = "Искать интерполяции"
 pt = "Pesquisar interpolações"
 
 ["Search modifiers"]
@@ -4882,6 +5325,7 @@ ja = "モディファイアを検索"
 "zh-CN" = "搜索修改器"
 "zh-TW" = "搜尋修改器"
 "ko" = "수정자 검색"
+"ru" = "Искать модификаторы"
 pt = "Pesquisar modificadores"
 
 ["Searching Google Fonts…"]
@@ -4893,6 +5337,7 @@ ja = "Google Fontsを検索中…"
 "zh-CN" = "正在搜索 Google Fonts…"
 "zh-TW" = "正在搜尋 Google Fonts…"
 "ko" = "Google Fonts 검색 중…"
+"ru" = "Поиск в Google Fonts…"
 pt = "Pesquisando no Google Fonts…"
 
 ["Seed"]
@@ -4904,6 +5349,7 @@ ja = "シード"
 "zh-CN" = "种子"
 "zh-TW" = "種子"
 "ko" = "씨앗"
+"ru" = "Сид"
 pt = "Semente"
 
 ["Seed frequency"]
@@ -4915,6 +5361,7 @@ ja = "シード周波数"
 "zh-CN" = "种子频率"
 "zh-TW" = "種子頻率"
 "ko" = "시드 빈도"
+"ru" = "Частота сида"
 pt = "Frequência da semente"
 
 ["Segment length"]
@@ -4926,6 +5373,7 @@ ja = "セグメント長"
 "zh-CN" = "线段长度"
 "zh-TW" = "線段長度"
 "ko" = "세그먼트 길이"
+"ru" = "Длина сегмента"
 pt = "Comprimento do segmento"
 
 ["Segments"]
@@ -4937,6 +5385,7 @@ ja = "セグメント"
 "zh-CN" = "段"
 "zh-TW" = "段"
 "ko" = "세그먼트"
+"ru" = "Сегменты"
 pt = "Segmentos"
 
 ["Select"]
@@ -4948,6 +5397,7 @@ ja = "選択"
 "zh-CN" = "选择"
 "zh-TW" = "選取"
 "ko" = "선택"
+"ru" = "Выбрать"
 pt = "Selecionar"
 
 ["Select 3D model"]
@@ -4959,6 +5409,7 @@ ja = "3Dモデルを選択"
 "zh-CN" = "选择 3D 模型"
 "zh-TW" = "選擇 3D 模型"
 "ko" = "3D 모델 선택"
+"ru" = "Выбрать 3D-модель"
 pt = "Selecionar modelo 3D"
 
 ["Select environment image"]
@@ -4970,6 +5421,7 @@ ja = "環境画像を選択"
 "zh-CN" = "选择环境图像"
 "zh-TW" = "選擇環境影像"
 "ko" = "환경 이미지 선택"
+"ru" = "Выбрать изображение окружения"
 pt = "Selecionar imagem de ambiente"
 
 ["Select image"]
@@ -4981,6 +5433,7 @@ ja = "画像を選択"
 "zh-CN" = "选择图片"
 "zh-TW" = "選擇圖片"
 "ko" = "이미지 선택"
+"ru" = "Выбрать изображение"
 pt = "Selecionar imagem"
 
 ["Select model"]
@@ -4992,6 +5445,7 @@ ja = "モデルを選択"
 "zh-CN" = "选择模型"
 "zh-TW" = "選擇模型"
 "ko" = "모델 선택"
+"ru" = "Выбрать модель"
 pt = "Selecionar modelo"
 
 ["Select paint texture"]
@@ -5003,6 +5457,7 @@ ja = "ペイントテクスチャを選択"
 "zh-CN" = "选择绘制纹理"
 "zh-TW" = "選擇繪製紋理"
 "ko" = "페인트 텍스처 선택"
+"ru" = "Выбрать текстуру кисти"
 pt = "Selecionar textura de pintura"
 
 ["Semitones"]
@@ -5014,6 +5469,7 @@ ja = "半音"
 "zh-CN" = "半音"
 "zh-TW" = "半音"
 "ko" = "반음"
+"ru" = "Полутоны"
 pt = "Semitons"
 
 ["Sensitivity"]
@@ -5025,6 +5481,7 @@ ja = "感度"
 "zh-CN" = "灵敏度"
 "zh-TW" = "靈敏度"
 "ko" = "감도"
+"ru" = "Чувствительность"
 pt = "Sensibilidade"
 
 ["Sequential"]
@@ -5036,6 +5493,7 @@ ja = "順次"
 "zh-CN" = "顺序"
 "zh-TW" = "循序"
 "ko" = "순차"
+"ru" = "Последовательно"
 pt = "Sequencial"
 
 ["Shader"]
@@ -5047,6 +5505,7 @@ ja = "シェーダー"
 "zh-CN" = "着色器"
 "zh-TW" = "著色器"
 "ko" = "셰이더"
+"ru" = "Шейдер"
 pt = "Shader"
 
 ["Shadow blur"]
@@ -5058,6 +5517,7 @@ ja = "影のぼかし"
 "zh-CN" = "阴影模糊"
 "zh-TW" = "陰影模糊"
 "ko" = "그림자 흐림"
+"ru" = "Размытие тени"
 pt = "Desfoque da sombra"
 
 ["Shadow color"]
@@ -5069,6 +5529,7 @@ ja = "影の色"
 "zh-CN" = "阴影颜色"
 "zh-TW" = "陰影顏色"
 "ko" = "그림자 색상"
+"ru" = "Цвет тени"
 pt = "Cor da sombra"
 
 ["Shadow direction"]
@@ -5080,6 +5541,7 @@ ja = "影の方向"
 "zh-CN" = "阴影方向"
 "zh-TW" = "陰影方向"
 "ko" = "그림자 방향"
+"ru" = "Направление тени"
 pt = "Direção da sombra"
 
 ["Shadow distance"]
@@ -5091,6 +5553,7 @@ ja = "影の距離"
 "zh-CN" = "阴影距离"
 "zh-TW" = "陰影距離"
 "ko" = "그림자 거리"
+"ru" = "Расстояние тени"
 pt = "Distância da sombra"
 
 ["Shadow kind"]
@@ -5102,6 +5565,7 @@ ja = "影の種類"
 "zh-CN" = "阴影类型"
 "zh-TW" = "陰影類型"
 "ko" = "그림자 종류"
+"ru" = "Вид тени"
 pt = "Tipo de sombra"
 
 ["Shadow quality"]
@@ -5113,6 +5577,7 @@ ja = "影の品質"
 "zh-CN" = "阴影质量"
 "zh-TW" = "陰影品質"
 "ko" = "그림자 품질"
+"ru" = "Качество тени"
 pt = "Qualidade da sombra"
 
 ["Shadow strength"]
@@ -5124,6 +5589,7 @@ ja = "影の強度"
 "zh-CN" = "暗影强度"
 "zh-TW" = "暗影強度"
 "ko" = "그림자 강도"
+"ru" = "Сила тени"
 pt = "Intensidade da sombra"
 
 ["Shadow width"]
@@ -5135,6 +5601,7 @@ ja = "影の幅"
 "zh-CN" = "阴影宽度"
 "zh-TW" = "陰影寬度"
 "ko" = "그림자 폭"
+"ru" = "Ширина тени"
 pt = "Largura da sombra"
 
 ["Shaft width"]
@@ -5146,6 +5613,7 @@ ja = "軸の幅"
 "zh-CN" = "箭杆宽度"
 "zh-TW" = "箭桿寬度"
 "ko" = "화살대 너비"
+"ru" = "Ширина древка"
 pt = "Largura do corpo"
 
 ["Sharpness"]
@@ -5157,6 +5625,7 @@ ja = "シャープネス"
 "zh-CN" = "锐度"
 "zh-TW" = "銳利度"
 "ko" = "선명도"
+"ru" = "Резкость"
 pt = "Nitidez"
 
 ["Shear"]
@@ -5168,6 +5637,7 @@ ja = "シアー"
 "zh-CN" = "斜切"
 "zh-TW" = "斜切"
 "ko" = "전단"
+"ru" = "Сдвиг"
 pt = "Cisalhamento"
 
 ["Sheen"]
@@ -5179,6 +5649,7 @@ ja = "光沢"
 "zh-CN" = "光泽"
 "zh-TW" = "光澤"
 "ko" = "광택"
+"ru" = "Глянец"
 pt = "Brilho suave"
 
 ["Show in folder"]
@@ -5190,6 +5661,7 @@ ja = "フォルダーに表示"
 "zh-CN" = "在文件夹中显示"
 "zh-TW" = "在資料夾中顯示"
 "ko" = "폴더에서 보기"
+"ru" = "Показать в папке"
 pt = "Mostrar na pasta"
 
 ["Show project file in folder"]
@@ -5201,6 +5673,7 @@ ja = "プロジェクトファイルをフォルダーに表示"
 "zh-CN" = "在文件夹中显示项目文件"
 "zh-TW" = "在資料夾中顯示專案檔案"
 "ko" = "폴더에서 프로젝트 파일 보기"
+"ru" = "Показать файл проекта в папке"
 pt = "Mostrar arquivo do projeto na pasta"
 
 ["Sigma"]
@@ -5212,6 +5685,7 @@ ja = "シグマ"
 "zh-CN" = "西格玛"
 "zh-TW" = "西格瑪"
 "ko" = "시그마"
+"ru" = "Сигма"
 pt = "Sigma"
 
 ["Sigma ratio"]
@@ -5223,6 +5697,7 @@ ja = "シグマ比"
 "zh-CN" = "西格玛比率"
 "zh-TW" = "西格瑪比率"
 "ko" = "시그마 비율"
+"ru" = "Соотношение сигма"
 pt = "Proporção de sigma"
 
 ["Similarity"]
@@ -5234,6 +5709,7 @@ ja = "類似度"
 "zh-CN" = "相似度"
 "zh-TW" = "相似度"
 "ko" = "유사도"
+"ru" = "Сходство"
 pt = "Similaridade"
 
 ["Simplify tolerance"]
@@ -5245,6 +5721,7 @@ ja = "簡略化許容値"
 "zh-CN" = "简化容差"
 "zh-TW" = "簡化容差"
 "ko" = "단순화 허용 오차"
+"ru" = "Допуск упрощения"
 pt = "Tolerância de simplificação"
 
 ["Simultaneous"]
@@ -5256,6 +5733,7 @@ ja = "同時"
 "zh-CN" = "同时"
 "zh-TW" = "同時"
 "ko" = "동시"
+"ru" = "Одновременно"
 pt = "Simultâneo"
 
 ["Size"]
@@ -5267,6 +5745,7 @@ ja = "サイズ"
 "zh-CN" = "尺寸"
 "zh-TW" = "尺寸"
 "ko" = "크기"
+"ru" = "Размер"
 pt = "Tamanho"
 
 ["Size randomness"]
@@ -5278,6 +5757,7 @@ ja = "サイズのランダム性"
 "zh-CN" = "尺寸随机性"
 "zh-TW" = "尺寸隨機性"
 "ko" = "크기 무작위성"
+"ru" = "Случайность размера"
 pt = "Aleatoriedade de tamanho"
 
 ["Skia drawing"]
@@ -5289,6 +5769,7 @@ ja = "Skia描画"
 "zh-CN" = "Skia 绘图"
 "zh-TW" = "Skia 繪圖"
 "ko" = "Skia 드로잉"
+"ru" = "Рисование Skia"
 pt = "Desenho Skia"
 
 ["Smoothing"]
@@ -5300,6 +5781,7 @@ ja = "スムージング"
 "zh-CN" = "平滑"
 "zh-TW" = "平滑"
 "ko" = "스무딩"
+"ru" = "Сглаживание"
 pt = "Suavização"
 
 ["Smoothing radius"]
@@ -5311,6 +5793,7 @@ ja = "平滑化半径"
 "zh-CN" = "平滑半径"
 "zh-TW" = "平滑半徑"
 "ko" = "스무딩 반경"
+"ru" = "Радиус сглаживания"
 pt = "Raio de suavização"
 
 ["Smoothness"]
@@ -5322,6 +5805,7 @@ ja = "滑らかさ"
 "zh-CN" = "光滑度"
 "zh-TW" = "光滑度"
 "ko" = "부드러움"
+"ru" = "Плавность"
 pt = "Suavidade"
 
 ["Soft shadow"]
@@ -5333,6 +5817,7 @@ ja = "ソフトシャドウ"
 "zh-CN" = "软阴影"
 "zh-TW" = "軟陰影"
 "ko" = "부드러운 그림자"
+"ru" = "Мягкая тень"
 pt = "Sombra suave"
 
 ["Softness"]
@@ -5344,6 +5829,7 @@ ja = "柔らかさ"
 "zh-CN" = "柔和度"
 "zh-TW" = "柔和度"
 "ko" = "부드러움"
+"ru" = "Мягкость"
 pt = "Suavidade"
 
 ["Solid"]
@@ -5355,6 +5841,7 @@ ja = "ソリッド"
 "zh-CN" = "实体"
 "zh-TW" = "實體"
 "ko" = "솔리드"
+"ru" = "Сплошной"
 pt = "Sólido"
 
 ["Solid color"]
@@ -5366,6 +5853,7 @@ ja = "単色"
 "zh-CN" = "纯色"
 "zh-TW" = "純色"
 "ko" = "단색"
+"ru" = "Сплошной цвет"
 pt = "Cor sólida"
 
 ["Source"]
@@ -5377,6 +5865,7 @@ ja = "ソース"
 "zh-CN" = "源"
 "zh-TW" = "來源"
 "ko" = "소스"
+"ru" = "Источник"
 pt = "Origem"
 
 ["Spacing"]
@@ -5388,6 +5877,7 @@ ja = "間隔"
 "zh-CN" = "间距"
 "zh-TW" = "間距"
 "ko" = "간격"
+"ru" = "Интервал"
 pt = "Espaçamento"
 
 ["Speckle size"]
@@ -5399,6 +5889,7 @@ ja = "斑点サイズ"
 "zh-CN" = "散斑尺寸"
 "zh-TW" = "散斑尺寸"
 "ko" = "얼룩 크기"
+"ru" = "Размер крапинок"
 pt = "Tamanho do granulado"
 
 ["Specular size"]
@@ -5410,6 +5901,7 @@ ja = "スペキュラーサイズ"
 "zh-CN" = "高光大小"
 "zh-TW" = "鏡面反射大小"
 "ko" = "반사광 크기"
+"ru" = "Размер блика"
 pt = "Tamanho especular"
 
 ["Specular strength"]
@@ -5421,6 +5913,7 @@ ja = "スペキュラー強度"
 "zh-CN" = "高光强度"
 "zh-TW" = "鏡面反射強度"
 "ko" = "반사광 강도"
+"ru" = "Сила блика"
 pt = "Intensidade especular"
 
 ["Speed method"]
@@ -5432,6 +5925,7 @@ ja = "速度方式"
 "zh-CN" = "速度方法"
 "zh-TW" = "速度方法"
 "ko" = "속도 방식"
+"ru" = "Метод изменения скорости"
 pt = "Método de velocidade"
 
 ["Spill"]
@@ -5443,6 +5937,7 @@ ja = "スピル"
 "zh-CN" = "溢色"
 "zh-TW" = "溢色"
 "ko" = "스필"
+"ru" = "Захлёст"
 pt = "Vazamento de cor"
 
 ["Spin"]
@@ -5454,6 +5949,7 @@ ja = "スピン"
 "zh-CN" = "旋转"
 "zh-TW" = "旋轉"
 "ko" = "회전"
+"ru" = "Вращение"
 pt = "Giro"
 
 ["Splice threshold"]
@@ -5465,6 +5961,7 @@ ja = "スプライスしきい値"
 "zh-CN" = "拼接阈值"
 "zh-TW" = "拼接閾值"
 "ko" = "접합 임계값"
+"ru" = "Порог склейки"
 pt = "Limiar de emenda"
 
 ["Square"]
@@ -5476,6 +5973,7 @@ ja = "正方形"
 "zh-CN" = "正方形"
 "zh-TW" = "方塊"
 "ko" = "정사각형"
+"ru" = "Квадрат"
 pt = "Quadrado"
 
 ["Stabilization"]
@@ -5487,6 +5985,7 @@ ja = "手ぶれ補正"
 "zh-CN" = "稳定化"
 "zh-TW" = "穩定化"
 "ko" = "안정화"
+"ru" = "Стабилизация"
 pt = "Estabilização"
 
 ["Stabilization cache"]
@@ -5498,6 +5997,7 @@ ja = "手ぶれ補正キャッシュ"
 "zh-CN" = "稳定缓存"
 "zh-TW" = "穩定快取"
 "ko" = "안정화 캐시"
+"ru" = "Кэш стабилизации"
 pt = "Cache de estabilização"
 
 ["Start cap"]
@@ -5509,6 +6009,7 @@ ja = "始端キャップ"
 "zh-CN" = "起始端帽"
 "zh-TW" = "起始端點樣式"
 "ko" = "시작 캡"
+"ru" = "Начальный колпачок"
 pt = "Extremidade inicial"
 
 ["Start taper"]
@@ -5520,6 +6021,7 @@ ja = "始端テーパー"
 "zh-CN" = "开始锥度"
 "zh-TW" = "開始錐度"
 "ko" = "테이퍼 시작"
+"ru" = "Сужение в начале"
 pt = "Afilamento inicial"
 
 ["Start taper distance"]
@@ -5531,6 +6033,7 @@ ja = "始端テーパー距離"
 "zh-CN" = "起始锥度距离"
 "zh-TW" = "起始錐度距離"
 "ko" = "시작 테이퍼 거리"
+"ru" = "Расстояние сужения в начале"
 pt = "Distância do afilamento inicial"
 
 ["Starting angle"]
@@ -5542,6 +6045,7 @@ ja = "開始角度"
 "zh-CN" = "起始角度"
 "zh-TW" = "起始角度"
 "ko" = "시작 각도"
+"ru" = "Начальный угол"
 pt = "Ângulo inicial"
 
 ["Starting scale"]
@@ -5553,6 +6057,7 @@ ja = "開始スケール"
 "zh-CN" = "起始缩放"
 "zh-TW" = "起始縮放"
 "ko" = "시작 배율"
+"ru" = "Начальный масштаб"
 pt = "Escala inicial"
 
 ["Static-camera weight"]
@@ -5564,6 +6069,7 @@ ja = "固定カメラウェイト"
 "zh-CN" = "静态相机权重"
 "zh-TW" = "靜態相機權重"
 "ko" = "고정 카메라 가중치"
+"ru" = "Вес статичной камеры"
 pt = "Peso de câmera estática"
 
 ["Step"]
@@ -5575,6 +6081,7 @@ ja = "ステップ"
 "zh-CN" = "步进"
 "zh-TW" = "步進"
 "ko" = "단계"
+"ru" = "Шаг"
 pt = "Passo"
 
 ["Step size"]
@@ -5586,6 +6093,7 @@ ja = "ステップサイズ"
 "zh-CN" = "步长"
 "zh-TW" = "步長"
 "ko" = "단계 크기"
+"ru" = "Размер шага"
 pt = "Tamanho do passo"
 
 ["Strategy"]
@@ -5597,6 +6105,7 @@ ja = "方式"
 "zh-CN" = "策略"
 "zh-TW" = "策略"
 "ko" = "전략"
+"ru" = "Стратегия"
 pt = "Estratégia"
 
 ["Strength"]
@@ -5608,6 +6117,7 @@ ja = "強度"
 "zh-CN" = "强度"
 "zh-TW" = "強度"
 "ko" = "강도"
+"ru" = "Сила"
 pt = "Intensidade"
 
 ["Stroke color %{number}"]
@@ -5619,6 +6129,7 @@ ja = "線の色 %{number}"
 "zh-CN" = "描边颜色 %{number}"
 "zh-TW" = "筆畫顏色 %{number}"
 "ko" = "스트로크 색상 %{number}"
+"ru" = "Цвет обводки %{number}"
 pt = "Cor do traço %{number}"
 
 ["Stroke overlap"]
@@ -5630,6 +6141,7 @@ ja = "ストロークの重なり"
 "zh-CN" = "笔划重叠"
 "zh-TW" = "筆畫重疊"
 "ko" = "스트로크 오버랩"
+"ru" = "Перекрытие штрихов"
 pt = "Sobreposição de traços"
 
 ["Strokes"]
@@ -5641,6 +6153,7 @@ ja = "ストローク"
 "zh-CN" = "笔画"
 "zh-TW" = "筆畫"
 "ko" = "스트로크"
+"ru" = "Штрихи"
 pt = "Traços"
 
 ["Style"]
@@ -5652,6 +6165,7 @@ ja = "スタイル"
 "zh-CN" = "风格"
 "zh-TW" = "風格"
 "ko" = "스타일"
+"ru" = "Стиль"
 pt = "Estilo"
 
 ["Subdivision spacing"]
@@ -5663,6 +6177,7 @@ ja = "細分化間隔"
 "zh-CN" = "细分间距"
 "zh-TW" = "細分間距"
 "ko" = "세분화 간격"
+"ru" = "Интервал подразделения"
 pt = "Espaçamento de subdivisão"
 
 ["Subsurface"]
@@ -5674,6 +6189,7 @@ ja = "サブサーフェス"
 "zh-CN" = "次表面"
 "zh-TW" = "次表面"
 "ko" = "서브서피스"
+"ru" = "Подповерхностное рассеивание"
 pt = "Subsuperfície"
 
 ["Temperature"]
@@ -5685,6 +6201,7 @@ ja = "色温度"
 "zh-CN" = "温度"
 "zh-TW" = "溫度"
 "ko" = "온도"
+"ru" = "Температура"
 pt = "Temperatura"
 
 ["Text color"]
@@ -5696,6 +6213,7 @@ ja = "テキスト色"
 "zh-CN" = "文字颜色"
 "zh-TW" = "文字顏色"
 "ko" = "텍스트 색상"
+"ru" = "Цвет текста"
 pt = "Cor do texto"
 
 ["Texture"]
@@ -5707,6 +6225,7 @@ ja = "テクスチャ"
 "zh-CN" = "纹理"
 "zh-TW" = "紋理"
 "ko" = "텍스처"
+"ru" = "Текстура"
 pt = "Textura"
 
 ["Texture filter"]
@@ -5718,6 +6237,7 @@ ja = "テクスチャフィルター"
 "zh-CN" = "纹理过滤器"
 "zh-TW" = "紋理過濾器"
 "ko" = "텍스처 필터"
+"ru" = "Фильтр текстуры"
 pt = "Filtro de textura"
 
 ["Texture rotation"]
@@ -5729,6 +6249,7 @@ ja = "テクスチャ回転"
 "zh-CN" = "纹理旋转"
 "zh-TW" = "紋理旋轉"
 "ko" = "텍스처 회전"
+"ru" = "Поворот текстуры"
 pt = "Rotação da textura"
 
 ["Texture scale"]
@@ -5740,6 +6261,7 @@ ja = "テクスチャスケール"
 "zh-CN" = "纹理缩放"
 "zh-TW" = "紋理縮放"
 "ko" = "텍스처 배율"
+"ru" = "Масштаб текстуры"
 pt = "Escala da textura"
 
 ["Textures"]
@@ -5751,6 +6273,7 @@ ja = "テクスチャ"
 "zh-CN" = "纹理"
 "zh-TW" = "紋理"
 "ko" = "텍스처"
+"ru" = "Текстуры"
 pt = "Texturas"
 
 ["Threshold"]
@@ -5762,6 +6285,7 @@ ja = "しきい値"
 "zh-CN" = "阈值"
 "zh-TW" = "閾值"
 "ko" = "임계값"
+"ru" = "Порог"
 pt = "Limiar"
 
 ["Timeline Duration"]
@@ -5773,6 +6297,7 @@ ja = "タイムライン上の長さ"
 "zh-CN" = "时间线时长"
 "zh-TW" = "時間軸長度"
 "ko" = "타임라인 길이"
+"ru" = "Длительность на таймлайне"
 pt = "Duração na linha do tempo"
 
 ["Tint"]
@@ -5784,6 +6309,7 @@ ja = "色合い"
 "zh-CN" = "色调"
 "zh-TW" = "色調"
 "ko" = "틴트"
+"ru" = "Оттенок"
 pt = "Tonalidade"
 
 ["Tolerance"]
@@ -5795,6 +6321,7 @@ ja = "許容値"
 "zh-CN" = "容差"
 "zh-TW" = "容差"
 "ko" = "허용 오차"
+"ru" = "Допуск"
 pt = "Tolerância"
 
 ["Tone"]
@@ -5806,6 +6333,7 @@ ja = "トーン"
 "zh-CN" = "色调"
 "zh-TW" = "色調"
 "ko" = "톤"
+"ru" = "Тон"
 pt = "Tom"
 
 ["Top"]
@@ -5817,6 +6345,7 @@ ja = "上"
 "zh-CN" = "顶部"
 "zh-TW" = "頂部"
 "ko" = "맨 위"
+"ru" = "Верх"
 pt = "Superior"
 
 ["Top left"]
@@ -5828,6 +6357,7 @@ ja = "左上"
 "zh-CN" = "左上"
 "zh-TW" = "左上"
 "ko" = "왼쪽 위"
+"ru" = "Сверху слева"
 pt = "Superior esquerdo"
 
 ["Top right"]
@@ -5839,6 +6369,7 @@ ja = "右上"
 "zh-CN" = "右上"
 "zh-TW" = "右上"
 "ko" = "오른쪽 상단"
+"ru" = "Сверху справа"
 pt = "Superior direito"
 
 ["Track"]
@@ -5850,6 +6381,7 @@ ja = "トラック"
 "zh-CN" = "轨道"
 "zh-TW" = "軌道"
 "ko" = "트랙"
+"ru" = "Дорожка"
 pt = "Faixa"
 
 ["Tracking"]
@@ -5861,6 +6393,7 @@ ja = "トラッキング"
 "zh-CN" = "追踪"
 "zh-TW" = "追蹤"
 "ko" = "추적"
+"ru" = "Отслеживание"
 pt = "Rastreamento"
 
 ["Tracking method"]
@@ -5872,6 +6405,7 @@ ja = "トラッキング方式"
 "zh-CN" = "追踪方式"
 "zh-TW" = "追蹤方式"
 "ko" = "추적 방법"
+"ru" = "Метод отслеживания"
 pt = "Método de rastreamento"
 
 ["Tracks"]
@@ -5883,6 +6417,7 @@ ja = "トラック"
 "zh-CN" = "轨道"
 "zh-TW" = "軌道"
 "ko" = "트랙"
+"ru" = "Дорожки"
 pt = "Faixas"
 
 ["Trail length"]
@@ -5894,6 +6429,7 @@ ja = "軌跡の長さ"
 "zh-CN" = "轨迹长度"
 "zh-TW" = "軌跡長度"
 "ko" = "트레일 길이"
+"ru" = "Длина шлейфа"
 pt = "Comprimento do rastro"
 
 ["Transform"]
@@ -5905,6 +6441,7 @@ ja = "変形"
 "zh-CN" = "变换"
 "zh-TW" = "變形"
 "ko" = "변환"
+"ru" = "Трансформация"
 pt = "Transformação"
 
 ["Transition"]
@@ -5916,6 +6453,7 @@ ja = "トランジション"
 "zh-CN" = "转场"
 "zh-TW" = "轉場"
 "ko" = "전환"
+"ru" = "Переход"
 pt = "Transição"
 
 ["Transmission"]
@@ -5927,6 +6465,7 @@ ja = "透過"
 "zh-CN" = "透射"
 "zh-TW" = "透射"
 "ko" = "투과"
+"ru" = "Пропускание"
 pt = "Transmissão"
 
 ["Triangle"]
@@ -5938,6 +6477,7 @@ ja = "三角形"
 "zh-CN" = "三角形"
 "zh-TW" = "三角形"
 "ko" = "삼각형"
+"ru" = "Треугольник"
 pt = "Triângulo"
 
 ["Type"]
@@ -5949,6 +6489,7 @@ ja = "種類"
 "zh-CN" = "类型"
 "zh-TW" = "類型"
 "ko" = "유형"
+"ru" = "Тип"
 pt = "Tipo"
 
 ["Unavailable (%{id})"]
@@ -5960,6 +6501,7 @@ ja = "利用不可（%{id}）"
 "zh-CN" = "不可用 (%{id})"
 "zh-TW" = "不可用 (%{id})"
 "ko" = "사용할 수 없음(%{id})"
+"ru" = "Недоступно (%{id})"
 pt = "Indisponível (%{id})"
 
 ["Unavailable while an alpha-mask stream is selected"]
@@ -5971,6 +6513,7 @@ ja = "アルファマスクストリーム選択中は利用不可"
 "zh-CN" = "选择 Alpha 掩码流时不可用"
 "zh-TW" = "選取 Alpha 遮罩串流時無法使用"
 "ko" = "알파 마스크 스트림 선택 중에는 사용할 수 없음"
+"ru" = "Недоступно при выбранном потоке альфа-маски"
 pt = "Indisponível enquanto um fluxo de máscara alfa estiver selecionado"
 
 ["Upsampling"]
@@ -5982,6 +6525,7 @@ ja = "アップサンプリング"
 "zh-CN" = "上采样"
 "zh-TW" = "上取樣"
 "ko" = "업샘플링"
+"ru" = "Апсемплинг"
 pt = "Sobreamostragem"
 
 ["Using the reusable chunked analysis cache"]
@@ -5993,6 +6537,7 @@ ja = "再利用可能なチャンク解析キャッシュを使用中"
 "zh-CN" = "使用可复用的分段分析缓存"
 "zh-TW" = "使用可重複使用的分段分析快取"
 "ko" = "재사용 가능한 구간별 분석 캐시 사용"
+"ru" = "Используется повторно используемый кэш анализа по фрагментам"
 pt = "Usando cache de análise segmentada reutilizável"
 
 ["V align"]
@@ -6004,6 +6549,7 @@ ja = "垂直揃え"
 "zh-CN" = "垂直对齐"
 "zh-TW" = "垂直對齊"
 "ko" = "세로 정렬"
+"ru" = "Выравнивание по вертикали"
 pt = "Alinhamento V"
 
 ["Value"]
@@ -6015,6 +6561,7 @@ ja = "値"
 "zh-CN" = "值"
 "zh-TW" = "值"
 "ko" = "값"
+"ru" = "Значение"
 pt = "Valor"
 
 ["Variation"]
@@ -6026,6 +6573,7 @@ ja = "変化"
 "zh-CN" = "变化"
 "zh-TW" = "變化"
 "ko" = "변화"
+"ru" = "Вариация"
 pt = "Variação"
 
 ["Vertical"]
@@ -6037,6 +6585,7 @@ ja = "垂直"
 "zh-CN" = "垂直"
 "zh-TW" = "垂直"
 "ko" = "수직"
+"ru" = "Вертикальный"
 pt = "Vertical"
 
 ["Vertical FOV"]
@@ -6048,6 +6597,7 @@ ja = "垂直視野角"
 "zh-CN" = "垂直视场角 (FOV)"
 "zh-TW" = "垂直視野 (FOV)"
 "ko" = "수직 시야각 (FOV)"
+"ru" = "Вертикальный угол обзора (FOV)"
 pt = "Campo de visão vertical"
 
 ["Vertical alignment"]
@@ -6059,6 +6609,7 @@ ja = "垂直揃え"
 "zh-CN" = "垂直对齐"
 "zh-TW" = "垂直對齊"
 "ko" = "수직 정렬"
+"ru" = "Вертикальное выравнивание"
 pt = "Alinhamento vertical"
 
 ["Video Stream"]
@@ -6070,6 +6621,7 @@ ja = "ビデオストリーム"
 "zh-CN" = "视频流"
 "zh-TW" = "影片串流"
 "ko" = "비디오 스트림"
+"ru" = "Видеопоток"
 pt = "Fluxo de vídeo"
 
 ["Video stream %{number}"]
@@ -6081,6 +6633,7 @@ ja = "ビデオストリーム %{number}"
 "zh-CN" = "视频流 %{number}"
 "zh-TW" = "影片串流 %{number}"
 "ko" = "비디오 스트림 %{number}"
+"ru" = "Видеопоток %{number}"
 pt = "Fluxo de vídeo %{number}"
 
 ["View Layer"]
@@ -6092,6 +6645,7 @@ ja = "ビューレイヤー"
 "zh-CN" = "视图层"
 "zh-TW" = "檢視圖層"
 "ko" = "뷰 레이어"
+"ru" = "Слой просмотра"
 pt = "Camada de visualização"
 
 ["Visible"]
@@ -6103,6 +6657,7 @@ ja = "表示"
 "zh-CN" = "可见"
 "zh-TW" = "可見"
 "ko" = "표시됨"
+"ru" = "Видимый"
 pt = "Visível"
 
 ["Visible source area after stabilization"]
@@ -6114,6 +6669,7 @@ ja = "手ぶれ補正後に表示されるソース領域"
 "zh-CN" = "稳定后可见的源区域"
 "zh-TW" = "穩定化後可見的來源區域"
 "ko" = "안정화 후 표시되는 소스 영역"
+"ru" = "Видимая область исходника после стабилизации"
 pt = "Área de origem visível após estabilização"
 
 ["Visual"]
@@ -6125,6 +6681,7 @@ ja = "ビジュアル"
 "zh-CN" = "视觉"
 "zh-TW" = "視覺"
 "ko" = "비주얼"
+"ru" = "Визуальный"
 pt = "Visual"
 
 ["Visual track %{index}"]
@@ -6136,6 +6693,7 @@ ja = "ビジュアルトラック %{index}"
 "zh-CN" = "视觉轨道 %{index}"
 "zh-TW" = "視覺軌道 %{index}"
 "ko" = "비주얼 트랙 %{index}"
+"ru" = "Визуальная дорожка %{index}"
 pt = "Faixa visual %{index}"
 
 ["Warp amount"]
@@ -6147,6 +6705,7 @@ ja = "ワープ量"
 "zh-CN" = "翘曲量"
 "zh-TW" = "翹曲量"
 "ko" = "워프량"
+"ru" = "Величина искажения"
 pt = "Quantidade de distorção"
 
 ["Warp scale"]
@@ -6158,6 +6717,7 @@ ja = "ワープスケール"
 "zh-CN" = "扭曲比例"
 "zh-TW" = "扭曲比例"
 "ko" = "워프 스케일"
+"ru" = "Масштаб искажения"
 pt = "Escala de distorção"
 
 ["Waveform"]
@@ -6169,6 +6729,7 @@ ja = "波形"
 "zh-CN" = "波形"
 "zh-TW" = "波形"
 "ko" = "파형"
+"ru" = "Форма волны"
 pt = "Forma de onda"
 
 ["Wavelength"]
@@ -6180,6 +6741,7 @@ ja = "波長"
 "zh-CN" = "波长"
 "zh-TW" = "波長"
 "ko" = "파장"
+"ru" = "Длина волны"
 pt = "Comprimento de onda"
 
 ["Width frequency"]
@@ -6191,6 +6753,7 @@ ja = "幅の周波数"
 "zh-CN" = "宽度频率"
 "zh-TW" = "寬度頻率"
 "ko" = "폭 주파수"
+"ru" = "Частота ширины"
 pt = "Frequência da largura"
 
 ["Width randomness"]
@@ -6202,6 +6765,7 @@ ja = "幅のランダム性"
 "zh-CN" = "宽度随机性"
 "zh-TW" = "寬度隨機性"
 "ko" = "폭 무작위성"
+"ru" = "Случайность ширины"
 pt = "Aleatoriedade da largura"
 
 ["Width variation"]
@@ -6213,6 +6777,7 @@ ja = "幅の変化"
 "zh-CN" = "宽度变化"
 "zh-TW" = "寬度變化"
 "ko" = "폭 변화"
+"ru" = "Изменение ширины"
 pt = "Variação da largura"
 
 ["Wipe"]
@@ -6224,6 +6789,7 @@ ja = "ワイプ"
 "zh-CN" = "擦除"
 "zh-TW" = "擦除"
 "ko" = "와이프"
+"ru" = "Шторка"
 pt = "Varredura"
 
 ["Wobble"]
@@ -6235,6 +6801,7 @@ ja = "揺れ"
 "zh-CN" = "摆动"
 "zh-TW" = "擺動"
 "ko" = "워블"
+"ru" = "Колебание"
 pt = "Oscilação"
 
 ["Wobble position"]
@@ -6246,6 +6813,7 @@ ja = "揺れ位置"
 "zh-CN" = "摆动位置"
 "zh-TW" = "擺動位置"
 "ko" = "워블 위치"
+"ru" = "Положение колебания"
 pt = "Posição da oscilação"
 
 ["Wobble scale"]
@@ -6257,6 +6825,7 @@ ja = "揺れスケール"
 "zh-CN" = "摆动缩放"
 "zh-TW" = "擺動縮放"
 "ko" = "워블 배율"
+"ru" = "Масштаб колебания"
 pt = "Escala da oscilação"
 
 ["Word"]
@@ -6268,6 +6837,7 @@ ja = "単語"
 "zh-CN" = "单词"
 "zh-TW" = "單字"
 "ko" = "단어"
+"ru" = "Слово"
 pt = "Palavra"
 
 ["Zoom"]
@@ -6279,6 +6849,7 @@ ja = "ズーム"
 "zh-CN" = "缩放"
 "zh-TW" = "縮放"
 "ko" = "줌"
+"ru" = "Зум"
 pt = "Zoom"
 
 ["Arrow"]
@@ -6290,6 +6861,7 @@ ja = "矢印"
 "zh-CN" = "箭头"
 "zh-TW" = "箭頭"
 "ko" = "화살표"
+"ru" = "Стрелка"
 pt = "Seta"
 
 ["Blue X"]
@@ -6301,6 +6873,7 @@ ja = "青 X"
 "zh-CN" = "蓝色 X"
 "zh-TW" = "藍色 X"
 "ko" = "파란색 X"
+"ru" = "Синий X"
 pt = "Azul X"
 
 ["Blue Y"]
@@ -6312,6 +6885,7 @@ ja = "青 Y"
 "zh-CN" = "蓝色 Y"
 "zh-TW" = "藍色 Y"
 "ko" = "파란색 Y"
+"ru" = "Синий Y"
 pt = "Azul Y"
 
 ["Blue ← blue"]
@@ -6323,6 +6897,7 @@ ja = "青 ← 青"
 "zh-CN" = "蓝色←蓝色"
 "zh-TW" = "藍色←藍色"
 "ko" = "파란색 ← 파란색"
+"ru" = "Синий ← синий"
 pt = "Azul ← azul"
 
 ["Blue ← green"]
@@ -6334,6 +6909,7 @@ ja = "青 ← 緑"
 "zh-CN" = "蓝色←绿色"
 "zh-TW" = "藍色←綠色"
 "ko" = "파란색 ← 녹색"
+"ru" = "Синий ← зелёный"
 pt = "Azul ← verde"
 
 ["Blue ← red"]
@@ -6345,6 +6921,7 @@ ja = "青 ← 赤"
 "zh-CN" = "蓝色←红色"
 "zh-TW" = "藍色←紅色"
 "ko" = "파란색 ← 빨간색"
+"ru" = "Синий ← красный"
 pt = "Azul ← vermelho"
 
 ["Capsule"]
@@ -6356,6 +6933,7 @@ ja = "カプセル"
 "zh-CN" = "胶囊"
 "zh-TW" = "膠囊"
 "ko" = "캡슐"
+"ru" = "Капсула"
 pt = "Cápsula"
 
 ["Casual"]
@@ -6367,6 +6945,7 @@ ja = "カジュアル"
 "zh-CN" = "休闲"
 "zh-TW" = "休閒"
 "ko" = "캐주얼"
+"ru" = "Повседневный"
 pt = "Casual"
 
 ["Clock Wipe"]
@@ -6378,6 +6957,7 @@ ja = "クロックワイプ"
 "zh-CN" = "时钟擦除"
 "zh-TW" = "時鐘擦除"
 "ko" = "시계 와이프"
+"ru" = "Шторка по кругу"
 pt = "Varredura de relógio"
 
 ["Cone"]
@@ -6389,6 +6969,7 @@ ja = "円錐"
 "zh-CN" = "锥体"
 "zh-TW" = "錐體"
 "ko" = "원뿔"
+"ru" = "Конус"
 pt = "Cone"
 
 ["Contour Current"]
@@ -6400,6 +6981,7 @@ ja = "輪郭電流"
 "zh-CN" = "轮廓电流"
 "zh-TW" = "輪廓電流"
 "ko" = "윤곽 전류"
+"ru" = "Контурный ток"
 pt = "Corrente de contorno"
 
 ["Cross Fade"]
@@ -6411,6 +6993,7 @@ ja = "クロスフェード"
 "zh-CN" = "交叉淡入淡出"
 "zh-TW" = "交叉淡入淡出"
 "ko" = "크로스 페이드"
+"ru" = "Перекрёстное растворение"
 pt = "Fade cruzado"
 
 ["Cursive"]
@@ -6422,6 +7005,7 @@ ja = "筆記体"
 "zh-CN" = "手写体"
 "zh-TW" = "手寫體"
 "ko" = "필기체"
+"ru" = "Рукописный"
 pt = "Cursiva"
 
 ["Direct"]
@@ -6433,6 +7017,7 @@ ja = "直接"
 "zh-CN" = "直接"
 "zh-TW" = "直接"
 "ko" = "직접"
+"ru" = "Прямой"
 pt = "Direto"
 
 ["Disk / cylinder"]
@@ -6444,6 +7029,7 @@ ja = "円盤 / 円柱"
 "zh-CN" = "圆盘 / 圆柱体"
 "zh-TW" = "圓盤／圓柱體"
 "ko" = "디스크/실린더"
+"ru" = "Диск / цилиндр"
 pt = "Disco / cilindro"
 
 ["Dissolve"]
@@ -6455,6 +7041,7 @@ ja = "ディゾルブ"
 "zh-CN" = "溶解"
 "zh-TW" = "溶解"
 "ko" = "디졸브"
+"ru" = "Растворение"
 pt = "Dissolvência"
 
 ["Equal Power"]
@@ -6466,6 +7053,7 @@ ja = "等パワー"
 "zh-CN" = "等功率"
 "zh-TW" = "等功率"
 "ko" = "동일 전력"
+"ru" = "Равная мощность"
 pt = "Potência igual"
 
 ["F0 method"]
@@ -6477,6 +7065,7 @@ ja = "F0方式"
 "zh-CN" = "F0法"
 "zh-TW" = "F0法"
 "ko" = "F0 방법"
+"ru" = "Метод F0"
 pt = "Método F0"
 
 ["Facet Assembly"]
@@ -6488,6 +7077,7 @@ ja = "ファセット構成"
 "zh-CN" = "刻面组装"
 "zh-TW" = "刻面組裝"
 "ko" = "패싯 어셈블리"
+"ru" = "Сборка граней"
 pt = "Montagem de facetas"
 
 ["Fade Through Color"]
@@ -6499,6 +7089,7 @@ ja = "カラーフェード"
 "zh-CN" = "淡入淡出颜色"
 "zh-TW" = "淡入淡出色"
 "ko" = "페이드 스루 색상"
+"ru" = "Переход через цвет"
 pt = "Esmaecer para cor"
 
 ["Feature contours · multipass"]
@@ -6510,6 +7101,7 @@ ja = "特徴輪郭 · マルチパス"
 "zh-CN" = "特征轮廓·多通道"
 "zh-TW" = "特徵輪廓·多通道"
 "ko" = "특징 윤곽 · 멀티패스"
+"ru" = "Контуры признаков · многопроходно"
 pt = "Contornos de feições · múltiplos passos"
 
 ["Google"]
@@ -6521,6 +7113,7 @@ ja = "Google"
 "zh-CN" = "Google"
 "zh-TW" = "Google"
 "ko" = "Google"
+"ru" = "Google"
 pt = "Google"
 
 ["Green ← blue"]
@@ -6532,6 +7125,7 @@ ja = "緑 ← 青"
 "zh-CN" = "绿色←蓝色"
 "zh-TW" = "綠色←藍色"
 "ko" = "녹색 ← 파란색"
+"ru" = "Зелёный ← синий"
 pt = "Verde ← azul"
 
 ["Green ← green"]
@@ -6543,6 +7137,7 @@ ja = "緑 ← 緑"
 "zh-CN" = "绿色←绿色"
 "zh-TW" = "綠色←綠色"
 "ko" = "녹색 ← 녹색"
+"ru" = "Зелёный ← зелёный"
 pt = "Verde ← verde"
 
 ["Green ← red"]
@@ -6554,6 +7149,7 @@ ja = "緑 ← 赤"
 "zh-CN" = "绿色←红色"
 "zh-TW" = "綠色←紅色"
 "ko" = "녹색←빨간색"
+"ru" = "Зелёный ← красный"
 pt = "Verde ← vermelho"
 
 ["High · 24 samples"]
@@ -6565,6 +7161,7 @@ ja = "高 · 24サンプル"
 "zh-CN" = "高·24个样本"
 "zh-TW" = "高·24個樣本"
 "ko" = "높음 · 24개 샘플"
+"ru" = "Высокое · 24 сэмпла"
 pt = "Alta · 24 amostras"
 
 ["High · 8 probes"]
@@ -6576,6 +7173,7 @@ ja = "高 · 8プローブ"
 "zh-CN" = "高 · 8 个探针"
 "zh-TW" = "高 · 8 個探針"
 "ko" = "높음 · 8개 프로브"
+"ru" = "Высокое · 8 зондов"
 pt = "Alta · 8 sondas"
 
 ["Kuwahara · painterly"]
@@ -6587,6 +7185,7 @@ ja = "Kuwahara · 絵画調"
 "zh-CN" = "Kuwahara · 绘画风格"
 "zh-TW" = "Kuwahara · 繪畫風格"
 "ko" = "Kuwahara · 회화풍"
+"ru" = "Kuwahara · живописный"
 pt = "Kuwahara · pictórico"
 
 ["Live Performance"]
@@ -6598,6 +7197,7 @@ ja = "ライブパフォーマンス"
 "zh-CN" = "实时性能"
 "zh-TW" = "即時效能"
 "ko" = "실시간 성능"
+"ru" = "Производительность в реальном времени"
 pt = "Desempenho em tempo real"
 
 ["Last %{last} · Avg %{average} · Min %{minimum} · Max %{maximum} · %{samples} samples%{percentage}"]
@@ -6609,6 +7209,7 @@ ja = "直近 %{last} · 平均 %{average} · 最小 %{minimum} · 最大 %{maxim
 "zh-CN" = "最新值 %{last} · 平均值 %{average} · 最小值 %{minimum} · 最大值 %{maximum} · %{samples} 个样本%{percentage}"
 "zh-TW" = "最新值 %{last} · 平均值 %{average} · 最小值 %{minimum} · 最大值 %{maximum} · %{samples} 個樣本%{percentage}"
 "ko" = "최근값 %{last} · 평균 %{average} · 최소 %{minimum} · 최대 %{maximum} · %{samples}개 샘플%{percentage}"
+"ru" = "Последнее %{last} · Ср. %{average} · Мин. %{minimum} · Макс. %{maximum} · %{samples} сэмплов%{percentage}"
 pt = "Último %{last} · Méd. %{average} · Mín. %{minimum} · Máx. %{maximum} · %{samples} amostras%{percentage}"
 
 ["Living Fill"]
@@ -6620,6 +7221,7 @@ ja = "リビングフィル"
 "zh-CN" = "动态填充"
 "zh-TW" = "動態填滿"
 "ko" = "리빙 필"
+"ru" = "Живая заливка"
 pt = "Preenchimento vivo"
 
 ["Caption markup: **bold**, *italic*, __underline__, {milliseconds} karaoke, [base/ruby]"]
@@ -6631,6 +7233,7 @@ ja = "キャプションマークアップ: **太字**、*斜体*、__下線__�
 "zh-CN" = "字幕标记：**粗体**、*斜体*、__下划线__、{milliseconds} 卡拉 OK、[base/ruby]"
 "zh-TW" = "字幕標記：**粗體**、*斜體*、__底線__、{milliseconds} 卡拉 OK、[base/ruby]"
 "ko" = "캡션 마크업: **굵게**, *기울임꼴*, __밑줄__, {milliseconds} 노래방, [base/ruby]"
+"ru" = "Разметка субтитров: **жирный**, *курсив*, __подчёркнутый__, {миллисекунды} караоке, [основа/фуригана]"
 pt = "Marcação de legenda: **negrito**, *itálico*, __sublinhado__, {milissegundos} karaokê, [base/ruby]"
 
 ["Missing item"]
@@ -6642,6 +7245,7 @@ ja = "項目がありません"
 "zh-CN" = "缺少项目"
 "zh-TW" = "缺少項目"
 "ko" = "누락된 항목"
+"ru" = "Отсутствующий элемент"
 pt = "Item ausente"
 
 ["Morphological Resolve"]
@@ -6653,6 +7257,7 @@ ja = "形態学的解決"
 "zh-CN" = "形态学解析"
 "zh-TW" = "形態學解析"
 "ko" = "형태학적 처리"
+"ru" = "Морфологическое разрешение"
 pt = "Resolução morfológica"
 
 ["Naive"]
@@ -6664,6 +7269,7 @@ ja = "単純"
 "zh-CN" = "朴素"
 "zh-TW" = "樸素"
 "ko" = "나이브"
+"ru" = "Наивный"
 pt = "Simples"
 
 ["Native"]
@@ -6675,6 +7281,7 @@ ja = "ネイティブ"
 "zh-CN" = "原生"
 "zh-TW" = "原生"
 "ko" = "네이티브"
+"ru" = "Встроенный"
 pt = "Nativo"
 
 ["Oblique"]
@@ -6686,6 +7293,7 @@ ja = "斜体"
 "zh-CN" = "斜"
 "zh-TW" = "斜"
 "ko" = "비스듬한"
+"ru" = "Наклонный"
 pt = "Oblíquo"
 
 ["Off (Full Resolution)"]
@@ -6697,6 +7305,7 @@ ja = "オフ（フル解像度）"
 "zh-CN" = "关（全分辨率）"
 "zh-TW" = "關（全解析度）"
 "ko" = "끄기(전체 해상도)"
+"ru" = "Выкл. (полное разрешение)"
 pt = "Desativado (resolução máxima)"
 
 ["Origami"]
@@ -6708,6 +7317,7 @@ ja = "折り紙"
 "zh-CN" = "折纸"
 "zh-TW" = "摺紙"
 "ko" = "종이접기"
+"ru" = "Оригами"
 pt = "Origami"
 
 ["Path tracing"]
@@ -6719,6 +7329,7 @@ ja = "パストレーシング"
 "zh-CN" = "路径追踪"
 "zh-TW" = "路徑追蹤"
 "ko" = "경로 추적"
+"ru" = "Трассировка пути"
 pt = "Traçado de caminhos"
 
 ["Pools"]
@@ -6730,6 +7341,7 @@ ja = "プール"
 "zh-CN" = "池"
 "zh-TW" = "集區"
 "ko" = "풀"
+"ru" = "Пулы"
 pt = "Pools"
 
 ["Push"]
@@ -6741,6 +7353,7 @@ ja = "プッシュ"
 "zh-CN" = "推"
 "zh-TW" = "推"
 "ko" = "푸시"
+"ru" = "Сдвиг"
 pt = "Empurrar"
 
 ["Radial + Fresnel"]
@@ -6752,6 +7365,7 @@ ja = "放射 + フレネル"
 "zh-CN" = "径向+菲涅尔"
 "zh-TW" = "徑向+菲涅爾"
 "ko" = "방사형 + 프레넬"
+"ru" = "Радиальный + Френель"
 pt = "Radial + Fresnel"
 
 ["Radial probes"]
@@ -6763,6 +7377,7 @@ ja = "放射プローブ"
 "zh-CN" = "径向探针"
 "zh-TW" = "徑向探針"
 "ko" = "방사형 프로브"
+"ru" = "Радиальные зонды"
 pt = "Sondas radiais"
 
 ["Red X"]
@@ -6774,6 +7389,7 @@ ja = "赤 X"
 "zh-CN" = "红X"
 "zh-TW" = "紅X"
 "ko" = "빨간색 X"
+"ru" = "Красный X"
 pt = "Vermelho X"
 
 ["Red Y"]
@@ -6785,6 +7401,7 @@ ja = "赤 Y"
 "zh-CN" = "红Y"
 "zh-TW" = "紅Y"
 "ko" = "빨간색 Y"
+"ru" = "Красный Y"
 pt = "Vermelho Y"
 
 ["Red ← blue"]
@@ -6796,6 +7413,7 @@ ja = "赤 ← 青"
 "zh-CN" = "红←蓝"
 "zh-TW" = "紅←藍"
 "ko" = "빨간색 ← 파란색"
+"ru" = "Красный ← синий"
 pt = "Vermelho ← azul"
 
 ["Red ← green"]
@@ -6807,6 +7425,7 @@ ja = "赤 ← 緑"
 "zh-CN" = "红←绿"
 "zh-TW" = "紅←綠"
 "ko" = "빨간색 ← 녹색"
+"ru" = "Красный ← зелёный"
 pt = "Vermelho ← verde"
 
 ["Red ← red"]
@@ -6818,6 +7437,7 @@ ja = "赤 ← 赤"
 "zh-CN" = "红色←红色"
 "zh-TW" = "紅色←紅色"
 "ko" = "빨간색 ← 빨간색"
+"ru" = "Красный ← красный"
 pt = "Vermelho ← vermelho"
 
 ["Render Style"]
@@ -6829,6 +7449,7 @@ ja = "レンダリングスタイル"
 "zh-CN" = "渲染风格"
 "zh-TW" = "算繪樣式"
 "ko" = "렌더 스타일"
+"ru" = "Стиль рендеринга"
 pt = "Estilo de renderização"
 
 ["Repeat"]
@@ -6840,6 +7461,7 @@ ja = "繰り返し"
 "zh-CN" = "重复"
 "zh-TW" = "重複"
 "ko" = "반복"
+"ru" = "Повторить"
 pt = "Repetir"
 
 ["Reverse Diffusion"]
@@ -6851,6 +7473,7 @@ ja = "逆拡散"
 "zh-CN" = "反向扩散"
 "zh-TW" = "反向擴散"
 "ko" = "역확산"
+"ru" = "Обратная диффузия"
 pt = "Difusão reversa"
 
 ["Rotated LTR"]
@@ -6862,6 +7485,7 @@ ja = "回転・左から右"
 "zh-CN" = "旋转LTR"
 "zh-TW" = "旋轉LTR"
 "ko" = "회전된 LTR"
+"ru" = "Повёрнутый, слева направо"
 pt = "Girado da esq. para dir."
 
 ["Rotated RTL"]
@@ -6873,6 +7497,7 @@ ja = "回転・右から左"
 "zh-CN" = "旋转 RTL"
 "zh-TW" = "旋轉 RTL"
 "ko" = "회전된 RTL"
+"ru" = "Повёрнутый, справа налево"
 pt = "Girado da dir. para esq."
 
 ["SVG Colors"]
@@ -6884,6 +7509,7 @@ ja = "SVGの色"
 "zh-CN" = "SVG 颜色"
 "zh-TW" = "SVG 顏色"
 "ko" = "SVG 색상"
+"ru" = "Цвета SVG"
 pt = "Cores SVG"
 
 ["SVG color"]
@@ -6895,6 +7521,7 @@ ja = "SVGの色"
 "zh-CN" = "SVG颜色"
 "zh-TW" = "SVG顏色"
 "ko" = "SVG 색상"
+"ru" = "Цвет SVG"
 pt = "Cor SVG"
 
 ["Serif"]
@@ -6906,6 +7533,7 @@ ja = "明朝体"
 "zh-CN" = "衬线"
 "zh-TW" = "襯線"
 "ko" = "세리프"
+"ru" = "С засечками"
 pt = "Com serifa"
 
 ["Silhouette"]
@@ -6917,6 +7545,7 @@ ja = "シルエット"
 "zh-CN" = "轮廓"
 "zh-TW" = "輪廓"
 "ko" = "실루엣"
+"ru" = "Силуэт"
 pt = "Silhueta"
 
 ["Silhouette + creases"]
@@ -6928,6 +7557,7 @@ ja = "シルエット + 折り目"
 "zh-CN" = "轮廓+折痕"
 "zh-TW" = "輪廓+摺痕"
 "ko" = "실루엣 + 주름"
+"ru" = "Силуэт + складки"
 pt = "Silhueta + vincos"
 
 ["Slide"]
@@ -6939,6 +7569,7 @@ ja = "スライド"
 "zh-CN" = "滑动"
 "zh-TW" = "滑動"
 "ko" = "슬라이드"
+"ru" = "Сдвиг"
 pt = "Deslizar"
 
 ["Slide + Fade"]
@@ -6950,6 +7581,7 @@ ja = "スライド + フェード"
 "zh-CN" = "滑动+淡入淡出"
 "zh-TW" = "滑動+淡入淡出"
 "ko" = "슬라이드 + 페이드"
+"ru" = "Сдвиг + растворение"
 pt = "Deslizar + esmaecer"
 
 ["Small Capitals"]
@@ -6961,6 +7593,7 @@ ja = "スモールキャップ"
 "zh-CN" = "小型大写字母"
 "zh-TW" = "小型大寫字母"
 "ko" = "스몰 캡"
+"ru" = "Капитель"
 pt = "Versaletes"
 
 ["Soft Refraction"]
@@ -6972,6 +7605,7 @@ ja = "ソフト屈折"
 "zh-CN" = "软折射"
 "zh-TW" = "軟折射"
 "ko" = "소프트 굴절"
+"ru" = "Мягкое преломление"
 pt = "Refração suave"
 
 ["Sphere"]
@@ -6983,6 +7617,7 @@ ja = "球"
 "zh-CN" = "球体"
 "zh-TW" = "球體"
 "ko" = "구"
+"ru" = "Сфера"
 pt = "Esfera"
 
 ["Standard · 12 samples"]
@@ -6994,6 +7629,7 @@ ja = "標準 · 12サンプル"
 "zh-CN" = "标准·12个样本"
 "zh-TW" = "標準·12個樣本"
 "ko" = "표준 · 12개 샘플"
+"ru" = "Стандартное · 12 сэмплов"
 pt = "Padrão · 12 amostras"
 
 ["Standard · 4 probes"]
@@ -7005,6 +7641,7 @@ ja = "標準 · 4プローブ"
 "zh-CN" = "标准 · 4 个探针"
 "zh-TW" = "標準 · 4 個探針"
 "ko" = "표준 · 프로브 4개"
+"ru" = "Стандартное · 4 зонда"
 pt = "Padrão · 4 sondas"
 
 ["Star"]
@@ -7016,6 +7653,7 @@ ja = "星"
 "zh-CN" = "星星"
 "zh-TW" = "星星"
 "ko" = "별"
+"ru" = "Звезда"
 pt = "Estrela"
 
 ["Streak Wipe"]
@@ -7027,6 +7665,7 @@ ja = "ストリークワイプ"
 "zh-CN" = "条纹擦除"
 "zh-TW" = "條紋擦除"
 "ko" = "줄무늬 와이프"
+"ru" = "Шторка полосами"
 pt = "Varredura de faixas"
 
 ["Streamline"]
@@ -7038,6 +7677,7 @@ ja = "流線"
 "zh-CN" = "流线"
 "zh-TW" = "流線"
 "ko" = "유선형"
+"ru" = "Линии тока"
 pt = "Linha fluida"
 
 ["Stroke Transform"]
@@ -7049,6 +7689,7 @@ ja = "ストローク変形"
 "zh-CN" = "笔画变换"
 "zh-TW" = "筆畫變形"
 "ko" = "스트로크 변환"
+"ru" = "Преобразование штриха"
 pt = "Transformação de traço"
 
 ["System default"]
@@ -7060,6 +7701,7 @@ ja = "システム既定"
 "zh-CN" = "系统默认"
 "zh-TW" = "系統預設"
 "ko" = "시스템 기본값"
+"ru" = "По умолчанию (система)"
 pt = "Padrão do sistema"
 
 ["Thinning"]
@@ -7071,6 +7713,7 @@ ja = "細線化"
 "zh-CN" = "细化"
 "zh-TW" = "細化"
 "ko" = "세선화"
+"ru" = "Истончение"
 pt = "Afinamento"
 
 ["Torus"]
@@ -7082,6 +7725,7 @@ ja = "トーラス"
 "zh-CN" = "圆环体"
 "zh-TW" = "環形體"
 "ko" = "토러스"
+"ru" = "Тор"
 pt = "Toro"
 
 ["Track %{track} · Item %{item}"]
@@ -7093,6 +7737,7 @@ ja = "トラック %{track} · 項目 %{item}"
 "zh-CN" = "轨道 %{track} · 项目 %{item}"
 "zh-TW" = "軌道 %{track} · 項目 %{item}"
 "ko" = "트랙 %{track} · 항목 %{item}"
+"ru" = "Дорожка %{track} · Элемент %{item}"
 pt = "Faixa %{track} · Item %{item}"
 
 ["Triangular Fold"]
@@ -7104,6 +7749,7 @@ ja = "三角折り"
 "zh-CN" = "三角折"
 "zh-TW" = "三角折"
 "ko" = "삼각형 접기"
+"ru" = "Треугольное складывание"
 pt = "Dobra triangular"
 
 ["Ultra · 16 probes"]
@@ -7115,6 +7761,7 @@ ja = "最高 · 16プローブ"
 "zh-CN" = "超高 · 16 个探针"
 "zh-TW" = "超高 · 16 個探針"
 "ko" = "Ultra · 16개 프로브"
+"ru" = "Ультра · 16 зондов"
 pt = "Ultra · 16 sondas"
 
 ["Ultra · 48 samples"]
@@ -7126,6 +7773,7 @@ ja = "最高 · 48サンプル"
 "zh-CN" = "超·48个样本"
 "zh-TW" = "超·48個樣本"
 "ko" = "울트라 · 48개 샘플"
+"ru" = "Ультра · 48 сэмплов"
 pt = "Ultra · 48 amostras"
 
 ["Unwrite"]
@@ -7137,6 +7785,7 @@ ja = "消去"
 "zh-CN" = "擦除书写"
 "zh-TW" = "擦除書寫"
 "ko" = "쓰기 지우기"
+"ru" = "Стереть"
 pt = "Apagar"
 
 ["Vertical LTR"]
@@ -7148,6 +7797,7 @@ ja = "縦書き・左から右"
 "zh-CN" = "垂直LTR"
 "zh-TW" = "垂直LTR"
 "ko" = "수직 LTR"
+"ru" = "Вертикальный, слева направо"
 pt = "Vertical da esq. para dir."
 
 ["Vertical RTL"]
@@ -7159,6 +7809,7 @@ ja = "縦書き・右から左"
 "zh-CN" = "垂直RTL"
 "zh-TW" = "垂直RTL"
 "ko" = "수직 RTL"
+"ru" = "Вертикальный, справа налево"
 pt = "Vertical da dir. para esq."
 
 ["Video / Render request"]
@@ -7170,6 +7821,7 @@ ja = "ビデオ / レンダリング要求"
 "zh-CN" = "视频/渲染请求"
 "zh-TW" = "影片/算繪請求"
 "ko" = "비디오/렌더링 요청"
+"ru" = "Запрос видео / рендеринга"
 pt = "Solicitação de vídeo / renderização"
 
 ["Visual track %{number}"]
@@ -7181,6 +7833,7 @@ ja = "ビジュアルトラック %{number}"
 "zh-CN" = "视觉轨道 %{number}"
 "zh-TW" = "視覺軌道 %{number}"
 "ko" = "비주얼 트랙 %{number}"
+"ru" = "Визуальная дорожка %{number}"
 pt = "Faixa visual %{number}"
 
 ["Write"]
@@ -7192,6 +7845,7 @@ ja = "書く"
 "zh-CN" = "写"
 "zh-TW" = "寫"
 "ko" = "쓰기"
+"ru" = "Писать"
 pt = "Escrever"
 
 ["Writing"]
@@ -7203,6 +7857,7 @@ ja = "書き込み"
 "zh-CN" = "书写"
 "zh-TW" = "書寫"
 "ko" = "쓰기"
+"ru" = "Написание"
 pt = "Escrita"
 
 ["%{axis} variation axis"]
@@ -7214,6 +7869,7 @@ ja = "%{axis} バリエーション軸"
 "zh-CN" = "%{axis} 变化轴"
 "zh-TW" = "%{axis} 變化軸"
 "ko" = "%{axis} 변형 축"
+"ru" = "Ось вариации %{axis}"
 pt = "Eixo de variação %{axis}"
 
 ["%{name} copied"]
@@ -7225,6 +7881,7 @@ ja = "%{name} をコピーしました"
 "zh-CN" = "%{name} 已复制"
 "zh-TW" = "%{name} 已複製"
 "ko" = "%{name} 복사됨"
+"ru" = "%{name} скопировано"
 pt = "%{name} copiado"
 
 ["%{label} (Unavailable)"]
@@ -7236,6 +7893,7 @@ ja = "%{label}（利用不可）"
 "zh-CN" = "%{label}（不可用）"
 "zh-TW" = "%{label}（不可用）"
 "ko" = "%{label}(사용할 수 없음)"
+"ru" = "%{label} (недоступно)"
 pt = "%{label} (Indisponível)"
 
 ["%{message} %{completed}/%{total}"]
@@ -7247,6 +7905,7 @@ ja = "%{message} %{completed}/%{total}"
 "zh-CN" = "%{message} %{completed}/%{total}"
 "zh-TW" = "%{message} %{completed}/%{total}"
 "ko" = "%{message} %{completed}/%{total}"
+"ru" = "%{message} %{completed}/%{total}"
 pt = "%{message} %{completed}/%{total}"
 
 ["Output: %{output}"]
@@ -7258,6 +7917,7 @@ ja = "出力: %{output}"
 "zh-CN" = "输出：%{output}"
 "zh-TW" = "輸出：%{output}"
 "ko" = "출력: %{output}"
+"ru" = "Вывод: %{output}"
 pt = "Saída: %{output}"
 
 ["%{strokes} strokes, %{fills} fills"]
@@ -7269,6 +7929,7 @@ ja = "%{strokes} ストローク、%{fills} 塗り"
 "zh-CN" = "%{strokes} 个笔画，%{fills} 个填充"
 "zh-TW" = "%{strokes} 個筆畫，%{fills} 個填滿"
 "ko" = "스트로크 %{strokes}개, 채우기 %{fills}개"
+"ru" = "Штрихов: %{strokes}, заливок: %{fills}"
 pt = "%{strokes} traços, %{fills} preenchimentos"
 
 ["1 keyframe copied"]
@@ -7280,6 +7941,7 @@ ja = "キーフレームを1件コピーしました"
 "zh-CN" = "已复制 1 个关键帧"
 "zh-TW" = "已複製 1 個關鍵影格"
 "ko" = "키프레임 1개 복사됨"
+"ru" = "Скопирован 1 ключевой кадр"
 pt = "1 quadro-chave copiado"
 
 ["1 keyframe pasted"]
@@ -7291,6 +7953,7 @@ ja = "キーフレームを1件貼り付けました"
 "zh-CN" = "粘贴 1 个关键帧"
 "zh-TW" = "貼上 1 個關鍵影格"
 "ko" = "키프레임 1개를 붙여넣었습니다."
+"ru" = "Вставлен 1 ключевой кадр"
 pt = "1 quadro-chave colado"
 
 ["%{count} keyframes copied"]
@@ -7302,6 +7965,7 @@ ja = "%{count}件のキーフレームをコピーしました"
 "zh-CN" = "已复制 %{count} 个关键帧"
 "zh-TW" = "已複製 %{count} 個關鍵影格"
 "ko" = "%{count}개의 키프레임이 복사되었습니다."
+"ru" = "Скопировано ключевых кадров: %{count}"
 pt = "%{count} quadros-chave copiados"
 
 ["%{count} keyframes pasted"]
@@ -7313,6 +7977,7 @@ ja = "%{count}件のキーフレームを貼り付けました"
 "zh-CN" = "已粘贴 %{count} 个关键帧"
 "zh-TW" = "已貼上 %{count} 個關鍵影格"
 "ko" = "%{count}개의 키프레임을 붙여넣었습니다."
+"ru" = "Вставлено ключевых кадров: %{count}"
 pt = "%{count} quadros-chave colados"
 
 ["Analysis starts as source-time chunks are viewed"]
@@ -7324,6 +7989,7 @@ ja = "ソース時間チャンクの表示時に解析を開始"
 "zh-CN" = "查看源时间片段时开始分析"
 "zh-TW" = "檢視來源時間區段時開始分析"
 "ko" = "소스 시간 구간을 볼 때 분석이 시작됩니다."
+"ru" = "Анализ начинается при просмотре фрагментов исходного времени"
 pt = "A análise inicia conforme os trechos temporais de origem são visualizados"
 
 ["Benchmark report copied"]
@@ -7335,6 +8001,7 @@ ja = "ベンチマークレポートをコピーしました"
 "zh-CN" = "已复制基准报告"
 "zh-TW" = "已複製基準報告"
 "ko" = "벤치마크 보고서가 복사되었습니다."
+"ru" = "Отчёт о бенчмарке скопирован"
 pt = "Relatório de benchmark copiado"
 
 ["Checking compute server..."]
@@ -7346,6 +8013,7 @@ ja = "計算サーバーを確認中..."
 "zh-CN" = "正在检查计算服务器…"
 "zh-TW" = "正在檢查計算伺服器…"
 "ko" = "컴퓨팅 서버를 확인하는 중…"
+"ru" = "Проверка вычислительного сервера..."
 pt = "Verificando servidor de computação..."
 
 ["Choose a compatible Blender binary in Preferences"]
@@ -7357,6 +8025,7 @@ ja = "設定で互換性のあるBlender実行ファイルを選択してくだ�
 "zh-CN" = "请在偏好设置中选择兼容的 Blender 可执行文件"
 "zh-TW" = "請在偏好設定中選擇相容的 Blender 執行檔"
 "ko" = "환경설정에서 호환되는 Blender 실행 파일 선택"
+"ru" = "Выберите совместимый исполняемый файл Blender в настройках"
 pt = "Escolha um executável compatível do Blender nas Preferências"
 
 ["Expression output unavailable"]
@@ -7368,6 +8037,7 @@ ja = "式の出力を利用できません"
 "zh-CN" = "表达式输出不可用"
 "zh-TW" = "表達式輸出不可用"
 "ko" = "표현식 출력을 사용할 수 없습니다."
+"ru" = "Вывод выражения недоступен"
 pt = "Saída de expressão indisponível"
 
 ["Jacobi passes used to minimize the MeshFlow energy"]
@@ -7379,6 +8049,7 @@ ja = "MeshFlowエネルギーを最小化するJacobiパス数"
 "zh-CN" = "用于最小化 MeshFlow 能量的 Jacobi 迭代次数"
 "zh-TW" = "用於最小化 MeshFlow 能量的 Jacobi 迭代次數"
 "ko" = "MeshFlow 에너지를 최소화하는 Jacobi 패스 수"
+"ru" = "Проходы Якоби для минимизации энергии MeshFlow"
 pt = "Passos de Jacobi usados para minimizar a energia do MeshFlow"
 
 ["Ready (%{count} samples)"]
@@ -7390,6 +8061,7 @@ ja = "準備完了（%{count}サンプル）"
 "zh-CN" = "就绪（%{count} 个样本）"
 "zh-TW" = "就緒（%{count} 個樣本）"
 "ko" = "준비됨(%{count}개 샘플)"
+"ru" = "Готово (%{count} сэмплов)"
 pt = "Pronto (%{count} amostras)"
 
 ["Selected tracking method is unavailable"]
@@ -7401,6 +8073,7 @@ ja = "選択したトラッキング方式は利用できません"
 "zh-CN" = "所选的跟踪方法不可用"
 "zh-TW" = "所選的追蹤方法不可用"
 "ko" = "선택한 추적 방법을 사용할 수 없습니다."
+"ru" = "Выбранный метод отслеживания недоступен"
 pt = "O método de rastreamento selecionado está indisponível"
 
 ["Source track is empty"]
@@ -7412,6 +8085,7 @@ ja = "ソーストラックが空です"
 "zh-CN" = "源轨道为空"
 "zh-TW" = "源軌道為空"
 "ko" = "소스 트랙이 비어 있습니다."
+"ru" = "Исходная дорожка пуста"
 pt = "A faixa de origem está vazia"
 
 ["Source track unavailable"]
@@ -7423,6 +8097,7 @@ ja = "ソーストラックを利用できません"
 "zh-CN" = "源轨道不可用"
 "zh-TW" = "來源軌道不可用"
 "ko" = "소스 트랙을 사용할 수 없습니다."
+"ru" = "Исходная дорожка недоступна"
 pt = "Faixa de origem indisponível"
 
 ["3-band EQ"]
@@ -7434,6 +8109,7 @@ ja = "3バンドEQ"
 "zh-CN" = "3段均衡器"
 "zh-TW" = "3段均衡器"
 "ko" = "3밴드 EQ"
+"ru" = "3-полосный эквалайзер"
 pt = "Equalizador de 3 bandas"
 
 ["3D Object"]
@@ -7445,6 +8121,7 @@ ja = "3Dオブジェクト"
 "zh-CN" = "3D 对象"
 "zh-TW" = "3D 物件"
 "ko" = "3D 개체"
+"ru" = "3D-объект"
 pt = "Objeto 3D"
 
 ["3D Shape"]
@@ -7456,6 +8133,7 @@ ja = "3D図形"
 "zh-CN" = "3D形状"
 "zh-TW" = "3D形狀"
 "ko" = "3D 모양"
+"ru" = "3D-форма"
 pt = "Forma 3D"
 
 ["3D Text"]
@@ -7467,6 +8145,7 @@ ja = "3Dテキスト"
 "zh-CN" = "3D文字"
 "zh-TW" = "3D文字"
 "ko" = "3D 텍스트"
+"ru" = "3D-текст"
 pt = "Texto 3D"
 
 ["Alpha outline"]
@@ -7478,6 +8157,7 @@ ja = "アルファアウトライン"
 "zh-CN" = "Alpha 轮廓"
 "zh-TW" = "Alpha 輪廓"
 "ko" = "알파 윤곽선"
+"ru" = "Альфа-контур"
 pt = "Contorno alfa"
 
 ["Append"]
@@ -7489,6 +8169,7 @@ ja = "末尾に追加"
 "zh-CN" = "追加"
 "zh-TW" = "附加"
 "ko" = "추가"
+"ru" = "Добавить в конец"
 pt = "Anexar ao final"
 
 ["Bitcrusher"]
@@ -7500,6 +8181,7 @@ ja = "ビットクラッシャー"
 "zh-CN" = "比特破碎机"
 "zh-TW" = "比特破碎機"
 "ko" = "비트크러셔"
+"ru" = "Биткрашер"
 pt = "Bitcrusher"
 
 ["Bulge"]
@@ -7511,6 +8193,7 @@ ja = "膨張"
 "zh-CN" = "凸出"
 "zh-TW" = "凸出"
 "ko" = "볼록 효과"
+"ru" = "Выпуклость"
 pt = "Abaulamento"
 
 ["Cache"]
@@ -7522,6 +8205,7 @@ ja = "キャッシュ"
 "zh-CN" = "缓存"
 "zh-TW" = "快取"
 "ko" = "캐시"
+"ru" = "Кэш"
 pt = "Cache"
 
 ["Channel mixer"]
@@ -7533,6 +8217,7 @@ ja = "チャンネルミキサー"
 "zh-CN" = "通道混合器"
 "zh-TW" = "通道混合器"
 "ko" = "채널 믹서"
+"ru" = "Микшер каналов"
 pt = "Misturador de canais"
 
 ["Chorus"]
@@ -7544,6 +8229,7 @@ ja = "コーラス"
 "zh-CN" = "合唱"
 "zh-TW" = "合唱效果"
 "ko" = "코러스"
+"ru" = "Хорус"
 pt = "Chorus"
 
 ["Chroma key"]
@@ -7555,6 +8241,7 @@ ja = "クロマキー"
 "zh-CN" = "色度键"
 "zh-TW" = "色度去背"
 "ko" = "크로마키"
+"ru" = "Хромакей"
 pt = "Chroma key"
 
 ["Chromatic aberration"]
@@ -7566,6 +8253,7 @@ ja = "色収差"
 "zh-CN" = "色差"
 "zh-TW" = "色差"
 "ko" = "색수차"
+"ru" = "Хроматическая аберрация"
 pt = "Aberração cromática"
 
 ["Close up"]
@@ -7577,6 +8265,7 @@ ja = "クローズアップ"
 "zh-CN" = "特写"
 "zh-TW" = "特寫"
 "ko" = "클로즈업"
+"ru" = "Крупный план"
 pt = "Primeiro plano"
 
 ["Color correction"]
@@ -7588,6 +8277,7 @@ ja = "色補正"
 "zh-CN" = "色彩校正"
 "zh-TW" = "色彩校正"
 "ko" = "색상 보정"
+"ru" = "Цветокоррекция"
 pt = "Correção de cor"
 
 ["Compressor"]
@@ -7599,6 +8289,7 @@ ja = "コンプレッサー"
 "zh-CN" = "压缩器"
 "zh-TW" = "壓縮器"
 "ko" = "컴프레서"
+"ru" = "Компрессор"
 pt = "Compressor"
 
 ["Corner Pin"]
@@ -7610,6 +8301,7 @@ ja = "コーナーピン"
 "zh-CN" = "角点固定"
 "zh-TW" = "角點固定"
 "ko" = "코너 핀"
+"ru" = "Закрепление углов"
 pt = "Deformação de cantos"
 
 ["Crop"]
@@ -7621,6 +8313,7 @@ ja = "クロップ"
 "zh-CN" = "裁剪"
 "zh-TW" = "裁切"
 "ko" = "자르기"
+"ru" = "Кадрирование"
 pt = "Recortar"
 
 ["Decode"]
@@ -7632,6 +8325,7 @@ ja = "デコード"
 "zh-CN" = "解码"
 "zh-TW" = "解碼"
 "ko" = "디코딩"
+"ru" = "Декодирование"
 pt = "Decodificar"
 
 ["Denoise"]
@@ -7643,6 +8337,7 @@ ja = "ノイズ除去"
 "zh-CN" = "去噪"
 "zh-TW" = "降噪"
 "ko" = "노이즈 제거"
+"ru" = "Шумоподавление"
 pt = "Redução de ruído"
 
 ["Directional blur"]
@@ -7654,6 +8349,7 @@ ja = "方向ぼかし"
 "zh-CN" = "方向模糊"
 "zh-TW" = "方向模糊"
 "ko" = "방향성 흐림"
+"ru" = "Направленное размытие"
 pt = "Desfoque direcional"
 
 ["Displacement map"]
@@ -7665,6 +8361,7 @@ ja = "ディスプレイスメントマップ"
 "zh-CN" = "位移图"
 "zh-TW" = "位移圖"
 "ko" = "변위 맵"
+"ru" = "Карта смещения"
 pt = "Mapa de deslocamento"
 
 ["Dithering"]
@@ -7676,6 +8373,7 @@ ja = "ディザリング"
 "zh-CN" = "颜色抖动"
 "zh-TW" = "色彩抖動"
 "ko" = "디더링"
+"ru" = "Дизеринг"
 pt = "Dithering"
 
 ["Drop shadow"]
@@ -7687,6 +8385,7 @@ ja = "ドロップシャドウ"
 "zh-CN" = "投影"
 "zh-TW" = "投影"
 "ko" = "그림자"
+"ru" = "Падающая тень"
 pt = "Sombra projetada"
 
 ["Duotone"]
@@ -7698,6 +8397,7 @@ ja = "デュオトーン"
 "zh-CN" = "双色调"
 "zh-TW" = "雙色調"
 "ko" = "이중톤"
+"ru" = "Дуотон"
 pt = "Duotono"
 
 ["Echo"]
@@ -7709,6 +8409,7 @@ ja = "エコー"
 "zh-CN" = "回声"
 "zh-TW" = "迴音"
 "ko" = "에코"
+"ru" = "Эхо"
 pt = "Eco"
 
 ["Edge detection"]
@@ -7720,6 +8421,7 @@ ja = "エッジ検出"
 "zh-CN" = "边缘检测"
 "zh-TW" = "邊緣偵測"
 "ko" = "가장자리 감지"
+"ru" = "Обнаружение краёв"
 pt = "Detecção de bordas"
 
 ["Emboss"]
@@ -7731,6 +8433,7 @@ ja = "エンボス"
 "zh-CN" = "浮雕"
 "zh-TW" = "浮雕"
 "ko" = "엠보싱"
+"ru" = "Тиснение"
 pt = "Relevo"
 
 ["Erode"]
@@ -7742,6 +8445,7 @@ ja = "収縮"
 "zh-CN" = "腐蚀"
 "zh-TW" = "侵蝕"
 "ko" = "침식"
+"ru" = "Эрозия"
 pt = "Erosão"
 
 ["Filter"]
@@ -7753,6 +8457,7 @@ ja = "フィルター"
 "zh-CN" = "滤镜"
 "zh-TW" = "濾鏡"
 "ko" = "필터"
+"ru" = "Фильтр"
 pt = "Filtro"
 
 ["Fisheye"]
@@ -7764,6 +8469,7 @@ ja = "魚眼"
 "zh-CN" = "鱼眼"
 "zh-TW" = "魚眼"
 "ko" = "피쉬아이"
+"ru" = "Рыбий глаз"
 pt = "Olho-de-peixe"
 
 ["Gain"]
@@ -7775,6 +8481,7 @@ ja = "ゲイン"
 "zh-CN" = "增益"
 "zh-TW" = "增益"
 "ko" = "게인"
+"ru" = "Усиление"
 pt = "Ganho"
 
 ["Gaussian blur"]
@@ -7786,6 +8493,7 @@ ja = "ガウスぼかし"
 "zh-CN" = "高斯模糊"
 "zh-TW" = "高斯模糊"
 "ko" = "가우시안 블러"
+"ru" = "Гауссово размытие"
 pt = "Desfoque gaussiano"
 
 ["Glow"]
@@ -7797,6 +8505,7 @@ ja = "グロー"
 "zh-CN" = "辉光"
 "zh-TW" = "光暈"
 "ko" = "글로우"
+"ru" = "Свечение"
 pt = "Brilho"
 
 ["Ground"]
@@ -7808,6 +8517,7 @@ ja = "地面"
 "zh-CN" = "地面"
 "zh-TW" = "地面"
 "ko" = "지면"
+"ru" = "Земля"
 pt = "Chão"
 
 ["Halftone"]
@@ -7819,6 +8529,7 @@ ja = "ハーフトーン"
 "zh-CN" = "半色调"
 "zh-TW" = "網點"
 "ko" = "하프톤"
+"ru" = "Полутон"
 pt = "Meio-tom"
 
 ["Insert"]
@@ -7830,6 +8541,7 @@ ja = "挿入"
 "zh-CN" = "插入"
 "zh-TW" = "插入"
 "ko" = "삽입"
+"ru" = "Вставить"
 pt = "Inserir"
 
 ["Jump"]
@@ -7841,6 +8553,7 @@ ja = "ジャンプ"
 "zh-CN" = "跳转"
 "zh-TW" = "跳轉"
 "ko" = "점프"
+"ru" = "Перескок"
 pt = "Salto"
 
 ["Kaleidoscope"]
@@ -7852,6 +8565,7 @@ ja = "万華鏡"
 "zh-CN" = "万花筒"
 "zh-TW" = "萬花筒"
 "ko" = "만화경"
+"ru" = "Калейдоскоп"
 pt = "Caleidoscópio"
 
 ["Kuwahara"]
@@ -7863,6 +8577,7 @@ ja = "Kuwahara"
 "zh-CN" = "Kuwahara"
 "zh-TW" = "Kuwahara"
 "ko" = "Kuwahara"
+"ru" = "Kuwahara"
 pt = "Kuwahara"
 
 ["Lens distortion"]
@@ -7874,6 +8589,7 @@ ja = "レンズ歪み"
 "zh-CN" = "镜头畸变"
 "zh-TW" = "鏡頭畸變"
 "ko" = "렌즈 왜곡"
+"ru" = "Дисторсия объектива"
 pt = "Distorção de lente"
 
 ["Limiter"]
@@ -7885,6 +8601,7 @@ ja = "リミッター"
 "zh-CN" = "限制器"
 "zh-TW" = "限制器"
 "ko" = "리미터"
+"ru" = "Лимитер"
 pt = "Limitador"
 
 ["Luma key"]
@@ -7896,6 +8613,7 @@ ja = "ルマキー"
 "zh-CN" = "亮度键"
 "zh-TW" = "亮度鍵"
 "ko" = "루마 키"
+"ru" = "Люма-ключ"
 pt = "Chave de luma"
 
 ["Manim Smooth"]
@@ -7907,6 +8625,7 @@ ja = "Manimスムーズ"
 "zh-CN" = "Manim 平滑"
 "zh-TW" = "Manim 平滑"
 "ko" = "Manim 스무스"
+"ru" = "Плавность Manim"
 pt = "Suavização do Manim"
 
 ["Mosaic"]
@@ -7918,6 +8637,7 @@ ja = "モザイク"
 "zh-CN" = "马赛克"
 "zh-TW" = "馬賽克"
 "ko" = "모자이크"
+"ru" = "Мозаика"
 pt = "Mosaico"
 
 ["Noise"]
@@ -7929,6 +8649,7 @@ ja = "ノイズ"
 "zh-CN" = "噪声"
 "zh-TW" = "雜訊"
 "ko" = "노이즈"
+"ru" = "Шум"
 pt = "Ruído"
 
 ["Noise gate"]
@@ -7940,6 +8661,7 @@ ja = "ノイズゲート"
 "zh-CN" = "噪声门"
 "zh-TW" = "雜訊閘門"
 "ko" = "노이즈 게이트"
+"ru" = "Шумовой гейт"
 pt = "Gate de ruído"
 
 ["Pan"]
@@ -7951,6 +8673,7 @@ ja = "パン"
 "zh-CN" = "平移"
 "zh-TW" = "平移"
 "ko" = "팬"
+"ru" = "Панорамирование"
 pt = "Panorâmica"
 
 ["Path offset"]
@@ -7962,6 +8685,7 @@ ja = "パスオフセット"
 "zh-CN" = "路径偏移"
 "zh-TW" = "路徑偏移"
 "ko" = "경로 오프셋"
+"ru" = "Смещение пути"
 pt = "Deslocamento do caminho"
 
 ["Phone mic"]
@@ -7973,6 +8697,7 @@ ja = "電話マイク"
 "zh-CN" = "手机麦克风"
 "zh-TW" = "手機麥克風"
 "ko" = "휴대폰 마이크"
+"ru" = "Телефонный микрофон"
 pt = "Microfone de telefone"
 
 ["Point Light"]
@@ -7984,6 +8709,7 @@ ja = "ポイントライト"
 "zh-CN" = "点光源"
 "zh-TW" = "點光源"
 "ko" = "포인트 라이트"
+"ru" = "Точечный свет"
 pt = "Luz pontual"
 
 ["Posterize"]
@@ -7995,6 +8721,7 @@ ja = "ポスタリゼーション"
 "zh-CN" = "色调分离"
 "zh-TW" = "色調分離"
 "ko" = "포스터라이즈"
+"ru" = "Постеризация"
 pt = "Posterizar"
 
 ["Radial blur"]
@@ -8006,6 +8733,7 @@ ja = "放射状ぼかし"
 "zh-CN" = "径向模糊"
 "zh-TW" = "徑向模糊"
 "ko" = "방사형 흐림"
+"ru" = "Радиальное размытие"
 pt = "Desfoque radial"
 
 ["Rasterize"]
@@ -8017,6 +8745,7 @@ ja = "ラスタライズ"
 "zh-CN" = "光栅化"
 "zh-TW" = "光柵化"
 "ko" = "래스터화"
+"ru" = "Растеризация"
 pt = "Rasterizar"
 
 ["Reverb"]
@@ -8028,6 +8757,7 @@ ja = "リバーブ"
 "zh-CN" = "混响"
 "zh-TW" = "混響"
 "ko" = "리버브"
+"ru" = "Реверберация"
 pt = "Reverberação"
 
 ["Rewrite"]
@@ -8039,6 +8769,7 @@ ja = "書き直し"
 "zh-CN" = "改写"
 "zh-TW" = "改寫"
 "ko" = "고쳐 쓰기"
+"ru" = "Переписать"
 pt = "Reescrever"
 
 ["Sampling"]
@@ -8050,6 +8781,7 @@ ja = "サンプリング"
 "zh-CN" = "采样"
 "zh-TW" = "取樣"
 "ko" = "샘플링"
+"ru" = "Семплирование"
 pt = "Amostragem"
 
 ["Shaky path"]
@@ -8061,6 +8793,7 @@ ja = "揺れるパス"
 "zh-CN" = "抖动路径"
 "zh-TW" = "抖動路徑"
 "ko" = "흔들리는 경로"
+"ru" = "Трясущийся путь"
 pt = "Caminho trêmulo"
 
 ["Sharpen"]
@@ -8072,6 +8805,7 @@ ja = "シャープ"
 "zh-CN" = "锐化"
 "zh-TW" = "銳化"
 "ko" = "선명하게"
+"ru" = "Повысить резкость"
 pt = "Nitidez"
 
 ["Stereo width"]
@@ -8083,6 +8817,7 @@ ja = "ステレオ幅"
 "zh-CN" = "立体声宽度"
 "zh-TW" = "立體聲寬度"
 "ko" = "스테레오 폭"
+"ru" = "Ширина стерео"
 pt = "Largura estéreo"
 
 ["Sun"]
@@ -8094,6 +8829,7 @@ ja = "太陽"
 "zh-CN" = "太阳"
 "zh-TW" = "太陽"
 "ko" = "해"
+"ru" = "Солнце"
 pt = "Sol"
 
 ["Text mask"]
@@ -8105,6 +8841,7 @@ ja = "テキストマスク"
 "zh-CN" = "文本掩码"
 "zh-TW" = "文字遮罩"
 "ko" = "텍스트 마스크"
+"ru" = "Текстовая маска"
 pt = "Máscara de texto"
 
 ["Texture bounds"]
@@ -8116,6 +8853,7 @@ ja = "テクスチャ境界"
 "zh-CN" = "纹理边界"
 "zh-TW" = "紋理邊界"
 "ko" = "텍스처 경계"
+"ru" = "Границы текстуры"
 pt = "Limites da textura"
 
 ["Transparent Fill"]
@@ -8127,6 +8865,7 @@ ja = "透明塗り"
 "zh-CN" = "透明填充"
 "zh-TW" = "透明填充"
 "ko" = "투명 채우기"
+"ru" = "Прозрачная заливка"
 pt = "Preenchimento transparente"
 
 ["Tremolo"]
@@ -8138,6 +8877,7 @@ ja = "トレモロ"
 "zh-CN" = "颤音"
 "zh-TW" = "顫音"
 "ko" = "트레몰로"
+"ru" = "Тремоло"
 pt = "Trêmolo"
 
 ["Twirl"]
@@ -8149,6 +8889,7 @@ ja = "渦巻き"
 "zh-CN" = "旋转扭曲"
 "zh-TW" = "旋轉扭曲"
 "ko" = "회오리"
+"ru" = "Закручивание"
 pt = "Redemoinho"
 
 ["Vectorize"]
@@ -8160,6 +8901,7 @@ ja = "ベクター化"
 "zh-CN" = "矢量化"
 "zh-TW" = "向量化"
 "ko" = "벡터화"
+"ru" = "Векторизация"
 pt = "Vetorizar"
 
 ["Vignette"]
@@ -8171,6 +8913,7 @@ ja = "ビネット"
 "zh-CN" = "暗角"
 "zh-TW" = "暗角"
 "ko" = "비네트"
+"ru" = "Виньетка"
 pt = "Vinheta"
 
 ["Voice Change"]
@@ -8182,6 +8925,7 @@ ja = "ボイスチェンジ"
 "zh-CN" = "变声"
 "zh-TW" = "變聲"
 "ko" = "음성 변경"
+"ru" = "Смена голоса"
 pt = "Mudança de voz"
 
 ["Wave"]
@@ -8193,6 +8937,7 @@ ja = "波"
 "zh-CN" = "波浪"
 "zh-TW" = "波浪"
 "ko" = "웨이브"
+"ru" = "Волна"
 pt = "Onda"
 
 ["Zoom blur"]
@@ -8204,6 +8949,7 @@ ja = "ズームぼかし"
 "zh-CN" = "变焦模糊"
 "zh-TW" = "變焦模糊"
 "ko" = "줌 블러"
+"ru" = "Размытие с увеличением"
 pt = "Desfoque de zoom"
 
 ["Diff"]
@@ -8215,6 +8961,7 @@ ja = "差分"
 "zh-CN" = "差异"
 "zh-TW" = "差異"
 "ko" = "차이"
+"ru" = "Различия"
 pt = "Diferença"
 
 ["Back In"]
@@ -8226,6 +8973,7 @@ ja = "バック・イン"
 "zh-CN" = "回退缓入"
 "zh-TW" = "回退緩入"
 "ko" = "백 인"
+"ru" = "С возвратом, вход"
 pt = "Recuo de entrada"
 
 ["Back Out"]
@@ -8237,6 +8985,7 @@ ja = "バック・アウト"
 "zh-CN" = "回退缓出"
 "zh-TW" = "回退緩出"
 "ko" = "백 아웃"
+"ru" = "С возвратом, выход"
 pt = "Recuo de saída"
 
 ["Back In Out"]
@@ -8248,6 +8997,7 @@ ja = "バック・インアウト"
 "zh-CN" = "回退缓入缓出"
 "zh-TW" = "回退緩入緩出"
 "ko" = "백 인아웃"
+"ru" = "С возвратом, вход-выход"
 pt = "Recuo de entrada e saída"
 
 ["Bounce In"]
@@ -8259,6 +9009,7 @@ ja = "バウンス・イン"
 "zh-CN" = "弹入"
 "zh-TW" = "彈入"
 "ko" = "바운스 인"
+"ru" = "Отскок, вход"
 pt = "Rebote de entrada"
 
 ["Bounce Out"]
@@ -8270,6 +9021,7 @@ ja = "バウンス・アウト"
 "zh-CN" = "弹出"
 "zh-TW" = "彈出"
 "ko" = "바운스 아웃"
+"ru" = "Отскок, выход"
 pt = "Rebote de saída"
 
 ["Bounce In Out"]
@@ -8281,6 +9033,7 @@ ja = "バウンス・インアウト"
 "zh-CN" = "弹进弹出"
 "zh-TW" = "彈進彈出"
 "ko" = "바운스 인 아웃"
+"ru" = "Отскок, вход-выход"
 pt = "Rebote de entrada e saída"
 
 ["Circular In"]
@@ -8292,6 +9045,7 @@ ja = "円・イン"
 "zh-CN" = "圆形缓入"
 "zh-TW" = "圓形緩入"
 "ko" = "서큘러 인"
+"ru" = "Круговой, вход"
 pt = "Circular de entrada"
 
 ["Circular Out"]
@@ -8303,6 +9057,7 @@ ja = "円・アウト"
 "zh-CN" = "圆形缓出"
 "zh-TW" = "圓形緩出"
 "ko" = "서큘러 아웃"
+"ru" = "Круговой, выход"
 pt = "Circular de saída"
 
 ["Circular In Out"]
@@ -8314,6 +9069,7 @@ ja = "円・インアウト"
 "zh-CN" = "圆形缓入缓出"
 "zh-TW" = "圓形緩入緩出"
 "ko" = "서큘러 인아웃"
+"ru" = "Круговой, вход-выход"
 pt = "Circular de entrada e saída"
 
 ["Cubic In"]
@@ -8325,6 +9081,7 @@ ja = "3次・イン"
 "zh-CN" = "三次方缓入"
 "zh-TW" = "三次方緩入"
 "ko" = "큐빅 인"
+"ru" = "Кубический, вход"
 pt = "Cúbica de entrada"
 
 ["Cubic Out"]
@@ -8336,6 +9093,7 @@ ja = "3次・アウト"
 "zh-CN" = "三次方缓出"
 "zh-TW" = "三次方緩出"
 "ko" = "큐빅 아웃"
+"ru" = "Кубический, выход"
 pt = "Cúbica de saída"
 
 ["Cubic In Out"]
@@ -8347,6 +9105,7 @@ ja = "3次・インアウト"
 "zh-CN" = "三次方缓入缓出"
 "zh-TW" = "三次方緩入緩出"
 "ko" = "큐빅 인아웃"
+"ru" = "Кубический, вход-выход"
 pt = "Cúbica de entrada e saída"
 
 ["Elastic In"]
@@ -8358,6 +9117,7 @@ ja = "弾性・イン"
 "zh-CN" = "弹性缓入"
 "zh-TW" = "彈性緩入"
 "ko" = "엘라스틱 인"
+"ru" = "Упругий, вход"
 pt = "Elástica de entrada"
 
 ["Elastic Out"]
@@ -8369,6 +9129,7 @@ ja = "弾性・アウト"
 "zh-CN" = "弹性缓出"
 "zh-TW" = "彈性緩出"
 "ko" = "엘라스틱 아웃"
+"ru" = "Упругий, выход"
 pt = "Elástica de saída"
 
 ["Elastic In Out"]
@@ -8380,6 +9141,7 @@ ja = "弾性・インアウト"
 "zh-CN" = "弹性缓入缓出"
 "zh-TW" = "彈性緩入緩出"
 "ko" = "엘라스틱 인아웃"
+"ru" = "Упругий, вход-выход"
 pt = "Elástica de entrada e saída"
 
 ["Exponential In"]
@@ -8391,6 +9153,7 @@ ja = "指数・イン"
 "zh-CN" = "指数缓入"
 "zh-TW" = "指數緩入"
 "ko" = "익스포넨셜 인"
+"ru" = "Экспоненциальный, вход"
 pt = "Exponencial de entrada"
 
 ["Exponential Out"]
@@ -8402,6 +9165,7 @@ ja = "指数・アウト"
 "zh-CN" = "指数缓出"
 "zh-TW" = "指數緩出"
 "ko" = "익스포넨셜 아웃"
+"ru" = "Экспоненциальный, выход"
 pt = "Exponencial de saída"
 
 ["Exponential In Out"]
@@ -8413,6 +9177,7 @@ ja = "指数・インアウト"
 "zh-CN" = "指数缓入缓出"
 "zh-TW" = "指數緩入緩出"
 "ko" = "익스포넨셜 인아웃"
+"ru" = "Экспоненциальный, вход-выход"
 pt = "Exponencial de entrada e saída"
 
 ["Quad In"]
@@ -8424,6 +9189,7 @@ ja = "2次・イン"
 "zh-CN" = "二次方缓入"
 "zh-TW" = "二次方緩入"
 "ko" = "쿼드 인"
+"ru" = "Квадратичный, вход"
 pt = "Quadrática de entrada"
 
 ["Quad Out"]
@@ -8435,6 +9201,7 @@ ja = "2次・アウト"
 "zh-CN" = "二次方缓出"
 "zh-TW" = "二次方緩出"
 "ko" = "쿼드 아웃"
+"ru" = "Квадратичный, выход"
 pt = "Quadrática de saída"
 
 ["Quad In Out"]
@@ -8446,6 +9213,7 @@ ja = "2次・インアウト"
 "zh-CN" = "二次方缓入缓出"
 "zh-TW" = "二次方緩入緩出"
 "ko" = "쿼드 인아웃"
+"ru" = "Квадратичный, вход-выход"
 pt = "Quadrática de entrada e saída"
 
 ["Quart In"]
@@ -8457,6 +9225,7 @@ ja = "4次・イン"
 "zh-CN" = "四次方缓入"
 "zh-TW" = "四次方緩入"
 "ko" = "쿼트 인"
+"ru" = "Квартичный, вход"
 pt = "Quártica de entrada"
 
 ["Quart Out"]
@@ -8468,6 +9237,7 @@ ja = "4次・アウト"
 "zh-CN" = "四次方缓出"
 "zh-TW" = "四次方緩出"
 "ko" = "쿼트 아웃"
+"ru" = "Квартичный, выход"
 pt = "Quártica de saída"
 
 ["Quart In Out"]
@@ -8479,6 +9249,7 @@ ja = "4次・インアウト"
 "zh-CN" = "四次方缓入缓出"
 "zh-TW" = "四次方緩入緩出"
 "ko" = "쿼트 인아웃"
+"ru" = "Квартичный, вход-выход"
 pt = "Quártica de entrada e saída"
 
 ["Quint In"]
@@ -8490,6 +9261,7 @@ ja = "5次・イン"
 "zh-CN" = "五次方缓入"
 "zh-TW" = "五次方緩入"
 "ko" = "퀸트 인"
+"ru" = "Квинтический, вход"
 pt = "Quíntica de entrada"
 
 ["Quint Out"]
@@ -8501,6 +9273,7 @@ ja = "5次・アウト"
 "zh-CN" = "五次方缓出"
 "zh-TW" = "五次方緩出"
 "ko" = "퀸트 아웃"
+"ru" = "Квинтический, выход"
 pt = "Quíntica de saída"
 
 ["Quint In Out"]
@@ -8512,6 +9285,7 @@ ja = "5次・インアウト"
 "zh-CN" = "五次方缓入缓出"
 "zh-TW" = "五次方緩入緩出"
 "ko" = "퀸트 인아웃"
+"ru" = "Квинтический, вход-выход"
 pt = "Quíntica de entrada e saída"
 
 ["Sine In"]
@@ -8523,6 +9297,7 @@ ja = "サイン・イン"
 "zh-CN" = "正弦缓入"
 "zh-TW" = "正弦緩入"
 "ko" = "사인 인"
+"ru" = "Синусоидальный, вход"
 pt = "Seno de entrada"
 
 ["Sine Out"]
@@ -8534,6 +9309,7 @@ ja = "サイン・アウト"
 "zh-CN" = "正弦缓出"
 "zh-TW" = "正弦緩出"
 "ko" = "사인 아웃"
+"ru" = "Синусоидальный, выход"
 pt = "Seno de saída"
 
 ["Sine In Out"]
@@ -8545,6 +9321,7 @@ ja = "サイン・インアウト"
 "zh-CN" = "正弦缓入缓出"
 "zh-TW" = "正弦緩入緩出"
 "ko" = "사인 인아웃"
+"ru" = "Синусоидальный, вход-выход"
 pt = "Seno de entrada e saída"
 
 ["1 video track"]
@@ -8556,6 +9333,7 @@ ja = "ビデオトラック1本"
 "zh-CN" = "1 条视频轨道"
 "zh-TW" = "1 條影片軌道"
 "ko" = "비디오 트랙 1개"
+"ru" = "1 видеодорожка"
 pt = "1 faixa de vídeo"
 
 ["%{count} video tracks"]
@@ -8567,6 +9345,7 @@ ja = "ビデオトラック%{count}本"
 "zh-CN" = "%{count} 条视频轨道"
 "zh-TW" = "%{count} 條影片軌道"
 "ko" = "비디오 트랙 %{count}개"
+"ru" = "Видеодорожек: %{count}"
 pt = "%{count} faixas de vídeo"
 
 ["1 audio track"]
@@ -8578,6 +9357,7 @@ ja = "オーディオトラック1本"
 "zh-CN" = "1 条音轨"
 "zh-TW" = "1 條音軌"
 "ko" = "오디오 트랙 1개"
+"ru" = "1 аудиодорожка"
 pt = "1 faixa de áudio"
 
 ["%{count} audio tracks"]
@@ -8589,6 +9369,7 @@ ja = "オーディオトラック%{count}本"
 "zh-CN" = "%{count} 条音轨"
 "zh-TW" = "%{count} 條音軌"
 "ko" = "오디오 트랙 %{count}개"
+"ru" = "Аудиодорожек: %{count}"
 pt = "%{count} faixas de áudio"
 
 ["1 caption track"]
@@ -8600,6 +9381,7 @@ ja = "字幕トラック1本"
 "zh-CN" = "1 条字幕轨道"
 "zh-TW" = "1 條字幕軌道"
 "ko" = "자막 트랙 1개"
+"ru" = "1 дорожка субтитров"
 pt = "1 faixa de legendas"
 
 ["%{count} caption tracks"]
@@ -8611,6 +9393,7 @@ ja = "字幕トラック%{count}本"
 "zh-CN" = "%{count} 条字幕轨道"
 "zh-TW" = "%{count} 條字幕軌道"
 "ko" = "자막 트랙 %{count}개"
+"ru" = "Дорожек субтитров: %{count}"
 pt = "%{count} faixas de legendas"
 
 ["1 page"]
@@ -8622,6 +9405,7 @@ ja = "1ページ"
 "zh-CN" = "1 页"
 "zh-TW" = "1 頁"
 "ko" = "1페이지"
+"ru" = "1 страница"
 pt = "1 página"
 
 ["%{count} pages"]
@@ -8633,6 +9417,7 @@ ja = "%{count}ページ"
 "zh-CN" = "%{count} 页"
 "zh-TW" = "%{count} 頁"
 "ko" = "%{count} 페이지"
+"ru" = "Страниц: %{count}"
 pt = "%{count} páginas"
 
 ["3D models"]
@@ -8644,6 +9429,7 @@ ja = "3Dモデル"
 "zh-CN" = "3D 模型"
 "zh-TW" = "3D 模型"
 "ko" = "3D 모델"
+"ru" = "3D-модели"
 pt = "Modelos 3D"
 
 ["OptiX denoiser"]
@@ -8655,6 +9441,7 @@ ja = "OptiX デノイザー"
 "zh-CN" = "OptiX 降噪器"
 "zh-TW" = "OptiX 降噪器"
 "ko" = "OptiX 디노이저"
+"ru" = "Денойзер OptiX"
 pt = "Redutor de ruído OptiX"
 
 ["2× rotated grid"]
@@ -8666,6 +9453,7 @@ ja = "2倍回転グリッド"
 "zh-CN" = "2×旋转网格"
 "zh-TW" = "2×旋轉網格"
 "ko" = "2× 회전 그리드"
+"ru" = "Сетка 2× повёрнутая"
 pt = "Grade rotacionada 2×"
 
 ["4× grid"]
@@ -8677,6 +9465,7 @@ ja = "4倍グリッド"
 "zh-CN" = "4×网格"
 "zh-TW" = "4×網格"
 "ko" = "4× 그리드"
+"ru" = "Сетка 4×"
 pt = "Grade 4×"
 
 ["8× stochastic"]
@@ -8688,6 +9477,7 @@ ja = "8倍確率的"
 "zh-CN" = "8×随机"
 "zh-TW" = "8×隨機"
 "ko" = "8× 확률론적"
+"ru" = "8× стохастический"
 pt = "Estocástico 8×"
 
 ["FLAC · Lossless"]
@@ -8699,6 +9489,7 @@ ja = "FLAC · ロスレス"
 "zh-CN" = "FLAC·无损"
 "zh-TW" = "FLAC·無損"
 "ko" = "FLAC · 무손실"
+"ru" = "FLAC · Без потерь"
 pt = "FLAC · Sem perdas"
 
 ["H.265 · Balanced"]
@@ -8710,6 +9501,7 @@ ja = "H.265 · バランス"
 "zh-CN" = "H.265·平衡"
 "zh-TW" = "H.265·平衡"
 "ko" = "H.265 · 균형"
+"ru" = "H.265 · Сбалансированный"
 pt = "H.265 · Equilibrado"
 
 ["H.265 · Compact"]
@@ -8721,6 +9513,7 @@ ja = "H.265 · コンパクト"
 "zh-CN" = "H.265·紧凑型"
 "zh-TW" = "H.265·緊湊型"
 "ko" = "H.265 · 컴팩트"
+"ru" = "H.265 · Компактный"
 pt = "H.265 · Compacto"
 
 ["H.265 · High"]
@@ -8732,6 +9525,7 @@ ja = "H.265 · 高品質"
 "zh-CN" = "H.265·高"
 "zh-TW" = "H.265·高"
 "ko" = "H.265 · 높음"
+"ru" = "H.265 · Высокое"
 pt = "H.265 · Alto"
 
 ["H.265 · Lossless"]
@@ -8743,6 +9537,7 @@ ja = "H.265 · ロスレス"
 "zh-CN" = "H.265·无损"
 "zh-TW" = "H.265·無損"
 "ko" = "H.265 · 무손실"
+"ru" = "H.265 · Без потерь"
 pt = "H.265 · Sem perdas"
 
 ["Monospace Sans"]
@@ -8754,6 +9549,7 @@ ja = "等幅サンセリフ"
 "zh-CN" = "等宽无衬线体"
 "zh-TW" = "等寬無襯線體"
 "ko" = "고정폭 산세리프"
+"ru" = "Моноширинный гротеск"
 pt = "Monoespaçada sem serifa"
 
 ["Monospace Serif"]
@@ -8765,6 +9561,7 @@ ja = "等幅セリフ"
 "zh-CN" = "等宽衬线体"
 "zh-TW" = "等寬襯線體"
 "ko" = "고정폭 세리프"
+"ru" = "Моноширинный с засечками"
 pt = "Monoespaçada com serifa"
 
 ["Opus · Balanced"]
@@ -8776,6 +9573,7 @@ ja = "Opus · バランス"
 "zh-CN" = "Opus · 平衡"
 "zh-TW" = "Opus · 平衡"
 "ko" = "Opus · 균형"
+"ru" = "Opus · Сбалансированный"
 pt = "Opus · Equilibrado"
 
 ["Opus · Compact"]
@@ -8787,6 +9585,7 @@ ja = "Opus · コンパクト"
 "zh-CN" = "Opus · 紧凑"
 "zh-TW" = "Opus · 精簡"
 "ko" = "Opus · 컴팩트"
+"ru" = "Opus · Компактный"
 pt = "Opus · Compacto"
 
 ["Opus · High"]
@@ -8798,4 +9597,5 @@ ja = "Opus · 高品質"
 "zh-CN" = "Opus · 高质量"
 "zh-TW" = "Opus · 高品質"
 "ko" = "Opus · 고품질"
+"ru" = "Opus · Высокое"
 pt = "Opus · Alto"

@@ -9,6 +9,7 @@ ja = "サーバーに接続しています…"
 "zh-CN" = "正在连接到服务器…"
 "zh-TW" = "正在連接到伺服器…"
 "ko" = "서버에 연결하는 중…"
+"ru" = "Подключение к серверу…"
 pt = "Conectando ao servidor…"
 
 ["Generate"]
@@ -20,6 +21,7 @@ ja = "生成"
 "zh-CN" = "生成"
 "zh-TW" = "生成"
 "ko" = "생성"
+"ru" = "Создать"
 pt = "Gerar"
 
 ["Regenerate"]
@@ -31,6 +33,7 @@ ja = "再生成"
 "zh-CN" = "重新生成"
 "zh-TW" = "重新生成"
 "ko" = "다시 생성"
+"ru" = "Создать заново"
 pt = "Regenerar"
 
 ["Ready"]
@@ -42,6 +45,7 @@ ja = "準備完了"
 "zh-CN" = "就绪"
 "zh-TW" = "就緒"
 "ko" = "준비됨"
+"ru" = "Готово"
 pt = "Pronto"
 
 ["Select a model"]
@@ -53,6 +57,7 @@ ja = "モデルを選択してください"
 "zh-CN" = "选择模型"
 "zh-TW" = "選擇模型"
 "ko" = "모델 선택"
+"ru" = "Выберите модель"
 pt = "Selecione um modelo"
 
 ["Generated"]
@@ -64,6 +69,7 @@ ja = "生成完了"
 "zh-CN" = "已生成"
 "zh-TW" = "已生成"
 "ko" = "생성됨"
+"ru" = "Создано"
 pt = "Gerado"
 
 ["Add…"]
@@ -75,6 +81,7 @@ ja = "追加…"
 "zh-CN" = "添加…"
 "zh-TW" = "新增…"
 "ko" = "추가…"
+"ru" = "Добавить…"
 pt = "Adicionar…"
 
 ["Show in Folder"]
@@ -86,6 +93,7 @@ ja = "フォルダーに表示"
 "zh-CN" = "在文件夹中显示"
 "zh-TW" = "在資料夾中顯示"
 "ko" = "폴더에서 보기"
+"ru" = "Показать в папке"
 pt = "Mostrar na pasta"
 
 ["Choose an audio file"]
@@ -97,6 +105,7 @@ ja = "音声ファイルを選択"
 "zh-CN" = "选择音频文件"
 "zh-TW" = "選擇音訊檔案"
 "ko" = "오디오 파일 선택"
+"ru" = "Выберите аудиофайл"
 pt = "Escolher um arquivo de áudio"
 
 ["Reference audio actions"]
@@ -108,6 +117,7 @@ ja = "参照音声の操作"
 "zh-CN" = "参考音频操作"
 "zh-TW" = "參考音訊操作"
 "ko" = "참조 오디오 작업"
+"ru" = "Действия с эталонным аудио"
 pt = "Ações de áudio de referência"
 
 ["Add row"]
@@ -119,6 +129,7 @@ ja = "行を追加"
 "zh-CN" = "添加行"
 "zh-TW" = "新增行"
 "ko" = "행 추가"
+"ru" = "Добавить строку"
 pt = "Adicionar linha"
 
 ["Remove row"]
@@ -130,6 +141,7 @@ ja = "行を削除"
 "zh-CN" = "删除行"
 "zh-TW" = "刪除行"
 "ko" = "행 삭제"
+"ru" = "Удалить строку"
 pt = "Remover linha"
 
 ["Export"]
@@ -141,6 +153,7 @@ ja = "書き出し"
 "zh-CN" = "导出"
 "zh-TW" = "匯出"
 "ko" = "내보내기"
+"ru" = "Экспорт"
 pt = "Exportar"
 
 ["Export video"]
@@ -152,6 +165,7 @@ ja = "動画を書き出す"
 "zh-CN" = "导出视频"
 "zh-TW" = "匯出影片"
 "ko" = "비디오 내보내기"
+"ru" = "Экспортировать видео"
 pt = "Exportar vídeo"
 
 ["Export captions (YTT)"]
@@ -163,6 +177,7 @@ ja = "字幕を書き出す（YTT）"
 "zh-CN" = "导出字幕 (YTT)"
 "zh-TW" = "匯出字幕 (YTT)"
 "ko" = "자막 내보내기(YTT)"
+"ru" = "Экспортировать субтитры (YTT)"
 pt = "Exportar legendas (YTT)"
 
 ["Export JSON"]
@@ -174,6 +189,7 @@ ja = "JSONを書き出す"
 "zh-CN" = "导出 JSON"
 "zh-TW" = "匯出 JSON"
 "ko" = "JSON 내보내기"
+"ru" = "Экспортировать JSON"
 pt = "Exportar JSON"
 
 ["Merge into one file"]
@@ -185,6 +201,7 @@ ja = "1つのファイルに結合"
 "zh-CN" = "合并为一个文件"
 "zh-TW" = "合併為一個檔案"
 "ko" = "하나의 파일로 병합"
+"ru" = "Объединить в один файл"
 pt = "Mesclar em um único arquivo"
 
 ["Export each track separately"]
@@ -196,6 +213,7 @@ ja = "各トラックを個別に書き出す"
 "zh-CN" = "单独导出每个轨道"
 "zh-TW" = "單獨匯出每個軌道"
 "ko" = "각 트랙을 별도로 내보내기"
+"ru" = "Экспортировать каждую дорожку отдельно"
 pt = "Exportar cada faixa separadamente"
 
 ["Export YTT"]
@@ -207,6 +225,7 @@ ja = "YTTを書き出す"
 "zh-CN" = "导出 YTT"
 "zh-TW" = "匯出 YTT"
 "ko" = "YTT 내보내기"
+"ru" = "Экспортировать YTT"
 pt = "Exportar YTT"
 
 ["Export Captions"]
@@ -218,6 +237,7 @@ ja = "字幕を書き出す"
 "zh-CN" = "导出字幕"
 "zh-TW" = "匯出字幕"
 "ko" = "자막 내보내기"
+"ru" = "Экспортировать субтитры"
 pt = "Exportar legendas"
 
 ["Export YouTube Captions"]
@@ -229,6 +249,7 @@ ja = "YouTube字幕を書き出す"
 "zh-CN" = "导出 YouTube 字幕"
 "zh-TW" = "匯出 YouTube 字幕"
 "ko" = "YouTube 자막 내보내기"
+"ru" = "Экспортировать субтитры YouTube"
 pt = "Exportar legendas do YouTube"
 
 ["Captions exported"]
@@ -240,6 +261,7 @@ ja = "字幕を書き出しました"
 "zh-CN" = "字幕已导出"
 "zh-TW" = "字幕已匯出"
 "ko" = "자막을 내보냈습니다"
+"ru" = "Субтитры экспортированы"
 pt = "Legendas exportadas"
 
 ["%{count} caption files exported"]
@@ -251,6 +273,7 @@ ja = "%{count}個の字幕ファイルを書き出しました"
 "zh-CN" = "已导出 %{count} 个字幕文件"
 "zh-TW" = "已匯出 %{count} 個字幕檔案"
 "ko" = "%{count}개의 자막 파일을 내보냈습니다."
+"ru" = "Экспортировано файлов субтитров: %{count}"
 pt = "%{count} arquivos de legenda exportados"
 
 ["Export format"]
@@ -262,6 +285,7 @@ ja = "書き出し形式"
 "zh-CN" = "导出格式"
 "zh-TW" = "匯出格式"
 "ko" = "내보내기 형식"
+"ru" = "Формат экспорта"
 pt = "Formato de exportação"
 
 ["Container"]
@@ -273,6 +297,7 @@ ja = "コンテナ"
 "zh-CN" = "容器"
 "zh-TW" = "容器"
 "ko" = "컨테이너"
+"ru" = "Контейнер"
 pt = "Contêiner"
 
 ["Background Alpha"]
@@ -284,6 +309,7 @@ ja = "背景のアルファ"
 "zh-CN" = "背景 Alpha"
 "zh-TW" = "背景 Alpha"
 "ko" = "배경 알파"
+"ru" = "Альфа-фон"
 pt = "Alfa do fundo"
 
 ["Values below 128 are transparent in GIF output"]
@@ -295,6 +321,7 @@ ja = "128未満の値はGIF出力で透明になります"
 "zh-CN" = "低于 128 的值在 GIF 输出中是透明的"
 "zh-TW" = "低於 128 的值在 GIF 輸出中是透明的"
 "ko" = "128 미만의 값은 GIF 출력에서 투명합니다."
+"ru" = "Значения ниже 128 прозрачны в выводе GIF"
 pt = "Valores abaixo de 128 ficam transparentes na saída em GIF"
 
 ["Rate Control"]
@@ -306,6 +333,7 @@ ja = "レート制御"
 "zh-CN" = "码率控制"
 "zh-TW" = "位元率控制"
 "ko" = "비트레이트 제어"
+"ru" = "Управление битрейтом"
 pt = "Controle de taxa"
 
 ["Constant QP"]
@@ -317,6 +345,7 @@ ja = "固定QP"
 "zh-CN" = "恒定 QP"
 "zh-TW" = "固定 QP"
 "ko" = "고정 QP"
+"ru" = "Постоянный QP"
 pt = "QP constante"
 
 ["Constant Bitrate"]
@@ -328,6 +357,7 @@ ja = "固定ビットレート"
 "zh-CN" = "恒定比特率"
 "zh-TW" = "恆定位元率"
 "ko" = "고정 비트레이트"
+"ru" = "Постоянный битрейт"
 pt = "Taxa de bits constante"
 
 ["Variable Bitrate"]
@@ -339,6 +369,7 @@ ja = "可変ビットレート"
 "zh-CN" = "可变比特率"
 "zh-TW" = "可變位元率"
 "ko" = "가변 비트레이트"
+"ru" = "Переменный битрейт"
 pt = "Taxa de bits variável"
 
 ["Variable Bitrate with Target Quality"]
@@ -350,6 +381,7 @@ ja = "目標品質付き可変ビットレート"
 "zh-CN" = "目标质量可变比特率"
 "zh-TW" = "目標品質可變位元率"
 "ko" = "목표 품질 기반 가변 비트레이트"
+"ru" = "Переменный битрейт с целевым качеством"
 pt = "Taxa de bits variável com qualidade alvo"
 
 ["Lossless"]
@@ -361,6 +393,7 @@ ja = "可逆"
 "zh-CN" = "无损"
 "zh-TW" = "無損"
 "ko" = "무손실"
+"ru" = "Без потерь"
 pt = "Sem perdas"
 
 ["Video Bitrate"]
@@ -372,6 +405,7 @@ ja = "動画ビットレート"
 "zh-CN" = "视频比特率"
 "zh-TW" = "影片位元率"
 "ko" = "비디오 비트레이트"
+"ru" = "Битрейт видео"
 pt = "Taxa de bits do vídeo"
 
 ["Kbps for CBR/VBR"]
@@ -383,6 +417,7 @@ ja = "CBR/VBRのKbps"
 "zh-CN" = "CBR/VBR 的 Kbps"
 "zh-TW" = "CBR/VBR 的 Kbps"
 "ko" = "CBR/VBR용 Kbps"
+"ru" = "Кбит/с для CBR/VBR"
 pt = "Kbps para CBR/VBR"
 
 ["Max Video Bitrate"]
@@ -394,6 +429,7 @@ ja = "最大動画ビットレート"
 "zh-CN" = "最大视频比特率"
 "zh-TW" = "最大影片位元率"
 "ko" = "최대 비디오 비트 전송률"
+"ru" = "Максимальный битрейт видео"
 pt = "Taxa máxima de bits do vídeo"
 
 ["Kbps for VBR"]
@@ -405,6 +441,7 @@ ja = "VBRのKbps"
 "zh-CN" = "VBR 的 Kbps"
 "zh-TW" = "VBR 的 Kbps"
 "ko" = "VBR용 Kbps"
+"ru" = "Кбит/с для VBR"
 pt = "Kbps para VBR"
 
 ["Target Quality"]
@@ -416,6 +453,7 @@ ja = "目標品質"
 "zh-CN" = "目标质量"
 "zh-TW" = "目標品質"
 "ko" = "목표 품질"
+"ru" = "Целевое качество"
 pt = "Qualidade alvo"
 
 ["Lower values are higher quality"]
@@ -427,6 +465,7 @@ ja = "値が小さいほど高品質です"
 "zh-CN" = "值越低，质量越高"
 "zh-TW" = "數值越低，品質越高"
 "ko" = "값이 낮을수록 품질이 높아집니다."
+"ru" = "Меньшие значения означают более высокое качество"
 pt = "Valores menores significam maior qualidade"
 
 ["Keyframe Interval"]
@@ -438,6 +477,7 @@ ja = "キーフレーム間隔"
 "zh-CN" = "关键帧间隔"
 "zh-TW" = "關鍵影格間隔"
 "ko" = "키프레임 간격"
+"ru" = "Интервал ключевых кадров"
 pt = "Intervalo de quadros-chave"
 
 ["Seconds; 0 lets NVENC choose"]
@@ -449,6 +489,7 @@ ja = "秒。0の場合はNVENCが選択します"
 "zh-CN" = "秒；设为 0 时由 NVENC 选择"
 "zh-TW" = "秒；設為 0 時由 NVENC 選擇"
 "ko" = "초; 0으로 설정하면 NVENC가 선택"
+"ru" = "Секунды; 0 позволяет выбрать NVENC"
 pt = "Segundos; 0 permite que o NVENC escolha"
 
 ["P1: Fastest (Lowest Quality)"]
@@ -460,6 +501,7 @@ ja = "P1: 最速（最低品質）"
 "zh-CN" = "P1：最快（质量最低）"
 "zh-TW" = "P1：最快（品質最低）"
 "ko" = "P1: 가장 빠름(품질이 가장 낮음)"
+"ru" = "P1: Самый быстрый (самое низкое качество)"
 pt = "P1: Mais rápido (Menor qualidade)"
 
 ["P2: Faster (Lower Quality)"]
@@ -471,6 +513,7 @@ ja = "P2: 高速（低品質）"
 "zh-CN" = "P2：更快（质量较低）"
 "zh-TW" = "P2：更快（品質較低）"
 "ko" = "P2: 더 빠름(낮은 품질)"
+"ru" = "P2: Быстрее (низкое качество)"
 pt = "P2: Mais rápido (Qualidade inferior)"
 
 ["P3: Fast (Low Quality)"]
@@ -482,6 +525,7 @@ ja = "P3: 速い（低品質）"
 "zh-CN" = "P3：快速（低质量）"
 "zh-TW" = "P3：快速（低品質）"
 "ko" = "P3: 빠름(낮은 품질)"
+"ru" = "P3: Быстро (низкое качество)"
 pt = "P3: Rápido (Baixa qualidade)"
 
 ["P4: Medium (Medium Quality)"]
@@ -493,6 +537,7 @@ ja = "P4: 標準（標準品質）"
 "zh-CN" = "P4：中（中等质量）"
 "zh-TW" = "P4：中（中等品質）"
 "ko" = "P4: 중간(중간 품질)"
+"ru" = "P4: Средне (среднее качество)"
 pt = "P4: Médio (Qualidade média)"
 
 ["P5: Slow (Good Quality)"]
@@ -504,6 +549,7 @@ ja = "P5: 低速（高品質）"
 "zh-CN" = "P5：慢（质量好）"
 "zh-TW" = "P5：慢（品質好）"
 "ko" = "P5: 느림(품질 좋음)"
+"ru" = "P5: Медленно (хорошее качество)"
 pt = "P5: Lento (Boa qualidade)"
 
 ["P6: Slower (Better Quality)"]
@@ -515,6 +561,7 @@ ja = "P6: より低速（より高品質）"
 "zh-CN" = "P6：较慢（质量更好）"
 "zh-TW" = "P6：較慢（品質較好）"
 "ko" = "P6: 느림(품질 향상)"
+"ru" = "P6: Медленнее (качество лучше)"
 pt = "P6: Mais lento (Melhor qualidade)"
 
 ["P7: Slowest (Best Quality)"]
@@ -526,6 +573,7 @@ ja = "P7: 最低速（最高品質）"
 "zh-CN" = "P7：最慢（质量最好）"
 "zh-TW" = "P7：最慢（品質最好）"
 "ko" = "P7: 가장 느림(최고 품질)"
+"ru" = "P7: Самый медленный (лучшее качество)"
 pt = "P7: O mais lento (Melhor qualidade)"
 
 ["Tuning"]
@@ -537,6 +585,7 @@ ja = "チューニング"
 "zh-CN" = "调优"
 "zh-TW" = "調校"
 "ko" = "튜닝"
+"ru" = "Тюнинг"
 pt = "Ajuste fino"
 
 ["Ultra High Quality"]
@@ -548,6 +597,7 @@ ja = "超高品質"
 "zh-CN" = "超高品质"
 "zh-TW" = "超高品質"
 "ko" = "초고품질"
+"ru" = "Сверхвысокое качество"
 pt = "Qualidade ultra-alta"
 
 ["High Quality"]
@@ -559,6 +609,7 @@ ja = "高品質"
 "zh-CN" = "高质量"
 "zh-TW" = "高品質"
 "ko" = "고품질"
+"ru" = "Высокое качество"
 pt = "Alta qualidade"
 
 ["Low Latency"]
@@ -570,6 +621,7 @@ ja = "低遅延"
 "zh-CN" = "低延迟"
 "zh-TW" = "低延遲"
 "ko" = "낮은 대기 시간"
+"ru" = "Низкая задержка"
 pt = "Baixa latência"
 
 ["Ultra Low Latency"]
@@ -581,6 +633,7 @@ ja = "超低遅延"
 "zh-CN" = "超低延迟"
 "zh-TW" = "超低延遲"
 "ko" = "매우 낮은 지연 시간"
+"ru" = "Сверхнизкая задержка"
 pt = "Latência ultrabaixa"
 
 ["Multi Pass"]
@@ -592,6 +645,7 @@ ja = "マルチパス"
 "zh-CN" = "多次编码"
 "zh-TW" = "多重編碼"
 "ko" = "멀티패스"
+"ru" = "Многопроходное кодирование"
 pt = "Múltiplas passagens"
 
 ["Single Pass"]
@@ -603,6 +657,7 @@ ja = "1パス"
 "zh-CN" = "单次编码"
 "zh-TW" = "單次編碼"
 "ko" = "싱글 패스"
+"ru" = "Однопроходное кодирование"
 pt = "Passagem única"
 
 ["Two Passes (Quarter Resolution)"]
@@ -614,6 +669,7 @@ ja = "2パス（4分の1解像度）"
 "zh-CN" = "两次编码（四分之一分辨率）"
 "zh-TW" = "雙次編碼（四分之一解析度）"
 "ko" = "2패스(1/4 해상도)"
+"ru" = "Два прохода (четверть разрешения)"
 pt = "Duas passagens (Um quarto da resolução)"
 
 ["Two Passes (Full Resolution)"]
@@ -625,6 +681,7 @@ ja = "2パス（フル解像度）"
 "zh-CN" = "两次编码（全分辨率）"
 "zh-TW" = "雙次編碼（完整解析度）"
 "ko" = "2패스(전체 해상도)"
+"ru" = "Два прохода (полное разрешение)"
 pt = "Duas passagens (resolução máxima)"
 
 ["Profile"]
@@ -636,6 +693,7 @@ ja = "プロファイル"
 "zh-CN" = "配置文件"
 "zh-TW" = "設定檔"
 "ko" = "프로파일"
+"ru" = "Профиль"
 pt = "Perfil"
 
 ["Look-ahead"]
@@ -647,6 +705,7 @@ ja = "先読み"
 "zh-CN" = "前瞻"
 "zh-TW" = "前瞻"
 "ko" = "사전 분석"
+"ru" = "Упреждающий анализ"
 pt = "Look-ahead"
 
 ["Adaptive Quantization"]
@@ -658,6 +717,7 @@ ja = "適応量子化"
 "zh-CN" = "自适应量化"
 "zh-TW" = "自適應量化"
 "ko" = "적응형 양자화"
+"ru" = "Адаптивное квантование"
 pt = "Quantização adaptativa"
 
 ["B Frames"]
@@ -669,6 +729,7 @@ ja = "Bフレーム"
 "zh-CN" = "B 帧"
 "zh-TW" = "B 影格"
 "ko" = "B 프레임"
+"ru" = "B-кадры"
 pt = "Quadros B"
 
 ["B Frame as Reference"]
@@ -680,6 +741,7 @@ ja = "Bフレームを参照に使用"
 "zh-CN" = "将 B 帧用作参考"
 "zh-TW" = "將 B 影格作為參考"
 "ko" = "B 프레임을 참조로 사용"
+"ru" = "B-кадр как опорный"
 pt = "Quadro B como referência"
 
 ["Audio Encoder"]
@@ -691,6 +753,7 @@ ja = "音声エンコーダー"
 "zh-CN" = "音频编码器"
 "zh-TW" = "音訊編碼器"
 "ko" = "오디오 인코더"
+"ru" = "Аудиокодер"
 pt = "Codificador de áudio"
 
 ["Audio Sample Rate"]
@@ -702,6 +765,7 @@ ja = "音声サンプルレート"
 "zh-CN" = "音频采样率"
 "zh-TW" = "音訊取樣率"
 "ko" = "오디오 샘플링 속도"
+"ru" = "Частота дискретизации аудио"
 pt = "Taxa de amostragem de áudio"
 
 ["Audio Bitrate"]
@@ -713,6 +777,7 @@ ja = "音声ビットレート"
 "zh-CN" = "音频比特率"
 "zh-TW" = "音訊位元率"
 "ko" = "오디오 비트 전송률"
+"ru" = "Битрейт аудио"
 pt = "Taxa de bits de áudio"
 
 ["Kbps"]
@@ -724,6 +789,7 @@ ja = "Kbps"
 "zh-CN" = "Kbps"
 "zh-TW" = "Kbps"
 "ko" = "Kbps"
+"ru" = "Кбит/с"
 pt = "Kbps"
 
 ["Video format"]
@@ -735,6 +801,7 @@ ja = "動画形式"
 "zh-CN" = "视频格式"
 "zh-TW" = "影片格式"
 "ko" = "비디오 형식"
+"ru" = "Формат видео"
 pt = "Formato de vídeo"
 
 ["Encoder settings"]
@@ -746,6 +813,7 @@ ja = "エンコーダー設定"
 "zh-CN" = "编码器设置"
 "zh-TW" = "編碼器設定"
 "ko" = "인코더 설정"
+"ru" = "Настройки кодера"
 pt = "Configurações do codificador"
 
 ["Export Video"]
@@ -757,6 +825,7 @@ ja = "動画を書き出す"
 "zh-CN" = "导出视频"
 "zh-TW" = "匯出影片"
 "ko" = "비디오 내보내기"
+"ru" = "Экспортировать видео"
 pt = "Exportar vídeo"
 
 ["Video exported in %{duration}"]
@@ -768,6 +837,7 @@ ja = "%{duration}で動画を書き出しました"
 "zh-CN" = "视频已导出，用时 %{duration}"
 "zh-TW" = "影片已匯出，耗時 %{duration}"
 "ko" = "비디오를 %{duration} 만에 내보냈습니다"
+"ru" = "Видео экспортировано за %{duration}"
 pt = "Vídeo exportado em %{duration}"
 
 ["Exporting Video"]
@@ -779,6 +849,7 @@ ja = "動画を書き出しています"
 "zh-CN" = "正在导出视频"
 "zh-TW" = "正在匯出影片"
 "ko" = "비디오 내보내는 중"
+"ru" = "Экспорт видео"
 pt = "Exportando vídeo"
 
 ["Preparing"]
@@ -790,6 +861,7 @@ ja = "準備中"
 "zh-CN" = "准备中"
 "zh-TW" = "準備中"
 "ko" = "준비 중"
+"ru" = "Подготовка"
 pt = "Preparando"
 
 ["Stabilizing source video"]
@@ -801,6 +873,7 @@ ja = "元の動画を安定化しています"
 "zh-CN" = "正在稳定源视频"
 "zh-TW" = "正在穩定來源影片"
 "ko" = "소스 비디오 안정화 중"
+"ru" = "Стабилизация исходного видео"
 pt = "Estabilizando vídeo de origem"
 
 ["Opening output file"]
@@ -812,6 +885,7 @@ ja = "出力ファイルを開いています"
 "zh-CN" = "正在打开输出文件"
 "zh-TW" = "正在開啟輸出檔案"
 "ko" = "출력 파일 여는 중"
+"ru" = "Открытие файла вывода"
 pt = "Abrindo arquivo de saída"
 
 ["Preparing video renderer"]
@@ -823,6 +897,7 @@ ja = "動画レンダラーを準備しています"
 "zh-CN" = "正在准备视频渲染器"
 "zh-TW" = "正在準備影片算繪器"
 "ko" = "비디오 렌더러 준비 중"
+"ru" = "Подготовка видеорендерера"
 pt = "Preparando renderizador de vídeo"
 
 ["Preparing hardware frames"]
@@ -834,6 +909,7 @@ ja = "ハードウェアフレームを準備しています"
 "zh-CN" = "正在准备硬件帧"
 "zh-TW" = "正在準備硬體影格"
 "ko" = "하드웨어 프레임 준비 중"
+"ru" = "Подготовка аппаратных кадров"
 pt = "Preparando quadros de hardware"
 
 ["Opening video encoder"]
@@ -845,6 +921,7 @@ ja = "動画エンコーダーを開いています"
 "zh-CN" = "正在打开视频编码器"
 "zh-TW" = "正在開啟影片編碼器"
 "ko" = "비디오 인코더 여는 중"
+"ru" = "Открытие видеокодера"
 pt = "Abrindo codificador de vídeo"
 
 ["Opening audio encoder"]
@@ -856,6 +933,7 @@ ja = "音声エンコーダーを開いています"
 "zh-CN" = "正在打开音频编码器"
 "zh-TW" = "正在開啟音訊編碼器"
 "ko" = "오디오 인코더 여는 중"
+"ru" = "Открытие аудиокодера"
 pt = "Abrindo codificador de áudio"
 
 ["Writing media header"]
@@ -867,6 +945,7 @@ ja = "メディアヘッダーを書き込んでいます"
 "zh-CN" = "正在写入媒体标头"
 "zh-TW" = "正在寫入媒體標頭"
 "ko" = "미디어 헤더 작성 중"
+"ru" = "Запись медиазаголовка"
 pt = "Gravando cabeçalho de mídia"
 
 ["Preparing audio"]
@@ -878,6 +957,7 @@ ja = "音声を準備しています"
 "zh-CN" = "正在准备音频"
 "zh-TW" = "正在準備音訊"
 "ko" = "오디오 준비 중"
+"ru" = "Подготовка аудио"
 pt = "Preparando áudio"
 
 ["Preparing audio (%{percent}%)"]
@@ -889,6 +969,7 @@ ja = "音声を準備しています（%{percent}%）"
 "zh-CN" = "正在准备音频（%{percent}%）"
 "zh-TW" = "正在準備音訊（%{percent}%）"
 "ko" = "오디오 준비 중(%{percent}%)"
+"ru" = "Подготовка аудио (%{percent}%)"
 pt = "Preparando áudio (%{percent}%)"
 
 ["Encoding audio"]
@@ -900,6 +981,7 @@ ja = "音声をエンコードしています"
 "zh-CN" = "正在编码音频"
 "zh-TW" = "正在編碼音訊"
 "ko" = "오디오 인코딩 중"
+"ru" = "Кодирование аудио"
 pt = "Codificando áudio"
 
 ["Encoding audio (%{percent}%)"]
@@ -911,6 +993,7 @@ ja = "音声をエンコードしています（%{percent}%）"
 "zh-CN" = "正在编码音频（%{percent}%）"
 "zh-TW" = "正在編碼音訊（%{percent}%）"
 "ko" = "오디오 인코딩 중(%{percent}%)"
+"ru" = "Кодирование аудио (%{percent}%)"
 pt = "Codificando áudio (%{percent}%)"
 
 ["Rendering frames"]
@@ -922,6 +1005,7 @@ ja = "フレームをレンダリングしています"
 "zh-CN" = "正在渲染帧"
 "zh-TW" = "正在算繪影格"
 "ko" = "프레임 렌더링 중"
+"ru" = "Рендеринг кадров"
 pt = "Renderizando quadros"
 
 ["%{current} of %{total} frames (%{percent}%)"]
@@ -933,6 +1017,7 @@ ja = "%{total}フレーム中%{current}（%{percent}%）"
 "zh-CN" = "%{total} 帧中的 %{current} 帧（%{percent}%）"
 "zh-TW" = "%{total} 個影格中的第 %{current} 個（%{percent}%）"
 "ko" = "전체 %{total}프레임 중 %{current}프레임(%{percent}%)"
+"ru" = "Кадр %{current} из %{total} (%{percent}%)"
 pt = "%{current} de %{total} quadros (%{percent}%)"
 
 ["%{current} of %{total} frames (%{percent}%) - %{fps} fps - %{eta} left"]
@@ -944,6 +1029,7 @@ ja = "%{total}フレーム中%{current}（%{percent}%）- %{fps} fps - 残り%{e
 "zh-CN" = "%{total} 帧中的 %{current} 帧（%{percent}%）- %{fps} fps - 剩余 %{eta}"
 "zh-TW" = "%{total} 個影格中的第 %{current} 個（%{percent}%）- %{fps} fps - 剩餘 %{eta}"
 "ko" = "전체 %{total}프레임 중 %{current}프레임(%{percent}%) - %{fps}fps - 남은 시간 %{eta}"
+"ru" = "Кадр %{current} из %{total} (%{percent}%) — %{fps} fps — осталось %{eta}"
 pt = "%{current} de %{total} quadros (%{percent}%) - %{fps} fps - %{eta} restantes"
 
 ["Finishing file"]
@@ -955,6 +1041,7 @@ ja = "ファイルを仕上げています"
 "zh-CN" = "正在完成文件…"
 "zh-TW" = "正在完成檔案…"
 "ko" = "파일 마무리 중…"
+"ru" = "Завершение файла"
 pt = "Finalizando arquivo"
 
 ["Finishing"]
@@ -966,6 +1053,7 @@ ja = "仕上げ中"
 "zh-CN" = "正在完成…"
 "zh-TW" = "正在完成…"
 "ko" = "마무리 중…"
+"ru" = "Завершение"
 pt = "Finalizando"
 
 ["JSON exported"]
@@ -977,6 +1065,7 @@ ja = "JSONを書き出しました"
 "zh-CN" = "JSON 已导出"
 "zh-TW" = "JSON 已匯出"
 "ko" = "JSON을 내보냈습니다"
+"ru" = "JSON экспортирован"
 pt = "JSON exportado"
 
 ["Step back one frame"]
@@ -988,6 +1077,7 @@ ja = "1フレーム戻る"
 "zh-CN" = "后退一帧"
 "zh-TW" = "後退一影格"
 "ko" = "한 프레임 뒤로 이동"
+"ru" = "Назад на один кадр"
 pt = "Voltar um quadro"
 
 ["Play"]
@@ -999,6 +1089,7 @@ ja = "再生"
 "zh-CN" = "播放"
 "zh-TW" = "播放"
 "ko" = "재생"
+"ru" = "Воспроизвести"
 pt = "Reproduzir"
 
 ["Pause"]
@@ -1010,6 +1101,7 @@ ja = "一時停止"
 "zh-CN" = "暂停"
 "zh-TW" = "暫停"
 "ko" = "일시 정지"
+"ru" = "Пауза"
 pt = "Pausar"
 
 ["Step forward one frame"]
@@ -1021,6 +1113,7 @@ ja = "1フレーム進む"
 "zh-CN" = "前进一帧"
 "zh-TW" = "前進一影格"
 "ko" = "한 프레임 앞으로 이동"
+"ru" = "Вперёд на один кадр"
 pt = "Avançar um quadro"
 
 ["Fullscreen preview"]
@@ -1032,6 +1125,7 @@ ja = "全画面プレビュー"
 "zh-CN" = "全屏预览"
 "zh-TW" = "全螢幕預覽"
 "ko" = "전체 화면 미리보기"
+"ru" = "Полноэкранный предпросмотр"
 pt = "Pré-visualização em tela cheia"
 
 ["Restore preview"]
@@ -1043,6 +1137,7 @@ ja = "プレビューを元に戻す"
 "zh-CN" = "恢复预览"
 "zh-TW" = "恢復預覽"
 "ko" = "미리보기 복원"
+"ru" = "Восстановить предпросмотр"
 pt = "Restaurar pré-visualização"
 
 ["Guide"]
@@ -1054,6 +1149,7 @@ ja = "ガイド"
 "zh-CN" = "参考线"
 "zh-TW" = "參考線"
 "ko" = "안내선"
+"ru" = "Направляющая"
 pt = "Guia"
 
 ["Playback speed"]
@@ -1065,6 +1161,7 @@ ja = "再生速度"
 "zh-CN" = "播放速度"
 "zh-TW" = "播放速度"
 "ko" = "재생 속도"
+"ru" = "Скорость воспроизведения"
 pt = "Velocidade de reprodução"
 
 ["x1"]
@@ -1076,6 +1173,7 @@ ja = "x1"
 "zh-CN" = "x1"
 "zh-TW" = "x1"
 "ko" = "x1"
+"ru" = "x1"
 pt = "1x"
 
 ["--"]
@@ -1087,6 +1185,7 @@ ja = "--"
 "zh-CN" = "--"
 "zh-TW" = "--"
 "ko" = "--"
+"ru" = "--"
 pt = "--"
 
 ["Playback speed %{speed}"]
@@ -1098,6 +1197,7 @@ ja = "再生速度: %{speed}"
 "zh-CN" = "播放速度%{speed}"
 "zh-TW" = "播放速度%{speed}"
 "ko" = "재생 속도 %{speed}"
+"ru" = "Скорость воспроизведения %{speed}"
 pt = "Velocidade de reprodução %{speed}"
 
 ["Pen (B)"]
@@ -1109,6 +1209,7 @@ ja = "ペン（B）"
 "zh-CN" = "笔（B）"
 "zh-TW" = "筆（B）"
 "ko" = "펜(B)"
+"ru" = "Перо (B)"
 pt = "Caneta (B)"
 
 ["Fill (F)"]
@@ -1120,6 +1221,7 @@ ja = "塗りつぶし（F）"
 "zh-CN" = "填充 (F)"
 "zh-TW" = "填充 (F)"
 "ko" = "채우기(F)"
+"ru" = "Заливка (F)"
 pt = "Preenchimento (F)"
 
 ["Stroke Transform (T)"]
@@ -1131,6 +1233,7 @@ ja = "ストローク変形（T）"
 "zh-CN" = "笔画变换 (T)"
 "zh-TW" = "筆畫變換 (T)"
 "ko" = "스트로크 변환(T)"
+"ru" = "Преобразование обводки (T)"
 pt = "Transformar traço (T)"
 
 ["Eraser (E)"]
@@ -1142,6 +1245,7 @@ ja = "消しゴム（E）"
 "zh-CN" = "橡皮擦 (E)"
 "zh-TW" = "橡皮擦 (E)"
 "ko" = "지우개(E)"
+"ru" = "Ластик (E)"
 pt = "Borracha (E)"
 
 ["Adjust points (hold Ctrl for temporary adjustment)"]
@@ -1153,6 +1257,7 @@ ja = "ポイントを調整（Ctrlを押している間だけ一時調整）"
 "zh-CN" = "调整点（按住 Ctrl 可临时调整）"
 "zh-TW" = "調整控制點（按住 Ctrl 可暫時調整）"
 "ko" = "포인트 조정(Ctrl을 누르면 임시 조정)"
+"ru" = "Настройка точек (удерживайте Ctrl для временной настройки)"
 pt = "Ajustar pontos (segure Ctrl para ajuste temporário)"
 
 ["Pen width scale"]
@@ -1164,6 +1269,7 @@ ja = "ペン幅の倍率"
 "zh-CN" = "画笔宽度缩放"
 "zh-TW" = "畫筆寬度縮放"
 "ko" = "펜 너비 배율"
+"ru" = "Масштаб ширины пера"
 pt = "Escala da largura da caneta"
 
 ["Eraser width scale"]
@@ -1175,6 +1281,7 @@ ja = "消しゴム幅の倍率"
 "zh-CN" = "橡皮擦宽度缩放"
 "zh-TW" = "橡皮擦寬度縮放"
 "ko" = "지우개 너비 배율"
+"ru" = "Масштаб ширины ластика"
 pt = "Escala da largura da borracha"
 
 ["Fill gap tolerance"]
@@ -1186,6 +1293,7 @@ ja = "塗りつぶしの隙間許容値"
 "zh-CN" = "填充间隙容差"
 "zh-TW" = "填滿間隙容差"
 "ko" = "채우기 간격 허용 오차"
+"ru" = "Допуск зазоров при заливке"
 pt = "Tolerância de abertura do preenchimento"
 
 ["Previous drawing onion skin"]
@@ -1197,6 +1305,7 @@ ja = "前の描画のオニオンスキン"
 "zh-CN" = "上一幅绘图的洋葱皮"
 "zh-TW" = "上一張繪圖的洋蔥皮"
 "ko" = "이전 그림 어니언 스킨"
+"ru" = "Луковая кожура предыдущего рисунка"
 pt = "Papel vegetal do desenho anterior"
 
 ["Next drawing onion skin"]
@@ -1208,6 +1317,7 @@ ja = "次の描画のオニオンスキン"
 "zh-CN" = "下一幅绘图的洋葱皮"
 "zh-TW" = "下一張繪圖的洋蔥皮"
 "ko" = "다음 그림 어니언 스킨"
+"ru" = "Луковая кожура следующего рисунка"
 pt = "Papel vegetal do próximo desenho"
 
 ["Paint texture %{number}"]
@@ -1219,6 +1329,7 @@ ja = "ペイントテクスチャ%{number}"
 "zh-CN" = "绘制纹理 %{number}"
 "zh-TW" = "繪製紋理 %{number}"
 "ko" = "페인트 텍스처 %{number}"
+"ru" = "Текстура кисти %{number}"
 pt = "Textura de pintura %{number}"
 
 ["Video Player"]
@@ -1230,6 +1341,7 @@ ja = "動画プレーヤー"
 "zh-CN" = "视频播放器"
 "zh-TW" = "影片播放器"
 "ko" = "비디오 플레이어"
+"ru" = "Видеоплеер"
 pt = "Reprodutor de vídeo"
 
 ["Copy Preview Image"]
@@ -1241,6 +1353,7 @@ ja = "プレビュー画像をコピー"
 "zh-CN" = "复制预览图像"
 "zh-TW" = "複製預覽影像"
 "ko" = "미리보기 이미지 복사"
+"ru" = "Копировать изображение предпросмотра"
 pt = "Copiar imagem da pré-visualização"
 
 ["Save Preview Image…"]
@@ -1252,6 +1365,7 @@ ja = "プレビュー画像を保存…"
 "zh-CN" = "保存预览图像…"
 "zh-TW" = "儲存預覽影像…"
 "ko" = "미리보기 이미지 저장…"
+"ru" = "Сохранить изображение предпросмотра…"
 pt = "Salvar imagem da pré-visualização…"
 
 ["Save Preview Image"]
@@ -1263,6 +1377,7 @@ ja = "プレビュー画像を保存"
 "zh-CN" = "保存预览图像"
 "zh-TW" = "儲存預覽影像"
 "ko" = "미리보기 이미지 저장"
+"ru" = "Сохранить изображение предпросмотра"
 pt = "Salvar imagem da pré-visualização"
 
 ["PNG image"]
@@ -1274,6 +1389,7 @@ ja = "PNG画像"
 "zh-CN" = "PNG图像"
 "zh-TW" = "PNG影像"
 "ko" = "PNG 이미지"
+"ru" = "Изображение PNG"
 pt = "Imagem PNG"
 
 ["Magnet"]
@@ -1285,6 +1401,7 @@ ja = "マグネット"
 "zh-CN" = "磁铁"
 "zh-TW" = "磁鐵"
 "ko" = "자석"
+"ru" = "Магнит"
 pt = "Ímã"
 
 ["Beat Grid"]
@@ -1296,6 +1413,7 @@ ja = "ビートグリッド"
 "zh-CN" = "节拍网格"
 "zh-TW" = "節拍格線"
 "ko" = "비트 그리드"
+"ru" = "Сетка битов"
 pt = "Grade de batidas"
 
 ["Analyzing beats…"]
@@ -1307,6 +1425,7 @@ ja = "ビートを解析しています…"
 "zh-CN" = "分析节拍…"
 "zh-TW" = "分析節拍…"
 "ko" = "비트 분석 중…"
+"ru" = "Анализ битов…"
 pt = "Analisando batidas…"
 
 ["No reliable beat detected"]
@@ -1318,6 +1437,7 @@ ja = "信頼できるビートを検出できませんでした"
 "zh-CN" = "未检测到可靠的节拍"
 "zh-TW" = "未偵測到可靠的節拍"
 "ko" = "신뢰할 수 있는 비트가 감지되지 않음"
+"ru" = "Достоверный бит не обнаружен"
 pt = "Nenhuma batida confiável detectada"
 
 ["Pointer"]
@@ -1329,6 +1449,7 @@ ja = "ポインター"
 "zh-CN" = "指针"
 "zh-TW" = "指標"
 "ko" = "포인터"
+"ru" = "Указатель"
 pt = "Ponteiro"
 
 ["Cut"]
@@ -1340,6 +1461,7 @@ ja = "カット"
 "zh-CN" = "剪切"
 "zh-TW" = "剪下"
 "ko" = "자르기"
+"ru" = "Разрезать"
 pt = "Cortar"
 
 ["Overwrite/Insert"]
@@ -1351,6 +1473,7 @@ ja = "上書き/挿入"
 "zh-CN" = "覆盖/插入"
 "zh-TW" = "覆蓋/插入"
 "ko" = "덮어쓰기/삽입"
+"ru" = "Перезапись/вставка"
 pt = "Sobrescrever/Inserir"
 
 ["Block"]
@@ -1362,6 +1485,7 @@ ja = "ブロック"
 "zh-CN" = "块"
 "zh-TW" = "區塊"
 "ko" = "블록"
+"ru" = "Блок"
 pt = "Bloquear"
 
 ["Import Captions…"]
@@ -1373,6 +1497,7 @@ ja = "字幕を読み込む…"
 "zh-CN" = "导入字幕…"
 "zh-TW" = "匯入字幕…"
 "ko" = "자막 가져오기…"
+"ru" = "Импортировать субтитры…"
 pt = "Importar legendas…"
 
 ["Import Media…"]
@@ -1384,6 +1509,7 @@ ja = "メディアを読み込む…"
 "zh-CN" = "导入媒体…"
 "zh-TW" = "匯入媒體…"
 "ko" = "미디어 가져오기…"
+"ru" = "Импортировать медиа…"
 pt = "Importar mídia…"
 
 ["3D Scene"]
@@ -1395,6 +1521,7 @@ ja = "3Dシーン"
 "zh-CN" = "3D场景"
 "zh-TW" = "3D場景"
 "ko" = "3D 장면"
+"ru" = "3D-сцена"
 pt = "Cena 3D"
 
 ["New %{kind}"]
@@ -1406,6 +1533,7 @@ ja = "新規%{kind}"
 "zh-CN" = "新建 %{kind}"
 "zh-TW" = "新增 %{kind}"
 "ko" = "새 %{kind}"
+"ru" = "Новый %{kind}"
 pt = "Novo %{kind}"
 
 ["Paste"]
@@ -1417,6 +1545,7 @@ ja = "貼り付け"
 "zh-CN" = "粘贴"
 "zh-TW" = "貼上"
 "ko" = "붙여넣기"
+"ru" = "Вставить"
 pt = "Colar"
 
 ["Replace Properties"]
@@ -1428,6 +1557,7 @@ ja = "プロパティを置換"
 "zh-CN" = "替换属性"
 "zh-TW" = "取代屬性"
 "ko" = "속성 바꾸기"
+"ru" = "Заменить свойства"
 pt = "Substituir propriedades"
 
 ["Paste Modifiers"]
@@ -1439,6 +1569,7 @@ ja = "モディファイアを貼り付け"
 "zh-CN" = "粘贴修改器"
 "zh-TW" = "貼上修改器"
 "ko" = "수정자 붙여넣기"
+"ru" = "Вставить модификаторы"
 pt = "Colar modificadores"
 
 ["Fold Sequence"]
@@ -1450,6 +1581,7 @@ ja = "シーケンスを折りたたむ"
 "zh-CN" = "折叠序列"
 "zh-TW" = "收合序列"
 "ko" = "시퀀스 접기"
+"ru" = "Свернуть последовательность"
 pt = "Recolher sequência"
 
 ["Unlink Folder"]
@@ -1461,6 +1593,7 @@ ja = "フォルダーのリンクを解除"
 "zh-CN" = "取消链接文件夹"
 "zh-TW" = "取消連結資料夾"
 "ko" = "폴더 연결 해제"
+"ru" = "Отменить связь с папкой"
 pt = "Desvincular pasta"
 
 ["Add Track at Top"]
@@ -1472,6 +1605,7 @@ ja = "上にトラックを追加"
 "zh-CN" = "在顶部添加轨道"
 "zh-TW" = "在頂端新增軌道"
 "ko" = "상단에 트랙 추가"
+"ru" = "Добавить дорожку сверху"
 pt = "Adicionar faixa no topo"
 
 ["Add Track at Bottom"]
@@ -1483,6 +1617,7 @@ ja = "下にトラックを追加"
 "zh-CN" = "在底部添加轨道"
 "zh-TW" = "在底端新增軌道"
 "ko" = "하단에 트랙 추가"
+"ru" = "Добавить дорожку снизу"
 pt = "Adicionar faixa na base"
 
 ["Copy Frame"]
@@ -1494,6 +1629,7 @@ ja = "フレームをコピー"
 "zh-CN" = "复制帧"
 "zh-TW" = "複製影格"
 "ko" = "프레임 복사"
+"ru" = "Копировать кадр"
 pt = "Copiar quadro"
 
 ["Save Frame…"]
@@ -1505,6 +1641,7 @@ ja = "フレームを保存…"
 "zh-CN" = "保存帧…"
 "zh-TW" = "儲存影格…"
 "ko" = "프레임 저장…"
+"ru" = "Сохранить кадр…"
 pt = "Salvar quadro…"
 
 ["Frame copied"]
@@ -1516,6 +1653,7 @@ ja = "フレームをコピーしました"
 "zh-CN" = "已复制帧"
 "zh-TW" = "已複製影格"
 "ko" = "프레임이 복사되었습니다."
+"ru" = "Кадр скопирован"
 pt = "Quadro copiado"
 
 ["Save Selected Frame"]
@@ -1527,6 +1665,7 @@ ja = "選択したフレームを保存"
 "zh-CN" = "保存选定的帧"
 "zh-TW" = "儲存所選影格"
 "ko" = "선택한 프레임 저장"
+"ru" = "Сохранить выбранный кадр"
 pt = "Salvar quadro selecionado"
 
 ["Enable Beat Detection"]
@@ -1538,6 +1677,7 @@ ja = "ビート検出を有効化"
 "zh-CN" = "启用节拍检测"
 "zh-TW" = "啟用節拍偵測"
 "ko" = "비트 감지 활성화"
+"ru" = "Включить обнаружение битов"
 pt = "Habilitar detecção de batidas"
 
 ["Disable Beat Detection"]
@@ -1549,6 +1689,7 @@ ja = "ビート検出を無効化"
 "zh-CN" = "禁用节拍检测"
 "zh-TW" = "停用節拍偵測"
 "ko" = "비트 감지 비활성화"
+"ru" = "Отключить обнаружение битов"
 pt = "Desabilitar detecção de batidas"
 
 ["Export Audio…"]
@@ -1560,6 +1701,7 @@ ja = "音声を書き出す…"
 "zh-CN" = "导出音频…"
 "zh-TW" = "匯出音訊…"
 "ko" = "오디오 내보내기…"
+"ru" = "Экспортировать аудио…"
 pt = "Exportar áudio…"
 
 ["Transcribe"]
@@ -1571,6 +1713,7 @@ ja = "文字起こし"
 "zh-CN" = "转录"
 "zh-TW" = "轉錄"
 "ko" = "음성 인식"
+"ru" = "Транскрибировать"
 pt = "Transcrever"
 
 ["Remove Silences"]
@@ -1582,6 +1725,7 @@ ja = "無音部分を削除"
 "zh-CN" = "移除静音片段"
 "zh-TW" = "移除靜音區段"
 "ko" = "무음 제거"
+"ru" = "Удалить тишину"
 pt = "Remover silêncios"
 
 ["Export Selected Audio"]
@@ -1593,6 +1737,7 @@ ja = "選択した音声を書き出す"
 "zh-CN" = "导出选定的音频"
 "zh-TW" = "匯出選定的音訊"
 "ko" = "선택한 오디오 내보내기"
+"ru" = "Экспортировать выбранное аудио"
 pt = "Exportar áudio selecionado"
 
 ["Exporting Audio"]
@@ -1604,6 +1749,7 @@ ja = "音声を書き出しています"
 "zh-CN" = "正在导出音频"
 "zh-TW" = "正在匯出音訊"
 "ko" = "오디오 내보내는 중"
+"ru" = "Экспорт аудио"
 pt = "Exportando áudio"
 
 ["The selected items will be mixed into one audio file."]
@@ -1615,6 +1761,7 @@ ja = "選択した項目を1つの音声ファイルにミックスします。"
 "zh-CN" = "所选项目将被混合到一个音频文件中。"
 "zh-TW" = "所選項目將被混合到一個音訊檔案中。"
 "ko" = "선택한 항목이 하나의 오디오 파일로 믹싱됩니다."
+"ru" = "Выбранные элементы будут сведены в один аудиофайл."
 pt = "Os itens selecionados serão mixados em um único arquivo de áudio."
 
 ["Choose File"]
@@ -1626,6 +1773,7 @@ ja = "ファイルを選択"
 "zh-CN" = "选择文件"
 "zh-TW" = "選擇檔案"
 "ko" = "파일 선택"
+"ru" = "Выбрать файл"
 pt = "Escolher arquivo"
 
 ["Audio exported"]
@@ -1637,6 +1785,7 @@ ja = "音声を書き出しました"
 "zh-CN" = "音频已导出"
 "zh-TW" = "音訊已匯出"
 "ko" = "오디오를 내보냈습니다"
+"ru" = "Аудио экспортировано"
 pt = "Áudio exportado"
 
 ["Add Caption Track"]
@@ -1648,6 +1797,7 @@ ja = "字幕トラックを追加"
 "zh-CN" = "添加字幕轨道"
 "zh-TW" = "新增字幕軌道"
 "ko" = "자막 트랙 추가"
+"ru" = "Добавить дорожку субтитров"
 pt = "Adicionar faixa de legendas"
 
 ["Add Video Track"]
@@ -1659,6 +1809,7 @@ ja = "動画トラックを追加"
 "zh-CN" = "添加视频轨道"
 "zh-TW" = "新增影片軌道"
 "ko" = "비디오 트랙 추가"
+"ru" = "Добавить видеодорожку"
 pt = "Adicionar faixa de vídeo"
 
 ["Add Audio Track"]
@@ -1670,6 +1821,7 @@ ja = "音声トラックを追加"
 "zh-CN" = "添加音轨"
 "zh-TW" = "新增音軌"
 "ko" = "오디오 트랙 추가"
+"ru" = "Добавить аудиодорожку"
 pt = "Adicionar faixa de áudio"
 
 ["Gain Offset"]
@@ -1681,6 +1833,7 @@ ja = "ゲインオフセット"
 "zh-CN" = "增益偏移"
 "zh-TW" = "增益偏移"
 "ko" = "게인 오프셋"
+"ru" = "Смещение усиления"
 pt = "Ajuste de ganho"
 
 ["Track gain offset in decibels"]
@@ -1692,6 +1845,7 @@ ja = "トラックのゲインオフセット（デシベル）"
 "zh-CN" = "轨道增益偏移（以分贝为单位）"
 "zh-TW" = "軌道增益偏移（以分貝為單位）"
 "ko" = "데시벨 단위의 트랙 게인 오프셋"
+"ru" = "Смещение усиления дорожки в децибелах"
 pt = "Ajuste de ganho da faixa em decibéis"
 
 ["Generate Speech"]
@@ -1703,6 +1857,7 @@ ja = "音声を生成"
 "zh-CN" = "生成语音"
 "zh-TW" = "生成語音"
 "ko" = "음성 생성"
+"ru" = "Создать речь"
 pt = "Gerar fala"
 
 ["Move Out"]
@@ -1714,6 +1869,7 @@ ja = "外に移動"
 "zh-CN" = "移出"
 "zh-TW" = "移出"
 "ko" = "밖으로 이동"
+"ru" = "Вынести"
 pt = "Mover para fora"
 
 ["Group"]
@@ -1725,6 +1881,7 @@ ja = "グループ化"
 "zh-CN" = "组合"
 "zh-TW" = "群組"
 "ko" = "그룹화"
+"ru" = "Сгруппировать"
 pt = "Agrupar"
 
 ["Ungroup"]
@@ -1736,6 +1893,7 @@ ja = "グループ解除"
 "zh-CN" = "取消分组"
 "zh-TW" = "取消分組"
 "ko" = "그룹 해제"
+"ru" = "Разгруппировать"
 pt = "Desagrupar"
 
 ["Delete Track"]
@@ -1747,6 +1905,7 @@ ja = "トラックを削除"
 "zh-CN" = "删除轨道"
 "zh-TW" = "刪除軌道"
 "ko" = "트랙 삭제"
+"ru" = "Удалить дорожку"
 pt = "Excluir faixa"
 
 ["Properties replaced on 1 item"]
@@ -1758,6 +1917,7 @@ ja = "1項目のプロパティを置換しました"
 "zh-CN" = "已替换 1 个项目的属性"
 "zh-TW" = "已取代 1 個項目的屬性"
 "ko" = "항목 1개의 속성을 바꿨습니다"
+"ru" = "Свойства заменены на 1 элементе"
 pt = "Propriedades substituídas em 1 item"
 
 ["Properties replaced on %{count} items"]
@@ -1769,6 +1929,7 @@ ja = "%{count}項目のプロパティを置換しました"
 "zh-CN" = "已替换 %{count} 个项目的属性"
 "zh-TW" = "已取代 %{count} 個項目的屬性"
 "ko" = "항목 %{count}개의 속성을 바꿨습니다"
+"ru" = "Свойства заменены на %{count} элементах"
 pt = "Propriedades substituídas em %{count} itens"
 
 ["Delete Tracks?"]
@@ -1780,6 +1941,7 @@ ja = "トラックを削除しますか？"
 "zh-CN" = "删除轨道？"
 "zh-TW" = "刪除軌道？"
 "ko" = "트랙을 삭제하시겠습니까?"
+"ru" = "Удалить дорожки?"
 pt = "Excluir faixas?"
 
 ["1 clip is about to be deleted, are you sure?"]
@@ -1791,6 +1953,7 @@ ja = "1個のクリップを削除します。よろしいですか？"
 "zh-CN" = "1 个剪辑即将被删除，您确定吗？"
 "zh-TW" = "1 個片段即將被刪除，您確定嗎？"
 "ko" = "클립 1개를 삭제하려고 합니다. 삭제하시겠습니까?"
+"ru" = "Будет удалён 1 клип. Продолжить?"
 pt = "1 clipe está prestes a ser excluído, tem certeza?"
 
 ["%{count} clips are about to be deleted, are you sure?"]
@@ -1802,6 +1965,7 @@ ja = "%{count}個のクリップを削除します。よろしいですか？"
 "zh-CN" = "%{count} 个剪辑即将被删除，您确定吗？"
 "zh-TW" = "%{count} 個片段即將被刪除，您確定嗎？"
 "ko" = "%{count}개의 클립이 곧 삭제될 예정입니다. 정말로 삭제하시겠습니까?"
+"ru" = "Будет удалено %{count} клипов. Продолжить?"
 pt = "%{count} clipes estão prestes a ser excluídos, tem certeza?"
 
 ["Silence threshold"]
@@ -1813,6 +1977,7 @@ ja = "無音しきい値"
 "zh-CN" = "静音阈值"
 "zh-TW" = "靜音閾值"
 "ko" = "무음 임계값"
+"ru" = "Порог тишины"
 pt = "Limiar de silêncio"
 
 ["Minimum silence"]
@@ -1824,6 +1989,7 @@ ja = "最小無音時間"
 "zh-CN" = "最短静音"
 "zh-TW" = "最短靜音"
 "ko" = "최소 무음 길이"
+"ru" = "Минимальная тишина"
 pt = "Silêncio mínimo"
 
 ["Gap tolerance"]
@@ -1835,6 +2001,7 @@ ja = "隙間の許容値"
 "zh-CN" = "间隙公差"
 "zh-TW" = "間隙公差"
 "ko" = "간격 허용 오차"
+"ru" = "Допуск зазоров"
 pt = "Tolerância de intervalo"
 
 ["Min chunk"]
@@ -1846,6 +2013,7 @@ ja = "最小チャンク"
 "zh-CN" = "最短片段"
 "zh-TW" = "最短區段"
 "ko" = "최소 구간"
+"ru" = "Минимальный фрагмент"
 pt = "Trecho mínimo"
 
 ["No Silences Found"]
@@ -1857,6 +2025,7 @@ ja = "無音部分が見つかりません"
 "zh-CN" = "未发现静音"
 "zh-TW" = "找不到靜音區段"
 "ko" = "무음 구간을 찾을 수 없음"
+"ru" = "Тишина не найдена"
 pt = "Nenhum silêncio encontrado"
 
 ["No selected-audio gaps matched the configured threshold and duration."]
@@ -1868,6 +2037,7 @@ ja = "選択した音声に、設定したしきい値と長さに一致する�
 "zh-CN" = "所选音频的间隙均不符合设置的阈值和持续时间。"
 "zh-TW" = "所選音訊的間隙皆不符合設定的閾值與持續時間。"
 "ko" = "선택한 오디오에 설정된 임계값과 길이를 충족하는 무음 구간이 없습니다."
+"ru" = "Ни один участок тишины в выбранном аудио не соответствует заданным порогу и длительности."
 pt = "Nenhum intervalo do áudio selecionado correspondeu ao limiar e duração configurados."
 
 ["No timeline ranges were removed."]
@@ -1879,6 +2049,7 @@ ja = "タイムラインの範囲は削除されませんでした。"
 "zh-CN" = "未移除任何时间线范围。"
 "zh-TW" = "未移除任何時間軸範圍。"
 "ko" = "제거된 타임라인 범위가 없습니다."
+"ru" = "Ни один диапазон таймлайна не был удалён."
 pt = "Nenhum intervalo da linha do tempo foi removido."
 
 ["Follow cuts"]
@@ -1890,6 +2061,7 @@ ja = "カットに従う"
 "zh-CN" = "跟随切点"
 "zh-TW" = "跟隨切點"
 "ko" = "컷 따르기"
+"ru" = "Следовать за разрезами"
 pt = "Seguir cortes"
 
 ["Snap source"]
@@ -1901,6 +2073,7 @@ ja = "スナップ元"
 "zh-CN" = "吸附源"
 "zh-TW" = "吸附來源"
 "ko" = "스냅 소스"
+"ru" = "Источник привязки"
 pt = "Origem do encaixe"
 
 ["Snap tolerance"]
@@ -1912,6 +2085,7 @@ ja = "スナップ許容値"
 "zh-CN" = "吸附容差"
 "zh-TW" = "吸附容差"
 "ko" = "스냅 허용 오차"
+"ru" = "Допуск привязки"
 pt = "Tolerância do encaixe"
 
 ["Snap generated caption boundaries to nearby cuts within this many seconds."]
@@ -1923,6 +2097,7 @@ ja = "生成した字幕の境界を、この秒数以内にある近くのカ�
 "zh-CN" = "将生成的字幕边界吸附到指定秒数内邻近的切点。"
 "zh-TW" = "將生成的字幕邊界吸附到指定秒數內鄰近的切點。"
 "ko" = "생성된 자막 경계를 지정한 시간 내의 가까운 컷에 스냅합니다."
+"ru" = "Привязывать границы созданных субтитров к близлежащим разрезам в пределах указанного количества секунд."
 pt = "Encaixar limites das legendas geradas nos cortes próximos dentro desta quantidade de segundos."
 
 ["Continue cut threshold"]
@@ -1934,6 +2109,7 @@ ja = "カット継続しきい値"
 "zh-CN" = "连续切点阈值"
 "zh-TW" = "連續切點閾值"
 "ko" = "연속 컷 임계값"
+"ru" = "Порог продолжения разреза"
 pt = "Limiar de continuidade de corte"
 
 ["Absorb chunks shorter than this many seconds only when the merged chunk stays under this threshold."]
@@ -1945,6 +2121,7 @@ ja = "この秒数より短いチャンクを、結合後もこのしきい値�
 "zh-CN" = "仅当合并后的片段不超过此阈值时，才合并短于指定秒数的片段。"
 "zh-TW" = "只有合併後的區段不超過此閾值時，才合併短於指定秒數的區段。"
 "ko" = "병합 후 길이가 이 임계값을 넘지 않을 때만 지정한 초보다 짧은 구간을 병합합니다."
+"ru" = "Поглощать фрагменты короче указанного количества секунд только в том случае, если объединённый фрагмент остаётся в пределах этого порога."
 pt = "Absorver trechos mais curtos que esta quantidade de segundos apenas quando o trecho mesclado permanecer abaixo deste limiar."
 
 ["%{count} chunk will be transcribed."]
@@ -1956,6 +2133,7 @@ ja = "%{count}個のチャンクを文字起こしします。"
 "zh-CN" = "将转录 %{count} 个片段。"
 "zh-TW" = "將轉錄 %{count} 個區段。"
 "ko" = "%{count}개 구간을 음성 인식합니다."
+"ru" = "Будет транскрибирован %{count} фрагмент."
 pt = "%{count} trecho será transcrito."
 
 ["%{count} chunks will be transcribed."]
@@ -1967,6 +2145,7 @@ ja = "%{count}個のチャンクを文字起こしします。"
 "zh-CN" = "将转录 %{count} 个片段。"
 "zh-TW" = "將轉錄 %{count} 個區段。"
 "ko" = "%{count}개 구간을 음성 인식합니다."
+"ru" = "Будет транскрибировано %{count} фрагментов."
 pt = "%{count} trechos serão transcritos."
 
 ["Transcribing..."]
@@ -1978,6 +2157,7 @@ ja = "文字起こし中..."
 "zh-CN" = "正在转录…"
 "zh-TW" = "正在轉錄…"
 "ko" = "음성 인식 중…"
+"ru" = "Транскрибирование…"
 pt = "Transcrevendo..."
 
 ["Audio cuts"]
@@ -1989,6 +2169,7 @@ ja = "音声カット"
 "zh-CN" = "音频切点"
 "zh-TW" = "音訊切點"
 "ko" = "오디오 컷"
+"ru" = "Разрезы аудио"
 pt = "Cortes de áudio"
 
 ["Video cuts"]
@@ -2000,6 +2181,7 @@ ja = "動画カット"
 "zh-CN" = "视频切点"
 "zh-TW" = "影片切點"
 "ko" = "비디오 컷"
+"ru" = "Разрезы видео"
 pt = "Cortes de vídeo"
 
 ["Audio and video cuts"]
@@ -2011,6 +2193,7 @@ ja = "音声と動画のカット"
 "zh-CN" = "音频和视频切点"
 "zh-TW" = "音訊與影片切點"
 "ko" = "오디오 및 비디오 컷"
+"ru" = "Разрезы аудио и видео"
 pt = "Cortes de áudio e vídeo"
 
 ["%{current}/%{total} · %{message}"]
@@ -2022,6 +2205,7 @@ ja = "%{current}/%{total} · %{message}"
 "zh-CN" = "%{current}/%{total} · %{message}"
 "zh-TW" = "%{current}/%{total} · %{message}"
 "ko" = "%{current}/%{total} · %{message}"
+"ru" = "%{current}/%{total} · %{message}"
 pt = "%{current}/%{total} · %{message}"
 
 ["%{current}/%{total} · Complete"]
@@ -2033,6 +2217,7 @@ ja = "%{current}/%{total} · 完了"
 "zh-CN" = "%{current}/%{total} · 已完成"
 "zh-TW" = "%{current}/%{total} · 已完成"
 "ko" = "%{current}/%{total} · 완료"
+"ru" = "%{current}/%{total} · Готово"
 pt = "%{current}/%{total} · Concluído"
 
 ["%{count} caption chunk will be generated with each caption's exact duration."]
@@ -2044,6 +2229,7 @@ ja = "字幕の正確な長さで%{count}個の字幕チャンクを生成しま
 "zh-CN" = "%{count} 个字幕片段将按各字幕的精确时长生成。"
 "zh-TW" = "%{count} 個字幕區段將依各字幕的精確長度生成。"
 "ko" = "각 자막의 정확한 길이로 자막 구간 %{count}개를 생성합니다."
+"ru" = "Будет создан %{count} фрагмент субтитров с точной длительностью соответствующего субтитра."
 pt = "%{count} trecho de legenda será gerado com a duração exata de cada legenda."
 
 ["%{count} caption chunks will be generated with each caption's exact duration."]
@@ -2055,6 +2241,7 @@ ja = "各字幕の正確な長さで%{count}個の字幕チャンクを生成し
 "zh-CN" = "%{count} 个字幕片段将按各字幕的精确时长生成。"
 "zh-TW" = "%{count} 個字幕區段將依各字幕的精確長度生成。"
 "ko" = "각 자막의 정확한 길이로 자막 구간 %{count}개를 생성합니다."
+"ru" = "Будет создано %{count} фрагментов субтитров с точной длительностью соответствующих субтитров."
 pt = "%{count} trechos de legendas serão gerados com a duração exata de cada legenda."
 
 ["%{count} empty or invalid chunk will be skipped."]
@@ -2066,6 +2253,7 @@ ja = "%{count}個の空または無効なチャンクをスキップします。
 "zh-CN" = "将跳过 %{count} 个空白或无效片段。"
 "zh-TW" = "將略過 %{count} 個空白或無效區段。"
 "ko" = "비어 있거나 잘못된 구간 %{count}개를 건너뜁니다."
+"ru" = "Будет пропущен %{count} пустой или недопустимый фрагмент."
 pt = "%{count} trecho vazio ou inválido será ignorado."
 
 ["%{count} empty or invalid chunks will be skipped."]
@@ -2077,6 +2265,7 @@ ja = "%{count}個の空または無効なチャンクをスキップします。
 "zh-CN" = "将跳过 %{count} 个空白或无效片段。"
 "zh-TW" = "將略過 %{count} 個空白或無效區段。"
 "ko" = "비어 있거나 잘못된 구간 %{count}개를 건너뜁니다."
+"ru" = "Будет пропущено %{count} пустых или недопустимых фрагментов."
 pt = "%{count} trechos vazios ou inválidos serão ignorados."
 
 ["Chunk %{current}/%{total}"]
@@ -2088,6 +2277,7 @@ ja = "チャンク%{current}/%{total}"
 "zh-CN" = "片段 %{current}/%{total}"
 "zh-TW" = "區段 %{current}/%{total}"
 "ko" = "구간 %{current}/%{total}"
+"ru" = "Фрагмент %{current}/%{total}"
 pt = "Trecho %{current}/%{total}"
 
 ["Generating Speech…"]
@@ -2099,6 +2289,7 @@ ja = "音声を生成しています…"
 "zh-CN" = "正在生成语音…"
 "zh-TW" = "正在生成語音…"
 "ko" = "음성 생성 중…"
+"ru" = "Создание речи…"
 pt = "Gerando fala…"
 
 ["Match Project to Video?"]
@@ -2110,6 +2301,7 @@ ja = "プロジェクトを動画に合わせますか？"
 "zh-CN" = "使项目匹配视频？"
 "zh-TW" = "讓專案套用影片設定？"
 "ko" = "프로젝트를 비디오에 맞추시겠습니까?"
+"ru" = "Согласовать проект с видео?"
 pt = "Ajustar projeto ao vídeo?"
 
 ["This is the first video in the project. Match the project to its %{width}×%{height} resolution and %{fps} FPS?"]
@@ -2121,6 +2313,7 @@ ja = "プロジェクトで最初の動画です。プロジェクトを%{width}
 "zh-CN" = "这是项目中的第一个视频。是否将项目设置为其 %{width}×%{height} 分辨率和 %{fps} FPS？"
 "zh-TW" = "這是專案中的第一部影片。要將專案設定為 %{width}×%{height} 解析度與 %{fps} FPS 嗎？"
 "ko" = "프로젝트의 첫 비디오입니다. 프로젝트를 %{width}×%{height} 해상도 및 %{fps} FPS에 맞추시겠습니까?"
+"ru" = "Это первое видео в проекте. Согласовать проект с его разрешением %{width}×%{height} и частотой %{fps} FPS?"
 pt = "Este é o primeiro vídeo do projeto. Deseja ajustar o projeto para sua resolução de %{width}×%{height} e %{fps} FPS?"
 
 ["This is the first video in the project. Match the project to its %{width}×%{height} resolution?"]
@@ -2132,6 +2325,7 @@ ja = "プロジェクトで最初の動画です。プロジェクトを%{width}
 "zh-CN" = "这是项目中的第一个视频。是否将项目设置为其 %{width}×%{height} 分辨率？"
 "zh-TW" = "這是專案中的第一部影片。要將專案設定為 %{width}×%{height} 解析度嗎？"
 "ko" = "프로젝트의 첫 비디오입니다. 프로젝트를 %{width}×%{height} 해상도에 맞추시겠습니까?"
+"ru" = "Это первое видео в проекте. Согласовать проект с его разрешением %{width}×%{height}?"
 pt = "Este é o primeiro vídeo do projeto. Deseja ajustar o projeto para sua resolução de %{width}×%{height}?"
 
 ["This is the first video in the project. Match the project to its %{fps} FPS?"]
@@ -2143,6 +2337,7 @@ ja = "プロジェクトで最初の動画です。プロジェクトを%{fps} F
 "zh-CN" = "这是项目中的第一个视频。是否将项目设置为其 %{fps} FPS？"
 "zh-TW" = "這是專案中的第一部影片。要將專案設定為 %{fps} FPS 嗎？"
 "ko" = "프로젝트의 첫 비디오입니다. 프로젝트를 %{fps} FPS에 맞추시겠습니까?"
+"ru" = "Это первое видео в проекте. Согласовать проект с его частотой %{fps} FPS?"
 pt = "Este é o primeiro vídeo do projeto. Deseja ajustar o projeto para %{fps} FPS?"
 
 ["Keep Project Settings"]
@@ -2154,6 +2349,7 @@ ja = "プロジェクト設定を維持"
 "zh-CN" = "保留项目设置"
 "zh-TW" = "保留專案設定"
 "ko" = "프로젝트 설정 유지"
+"ru" = "Сохранить настройки проекта"
 pt = "Manter configurações do projeto"
 
 ["Match Video"]
@@ -2165,6 +2361,7 @@ ja = "動画に合わせる"
 "zh-CN" = "匹配视频"
 "zh-TW" = "套用影片設定"
 "ko" = "비디오에 맞추기"
+"ru" = "Согласовать с видео"
 pt = "Ajustar ao vídeo"
 
 ["Import to Track"]
@@ -2176,6 +2373,7 @@ ja = "トラックに読み込む"
 "zh-CN" = "导入到轨道"
 "zh-TW" = "匯入至軌道"
 "ko" = "트랙으로 가져오기"
+"ru" = "Импортировать на дорожку"
 pt = "Importar para a faixa"
 
 ["Remux MKV/WebM to MP4?"]
@@ -2187,6 +2385,7 @@ ja = "MKV/WebMをMP4に再多重化しますか？"
 "zh-CN" = "将 MKV/WebM 重新封装为 MP4？"
 "zh-TW" = "將 MKV/WebM 重新封裝為 MP4？"
 "ko" = "MKV/WebM을 MP4로 리먹스하시겠습니까?"
+"ru" = "Перепаковать MKV/WebM в MP4?"
 pt = "Remuxar MKV/WebM para MP4?"
 
 ["MP4 is the supported timeline import format. The file can be remuxed losslessly first."]
@@ -2198,6 +2397,7 @@ ja = "タイムラインへの読み込みはMP4に対応しています。先�
 "zh-CN" = "MP4 是时间线支持的导入格式。可以先对该文件进行无损重新封装。"
 "zh-TW" = "MP4 是時間軸支援的匯入格式。可以先對檔案進行無損重新封裝。"
 "ko" = "MP4는 타임라인에서 지원하는 가져오기 형식입니다. 먼저 파일을 무손실로 리먹스할 수 있습니다."
+"ru" = "MP4 — поддерживаемый формат импорта на таймлайн. Сначала файл можно перепаковать без потерь."
 pt = "MP4 é o formato suportado para importação na linha do tempo. O arquivo pode ser remuxado sem perdas primeiro."
 
 ["Remux"]
@@ -2209,6 +2409,7 @@ ja = "再多重化"
 "zh-CN" = "重新封装"
 "zh-TW" = "重新封裝"
 "ko" = "리먹스"
+"ru" = "Перепаковать"
 pt = "Remuxar"
 
 ["Delete original file?"]
@@ -2220,6 +2421,7 @@ ja = "元のファイルを削除しますか？"
 "zh-CN" = "删除原文件？"
 "zh-TW" = "刪除原檔案？"
 "ko" = "원본 파일을 삭제하시겠습니까?"
+"ru" = "Удалить исходный файл?"
 pt = "Excluir arquivo original?"
 
 ["The file was remuxed. Delete the original to keep only the MP4 copy?"]
@@ -2231,6 +2433,7 @@ ja = "ファイルを再多重化しました。元のファイルを削除し�
 "zh-CN" = "文件已重新封装。是否删除原始文件，只保留 MP4 副本？"
 "zh-TW" = "檔案已重新封裝。要刪除原始檔案，只保留 MP4 副本嗎？"
 "ko" = "파일을 리먹스했습니다. MP4 사본만 유지하도록 원본을 삭제하시겠습니까?"
+"ru" = "Файл был перепакован. Удалить исходный файл, чтобы оставить только копию MP4?"
 pt = "O arquivo foi remuxado. Deseja excluir o original para manter apenas a cópia em MP4?"
 
 ["Keep"]
@@ -2242,6 +2445,7 @@ ja = "残す"
 "zh-CN" = "保留"
 "zh-TW" = "保留"
 "ko" = "유지"
+"ru" = "Оставить"
 pt = "Manter"
 
 ["Starting Blender…"]
@@ -2253,6 +2457,7 @@ ja = "Blenderを起動しています…"
 "zh-CN" = "正在启动 Blender…"
 "zh-TW" = "正在啟動 Blender…"
 "ko" = "Blender 시작 중…"
+"ru" = "Запуск Blender…"
 pt = "Iniciando o Blender…"
 
 ["Starting Manim…"]
@@ -2264,6 +2469,7 @@ ja = "Manimを起動しています…"
 "zh-CN" = "正在启动 Manim…"
 "zh-TW" = "正在啟動 Manim…"
 "ko" = "Manim 시작 중…"
+"ru" = "Запуск Manim…"
 pt = "Iniciando o Manim…"
 
 ["Loading scene…"]
@@ -2275,6 +2481,7 @@ ja = "シーンを読み込んでいます…"
 "zh-CN" = "加载场景…"
 "zh-TW" = "載入場景…"
 "ko" = "장면 로드 중…"
+"ru" = "Загрузка сцены…"
 pt = "Carregando cena…"
 
 ["Frame %{completed}"]
@@ -2286,6 +2493,7 @@ ja = "フレーム%{completed}"
 "zh-CN" = "帧 %{completed}"
 "zh-TW" = "影格 %{completed}"
 "ko" = "프레임 %{completed}"
+"ru" = "Кадр %{completed}"
 pt = "Quadro %{completed}"
 
 ["Frame %{completed} / %{total}"]
@@ -2297,4 +2505,5 @@ ja = "フレーム%{completed} / %{total}"
 "zh-CN" = "帧 %{completed} / %{total}"
 "zh-TW" = "影格 %{completed} / %{total}"
 "ko" = "프레임 %{completed} / %{total}"
+"ru" = "Кадр %{completed} / %{total}"
 pt = "Quadro %{completed} / %{total}"

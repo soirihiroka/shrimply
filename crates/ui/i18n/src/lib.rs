@@ -4,7 +4,9 @@ use std::borrow::Cow;
 rust_i18n::i18n!("locales", fallback = "en");
 
 const DEFAULT_LOCALE: &str = "en";
-const SUPPORTED_LOCALES: [&str; 9] = ["en", "es", "fr", "de", "ja", "zh-CN", "zh-TW", "ko", "pt"];
+const SUPPORTED_LOCALES: [&str; 10] = [
+    "en", "es", "fr", "de", "ja", "zh-CN", "zh-TW", "ko", "pt", "ru",
+];
 
 pub fn init_system_locale() {
     let locale = glib::language_names()
