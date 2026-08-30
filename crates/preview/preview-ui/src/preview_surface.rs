@@ -92,6 +92,7 @@ struct VideoSurfaceState {
     snap_radius_px: u32,
     caption_bottom_inset: f32,
     caption_font_size: f32,
+    caption_background_color: Color<u8>,
     caption_split_hover: Option<GlamVec2>,
     preview_padding_px: u32,
     preview_shadow_size_px: u32,
@@ -190,6 +191,7 @@ impl PreviewController {
             snap_radius_px: preference.timeline_snap_radius_px,
             caption_bottom_inset: 0.0,
             caption_font_size: preference.caption_font_size,
+            caption_background_color: preference.caption_background_color,
             caption_split_hover: None,
             preview_padding_px: preference.preview_padding_px,
             preview_shadow_size_px: preference.preview_shadow_size_px,
@@ -276,6 +278,7 @@ impl PreviewController {
         preferences_store::connect(&preferences, move |preference| {
             let mut state = preference_state.borrow_mut();
             state.caption_font_size = preference.caption_font_size;
+            state.caption_background_color = preference.caption_background_color;
             state.preview_padding_px = preference.preview_padding_px;
             state.preview_shadow_size_px = preference.preview_shadow_size_px;
             state.preview_upsample_method = preference.preview_upsample_method;
@@ -1017,6 +1020,7 @@ fn attach_render(
             .then_some(project.preview_guides.as_ref());
         let caption_bottom_inset = state.caption_bottom_inset;
         let caption_font_size = state.caption_font_size;
+        let caption_background_color = state.caption_background_color;
         let caption_split_hover = state.caption_split_hover;
         let shadow_size_px = state.preview_shadow_size_px;
         let upsample_method = state.preview_upsample_method;
@@ -1061,6 +1065,7 @@ fn attach_render(
                         position,
                         surface_rect,
                         caption_font_size,
+                        caption_background_color,
                         caption_bottom_inset,
                         focused_caption
                             .as_ref()

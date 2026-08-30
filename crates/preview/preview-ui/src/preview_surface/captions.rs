@@ -113,6 +113,7 @@ pub(super) fn draw_captions(
     position: Time,
     preview_rect: Rect,
     caption_font_size: f32,
+    caption_background_color: Color<u8>,
     caption_bottom_inset: f32,
     split: Option<(&ItemAddress, Vec2, Color)>,
 ) {
@@ -120,7 +121,7 @@ pub(super) fn draw_captions(
         return;
     }
 
-    let active = active_captions(project, position);
+    let active = active_captions(project, position, caption_background_color);
     let mut bottom_stack = caption_bottom_inset;
     for item in active {
         let automatic_bottom = item.h_align == HorizontalAlign::Center
@@ -158,6 +159,7 @@ pub(super) fn split_at_position(
     position: Time,
     preview_rect: Rect,
     caption_font_size: f32,
+    caption_background_color: Color<u8>,
     caption_bottom_inset: f32,
     point: Vec2,
 ) -> Option<usize> {
@@ -166,7 +168,7 @@ pub(super) fn split_at_position(
         return None;
     }
     let mut bottom_stack = caption_bottom_inset;
-    for item in active_captions(project, position) {
+    for item in active_captions(project, position, caption_background_color) {
         let automatic_bottom = item.h_align == HorizontalAlign::Center
             && item.v_align == VerticalAlign::Bottom
             && item.position_x == 50
@@ -190,7 +192,11 @@ pub(super) fn split_at_position(
     None
 }
 
-fn active_captions(project: &Project, position: Time) -> Vec<CaptionItem> {
+fn active_captions(
+    project: &Project,
+    position: Time,
+    caption_background_color: Color<u8>,
+) -> Vec<CaptionItem> {
     let mut active = project
         .caption_tracks
         .iter()
@@ -218,7 +224,7 @@ fn active_captions(project: &Project, position: Time) -> Vec<CaptionItem> {
             if let Some(defaults) = defaults {
                 if !item.styling_enabled {
                     item.text_color = defaults.text_color;
-                    item.background_color = defaults.background_color;
+                    item.background_color = caption_background_color;
                     item.edge_color = defaults.edge_color;
                     item.edge_style = defaults.edge_style;
                     item.font = defaults.font;

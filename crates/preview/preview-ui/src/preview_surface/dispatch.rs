@@ -90,6 +90,7 @@ pub(super) fn caption_split_at_pointer(
         player.position,
         preview_rect,
         state.caption_font_size,
+        state.caption_background_color,
         state.caption_bottom_inset,
         point,
     )?;
