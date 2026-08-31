@@ -273,6 +273,19 @@ ja = "破棄"
 pt = "Descartar"
 tr = "Vazgeç"
 
+["File"]
+en = "File"
+es = "Archivo"
+fr = "Fichier"
+de = "Datei"
+ja = "ファイル"
+"zh-CN" = "文件"
+"zh-TW" = "檔案"
+ko = "파일"
+ru = "Файл"
+pt = "Arquivo"
+tr = "Dosya"
+
 ["Format"]
 en = "Format"
 es = "Formato"
