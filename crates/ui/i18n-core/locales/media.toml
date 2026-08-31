@@ -11,6 +11,7 @@ ja = "サーバーに接続しています…"
 "ko" = "서버에 연결하는 중…"
 "ru" = "Подключение к серверу…"
 pt = "Conectando ao servidor…"
+it = "Connessione al server…"
 
 ["Generate"]
 en = "Generate"
@@ -23,6 +24,7 @@ ja = "生成"
 "ko" = "생성"
 "ru" = "Создать"
 pt = "Gerar"
+it = "Genera"
 
 ["Regenerate"]
 en = "Regenerate"
@@ -35,6 +37,7 @@ ja = "再生成"
 "ko" = "다시 생성"
 "ru" = "Создать заново"
 pt = "Regenerar"
+it = "Rigenera"
 
 ["Ready"]
 en = "Ready"
@@ -47,6 +50,7 @@ ja = "準備完了"
 "ko" = "준비됨"
 "ru" = "Готово"
 pt = "Pronto"
+it = "Pronto"
 
 ["Select a model"]
 en = "Select a model"
@@ -59,6 +63,7 @@ ja = "モデルを選択してください"
 "ko" = "모델 선택"
 "ru" = "Выберите модель"
 pt = "Selecione um modelo"
+it = "Seleziona un modello"
 
 ["Generated"]
 en = "Generated"
@@ -71,6 +76,7 @@ ja = "生成完了"
 "ko" = "생성됨"
 "ru" = "Создано"
 pt = "Gerado"
+it = "Generato"
 
 ["Add…"]
 en = "Add…"
@@ -83,6 +89,7 @@ ja = "追加…"
 "ko" = "추가…"
 "ru" = "Добавить…"
 pt = "Adicionar…"
+it = "Aggiungi…"
 
 ["Show in Folder"]
 en = "Show in Folder"
@@ -95,6 +102,7 @@ ja = "フォルダーに表示"
 "ko" = "폴더에서 보기"
 "ru" = "Показать в папке"
 pt = "Mostrar na pasta"
+it = "Mostra nella cartella"
 
 ["Choose an audio file"]
 en = "Choose an audio file"
@@ -107,6 +115,7 @@ ja = "音声ファイルを選択"
 "ko" = "오디오 파일 선택"
 "ru" = "Выберите аудиофайл"
 pt = "Escolher um arquivo de áudio"
+it = "Scegli un file audio"
 
 ["Reference audio actions"]
 en = "Reference audio actions"
@@ -119,6 +128,7 @@ ja = "参照音声の操作"
 "ko" = "참조 오디오 작업"
 "ru" = "Действия с эталонным аудио"
 pt = "Ações de áudio de referência"
+it = "Azioni audio di riferimento"
 
 ["Add row"]
 en = "Add row"
@@ -131,6 +141,7 @@ ja = "行を追加"
 "ko" = "행 추가"
 "ru" = "Добавить строку"
 pt = "Adicionar linha"
+it = "Aggiungi fila"
 
 ["Remove row"]
 en = "Remove row"
@@ -143,6 +154,7 @@ ja = "行を削除"
 "ko" = "행 삭제"
 "ru" = "Удалить строку"
 pt = "Remover linha"
+it = "Rimuovi fila"
 
 ["Export"]
 en = "Export"
@@ -155,6 +167,7 @@ ja = "書き出し"
 "ko" = "내보내기"
 "ru" = "Экспорт"
 pt = "Exportar"
+it = "Esporta"
 
 ["Export video"]
 en = "Export video"
@@ -167,6 +180,7 @@ ja = "動画を書き出す"
 "ko" = "비디오 내보내기"
 "ru" = "Экспортировать видео"
 pt = "Exportar vídeo"
+it = "Esporta video"
 
 ["Export captions (YTT)"]
 en = "Export captions (YTT)"
@@ -179,6 +193,7 @@ ja = "字幕を書き出す（YTT）"
 "ko" = "자막 내보내기(YTT)"
 "ru" = "Экспортировать субтитры (YTT)"
 pt = "Exportar legendas (YTT)"
+it = "Esporta sottotitoli (YTT)"
 
 ["Export JSON"]
 en = "Export JSON"
@@ -191,6 +206,7 @@ ja = "JSONを書き出す"
 "ko" = "JSON 내보내기"
 "ru" = "Экспортировать JSON"
 pt = "Exportar JSON"
+it = "Esporta JSON"
 
 ["Merge into one file"]
 en = "Merge into one file"
@@ -203,6 +219,7 @@ ja = "1つのファイルに結合"
 "ko" = "하나의 파일로 병합"
 "ru" = "Объединить в один файл"
 pt = "Mesclar em um único arquivo"
+it = "Unisci in un unico file"
 
 ["Export each track separately"]
 en = "Export each track separately"
@@ -215,6 +232,7 @@ ja = "各トラックを個別に書き出す"
 "ko" = "각 트랙을 별도로 내보내기"
 "ru" = "Экспортировать каждую дорожку отдельно"
 pt = "Exportar cada faixa separadamente"
+it = "Esporta ogni traccia separatamente"
 
 ["Export YTT"]
 en = "Export YTT"
@@ -227,6 +245,7 @@ ja = "YTTを書き出す"
 "ko" = "YTT 내보내기"
 "ru" = "Экспортировать YTT"
 pt = "Exportar YTT"
+it = "Esporta YTT"
 
 ["Export Captions"]
 en = "Export Captions"
@@ -239,6 +258,7 @@ ja = "字幕を書き出す"
 "ko" = "자막 내보내기"
 "ru" = "Экспортировать субтитры"
 pt = "Exportar legendas"
+it = "Esporta sottotitoli"
 
 ["Export YouTube Captions"]
 en = "Export YouTube Captions"
@@ -251,6 +271,7 @@ ja = "YouTube字幕を書き出す"
 "ko" = "YouTube 자막 내보내기"
 "ru" = "Экспортировать субтитры YouTube"
 pt = "Exportar legendas do YouTube"
+it = "Esporta sottotitoli YouTube"
 
 ["Captions exported"]
 en = "Captions exported"
@@ -263,6 +284,7 @@ ja = "字幕を書き出しました"
 "ko" = "자막을 내보냈습니다"
 "ru" = "Субтитры экспортированы"
 pt = "Legendas exportadas"
+it = "Sottotitoli esportati"
 
 ["%{count} caption files exported"]
 en = "%{count} caption files exported"
@@ -275,6 +297,7 @@ ja = "%{count}個の字幕ファイルを書き出しました"
 "ko" = "%{count}개의 자막 파일을 내보냈습니다."
 "ru" = "Экспортировано файлов субтитров: %{count}"
 pt = "%{count} arquivos de legenda exportados"
+it = "%{count} file di sottotitoli esportati"
 
 ["Export format"]
 en = "Export format"
@@ -287,6 +310,7 @@ ja = "書き出し形式"
 "ko" = "내보내기 형식"
 "ru" = "Формат экспорта"
 pt = "Formato de exportação"
+it = "Formato di esportazione"
 
 ["Container"]
 en = "Container"
@@ -299,6 +323,7 @@ ja = "コンテナ"
 "ko" = "컨테이너"
 "ru" = "Контейнер"
 pt = "Contêiner"
+it = "Contenitore"
 
 ["Background Alpha"]
 en = "Background Alpha"
@@ -311,6 +336,7 @@ ja = "背景のアルファ"
 "ko" = "배경 알파"
 "ru" = "Альфа-фон"
 pt = "Alfa do fundo"
+it = "Alpha dello sfondo"
 
 ["Values below 128 are transparent in GIF output"]
 en = "Values below 128 are transparent in GIF output"
@@ -323,6 +349,7 @@ ja = "128未満の値はGIF出力で透明になります"
 "ko" = "128 미만의 값은 GIF 출력에서 투명합니다."
 "ru" = "Значения ниже 128 прозрачны в выводе GIF"
 pt = "Valores abaixo de 128 ficam transparentes na saída em GIF"
+it = "I valori inferiori a 128 sono trasparenti nell'output GIF"
 
 ["Rate Control"]
 en = "Rate Control"
@@ -335,6 +362,7 @@ ja = "レート制御"
 "ko" = "비트레이트 제어"
 "ru" = "Управление битрейтом"
 pt = "Controle de taxa"
+it = "Controllo del bitrate"
 
 ["Constant QP"]
 en = "Constant QP"
@@ -347,6 +375,7 @@ ja = "固定QP"
 "ko" = "고정 QP"
 "ru" = "Постоянный QP"
 pt = "QP constante"
+it = "QP costante"
 
 ["Constant Bitrate"]
 en = "Constant Bitrate"
@@ -359,6 +388,7 @@ ja = "固定ビットレート"
 "ko" = "고정 비트레이트"
 "ru" = "Постоянный битрейт"
 pt = "Taxa de bits constante"
+it = "Bitrate costante"
 
 ["Variable Bitrate"]
 en = "Variable Bitrate"
@@ -371,6 +401,7 @@ ja = "可変ビットレート"
 "ko" = "가변 비트레이트"
 "ru" = "Переменный битрейт"
 pt = "Taxa de bits variável"
+it = "Bitrate variabile"
 
 ["Variable Bitrate with Target Quality"]
 en = "Variable Bitrate with Target Quality"
@@ -383,6 +414,7 @@ ja = "目標品質付き可変ビットレート"
 "ko" = "목표 품질 기반 가변 비트레이트"
 "ru" = "Переменный битрейт с целевым качеством"
 pt = "Taxa de bits variável com qualidade alvo"
+it = "Bitrate variabile con qualità obiettivo"
 
 ["Lossless"]
 en = "Lossless"
@@ -395,6 +427,7 @@ ja = "可逆"
 "ko" = "무손실"
 "ru" = "Без потерь"
 pt = "Sem perdas"
+it = "Senza perdite"
 
 ["Video Bitrate"]
 en = "Video Bitrate"
@@ -407,6 +440,7 @@ ja = "動画ビットレート"
 "ko" = "비디오 비트레이트"
 "ru" = "Битрейт видео"
 pt = "Taxa de bits do vídeo"
+it = "Bitrate video"
 
 ["Kbps for CBR/VBR"]
 en = "Kbps for CBR/VBR"
@@ -419,6 +453,7 @@ ja = "CBR/VBRのKbps"
 "ko" = "CBR/VBR용 Kbps"
 "ru" = "Кбит/с для CBR/VBR"
 pt = "Kbps para CBR/VBR"
+it = "Kbps per CBR/VBR"
 
 ["Max Video Bitrate"]
 en = "Max Video Bitrate"
@@ -431,6 +466,7 @@ ja = "最大動画ビットレート"
 "ko" = "최대 비디오 비트 전송률"
 "ru" = "Максимальный битрейт видео"
 pt = "Taxa máxima de bits do vídeo"
+it = "Bitrate video massimo"
 
 ["Kbps for VBR"]
 en = "Kbps for VBR"
@@ -443,6 +479,7 @@ ja = "VBRのKbps"
 "ko" = "VBR용 Kbps"
 "ru" = "Кбит/с для VBR"
 pt = "Kbps para VBR"
+it = "Kbps per VBR"
 
 ["Target Quality"]
 en = "Target Quality"
@@ -455,6 +492,7 @@ ja = "目標品質"
 "ko" = "목표 품질"
 "ru" = "Целевое качество"
 pt = "Qualidade alvo"
+it = "Qualità obiettivo"
 
 ["Lower values are higher quality"]
 en = "Lower values are higher quality"
@@ -467,6 +505,7 @@ ja = "値が小さいほど高品質です"
 "ko" = "값이 낮을수록 품질이 높아집니다."
 "ru" = "Меньшие значения означают более высокое качество"
 pt = "Valores menores significam maior qualidade"
+it = "Valori più bassi hanno qualità maggiore"
 
 ["Keyframe Interval"]
 en = "Keyframe Interval"
@@ -479,6 +518,7 @@ ja = "キーフレーム間隔"
 "ko" = "키프레임 간격"
 "ru" = "Интервал ключевых кадров"
 pt = "Intervalo de quadros-chave"
+it = "Intervallo tra keyframe"
 
 ["Seconds; 0 lets NVENC choose"]
 en = "Seconds; 0 lets NVENC choose"
@@ -491,6 +531,7 @@ ja = "秒。0の場合はNVENCが選択します"
 "ko" = "초; 0으로 설정하면 NVENC가 선택"
 "ru" = "Секунды; 0 позволяет выбрать NVENC"
 pt = "Segundos; 0 permite que o NVENC escolha"
+it = "Secondi; 0 lascia scegliere a NVENC"
 
 ["P1: Fastest (Lowest Quality)"]
 en = "P1: Fastest (Lowest Quality)"
@@ -503,6 +544,7 @@ ja = "P1: 最速（最低品質）"
 "ko" = "P1: 가장 빠름(품질이 가장 낮음)"
 "ru" = "P1: Самый быстрый (самое низкое качество)"
 pt = "P1: Mais rápido (Menor qualidade)"
+it = "P1: Il più veloce (qualità minima)"
 
 ["P2: Faster (Lower Quality)"]
 en = "P2: Faster (Lower Quality)"
@@ -515,6 +557,7 @@ ja = "P2: 高速（低品質）"
 "ko" = "P2: 더 빠름(낮은 품질)"
 "ru" = "P2: Быстрее (низкое качество)"
 pt = "P2: Mais rápido (Qualidade inferior)"
+it = "P2: Più veloce (qualità bassa)"
 
 ["P3: Fast (Low Quality)"]
 en = "P3: Fast (Low Quality)"
@@ -527,6 +570,7 @@ ja = "P3: 速い（低品質）"
 "ko" = "P3: 빠름(낮은 품질)"
 "ru" = "P3: Быстро (низкое качество)"
 pt = "P3: Rápido (Baixa qualidade)"
+it = "P3: Veloce (qualità bassa)"
 
 ["P4: Medium (Medium Quality)"]
 en = "P4: Medium (Medium Quality)"
@@ -539,6 +583,7 @@ ja = "P4: 標準（標準品質）"
 "ko" = "P4: 중간(중간 품질)"
 "ru" = "P4: Средне (среднее качество)"
 pt = "P4: Médio (Qualidade média)"
+it = "P4: Medio (qualità media)"
 
 ["P5: Slow (Good Quality)"]
 en = "P5: Slow (Good Quality)"
@@ -551,6 +596,7 @@ ja = "P5: 低速（高品質）"
 "ko" = "P5: 느림(품질 좋음)"
 "ru" = "P5: Медленно (хорошее качество)"
 pt = "P5: Lento (Boa qualidade)"
+it = "P5: Lento (buona qualità)"
 
 ["P6: Slower (Better Quality)"]
 en = "P6: Slower (Better Quality)"
@@ -563,6 +609,7 @@ ja = "P6: より低速（より高品質）"
 "ko" = "P6: 느림(품질 향상)"
 "ru" = "P6: Медленнее (качество лучше)"
 pt = "P6: Mais lento (Melhor qualidade)"
+it = "P6: Più lento (migliore qualità)"
 
 ["P7: Slowest (Best Quality)"]
 en = "P7: Slowest (Best Quality)"
@@ -575,6 +622,7 @@ ja = "P7: 最低速（最高品質）"
 "ko" = "P7: 가장 느림(최고 품질)"
 "ru" = "P7: Самый медленный (лучшее качество)"
 pt = "P7: O mais lento (Melhor qualidade)"
+it = "P7: Il più lento (qualità massima)"
 
 ["Tuning"]
 en = "Tuning"
@@ -587,6 +635,7 @@ ja = "チューニング"
 "ko" = "튜닝"
 "ru" = "Тюнинг"
 pt = "Ajuste fino"
+it = "Ottimizzazione"
 
 ["Ultra High Quality"]
 en = "Ultra High Quality"
@@ -599,6 +648,7 @@ ja = "超高品質"
 "ko" = "초고품질"
 "ru" = "Сверхвысокое качество"
 pt = "Qualidade ultra-alta"
+it = "Qualità ultra alta"
 
 ["High Quality"]
 en = "High Quality"
@@ -611,6 +661,7 @@ ja = "高品質"
 "ko" = "고품질"
 "ru" = "Высокое качество"
 pt = "Alta qualidade"
+it = "Qualità alta"
 
 ["Low Latency"]
 en = "Low Latency"
@@ -623,6 +674,7 @@ ja = "低遅延"
 "ko" = "낮은 대기 시간"
 "ru" = "Низкая задержка"
 pt = "Baixa latência"
+it = "Bassa latenza"
 
 ["Ultra Low Latency"]
 en = "Ultra Low Latency"
@@ -635,6 +687,7 @@ ja = "超低遅延"
 "ko" = "매우 낮은 지연 시간"
 "ru" = "Сверхнизкая задержка"
 pt = "Latência ultrabaixa"
+it = "Latenza ultra bassa"
 
 ["Multi Pass"]
 en = "Multi Pass"
@@ -647,6 +700,7 @@ ja = "マルチパス"
 "ko" = "멀티패스"
 "ru" = "Многопроходное кодирование"
 pt = "Múltiplas passagens"
+it = "Multi-pass"
 
 ["Single Pass"]
 en = "Single Pass"
@@ -659,6 +713,7 @@ ja = "1パス"
 "ko" = "싱글 패스"
 "ru" = "Однопроходное кодирование"
 pt = "Passagem única"
+it = "Passaggio singolo"
 
 ["Two Passes (Quarter Resolution)"]
 en = "Two Passes (Quarter Resolution)"
@@ -671,6 +726,7 @@ ja = "2パス（4分の1解像度）"
 "ko" = "2패스(1/4 해상도)"
 "ru" = "Два прохода (четверть разрешения)"
 pt = "Duas passagens (Um quarto da resolução)"
+it = "Due passaggi (un quarto di risoluzione)"
 
 ["Two Passes (Full Resolution)"]
 en = "Two Passes (Full Resolution)"
@@ -683,6 +739,7 @@ ja = "2パス（フル解像度）"
 "ko" = "2패스(전체 해상도)"
 "ru" = "Два прохода (полное разрешение)"
 pt = "Duas passagens (resolução máxima)"
+it = "Due passaggi (risoluzione piena)"
 
 ["Profile"]
 en = "Profile"
@@ -695,6 +752,7 @@ ja = "プロファイル"
 "ko" = "프로파일"
 "ru" = "Профиль"
 pt = "Perfil"
+it = "Profilo"
 
 ["Look-ahead"]
 en = "Look-ahead"
@@ -707,6 +765,7 @@ ja = "先読み"
 "ko" = "사전 분석"
 "ru" = "Упреждающий анализ"
 pt = "Look-ahead"
+it = "Look-ahead"
 
 ["Adaptive Quantization"]
 en = "Adaptive Quantization"
@@ -719,6 +778,7 @@ ja = "適応量子化"
 "ko" = "적응형 양자화"
 "ru" = "Адаптивное квантование"
 pt = "Quantização adaptativa"
+it = "Quantizzazione adattiva"
 
 ["B Frames"]
 en = "B Frames"
@@ -731,6 +791,7 @@ ja = "Bフレーム"
 "ko" = "B 프레임"
 "ru" = "B-кадры"
 pt = "Quadros B"
+it = "B frames"
 
 ["B Frame as Reference"]
 en = "B Frame as Reference"
@@ -743,6 +804,7 @@ ja = "Bフレームを参照に使用"
 "ko" = "B 프레임을 참조로 사용"
 "ru" = "B-кадр как опорный"
 pt = "Quadro B como referência"
+it = "B frames come riferimento"
 
 ["Audio Encoder"]
 en = "Audio Encoder"
@@ -755,6 +817,7 @@ ja = "音声エンコーダー"
 "ko" = "오디오 인코더"
 "ru" = "Аудиокодер"
 pt = "Codificador de áudio"
+it = "Encoder audio"
 
 ["Audio Sample Rate"]
 en = "Audio Sample Rate"
@@ -767,6 +830,7 @@ ja = "音声サンプルレート"
 "ko" = "오디오 샘플링 속도"
 "ru" = "Частота дискретизации аудио"
 pt = "Taxa de amostragem de áudio"
+it = "Frequenza di campionamento audio"
 
 ["Audio Bitrate"]
 en = "Audio Bitrate"
@@ -779,6 +843,7 @@ ja = "音声ビットレート"
 "ko" = "오디오 비트 전송률"
 "ru" = "Битрейт аудио"
 pt = "Taxa de bits de áudio"
+it = "Bitrate audio"
 
 ["Kbps"]
 en = "Kbps"
@@ -791,6 +856,7 @@ ja = "Kbps"
 "ko" = "Kbps"
 "ru" = "Кбит/с"
 pt = "Kbps"
+it = "Kbps"
 
 ["Video format"]
 en = "Video format"
@@ -803,6 +869,7 @@ ja = "動画形式"
 "ko" = "비디오 형식"
 "ru" = "Формат видео"
 pt = "Formato de vídeo"
+it = "Formato video"
 
 ["Encoder settings"]
 en = "Encoder settings"
@@ -815,6 +882,7 @@ ja = "エンコーダー設定"
 "ko" = "인코더 설정"
 "ru" = "Настройки кодера"
 pt = "Configurações do codificador"
+it = "Impostazioni encoder"
 
 ["Export Video"]
 en = "Export Video"
@@ -827,6 +895,7 @@ ja = "動画を書き出す"
 "ko" = "비디오 내보내기"
 "ru" = "Экспортировать видео"
 pt = "Exportar vídeo"
+it = "Esporta video"
 
 ["Video exported in %{duration}"]
 en = "Video exported in %{duration}"
@@ -839,6 +908,7 @@ ja = "%{duration}で動画を書き出しました"
 "ko" = "비디오를 %{duration} 만에 내보냈습니다"
 "ru" = "Видео экспортировано за %{duration}"
 pt = "Vídeo exportado em %{duration}"
+it = "Video esportato in %{duration}"
 
 ["Exporting Video"]
 en = "Exporting Video"
@@ -851,6 +921,7 @@ ja = "動画を書き出しています"
 "ko" = "비디오 내보내는 중"
 "ru" = "Экспорт видео"
 pt = "Exportando vídeo"
+it = "Esportazione video"
 
 ["Preparing"]
 en = "Preparing"
@@ -863,6 +934,7 @@ ja = "準備中"
 "ko" = "준비 중"
 "ru" = "Подготовка"
 pt = "Preparando"
+it = "Preparazione"
 
 ["Stabilizing source video"]
 en = "Stabilizing source video"
@@ -875,6 +947,7 @@ ja = "元の動画を安定化しています"
 "ko" = "소스 비디오 안정화 중"
 "ru" = "Стабилизация исходного видео"
 pt = "Estabilizando vídeo de origem"
+it = "Stabilizzazione del video sorgente"
 
 ["Opening output file"]
 en = "Opening output file"
@@ -887,6 +960,7 @@ ja = "出力ファイルを開いています"
 "ko" = "출력 파일 여는 중"
 "ru" = "Открытие файла вывода"
 pt = "Abrindo arquivo de saída"
+it = "Apertura del file di output"
 
 ["Preparing video renderer"]
 en = "Preparing video renderer"
@@ -899,6 +973,7 @@ ja = "動画レンダラーを準備しています"
 "ko" = "비디오 렌더러 준비 중"
 "ru" = "Подготовка видеорендерера"
 pt = "Preparando renderizador de vídeo"
+it = "Preparazione del renderer video"
 
 ["Preparing hardware frames"]
 en = "Preparing hardware frames"
@@ -911,6 +986,7 @@ ja = "ハードウェアフレームを準備しています"
 "ko" = "하드웨어 프레임 준비 중"
 "ru" = "Подготовка аппаратных кадров"
 pt = "Preparando quadros de hardware"
+it = "Preparazione dei fotogrammi hardware"
 
 ["Opening video encoder"]
 en = "Opening video encoder"
@@ -923,6 +999,7 @@ ja = "動画エンコーダーを開いています"
 "ko" = "비디오 인코더 여는 중"
 "ru" = "Открытие видеокодера"
 pt = "Abrindo codificador de vídeo"
+it = "Apertura dell'encoder video"
 
 ["Opening audio encoder"]
 en = "Opening audio encoder"
@@ -935,6 +1012,7 @@ ja = "音声エンコーダーを開いています"
 "ko" = "오디오 인코더 여는 중"
 "ru" = "Открытие аудиокодера"
 pt = "Abrindo codificador de áudio"
+it = "Apertura dell'encoder audio"
 
 ["Writing media header"]
 en = "Writing media header"
@@ -947,6 +1025,7 @@ ja = "メディアヘッダーを書き込んでいます"
 "ko" = "미디어 헤더 작성 중"
 "ru" = "Запись медиазаголовка"
 pt = "Gravando cabeçalho de mídia"
+it = "Scrittura dell'intestazione media"
 
 ["Preparing audio"]
 en = "Preparing audio"
@@ -959,6 +1038,7 @@ ja = "音声を準備しています"
 "ko" = "오디오 준비 중"
 "ru" = "Подготовка аудио"
 pt = "Preparando áudio"
+it = "Preparazione audio"
 
 ["Preparing audio (%{percent}%)"]
 en = "Preparing audio (%{percent}%)"
@@ -971,6 +1051,7 @@ ja = "音声を準備しています（%{percent}%）"
 "ko" = "오디오 준비 중(%{percent}%)"
 "ru" = "Подготовка аудио (%{percent}%)"
 pt = "Preparando áudio (%{percent}%)"
+it = "Preparazione audio (%{percent}%)"
 
 ["Encoding audio"]
 en = "Encoding audio"
@@ -983,6 +1064,7 @@ ja = "音声をエンコードしています"
 "ko" = "오디오 인코딩 중"
 "ru" = "Кодирование аудио"
 pt = "Codificando áudio"
+it = "Codifica audio"
 
 ["Encoding audio (%{percent}%)"]
 en = "Encoding audio (%{percent}%)"
@@ -995,6 +1077,7 @@ ja = "音声をエンコードしています（%{percent}%）"
 "ko" = "오디오 인코딩 중(%{percent}%)"
 "ru" = "Кодирование аудио (%{percent}%)"
 pt = "Codificando áudio (%{percent}%)"
+it = "Codifica audio (%{percent}%)"
 
 ["Rendering frames"]
 en = "Rendering frames"
@@ -1007,6 +1090,7 @@ ja = "フレームをレンダリングしています"
 "ko" = "프레임 렌더링 중"
 "ru" = "Рендеринг кадров"
 pt = "Renderizando quadros"
+it = "Rendering dei fotogrammi"
 
 ["%{current} of %{total} frames (%{percent}%)"]
 en = "%{current} of %{total} frames (%{percent}%)"
@@ -1019,6 +1103,7 @@ ja = "%{total}フレーム中%{current}（%{percent}%）"
 "ko" = "전체 %{total}프레임 중 %{current}프레임(%{percent}%)"
 "ru" = "Кадр %{current} из %{total} (%{percent}%)"
 pt = "%{current} de %{total} quadros (%{percent}%)"
+it = "%{current} di %{total} fotogrammi (%{percent}%)"
 
 ["%{current} of %{total} frames (%{percent}%) - %{fps} fps - %{eta} left"]
 en = "%{current} of %{total} frames (%{percent}%) - %{fps} fps - %{eta} left"
@@ -1031,6 +1116,7 @@ ja = "%{total}フレーム中%{current}（%{percent}%）- %{fps} fps - 残り%{e
 "ko" = "전체 %{total}프레임 중 %{current}프레임(%{percent}%) - %{fps}fps - 남은 시간 %{eta}"
 "ru" = "Кадр %{current} из %{total} (%{percent}%) — %{fps} fps — осталось %{eta}"
 pt = "%{current} de %{total} quadros (%{percent}%) - %{fps} fps - %{eta} restantes"
+it = "%{current} di %{total} fotogrammi (%{percent}%) - %{fps} fps - rimanenti %{eta}"
 
 ["Finishing file"]
 en = "Finishing file"
@@ -1043,6 +1129,7 @@ ja = "ファイルを仕上げています"
 "ko" = "파일 마무리 중…"
 "ru" = "Завершение файла"
 pt = "Finalizando arquivo"
+it = "Completamento del file"
 
 ["Finishing"]
 en = "Finishing"
@@ -1055,6 +1142,7 @@ ja = "仕上げ中"
 "ko" = "마무리 중…"
 "ru" = "Завершение"
 pt = "Finalizando"
+it = "Completamento"
 
 ["JSON exported"]
 en = "JSON exported"
@@ -1067,6 +1155,7 @@ ja = "JSONを書き出しました"
 "ko" = "JSON을 내보냈습니다"
 "ru" = "JSON экспортирован"
 pt = "JSON exportado"
+it = "JSON esportato"
 
 ["Step back one frame"]
 en = "Step back one frame"
@@ -1079,6 +1168,7 @@ ja = "1フレーム戻る"
 "ko" = "한 프레임 뒤로 이동"
 "ru" = "Назад на один кадр"
 pt = "Voltar um quadro"
+it = "Indietro di un fotogramma"
 
 ["Play"]
 en = "Play"
@@ -1091,6 +1181,7 @@ ja = "再生"
 "ko" = "재생"
 "ru" = "Воспроизвести"
 pt = "Reproduzir"
+it = "Riproduci"
 
 ["Pause"]
 en = "Pause"
@@ -1103,6 +1194,7 @@ ja = "一時停止"
 "ko" = "일시 정지"
 "ru" = "Пауза"
 pt = "Pausar"
+it = "Pausa"
 
 ["Step forward one frame"]
 en = "Step forward one frame"
@@ -1115,6 +1207,7 @@ ja = "1フレーム進む"
 "ko" = "한 프레임 앞으로 이동"
 "ru" = "Вперёд на один кадр"
 pt = "Avançar um quadro"
+it = "Avanti di un fotogramma"
 
 ["Fullscreen preview"]
 en = "Fullscreen preview"
@@ -1127,6 +1220,7 @@ ja = "全画面プレビュー"
 "ko" = "전체 화면 미리보기"
 "ru" = "Полноэкранный предпросмотр"
 pt = "Pré-visualização em tela cheia"
+it = "Anteprima a schermo intero"
 
 ["Restore preview"]
 en = "Restore preview"
@@ -1139,6 +1233,7 @@ ja = "プレビューを元に戻す"
 "ko" = "미리보기 복원"
 "ru" = "Восстановить предпросмотр"
 pt = "Restaurar pré-visualização"
+it = "Ripristina anteprima"
 
 ["Guide"]
 en = "Guide"
@@ -1151,6 +1246,7 @@ ja = "ガイド"
 "ko" = "안내선"
 "ru" = "Направляющая"
 pt = "Guia"
+it = "Guida"
 
 ["Playback speed"]
 en = "Playback speed"
@@ -1163,6 +1259,7 @@ ja = "再生速度"
 "ko" = "재생 속도"
 "ru" = "Скорость воспроизведения"
 pt = "Velocidade de reprodução"
+it = "Velocità di riproduzione"
 
 ["x1"]
 en = "x1"
@@ -1175,6 +1272,7 @@ ja = "x1"
 "ko" = "x1"
 "ru" = "x1"
 pt = "1x"
+it = "x1"
 
 ["--"]
 en = "--"
@@ -1187,6 +1285,7 @@ ja = "--"
 "ko" = "--"
 "ru" = "--"
 pt = "--"
+it = "--"
 
 ["Playback speed %{speed}"]
 en = "Playback speed %{speed}"
@@ -1199,6 +1298,7 @@ ja = "再生速度: %{speed}"
 "ko" = "재생 속도 %{speed}"
 "ru" = "Скорость воспроизведения %{speed}"
 pt = "Velocidade de reprodução %{speed}"
+it = "Velocità di riproduzione %{speed}"
 
 ["Pen (B)"]
 en = "Pen (B)"
@@ -1211,6 +1311,7 @@ ja = "ペン（B）"
 "ko" = "펜(B)"
 "ru" = "Перо (B)"
 pt = "Caneta (B)"
+it = "Penna (B)"
 
 ["Fill (F)"]
 en = "Fill (F)"
@@ -1223,6 +1324,7 @@ ja = "塗りつぶし（F）"
 "ko" = "채우기(F)"
 "ru" = "Заливка (F)"
 pt = "Preenchimento (F)"
+it = "Riempi (F)"
 
 ["Stroke Transform (T)"]
 en = "Stroke Transform (T)"
@@ -1235,6 +1337,7 @@ ja = "ストローク変形（T）"
 "ko" = "스트로크 변환(T)"
 "ru" = "Преобразование обводки (T)"
 pt = "Transformar traço (T)"
+it = "Trasforma tratto (T)"
 
 ["Eraser (E)"]
 en = "Eraser (E)"
@@ -1247,6 +1350,7 @@ ja = "消しゴム（E）"
 "ko" = "지우개(E)"
 "ru" = "Ластик (E)"
 pt = "Borracha (E)"
+it = "Gomma (E)"
 
 ["Adjust points (hold Ctrl for temporary adjustment)"]
 en = "Adjust points (hold Ctrl for temporary adjustment)"
@@ -1259,6 +1363,7 @@ ja = "ポイントを調整（Ctrlを押している間だけ一時調整）"
 "ko" = "포인트 조정(Ctrl을 누르면 임시 조정)"
 "ru" = "Настройка точек (удерживайте Ctrl для временной настройки)"
 pt = "Ajustar pontos (segure Ctrl para ajuste temporário)"
+it = "Regola i punti (tieni premuto Ctrl per la regolazione temporanea)"
 
 ["Pen width scale"]
 en = "Pen width scale"
@@ -1271,6 +1376,7 @@ ja = "ペン幅の倍率"
 "ko" = "펜 너비 배율"
 "ru" = "Масштаб ширины пера"
 pt = "Escala da largura da caneta"
+it = "Scala spessore penna"
 
 ["Eraser width scale"]
 en = "Eraser width scale"
@@ -1283,6 +1389,7 @@ ja = "消しゴム幅の倍率"
 "ko" = "지우개 너비 배율"
 "ru" = "Масштаб ширины ластика"
 pt = "Escala da largura da borracha"
+it = "Scala spessore gomma"
 
 ["Fill gap tolerance"]
 en = "Fill gap tolerance"
@@ -1295,6 +1402,7 @@ ja = "塗りつぶしの隙間許容値"
 "ko" = "채우기 간격 허용 오차"
 "ru" = "Допуск зазоров при заливке"
 pt = "Tolerância de abertura do preenchimento"
+it = "Tolleranza di riempimento dei vuoti"
 
 ["Previous drawing onion skin"]
 en = "Previous drawing onion skin"
@@ -1307,6 +1415,7 @@ ja = "前の描画のオニオンスキン"
 "ko" = "이전 그림 어니언 스킨"
 "ru" = "Луковая кожура предыдущего рисунка"
 pt = "Papel vegetal do desenho anterior"
+it = "Onion skin del disegno precedente"
 
 ["Next drawing onion skin"]
 en = "Next drawing onion skin"
@@ -1319,6 +1428,7 @@ ja = "次の描画のオニオンスキン"
 "ko" = "다음 그림 어니언 스킨"
 "ru" = "Луковая кожура следующего рисунка"
 pt = "Papel vegetal do próximo desenho"
+it = "Onion skin del disegno successivo"
 
 ["Paint texture %{number}"]
 en = "Paint texture %{number}"
@@ -1331,6 +1441,7 @@ ja = "ペイントテクスチャ%{number}"
 "ko" = "페인트 텍스처 %{number}"
 "ru" = "Текстура кисти %{number}"
 pt = "Textura de pintura %{number}"
+it = "Texture pittura %{number}"
 
 ["Video Player"]
 en = "Video Player"
@@ -1343,6 +1454,7 @@ ja = "動画プレーヤー"
 "ko" = "비디오 플레이어"
 "ru" = "Видеоплеер"
 pt = "Reprodutor de vídeo"
+it = "Player video"
 
 ["Copy Preview Image"]
 en = "Copy Preview Image"
@@ -1355,6 +1467,7 @@ ja = "プレビュー画像をコピー"
 "ko" = "미리보기 이미지 복사"
 "ru" = "Копировать изображение предпросмотра"
 pt = "Copiar imagem da pré-visualização"
+it = "Copia immagine anteprima"
 
 ["Save Preview Image…"]
 en = "Save Preview Image…"
@@ -1367,6 +1480,7 @@ ja = "プレビュー画像を保存…"
 "ko" = "미리보기 이미지 저장…"
 "ru" = "Сохранить изображение предпросмотра…"
 pt = "Salvar imagem da pré-visualização…"
+it = "Salva immagine anteprima…"
 
 ["Save Preview Image"]
 en = "Save Preview Image"
@@ -1379,6 +1493,7 @@ ja = "プレビュー画像を保存"
 "ko" = "미리보기 이미지 저장"
 "ru" = "Сохранить изображение предпросмотра"
 pt = "Salvar imagem da pré-visualização"
+it = "Salva immagine anteprima"
 
 ["PNG image"]
 en = "PNG image"
@@ -1391,6 +1506,7 @@ ja = "PNG画像"
 "ko" = "PNG 이미지"
 "ru" = "Изображение PNG"
 pt = "Imagem PNG"
+it = "Immagine PNG"
 
 ["Magnet"]
 en = "Magnet"
@@ -1403,6 +1519,7 @@ ja = "マグネット"
 "ko" = "자석"
 "ru" = "Магнит"
 pt = "Ímã"
+it = "Magnete"
 
 ["Beat Grid"]
 en = "Beat Grid"
@@ -1415,6 +1532,7 @@ ja = "ビートグリッド"
 "ko" = "비트 그리드"
 "ru" = "Сетка битов"
 pt = "Grade de batidas"
+it = "Griglia dei beat"
 
 ["Analyzing beats…"]
 en = "Analyzing beats…"
@@ -1427,6 +1545,7 @@ ja = "ビートを解析しています…"
 "ko" = "비트 분석 중…"
 "ru" = "Анализ битов…"
 pt = "Analisando batidas…"
+it = "Analisi dei beat…"
 
 ["No reliable beat detected"]
 en = "No reliable beat detected"
@@ -1439,6 +1558,7 @@ ja = "信頼できるビートを検出できませんでした"
 "ko" = "신뢰할 수 있는 비트가 감지되지 않음"
 "ru" = "Достоверный бит не обнаружен"
 pt = "Nenhuma batida confiável detectada"
+it = "Nessun beat affidabile rilevato"
 
 ["Pointer"]
 en = "Pointer"
@@ -1451,6 +1571,7 @@ ja = "ポインター"
 "ko" = "포인터"
 "ru" = "Указатель"
 pt = "Ponteiro"
+it = "Puntatore"
 
 ["Cut"]
 en = "Cut"
@@ -1463,6 +1584,7 @@ ja = "カット"
 "ko" = "자르기"
 "ru" = "Разрезать"
 pt = "Cortar"
+it = "Taglia"
 
 ["Overwrite/Insert"]
 en = "Overwrite/Insert"
@@ -1475,6 +1597,7 @@ ja = "上書き/挿入"
 "ko" = "덮어쓰기/삽입"
 "ru" = "Перезапись/вставка"
 pt = "Sobrescrever/Inserir"
+it = "Sovrascrivi/Inserisci"
 
 ["Block"]
 en = "Block"
@@ -1487,6 +1610,7 @@ ja = "ブロック"
 "ko" = "블록"
 "ru" = "Блок"
 pt = "Bloquear"
+it = "Blocca"
 
 ["Import Captions…"]
 en = "Import Captions…"
@@ -1499,6 +1623,7 @@ ja = "字幕を読み込む…"
 "ko" = "자막 가져오기…"
 "ru" = "Импортировать субтитры…"
 pt = "Importar legendas…"
+it = "Importa sottotitoli…"
 
 ["Import Media…"]
 en = "Import Media…"
@@ -1511,6 +1636,7 @@ ja = "メディアを読み込む…"
 "ko" = "미디어 가져오기…"
 "ru" = "Импортировать медиа…"
 pt = "Importar mídia…"
+it = "Importa media…"
 
 ["3D Scene"]
 en = "3D Scene"
@@ -1523,6 +1649,7 @@ ja = "3Dシーン"
 "ko" = "3D 장면"
 "ru" = "3D-сцена"
 pt = "Cena 3D"
+it = "Scena 3D"
 
 ["New %{kind}"]
 en = "New %{kind}"
@@ -1535,6 +1662,7 @@ ja = "新規%{kind}"
 "ko" = "새 %{kind}"
 "ru" = "Новый %{kind}"
 pt = "Novo %{kind}"
+it = "Nuovo: %{kind}"
 
 ["Paste"]
 en = "Paste"
@@ -1547,6 +1675,7 @@ ja = "貼り付け"
 "ko" = "붙여넣기"
 "ru" = "Вставить"
 pt = "Colar"
+it = "Incolla"
 
 ["Replace Properties"]
 en = "Replace Properties"
@@ -1559,6 +1688,7 @@ ja = "プロパティを置換"
 "ko" = "속성 바꾸기"
 "ru" = "Заменить свойства"
 pt = "Substituir propriedades"
+it = "Sostituisci proprietà"
 
 ["Paste Modifiers"]
 en = "Paste Modifiers"
@@ -1571,6 +1701,7 @@ ja = "モディファイアを貼り付け"
 "ko" = "수정자 붙여넣기"
 "ru" = "Вставить модификаторы"
 pt = "Colar modificadores"
+it = "Incolla modificatori"
 
 ["Fold Sequence"]
 en = "Fold Sequence"
@@ -1583,6 +1714,7 @@ ja = "シーケンスを折りたたむ"
 "ko" = "시퀀스 접기"
 "ru" = "Свернуть последовательность"
 pt = "Recolher sequência"
+it = "Comprimi sequenza"
 
 ["Unlink Folder"]
 en = "Unlink Folder"
@@ -1595,6 +1727,7 @@ ja = "フォルダーのリンクを解除"
 "ko" = "폴더 연결 해제"
 "ru" = "Отменить связь с папкой"
 pt = "Desvincular pasta"
+it = "Scollega cartella"
 
 ["Add Track at Top"]
 en = "Add Track at Top"
@@ -1607,6 +1740,7 @@ ja = "上にトラックを追加"
 "ko" = "상단에 트랙 추가"
 "ru" = "Добавить дорожку сверху"
 pt = "Adicionar faixa no topo"
+it = "Aggiungi traccia in alto"
 
 ["Add Track at Bottom"]
 en = "Add Track at Bottom"
@@ -1619,6 +1753,7 @@ ja = "下にトラックを追加"
 "ko" = "하단에 트랙 추가"
 "ru" = "Добавить дорожку снизу"
 pt = "Adicionar faixa na base"
+it = "Aggiungi traccia in basso"
 
 ["Copy Frame"]
 en = "Copy Frame"
@@ -1631,6 +1766,7 @@ ja = "フレームをコピー"
 "ko" = "프레임 복사"
 "ru" = "Копировать кадр"
 pt = "Copiar quadro"
+it = "Copia fotogramma"
 
 ["Save Frame…"]
 en = "Save Frame…"
@@ -1643,6 +1779,7 @@ ja = "フレームを保存…"
 "ko" = "프레임 저장…"
 "ru" = "Сохранить кадр…"
 pt = "Salvar quadro…"
+it = "Salva fotogramma…"
 
 ["Frame copied"]
 en = "Frame copied"
@@ -1655,6 +1792,7 @@ ja = "フレームをコピーしました"
 "ko" = "프레임이 복사되었습니다."
 "ru" = "Кадр скопирован"
 pt = "Quadro copiado"
+it = "Fotogramma copiato"
 
 ["Save Selected Frame"]
 en = "Save Selected Frame"
@@ -1667,6 +1805,7 @@ ja = "選択したフレームを保存"
 "ko" = "선택한 프레임 저장"
 "ru" = "Сохранить выбранный кадр"
 pt = "Salvar quadro selecionado"
+it = "Salva fotogramma selezionato"
 
 ["Enable Beat Detection"]
 en = "Enable Beat Detection"
@@ -1679,6 +1818,7 @@ ja = "ビート検出を有効化"
 "ko" = "비트 감지 활성화"
 "ru" = "Включить обнаружение битов"
 pt = "Habilitar detecção de batidas"
+it = "Attiva rilevamento dei beat"
 
 ["Disable Beat Detection"]
 en = "Disable Beat Detection"
@@ -1691,6 +1831,7 @@ ja = "ビート検出を無効化"
 "ko" = "비트 감지 비활성화"
 "ru" = "Отключить обнаружение битов"
 pt = "Desabilitar detecção de batidas"
+it = "Disattiva rilevamento dei beat"
 
 ["Export Audio…"]
 en = "Export Audio…"
@@ -1703,6 +1844,7 @@ ja = "音声を書き出す…"
 "ko" = "오디오 내보내기…"
 "ru" = "Экспортировать аудио…"
 pt = "Exportar áudio…"
+it = "Esporta audio…"
 
 ["Transcribe"]
 en = "Transcribe"
@@ -1715,6 +1857,7 @@ ja = "文字起こし"
 "ko" = "음성 인식"
 "ru" = "Транскрибировать"
 pt = "Transcrever"
+it = "Trascrivi"
 
 ["Remove Silences"]
 en = "Remove Silences"
@@ -1727,6 +1870,7 @@ ja = "無音部分を削除"
 "ko" = "무음 제거"
 "ru" = "Удалить тишину"
 pt = "Remover silêncios"
+it = "Rimuovi silenzi"
 
 ["Export Selected Audio"]
 en = "Export Selected Audio"
@@ -1739,6 +1883,7 @@ ja = "選択した音声を書き出す"
 "ko" = "선택한 오디오 내보내기"
 "ru" = "Экспортировать выбранное аудио"
 pt = "Exportar áudio selecionado"
+it = "Esporta audio selezionato"
 
 ["Exporting Audio"]
 en = "Exporting Audio"
@@ -1751,6 +1896,7 @@ ja = "音声を書き出しています"
 "ko" = "오디오 내보내는 중"
 "ru" = "Экспорт аудио"
 pt = "Exportando áudio"
+it = "Esportazione audio"
 
 ["The selected items will be mixed into one audio file."]
 en = "The selected items will be mixed into one audio file."
@@ -1763,6 +1909,7 @@ ja = "選択した項目を1つの音声ファイルにミックスします。"
 "ko" = "선택한 항목이 하나의 오디오 파일로 믹싱됩니다."
 "ru" = "Выбранные элементы будут сведены в один аудиофайл."
 pt = "Os itens selecionados serão mixados em um único arquivo de áudio."
+it = "Gli elementi selezionati verranno mixati in un unico file audio."
 
 ["Choose File"]
 en = "Choose File"
@@ -1775,6 +1922,7 @@ ja = "ファイルを選択"
 "ko" = "파일 선택"
 "ru" = "Выбрать файл"
 pt = "Escolher arquivo"
+it = "Scegli file"
 
 ["Audio exported"]
 en = "Audio exported"
@@ -1787,6 +1935,7 @@ ja = "音声を書き出しました"
 "ko" = "오디오를 내보냈습니다"
 "ru" = "Аудио экспортировано"
 pt = "Áudio exportado"
+it = "Audio esportato"
 
 ["Add Caption Track"]
 en = "Add Caption Track"
@@ -1799,6 +1948,7 @@ ja = "字幕トラックを追加"
 "ko" = "자막 트랙 추가"
 "ru" = "Добавить дорожку субтитров"
 pt = "Adicionar faixa de legendas"
+it = "Aggiungi traccia sottotitoli"
 
 ["Add Video Track"]
 en = "Add Video Track"
@@ -1811,6 +1961,7 @@ ja = "動画トラックを追加"
 "ko" = "비디오 트랙 추가"
 "ru" = "Добавить видеодорожку"
 pt = "Adicionar faixa de vídeo"
+it = "Aggiungi traccia video"
 
 ["Add Audio Track"]
 en = "Add Audio Track"
@@ -1823,6 +1974,7 @@ ja = "音声トラックを追加"
 "ko" = "오디오 트랙 추가"
 "ru" = "Добавить аудиодорожку"
 pt = "Adicionar faixa de áudio"
+it = "Aggiungi traccia audio"
 
 ["Gain Offset"]
 en = "Gain Offset"
@@ -1835,6 +1987,7 @@ ja = "ゲインオフセット"
 "ko" = "게인 오프셋"
 "ru" = "Смещение усиления"
 pt = "Ajuste de ganho"
+it = "Offset gain"
 
 ["Track gain offset in decibels"]
 en = "Track gain offset in decibels"
@@ -1847,6 +2000,7 @@ ja = "トラックのゲインオフセット（デシベル）"
 "ko" = "데시벨 단위의 트랙 게인 오프셋"
 "ru" = "Смещение усиления дорожки в децибелах"
 pt = "Ajuste de ganho da faixa em decibéis"
+it = "Offset gain della traccia in decibel"
 
 ["Generate Speech"]
 en = "Generate Speech"
@@ -1859,6 +2013,7 @@ ja = "音声を生成"
 "ko" = "음성 생성"
 "ru" = "Создать речь"
 pt = "Gerar fala"
+it = "Genera voce"
 
 ["Move Out"]
 en = "Move Out"
@@ -1871,6 +2026,7 @@ ja = "外に移動"
 "ko" = "밖으로 이동"
 "ru" = "Вынести"
 pt = "Mover para fora"
+it = "Sposta fuori"
 
 ["Group"]
 en = "Group"
@@ -1883,6 +2039,7 @@ ja = "グループ化"
 "ko" = "그룹화"
 "ru" = "Сгруппировать"
 pt = "Agrupar"
+it = "Raggruppa"
 
 ["Ungroup"]
 en = "Ungroup"
@@ -1895,6 +2052,7 @@ ja = "グループ解除"
 "ko" = "그룹 해제"
 "ru" = "Разгруппировать"
 pt = "Desagrupar"
+it = "Annulla raggruppamento"
 
 ["Delete Track"]
 en = "Delete Track"
@@ -1907,6 +2065,7 @@ ja = "トラックを削除"
 "ko" = "트랙 삭제"
 "ru" = "Удалить дорожку"
 pt = "Excluir faixa"
+it = "Elimina traccia"
 
 ["Properties replaced on 1 item"]
 en = "Properties replaced on 1 item"
@@ -1919,6 +2078,7 @@ ja = "1項目のプロパティを置換しました"
 "ko" = "항목 1개의 속성을 바꿨습니다"
 "ru" = "Свойства заменены на 1 элементе"
 pt = "Propriedades substituídas em 1 item"
+it = "Proprietà sostituite su 1 elemento"
 
 ["Properties replaced on %{count} items"]
 en = "Properties replaced on %{count} items"
@@ -1931,6 +2091,7 @@ ja = "%{count}項目のプロパティを置換しました"
 "ko" = "항목 %{count}개의 속성을 바꿨습니다"
 "ru" = "Свойства заменены на %{count} элементах"
 pt = "Propriedades substituídas em %{count} itens"
+it = "Proprietà sostituite su %{count} elementi"
 
 ["Delete Tracks?"]
 en = "Delete Tracks?"
@@ -1943,6 +2104,7 @@ ja = "トラックを削除しますか？"
 "ko" = "트랙을 삭제하시겠습니까?"
 "ru" = "Удалить дорожки?"
 pt = "Excluir faixas?"
+it = "Eliminare le tracce?"
 
 ["1 clip is about to be deleted, are you sure?"]
 en = "1 clip is about to be deleted, are you sure?"
@@ -1955,6 +2117,7 @@ ja = "1個のクリップを削除します。よろしいですか？"
 "ko" = "클립 1개를 삭제하려고 합니다. 삭제하시겠습니까?"
 "ru" = "Будет удалён 1 клип. Продолжить?"
 pt = "1 clipe está prestes a ser excluído, tem certeza?"
+it = "1 clip sta per essere eliminata, sei sicuro?"
 
 ["%{count} clips are about to be deleted, are you sure?"]
 en = "%{count} clips are about to be deleted, are you sure?"
@@ -1967,6 +2130,7 @@ ja = "%{count}個のクリップを削除します。よろしいですか？"
 "ko" = "%{count}개의 클립이 곧 삭제될 예정입니다. 정말로 삭제하시겠습니까?"
 "ru" = "Будет удалено %{count} клипов. Продолжить?"
 pt = "%{count} clipes estão prestes a ser excluídos, tem certeza?"
+it = "%{count} clip stanno per essere eliminate, sei sicuro?"
 
 ["Silence threshold"]
 en = "Silence threshold"
@@ -1979,6 +2143,7 @@ ja = "無音しきい値"
 "ko" = "무음 임계값"
 "ru" = "Порог тишины"
 pt = "Limiar de silêncio"
+it = "Soglia di silenzio"
 
 ["Minimum silence"]
 en = "Minimum silence"
@@ -1991,6 +2156,7 @@ ja = "最小無音時間"
 "ko" = "최소 무음 길이"
 "ru" = "Минимальная тишина"
 pt = "Silêncio mínimo"
+it = "Silenzio minimo"
 
 ["Gap tolerance"]
 en = "Gap tolerance"
@@ -2003,6 +2169,7 @@ ja = "隙間の許容値"
 "ko" = "간격 허용 오차"
 "ru" = "Допуск зазоров"
 pt = "Tolerância de intervalo"
+it = "Tolleranza vuoti"
 
 ["Min chunk"]
 en = "Min chunk"
@@ -2015,6 +2182,7 @@ ja = "最小チャンク"
 "ko" = "최소 구간"
 "ru" = "Минимальный фрагмент"
 pt = "Trecho mínimo"
+it = "Frammento minimo"
 
 ["No Silences Found"]
 en = "No Silences Found"
@@ -2027,6 +2195,7 @@ ja = "無音部分が見つかりません"
 "ko" = "무음 구간을 찾을 수 없음"
 "ru" = "Тишина не найдена"
 pt = "Nenhum silêncio encontrado"
+it = "Nessun silenzio trovato"
 
 ["No selected-audio gaps matched the configured threshold and duration."]
 en = "No selected-audio gaps matched the configured threshold and duration."
@@ -2039,6 +2208,7 @@ ja = "選択した音声に、設定したしきい値と長さに一致する�
 "ko" = "선택한 오디오에 설정된 임계값과 길이를 충족하는 무음 구간이 없습니다."
 "ru" = "Ни один участок тишины в выбранном аудио не соответствует заданным порогу и длительности."
 pt = "Nenhum intervalo do áudio selecionado correspondeu ao limiar e duração configurados."
+it = "Nessun vuoto dell'audio selezionato corrispondeva alla soglia e alla durata configurate."
 
 ["No timeline ranges were removed."]
 en = "No timeline ranges were removed."
@@ -2051,6 +2221,7 @@ ja = "タイムラインの範囲は削除されませんでした。"
 "ko" = "제거된 타임라인 범위가 없습니다."
 "ru" = "Ни один диапазон таймлайна не был удалён."
 pt = "Nenhum intervalo da linha do tempo foi removido."
+it = "Nessun intervallo della sequenza è stato rimosso."
 
 ["Follow cuts"]
 en = "Follow cuts"
@@ -2063,6 +2234,7 @@ ja = "カットに従う"
 "ko" = "컷 따르기"
 "ru" = "Следовать за разрезами"
 pt = "Seguir cortes"
+it = "Segui i tagli"
 
 ["Snap source"]
 en = "Snap source"
@@ -2075,6 +2247,7 @@ ja = "スナップ元"
 "ko" = "스냅 소스"
 "ru" = "Источник привязки"
 pt = "Origem do encaixe"
+it = "Origine snap"
 
 ["Snap tolerance"]
 en = "Snap tolerance"
@@ -2087,6 +2260,7 @@ ja = "スナップ許容値"
 "ko" = "스냅 허용 오차"
 "ru" = "Допуск привязки"
 pt = "Tolerância do encaixe"
+it = "Tolleranza snap"
 
 ["Snap generated caption boundaries to nearby cuts within this many seconds."]
 en = "Snap generated caption boundaries to nearby cuts within this many seconds."
@@ -2099,6 +2273,7 @@ ja = "生成した字幕の境界を、この秒数以内にある近くのカ�
 "ko" = "생성된 자막 경계를 지정한 시간 내의 가까운 컷에 스냅합니다."
 "ru" = "Привязывать границы созданных субтитров к близлежащим разрезам в пределах указанного количества секунд."
 pt = "Encaixar limites das legendas geradas nos cortes próximos dentro desta quantidade de segundos."
+it = "Aggancia i limiti dei sottotitoli generati ai tagli vicini entro questo numero di secondi."
 
 ["Continue cut threshold"]
 en = "Continue cut threshold"
@@ -2111,6 +2286,7 @@ ja = "カット継続しきい値"
 "ko" = "연속 컷 임계값"
 "ru" = "Порог продолжения разреза"
 pt = "Limiar de continuidade de corte"
+it = "Soglia continuità del taglio"
 
 ["Absorb chunks shorter than this many seconds only when the merged chunk stays under this threshold."]
 en = "Absorb chunks shorter than this many seconds only when the merged chunk stays under this threshold."
@@ -2123,6 +2299,7 @@ ja = "この秒数より短いチャンクを、結合後もこのしきい値�
 "ko" = "병합 후 길이가 이 임계값을 넘지 않을 때만 지정한 초보다 짧은 구간을 병합합니다."
 "ru" = "Поглощать фрагменты короче указанного количества секунд только в том случае, если объединённый фрагмент остаётся в пределах этого порога."
 pt = "Absorver trechos mais curtos que esta quantidade de segundos apenas quando o trecho mesclado permanecer abaixo deste limiar."
+it = "Assorbi frammenti più brevi di questo numero di secondi solo se il frammento unito resta sotto questa soglia."
 
 ["%{count} chunk will be transcribed."]
 en = "%{count} chunk will be transcribed."
@@ -2135,6 +2312,7 @@ ja = "%{count}個のチャンクを文字起こしします。"
 "ko" = "%{count}개 구간을 음성 인식합니다."
 "ru" = "Будет транскрибирован %{count} фрагмент."
 pt = "%{count} trecho será transcrito."
+it = "%{count} frammenti verrà trascritto."
 
 ["%{count} chunks will be transcribed."]
 en = "%{count} chunks will be transcribed."
@@ -2147,6 +2325,7 @@ ja = "%{count}個のチャンクを文字起こしします。"
 "ko" = "%{count}개 구간을 음성 인식합니다."
 "ru" = "Будет транскрибировано %{count} фрагментов."
 pt = "%{count} trechos serão transcritos."
+it = "%{count} frammenti verranno trascritti."
 
 ["Transcribing..."]
 en = "Transcribing..."
@@ -2159,6 +2338,7 @@ ja = "文字起こし中..."
 "ko" = "음성 인식 중…"
 "ru" = "Транскрибирование…"
 pt = "Transcrevendo..."
+it = "Trascrizione…"
 
 ["Audio cuts"]
 en = "Audio cuts"
@@ -2171,6 +2351,7 @@ ja = "音声カット"
 "ko" = "오디오 컷"
 "ru" = "Разрезы аудио"
 pt = "Cortes de áudio"
+it = "Tagli audio"
 
 ["Video cuts"]
 en = "Video cuts"
@@ -2183,6 +2364,7 @@ ja = "動画カット"
 "ko" = "비디오 컷"
 "ru" = "Разрезы видео"
 pt = "Cortes de vídeo"
+it = "Tagli video"
 
 ["Audio and video cuts"]
 en = "Audio and video cuts"
@@ -2195,6 +2377,7 @@ ja = "音声と動画のカット"
 "ko" = "오디오 및 비디오 컷"
 "ru" = "Разрезы аудио и видео"
 pt = "Cortes de áudio e vídeo"
+it = "Tagli audio e video"
 
 ["%{current}/%{total} · %{message}"]
 en = "%{current}/%{total} · %{message}"
@@ -2207,6 +2390,7 @@ ja = "%{current}/%{total} · %{message}"
 "ko" = "%{current}/%{total} · %{message}"
 "ru" = "%{current}/%{total} · %{message}"
 pt = "%{current}/%{total} · %{message}"
+it = "%{current}/%{total} · %{message}"
 
 ["%{current}/%{total} · Complete"]
 en = "%{current}/%{total} · Complete"
@@ -2219,6 +2403,7 @@ ja = "%{current}/%{total} · 完了"
 "ko" = "%{current}/%{total} · 완료"
 "ru" = "%{current}/%{total} · Готово"
 pt = "%{current}/%{total} · Concluído"
+it = "%{current}/%{total} · Completato"
 
 ["%{count} caption chunk will be generated with each caption's exact duration."]
 en = "%{count} caption chunk will be generated with each caption's exact duration."
@@ -2231,6 +2416,7 @@ ja = "字幕の正確な長さで%{count}個の字幕チャンクを生成しま
 "ko" = "각 자막의 정확한 길이로 자막 구간 %{count}개를 생성합니다."
 "ru" = "Будет создан %{count} фрагмент субтитров с точной длительностью соответствующего субтитра."
 pt = "%{count} trecho de legenda será gerado com a duração exata de cada legenda."
+it = "Verrà generato %{count} frammento di sottotitoli con la durata esatta di ciascun sottotitolo."
 
 ["%{count} caption chunks will be generated with each caption's exact duration."]
 en = "%{count} caption chunks will be generated with each caption's exact duration."
@@ -2243,6 +2429,7 @@ ja = "各字幕の正確な長さで%{count}個の字幕チャンクを生成し
 "ko" = "각 자막의 정확한 길이로 자막 구간 %{count}개를 생성합니다."
 "ru" = "Будет создано %{count} фрагментов субтитров с точной длительностью соответствующих субтитров."
 pt = "%{count} trechos de legendas serão gerados com a duração exata de cada legenda."
+it = "Verranno generati %{count} frammenti di sottotitoli con la durata esatta di ciascun sottotitolo."
 
 ["%{count} empty or invalid chunk will be skipped."]
 en = "%{count} empty or invalid chunk will be skipped."
@@ -2255,6 +2442,7 @@ ja = "%{count}個の空または無効なチャンクをスキップします。
 "ko" = "비어 있거나 잘못된 구간 %{count}개를 건너뜁니다."
 "ru" = "Будет пропущен %{count} пустой или недопустимый фрагмент."
 pt = "%{count} trecho vazio ou inválido será ignorado."
+it = "%{count} frammento vuoto o non valido verrà saltato."
 
 ["%{count} empty or invalid chunks will be skipped."]
 en = "%{count} empty or invalid chunks will be skipped."
@@ -2267,6 +2455,7 @@ ja = "%{count}個の空または無効なチャンクをスキップします。
 "ko" = "비어 있거나 잘못된 구간 %{count}개를 건너뜁니다."
 "ru" = "Будет пропущено %{count} пустых или недопустимых фрагментов."
 pt = "%{count} trechos vazios ou inválidos serão ignorados."
+it = "%{count} frammenti vuoti o non validi verranno saltati."
 
 ["Chunk %{current}/%{total}"]
 en = "Chunk %{current}/%{total}"
@@ -2279,6 +2468,7 @@ ja = "チャンク%{current}/%{total}"
 "ko" = "구간 %{current}/%{total}"
 "ru" = "Фрагмент %{current}/%{total}"
 pt = "Trecho %{current}/%{total}"
+it = "Frammento %{current}/%{total}"
 
 ["Generating Speech…"]
 en = "Generating Speech…"
@@ -2291,6 +2481,7 @@ ja = "音声を生成しています…"
 "ko" = "음성 생성 중…"
 "ru" = "Создание речи…"
 pt = "Gerando fala…"
+it = "Generazione voce…"
 
 ["Match Project to Video?"]
 en = "Match Project to Video?"
@@ -2303,6 +2494,7 @@ ja = "プロジェクトを動画に合わせますか？"
 "ko" = "프로젝트를 비디오에 맞추시겠습니까?"
 "ru" = "Согласовать проект с видео?"
 pt = "Ajustar projeto ao vídeo?"
+it = "Adattare il progetto al video?"
 
 ["This is the first video in the project. Match the project to its %{width}×%{height} resolution and %{fps} FPS?"]
 en = "This is the first video in the project. Match the project to its %{width}×%{height} resolution and %{fps} FPS?"
@@ -2315,6 +2507,7 @@ ja = "プロジェクトで最初の動画です。プロジェクトを%{width}
 "ko" = "프로젝트의 첫 비디오입니다. 프로젝트를 %{width}×%{height} 해상도 및 %{fps} FPS에 맞추시겠습니까?"
 "ru" = "Это первое видео в проекте. Согласовать проект с его разрешением %{width}×%{height} и частотой %{fps} FPS?"
 pt = "Este é o primeiro vídeo do projeto. Deseja ajustar o projeto para sua resolução de %{width}×%{height} e %{fps} FPS?"
+it = "Questo è il primo video del progetto. Adatta il progetto alla sua risoluzione di %{width}×%{height} e %{fps} FPS?"
 
 ["This is the first video in the project. Match the project to its %{width}×%{height} resolution?"]
 en = "This is the first video in the project. Match the project to its %{width}×%{height} resolution?"
@@ -2327,6 +2520,7 @@ ja = "プロジェクトで最初の動画です。プロジェクトを%{width}
 "ko" = "프로젝트의 첫 비디오입니다. 프로젝트를 %{width}×%{height} 해상도에 맞추시겠습니까?"
 "ru" = "Это первое видео в проекте. Согласовать проект с его разрешением %{width}×%{height}?"
 pt = "Este é o primeiro vídeo do projeto. Deseja ajustar o projeto para sua resolução de %{width}×%{height}?"
+it = "Questo è il primo video del progetto. Adatta il progetto alla sua risoluzione di %{width}×%{height}?"
 
 ["This is the first video in the project. Match the project to its %{fps} FPS?"]
 en = "This is the first video in the project. Match the project to its %{fps} FPS?"
@@ -2339,6 +2533,7 @@ ja = "プロジェクトで最初の動画です。プロジェクトを%{fps} F
 "ko" = "프로젝트의 첫 비디오입니다. 프로젝트를 %{fps} FPS에 맞추시겠습니까?"
 "ru" = "Это первое видео в проекте. Согласовать проект с его частотой %{fps} FPS?"
 pt = "Este é o primeiro vídeo do projeto. Deseja ajustar o projeto para %{fps} FPS?"
+it = "Questo è il primo video del progetto. Adatta il progetto ai suoi %{fps} FPS?"
 
 ["Keep Project Settings"]
 en = "Keep Project Settings"
@@ -2351,6 +2546,7 @@ ja = "プロジェクト設定を維持"
 "ko" = "프로젝트 설정 유지"
 "ru" = "Сохранить настройки проекта"
 pt = "Manter configurações do projeto"
+it = "Mantieni impostazioni progetto"
 
 ["Match Video"]
 en = "Match Video"
@@ -2363,6 +2559,7 @@ ja = "動画に合わせる"
 "ko" = "비디오에 맞추기"
 "ru" = "Согласовать с видео"
 pt = "Ajustar ao vídeo"
+it = "Adatta al video"
 
 ["Import to Track"]
 en = "Import to Track"
@@ -2375,6 +2572,7 @@ ja = "トラックに読み込む"
 "ko" = "트랙으로 가져오기"
 "ru" = "Импортировать на дорожку"
 pt = "Importar para a faixa"
+it = "Importa nella traccia"
 
 ["Remux MKV/WebM to MP4?"]
 en = "Remux MKV/WebM to MP4?"
@@ -2387,6 +2585,7 @@ ja = "MKV/WebMをMP4に再多重化しますか？"
 "ko" = "MKV/WebM을 MP4로 리먹스하시겠습니까?"
 "ru" = "Перепаковать MKV/WebM в MP4?"
 pt = "Remuxar MKV/WebM para MP4?"
+it = "Eseguire remux MKV/WebM in MP4?"
 
 ["MP4 is the supported timeline import format. The file can be remuxed losslessly first."]
 en = "MP4 is the supported timeline import format. The file can be remuxed losslessly first."
@@ -2399,6 +2598,7 @@ ja = "タイムラインへの読み込みはMP4に対応しています。先�
 "ko" = "MP4는 타임라인에서 지원하는 가져오기 형식입니다. 먼저 파일을 무손실로 리먹스할 수 있습니다."
 "ru" = "MP4 — поддерживаемый формат импорта на таймлайн. Сначала файл можно перепаковать без потерь."
 pt = "MP4 é o formato suportado para importação na linha do tempo. O arquivo pode ser remuxado sem perdas primeiro."
+it = "MP4 è il formato supportato per l'import nella timeline. È possibile eseguire prima un remux senza perdita di qualità."
 
 ["Remux"]
 en = "Remux"
@@ -2411,6 +2611,7 @@ ja = "再多重化"
 "ko" = "리먹스"
 "ru" = "Перепаковать"
 pt = "Remuxar"
+it = "Remux"
 
 ["Delete original file?"]
 en = "Delete original file?"
@@ -2423,6 +2624,7 @@ ja = "元のファイルを削除しますか？"
 "ko" = "원본 파일을 삭제하시겠습니까?"
 "ru" = "Удалить исходный файл?"
 pt = "Excluir arquivo original?"
+it = "Eliminare il file originale?"
 
 ["The file was remuxed. Delete the original to keep only the MP4 copy?"]
 en = "The file was remuxed. Delete the original to keep only the MP4 copy?"
@@ -2435,6 +2637,7 @@ ja = "ファイルを再多重化しました。元のファイルを削除し�
 "ko" = "파일을 리먹스했습니다. MP4 사본만 유지하도록 원본을 삭제하시겠습니까?"
 "ru" = "Файл был перепакован. Удалить исходный файл, чтобы оставить только копию MP4?"
 pt = "O arquivo foi remuxado. Deseja excluir o original para manter apenas a cópia em MP4?"
+it = "Remux sul file completato. Eliminare l'originale per conservare solo la copia in MP4?"
 
 ["Keep"]
 en = "Keep"
@@ -2447,6 +2650,7 @@ ja = "残す"
 "ko" = "유지"
 "ru" = "Оставить"
 pt = "Manter"
+it = "Mantieni"
 
 ["Starting Blender…"]
 en = "Starting Blender…"
@@ -2459,6 +2663,7 @@ ja = "Blenderを起動しています…"
 "ko" = "Blender 시작 중…"
 "ru" = "Запуск Blender…"
 pt = "Iniciando o Blender…"
+it = "Avvio di Blender…"
 
 ["Starting Manim…"]
 en = "Starting Manim…"
@@ -2471,6 +2676,7 @@ ja = "Manimを起動しています…"
 "ko" = "Manim 시작 중…"
 "ru" = "Запуск Manim…"
 pt = "Iniciando o Manim…"
+it = "Avvio di Manim…"
 
 ["Loading scene…"]
 en = "Loading scene…"
@@ -2483,6 +2689,7 @@ ja = "シーンを読み込んでいます…"
 "ko" = "장면 로드 중…"
 "ru" = "Загрузка сцены…"
 pt = "Carregando cena…"
+it = "Caricamento della scena…"
 
 ["Frame %{completed}"]
 en = "Frame %{completed}"
@@ -2495,6 +2702,7 @@ ja = "フレーム%{completed}"
 "ko" = "프레임 %{completed}"
 "ru" = "Кадр %{completed}"
 pt = "Quadro %{completed}"
+it = "Fotogrammi %{completed}"
 
 ["Frame %{completed} / %{total}"]
 en = "Frame %{completed} / %{total}"
@@ -2507,3 +2715,4 @@ ja = "フレーム%{completed} / %{total}"
 "ko" = "프레임 %{completed} / %{total}"
 "ru" = "Кадр %{completed} / %{total}"
 pt = "Quadro %{completed} / %{total}"
+it = "Fotogrammi %{completed} / %{total}"

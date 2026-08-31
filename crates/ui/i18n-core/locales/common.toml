@@ -12,6 +12,7 @@ ja = "%{count}件のエフェクトを貼り付けました"
 "ru" = "Вставлено эффектов: %{count}"
 pt = "%{count} efeitos colados"
 tr = "%{count} efekt yapıştırıldı"
+it = "%{count} effetti incollati"
 
 ["1 effect pasted"]
 en = "1 effect pasted"
@@ -25,6 +26,7 @@ ja = "エフェクトを1件貼り付けました"
 "ru" = "Вставлен 1 эффект"
 pt = "1 efeito colado"
 tr = "1 efekt yapıştırıldı"
+it = "1 effetto incollato"
 
 ["Alpha"]
 en = "Alpha"
@@ -38,6 +40,7 @@ ja = "アルファ"
 "ru" = "Альфа"
 pt = "Alfa"
 tr = "Alfa"
+it = "Alfa"
 
 ["Appearance"]
 en = "Appearance"
@@ -51,6 +54,7 @@ ja = "外観"
 "ru" = "Внешний вид"
 pt = "Aparência"
 tr = "Görünüm"
+it = "Aspetto"
 
 ["Apply"]
 en = "Apply"
@@ -64,6 +68,7 @@ ja = "適用"
 "ru" = "Применить"
 pt = "Aplicar"
 tr = "Uygula"
+it = "Applica"
 
 ["Audio"]
 en = "Audio"
@@ -77,6 +82,7 @@ ja = "オーディオ"
 "ru" = "Аудио"
 pt = "Áudio"
 tr = "Ses"
+it = "Audio"
 
 ["Audio Generator"]
 en = "Audio Generator"
@@ -90,6 +96,7 @@ ja = "オーディオジェネレーター"
 "ru" = "Генератор аудио"
 pt = "Gerador de áudio"
 tr = "Ses Üreteci"
+it = "Generatore audio"
 
 ["Audio Track"]
 en = "Audio Track"
@@ -103,6 +110,7 @@ ja = "オーディオトラック"
 "ru" = "Аудиодорожка"
 pt = "Faixa de áudio"
 tr = "Ses Parçası"
+it = "Traccia audio"
 
 ["Background"]
 en = "Background"
@@ -116,6 +124,7 @@ ja = "背景"
 "ru" = "Фон"
 pt = "Fundo"
 tr = "Arka Plan"
+it = "Sfondo"
 
 ["Cancel"]
 en = "Cancel"
@@ -129,6 +138,7 @@ ja = "キャンセル"
 "ru" = "Отмена"
 pt = "Cancelar"
 tr = "İptal"
+it = "Cancella"
 
 ["Cancelled"]
 en = "Cancelled"
@@ -142,6 +152,7 @@ ja = "キャンセル済み"
 "ru" = "Отменено"
 pt = "Cancelado"
 tr = "İptal Edildi"
+it = "Annullato"
 
 ["Cancelling…"]
 en = "Cancelling…"
@@ -155,6 +166,7 @@ ja = "キャンセル中…"
 "ru" = "Отмена…"
 pt = "Cancelando…"
 tr = "İptal Ediliyor"
+it = "Annullando..."
 
 ["Caption"]
 en = "Caption"
@@ -168,6 +180,7 @@ ja = "字幕"
 "ru" = "Субтитры"
 pt = "Legenda"
 tr = "Alt Yazı"
+it = "Sottotitolo"
 
 ["Caption Track"]
 en = "Caption Track"
@@ -181,6 +194,7 @@ ja = "字幕トラック"
 "ru" = "Дорожка субтитров"
 pt = "Faixa de legendas"
 tr = "Alt Yazı Parçası"
+it = "Traccia dei sottotitoli"
 
 ["Choose…"]
 en = "Choose…"
@@ -194,6 +208,7 @@ ja = "選択…"
 "ru" = "Выбрать…"
 pt = "Escolher…"
 tr = "Seç…"
+it = "Scegli..."
 
 ["Clear"]
 en = "Clear"
@@ -207,6 +222,7 @@ ja = "クリア"
 "ru" = "Очистить"
 pt = "Limpar"
 tr = "Temizle"
+it = "Pulisci"
 
 ["Close"]
 en = "Close"
@@ -220,6 +236,7 @@ ja = "閉じる"
 "ru" = "Закрыть"
 pt = "Fechar"
 tr = "Kapat"
+it = "Chiudi"
 
 ["Copy"]
 en = "Copy"
@@ -233,6 +250,7 @@ ja = "コピー"
 "ru" = "Копировать"
 pt = "Copiar"
 tr = "Kopyala"
+it = "Copia"
 
 ["Custom"]
 en = "Custom"
@@ -246,6 +264,7 @@ ja = "カスタム"
 "ru" = "Пользовательский"
 pt = "Personalizado"
 tr = "Özel"
+it = "Personalizzato"
 
 ["Delete"]
 en = "Delete"
@@ -259,6 +278,7 @@ ja = "削除"
 "ru" = "Удалить"
 pt = "Excluir"
 tr = "Sil"
+it = "Elimina"
 
 ["Discard"]
 en = "Discard"
@@ -272,6 +292,21 @@ ja = "破棄"
 "ru" = "Отменить"
 pt = "Descartar"
 tr = "Vazgeç"
+it = "Scarta"
+
+["File"]
+en = "File"
+es = "Archivo"
+fr = "Fichier"
+de = "Datei"
+ja = "ファイル"
+"zh-CN" = "文件"
+"zh-TW" = "檔案"
+ko = "파일"
+ru = "Файл"
+pt = "Arquivo"
+tr = "Dosya"
+it = "File"
 
 ["Format"]
 en = "Format"
@@ -285,6 +320,7 @@ ja = "形式"
 "ru" = "Формат"
 pt = "Formato"
 tr = "Format"
+it = "Formato"
 
 ["Frame Rate"]
 en = "Frame Rate"
@@ -298,6 +334,7 @@ ja = "フレームレート"
 "ru" = "Частота кадров"
 pt = "Taxa de quadros"
 tr = "Kare Hızı"
+it = "Frequenza fotogrammi"
 
 ["Frame rate"]
 en = "Frame rate"
@@ -311,6 +348,7 @@ ja = "フレームレート"
 "ru" = "Частота кадров"
 pt = "Taxa de quadros"
 tr = "Kare hızı"
+it = "Frequenza fotogrammi"
 
 ["Hue"]
 en = "Hue"
@@ -324,6 +362,7 @@ ja = "色相"
 "ru" = "Оттенок"
 pt = "Matiz"
 tr = "Ton"
+it = "Tonalità"
 
 ["Info"]
 en = "Info"
@@ -337,6 +376,7 @@ ja = "情報"
 "ru" = "Информация"
 pt = "Informações"
 tr = "Bilgi"
+it = "Informazioni"
 
 ["Model"]
 en = "Model"
@@ -350,6 +390,7 @@ ja = "モデル"
 "ru" = "Модель"
 pt = "Modelo"
 tr = "Model"
+it = "Modello"
 
 ["New Track"]
 en = "New Track"
@@ -363,6 +404,7 @@ ja = "新規トラック"
 "ru" = "Новая дорожка"
 pt = "Nova faixa"
 tr = "Yeni Parça"
+it = "Nuova traccia"
 
 ["None"]
 en = "None"
@@ -376,6 +418,7 @@ ja = "なし"
 "ru" = "Нет"
 pt = "Nenhum"
 tr = "Hiçbiri"
+it = "Nessuno"
 
 ["Output"]
 en = "Output"
@@ -389,6 +432,7 @@ ja = "出力"
 "ru" = "Вывод"
 pt = "Saída"
 tr = "Çıktı"
+it = "Uscita"
 
 ["Padding"]
 en = "Padding"
@@ -402,6 +446,7 @@ ja = "余白"
 "ru" = "Отступ"
 pt = "Preenchimento"
 tr = "İç Boşluk"
+it = "Spaziatura"
 
 ["Paint"]
 en = "Paint"
@@ -415,6 +460,7 @@ ja = "ペイント"
 "ru" = "Рисование"
 pt = "Pintura"
 tr = "Çizim"
+it = "Pittura"
 
 ["Performance"]
 en = "Performance"
@@ -428,6 +474,7 @@ ja = "パフォーマンス"
 "ru" = "Производительность"
 pt = "Desempenho"
 tr = "Performans"
+it = "Prestazioni"
 
 ["Preset"]
 en = "Preset"
@@ -441,6 +488,7 @@ ja = "プリセット"
 "ru" = "Пресет"
 pt = "Predefinição"
 tr = "Ön Ayar"
+it = "Preimpostato"
 
 ["Sending request…"]
 en = "Sending request…"
@@ -454,6 +502,7 @@ ja = "リクエストを送信中…"
 "ru" = "Отправка запроса…"
 pt = "Enviando solicitação…"
 tr = "İstek gönderiliyor…"
+it = "Inviando richiesta..."
 
 ["Shape"]
 en = "Shape"
@@ -467,6 +516,7 @@ ja = "図形"
 "ru" = "Фигура"
 pt = "Forma"
 tr = "Şekil"
+it = "Forma"
 
 ["Speed"]
 en = "Speed"
@@ -480,6 +530,7 @@ ja = "速度"
 "ru" = "Скорость"
 pt = "Velocidade"
 tr = "Hız"
+it = "Velocità"
 
 ["Text"]
 en = "Text"
@@ -493,6 +544,7 @@ ja = "テキスト"
 "ru" = "Текст"
 pt = "Texto"
 tr = "Metin"
+it = "Testo"
 
 ["Text to Speech"]
 en = "Text to Speech"
@@ -506,6 +558,7 @@ ja = "音声読み上げ"
 "ru" = "Озвучивание текста"
 pt = "Texto para fala"
 tr = "Metinden Sese"
+it = "Sintesi vocale"
 
 ["Version"]
 en = "Version"
@@ -519,6 +572,7 @@ ja = "バージョン"
 "ru" = "Версия"
 pt = "Versão"
 tr = "Sürüm"
+it = "Versione"
 
 ["Video"]
 en = "Video"
@@ -532,6 +586,7 @@ ja = "ビデオ"
 "ru" = "Видео"
 pt = "Vídeo"
 tr = "Video"
+it = "Video"
 
 ["Video Generation"]
 en = "Video Generation"
@@ -545,6 +600,7 @@ ja = "ビデオ生成"
 "ru" = "Генерация видео"
 pt = "Geração de vídeo"
 tr = "Video Üreteci"
+it = "Generazione video"
 
 ["Video Track"]
 en = "Video Track"
@@ -558,6 +614,7 @@ ja = "ビデオトラック"
 "ru" = "Видеодорожка"
 pt = "Faixa de vídeo"
 tr = "Video Parçası"
+it = "Traccia video"
 
 ["Width"]
 en = "Width"
@@ -571,3 +628,4 @@ ja = "幅"
 "ru" = "Ширина"
 pt = "Largura"
 tr = "Genişlik"
+it = "Larghezza"

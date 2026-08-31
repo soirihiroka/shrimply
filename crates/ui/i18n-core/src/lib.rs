@@ -5,7 +5,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 
 const DEFAULT_LOCALE: &str = "en";
 const SUPPORTED_LOCALES: [&str; 11] = [
-    "en", "es", "fr", "de", "ja", "zh-CN", "zh-TW", "ko", "pt", "ru", "tr",
+    "en", "es", "fr", "de", "ja", "zh-CN", "zh-TW", "ko", "pt", "ru", "tr", "it",
 ];
 
 pub fn init_system_locale() {
