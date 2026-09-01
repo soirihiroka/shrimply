@@ -10,6 +10,7 @@ SLANG_SOURCE_DIR ?= $(CURDIR)/external/slang
 SLANG_BUILD_DIR ?= $(SLANG_SOURCE_DIR)/build
 OPTIX_ROOT ?= $(CURDIR)/external/optix-dev
 DNF ?= sudo dnf
+PACMAN ?= sudo pacman -S --needed
 INSTALL ?= install
 PKG_CONFIG ?= /usr/bin/pkg-config
 PKG_CONFIG_PATH ?= /usr/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
@@ -107,7 +108,32 @@ FEDORA_PACKAGES := \
 	poppler-glib-devel \
 	freetype-devel
 
-.PHONY: native-deps qt-native-deps qt-desktop-file cuda-target-check cuda-artifacts dev qt-build dev-qt dev-server docs docs-check run run-qt build release check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test crash-report oxide-doctor oxide-setup clean-dev clean deps-fedora install install-codex-mcp-dev install-agy-mcp-dev uninstall
+ARCH_PACKAGES := \
+	base-devel \
+	rustup \
+	boost \
+	clang \
+	cmake \
+	ninja \
+	opencv \
+	openssl \
+	pkgconf \
+	gobject-introspection \
+	ffmpeg \
+	rubberband \
+	alsa-lib \
+	gtk4 \
+	libadwaita \
+	pipewire \
+	libglvnd \
+	gtksourceview5 \
+	vte4 \
+	poppler-glib \
+	freetype2 \
+	lld \
+	cuda
+
+.PHONY: native-deps qt-native-deps qt-desktop-file cuda-target-check cuda-artifacts dev qt-build dev-qt dev-server docs docs-check run run-qt build release check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test crash-report oxide-doctor oxide-setup clean-dev clean deps-fedora deps-arch oxide-setup-arch install install-codex-mcp-dev install-agy-mcp-dev uninstall
 
 native-deps:
 	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
@@ -371,6 +397,15 @@ oxide-doctor:
 oxide-setup:
 	$(OXIDE_ENV) $(CARGO) oxide setup
 
+oxide-setup-arch:
+	cd external/cuda-oxide/crates/rustc-codegen-cuda && \
+		SYSROOT="$$($(RUSTUP) run $(RUST_TOOLCHAIN) rustc --print sysroot)" && \
+		LIBRARY_PATH="$$SYSROOT/lib" LD_LIBRARY_PATH="$$SYSROOT/lib" \
+		$(CARGO) build --lib --target host-tuple --target-dir target
+	@echo
+	@echo "Backend built. Export this before running make dev/build/release/check:"
+	@echo "  export CUDA_OXIDE_BACKEND=$(CURDIR)/external/cuda-oxide/crates/rustc-codegen-cuda/target/x86_64-unknown-linux-gnu/debug/librustc_codegen_cuda.so"
+
 clean-dev:
 	$(CARGO) clean --profile dev
 
@@ -381,6 +416,12 @@ clean:
 
 deps-fedora:
 	$(DNF) install $(FEDORA_PACKAGES)
+
+deps-arch:
+	$(PACMAN) $(ARCH_PACKAGES)
+	$(RUSTUP) toolchain install $(RUST_TOOLCHAIN) --component rust-src,rustc-dev,llvm-tools,rustfmt,clippy
+	git submodule update --init --recursive --progress
+	$(RUSTUP) run $(RUST_TOOLCHAIN) cargo install --path external/cuda-oxide/crates/cargo-oxide --locked
 
 install: release
 	$(INSTALL) -Dm755 target/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
