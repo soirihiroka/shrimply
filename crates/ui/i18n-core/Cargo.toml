@@ -3,5 +3,8 @@ name = "shrimply-i18n-core"
 version = "0.1.0"
 edition = "2024"
 
+[build-dependencies]
+toml = "0.8"
+
 [dependencies]
 rust-i18n.workspace = true
