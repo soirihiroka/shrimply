@@ -28,13 +28,40 @@ pub fn text(key: &str) -> Cow<'_, str> {
 }
 
 pub fn text_args(key: &str, args: &[(&str, String)]) -> String {
-    let translated = text(key);
     let patterns = args.iter().map(|(name, _)| *name).collect::<Vec<_>>();
     let values = args
         .iter()
         .map(|(_, value)| value.clone())
         .collect::<Vec<_>>();
-    rust_i18n::replace_patterns(&translated, &patterns, &values)
+
+    let translated = text(key);
+    let result = rust_i18n::replace_patterns(&translated, &patterns, &values);
+
+    // If a %{...} placeholder survives, the translation's placeholder doesn't
+    // match the one passed here (a typo'd %{name}). Never show that raw blob
+    // in the UI: fall back to the canonical English string and re-resolve.
+    if has_unresolved_placeholder(&result) {
+        let english = t!(key, locale = "en");
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "text_args: unresolved placeholder in translation {:?}, fell back to English: {}",
+                key, result
+            );
+        }
+        // If English is still unresolved, the argument simply wasn't passed
+        // (a different bug). Return it as-is; never attempt a third pass.
+        return rust_i18n::replace_patterns(&english, &patterns, &values);
+    }
+
+    result
+}
+
+/// Returns true if `s` still contains an unresolved `%{name}` placeholder.
+fn has_unresolved_placeholder(s: &str) -> bool {
+    match s.find("%{") {
+        Some(open) => s[open + 2..].contains('}'),
+        None => false,
+    }
 }
 
 fn normalize_locale(locale: &str) -> String {
