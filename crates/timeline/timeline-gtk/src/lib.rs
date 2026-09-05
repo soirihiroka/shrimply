@@ -353,7 +353,7 @@ impl ToolkitTimeline {
         {
             let delta = vec2(delta_x as f32, delta_y as f32);
             let mut runtime = self.runtime.borrow_mut();
-            runtime.scene.relative_motion(delta);
+            runtime.scene.event(TimelineEvent::RelativeMotion { delta });
         }
     }
 

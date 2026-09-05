@@ -52,7 +52,7 @@ pub(crate) fn add_input_controllers(
                 PointerLock::new_2d(&motion_area, move |delta_x, delta_y| {
                     let delta = vec2(delta_x as f32, delta_y as f32);
                     let mut runtime = relative_runtime.borrow_mut();
-                    runtime.scene.relative_motion(delta);
+                    runtime.scene.event(Event::RelativeMotion { delta });
                     drop(runtime);
                     relative_area.queue_render();
                 })

@@ -12,6 +12,9 @@ pub enum Event {
         point: Vec2,
         modifiers: TimelineModifiers,
     },
+    RelativeMotion {
+        delta: Vec2,
+    },
     Press {
         point: Vec2,
         button: PointerButton,
@@ -65,13 +68,26 @@ impl Scene {
         self.software_cursor = Some(TimelineSoftwareCursor { position, cursor });
     }
 
-    pub fn relative_motion(&mut self, delta: Vec2) {
+    fn relative_motion(&mut self, delta: Vec2) {
         let Some(cursor) = self.software_cursor.as_mut() else {
             return;
         };
-        let bounds = Rect::from_min_max(vec2(timeline_x() as f32, 0.0), self.viewport.max);
-        self.pointer_pos = Some(self.pointer_pos.unwrap_or(cursor.position) + delta);
-        cursor.position = bounds.wrap_point(cursor.position + delta);
+        let bounds = Rect::from_min_max(
+            vec2(timeline_x() as f32, 0.0),
+            vec2(
+                (timeline_x() + timeline_width(f64::from(self.viewport.width()))) as f32,
+                self.viewport.max.y,
+            ),
+        );
+        let unwrapped = cursor.position + delta;
+        let wrapped = bounds.wrap_point(unwrapped);
+        let wrap_offset = wrapped - unwrapped;
+        if self.view.drag_mode == DragMode::MiddlePan {
+            self.view.drag_start_x += f64::from(wrap_offset.x);
+            self.view.drag_start_y += f64::from(wrap_offset.y);
+        }
+        self.pointer_pos = Some(wrapped);
+        cursor.position = wrapped;
     }
 
     pub fn end_relative_pointer(&mut self) -> Option<Vec2> {
@@ -87,6 +103,7 @@ impl Scene {
                 self.pointer_pos = Some(point);
                 self.modifiers = modifiers;
             }
+            Event::RelativeMotion { delta } => self.relative_motion(delta),
             Event::Press {
                 point,
                 button,
