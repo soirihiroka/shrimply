@@ -102,6 +102,8 @@ members = [
     "crates/video/decoder-pool",
     "crates/video/gpu-memory",
     "crates/video/visual-frame",
+    "vendor/pocketsphinx",
+    "vendor/rhubarb-lip-sync",
     "crates/3d/3d-control",
     "crates/3d/3dgs",
     "crates/3d/optix-denoiser",
@@ -131,6 +133,8 @@ cxx-qt = "0.9.1"
 cxx-qt-build = "0.9.1"
 cxx-qt-lib = "0.9.1"
 shrimply-cuda = { path = "crates/cuda/bridge" }
+shrimply-pocketsphinx = { path = "vendor/pocketsphinx" }
+shrimply-rhubarb-lip-sync = { path = "vendor/rhubarb-lip-sync" }
 cc = "1"
 deep_filter = { path = "vendor/deepfilternet/libDF" }
 easyfft = "0.4"

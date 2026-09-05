@@ -1,7 +1,4 @@
-use std::fs::OpenOptions;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex, OnceLock, mpsc};
 use std::thread;
 
@@ -14,7 +11,7 @@ use super::{
 };
 
 const VOLUME_PEAK_CACHE_CHUNK_FRAMES: usize = 120;
-const RHUBARB_SAMPLE_RATE: u32 = 16_000;
+const LIP_SYNC_SAMPLE_RATE: u32 = shrimply_lip_sync::SAMPLE_RATE;
 
 enum MouthAnalysisCommand {
     Analyze {
@@ -237,8 +234,8 @@ impl MouthAnalysisService {
             position,
             blocking,
         } = request;
-        let start_frame = start.as_sample_frame(RHUBARB_SAMPLE_RATE);
-        let end_frame = end.as_sample_frame(RHUBARB_SAMPLE_RATE);
+        let start_frame = start.as_sample_frame(LIP_SYNC_SAMPLE_RATE);
+        let end_frame = end.as_sample_frame(LIP_SYNC_SAMPLE_RATE);
         if indices.is_empty() || end_frame <= start_frame {
             return shrimply_lip_sync::MouthValue::Ready(shrimply_lip_sync::MouthShape::X);
         }
@@ -285,7 +282,7 @@ impl MouthAnalysisService {
                 Some(CachedMouthAnalysis::Ready(cues)) => {
                     let range_start = Time::from_fraction(
                         i64::try_from(start_frame).unwrap_or(i64::MAX),
-                        i64::from(RHUBARB_SAMPLE_RATE),
+                        i64::from(LIP_SYNC_SAMPLE_RATE),
                     );
                     let position = position.saturating_sub(range_start);
                     let shape = cues
@@ -357,49 +354,29 @@ fn mouth_analysis_worker(
     }
 }
 
-struct TemporaryWave(PathBuf);
-
-impl Drop for TemporaryWave {
-    fn drop(&mut self) {
-        if let Err(error) = std::fs::remove_file(&self.0)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!("Could not remove temporary lip-sync audio: {error}");
-        }
-    }
-}
-
 fn analyze_project_mouth(
     project: &Project,
     indices: &[usize],
     start_frame: u64,
     end_frame: u64,
 ) -> Result<Vec<shrimply_lip_sync::MouthCue>, String> {
-    let path = std::env::temp_dir().join(format!("shrimply-mouth-{}.wav", uuid::Uuid::new_v4()));
-    let temporary = TemporaryWave(path);
-    write_mouth_wave(project, indices, start_frame, end_frame, &temporary.0)?;
-    shrimply_lip_sync::analyze_wave(&temporary.0, &shrimply_lip_sync::model_directory()?)
+    let samples = render_mouth_samples(project, indices, start_frame, end_frame)?;
+    shrimply_lip_sync::analyze(&samples)
 }
 
-fn write_mouth_wave(
+fn render_mouth_samples(
     project: &Project,
     indices: &[usize],
     start_frame: u64,
     end_frame: u64,
-    path: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<Vec<i16>, String> {
     let frame_count = end_frame.saturating_sub(start_frame);
-    let data_bytes = frame_count
-        .checked_mul(std::mem::size_of::<i16>() as u64)
-        .and_then(|bytes| u32::try_from(bytes).ok())
-        .ok_or_else(|| "project audio is too long for Rhubarb's WAV input".to_string())?;
-    let file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| format!("could not create lip-sync audio: {error}"))?;
-    let mut output = BufWriter::new(file);
-    write_wave_header(&mut output, data_bytes)?;
+    let frame_count = usize::try_from(frame_count)
+        .map_err(|_| "project audio is too long for lip-sync analysis".to_string())?;
+    let mut output = Vec::new();
+    output
+        .try_reserve_exact(frame_count)
+        .map_err(|error| format!("could not allocate lip-sync audio: {error}"))?;
     let mut sessions = HashMap::new();
     let mut timeline_frame = start_frame;
     while timeline_frame < end_frame {
@@ -410,45 +387,16 @@ fn write_mouth_wave(
             indices,
             timeline_frame,
             frames,
-            RHUBARB_SAMPLE_RATE,
+            LIP_SYNC_SAMPLE_RATE,
         );
         for channels in samples.chunks_exact(CHANNELS) {
             let mono = channels.iter().copied().sum::<f32>() / CHANNELS as f32;
             let sample = (mono.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
-            output
-                .write_all(&sample.to_le_bytes())
-                .map_err(|error| format!("could not write lip-sync audio: {error}"))?;
+            output.push(sample);
         }
         timeline_frame += frames as u64;
     }
-    output
-        .flush()
-        .map_err(|error| format!("could not finish lip-sync audio: {error}"))
-}
-
-fn write_wave_header(output: &mut impl Write, data_bytes: u32) -> Result<(), String> {
-    const HEADER_AFTER_RIFF_SIZE: u32 = 36;
-    const PCM_FORMAT: u16 = 1;
-    const MONO_CHANNELS: u16 = 1;
-    const BITS_PER_SAMPLE: u16 = 16;
-    let byte_rate = RHUBARB_SAMPLE_RATE * u32::from(BITS_PER_SAMPLE) / 8;
-    let block_align = MONO_CHANNELS * BITS_PER_SAMPLE / 8;
-    let mut header = Vec::with_capacity(44);
-    header.extend_from_slice(b"RIFF");
-    header.extend_from_slice(&(HEADER_AFTER_RIFF_SIZE + data_bytes).to_le_bytes());
-    header.extend_from_slice(b"WAVEfmt ");
-    header.extend_from_slice(&16_u32.to_le_bytes());
-    header.extend_from_slice(&PCM_FORMAT.to_le_bytes());
-    header.extend_from_slice(&MONO_CHANNELS.to_le_bytes());
-    header.extend_from_slice(&RHUBARB_SAMPLE_RATE.to_le_bytes());
-    header.extend_from_slice(&byte_rate.to_le_bytes());
-    header.extend_from_slice(&block_align.to_le_bytes());
-    header.extend_from_slice(&BITS_PER_SAMPLE.to_le_bytes());
-    header.extend_from_slice(b"data");
-    header.extend_from_slice(&data_bytes.to_le_bytes());
-    output
-        .write_all(&header)
-        .map_err(|error| format!("could not write lip-sync WAV header: {error}"))
+    Ok(output)
 }
 
 enum VolumePeakCacheCommand {

@@ -79,16 +79,14 @@ ICONDIR ?= $(DATADIR)/icons/hicolor/scalable/apps
 DESKTOP_FILE := assets/dev.shrimply.Shrimply.desktop
 QT_DESKTOP_FILE := assets/dev.shrimply.Shrimply.Qt.desktop
 APP_ICON := assets/icons/dev.shrimply.Shrimply.svg
-RHUBARB_LIBRARY := target/release/libshrimply-rhubarb.so
-RHUBARB_MODEL_SOURCE := external/rhubarb-lip-sync/rhubarb/lib/pocketsphinx-rev13216/model/en-us
-RHUBARB_ACOUSTIC_MODEL_SOURCE := external/rhubarb-lip-sync/rhubarb/lib/cmusphinx-en-us-5.2
-RHUBARB_RESOURCE_DIR := $(DATADIR)/shrimply/rhubarb/sphinx
+LIP_SYNC_MODEL := target/release/res/lip-sync/pocketsphinx-ci.model
+LIP_SYNC_RESOURCE_DIR := $(DATADIR)/shrimply/lip-sync
+LIP_SYNC_LICENSE_DIR := $(DATADIR)/licenses/shrimply
 ICONS_RESOURCE_DIR := $(DATADIR)/shrimply/icons
 
 FEDORA_PACKAGES := \
 	rust \
 	cargo \
-	boost-devel \
 	clang \
 	clang-devel \
 	cmake \
@@ -324,11 +322,10 @@ install: release
 	$(INSTALL) -Dm755 target/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	$(INSTALL) -Dm755 target/release/$(EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 	$(INSTALL) -Dm755 target/release/$(MCP_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(MCP_BIN_NAME)"
-	$(INSTALL) -Dm755 $(RHUBARB_LIBRARY) "$(DESTDIR)$(BINDIR)/libshrimply-rhubarb.so"
-	$(INSTALL) -d "$(DESTDIR)$(RHUBARB_RESOURCE_DIR)"
-	cp -a $(RHUBARB_MODEL_SOURCE)/. "$(DESTDIR)$(RHUBARB_RESOURCE_DIR)/"
-	$(INSTALL) -d "$(DESTDIR)$(RHUBARB_RESOURCE_DIR)/acoustic-model"
-	cp -a $(RHUBARB_ACOUSTIC_MODEL_SOURCE)/. "$(DESTDIR)$(RHUBARB_RESOURCE_DIR)/acoustic-model/"
+	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
+	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
+	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
+	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	$(INSTALL) -d "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	cp -a assets/icons/. "$(DESTDIR)$(ICONS_RESOURCE_DIR)/"
 	sed -e 's|^Exec=.*|Exec=$(BINDIR)/$(BIN_NAME) %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(BIN_NAME)|' $(DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
@@ -342,6 +339,10 @@ install: release
 install-qt: qt-release
 	$(INSTALL) -Dm755 target/release/$(QT_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(QT_BIN_NAME)"
 	$(INSTALL) -Dm755 target/release/$(QT_EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(QT_EDITOR_BIN_NAME)"
+	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
+	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
+	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
+	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	sed -e 's|^Exec=.*|Exec=$(BINDIR)/$(QT_BIN_NAME) %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
@@ -363,8 +364,10 @@ uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(MCP_BIN_NAME)"
-	rm -f "$(DESTDIR)$(BINDIR)/libshrimply-rhubarb.so"
-	rm -rf "$(DESTDIR)$(DATADIR)/shrimply/rhubarb"
+	rm -rf "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	rm -rf "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
 	rm -f "$(DESTDIR)$(ICONDIR)/dev.shrimply.Shrimply.svg"

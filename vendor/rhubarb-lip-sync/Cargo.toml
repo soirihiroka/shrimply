@@ -1,0 +1,9 @@
+[package]
+name = "shrimply-rhubarb-lip-sync"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+earshot = "1"
+shrimply-pocketsphinx = { path = "../pocketsphinx" }

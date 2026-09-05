@@ -1,47 +1,14 @@
-use std::{
-    ffi::{CStr, CString, c_char, c_void},
-    path::{Path, PathBuf},
-    ptr,
-    sync::{
-        Arc, Mutex, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
 };
 
 use hashbrown::{HashMap, HashSet};
 use shrimply_project::project::Time;
 
-#[repr(C)]
-struct NativeMouthCue {
-    start_centiseconds: i64,
-    end_centiseconds: i64,
-    shape: u8,
-}
+static ANALYZER: OnceLock<shrimply_rhubarb_lip_sync::Analyzer> = OnceLock::new();
 
-#[repr(C)]
-struct NativeResult {
-    cues: *mut NativeMouthCue,
-    cue_count: usize,
-    error: *mut c_char,
-}
-
-type AnalyzeFunction =
-    unsafe extern "C" fn(*const c_char, *const c_char, i32, *mut NativeResult) -> i32;
-type FreeResultFunction = unsafe extern "C" fn(*mut NativeResult);
-
-struct NativeApi {
-    _handle: *mut c_void,
-    analyze: AnalyzeFunction,
-    free_result: FreeResultFunction,
-}
-
-// SAFETY: dlopen handles and immutable function pointers may be called from any thread. Rhubarb's
-// own shared state is initialized once in the C++ shim.
-unsafe impl Send for NativeApi {}
-// SAFETY: See the Send implementation above.
-unsafe impl Sync for NativeApi {}
-
-static NATIVE_API: OnceLock<Result<NativeApi, String>> = OnceLock::new();
+pub const SAMPLE_RATE: u32 = shrimply_rhubarb_lip_sync::SAMPLE_RATE_HZ;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum MouthShape {
@@ -87,7 +54,9 @@ impl TryFrom<u8> for MouthShape {
             b'G' => Ok(Self::G),
             b'H' => Ok(Self::H),
             b'X' => Ok(Self::X),
-            _ => Err(format!("Rhubarb returned unknown mouth shape byte {value}")),
+            _ => Err(format!(
+                "lip-sync analyzer returned unknown mouth shape byte {value}"
+            )),
         }
     }
 }
@@ -99,201 +68,33 @@ pub struct MouthCue {
     pub shape: MouthShape,
 }
 
-pub fn analyze_wave(wave_path: &Path, model_directory: &Path) -> Result<Vec<MouthCue>, String> {
-    let api = NATIVE_API
-        .get_or_init(load_native_api)
-        .as_ref()
-        .map_err(Clone::clone)?;
-    let wave_path = path_c_string(wave_path)?;
-    let model_directory = path_c_string(model_directory)?;
-    let max_threads = std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
-        .min(i32::MAX as usize) as i32;
-    let mut native = NativeResult {
-        cues: ptr::null_mut(),
-        cue_count: 0,
-        error: ptr::null_mut(),
-    };
-    // SAFETY: Both strings and the result storage remain alive for the call. The shim owns any
-    // returned allocations until shrimply_rhubarb_free_result is called below.
-    let status = unsafe {
-        (api.analyze)(
-            wave_path.as_ptr(),
-            model_directory.as_ptr(),
-            max_threads,
-            &mut native,
-        )
-    };
-    let result = if status == 0 {
-        if native.cue_count > 0 && native.cues.is_null() {
-            Err("Rhubarb returned a null cue array".to_string())
-        } else {
-            // SAFETY: The shim returns cue_count initialized entries when cues is non-null.
-            let cues = if native.cue_count == 0 {
-                &[]
-            } else {
-                // SAFETY: A successful non-empty result contains cue_count initialized entries.
-                unsafe { std::slice::from_raw_parts(native.cues, native.cue_count) }
-            };
-            cues.iter()
-                .map(|cue| {
-                    Ok(MouthCue {
-                        start: Time::from_fraction(cue.start_centiseconds, 100),
-                        end: Time::from_fraction(cue.end_centiseconds, 100),
-                        shape: MouthShape::try_from(cue.shape)?,
-                    })
-                })
-                .collect()
-        }
-    } else if native.error.is_null() {
-        Err("Rhubarb analysis failed without an error message".to_string())
+pub fn analyze(samples: &[i16]) -> Result<Vec<MouthCue>, String> {
+    let analyzer = if let Some(analyzer) = ANALYZER.get() {
+        analyzer
     } else {
-        // SAFETY: A non-null error from the shim is a null-terminated string.
-        Err(unsafe { CStr::from_ptr(native.error) }
-            .to_string_lossy()
-            .into_owned())
+        let analyzer = shrimply_rhubarb_lip_sync::Analyzer::new()?;
+        let _ = ANALYZER.set(analyzer);
+        ANALYZER.get().expect("analyzer was initialized")
     };
-    // SAFETY: native was initialized above and has not been freed yet.
-    unsafe { (api.free_result)(&mut native) };
-    result
-}
-
-fn load_native_api() -> Result<NativeApi, String> {
-    let library = native_library_path()?;
-    let library_path = path_c_string(&library)?;
-    // SAFETY: library_path is a valid null-terminated path. The handle remains open for the
-    // process lifetime in NativeApi.
-    let handle = unsafe { libc::dlopen(library_path.as_ptr(), libc::RTLD_NOW) };
-    if handle.is_null() {
-        return Err(format!(
-            "could not load Rhubarb library {}: {}",
-            library.display(),
-            dynamic_loader_error()
-        ));
-    }
-    // SAFETY: The crate builds these exact C ABI symbols into the library above.
-    let analyze = unsafe {
-        std::mem::transmute::<*mut c_void, AnalyzeFunction>(load_symbol(
-            handle,
-            c"shrimply_rhubarb_analyze",
-        )?)
-    };
-    // SAFETY: The crate builds these exact C ABI symbols into the library above.
-    let free_result = unsafe {
-        std::mem::transmute::<*mut c_void, FreeResultFunction>(load_symbol(
-            handle,
-            c"shrimply_rhubarb_free_result",
-        )?)
-    };
-    Ok(NativeApi {
-        _handle: handle,
-        analyze,
-        free_result,
-    })
-}
-
-unsafe fn load_symbol(handle: *mut c_void, name: &CStr) -> Result<*mut c_void, String> {
-    // SAFETY: handle is returned by dlopen and name is null-terminated.
-    let symbol = unsafe { libc::dlsym(handle, name.as_ptr()) };
-    if symbol.is_null() {
-        Err(format!(
-            "Rhubarb library is missing {}: {}",
-            name.to_string_lossy(),
-            dynamic_loader_error()
-        ))
-    } else {
-        Ok(symbol)
-    }
-}
-
-fn dynamic_loader_error() -> String {
-    // SAFETY: dlerror returns either null or a process-owned null-terminated error string.
-    let error = unsafe { libc::dlerror() };
-    if error.is_null() {
-        "unknown dynamic loader error".to_string()
-    } else {
-        // SAFETY: The non-null value from dlerror is null-terminated.
-        unsafe { CStr::from_ptr(error) }
-            .to_string_lossy()
-            .into_owned()
-    }
-}
-
-fn native_library_path() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("SHRIMPLY_RHUBARB_LIBRARY") {
-        return validate_native_library(PathBuf::from(path));
-    }
-    if let Some(path) = option_env!("SHRIMPLY_BUILD_RHUBARB_LIBRARY") {
-        let path = PathBuf::from(path);
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("could not locate the shrimply executable: {error}"))?;
-    if let Some(directory) = executable.parent() {
-        let path = directory.join(format!(
-            "libshrimply-rhubarb{}",
-            std::env::consts::DLL_SUFFIX
-        ));
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
-    Err("Rhubarb native library could not be located".to_string())
-}
-
-fn validate_native_library(path: PathBuf) -> Result<PathBuf, String> {
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!(
-            "Rhubarb native library is missing from {}",
-            path.display()
-        ))
-    }
-}
-
-pub fn model_directory() -> Result<PathBuf, String> {
-    if let Some(path) = std::env::var_os("SHRIMPLY_RHUBARB_RESOURCES") {
-        return validate_model_directory(PathBuf::from(path));
-    }
-    if let Some(path) = option_env!("SHRIMPLY_BUILD_RHUBARB_RESOURCES") {
-        let path = PathBuf::from(path);
-        if path.join("cmudict-en-us.dict").is_file() {
-            return Ok(path);
-        }
-    }
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("could not locate the shrimply executable: {error}"))?;
-    if let Some(directory) = executable.parent() {
-        for candidate in [
-            directory.join("res/sphinx"),
-            directory.join("../share/shrimply/rhubarb/sphinx"),
-        ] {
-            if candidate.join("cmudict-en-us.dict").is_file() {
-                return Ok(candidate);
-            }
-        }
-    }
-    Err("Rhubarb model resources could not be located".to_string())
-}
-
-fn validate_model_directory(directory: PathBuf) -> Result<PathBuf, String> {
-    if directory.join("cmudict-en-us.dict").is_file() {
-        Ok(directory)
-    } else {
-        Err(format!(
-            "Rhubarb model resources are missing from {}",
-            directory.display()
-        ))
-    }
-}
-
-fn path_c_string(path: &Path) -> Result<CString, String> {
-    CString::new(path.as_os_str().as_encoded_bytes())
-        .map_err(|_| format!("path contains a null byte: {}", path.display()))
+    let cues = analyzer.analyze(samples)?;
+    Ok(cues
+        .into_iter()
+        .map(|cue| MouthCue {
+            start: Time::from_fraction(cue.start_centiseconds, 100),
+            end: Time::from_fraction(cue.end_centiseconds, 100),
+            shape: match cue.shape {
+                shrimply_rhubarb_lip_sync::MouthShape::A => MouthShape::A,
+                shrimply_rhubarb_lip_sync::MouthShape::B => MouthShape::B,
+                shrimply_rhubarb_lip_sync::MouthShape::C => MouthShape::C,
+                shrimply_rhubarb_lip_sync::MouthShape::D => MouthShape::D,
+                shrimply_rhubarb_lip_sync::MouthShape::E => MouthShape::E,
+                shrimply_rhubarb_lip_sync::MouthShape::F => MouthShape::F,
+                shrimply_rhubarb_lip_sync::MouthShape::G => MouthShape::G,
+                shrimply_rhubarb_lip_sync::MouthShape::H => MouthShape::H,
+                shrimply_rhubarb_lip_sync::MouthShape::X => MouthShape::X,
+            },
+        })
+        .collect())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

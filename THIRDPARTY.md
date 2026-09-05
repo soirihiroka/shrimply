@@ -66,6 +66,21 @@ AUTHORS: Pradyun Gedam; Jakub Steiner; GNOME contributors
 
 ---
 
+COMPONENT: Rhubarb Lip Sync Rust port
+SOURCE: https://github.com/DanielSWolf/rhubarb-lip-sync
+VERSION: Based on 9b9573cd21b253c9ba58739bbd1aa0b50b991bff
+LICENSE: MIT License
+AUTHOR: Daniel Wolf
+
+---
+
+COMPONENT: PocketSphinx context-independent acoustic model
+SOURCE: https://cmusphinx.github.io/
+LICENSE: BSD 2-Clause License
+AUTHORS: Carnegie Mellon University; Alpha Cephei Inc.; CMU Sphinx contributors
+
+---
+
 COMPONENT: Rhubarb Lip Sync mouth-shape documentation images
 SOURCE: https://github.com/DanielSWolf/rhubarb-lip-sync
 VERSION: 9b9573cd21b253c9ba58739bbd1aa0b50b991bff

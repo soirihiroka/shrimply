@@ -1,8 +1,8 @@
 Lip sync
 ========
 
-Shrimply uses `Rhubarb Lip Sync
-<https://github.com/DanielSWolf/rhubarb-lip-sync#mouth-shapes>`__ to
+Shrimply includes a Rust port of the parts of `Rhubarb Lip Sync
+<https://github.com/DanielSWolf/rhubarb-lip-sync#mouth-shapes>`__ needed to
 automatically match a character's mouth shape to speech in your project audio.
 
 Using mouth shapes in expressions
