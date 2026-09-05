@@ -6350,6 +6350,7 @@ dependencies = [
  "shrimply-paint-edit",
  "shrimply-playback-performance",
  "shrimply-preview-core",
+ "shrimply-preview-interaction-core",
  "shrimply-preview-runtime",
  "shrimply-project",
  "shrimply-render-core",

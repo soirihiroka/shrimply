@@ -19,6 +19,7 @@ shrimply-gpu-memory = { path = "../../video/gpu-memory" }
 shrimply-paint-edit = { path = "../../paint/paint-edit" }
 shrimply-project = { path = "../../project/project" }
 shrimply-preview-core = { path = "../preview-core" }
+shrimply-preview-interaction-core = { path = "../preview-interaction-core" }
 shrimply-preview-runtime = { path = "../preview-runtime" }
 shrimply-playback-performance = { path = "../playback-performance" }
 shrimply-render-core = { path = "../../render-core" }
