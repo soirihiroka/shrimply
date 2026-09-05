@@ -6,6 +6,7 @@ members = [
     "crates/apps/editor-ui",
     "crates/apps/launcher-ui",
     "crates/apps/launcher-qt-ui",
+    "crates/apps/launcher-appkit",
     "crates/asset",
     "crates/audio/audio",
     "crates/audio/audio-modifiers",
@@ -165,6 +166,10 @@ ndarray = "0.17"
 nnnoiseless = "0.5"
 notify = "8"
 num-traits = "0.2"
+objc2 = "0.6.2"
+block2 = "0.6.2"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"
 oklab = "1"
 opencv = { version = "0.100", default-features = false, features = ["calib3d", "clang-runtime", "imgproc", "video", "videoio"] }
 pango = "0.22"

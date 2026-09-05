@@ -52,11 +52,13 @@ EDITOR_PACKAGE := shrimply-editor-ui
 QT_EDITOR_PACKAGE := shrimply-editor-qt-ui
 LAUNCHER_PACKAGE := shrimply-launcher-ui
 QT_LAUNCHER_PACKAGE := shrimply-launcher-qt-ui
+APPKIT_LAUNCHER_PACKAGE := shrimply-launcher-appkit
 GTK_COMPONENTS_PACKAGE := shrimply-gtk-components
 QT_COMPONENTS_PACKAGE := shrimply-qt-components
 GTK_COMPONENTS_DEMO_PACKAGE := shrimply-gtk-components-demo
 QT_COMPONENTS_DEMO_PACKAGE := shrimply-qt-components-demo
 QT_BIN_NAME := shrimply-qt
+APPKIT_BIN_NAME := shrimply-appkit
 QT_EDITOR_BIN_NAME := shrimply-editor-qt
 MCP_PACKAGE := shrimply-mcp
 MCP_BIN_NAME := shrimply-mcp
@@ -157,10 +159,8 @@ dev: native-deps cuda-artifacts
 
 dev-mac:
 	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
-	@command -v $(QT_QMAKE) >/dev/null 2>&1 || { echo "Missing Qt 6 qmake ($(QT_QMAKE))" >&2; exit 1; }
-	@version="$$($(QT_QMAKE) -query QT_VERSION)"; case "$$version" in 6.*) ;; *) echo "$(QT_QMAKE) selected unsupported Qt $$version; Qt 6 is required" >&2; exit 1 ;; esac
-	RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" QMAKE="$$(command -v $(QT_QMAKE))" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@18)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@18)/lib" SLANG_SOURCE_DIR=$(SLANG_SOURCE_DIR) SLANG_BUILD_DIR=$(SLANG_BUILD_DIR) CARGO_TERM_COLOR=always $(CARGO) build -p $(QT_LAUNCHER_PACKAGE) --bin $(QT_BIN_NAME)
-	QT_QUICK_CONTROLS_STYLE=macOS RUST_LOG=$(RUST_LOG) target/debug/$(QT_BIN_NAME)
+	RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@18)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@18)/lib" SLANG_SOURCE_DIR=$(SLANG_SOURCE_DIR) SLANG_BUILD_DIR=$(SLANG_BUILD_DIR) CARGO_TERM_COLOR=always $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) --bin $(APPKIT_BIN_NAME)
+	RUST_LOG=$(RUST_LOG) target/debug/$(APPKIT_BIN_NAME)
 
 qt-build: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) -p $(MCP_PACKAGE) --bins

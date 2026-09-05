@@ -1,0 +1,22 @@
+[package]
+name = "shrimply-launcher-appkit"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "shrimply-appkit"
+path = "src/main.rs"
+
+[dependencies]
+shrimply-cross-ui-core = { path = "../../ui/cross-ui-core" }
+shrimply-component-core = { path = "../../ui/component-core" }
+shrimply-math-core = { path = "../../math/core" }
+shrimply-project-core = { path = "../../project/project-core" }
+shrimply-support = { path = "../../support" }
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
