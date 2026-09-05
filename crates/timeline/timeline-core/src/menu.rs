@@ -45,6 +45,7 @@ pub enum ContextMenuRequest {
     RemoveSilences,
     GenerateSpeech,
     DeleteFoldedTrack { clip_count: usize },
+    DeleteTracks { clip_count: usize },
 }
 
 pub const TIMELINE_CLIPBOARD_MARKER: &str = "shrimply timeline items";

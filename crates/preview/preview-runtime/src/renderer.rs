@@ -29,12 +29,8 @@ pub struct VideoRenderer {
     texture_height: u32,
     last_frame_key: Option<CompositedFrameStorageKey>,
     mipmapped_frame_key: Option<CompositedFrameStorageKey>,
-    has_frame_uniform: Option<glow::NativeUniformLocation>,
     surface_size_uniform: Option<glow::NativeUniformLocation>,
     content_rect_uniform: Option<glow::NativeUniformLocation>,
-    background_color_uniform: Option<glow::NativeUniformLocation>,
-    shadow_size_uniform: Option<glow::NativeUniformLocation>,
-    draw_frame_uniform: Option<glow::NativeUniformLocation>,
     overlay_renderer: TimelineRenderer,
 }
 
@@ -45,12 +41,8 @@ impl VideoRenderer {
             let program = create_program(&gl)?;
             let vao = gl.create_vertex_array()?;
             let rgba_texture = create_video_texture(&gl)?;
-            let has_frame_uniform = gl.get_uniform_location(program, "u_has_frame");
             let surface_size_uniform = gl.get_uniform_location(program, "u_surface_size");
             let content_rect_uniform = gl.get_uniform_location(program, "u_content_rect");
-            let background_color_uniform = gl.get_uniform_location(program, "u_background_color");
-            let shadow_size_uniform = gl.get_uniform_location(program, "u_shadow_size");
-            let draw_frame_uniform = gl.get_uniform_location(program, "u_draw_frame");
             let rgba_texture_uniform = gl.get_uniform_location(program, "u_rgba_texture");
             gl.use_program(Some(program));
             gl.uniform_1_i32(rgba_texture_uniform.as_ref(), 0);
@@ -66,12 +58,8 @@ impl VideoRenderer {
                 texture_height: 0,
                 last_frame_key: None,
                 mipmapped_frame_key: None,
-                has_frame_uniform,
                 surface_size_uniform,
                 content_rect_uniform,
-                background_color_uniform,
-                shadow_size_uniform,
-                draw_frame_uniform,
                 overlay_renderer: TimelineRenderer::new(),
             })
         }
@@ -87,10 +75,30 @@ impl VideoRenderer {
     ) -> Result<(), String> {
         let width = surface.x.max(1);
         let height = surface.y.max(1);
+        let framebuffer = unsafe { self.gl.get_parameter_framebuffer(glow::FRAMEBUFFER_BINDING) };
+        let background = self.overlay_renderer.begin_frame(
+            glam::UVec2::new(width as u32, height as u32),
+            pixels_per_point,
+            appearance.background_color,
+        )?;
+        shrimply_preview_core::canvas::draw_background(
+            background.canvas(),
+            shrimply_preview_core::canvas::Appearance {
+                content_rect: appearance.content_rect,
+                background: appearance.background_color,
+                shadow_size: appearance.shadow_size_px,
+                pixel_scale: pixels_per_point,
+            },
+        );
+        self.overlay_renderer.end_frame()?;
         unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, framebuffer);
+            self.gl.disable(glow::SCISSOR_TEST);
+            self.gl.disable(glow::STENCIL_TEST);
+            self.gl.color_mask(true, true, true, true);
+            self.gl.blend_equation(glow::FUNC_ADD);
+            self.gl.bind_sampler(0, None);
             self.gl.viewport(0, 0, width, height);
-            self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
-            self.gl.clear(glow::COLOR_BUFFER_BIT);
             self.gl.disable(glow::DEPTH_TEST);
             self.gl.disable(glow::CULL_FACE);
             self.gl.use_program(Some(self.program));
@@ -107,17 +115,6 @@ impl VideoRenderer {
                 appearance.content_rect.width() * pixels_per_point,
                 appearance.content_rect.height() * pixels_per_point,
             );
-            self.gl.uniform_4_f32(
-                self.background_color_uniform.as_ref(),
-                appearance.background_color.r,
-                appearance.background_color.g,
-                appearance.background_color.b,
-                appearance.background_color.a,
-            );
-            self.gl.uniform_1_f32(
-                self.shadow_size_uniform.as_ref(),
-                appearance.shadow_size_px as f32 * pixels_per_point,
-            );
             self.gl.active_texture(glow::TEXTURE0);
             self.gl
                 .bind_texture(glow::TEXTURE_2D, Some(self.rgba_texture));
@@ -125,14 +122,19 @@ impl VideoRenderer {
                 self.upload_frame(frame)?;
             }
             self.set_sampling(appearance.upsample_method, appearance.downsample_method);
+            self.gl.enable(glow::BLEND);
+            self.gl.blend_func_separate(
+                glow::SRC_ALPHA,
+                glow::ONE_MINUS_SRC_ALPHA,
+                glow::ONE,
+                glow::ONE_MINUS_SRC_ALPHA,
+            );
+            if frame.is_some() {
+                self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            }
             self.gl.disable(glow::BLEND);
-            self.gl
-                .uniform_1_i32(self.has_frame_uniform.as_ref(), i32::from(frame.is_some()));
-            self.gl.uniform_1_i32(self.draw_frame_uniform.as_ref(), 0);
-            self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
-            self.gl.uniform_1_i32(self.draw_frame_uniform.as_ref(), 1);
-            self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             self.gl.bind_vertex_array(None);
+
             self.gl.use_program(None);
         }
         let painter = self.overlay_renderer.begin_overlay_frame(

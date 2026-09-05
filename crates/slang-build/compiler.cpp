@@ -274,17 +274,41 @@ static int compile(const CompileRequest& request)
         std::cerr << static_cast<const char*>(diagnostics->getBufferPointer());
     if (!module)
         return 1;
+    diagnostics.setNull();
+    const auto diagnosed = [&](SlangResult result) {
+        if (diagnostics)
+            std::cerr << static_cast<const char*>(diagnostics->getBufferPointer());
+        diagnostics.setNull();
+        return SLANG_SUCCEEDED(result);
+    };
 
     std::vector<Slang::ComPtr<slang::IEntryPoint>> entries;
     const bool explicit_entries = request.entry_count != 0;
-    const auto entry_count = explicit_entries ? request.entry_count : static_cast<size_t>(module->getDefinedEntryPointCount());
+    std::vector<const char*> cuda_entries;
+    if (cuda && !explicit_entries && module->getDefinedEntryPointCount() == 0)
+    {
+        for (auto declaration : module->getModuleReflection()->getChildren())
+        {
+            auto function = declaration->asFunction();
+            if (function && function->findAttributeByName(global_session, "CudaKernel"))
+                cuda_entries.push_back(function->getName());
+        }
+    }
+    const auto entry_count = explicit_entries ? request.entry_count
+        : !cuda_entries.empty() ? cuda_entries.size() : static_cast<size_t>(module->getDefinedEntryPointCount());
     for (size_t index = 0; index < entry_count; ++index)
     {
         Slang::ComPtr<slang::IEntryPoint> entry;
-        const auto result = explicit_entries
+        // CUDA exports need an explicit compute stage to lower dispatch-thread
+        // semantics to CUDA builtins instead of adding a host kernel argument.
+        const auto result = !cuda_entries.empty() || (explicit_entries && (cuda || request.target == Target::Metal))
+            ? module->findAndCheckEntryPoint(
+                explicit_entries ? request.entries[index] : cuda_entries[index],
+                SLANG_STAGE_COMPUTE, entry.writeRef(), diagnostics.writeRef())
+            : explicit_entries
             ? module->findEntryPointByName(request.entries[index], entry.writeRef())
             : module->getDefinedEntryPoint(static_cast<SlangInt32>(index), entry.writeRef());
-        if (SLANG_FAILED(result))
+        if (!diagnosed(result))
         {
             std::cerr << "cannot find shader entry point\n";
             return 1;
@@ -299,12 +323,6 @@ static int compile(const CompileRequest& request)
     std::vector<slang::IComponentType*> components = { module };
     for (const auto& entry : entries)
         components.push_back(entry);
-    const auto diagnosed = [&](SlangResult result) {
-        if (diagnostics)
-            std::cerr << static_cast<const char*>(diagnostics->getBufferPointer());
-        diagnostics.setNull();
-        return SLANG_SUCCEEDED(result);
-    };
     Slang::ComPtr<slang::IComponentType> composite;
     if (!diagnosed(session->createCompositeComponentType(
             components.data(), components.size(), composite.writeRef(), diagnostics.writeRef())))
@@ -315,7 +333,10 @@ static int compile(const CompileRequest& request)
 
     std::ofstream output(request.abi_path);
     if (!output)
+    {
+        std::cerr << "cannot open Slang ABI output: " << request.abi_path << '\n';
         return 1;
+    }
     std::set<std::string> reflected_structs;
     std::set<std::string> reflected_enums;
     auto layout = program->getLayout(0, diagnostics.writeRef());

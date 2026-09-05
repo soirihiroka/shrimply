@@ -105,7 +105,7 @@ pub(crate) fn paste_selected_item_properties_core(
             if let Some(item) = project.video_item(target)
                 && item.stabilize_video
             {
-                shrimply_video::video_stabilization::request(item);
+                shrimply_video_cuda::video_stabilization::request(item);
             }
         }
     }

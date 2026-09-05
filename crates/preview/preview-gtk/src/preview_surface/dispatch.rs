@@ -7,12 +7,8 @@ pub(super) fn attach_frame_scheduler(
 ) {
     area.add_tick_callback(move |area, _| {
         let mut controller_state = controller.borrow_mut();
-        let live_base_pending =
-            controller_state.live_base_pending && controller_state.live_base_in_flight.is_none();
-        if live_base_pending {
-            controller_state.live_base_pending = false;
-        }
-        let frame_pending = std::mem::take(&mut controller_state.frame_pending);
+        let live_base_pending = controller_state.core.take_live_base_request();
+        let frame_pending = std::mem::take(&mut controller_state.core.frame_pending);
         if !frame_pending && !live_base_pending {
             return glib::ControlFlow::Continue;
         }
@@ -28,10 +24,7 @@ pub(super) fn attach_frame_scheduler(
             );
             let revision = player_state::snapshot(&player_state).revision;
             let mut controller = controller.borrow_mut();
-            controller.live_base_in_flight = Some(revision);
-            if let Some(provider) = controller.provider.as_mut() {
-                provider.project_revision = revision;
-            }
+            controller.core.live_base_requested(revision);
         }
         if frame_pending {
             area.queue_render();

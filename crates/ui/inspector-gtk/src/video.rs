@@ -401,7 +401,7 @@ fn reset_video_stabilization(context: &InspectorContext, _: Option<VideoItem>) {
         context,
         "reset-video-stabilization",
         |item: &mut VideoItem| {
-            shrimply_video::video_stabilization::cancel(item);
+            shrimply_video_cuda::video_stabilization::cancel(item);
             item.stabilize_video = false;
             item.stabilization_method = Default::default();
             item.stabilization_crop_ratio =
@@ -449,11 +449,11 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
                     if item.stabilization_method() == method {
                         return false;
                     }
-                    shrimply_video::video_stabilization::cancel(item);
+                    shrimply_video_cuda::video_stabilization::cancel(item);
                     item.stabilize_video = !matches!(method, VideoStabilizationMethod::Off);
                     item.stabilization_method = method;
                     if item.stabilize_video {
-                        shrimply_video::video_stabilization::request(item);
+                        shrimply_video_cuda::video_stabilization::request(item);
                     }
                     true
                 },
@@ -473,7 +473,7 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
     let spinner = adw::Spinner::new();
     spinner.set_size_request(18, 18);
     spinner.set_visible(
-        item.stabilize_video && shrimply_video::video_stabilization::is_generating(item),
+        item.stabilize_video && shrimply_video_cuda::video_stabilization::is_generating(item),
     );
     let method_controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     method_controls.append(&method_control);
@@ -506,7 +506,7 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
                 }
                 item.stabilization_crop_ratio = value;
                 if item.stabilize_video {
-                    shrimply_video::video_stabilization::request(item);
+                    shrimply_video_cuda::video_stabilization::request(item);
                 }
                 true
             },
@@ -538,7 +538,7 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
                 }
                 item.stabilization_first_derivative_weight = value;
                 if item.stabilize_video {
-                    shrimply_video::video_stabilization::request(item);
+                    shrimply_video_cuda::video_stabilization::request(item);
                 }
                 true
             },
@@ -570,7 +570,7 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
                 }
                 item.stabilization_second_derivative_weight = value;
                 if item.stabilize_video {
-                    shrimply_video::video_stabilization::request(item);
+                    shrimply_video_cuda::video_stabilization::request(item);
                 }
                 true
             },
@@ -602,7 +602,7 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
                 }
                 item.stabilization_third_derivative_weight = value;
                 if item.stabilize_video {
-                    shrimply_video::video_stabilization::request(item);
+                    shrimply_video_cuda::video_stabilization::request(item);
                 }
                 true
             },
@@ -614,7 +614,7 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
         .title(tr!("Stabilization cache").as_ref())
         .subtitle(tr!("Discard and reanalyze the current source-time chunk").as_ref())
         .build();
-    let generating = shrimply_video::video_stabilization::is_generating(item);
+    let generating = shrimply_video_cuda::video_stabilization::is_generating(item);
     let rebuild = gtk::Button::builder()
         .label(tr!(if generating { "Cancel" } else { "Rebuild" }).as_ref())
         .sensitive(item.stabilize_video && !unavailable)
@@ -629,15 +629,15 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
         rebuild.connect_clicked(move |_| {
             let item = project.borrow().video_item(&rebuild_key).cloned();
             if let Some(item) = item {
-                if shrimply_video::video_stabilization::is_generating(&item) {
-                    shrimply_video::video_stabilization::cancel(&item);
+                if shrimply_video_cuda::video_stabilization::is_generating(&item) {
+                    shrimply_video_cuda::video_stabilization::cancel(&item);
                     return;
                 }
                 let timeline_position = player_state::current_time(&player_state);
                 let source_position =
                     shrimply_project::project::video_source_time_at(&item, timeline_position)
                         .unwrap_or(item.time_offset);
-                shrimply_video::video_stabilization::rebuild(&item, source_position);
+                shrimply_video_cuda::video_stabilization::rebuild(&item, source_position);
             }
         });
 
@@ -648,7 +648,7 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
         let project = context.project.clone();
         let player_state = context.player_state.clone();
         let status_key = key;
-        let mut was_generating = shrimply_video::video_stabilization::is_generating(item);
+        let mut was_generating = shrimply_video_cuda::video_stabilization::is_generating(item);
         glib::timeout_add_local(Duration::from_millis(100), move || {
             let Some(_method_row) = method_row.upgrade() else {
                 return glib::ControlFlow::Break;
@@ -664,9 +664,9 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
                 return glib::ControlFlow::Break;
             };
             spinner.set_visible(
-                item.stabilize_video && shrimply_video::video_stabilization::is_generating(&item),
+                item.stabilize_video && shrimply_video_cuda::video_stabilization::is_generating(&item),
             );
-            let generating = shrimply_video::video_stabilization::is_generating(&item);
+            let generating = shrimply_video_cuda::video_stabilization::is_generating(&item);
             if was_generating && !generating {
                 player_state::refresh_project(
                     &player_state,
@@ -737,7 +737,7 @@ fn mesh_flow_settings_rows(
                     return false;
                 }
                 item.mesh_flow_rows = value;
-                shrimply_video::video_stabilization::request(item);
+                shrimply_video_cuda::video_stabilization::request(item);
                 true
             },
         );
@@ -765,7 +765,7 @@ fn mesh_flow_settings_rows(
                     return false;
                 }
                 item.mesh_flow_columns = value;
-                shrimply_video::video_stabilization::request(item);
+                shrimply_video_cuda::video_stabilization::request(item);
                 true
             },
         );
@@ -793,7 +793,7 @@ fn mesh_flow_settings_rows(
                     return false;
                 }
                 item.mesh_flow_smoothing_radius = value;
-                shrimply_video::video_stabilization::request(item);
+                shrimply_video_cuda::video_stabilization::request(item);
                 true
             },
         );
@@ -821,7 +821,7 @@ fn mesh_flow_settings_rows(
                     return false;
                 }
                 item.mesh_flow_iterations = value;
-                shrimply_video::video_stabilization::request(item);
+                shrimply_video_cuda::video_stabilization::request(item);
                 true
             },
         );
@@ -850,7 +850,7 @@ fn mesh_flow_settings_rows(
                         return false;
                     }
                     item.mesh_flow_adaptive_weights = value;
-                    shrimply_video::video_stabilization::request(item);
+                    shrimply_video_cuda::video_stabilization::request(item);
                     true
                 },
             );
@@ -874,11 +874,11 @@ fn stabilization_status(item: &VideoItem) -> &'static str {
         "Unavailable while an alpha-mask stream is selected"
     } else if !item.stabilize_video {
         ""
-    } else if shrimply_video::video_stabilization::is_generating(item) {
+    } else if shrimply_video_cuda::video_stabilization::is_generating(item) {
         "Analyzing source motion…"
-    } else if shrimply_video::video_stabilization::has_failed(item) {
+    } else if shrimply_video_cuda::video_stabilization::has_failed(item) {
         "Analysis failed; use Rebuild to retry"
-    } else if shrimply_video::video_stabilization::is_ready(item) {
+    } else if shrimply_video_cuda::video_stabilization::is_ready(item) {
         "Using the reusable chunked analysis cache"
     } else {
         "Analysis starts as source-time chunks are viewed"
@@ -1243,7 +1243,7 @@ fn layered_image_controls(
     value: &LayeredImageLayers,
     context: &InspectorContext,
 ) -> Vec<gtk::Widget> {
-    let Ok(image) = shrimply_video::load_layered_image(&value.file) else {
+    let Ok(image) = shrimply_video_cuda::load_layered_image(&value.file) else {
         return Vec::new();
     };
     let section = InspectorSection::controls();

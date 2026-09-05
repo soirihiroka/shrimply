@@ -1,0 +1,23 @@
+[package]
+name = "shrimply-preview-render-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shrimply-pdf = { path = "../../pdf" }
+shrimply-paint-skia = { path = "../../paint/paint-skia" }
+shrimply-audio = { path = "../../audio/audio" }
+shrimply-render-core = { path = "../../render-core" }
+ffmpeg-next.workspace = true
+skia-safe = { workspace = true, features = ["svg", "textlayout"] }
+shrimply-project = { path = "../../project/project" }
+shrimply-evaluation = { path = "../../evaluation" }
+shrimply-math-core = { path = "../../math/core" }
+shrimply-background = { path = "../../background" }
+uuid.workspace = true
+tracing.workspace = true
+shrimply-preview-core = { path = "../preview-core" }
+shrimply-video-core = { path = "../../video/video-core" }
+shrimply-video-modifiers = { path = "../../video/video-modifiers" }
+shrimply-math-geometry = { path = "../../math/geometry" }
+glam.workspace = true

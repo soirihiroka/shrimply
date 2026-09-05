@@ -6,9 +6,9 @@ use shrimply_paint_model::{PaintDrawing, PaintFill, PaintPoint, PaintStroke};
 use uuid::Uuid;
 
 pub use preview::{
-    PAINT_PREVIEW_FACET, PAINT_PREVIEW_STATE, PaintOnionFrame, PaintPointSelection,
-    PaintPreviewMode, PaintPreviewRender, PaintPreviewState, ResolvedShakyPath, preview_provider,
-    resolve_onion_frame,
+    DEFAULT_PAINT_ERASER_SCALE, PAINT_PREVIEW_FACET, PAINT_PREVIEW_STATE, PaintOnionFrame,
+    PaintPointSelection, PaintPreviewMode, PaintPreviewRender, PaintPreviewState,
+    ResolvedShakyPath, preview_provider, resolve_onion_frame,
 };
 pub use shrimply_paint_geometry::ResolvedPathOffset;
 

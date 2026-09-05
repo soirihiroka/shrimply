@@ -58,7 +58,7 @@ float alpha_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
               fy);
 }
 
-[CudaKernel] void rgba_to_float(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void rgba_to_float(uint3 id : SV_DispatchThreadID,
                                 uniform uint8_t *source, uniform uint64_t pitch,
                                 uniform uint width, uniform float4 *output,
                                 uniform uint64_t output_count) {
@@ -72,7 +72,7 @@ float alpha_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
                (uint(source[address + 3u]) << 24);
   Color c = color_premultiply(color_from_rgba(pixel));
   output[i] = float4(c.r, c.g, c.b, c.a);
-}[CudaKernel] void nv12_to_float(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void nv12_to_float(uint3 id : SV_DispatchThreadID,
                                  uniform uint8_t *y_plane,
                                  uniform uint8_t *uv_plane,
                                  uniform uint64_t y_pitch,
@@ -93,7 +93,7 @@ float alpha_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
       clamp(yy - 0.21324861f * chroma.x - 0.53290933f * chroma.y, 0.0f, 1.0f),
       clamp(yy + 2.1124017f * chroma.x, 0.0f, 1.0f), 1.0f);
 }
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams params,
             uniform ConvolutionTerm *terms, uniform uint64_t term_count,
             uniform float4 *output, uniform uint64_t output_count) {
@@ -122,7 +122,7 @@ convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams params,
                            0.0f, 0.0f) *
               params.residual_scale;
   output[i] = result;
-}[CudaKernel] void depth_to_space_x2(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void depth_to_space_x2(uint3 id : SV_DispatchThreadID,
                                      uniform ImageDescriptor convolution,
                                      uniform ImageDescriptor residual,
                                      uniform uint width, uniform float4 *output,
@@ -136,7 +136,7 @@ convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams params,
                      .pixels)[source_y * convolution.width + source_x][channel];
   output[i] = value + image_sample(residual, x, y, width, height, 0.0f, 0.0f);
 }
-[CudaKernel] void float_to_rgba_opaque(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void float_to_rgba_opaque(uint3 id : SV_DispatchThreadID,
                                        uniform float4 *source,
                                        uniform uint *output,
                                        uniform uint64_t output_count) {
@@ -144,7 +144,7 @@ convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams params,
   if (i < output_count)
     output[i] =
         color_to_rgba(color(source[i].x, source[i].y, source[i].z, 1.0f));
-}[CudaKernel] void float_to_rgba_alpha(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void float_to_rgba_alpha(uint3 id : SV_DispatchThreadID,
                                        uniform AlphaParams params,
                                        uniform uint *output,
                                        uniform uint64_t output_count) {

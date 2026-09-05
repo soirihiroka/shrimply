@@ -9,8 +9,8 @@ use crate::player_state::{self, ProjectChange, SharedPlayerState};
 use crate::project::{ItemKind, Project, Time};
 use crate::selection_state::SharedSelectionState;
 use crate::{
-    MAX_SECONDS_PER_PIXEL, TimelineRuntime, frame_step_seconds, min_seconds_per_pixel,
-    selected_timeline_items, timeline_width,
+    TimelineRuntime, frame_step_seconds, min_seconds_per_pixel, selected_timeline_items,
+    timeline_width,
 };
 
 use super::{
@@ -19,10 +19,6 @@ use super::{
     delete_selected_tracks, group_selected_timeline_items, replace_selected_item_properties,
     ungroup_selected_timeline_items,
 };
-
-const ZOOM_TOGGLE_DETAIL_SCALE: f64 = 0.05;
-const ZOOM_TOGGLE_MAX_DETAIL_SECONDS: i64 = 10;
-const ZOOM_TOGGLE_GLOBAL_THRESHOLD: f64 = 0.8;
 
 pub(super) fn add_controller(
     area: &gtk::GLArea,
@@ -308,20 +304,14 @@ fn toggle_timeline_zoom(
             min_seconds_per_pixel(frame_step_seconds(&project)),
         )
     };
-    let global_zoom =
-        (duration.as_secs_f64() / timeline_width).clamp(minimum_zoom, MAX_SECONDS_PER_PIXEL);
-    let detail_zoom = (global_zoom * ZOOM_TOGGLE_DETAIL_SCALE)
-        .min(Time::from_seconds(ZOOM_TOGGLE_MAX_DETAIL_SECONDS).as_secs_f64() / timeline_width)
-        .max(minimum_zoom);
     let mut runtime = runtime.borrow_mut();
-    let zoomed_in = runtime.view.seconds_per_pixel < global_zoom * ZOOM_TOGGLE_GLOBAL_THRESHOLD;
-    runtime.view.seconds_per_pixel = if zoomed_in { global_zoom } else { detail_zoom };
-    let visible_seconds = timeline_width * runtime.view.seconds_per_pixel;
-    runtime.view.scroll_seconds = if zoomed_in {
-        0.0
-    } else {
-        (player.position.as_secs_f64() - visible_seconds / 2.0).max(0.0)
-    };
+    shrimply_timeline_core::math::toggle_timeline_zoom(
+        &mut runtime.view,
+        duration,
+        player.position,
+        timeline_width,
+        minimum_zoom,
+    );
     runtime.horizontal_scrollbar.cancel_scroll();
     runtime.overscroll = None;
     let zoom = Time::from_seconds_f64(runtime.view.seconds_per_pixel);

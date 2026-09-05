@@ -21,7 +21,7 @@ shrimply-project = { path = "../../project/project" }
 shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
 shrimply-state = { path = "../../state" }
 shrimply-timeline-gtk = { path = "../../timeline/timeline-gtk" }
-shrimply-video = { path = "../../video/rendering" }
+shrimply-video-cuda = { path = "../../video/video-cuda" }
 skia-safe.workspace = true
 tracing.workspace = true
 uuid.workspace = true

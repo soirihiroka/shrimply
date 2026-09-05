@@ -41,7 +41,7 @@ shrimply-gtk-components = { path = "../gtk-components" }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 shrimply-video-generation = { path = "../../video/video-generation" }
 shrimply-video-generation-gtk = { path = "../../video/video-generation-gtk" }
-shrimply-video = { path = "../../video/rendering" }
+shrimply-video-cuda = { path = "../../video/video-cuda" }
 shrimply-math-color = { path = "../../math/color", features = ["gdk"] }
 shrimply-cross-ui-theme = { path = "../cross-ui-theme" }
 shrimply-math-geometry = { path = "../../math/geometry" }

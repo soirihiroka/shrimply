@@ -18,7 +18,9 @@ use super::CHANNELS;
 
 mod analysis;
 
-pub use analysis::{FrameAudioSampler, FrameMouthSampler, FrameVolumeSampler};
+pub use analysis::{
+    EXPRESSION_SAMPLE_RATE_HZ, FrameAudioSampler, FrameMouthSampler, FrameVolumeSampler,
+};
 
 const AV_TIME_BASE: u128 = 1_000_000;
 const BUFFER_LOOKBEHIND_FRAMES: u64 = 48_000;

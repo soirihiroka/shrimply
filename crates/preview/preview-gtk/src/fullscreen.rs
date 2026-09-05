@@ -1,8 +1,7 @@
 use super::*;
 use shrimply_gtk_components::ui::I18nWidgetExt;
 
-const CONTROLS_HIDE_DELAY: Duration = Duration::from_secs(3);
-const REVEAL_POINTER_THRESHOLD: f32 = 1.0;
+use shrimply_preview_interaction_core::fullscreen::{CONTROLS_HIDE_DELAY, ControlsMotion};
 const RESTORE_ICON: &str = "arrows-pointing-inward-symbolic";
 const CONTROLS_CLASS: &str = "preview-fullscreen-controls";
 
@@ -55,10 +54,7 @@ struct PreviewFullscreenState {
     notify_id: Rc<RefCell<Option<glib::SignalHandlerId>>>,
     hide_source_id: Rc<RefCell<Option<glib::SourceId>>>,
     hide_generation: Rc<Cell<u64>>,
-    pointer_position: Rc<Cell<Option<Vec2>>>,
-    controls_pointer_position: Rc<Cell<Option<Vec2>>>,
-    hidden_pointer_position: Rc<Cell<Option<Vec2>>>,
-    controls_hidden_after_idle: Rc<Cell<bool>>,
+    motion: Rc<ControlsMotion>,
 }
 
 pub(super) fn attach(widgets: Widgets, player_state: SharedPlayerState) {
@@ -68,10 +64,7 @@ pub(super) fn attach(widgets: Widgets, player_state: SharedPlayerState) {
         notify_id: Rc::new(RefCell::new(None::<glib::SignalHandlerId>)),
         hide_source_id: Rc::new(RefCell::new(None::<glib::SourceId>)),
         hide_generation: Rc::new(Cell::new(0u64)),
-        pointer_position: Rc::new(Cell::new(None)),
-        controls_pointer_position: Rc::new(Cell::new(None)),
-        hidden_pointer_position: Rc::new(Cell::new(None)),
-        controls_hidden_after_idle: Rc::new(Cell::new(false)),
+        motion: Rc::new(ControlsMotion::default()),
     };
 
     attach_fullscreen_controls_motion(&widgets, &state);
@@ -160,10 +153,7 @@ fn enter_preview_fullscreen(widgets: &Widgets, state: &PreviewFullscreenState) {
         left_bar_visible,
     });
     state.active.set(true);
-    state.pointer_position.set(None);
-    state.controls_pointer_position.set(None);
-    state.hidden_pointer_position.set(None);
-    state.controls_hidden_after_idle.set(false);
+    state.motion.reset();
     widgets.video_surface.set_fullscreen(true);
     set_fullscreen_button_mode(&widgets.button, true);
     show_fullscreen_controls(widgets, state);
@@ -223,9 +213,7 @@ fn restore_preview_fullscreen(
     }
 
     state.active.set(false);
-    state.controls_pointer_position.set(None);
-    state.hidden_pointer_position.set(None);
-    state.controls_hidden_after_idle.set(false);
+    state.motion.reset();
     cancel_fullscreen_controls_hide(state);
     set_fullscreen_button_mode(&widgets.button, false);
 }
@@ -278,11 +266,7 @@ fn attach_fullscreen_controls_motion(widgets: &Widgets, state: &PreviewFullscree
     let motion_widgets = widgets.clone();
     let motion_state = state.clone();
     overlay_motion.connect_motion(move |_, x, y| {
-        if motion_state.active.get()
-            && should_reveal_fullscreen_controls_after_motion(
-                &motion_state,
-                vec2(x as f32, y as f32),
-            )
+        if motion_state.active.get() && motion_state.motion.pointer_motion(vec2(x as f32, y as f32))
         {
             show_fullscreen_controls(&motion_widgets, &motion_state);
         }
@@ -301,9 +285,7 @@ fn attach_fullscreen_controls_motion(widgets: &Widgets, state: &PreviewFullscree
     let enter_state = state.clone();
     controls_motion.connect_enter(move |_, x, y| {
         if enter_state.active.get() {
-            enter_state
-                .controls_pointer_position
-                .set(Some(vec2(x as f32, y as f32)));
+            enter_state.motion.controls_enter(vec2(x as f32, y as f32));
             enter_widgets.controls.set_visible(true);
             update_fullscreen_caption_inset(&enter_widgets);
             schedule_fullscreen_controls_hide(&enter_widgets, &enter_state);
@@ -313,10 +295,9 @@ fn attach_fullscreen_controls_motion(widgets: &Widgets, state: &PreviewFullscree
     let motion_state = state.clone();
     controls_motion.connect_motion(move |_, x, y| {
         if motion_state.active.get()
-            && pointer_moved_since(
-                &motion_state.controls_pointer_position,
-                vec2(x as f32, y as f32),
-            )
+            && motion_state
+                .motion
+                .controls_motion(vec2(x as f32, y as f32))
         {
             show_fullscreen_controls(&motion_widgets, &motion_state);
         }
@@ -330,8 +311,7 @@ fn attach_fullscreen_controls_motion(widgets: &Widgets, state: &PreviewFullscree
 }
 
 fn show_fullscreen_controls(widgets: &Widgets, state: &PreviewFullscreenState) {
-    state.hidden_pointer_position.set(None);
-    state.controls_hidden_after_idle.set(false);
+    state.motion.shown();
     widgets.controls.set_visible(true);
     update_fullscreen_caption_inset(widgets);
     schedule_fullscreen_controls_hide(widgets, state);
@@ -351,12 +331,7 @@ fn hide_fullscreen_controls(
 ) {
     widgets.controls.set_visible(false);
     widgets.video_surface.set_caption_bottom_inset(0.0);
-    state.controls_hidden_after_idle.set(require_pointer_move);
-    state.hidden_pointer_position.set(
-        require_pointer_move
-            .then(|| state.pointer_position.get())
-            .flatten(),
-    );
+    state.motion.hidden(require_pointer_move);
     cancel_fullscreen_controls_hide(state);
 }
 
@@ -394,40 +369,6 @@ fn cancel_fullscreen_controls_hide(state: &PreviewFullscreenState) {
     }
 }
 
-fn should_reveal_fullscreen_controls_after_motion(
-    state: &PreviewFullscreenState,
-    position: Vec2,
-) -> bool {
-    if !pointer_moved_since(&state.pointer_position, position) {
-        return false;
-    }
-
-    if !state.controls_hidden_after_idle.get() {
-        return true;
-    }
-
-    let Some(hidden_position) = state.hidden_pointer_position.get() else {
-        state.hidden_pointer_position.set(Some(position));
-        return false;
-    };
-    if pointer_positions_close(hidden_position, position) {
-        return false;
-    }
-
-    state.hidden_pointer_position.set(None);
-    state.controls_hidden_after_idle.set(false);
-    true
-}
-
-fn pointer_moved_since(position: &Cell<Option<Vec2>>, next: Vec2) -> bool {
-    let previous = position.get();
-    position.set(Some(next));
-    previous.is_none_or(|previous| !pointer_positions_close(previous, next))
-}
-
-fn pointer_positions_close(a: Vec2, b: Vec2) -> bool {
-    (a.x - b.x).abs() <= REVEAL_POINTER_THRESHOLD && (a.y - b.y).abs() <= REVEAL_POINTER_THRESHOLD
-}
 pub(super) fn install_css() {
     let Some(display) = gdk::Display::default() else {
         return;

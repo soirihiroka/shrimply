@@ -11,6 +11,11 @@ pub type Float3 = [f32; 3];
 pub type Float4 = [f32; 4];
 pub type Float4x4 = [f32; 16];
 pub type CubicControls<T> = SVector<T, 4>;
+
+pub fn inverse_affine(matrix: glam::Mat3) -> Option<glam::Mat3> {
+    let determinant = matrix.determinant();
+    (determinant.is_finite() && determinant.abs() > f32::EPSILON).then(|| matrix.inverse())
+}
 type SepticControls<T> = SVector<T, 8>;
 
 #[inline(always)]

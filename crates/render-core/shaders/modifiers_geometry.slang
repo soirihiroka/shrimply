@@ -3,7 +3,7 @@ import color;
 import common;
 import math;
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 bulge_pinch(uniform uint *input, uniform uint w, uniform uint h,
             uniform uint *out, uniform uint64_t out_len,
             uniform BulgePinchParams params, uint3 id : SV_DispatchThreadID) {
@@ -25,7 +25,7 @@ bulge_pinch(uniform uint *input, uniform uint w, uniform uint h,
   out[i] = input[sy * w + sx];
 }
 
-    [CudaKernel] void displacement_map(uniform uint *input, uniform uint w,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void displacement_map(uniform uint *input, uniform uint w,
                                        uniform uint h, uniform uint *out,
                                        uniform uint64_t out_len,
                                        uniform float amount,
@@ -42,7 +42,7 @@ bulge_pinch(uniform uint *input, uniform uint w, uniform uint h,
   out[i] = input[sy * w + sx];
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 fisheye(uniform uint *input, uniform uint width, uniform uint height,
         uniform uint *out, uniform uint64_t out_len, uniform float intensity,
         uniform Vec2 center_value, uint3 id : SV_DispatchThreadID) {
@@ -64,7 +64,7 @@ fisheye(uniform uint *input, uniform uint width, uniform uint height,
   out[i] = input[sy * width + sx];
 }
 
-    [CudaKernel] void kaleidoscope(uniform uint *input, uniform uint w,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void kaleidoscope(uniform uint *input, uniform uint w,
                                    uniform uint h, uniform uint *out,
                                    uniform uint64_t out_len,
                                    uniform KaleidoscopeParams params,
@@ -88,7 +88,7 @@ fisheye(uniform uint *input, uniform uint width, uniform uint height,
   out[i] = input[sy * w + sx];
 }
 
-[CudaKernel] void lens_distortion(uniform uint *input, uniform uint w,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void lens_distortion(uniform uint *input, uniform uint w,
                                   uniform uint h, uniform uint *out,
                                   uniform uint64_t out_len,
                                   uniform float distortion, uniform Vec2 center,
@@ -107,7 +107,7 @@ fisheye(uniform uint *input, uniform uint width, uniform uint height,
                : 0u;
 }
 
-    [CudaKernel] void mirror(uniform uint *input, uniform uint w,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void mirror(uniform uint *input, uniform uint w,
                              uniform uint h, uniform uint *out,
                              uniform uint64_t out_len, uniform uint horizontal,
                              uniform uint vertical,
@@ -120,7 +120,7 @@ fisheye(uniform uint *input, uniform uint width, uniform uint height,
   out[i] = input[sy * w + sx];
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 pixelate_mosaic(uniform uint *input, uniform uint width, uniform uint height,
                 uniform uint *out, uniform uint64_t out_len,
                 uniform uint block_width, uniform uint block_height,
@@ -134,7 +134,7 @@ pixelate_mosaic(uniform uint *input, uniform uint width, uniform uint height,
   out[i] = input[sy * width + sx];
 }
 
-    [CudaKernel] void twirl(uniform uint *input, uniform uint w, uniform uint h,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void twirl(uniform uint *input, uniform uint w, uniform uint h,
                             uniform uint *out, uniform uint64_t out_len,
                             uniform TwirlParams params,
                             uint3 id : SV_DispatchThreadID) {
@@ -156,7 +156,7 @@ pixelate_mosaic(uniform uint *input, uniform uint width, uniform uint height,
   out[i] = input[sy * w + sx];
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 wave_ripple(uniform uint *input, uniform uint w, uniform uint h,
             uniform uint *out, uniform uint64_t out_len,
             uniform WaveRippleParams params, uint3 id : SV_DispatchThreadID) {
@@ -174,7 +174,7 @@ wave_ripple(uniform uint *input, uniform uint w, uniform uint h,
   out[i] = input[sy * w + sx];
 }
 
-    [CudaKernel] void corner_pin(uniform CornerPinParams params,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void corner_pin(uniform CornerPinParams params,
                                  uniform uint *out, uniform uint64_t out_len,
                                  uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);

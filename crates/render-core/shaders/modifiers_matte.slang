@@ -65,7 +65,7 @@ float shape_alpha_mask_amount(float2 point, ShapeAlphaMaskParams params) {
   return params.invert != 0u ? 1.0f - amount : amount;
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
            uniform AlphaMaskParams params, uniform uint *output,
            uniform uint64_t output_count) {
@@ -90,7 +90,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                                   source.a * rec709_luma(mask) * mask.a));
 }
 
-    [CudaKernel] void shape_alpha_mask(uint3 id : SV_DispatchThreadID,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void shape_alpha_mask(uint3 id : SV_DispatchThreadID,
                                        uniform uint *input,
                                        uniform ShapeAlphaMaskParams params,
                                        uniform uint *output,
@@ -129,7 +129,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
       alpha));
 }
 
-[CudaKernel] void chroma_key(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void chroma_key(uint3 id : SV_DispatchThreadID,
                              uniform uint *input, uniform uint *output,
                              uniform uint64_t output_count,
                              uniform ChromaKeyParams params) {
@@ -157,7 +157,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
   output[i] = color_to_rgba(color(rgb.x, rgb.y, rgb.z, value.a * keep));
 }
 
-    [CudaKernel] void luma_key(uint3 id : SV_DispatchThreadID,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void luma_key(uint3 id : SV_DispatchThreadID,
                                uniform uint *input, uniform uint *output,
                                uniform uint64_t output_count,
                                uniform float threshold, uniform float softness,
@@ -174,7 +174,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
   output[i] = color_to_rgba(color_with_alpha(value, value.a * keep));
 }
 
-[CudaKernel] void mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                        uniform MaskParams params, uniform uint *output,
                        uniform uint64_t output_count) {
   uint i = id.x;
@@ -205,7 +205,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
       color_to_rgba(color(source.r, source.g, source.b, source.a * amount));
 }
 
-    [CudaKernel] void sam2_proxy(uint3 id : SV_DispatchThreadID,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void sam2_proxy(uint3 id : SV_DispatchThreadID,
                                  uniform uint *input, uniform uint *output,
                                  uniform Sam2ProxyParams params) {
   uint i = id.x, pixels = params.model_size * params.model_size;
@@ -226,7 +226,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
       color(value.r * value.a, value.g * value.a, value.b * value.a, 1.0f));
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 sam2_apply_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                 uniform int8_t *masks, uniform uint *output,
                 uniform uint64_t output_count, uniform Sam2MaskParams params) {
@@ -265,7 +265,7 @@ sam2_apply_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
   output[i] = color_to_rgba(color_with_alpha(value, value.a * keep));
 }
 
-    [CudaKernel] void transparent_fill_apply_mask(
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void transparent_fill_apply_mask(
         uint3 id : SV_DispatchThreadID, uniform uint *input,
         uniform uint8_t *mask_bits, uniform uint *output,
         uniform uint64_t output_count,
@@ -395,7 +395,7 @@ uint triangular_fold_pixel(uint *input, float x, float y, uint width,
                              source.b * shade, source.a * coverage));
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 visual_transition_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                        uniform uint width, uniform uint height,
                        uniform uint *output, uniform uint64_t output_count,
@@ -466,7 +466,7 @@ float4 triangle_hit(float2 point, float4 a, float4 b, float4 c, float2 uv_a,
       wa * uv_a.y + wb * uv_b.y + wc * uv_c.y, clamp(shade, 0.78f, 1.0f));
 }
 
-[CudaKernel] void origami_transition(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void origami_transition(uint3 id : SV_DispatchThreadID,
                                      uniform uint *input, uniform uint width,
                                      uniform uint height, uniform uint *output,
                                      uniform uint64_t output_count,
@@ -518,7 +518,7 @@ float4 triangle_hit(float2 point, float4 a, float4 b, float4 c, float2 uv_a,
       color(source.r * best.w, source.g * best.w, source.b * best.w, source.a));
 }
 
-    [CudaKernel] void transition_gaussian_blur_horizontal(
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void transition_gaussian_blur_horizontal(
         uint3 id : SV_DispatchThreadID, uniform uint *input, uniform uint width,
         uniform uint *output, uniform uint64_t output_count,
         uniform uint radius_u) {
@@ -540,7 +540,7 @@ float4 triangle_hit(float2 point, float4 a, float4 b, float4 c, float2 uv_a,
   output[i] = color_to_rgba(
       color(sum.x / total, sum.y / total, sum.z / total, sum.w / total));
 }
-[CudaKernel] void transition_gaussian_blur_vertical(
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void transition_gaussian_blur_vertical(
     uint3 id : SV_DispatchThreadID, uniform uint *input, uniform uint width,
     uniform uint height, uniform uint *output, uniform uint64_t output_count,
     uniform uint radius_u) {
@@ -562,7 +562,7 @@ float4 triangle_hit(float2 point, float4 a, float4 b, float4 c, float2 uv_a,
   output[i] =
       color_to_rgba(color(sum.x / total / divisor, sum.y / total / divisor,
                           sum.z / total / divisor, alpha));
-}[CudaKernel] void transition_pixelate(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void transition_pixelate(uint3 id : SV_DispatchThreadID,
                                        uniform uint *input, uniform uint width,
                                        uniform uint height,
                                        uniform uint *output,

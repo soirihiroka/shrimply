@@ -112,146 +112,40 @@ pub(in crate::interaction::pointer) fn end_pointer_action(
         }
         DragMode::Item | DragMode::ResizeItem => {}
         DragMode::Transition => {
-            if let Some(mut drag) = runtime.clip_transition_drag.take() {
-                if runtime.view.drag_moved {
-                    let project_ref = project.borrow();
-                    update_clip_transition_drag(
-                        &mut drag,
-                        &project_ref,
-                        runtime.view,
-                        x,
-                        &runtime.snap_repository,
-                    );
-                }
-                if drag.center_resize && drag.target_cut != drag.cut {
-                    let mut project_state = project.borrow_mut();
-                    let changed = SequenceTimeline::for_item(&project_state, &drag.outgoing)
-                        .expect("clip transition item must have a valid operation scope")
-                        .apply_clip_transition_cut(
-                            &mut project_state,
-                            &drag.outgoing,
-                            &drag.incoming,
-                            drag.target_cut,
-                        );
-                    if changed {
-                        project_state.normalize_clip_transitions();
-                        crate::project::commit_edit(&project_state, "roll-clip-transition");
-                        drop(project_state);
-                        let audio = drag.outgoing.kind() == crate::project::ItemKind::Audio;
-                        player_state::refresh_project(
-                            player_state,
-                            ProjectChange {
-                                audio,
-                                audio_waveforms: audio,
-                                video: drag.outgoing.kind() == crate::project::ItemKind::Video,
-                                inspector: true,
-                                ..ProjectChange::default()
-                            },
-                        );
-                    }
-                }
-                let duration = if drag.original_duration.is_none() && !runtime.view.drag_moved {
-                    let project_ref = project.borrow();
-                    let left = project_ref.item(&drag.outgoing).map(|item| item.times());
-                    let right = project_ref.item(&drag.incoming).map(|item| item.times());
-                    match (left, right) {
-                        (Some((left_start, left_end)), Some((right_start, right_end))) => {
-                            let left_intro = transition_durations(&project_ref, &drag.outgoing)
-                                .and_then(|(intro, _)| intro);
-                            let right_outro = transition_durations(&project_ref, &drag.incoming)
-                                .and_then(|(_, outro)| outro);
-                            let maximum = crate::math::maximum_clip_transition_duration(
-                                left_end.saturating_sub(left_start),
-                                right_end.saturating_sub(right_start),
-                                left_intro,
-                                right_outro,
-                            );
-                            let duration = crate::math::default_clip_transition_duration(
-                                left_end.saturating_sub(left_start),
-                                right_end.saturating_sub(right_start),
-                            )
-                            .min(maximum);
-                            (duration > Time::ZERO).then_some(duration)
-                        }
-                        _ => None,
-                    }
-                } else if drag.handle.is_some() && runtime.view.drag_moved {
-                    drag.target_duration
-                } else {
-                    drag.original_duration
-                };
-                if duration != drag.original_duration {
-                    let mut project_state = project.borrow_mut();
-                    let changed = SequenceTimeline::for_item(&project_state, &drag.outgoing)
-                        .expect("clip transition item must have a valid operation scope")
-                        .apply_clip_transition(
-                            &mut project_state,
-                            &drag.outgoing,
-                            &drag.incoming,
-                            duration,
-                        );
-                    if changed {
-                        crate::project::commit_edit(&project_state, "edit-clip-transition");
-                        drop(project_state);
-                        if duration.is_some() {
-                            selection_state::set_focused_transition(
-                                selection_state,
-                                TransitionSide::Outro,
-                            );
-                        } else {
-                            selection_state::clear_focused_transition(selection_state);
-                        }
-                        player_state::refresh_project(
-                            player_state,
-                            ProjectChange {
-                                audio: drag.outgoing.kind() == crate::project::ItemKind::Audio,
-                                video: drag.outgoing.kind() == crate::project::ItemKind::Video,
-                                inspector: true,
-                                ..ProjectChange::default()
-                            },
-                        );
-                    }
-                }
+            let mut gesture = shrimply_timeline_core::transitions::Gesture {
+                clip: runtime.clip_transition_drag.take(),
+                item: runtime.transition_drag.take(),
+            };
+            if runtime.view.drag_moved {
+                gesture.update(
+                    &project.borrow(),
+                    selection_state,
+                    runtime.view,
+                    x,
+                    &runtime.snap_repository,
+                );
             }
-            if runtime.view.drag_moved
-                && let Some(mut drag) = runtime.transition_drag.take()
-            {
-                {
-                    let project_ref = project.borrow();
-                    update_transition_drag(
-                        &mut drag,
-                        &project_ref,
-                        runtime.view,
-                        x,
-                        &runtime.snap_repository,
-                    );
+            let mut project_state = project.borrow_mut();
+            if let Some(applied) = gesture.finish(&mut project_state, runtime.view.drag_moved) {
+                project_state.normalize_clip_transitions();
+                crate::project::commit_edit(&project_state, applied.message);
+                drop(project_state);
+                if let Some(side) = applied.focus {
+                    selection_state::set_focused_transition(selection_state, side);
+                } else {
+                    selection_state::clear_focused_transition(selection_state);
                 }
-                if drag.remove || drag.target_duration > Time::ZERO {
-                    let mut project_state = project.borrow_mut();
-                    let duration = (!drag.remove).then_some(drag.target_duration);
-                    let changed = SequenceTimeline::for_item(&project_state, &drag.key)
-                        .expect("transition item must have a valid operation scope")
-                        .apply_transition(&mut project_state, &drag.key, drag.side, duration);
-                    if changed {
-                        project_state.normalize_clip_transitions();
-                        crate::project::commit_edit(&project_state, "edit-item-transition");
-                        drop(project_state);
-                        if drag.remove {
-                            selection_state::clear_focused_transition(selection_state);
-                        } else {
-                            selection_state::set_focused_transition(selection_state, drag.side);
-                        }
-                        player_state::refresh_project(
-                            player_state,
-                            ProjectChange {
-                                audio: matches!(drag.key.kind(), crate::project::ItemKind::Audio),
-                                video: matches!(drag.key.kind(), crate::project::ItemKind::Video),
-                                inspector: true,
-                                ..ProjectChange::default()
-                            },
-                        );
-                    }
-                }
+                let audio = applied.kind == crate::project::ItemKind::Audio;
+                player_state::refresh_project(
+                    player_state,
+                    ProjectChange {
+                        audio,
+                        audio_waveforms: audio && applied.rolling,
+                        video: applied.kind == crate::project::ItemKind::Video,
+                        inspector: true,
+                        ..ProjectChange::default()
+                    },
+                );
             }
         }
         DragMode::Cut => {
@@ -361,31 +255,4 @@ pub(in crate::interaction::pointer) fn end_pointer_action(
     runtime.view.drag_moved = false;
 }
 
-fn commit_rectangle_selection(
-    context: &impl crate::timeline_operation::TimelineOperationContext,
-    project: &Project,
-    selection_state: &SharedSelectionState,
-    selection: TimelineSelection,
-) {
-    let mut selected = if selection.add_to_selection {
-        selection_state::selected_item_addresses(selection_state, project)
-            .into_iter()
-            .filter(|item| context.contains_item(project, item))
-            .collect()
-    } else {
-        Vec::new()
-    };
-    selected.extend(selected_item_addresses(context, project, selection));
-    if !selection.ignore_grouping {
-        selected = crate::items::expand_grouped_item_addresses(context, project, &selected);
-    }
-    let context_items = context.items(project);
-    selected.sort_by_key(|item| {
-        context_items
-            .iter()
-            .position(|candidate| candidate == item)
-            .unwrap_or(usize::MAX)
-    });
-    selected.dedup();
-    selection_state::set_selected_item_addresses(selection_state, project, selected, None);
-}
+use shrimply_timeline_core::selection::commit_rectangle_selection;

@@ -239,31 +239,31 @@ frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost
 
 video-lifecycle-test: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video continuous_playback_coalesces_until_an_explicit_discontinuity
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-cuda continuous_playback_coalesces_until_an_explicit_discontinuity
 
 transparent-fill-frame-range-test: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video modifiers::transparent_fill::tests::partial_first_project_frame_uses_the_item_start_mask -- --exact --test-threads=1
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-cuda modifiers::transparent_fill::tests::partial_first_project_frame_uses_the_item_start_mask -- --exact --test-threads=1
 
 transparent-fill-cache-test: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video modifiers::transparent_fill::tests::cache_round_trips_evicted_project_frame_masks -- --exact --test-threads=1
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-cuda modifiers::transparent_fill::tests::cache_round_trips_evicted_project_frame_masks -- --exact --test-threads=1
 
 transparent-fill-decoder-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-decoder tests::accurate_out_of_order_requests_map_30fps_positions_to_24fps_frames -- --exact --test-threads=1 --nocapture
 
 transparent-fill-kernel-test: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video modifiers::transparent_fill::tests::cached_mask_applies_with_the_cuda_kernel -- --exact --test-threads=1
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-cuda modifiers::transparent_fill::tests::cached_mask_applies_with_the_cuda_kernel -- --exact --test-threads=1
 
 transparent-fill-compositor-test: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video modifiers::transparent_fill::tests::preview_compositor_applies_each_out_of_order_project_frame_mask -- --exact --ignored --test-threads=1
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-cuda modifiers::transparent_fill::tests::preview_compositor_applies_each_out_of_order_project_frame_mask -- --exact --ignored --test-threads=1
 
 transparent-fill-playback-test: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video modifiers::transparent_fill::tests::preview_uses_the_mask_for_each_project_frame -- --exact --ignored --test-threads=1 --nocapture
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-cuda modifiers::transparent_fill::tests::preview_uses_the_mask_for_each_project_frame -- --exact --ignored --test-threads=1 --nocapture
 
 transparent-fill-e2e-fixture: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video modifiers::transparent_fill::tests::generates_transparent_fill_end_to_end_fixture -- --exact --test-threads=1 --nocapture
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-cuda modifiers::transparent_fill::tests::generates_transparent_fill_end_to_end_fixture -- --exact --test-threads=1 --nocapture
 
 transparent-fill-e2e-test: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video modifiers::transparent_fill::tests::transparent_fill_analyzes_and_renders_a_real_project_end_to_end -- --exact --ignored --test-threads=1 --nocapture
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-cuda modifiers::transparent_fill::tests::transparent_fill_analyzes_and_renders_a_real_project_end_to_end -- --exact --ignored --test-threads=1 --nocapture
 
 fmt:
 	$(BUILD_ENV) $(CARGO) fmt
@@ -279,7 +279,7 @@ test: cuda-artifacts
 
 decode-ahead-benchmark:
 	@test -n "$(VIDEO)" || { echo "usage: make decode-ahead-benchmark VIDEO=/path/to/video.mp4 [FRAMES=300] [LAYERS=2]" >&2; exit 1; }
-	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-video --example decode_ahead_benchmark -- "$(VIDEO)" "$(or $(FRAMES),300)" "$(or $(LAYERS),2)"
+	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-video-cuda --example decode_ahead_benchmark -- "$(VIDEO)" "$(or $(FRAMES),300)" "$(or $(LAYERS),2)"
 
 paint-interpolation-test:
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-paint-interpolation

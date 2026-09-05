@@ -2,7 +2,7 @@ import abi;
 import color;
 import common;
 
-[CudaKernel] void affine_stabilization(uniform AffineStabilizationParams params,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void affine_stabilization(uniform AffineStabilizationParams params,
                                        uniform uint *out,
                                        uniform uint64_t out_len,
                                        uint3 id : SV_DispatchThreadID) {

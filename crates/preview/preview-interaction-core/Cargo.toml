@@ -1,0 +1,18 @@
+[package]
+name = "shrimply-preview-interaction-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+glam.workspace = true
+skia-safe = { workspace = true, features = ["textlayout"] }
+uuid.workspace = true
+shrimply-core = { path = "../../core" }
+shrimply-evaluation = { path = "../../evaluation" }
+shrimply-video-core = { path = "../../video/video-core" }
+shrimply-3dgs = { path = "../../3d/3dgs" }
+shrimply-preview-core = { path = "../preview-core" }
+shrimply-project = { path = "../../project/project" }
+shrimply-math-color = { path = "../../math/color", features = ["skia"] }
+shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
+shrimply-cross-ui-theme = { path = "../../ui/cross-ui-theme" }

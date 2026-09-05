@@ -15,7 +15,6 @@ use crate::target::InspectorTarget;
 mod audio;
 
 pub const INSPECTOR_MIN_WIDTH: i32 = 320;
-const EXPRESSION_AUDIO_SAMPLE_RATE_HZ: u32 = 48_000;
 pub(crate) const INSPECTOR_EDIT_COMMIT: &str = "inspector-edit";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -162,7 +161,7 @@ pub struct InspectorController {
 
 pub(crate) struct CachedTransparentFillStatus {
     pub(crate) revision: u64,
-    pub(crate) prepared: shrimply_video::transparent_fill_analysis::PreparedStatus,
+    pub(crate) prepared: shrimply_video_cuda::transparent_fill_analysis::PreparedStatus,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -186,7 +185,7 @@ impl InspectorController {
             expression_cache: Rc::new(RefCell::new(Default::default())),
             audio_sampler: Rc::new(RefCell::new(
                 shrimply_audio::streaming::FrameAudioSampler::preview(
-                    EXPRESSION_AUDIO_SAMPLE_RATE_HZ,
+                    shrimply_audio::streaming::EXPRESSION_SAMPLE_RATE_HZ,
                 ),
             )),
             analysis_transitions: Rc::new(RefCell::new(HashMap::new())),

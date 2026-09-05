@@ -1,9 +1,7 @@
 use super::*;
 use crate::items::{DragCollisionMode, DraggedGroup};
-use crate::project::ItemAddress;
-use crate::timeline_operation::SequenceTimeline;
 
-mod drop_area;
+use shrimply_timeline_core::drop_area;
 
 struct DragUpdate<'a> {
     project: &'a Project,
@@ -71,97 +69,16 @@ impl Draggable for NestedItem {
         let Some(drag) = runtime.folded_drag.as_mut() else {
             return false;
         };
-        let previous = (
-            drag.target_start,
-            drag.target_end,
-            drag.target_track.clone(),
-            drag.items.clone(),
-        );
-        let context = SequenceTimeline::for_item(update.project, &drag.key)
-            .expect("dragged item must have a valid operation scope");
-        drag.cross_scope_preview_row = None;
-        if matches!(drag.kind, crate::folded_sequence::FoldedDragKind::Move)
-            && let Some(drop) = drop_area::ItemDrop::at(
-                drop_area::DragDropContext {
-                    project: update.project,
-                    view: update.view,
-                    position: update.position,
-                    collision_mode: runtime.drag_collision_mode,
-                },
-                &context,
-                &drag.key,
-                (drag.target_start, drag.target_end),
-            )
-        {
-            if let Some(target) = drop.target_track().cloned() {
-                let _ = drag.set_target_track(&context, update.project, target);
-            } else if drop.is_nested() {
-                let content_y = update.position.y + update.view.scroll_y - RULER_HEIGHT;
-                drag.cross_scope_preview_row =
-                    (content_y >= 0.0).then(|| (content_y / TRACK_HEIGHT).floor() as usize);
-            }
-        }
-        let target = Time::from_seconds_f64(x_to_time(
-            update.position.x,
-            update.view.scroll_seconds,
-            update.view.seconds_per_pixel,
-        ));
-        let target = if drag.kind == crate::folded_sequence::FoldedDragKind::Move {
-            target.signed_sub(drag.pointer_offset)
-        } else {
-            target
-        };
-        let target = runtime.snap_repository.snap(target).unwrap_or(target);
-        crate::folded_sequence::update_drag(
+        shrimply_timeline_core::dragging::update_nested(
             drag,
-            target,
-            crate::geometry::frame_step(update.project),
+            update.project,
+            shrimply_timeline_core::dragging::DragRequest {
+                view: update.view,
+                position: update.position,
+                collision_mode: runtime.drag_collision_mode,
+                snap_repository: &runtime.snap_repository,
+            },
         );
-        if matches!(drag.kind, crate::folded_sequence::FoldedDragKind::Move) {
-            let drop = drop_area::ItemDrop::at(
-                drop_area::DragDropContext {
-                    project: update.project,
-                    view: update.view,
-                    position: update.position,
-                    collision_mode: runtime.drag_collision_mode,
-                },
-                &context,
-                &drag.key,
-                (drag.target_start, drag.target_end),
-            );
-            drag.valid_drop = drop.as_ref().is_some_and(|drop| {
-                if drop.target_track().is_none() {
-                    drag.items.len() == 1 && drop.can_apply(update.project)
-                } else {
-                    let mut candidate = update.project.clone();
-                    crate::folded_sequence::apply_move_drag(
-                        &mut candidate,
-                        drag,
-                        runtime.drag_collision_mode,
-                    )
-                    .is_some()
-                }
-            });
-            drag.preview_status = if !drag.valid_drop {
-                crate::items::DragPreviewStatus::Blocked
-            } else {
-                match runtime.drag_collision_mode {
-                    DragCollisionMode::Overwrite => crate::items::DragPreviewStatus::Overwrite,
-                    DragCollisionMode::Block => crate::items::DragPreviewStatus::Clear,
-                    DragCollisionMode::NewTrack => crate::items::DragPreviewStatus::NewTrack,
-                }
-            };
-        }
-        if runtime.drag_collision_mode == DragCollisionMode::Block
-            && !crate::folded_sequence::can_apply_drag(update.project, drag)
-        {
-            (
-                drag.target_start,
-                drag.target_end,
-                drag.target_track,
-                drag.items,
-            ) = previous;
-        }
         true
     }
 
@@ -172,94 +89,25 @@ impl Draggable for NestedItem {
         if !finish.moved {
             return true;
         }
-        let context = {
-            let project = finish.project.borrow();
-            SequenceTimeline::for_item(&project, &drag.key)
-                .expect("dragged item must have a valid operation scope")
-        };
-        let target = {
-            let target = Time::from_seconds_f64(x_to_time(
-                finish.position.x,
-                finish.view.scroll_seconds,
-                finish.view.seconds_per_pixel,
-            ));
-            let target = if drag.kind == crate::folded_sequence::FoldedDragKind::Move {
-                target.signed_sub(drag.pointer_offset)
-            } else {
-                target
-            };
-            runtime.snap_repository.snap(target).unwrap_or(target)
-        };
-        crate::folded_sequence::update_drag(
-            &mut drag,
-            target,
-            crate::geometry::frame_step(&finish.project.borrow()),
-        );
-        if matches!(drag.kind, crate::folded_sequence::FoldedDragKind::Move) {
-            let item_drop = {
-                let project = finish.project.borrow();
-                drop_area::ItemDrop::at(
-                    drop_area::DragDropContext {
-                        project: &project,
-                        view: finish.view,
-                        position: finish.position,
-                        collision_mode: runtime.drag_collision_mode,
-                    },
-                    &context,
-                    &drag.key,
-                    (drag.target_start, drag.target_end),
-                )
-            };
-            let Some(item_drop) = item_drop else {
-                return true;
-            };
-            if item_drop.target_track().is_none() {
-                if drag.items.len() != 1 {
-                    return true;
-                }
-                let kind = crate::folded_sequence::track_kind(&drag.key);
-                return apply_item_drop(finish, item_drop, kind);
-            }
-            let target_track = item_drop
-                .target_track()
-                .expect("existing-track drop must expose its target")
-                .clone();
-            let project = finish.project.borrow();
-            if !drag.set_target_track(&context, &project, target_track) {
-                return true;
-            }
-        }
         let kind = crate::folded_sequence::track_kind(&drag.key);
         let mut project = finish.project.borrow_mut();
-        let selected = if drag.kind == crate::folded_sequence::FoldedDragKind::Move {
-            crate::folded_sequence::apply_move_drag(
-                &mut project,
-                &drag,
-                runtime.drag_collision_mode,
-            )
-        } else {
-            crate::folded_sequence::apply_resize_drag(
-                &mut project,
-                &drag,
-                match runtime.drag_collision_mode {
-                    DragCollisionMode::NewTrack => DragCollisionMode::Block,
-                    mode => mode,
-                },
-            )
-        };
-        let Some(selected) = selected else {
+        let selected = shrimply_timeline_core::dragging::finish_nested(
+            &mut drag,
+            &mut project,
+            shrimply_timeline_core::dragging::DragRequest {
+                view: finish.view,
+                position: finish.position,
+                collision_mode: runtime.drag_collision_mode,
+                snap_repository: &runtime.snap_repository,
+            },
+        );
+        let Some(outcome) = selected else {
             return true;
         };
         let duration = project.duration();
         project.normalize_clip_transitions();
-        crate::project::commit_edit(
-            &project,
-            if drag.kind == crate::folded_sequence::FoldedDragKind::Move {
-                "move-timeline-items"
-            } else {
-                "resize-timeline-items"
-            },
-        );
+        crate::project::commit_edit(&project, outcome.commit_name);
+        let selected = outcome.selected;
         drop(project);
         let project = finish.project.borrow();
         let focused = selected
@@ -291,39 +139,15 @@ impl Draggable for RootItems {
             update.position.y,
             &runtime.snap_repository,
         );
-        if let Some(source) = single_root_address(update.project, group)
-            && let Some(item) = group.items.first()
-            && let Some(times) = crate::target_item_times(group, item)
-            && let Some(drop) = drop_area::ItemDrop::at(
-                drop_area::DragDropContext {
-                    project: update.project,
-                    view: update.view,
-                    position: update.position,
-                    collision_mode: runtime.drag_collision_mode,
-                },
-                &SequenceTimeline::root(),
-                &source,
-                times,
-            )
-            && drop.is_nested()
-        {
-            group.valid_drop = drop.can_apply(update.project);
-            group.preview_status = if !group.valid_drop {
-                crate::items::DragPreviewStatus::Blocked
-            } else {
-                match runtime.drag_collision_mode {
-                    DragCollisionMode::Overwrite => crate::items::DragPreviewStatus::Overwrite,
-                    DragCollisionMode::Block => crate::items::DragPreviewStatus::Clear,
-                    DragCollisionMode::NewTrack => crate::items::DragPreviewStatus::NewTrack,
-                }
-            };
-            let content_y = update.position.y + update.view.scroll_y - RULER_HEIGHT;
-            group.cross_scope_preview_row =
-                (content_y >= 0.0).then(|| (content_y / TRACK_HEIGHT).floor() as usize);
-            group.new_tracks.clear();
-            group.blocked_indicators.clear();
-            group.overwrite_indicators.clear();
-        }
+        drop_area::update_root_preview(
+            drop_area::DragDropContext {
+                project: update.project,
+                view: update.view,
+                position: update.position,
+                collision_mode: runtime.drag_collision_mode,
+            },
+            group,
+        );
         true
     }
 
@@ -357,21 +181,15 @@ impl Draggable for RootItems {
             );
         }
         let mut project = finish.project.borrow_mut();
-        if let Some(source) = single_root_address(&project, &group)
-            && let Some(item) = group.items.first()
-            && let Some((start, end)) = crate::target_item_times(&group, item)
-            && let Some(item_drop) = drop_area::ItemDrop::at(
-                drop_area::DragDropContext {
-                    project: &project,
-                    view: finish.view,
-                    position: finish.position,
-                    collision_mode: runtime.drag_collision_mode,
-                },
-                &SequenceTimeline::root(),
-                &source,
-                (start, end),
-            )
-        {
+        if let Some(item_drop) = drop_area::root_item_drop(
+            drop_area::DragDropContext {
+                project: &project,
+                view: finish.view,
+                position: finish.position,
+                collision_mode: runtime.drag_collision_mode,
+            },
+            &group,
+        ) {
             let kind = group.grabbed.kind;
             drop(project);
             return apply_item_drop(finish, item_drop, kind);
@@ -489,10 +307,6 @@ impl Draggable for RootResize {
         player_state::refresh_project(finish.player_state, change);
         true
     }
-}
-
-fn single_root_address(project: &Project, group: &DraggedGroup) -> Option<ItemAddress> {
-    (group.items.len() == 1).then(|| selection_state::item_address(project, group.items[0].key))?
 }
 
 fn refresh(player_state: &SharedPlayerState, kind: TrackKind, duration: Time) {

@@ -35,7 +35,7 @@ use shrimply_state::{
     preferences::{self, SharedPreferences},
 };
 use shrimply_timeline::selection_state::{self, SharedSelectionState};
-use shrimply_video::transparent_fill_analysis::Status as TransparentFillStatus;
+use shrimply_video_cuda::transparent_fill_analysis::Status as TransparentFillStatus;
 use shrimply_video_modifiers::{ModifierEffect, RasterModifierEffect};
 use uuid::Uuid;
 
@@ -820,14 +820,14 @@ async fn analyze_transparent_fill(
         },
     );
     let run_id =
-        shrimply_video::transparent_fill_analysis::analyze(project, &address, modifier_id)?;
+        shrimply_video_cuda::transparent_fill_analysis::analyze(project, &address, modifier_id)?;
 
     loop {
         if canceled.load(Ordering::Acquire) {
-            shrimply_video::transparent_fill_analysis::cancel(run_id);
+            shrimply_video_cuda::transparent_fill_analysis::cancel(run_id);
             return Err("MCP client canceled Transparent Fill analysis".to_string());
         }
-        let status = shrimply_video::transparent_fill_analysis::status_for_run(run_id);
+        let status = shrimply_video_cuda::transparent_fill_analysis::status_for_run(run_id);
         match status {
             TransparentFillStatus::Running { .. } => {
                 glib::timeout_future(CANCELLATION_POLL_INTERVAL).await;
@@ -840,7 +840,7 @@ async fn analyze_transparent_fill(
                 return Err("Transparent Fill analysis was canceled".to_string());
             }
             TransparentFillStatus::Missing => {
-                shrimply_video::transparent_fill_analysis::cancel(run_id);
+                shrimply_video_cuda::transparent_fill_analysis::cancel(run_id);
                 return Err(
                     "Transparent Fill inputs changed while analysis was running; retry analysis"
                         .to_string(),

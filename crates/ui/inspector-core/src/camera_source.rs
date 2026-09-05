@@ -8,7 +8,7 @@ use shrimply_3dgs::{
     TrackingSettings, VGGT_SLAM_TRACKING_MODEL,
 };
 use shrimply_project::project::{ItemAddress, Project, VideoItemContent};
-use shrimply_video::camera_reconstruction::{self, AnalysisStatus};
+use shrimply_video_cuda::camera_reconstruction::{self, AnalysisStatus};
 use strum::IntoEnumIterator;
 
 use crate::{

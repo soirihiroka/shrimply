@@ -1,20 +1,76 @@
-use super::layout::{BUTTON_SIZE, TOOLBAR_WIDTH, button, placeholder, split_item, stack, surface};
-use objc2::MainThreadOnly;
+use super::layout::{BUTTON_SIZE, TOOLBAR_WIDTH, button, stack};
 use objc2::rc::Retained;
-use objc2_app_kit::{
-    NSBox, NSBoxType, NSColor, NSSplitViewController, NSSplitViewDividerStyle, NSView,
-};
+use objc2::{MainThreadOnly, sel};
+use objc2_app_kit::{NSBox, NSBoxType, NSStackView, NSView};
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSRect};
 
 // Match the GTK timeline's tool rail, track labels, ruler, and audio-meter widths.
-const TRACK_HEADER_WIDTH: f64 = 158.0;
-const RULER_HEIGHT: f64 = 44.0;
 const AUDIO_METER_WIDTH: f64 = shrimply_skia_adw_core::audio_meter::DEFAULT_WIDTH as f64;
 const DIVIDER_WIDTH: f64 = 1.0;
 const TOOL_GAP: f64 = 4.0;
-const TIMELINE_MIN_WIDTH: f64 = 480.0;
 
-pub fn build(mtm: MainThreadMarker) -> Retained<NSSplitViewController> {
+#[derive(Clone, Copy)]
+#[repr(isize)]
+pub enum Tool {
+    Magnet,
+    BeatGrid,
+    Pointer,
+    Cut,
+    Overwrite,
+    Block,
+    NewTrack,
+}
+
+impl Tool {
+    pub fn selected(self, state: shrimply_timeline_core::ToolState) -> bool {
+        use shrimply_timeline_core::{CursorTool, DragCollisionMode};
+        match self {
+            Self::Magnet => state.magnet,
+            Self::BeatGrid => state.beat_grid,
+            Self::Pointer => state.cursor == CursorTool::Pointer,
+            Self::Cut => state.cursor == CursorTool::Cut,
+            Self::Overwrite => state.drag_collision == DragCollisionMode::Overwrite,
+            Self::Block => state.drag_collision == DragCollisionMode::Block,
+            Self::NewTrack => state.drag_collision == DragCollisionMode::NewTrack,
+        }
+    }
+
+    pub fn activate(self, tools: &shrimply_timeline_core::TimelineTools) {
+        use shrimply_timeline_core::{CursorTool, DragCollisionMode};
+        match self {
+            Self::Magnet => tools.set_magnet(!tools.state().magnet),
+            Self::BeatGrid => tools.set_beat_grid(!tools.state().beat_grid),
+            Self::Pointer => tools.set_cursor(CursorTool::Pointer),
+            Self::Cut => tools.set_cursor(CursorTool::Cut),
+            Self::Overwrite => tools.set_drag_collision(DragCollisionMode::Overwrite),
+            Self::Block => tools.set_drag_collision(DragCollisionMode::Block),
+            Self::NewTrack => tools.set_drag_collision(DragCollisionMode::NewTrack),
+        }
+    }
+}
+
+pub fn build(
+    session: std::rc::Rc<shrimply_cross_ui_core::editor::EditorSession>,
+    imports: std::rc::Rc<std::cell::RefCell<super::media::Imports>>,
+    mtm: MainThreadMarker,
+) -> (
+    Retained<NSStackView>,
+    Retained<super::canvas::CanvasView>,
+    Retained<super::canvas::CanvasView>,
+) {
+    let scene = shrimply_timeline_core::scene::Scene::new(
+        session.project.clone(),
+        session.player_state.clone(),
+        session.selection_state.clone(),
+        session.preferences.clone(),
+        session.property_clipboard.clone(),
+    );
+    let tracks = super::canvas::new(
+        super::canvas::Content::Timeline(Box::new(scene)),
+        session.clone(),
+        imports.clone(),
+        mtm,
+    );
     let tools = stack(true, mtm);
     tools.setSpacing(TOOL_GAP);
     tools.setAlignment(objc2_app_kit::NSLayoutAttribute::CenterX);
@@ -29,12 +85,22 @@ pub fn build(mtm: MainThreadMarker) -> Retained<NSSplitViewController> {
         .constraintEqualToConstant(TOOLBAR_WIDTH)
         .setActive(true);
     for group in [
-        &[("paperclip", "Magnet"), ("metronome", "Beat Grid")][..],
-        &[("cursorarrow", "Pointer"), ("scissors", "Cut")][..],
         &[
-            ("rectangle.on.rectangle", "Overwrite/Insert"),
-            ("pause.rectangle", "Block"),
-            ("rectangle.badge.plus", "New Track"),
+            (Tool::Magnet, "paperclip", "Magnet"),
+            (Tool::BeatGrid, "metronome", "Beat Grid"),
+        ][..],
+        &[
+            (Tool::Pointer, "cursorarrow", "Pointer"),
+            (Tool::Cut, "scissors", "Cut"),
+        ][..],
+        &[
+            (
+                Tool::Overwrite,
+                "rectangle.on.rectangle",
+                "Overwrite/Insert",
+            ),
+            (Tool::Block, "pause.rectangle", "Block"),
+            (Tool::NewTrack, "rectangle.badge.plus", "New Track"),
         ][..],
     ] {
         if tools.arrangedSubviews().count() != 0 {
@@ -50,45 +116,35 @@ pub fn build(mtm: MainThreadMarker) -> Retained<NSSplitViewController> {
                 .setActive(true);
             tools.addArrangedSubview(&divider);
         }
-        for (icon, label) in group {
-            tools.addArrangedSubview(&button(icon, label, mtm));
+        for (tool, icon, label) in group {
+            let button = button(icon, label, mtm);
+            button.setEnabled(true);
+            button.setButtonType(objc2_app_kit::NSButtonType::PushOnPushOff);
+            button.setTag(*tool as isize);
+            unsafe {
+                button.setTarget(Some(&*tracks));
+                button.setAction(Some(sel!(changeTimelineTool:)));
+            }
+            tracks.register_tool(*tool, button.clone());
+            tools.addArrangedSubview(&button);
         }
     }
     tools.addArrangedSubview(&NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO));
 
-    let headers = surface(mtm);
-    headers.setFillColor(&NSColor::windowBackgroundColor());
-    headers
+    let meter = super::canvas::new(
+        super::canvas::Content::Meter(Default::default()),
+        session,
+        imports,
+        mtm,
+    );
+    meter
         .widthAnchor()
-        .constraintEqualToConstant(TRACK_HEADER_WIDTH)
+        .constraintEqualToConstant(AUDIO_METER_WIDTH)
         .setActive(true);
-    let ruler = surface(mtm);
-    ruler.setFillColor(&NSColor::windowBackgroundColor());
-    ruler
-        .heightAnchor()
-        .constraintEqualToConstant(RULER_HEIGHT)
-        .setActive(true);
-    let tracks = stack(true, mtm);
-    tracks.addArrangedSubview(&ruler);
-    tracks.addArrangedSubview(&placeholder("Timeline", "rectangle.stack", mtm));
     let timeline = stack(false, mtm);
     timeline.setSpacing(DIVIDER_WIDTH);
     timeline.addArrangedSubview(&tools);
-    timeline.addArrangedSubview(&headers);
     timeline.addArrangedSubview(&tracks);
-
-    let meter = super::audio_meter::new(mtm);
-    let meter = split_item(&meter, mtm);
-    meter.setMinimumThickness(AUDIO_METER_WIDTH);
-    meter.setMaximumThickness(AUDIO_METER_WIDTH + BUTTON_SIZE);
-    let timeline = split_item(&timeline, mtm);
-    timeline.setMinimumThickness(TIMELINE_MIN_WIDTH);
-    let split = NSSplitViewController::new(mtm);
-    split.splitView().setVertical(true);
-    split
-        .splitView()
-        .setDividerStyle(NSSplitViewDividerStyle::Thin);
-    split.addSplitViewItem(&timeline);
-    split.addSplitViewItem(&meter);
-    split
+    timeline.addArrangedSubview(&meter);
+    (timeline, tracks, meter)
 }

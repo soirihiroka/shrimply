@@ -1,0 +1,17 @@
+[package]
+name = "shrimply-render-metal"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation.workspace = true
+objc2-metal.workspace = true
+shrimply-render-core = { path = "../render-core" }
+skia-safe = { workspace = true, features = ["metal"] }
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+shrimply-slang-build = { path = "../slang-build" }
+serde_json.workspace = true
+objc2-foundation.workspace = true
+objc2-metal.workspace = true

@@ -13,10 +13,21 @@ shrimply-core = { path = "../../core" }
 shrimply-math-core = { path = "../../math/core" }
 shrimply-pdf = { path = "../../pdf" }
 shrimply-project = { path = "../../project/project" }
+shrimply-property-transfer = { path = "../../property-transfer" }
 shrimply-resource-pipeline = { path = "../../resource-pipeline" }
 shrimply-scene-3d = { path = "../../3d/scene-3d" }
 shrimply-state = { path = "../../state" }
 shrimply-timeline = { path = "../timeline" }
-shrimply-video = { path = "../../video/rendering" }
+shrimply-layered-image = { path = "../../layered-image/layered-image" }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 uuid = { workspace = true, features = ["v4"] }
+shrimply-audio = { path = "../../audio/audio" }
+shrimply-math-media = { path = "../../math/media" }
+shrimply-math-color = { path = "../../math/color" }
+shrimply-playback-performance = { path = "../../preview/playback-performance" }
+shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
+shrimply-cross-ui-theme = { path = "../../ui/cross-ui-theme" }
+shrimply-i18n-core = { path = "../../ui/i18n-core" }
+tracing.workspace = true
+skia-safe.workspace = true
+shrimply-timeline-snap = { path = "../timeline-snap" }

@@ -1,3 +1,5 @@
+static const uint COMPUTE_GROUP_SIZE = 256u;
+
 [__AttributeUsage(_AttributeTargets.Struct)]
 [__AttributeUsage(_AttributeTargets.Param)]
 struct RustTypeAttribute { string name; };

@@ -1,9 +1,8 @@
 use super::*;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-const FINAL_PREVIEW_DELAY: Duration = Duration::from_millis(450);
+use shrimply_preview_core::accuracy::{FINAL_PREVIEW_DELAY, LOCAL_SCRUB_WINDOW_SECONDS};
 const SETTLED_RENDER_RETRY_DELAY: Duration = Duration::from_millis(100);
-const LOCAL_SCRUB_WINDOW_SECONDS: i64 = 3;
 type SettledRender = (Instant, u64, Time, CompositeAccuracy);
 
 pub struct PreviewMediaUpdate {

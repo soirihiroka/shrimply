@@ -1,5 +1,8 @@
 use hashbrown::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 
 pub use shrimply_math_color::{Color, LayerBlendMode};
 pub use shrimply_math_core::{
@@ -12,6 +15,19 @@ pub use shrimply_math_geometry::{
 };
 use shrimply_project_core::{AudioClipTransitionCurve, CanvasSize, TransitionSide};
 pub use shrimply_render_core::math::*;
+
+pub fn background_noise_epoch(position: Time, interval_seconds: f32) -> u32 {
+    const MIN_INTERVAL_SECONDS: f32 = 0.001;
+    let interval_seconds = interval_seconds.max(MIN_INTERVAL_SECONDS);
+    if interval_seconds.is_infinite() {
+        return 0;
+    }
+    let rate =
+        Fraction::from(1u8) / shrimply_math_core::fraction_from_f64(f64::from(interval_seconds));
+    nonnegative_frame_index(position.max(Time::ZERO), rate)
+        .unwrap_or(u64::MAX)
+        .min(u64::from(u32::MAX)) as u32
+}
 
 pub fn gib_to_bytes(gib: Fraction) -> u64 {
     let GenericFraction::Rational(sign, ratio) = gib else {
@@ -27,13 +43,22 @@ pub fn gib_to_bytes(gib: Fraction) -> u64 {
         .min(u128::from(u64::MAX)) as u64
 }
 
-type VolumeResolver = dyn Fn(&[usize]) -> f32 + Send + Sync;
+type VolumeResolver = dyn Fn(&[usize]) -> VolumeValue + Send + Sync;
+
+#[derive(Clone, Debug)]
+pub enum VolumeValue {
+    Ready(f32),
+    Pending,
+    Failed(String),
+}
 
 #[derive(Clone)]
 pub struct FrameVolumeMixer {
     track_count: usize,
     resolver: Arc<VolumeResolver>,
-    resolved: Arc<Mutex<HashMap<Vec<usize>, f32>>>,
+    deferred_resolver: Option<Arc<VolumeResolver>>,
+    resolved: Arc<Mutex<HashMap<Vec<usize>, VolumeValue>>>,
+    pending: Arc<AtomicBool>,
     frame: Arc<()>,
 }
 
@@ -66,21 +91,61 @@ impl FrameVolumeMixer {
     ) -> Self {
         Self {
             track_count,
-            resolver: Arc::new(resolver),
+            resolver: Arc::new(move |indices| VolumeValue::Ready(resolver(indices))),
+            deferred_resolver: None,
             resolved: Default::default(),
+            pending: Default::default(),
             frame: Arc::new(()),
         }
+    }
+
+    pub fn with_deferred_resolver(
+        mut self,
+        resolver: impl Fn(&[usize]) -> VolumeValue + Send + Sync + 'static,
+    ) -> Self {
+        self.deferred_resolver = Some(Arc::new(resolver));
+        self
+    }
+
+    /// A nonblocking view shares completed values with the render worker. Each
+    /// preparation gets its own pending flag, so incomplete results cannot become
+    /// accepted geometry and retries can observe newly completed queries.
+    pub fn for_preparation(&self) -> Self {
+        Self {
+            resolver: self
+                .deferred_resolver
+                .clone()
+                .unwrap_or_else(|| self.resolver.clone()),
+            pending: Default::default(),
+            ..self.clone()
+        }
+    }
+
+    pub fn pending(&self) -> bool {
+        self.pending.load(Ordering::Relaxed)
+    }
+
+    pub fn failures(&self) -> Vec<String> {
+        self.resolved
+            .lock()
+            .expect("frame volume cache mutex poisoned")
+            .values()
+            .filter_map(|value| match value {
+                VolumeValue::Failed(error) => Some(error.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn silent(track_count: usize) -> Self {
         Self::resolving(track_count, |_| 0.0)
     }
 
-    pub fn all(&self) -> f32 {
+    pub fn all(&self) -> VolumeValue {
         self.resolve((0..self.track_count).collect())
     }
 
-    pub fn selected(&self, indices: &[usize]) -> Result<f32, VolumeSelectionError> {
+    pub fn selected(&self, indices: &[usize]) -> Result<VolumeValue, VolumeSelectionError> {
         let mut selected = HashSet::with_capacity(indices.len());
         for &index in indices {
             if index >= self.track_count {
@@ -99,22 +164,26 @@ impl FrameVolumeMixer {
         Ok(self.resolve(indices))
     }
 
-    fn resolve(&self, indices: Vec<usize>) -> f32 {
+    fn resolve(&self, indices: Vec<usize>) -> VolumeValue {
         if let Some(volume) = self
             .resolved
             .lock()
             .expect("frame volume cache mutex poisoned")
             .get(&indices)
-            .copied()
+            .cloned()
         {
             return volume;
         }
 
         let volume = (self.resolver)(&indices);
-        self.resolved
-            .lock()
-            .expect("frame volume cache mutex poisoned")
-            .insert(indices, volume);
+        if matches!(volume, VolumeValue::Pending) {
+            self.pending.store(true, Ordering::Relaxed);
+        } else {
+            self.resolved
+                .lock()
+                .expect("frame volume cache mutex poisoned")
+                .insert(indices, volume.clone());
+        }
         volume
     }
 

@@ -3,7 +3,7 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub use shrimply_audio as audio;
 pub use shrimply_gtk_components::{desktop_open, playback_shortcuts, skia_font, skia_system_font};
@@ -33,57 +33,52 @@ use crate::audio::waveform::{self, WaveformMap};
 use crate::player_state::SharedPlayerState;
 use crate::preferences::store as preferences_store;
 use crate::project::{
-    AudioItem, CaptionItem, FontFamily, Project, RepeatStrategy, Time, Transform, TransitionSide,
-    VideoItem, VideoItemContent, VideoSampleMethod, default_playback_speed,
-    generated_item_keyframe_span, generated_item_natural_end_position, generated_item_natural_span,
-    media_item_natural_end_position, media_natural_end_interval, media_real_span,
-    scaled_time_delta, video_natural_end_interval,
+    AudioItem, FontFamily, Project, RepeatStrategy, Time, Transform, TransitionSide, VideoItem,
+    VideoItemContent, VideoSampleMethod, default_playback_speed,
 };
 use crate::selection_state::SharedSelectionState;
 use adw::prelude::*;
 use gtk::glib;
-use renderer::{Align2, FontId, Rect, Stroke, StrokeKind, Vec2, vec2};
+use renderer::{Rect, Vec2, vec2};
 use shrimply_core::timeline_value::{TimelineBool, TimelineValue};
 use shrimply_cross_ui_theme as theme;
+use shrimply_timeline::TrackKey;
 pub use shrimply_timeline_core::{
     ContextItemKind, ContextMenu, ContextMenuAction, ContextMenuControl, ContextMenuEntry,
     ContextMenuItem, ContextMenuRequest, CursorTool, DragCollisionMode, FoldedItemMenuContext,
     ItemMenuContext, TimelineTools, ToolState, TrackAddAction, TrackAddMenuEntry, TrackMenuContext,
     VideoFrameSelection, track_add_menu,
 };
-use shrimply_timeline::{TrackGap, TrackKey};
 
-mod beat_grid;
+pub use shrimply_timeline_core::beat_grid;
 mod audio_meter_gtk;
-mod native_menu;
 mod clipboard;
 mod context_menu;
-mod drawing;
+mod native_menu;
 pub use shrimply_gtk_components::cursor;
+pub use shrimply_timeline_core::drawing;
 mod caption_tts;
 mod drag_and_drop;
 mod external_content;
-mod folded_sequence;
+pub use shrimply_timeline_core::folded_sequence;
 mod frame;
-mod geometry;
+pub use shrimply_timeline_core::geometry;
 pub mod import;
 mod interaction;
-mod items;
+pub use shrimply_timeline_core::items;
 mod recording;
 mod runtime;
 pub use shrimply_gtk_components::canvas as renderer;
-pub(crate) mod ruler;
+pub use shrimply_timeline_core::ruler;
 mod setup;
 mod silence;
-mod snapping;
-mod timeline_operation;
+use shrimply_timeline_core::snapping;
+pub use shrimply_timeline_core::timeline_operation;
 mod toolkit_context_menu;
 mod track_controls;
-mod view;
+pub use shrimply_timeline_core::view;
 
-use drawing::{
-    TimelineInput, active_virtual_tracks, draw_timeline, item_rect, row_screen_y, row_y,
-};
+use drawing::{TimelineInput, active_virtual_tracks, draw_timeline, item_rect, row_screen_y};
 use frame::timeline_gtk;
 use geometry::*;
 use recording::{
@@ -94,62 +89,14 @@ use renderer::{TimelinePainter, TimelineRenderer};
 use runtime::*;
 use setup::*;
 use track_controls::{
-    for_each_visible_track_row, show_track_add_menu, timeline_sidebar, toggle_track_enabled,
-    toggle_track_enabled_core, track_button_at, track_enabled, track_label_action_at,
-    track_label_button_y, visible_row_range,
+    show_track_add_menu, timeline_sidebar, toggle_track_enabled, toggle_track_enabled_core,
+    track_button_at, track_label_action_at, track_label_button_y,
 };
 use view::*;
 
-use items::{
-    DragIndicator, DragPreviewStatus, DraggedGroup, ItemKey, ResizeDrag, TimelineClipboard,
-    TrackKind, fitted_transition_durations, is_item_dragged, is_item_selected, resize_item_times,
-    row_for_track, target_item_times, target_track_index, transition_durations,
-};
+use items::{DraggedGroup, ItemKey, ResizeDrag, TimelineClipboard, TrackKind, target_item_times};
 
-const TRACK_LABEL_BUTTON_SIZE: f64 = 26.0;
-const TRACK_INDEX_COLUMN_WIDTH: f64 = 40.0;
-const TRACK_LABEL_PADDING_X: f64 = 14.0;
-const TRACK_LABEL_BUTTON_START_X: f64 = TRACK_INDEX_COLUMN_WIDTH + TRACK_LABEL_PADDING_X;
-const TRACK_LABEL_BUTTON_GAP: f64 = 6.0;
-const TRACK_LABEL_BUTTON_STRIDE: f64 = TRACK_LABEL_BUTTON_SIZE + TRACK_LABEL_BUTTON_GAP;
-const TRACK_LABEL_TOGGLE_X: f64 = TRACK_LABEL_BUTTON_START_X;
-const TRACK_LABEL_ADD_X: f64 = TRACK_LABEL_BUTTON_START_X + TRACK_LABEL_BUTTON_STRIDE;
-const TRACK_LABEL_RECORD_X: f64 = TRACK_LABEL_BUTTON_START_X + TRACK_LABEL_BUTTON_STRIDE * 2.0;
-const LABEL_WIDTH: f64 = TRACK_LABEL_RECORD_X + TRACK_LABEL_BUTTON_SIZE + TRACK_LABEL_PADDING_X;
-const TRACK_SELECTION_LABEL_ALPHA: f32 = 0.24;
-const TRACK_SELECTION_ROW_ALPHA: f32 = 0.18;
-const TRACK_SELECTION_EDGE_ALPHA: f32 = 0.44;
-const TIMELINE_PADDING_LEFT: f64 = 2.0;
-const TIMELINE_PADDING_RIGHT: f64 = 2.0;
-const RULER_HEIGHT: f64 = 44.0;
-const RULER_LABEL_ALPHA: f32 = 0.55;
-const TRACK_HEIGHT: f64 = 36.0;
-const PLAYHEAD_HANDLE_WIDTH: f64 = 16.0;
-const PLAYHEAD_HANDLE_HEIGHT: f64 = 8.0;
-const PLAYHEAD_HANDLE_TOP: f64 = 21.0;
-const PLAYHEAD_HANDLE_TRIANGLE_HEIGHT: f64 = 5.0;
-const PLAYHEAD_SCROLL_MARGIN_PX: f64 = 96.0;
-const ITEM_PADDING_X: f64 = 2.0;
-const ITEM_BORDER_STROKE_WIDTH: f32 = 2.0;
-const SUBPIXEL_ITEM_WIDTH: f64 = 1.0;
-const MIN_DETAILED_ITEM_WIDTH: f64 = 8.0;
-const ITEM_RESIZE_HANDLE_WIDTH: f64 = 6.0;
-const MIN_SECONDS_PER_PIXEL: f64 = 1.0 / 100_000.0;
-const MAX_SECONDS_PER_PIXEL: f64 = 60.0;
-const MAX_FRAME_PIXEL_WIDTH: f64 = 32.0;
-const FRAME_TICK_MIN_WIDTH: f64 = 8.0;
-const WAVEFORM_CHUNKS_PER_FRAME: u32 = 8;
-const CLICK_DRAG_TOLERANCE: f64 = 2.0;
-const SCROLL_PIXELS_PER_STEP: f64 = 120.0;
-const WAVEFORM_POLL_INTERVAL: Duration = Duration::from_millis(33);
-const WAVEFORM_RELOAD_DELAY: Duration = Duration::from_millis(75);
-const BEAT_POLL_INTERVAL: Duration = Duration::from_millis(33);
-const RECORDING_DURATION_HEADROOM_SECONDS: i64 = 10;
-const VIDEO_RECORDING_POLL_INTERVAL: Duration = Duration::from_millis(33);
-const PERFORMANCE_MARKER_HEIGHT: f64 = 3.0;
-const PERFORMANCE_VISUAL_ALPHA: f32 = 0.42;
-const SIDEBAR_WIDTH: i32 = 44;
-const SIDEBAR_ICON_SIZE: i32 = 28;
+pub use shrimply_timeline_core::metrics::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolkitPointerButton {
@@ -652,27 +599,11 @@ impl ToolkitTimeline {
     }
 
     fn toggle_sequence(&self, path: Vec<uuid::Uuid>) {
-        let mut project = self.project.borrow_mut();
-        let collapsed = if let Some(index) = project
-            .expanded_sequence_paths
-            .iter()
-            .position(|expanded| *expanded == path)
-        {
-            project.expanded_sequence_paths.remove(index);
-            true
-        } else {
-            project.expanded_sequence_paths.push(path.clone());
-            false
-        };
-        project::save_view_state(&project);
-        drop(project);
-        if collapsed {
-            let mut selected = selection_state::selected_nested_items(&self.selection_state);
-            selected.retain(|item| !item.sequence_path().starts_with(&path));
-            let focused = selection_state::focused_nested_item(&self.selection_state)
-                .filter(|item| selected.contains(item));
-            selection_state::set_selected_nested_items(&self.selection_state, selected, focused);
-        }
+        shrimply_timeline_core::folded_sequence::toggle_sequence(
+            &self.project,
+            &self.selection_state,
+            path,
+        );
     }
 }
 
@@ -1037,7 +968,9 @@ pub fn new(
     let split = gtk::Paned::new(gtk::Orientation::Horizontal);
     split.set_wide_handle(false);
     split.set_start_child(Some(&timeline));
-    split.set_end_child(Some(&audio_meter_gtk::new(move || audio_levels.take_peaks())));
+    split.set_end_child(Some(&audio_meter_gtk::new(move || {
+        audio_levels.take_peaks()
+    })));
     split.set_resize_start_child(true);
     split.set_resize_end_child(false);
     split.set_shrink_start_child(false);

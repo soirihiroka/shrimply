@@ -2,8 +2,10 @@ use shrimply_state::preferences::{self, PreferencesSnapshot, SharedPreferences};
 
 mod menu;
 pub use menu::*;
+pub mod audio_selection;
 pub mod import;
 mod track_add;
+pub mod video_selection;
 pub use track_add::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -169,3 +171,62 @@ impl TimelineTools {
         );
     }
 }
+
+use hashbrown::HashMap;
+pub use shrimply_audio as audio;
+pub use shrimply_math_color::Color;
+pub use shrimply_math_core::Fraction;
+pub use shrimply_project::{caption, project, time_format, timeline_search};
+pub use shrimply_skia_adw_core::{canvas as renderer, cursor, skia_font, skia_system_font};
+pub use shrimply_timeline::{edit, selection_state};
+use std::time::Instant;
+pub mod math;
+pub mod scene;
+pub mod selection;
+use audio::beat::BeatMap;
+use audio::waveform::{self, WaveformMap};
+use project::{
+    AudioItem, CaptionItem, Project, RepeatStrategy, Time, TransitionSide, VideoItemContent,
+    generated_item_keyframe_span, generated_item_natural_end_position, generated_item_natural_span,
+    media_item_natural_end_position, media_natural_end_interval, media_real_span,
+    scaled_time_delta, video_natural_end_interval,
+};
+use renderer::{Align2, FontId, Rect, Stroke, StrokeKind, TimelinePainter, Vec2, vec2};
+pub use shrimply_cross_ui_theme as theme;
+use shrimply_playback_performance as playback_performance;
+use shrimply_timeline::TrackGap;
+pub use shrimply_timeline::TrackKey;
+pub mod beat_grid;
+pub mod dragging;
+pub mod draw_state;
+pub mod drawing;
+pub mod drop_area;
+pub mod external_content;
+pub mod folded_sequence;
+pub mod geometry;
+mod import_placement;
+pub mod items;
+pub mod metrics;
+pub mod ruler;
+pub mod timeline_operation;
+pub mod track_controls;
+pub mod view;
+use draw_state::*;
+use drawing::{row_screen_y, row_y};
+use geometry::*;
+use items::{
+    DragIndicator, DragPreviewStatus, DraggedGroup, ItemKey, ResizeDrag, TrackKind,
+    fitted_transition_durations, is_item_dragged, is_item_selected, resize_item_times,
+    row_for_track, target_item_times, target_track_index, transition_durations,
+};
+use metrics::*;
+use track_controls::*;
+use view::*;
+
+pub mod import_queue;
+
+pub mod transitions;
+
+pub mod caption_creation;
+pub mod cutting;
+pub mod snapping;

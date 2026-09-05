@@ -124,6 +124,13 @@ pub struct FrameMouthMixer {
 }
 
 impl FrameMouthMixer {
+    pub fn for_preparation(&self) -> Self {
+        Self {
+            pending: Default::default(),
+            ..self.clone()
+        }
+    }
+
     pub fn resolving(
         track_count: usize,
         resolver: impl Fn(&[usize], u128, Time, Time) -> MouthValue + Send + Sync + 'static,
@@ -231,6 +238,23 @@ pub struct FrameAudioAnalysis {
 }
 
 impl FrameAudioAnalysis {
+    pub fn for_preparation(&self) -> Self {
+        Self {
+            volume: self.volume.for_preparation(),
+            mouth: self.mouth.for_preparation(),
+        }
+    }
+
+    pub fn pending(&self) -> bool {
+        self.volume.pending() || self.mouth.pending()
+    }
+
+    pub fn failures(&self) -> Vec<String> {
+        let mut failures = self.volume.failures();
+        failures.extend(self.mouth.failures());
+        failures
+    }
+
     pub fn silent(track_count: usize) -> Self {
         Self {
             volume: shrimply_math_media::FrameVolumeMixer::silent(track_count),

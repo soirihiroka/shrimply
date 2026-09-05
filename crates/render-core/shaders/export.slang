@@ -21,7 +21,7 @@ Color average_block(uint *rgba, uint width, uint height, uint cx, uint cy) {
   return color(result.r / count, result.g / count, result.b / count, 1.0f);
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 rgba_to_nv12_luma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
                   uniform uint width, uniform uint height,
                   uniform uint8_t *y_plane, uniform uint64_t y_pitch) {
@@ -32,7 +32,7 @@ rgba_to_nv12_luma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
       uint8_t(to_bt709_ycbcr(load_pixel(rgba, width, i % width, i / width)).x);
 }
 
-    [CudaKernel] void rgba_to_nv12_chroma(uint3 id : SV_DispatchThreadID,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void rgba_to_nv12_chroma(uint3 id : SV_DispatchThreadID,
                                           uniform uint *rgba,
                                           uniform uint width,
                                           uniform uint height,
@@ -49,7 +49,7 @@ rgba_to_nv12_luma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
   uv_plane[offset + 1u] = uint8_t(value.z);
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 rgba_to_p010_luma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
                   uniform uint width, uniform uint height,
                   uniform uint16_t *y_plane, uniform uint64_t y_pitch) {
@@ -61,7 +61,7 @@ rgba_to_p010_luma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
       uint16_t(to_bt709_ycbcr(load_pixel(rgba, width, x, y)).x << 8u);
 }
 
-    [CudaKernel] void rgba_to_p010_chroma(uint3 id : SV_DispatchThreadID,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void rgba_to_p010_chroma(uint3 id : SV_DispatchThreadID,
                                           uniform uint *rgba,
                                           uniform uint width,
                                           uniform uint height,

@@ -1,6 +1,6 @@
 import abi;
 
-[CudaKernel][shader("compute")] void reflect_abi(
+[shader("compute")] void reflect_abi(
     uniform AffineStabilizationParams affine_stabilization,
     uniform CornerPinParams corner_pin,
     uniform LayerCompositeParams layer_composite,

@@ -156,107 +156,7 @@ pub(super) fn timeline_sidebar(
     toolbar
 }
 
-pub(super) fn for_each_visible_track_row(
-    project: &Project,
-    view: TimelineViewState,
-    height: f64,
-    mut f: impl FnMut(&items::TrackRow, usize),
-) {
-    let (start_row, end_row) = visible_row_range(view, height);
-    let rows = items::track_rows(project);
-    for (row, track) in rows
-        .iter()
-        .enumerate()
-        .take(end_row.min(rows.len()))
-        .skip(start_row)
-    {
-        f(track, row);
-    }
-}
-
-pub(super) fn visible_row_range(view: TimelineViewState, height: f64) -> (usize, usize) {
-    let top = view.scroll_y.max(0.0);
-    let bottom = (height - RULER_HEIGHT + view.scroll_y).max(top);
-    (
-        (top / TRACK_HEIGHT).floor().max(0.0) as usize,
-        (bottom / TRACK_HEIGHT).ceil().max(0.0) as usize,
-    )
-}
-
-pub(crate) fn track_label_action_at(
-    project: &Project,
-    view: TimelineViewState,
-    x: f64,
-    y: f64,
-) -> Option<(TrackKey, TrackLabelAction)> {
-    if !(0.0..timeline_x()).contains(&x) || y < RULER_HEIGHT {
-        return None;
-    }
-    let content_y = y + view.scroll_y;
-    let (kind, track_index, row) = items::track_at_y(project, content_y)?;
-    let row_y = row_screen_y(row, view);
-    let button_y = track_label_button_y(row_y);
-    let key = TrackKey { kind, track_index };
-    if hit_track_label_button(x, y, TRACK_LABEL_TOGGLE_X, button_y) {
-        Some((key, TrackLabelAction::Toggle))
-    } else if hit_track_label_button(x, y, TRACK_LABEL_ADD_X, button_y) {
-        Some((key, TrackLabelAction::Add))
-    } else if hit_track_label_button(x, y, TRACK_LABEL_RECORD_X, button_y) {
-        match kind {
-            TrackKind::Audio => Some((key, TrackLabelAction::AudioRecord)),
-            TrackKind::Video => Some((key, TrackLabelAction::VideoRecord)),
-            TrackKind::Caption => Some((key, TrackLabelAction::Select)),
-        }
-    } else {
-        Some((key, TrackLabelAction::Select))
-    }
-}
-
-pub(crate) fn track_button_at(
-    project: &Project,
-    view: TimelineViewState,
-    x: f64,
-    y: f64,
-) -> Option<TrackButtonId> {
-    let (key, action) = track_label_action_at(project, view, x, y)?;
-    match action {
-        TrackLabelAction::Select => None,
-        _ => Some((key, action)),
-    }
-}
-
-fn hit_track_label_button(x: f64, y: f64, button_x: f64, button_y: f64) -> bool {
-    shrimply_skia_adw_core::button::Button::hit_test(
-        shrimply_skia_adw_core::Rect::from_xywh(
-            button_x as f32,
-            button_y as f32,
-            TRACK_LABEL_BUTTON_SIZE as f32,
-            TRACK_LABEL_BUTTON_SIZE as f32,
-        ),
-        glam::Vec2::new(x as f32, y as f32),
-    )
-}
-
-pub(super) fn track_label_button_y(row_y: f64) -> f64 {
-    row_y + ((TRACK_HEIGHT - TRACK_LABEL_BUTTON_SIZE) / 2.0).max(0.0)
-}
-
-pub(super) fn track_enabled(project: &Project, key: TrackKey) -> bool {
-    match key.kind {
-        TrackKind::Caption => project
-            .caption_tracks
-            .get(key.track_index)
-            .is_some_and(|track| track.enabled),
-        TrackKind::Video => project
-            .video_tracks
-            .get(key.track_index)
-            .is_some_and(|track| track.enabled),
-        TrackKind::Audio => project
-            .audio_tracks
-            .get(key.track_index)
-            .is_some_and(|track| track.enabled),
-    }
-}
+pub use shrimply_timeline_core::track_controls::*;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show_track_add_menu(
@@ -409,29 +309,8 @@ pub(super) fn toggle_track_enabled_core(
     key: TrackKey,
 ) -> bool {
     let mut project_state = project.borrow_mut();
-    let changed = match key.kind {
-        TrackKind::Caption => project_state
-            .caption_tracks
-            .get_mut(key.track_index)
-            .is_some_and(|track| {
-                track.enabled = !track.enabled;
-                true
-            }),
-        TrackKind::Video => project_state
-            .video_tracks
-            .get_mut(key.track_index)
-            .is_some_and(|track| {
-                track.enabled = !track.enabled;
-                true
-            }),
-        TrackKind::Audio => project_state
-            .audio_tracks
-            .get_mut(key.track_index)
-            .is_some_and(|track| {
-                track.enabled = !track.enabled;
-                true
-            }),
-    };
+    let changed =
+        shrimply_timeline_core::track_controls::toggle_track_enabled(&mut project_state, key);
     if !changed {
         return false;
     }

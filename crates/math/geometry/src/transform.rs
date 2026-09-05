@@ -7,6 +7,13 @@ pub fn try_inverse(matrix: Mat3) -> Option<Mat3> {
     (determinant.is_finite() && determinant.abs() > f32::EPSILON).then(|| matrix.inverse())
 }
 
+pub fn motion_sample_inverses(current: Mat3, relative: &[ComposedTransform2D]) -> Vec<Mat3> {
+    relative
+        .iter()
+        .filter_map(|sample| try_inverse(sample.matrix * current))
+        .collect()
+}
+
 pub fn vector_angle_degrees(vector: Vec2) -> Option<f32> {
     (vector.length_squared() > f32::EPSILON).then(|| vector.y.atan2(vector.x).to_degrees())
 }
@@ -250,4 +257,23 @@ impl ComposedTransform2D {
             matrix: self.matrix.inverse(),
         }
     }
+}
+pub fn relative_motion_transforms(
+    current: ComposedTransform2D,
+    samples: Vec<ComposedTransform2D>,
+) -> Option<Vec<ComposedTransform2D>> {
+    let determinant = current.matrix.determinant();
+    if !determinant.is_finite()
+        || determinant == 0.0
+        || samples.iter().all(|sample| *sample == current)
+    {
+        return None;
+    }
+    let inverse = current.inverse();
+    Some(
+        samples
+            .into_iter()
+            .map(|sample| sample.compose(inverse))
+            .collect(),
+    )
 }

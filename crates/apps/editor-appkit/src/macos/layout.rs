@@ -1,11 +1,13 @@
-use super::{Editor, timeline};
+use super::{Editor, canvas, timeline};
+use objc2::DefinedClass;
 use objc2::rc::Retained;
 use objc2::{MainThreadOnly, sel};
 use objc2_app_kit::{
     NSBezelStyle, NSBox, NSBoxType, NSButton, NSColor, NSFont, NSGlassEffectView,
-    NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute, NSSlider,
-    NSSplitViewController, NSSplitViewDividerStyle, NSSplitViewItem, NSStackView, NSTextField,
-    NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView, NSViewController,
+    NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
+    NSLayoutConstraint, NSSlider, NSSplitViewController, NSSplitViewDividerStyle, NSSplitViewItem,
+    NSStackView, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
+    NSViewController,
 };
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString};
 
@@ -27,8 +29,21 @@ const PLAYBAR_HEIGHT: f64 = 44.0;
 
 pub struct Layout {
     pub root: Retained<NSSplitViewController>,
+    pub canvases: Vec<Retained<canvas::CanvasView>>,
+    pub progress: Retained<NSSlider>,
+    pub time: Retained<NSTextField>,
+    pub speed: Retained<NSTextField>,
+    pub play: Retained<NSButton>,
     pub inspector: Retained<NSSplitViewItem>,
     pub timeline: Retained<NSSplitViewItem>,
+    pub preview_layout: Retained<NSStackView>,
+    pub viewer: Retained<NSStackView>,
+    pub preview_host: Retained<NSView>,
+    pub preview_tools: Retained<NSStackView>,
+    pub playbar: Retained<NSStackView>,
+    pub fullscreen_button: Retained<NSButton>,
+    pub controls_overlay: Retained<NSGlassEffectView>,
+    pub overlay_constraints: Vec<Retained<NSLayoutConstraint>>,
 }
 
 pub fn symbol(name: &str, label: &str) -> Retained<NSImage> {
@@ -154,7 +169,7 @@ pub fn build(editor: &Editor) -> Layout {
         right: GAP,
     });
     preview_tools.addArrangedSubview(&button("checkmark", "Loading status", mtm));
-    for text in ["—", "x1"] {
+    let [_, speed] = ["—", "x1"].map(|text| {
         let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
         label.setTextColor(Some(&NSColor::secondaryLabelColor()));
         label.setAlignment(objc2_app_kit::NSTextAlignment::Center);
@@ -163,12 +178,28 @@ pub fn build(editor: &Editor) -> Layout {
             .constraintEqualToConstant(BUTTON_SIZE)
             .setActive(true);
         preview_tools.addArrangedSubview(&label);
-    }
-    preview_tools.addArrangedSubview(&button("ruler", "Guides", mtm));
+        label
+    });
+    speed.setToolTip(Some(&NSString::from_str("Playback speed")));
+    let guides = button("ruler", "Guides", mtm);
+    guides.setEnabled(true);
+    guides.setButtonType(objc2_app_kit::NSButtonType::PushOnPushOff);
+    preview_tools.addArrangedSubview(&guides);
     preview_tools.addArrangedSubview(&NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO));
     let viewer = stack(false, mtm);
     viewer.addArrangedSubview(&preview_tools);
-    viewer.addArrangedSubview(&placeholder("Preview", "play.rectangle", mtm));
+    let session = editor.ivars().session.get().expect("project loaded");
+    let preview_canvas = canvas::new(
+        canvas::Content::Preview(Box::new(canvas::preview::State::new(guides.clone()))),
+        session.clone(),
+        editor.ivars().imports.clone(),
+        mtm,
+    );
+    viewer.addArrangedSubview(&preview_canvas);
+    unsafe {
+        guides.setTarget(Some(&*preview_canvas));
+        guides.setAction(Some(sel!(togglePreviewGuides:)));
+    }
 
     let playbar = stack(false, mtm);
     playbar.setAlignment(NSLayoutAttribute::CenterY);
@@ -183,17 +214,50 @@ pub fn build(editor: &Editor) -> Layout {
         .heightAnchor()
         .constraintEqualToConstant(PLAYBAR_HEIGHT)
         .setActive(true);
-    for (icon, label) in [
-        ("backward.fill", "Step backward"),
-        ("play.fill", "Play"),
-        ("forward.fill", "Step forward"),
+    let mut play_button = None;
+    for (icon, label, action) in [
+        ("backward.fill", "Step backward", sel!(stepBackward:)),
+        ("play.fill", "Play", sel!(togglePlayback:)),
+        ("forward.fill", "Step forward", sel!(stepForward:)),
     ] {
-        playbar.addArrangedSubview(&button(icon, label, mtm));
+        let control = button(icon, label, mtm);
+        control.setEnabled(true);
+        unsafe {
+            control.setTarget(Some(editor));
+            control.setAction(Some(action));
+        }
+        if label == "Play" {
+            play_button = Some(control.clone());
+        } else {
+            let interval = shrimply_preview_core::playback::STEP_REPEAT_TICK.as_secs_f32();
+            control.setContinuous(true);
+            control.setPeriodicDelay_interval(interval, interval);
+            control.sendActionOn(
+                objc2_app_kit::NSEventMask::LeftMouseDown | objc2_app_kit::NSEventMask::Periodic,
+            );
+        }
+        playbar.addArrangedSubview(&control);
     }
     let progress = unsafe { NSSlider::sliderWithTarget_action(None, None, mtm) };
-    progress.setEnabled(false);
+    progress.setEnabled(true);
+    progress.setContinuous(true);
+    progress.sendActionOn(
+        objc2_app_kit::NSEventMask::LeftMouseDown
+            | objc2_app_kit::NSEventMask::LeftMouseDragged
+            | objc2_app_kit::NSEventMask::LeftMouseUp,
+    );
+    progress.setMinValue(0.0);
+    progress.setMaxValue(1.0);
+    unsafe {
+        progress.setTarget(Some(editor));
+        progress.setAction(Some(sel!(seek:)));
+    }
     playbar.addArrangedSubview(&progress);
     let time = NSTextField::labelWithString(&NSString::from_str("—:—:— / —:—:—"), mtm);
+    time.setFont(Some(&NSFont::monospacedSystemFontOfSize_weight(
+        NSFont::systemFontSize(),
+        unsafe { objc2_app_kit::NSFontWeightRegular },
+    )));
     time.setTextColor(Some(&NSColor::secondaryLabelColor()));
     playbar.addArrangedSubview(&time);
     let fullscreen = button(
@@ -207,10 +271,60 @@ pub fn build(editor: &Editor) -> Layout {
         fullscreen.setAction(Some(sel!(togglePreviewFullscreen:)));
     }
     playbar.addArrangedSubview(&fullscreen);
-    let preview = stack(true, mtm);
-    preview.addArrangedSubview(&viewer);
-    preview.addArrangedSubview(&playbar);
-    let preview = split_item(&preview, mtm);
+    let preview_host = NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO);
+    viewer.setTranslatesAutoresizingMaskIntoConstraints(false);
+    preview_host.addSubview(&viewer);
+    for constraint in [
+        viewer
+            .leadingAnchor()
+            .constraintEqualToAnchor(&preview_host.leadingAnchor()),
+        viewer
+            .trailingAnchor()
+            .constraintEqualToAnchor(&preview_host.trailingAnchor()),
+        viewer
+            .topAnchor()
+            .constraintEqualToAnchor(&preview_host.topAnchor()),
+        viewer
+            .bottomAnchor()
+            .constraintEqualToAnchor(&preview_host.bottomAnchor()),
+    ] {
+        constraint.setActive(true);
+    }
+    let controls_overlay =
+        NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), NSRect::ZERO);
+    controls_overlay.setStyle(NSGlassEffectViewStyle::Regular);
+    controls_overlay.setCornerRadius(PLAYBAR_HEIGHT / 2.0);
+    controls_overlay.setTranslatesAutoresizingMaskIntoConstraints(false);
+    let overlay_constraints = vec![
+        playbar
+            .leadingAnchor()
+            .constraintEqualToAnchor(&controls_overlay.leadingAnchor()),
+        playbar
+            .trailingAnchor()
+            .constraintEqualToAnchor(&controls_overlay.trailingAnchor()),
+        playbar
+            .topAnchor()
+            .constraintEqualToAnchor(&controls_overlay.topAnchor()),
+        playbar
+            .bottomAnchor()
+            .constraintEqualToAnchor(&controls_overlay.bottomAnchor()),
+        controls_overlay
+            .leadingAnchor()
+            .constraintEqualToAnchor(&preview_host.leadingAnchor()),
+        controls_overlay
+            .trailingAnchor()
+            .constraintEqualToAnchor(&preview_host.trailingAnchor()),
+        controls_overlay
+            .bottomAnchor()
+            .constraintEqualToAnchor(&preview_host.bottomAnchor()),
+        controls_overlay
+            .heightAnchor()
+            .constraintEqualToConstant(PLAYBAR_HEIGHT),
+    ];
+    let preview_layout = stack(true, mtm);
+    preview_layout.addArrangedSubview(&preview_host);
+    preview_layout.addArrangedSubview(&playbar);
+    let preview = split_item(&preview_layout, mtm);
     preview.setMinimumThickness(PREVIEW_MIN_WIDTH);
 
     let top = NSSplitViewController::new(mtm);
@@ -221,7 +335,9 @@ pub fn build(editor: &Editor) -> Layout {
     top.addSplitViewItem(&preview);
     let top = NSSplitViewItem::splitViewItemWithViewController(&top);
     top.setMinimumThickness(TOP_MIN_HEIGHT);
-    let timeline = NSSplitViewItem::splitViewItemWithViewController(&timeline::build(mtm));
+    let (timeline_view, timeline_canvas, meter_canvas) =
+        timeline::build(session.clone(), editor.ivars().imports.clone(), mtm);
+    let timeline = split_item(&timeline_view, mtm);
     timeline.setMinimumThickness(TIMELINE_MIN_HEIGHT);
     timeline.setPreferredThicknessFraction(TIMELINE_FRACTION);
     timeline.setCanCollapse(true);
@@ -235,7 +351,20 @@ pub fn build(editor: &Editor) -> Layout {
         .setFrame(NSRect::new(NSPoint::ZERO, WINDOW_SIZE));
     Layout {
         root,
+        canvases: vec![preview_canvas, timeline_canvas, meter_canvas],
+        progress,
+        time,
+        speed,
+        play: play_button.expect("play button created"),
         inspector,
         timeline,
+        preview_layout,
+        viewer,
+        preview_host,
+        preview_tools,
+        playbar,
+        fullscreen_button: fullscreen,
+        controls_overlay,
+        overlay_constraints,
     }
 }

@@ -3,6 +3,10 @@ name = "shrimply-export-core"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["video"]
+video = ["dep:shrimply-video-cuda"]
+
 [dependencies]
 ffmpeg-next.workspace = true
 glam.workspace = true
@@ -14,7 +18,7 @@ shrimply-math-color = { path = "../../math/color", features = ["gif"] }
 shrimply-math-core = { path = "../../math/core" }
 shrimply-math-media = { path = "../../math/media" }
 shrimply-project = { path = "../../project/project" }
-shrimply-video = { path = "../../video/rendering" }
+shrimply-video-cuda = { path = "../../video/video-cuda", optional = true }
 tracing.workspace = true
 
 [dev-dependencies]

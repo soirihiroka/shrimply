@@ -1,4 +1,4 @@
-use shrimply_video::modifier_cache;
+use shrimply_video_cuda::modifier_cache;
 use shrimply_video_modifiers::{
     ModifierEffect, RasterModifierEffect,
     cache::{CacheModifier, CacheQuality},

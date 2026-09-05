@@ -1,13 +1,13 @@
 use super::*;
 use crate::RenderedVideoFrame;
-use shrimply_timeline_core::{
-    ContextItemKind, ContextMenuControl, ItemMenuContext, TrackMenuContext, VideoFrameSelection,
-};
 use shrimply_gtk_components::tr;
 use shrimply_gtk_components::ui::I18nAlertDialogExt;
 use shrimply_gtk_components::ui::I18nFileFilterExt;
 use shrimply_gtk_components::ui::I18nMenuExt;
 use shrimply_gtk_components::ui::I18nWidgetExt;
+use shrimply_timeline_core::{
+    ContextItemKind, ContextMenuControl, ItemMenuContext, TrackMenuContext, VideoFrameSelection,
+};
 
 pub(crate) mod folded_items;
 pub(crate) mod folded_tracks;

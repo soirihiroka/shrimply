@@ -1,5 +1,5 @@
 use shrimply_core::timeline_value::TimelineValue;
-use shrimply_video::transparent_fill_analysis::{self, Status};
+use shrimply_video_cuda::transparent_fill_analysis::{self, Status};
 use shrimply_video_modifiers::{
     ModifierEffect, RasterModifierEffect,
     transparent_fill::{MAXIMUM_GAP, TransparentFillModifier},

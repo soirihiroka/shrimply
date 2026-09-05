@@ -12,6 +12,7 @@ use super::{
 
 const VOLUME_PEAK_CACHE_CHUNK_FRAMES: usize = 120;
 const LIP_SYNC_SAMPLE_RATE: u32 = shrimply_lip_sync::SAMPLE_RATE;
+pub const EXPRESSION_SAMPLE_RATE_HZ: u32 = 48_000;
 
 enum MouthAnalysisCommand {
     Analyze {
@@ -72,6 +73,12 @@ static MOUTH_ANALYSIS_SERVICE: OnceLock<MouthAnalysisService> = OnceLock::new();
 pub struct FrameAudioSampler {
     volume: FrameVolumeSampler,
     mouth: FrameMouthSampler,
+}
+
+impl Default for FrameAudioSampler {
+    fn default() -> Self {
+        Self::preview(EXPRESSION_SAMPLE_RATE_HZ)
+    }
 }
 
 impl FrameAudioSampler {
@@ -424,13 +431,9 @@ struct VolumePeakCache {
 }
 
 enum VolumeFrameResolverCommand {
-    SetProject {
-        project: Arc<Project>,
-        revision: u64,
-    },
     Resolve {
+        project: Arc<Project>,
         indices: Vec<usize>,
-        revision: u64,
         start_frame: u64,
         frame_count: usize,
         response: mpsc::SyncSender<f32>,
@@ -451,32 +454,24 @@ impl VolumeFrameResolver {
         Arc::new(Self { commands })
     }
 
-    fn set_project(&self, project: Arc<Project>, revision: u64) {
-        self.commands
-            .send(VolumeFrameResolverCommand::SetProject { project, revision })
-            .expect("volume frame resolver worker stopped unexpectedly");
-    }
-
-    fn resolve(
+    fn request(
         &self,
+        project: Arc<Project>,
         indices: &[usize],
-        revision: u64,
         start_frame: u64,
         frame_count: usize,
-    ) -> f32 {
+    ) -> mpsc::Receiver<f32> {
         let (response, result) = mpsc::sync_channel(1);
         self.commands
             .send(VolumeFrameResolverCommand::Resolve {
+                project,
                 indices: indices.to_vec(),
-                revision,
                 start_frame,
                 frame_count,
                 response,
             })
             .expect("volume frame resolver worker stopped unexpectedly");
         result
-            .recv()
-            .expect("volume frame resolver worker dropped a request")
     }
 }
 
@@ -555,6 +550,7 @@ impl VolumePeakCache {
 
 pub struct FrameVolumeSampler {
     sample_rate: u32,
+    project: Option<Arc<Project>>,
     cache_revision: Option<u64>,
     cache: Option<(u64, shrimply_math_media::FrameVolumeMixer)>,
     peaks: Arc<VolumePeakCache>,
@@ -566,6 +562,7 @@ impl FrameVolumeSampler {
         let sample_rate = sample_rate.max(1);
         Self {
             sample_rate,
+            project: None,
             cache_revision: None,
             cache: None,
             peaks: VolumePeakCache::new(sample_rate),
@@ -585,7 +582,7 @@ impl FrameVolumeSampler {
             self.cache = None;
             let project = Arc::new(project.clone());
             self.peaks.set_project(Arc::clone(&project), revision);
-            self.resolver.set_project(Arc::clone(&project), revision);
+            self.project = Some(project);
         }
         let Some(spans) = shrimply_math_media::timeline_sample_frame_spans(
             position,
@@ -611,16 +608,49 @@ impl FrameVolumeSampler {
         let track_count = project.audio_tracks.len();
         let peaks = Arc::clone(&self.peaks);
         let resolver = Arc::clone(&self.resolver);
+        let deferred = Arc::clone(&resolver);
+        let project = self
+            .project
+            .as_ref()
+            .expect("volume project snapshot")
+            .clone();
+        let deferred_project = Arc::clone(&project);
+        let frame_count = usize::try_from(end_frame.saturating_sub(start_frame))
+            .expect("volume frame exceeds addressable memory");
+        let requests = Mutex::new(HashMap::<Vec<usize>, mpsc::Receiver<f32>>::new());
         let mixer = shrimply_math_media::FrameVolumeMixer::resolving(track_count, move |indices| {
             if let Some(value) = peaks.get_or_request(revision, frame_index, indices) {
                 return value;
             }
             let _measurement = shrimply_benchmarking::measure("Volume sampling / Mix tracks");
-            let frame_count = usize::try_from(end_frame.saturating_sub(start_frame))
-                .expect("volume frame exceeds addressable memory");
-            let value = resolver.resolve(indices, revision, start_frame, frame_count);
+            let value = resolver
+                .request(Arc::clone(&project), indices, start_frame, frame_count)
+                .recv()
+                .expect("volume frame resolver worker dropped a request");
             peaks.store(revision, frame_index, indices, value);
             value
+        })
+        .with_deferred_resolver(move |indices| {
+            use shrimply_math_media::VolumeValue;
+            let mut requests = requests.lock().expect("deferred volume requests poisoned");
+            let request = requests.entry(indices.to_vec()).or_insert_with(|| {
+                deferred.request(
+                    Arc::clone(&deferred_project),
+                    indices,
+                    start_frame,
+                    frame_count,
+                )
+            });
+            match request.try_recv() {
+                Ok(value) => {
+                    requests.remove(indices);
+                    VolumeValue::Ready(value)
+                }
+                Err(mpsc::TryRecvError::Empty) => VolumeValue::Pending,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    VolumeValue::Failed("Volume analysis worker dropped a request".into())
+                }
+            }
         });
         self.cache = Some((start_frame, mixer.clone()));
         mixer
@@ -632,53 +662,44 @@ fn volume_frame_resolver_worker(
     sample_rate: u32,
 ) {
     let mut project = None;
-    let mut revision = None;
     let mut sessions = HashMap::new();
     while let Ok(command) = commands.recv() {
         match command {
-            VolumeFrameResolverCommand::SetProject {
-                project: next_project,
-                revision: next_revision,
-            } => {
-                sessions.clear();
-                project = Some(next_project);
-                revision = Some(next_revision);
-            }
             VolumeFrameResolverCommand::Resolve {
+                project: requested_project,
                 indices,
-                revision: requested_revision,
                 start_frame,
                 frame_count,
                 response,
             } => {
-                let value = project
+                if project
                     .as_ref()
-                    .filter(|project| {
-                        revision == Some(requested_revision)
-                            && indices
-                                .iter()
-                                .all(|&index| index < project.audio_tracks.len())
-                    })
-                    .map(|project| {
-                        let mixed = mix_project_selected_range(
-                            project,
-                            &mut sessions,
-                            &indices,
-                            start_frame,
-                            frame_count,
-                            sample_rate,
-                        );
-                        shrimply_math_media::peak_amplitude(&mixed)
-                    })
-                    .unwrap_or(0.0);
-                if response.send(value).is_err() {
-                    return;
+                    .is_none_or(|previous| !Arc::ptr_eq(previous, &requested_project))
+                {
+                    sessions.clear();
+                    project = Some(Arc::clone(&requested_project));
                 }
+                assert!(
+                    indices
+                        .iter()
+                        .all(|&index| index < requested_project.audio_tracks.len()),
+                    "volume selection exceeds project tracks"
+                );
+                let mixed = mix_project_selected_range(
+                    &requested_project,
+                    &mut sessions,
+                    &indices,
+                    start_frame,
+                    frame_count,
+                    sample_rate,
+                );
+                // Scrubbing can retire a frame before its query completes. That
+                // cancels only this response, not the shared resolver worker.
+                let _ = response.send(shrimply_math_media::peak_amplitude(&mixed));
             }
         }
     }
 }
-
 fn volume_peak_cache_worker(
     commands: mpsc::Receiver<VolumePeakCacheCommand>,
     state: Arc<Mutex<VolumePeakCacheState>>,

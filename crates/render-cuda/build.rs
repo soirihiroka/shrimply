@@ -7,16 +7,7 @@ use shrimply_slang_build::{Compiler, Target};
 #[cfg(target_os = "linux")]
 const CUDA_TARGET: &str = "sm_86";
 #[cfg(target_os = "linux")]
-const MODULES: &[&str] = &[
-    "preview",
-    "anime4k",
-    "modifiers",
-    "modifiers_blur",
-    "modifiers_geometry",
-    "modifiers_matte",
-    "stabilization",
-    "export",
-];
+const MODULES: &str = include_str!("../render-core/shaders/kernels.txt");
 
 #[cfg(not(target_os = "linux"))]
 fn main() {}
@@ -46,7 +37,7 @@ fn main() {
         .unwrap_or_else(|| PathBuf::from("/usr/local/cuda"));
     let host = env::var("CUDA_HOST_CXX").unwrap_or_else(|_| "g++-15".to_owned());
     let mut bindings = String::new();
-    for module in MODULES {
+    for module in MODULES.lines() {
         let source = shaders.join(format!("{module}.slang"));
         let artifact = compiler.compile(&source, Target::Cuda, &[]);
         let image = output.join(format!("{module}.cubin"));

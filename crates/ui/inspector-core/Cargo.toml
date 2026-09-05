@@ -34,7 +34,7 @@ shrimply-state = { path = "../../state" }
 shrimply-text-3d = { path = "../../3d/text-3d" }
 shrimply-timeline = { path = "../../timeline/timeline" }
 shrimply-tts = { path = "../../audio/tts" }
-shrimply-video = { path = "../../video/rendering" }
+shrimply-video-cuda = { path = "../../video/video-cuda" }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 skia-safe = { workspace = true, features = ["textlayout"] }
 strum.workspace = true

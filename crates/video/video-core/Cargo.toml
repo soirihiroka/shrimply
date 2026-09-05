@@ -1,0 +1,26 @@
+[package]
+name = "shrimply-video-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shrimply-paint-skia = { path = "../../paint/paint-skia" }
+shrimply-math-geometry = { path = "../../math/geometry" }
+shrimply-preview-skia = { path = "../../preview/preview-skia" }
+shrimply-core = { path = "../../core" }
+shrimply-background = { path = "../../background" }
+uuid.workspace = true
+shrimply-math-media = { path = "../../math/media" }
+shrimply-render-core = { path = "../../render-core" }
+shrimply-evaluation = { path = "../../evaluation" }
+shrimply-video-modifiers = { path = "../video-modifiers" }
+cached.workspace = true
+tracing.workspace = true
+cairo = { workspace = true, features = ["freetype"] }
+glam.workspace = true
+glib.workspace = true
+pango = { workspace = true, features = ["v1_57"] }
+pangocairo.workspace = true
+shrimply-project = { path = "../../project/project" }
+shrimply-text-3d = { path = "../../3d/text-3d" }
+skia-safe = { workspace = true, features = ["textlayout", "svg"] }

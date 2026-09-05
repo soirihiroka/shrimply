@@ -4,11 +4,12 @@ use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
-pub use fraction::{Fraction, GenericFraction, Ratio, Sign};
+pub use fraction::{BigFraction, Fraction, GenericFraction, Ratio, Sign};
 
 pub const FRACTION_ZERO: Fraction =
     GenericFraction::Rational(Sign::Plus, fraction::Ratio::new_raw(0, 1));
 const FRAME_RATE_DECIMAL_SCALE: f64 = 1_000.0;
+const TIME_NANOSECONDS_PER_SECOND: i64 = 1_000_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Time {
@@ -446,10 +447,46 @@ pub fn fraction_ratio_i128(value: Fraction) -> Option<(i128, i128)> {
     ))
 }
 
+/// Converts an exact time ratio to floating point at the native UI boundary.
+pub fn time_ratio_f64(time: Time, duration: Time) -> f64 {
+    if duration == Time::ZERO {
+        return 0.0;
+    }
+    let ratio =
+        BigFraction::from_fraction(time.seconds) / BigFraction::from_fraction(duration.seconds);
+    let value = ratio
+        .to_f64()
+        .expect("time ratio must be representable as f64");
+    assert!(value.is_finite(), "time ratio must be finite");
+    value
+}
+
 impl Time {
     pub const ZERO: Self = Self {
         seconds: FRACTION_ZERO,
     };
+
+    /// Rounds exact wide arithmetic once to nanoseconds, clamping to the Time domain.
+    pub fn from_big_fraction(seconds: BigFraction) -> Self {
+        let nanos = (seconds * BigFraction::from(TIME_NANOSECONDS_PER_SECOND)).round();
+        let GenericFraction::Rational(sign, ratio) = nanos else {
+            panic!("time must be a finite fraction");
+        };
+        // Read the unsigned magnitude before applying the sign: the fraction
+        // crate's signed conversion cannot represent i64::MIN directly.
+        let magnitude = ratio.numer().to_i128().unwrap_or(i128::MAX);
+        Self::from_nanos_i128(if sign == Sign::Minus {
+            -magnitude
+        } else {
+            magnitude
+        })
+    }
+
+    pub fn scaled(self, factor: Fraction) -> Self {
+        Self::from_big_fraction(
+            BigFraction::from_fraction(self.seconds) * BigFraction::from_fraction(factor),
+        )
+    }
 
     pub fn from_seconds_f64(seconds: f64) -> Self {
         if !seconds.is_finite() {

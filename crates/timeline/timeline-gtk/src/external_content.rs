@@ -20,6 +20,8 @@ use super::interaction::{
 use super::items::{self, ItemKey, TrackKind};
 use super::{TimelineRuntime, import, timeline_x, x_to_time};
 
+pub use shrimply_timeline_core::external_content::TextPreview;
+
 const CLIPBOARD_MEDIA_DIR: &str = "media/clipboard";
 
 pub(super) enum Content {
@@ -50,15 +52,6 @@ pub(super) enum Origin {
 pub(super) enum Placement {
     Playhead,
     Timeline { x: f64, y: f64 },
-}
-
-#[derive(Clone)]
-pub(super) struct TextPreview {
-    pub(super) text: String,
-    pub(super) kind: TrackKind,
-    pub(super) track_index: usize,
-    pub(super) start: Time,
-    pub(super) end: Time,
 }
 
 pub(super) fn text_preview(

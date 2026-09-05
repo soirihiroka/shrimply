@@ -1,5 +1,3 @@
-pub mod audio_meter;
-
 use gtk::gio;
 use gtk::glib::variant::ToVariant as _;
 use gtk::prelude::MenuModelExt as _;
@@ -7,12 +5,10 @@ use shrimply_timeline_core::{ContextMenu, ContextMenuEntry};
 
 pub struct MenuModel {
     pub menu: gio::Menu,
-    pub controls: Vec<shrimply_timeline_core::ContextMenuControl>,
 }
 
 pub fn menu_model(contract: &ContextMenu) -> MenuModel {
     let menu = gio::Menu::new();
-    let mut controls = Vec::new();
     for entries in &contract.sections {
         let section = gio::Menu::new();
         for entry in entries {
@@ -22,7 +18,9 @@ pub fn menu_model(contract: &ContextMenu) -> MenuModel {
                     let menu_item =
                         shrimply_gtk_components::ui::menu_item_i18n(item.label(), &action);
                     let icon = match item.action {
-                        shrimply_timeline_core::ContextMenuAction::Copy => Some("edit-copy-symbolic"),
+                        shrimply_timeline_core::ContextMenuAction::Copy => {
+                            Some("edit-copy-symbolic")
+                        }
                         shrimply_timeline_core::ContextMenuAction::Paste => {
                             Some("edit-paste-symbolic")
                         }
@@ -33,8 +31,7 @@ pub fn menu_model(contract: &ContextMenu) -> MenuModel {
                     }
                     section.append_item(&menu_item);
                 }
-                ContextMenuEntry::Control(control) => {
-                    controls.push(*control);
+                ContextMenuEntry::Control(_) => {
                     let menu_item = gio::MenuItem::new(None, None);
                     menu_item.set_attribute_value("custom", Some(&"speed-control".to_variant()));
                     section.append_item(&menu_item);
@@ -45,5 +42,5 @@ pub fn menu_model(contract: &ContextMenu) -> MenuModel {
             menu.append_section(None, &section);
         }
     }
-    MenuModel { menu, controls }
+    MenuModel { menu }
 }

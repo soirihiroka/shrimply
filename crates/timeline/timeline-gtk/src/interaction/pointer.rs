@@ -72,7 +72,7 @@ pub(crate) fn handle_timeline_input(
             let event = runtime.horizontal_scrollbar.scroll_pages_at(
                 scrollbar,
                 scroll.pointer,
-                delta / SCROLL_PIXELS_PER_STEP * SCROLLBAR_WHEEL_PAGE_FRACTION,
+                shrimply_timeline_core::math::scrollbar_wheel_pages(delta),
                 |value| scroll_seconds = value,
             );
             if event.handled {
@@ -181,12 +181,7 @@ pub(crate) fn handle_timeline_input(
     if pointer.middle_pressed
         && let Some(pos) = pointer.press_origin.or(pointer.interact_pos)
     {
-        runtime.view.drag_start_x = pos.x as f64;
-        runtime.view.drag_start_y = pos.y as f64;
-        runtime.view.drag_start_scroll_seconds = runtime.view.scroll_seconds;
-        runtime.view.drag_start_scroll_y = runtime.view.scroll_y;
-        runtime.view.drag_mode = DragMode::MiddlePan;
-        runtime.view.drag_moved = false;
+        runtime.view.begin_pan(pos.as_dvec2());
     }
 
     if pointer.middle_down
@@ -194,10 +189,7 @@ pub(crate) fn handle_timeline_input(
         && matches!(runtime.view.drag_mode, DragMode::MiddlePan)
     {
         let min_seconds_per_pixel = min_seconds_per_pixel(frame_step_seconds);
-        runtime.view.scroll_seconds = runtime.view.drag_start_scroll_seconds
-            - (pos.x as f64 - runtime.view.drag_start_x) * runtime.view.seconds_per_pixel;
-        runtime.view.scroll_y =
-            runtime.view.drag_start_scroll_y - (pos.y as f64 - runtime.view.drag_start_y);
+        runtime.view.pan_to(pos.as_dvec2());
         runtime.view.clamp(
             duration_seconds,
             timeline_width,
@@ -306,35 +298,17 @@ fn update_cut_preview(
         return;
     }
 
-    let Some(hit) = crate::folded_sequence::hit_projected_item(project, runtime.view, x, y)
-        .map(|hit| hit.key)
-        .or_else(|| {
-            hit_item_at(project, runtime.view, x, y)
-                .and_then(|key| selection_state::item_address(project, key))
-        })
-    else {
-        runtime.cut_preview = None;
-        return;
-    };
-
-    if runtime.cut_preview.as_ref().is_some_and(|preview| {
-        runtime.view.drag_mode == DragMode::Cut && !preview.keys.contains(&hit)
-    }) {
-        runtime.cut_preview = None;
-        return;
-    }
-
-    runtime.cut_preview =
-        cut_time_for_address(project, runtime.view, &hit, x, &runtime.snap_repository).map(
-            |time| {
-                timeline_cut(
-                    project,
-                    &selection_state::selected_item_addresses(selection_state, project),
-                    hit,
-                    time,
-                )
-            },
-        );
+    runtime.cut_preview = shrimply_timeline_core::cutting::preview(
+        project,
+        &selection_state::selected_item_addresses(selection_state, project),
+        runtime.cut_preview.as_ref(),
+        shrimply_timeline_core::cutting::PreviewRequest {
+            view: runtime.view,
+            position: glam::DVec2::new(x, y),
+            active: runtime.view.drag_mode == DragMode::Cut,
+            snaps: &runtime.snap_repository,
+        },
+    );
 }
 
 pub(super) fn insert_caption_on_double_click(
@@ -345,50 +319,14 @@ pub(super) fn insert_caption_on_double_click(
     snap_repository: &SnapRepo,
     default_duration: Time,
 ) -> Option<(ItemKey, Time)> {
-    if x < timeline_x() {
-        return None;
-    }
-    let project_state = project.borrow();
-    let time =
-        Time::from_seconds_f64(x_to_time(x, view.scroll_seconds, view.seconds_per_pixel).max(0.0));
-    let snapped_time = snap_repository.snap(time).unwrap_or(time);
-    let track_info = crate::items::track_at_y(&project_state, y + view.scroll_y);
-    let has_hit = hit_item_at(&project_state, view, x, y).is_some();
-    if has_hit {
-        return None;
-    }
-    let (kind, track_index, _) = track_info?;
-    if !matches!(kind, TrackKind::Caption) {
-        return None;
-    }
-    let mut end = snapped_time
-        .saturating_add(default_duration)
-        .snapped(project_state.frame_step());
-    let track = project_state.caption_tracks.get(track_index)?;
-    for item in &track.items {
-        if item.start <= snapped_time && snapped_time < item.end {
-            return None;
-        }
-        if item.start > snapped_time {
-            end = end.min(item.start);
-            break;
-        }
-    }
-    if end <= snapped_time {
-        return None;
-    }
-    drop(project_state);
     let mut project_state = project.borrow_mut();
-    let track = project_state.caption_tracks.get_mut(track_index)?;
-    let item_index = crate::items::insert_sorted(
-        &mut track.items,
-        CaptionItem::new(snapped_time, end, String::new()),
-    );
-    let item_key = ItemKey {
-        kind: TrackKind::Caption,
-        track_index,
-        item_index,
-    };
+    let item_key = shrimply_timeline_core::caption_creation::insert(
+        &mut project_state,
+        glam::DVec2::new(x, y),
+        view,
+        snap_repository,
+        default_duration,
+    )?;
     let duration = project_state.duration();
     crate::project::commit_edit(&project_state, "create-caption-on-double-click");
     drop(project_state);

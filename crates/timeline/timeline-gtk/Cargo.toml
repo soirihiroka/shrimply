@@ -34,7 +34,7 @@ shrimply-tts-gtk = { path = "../../audio/tts-gtk" }
 shrimply-gtk-components = { path = "../../ui/gtk-components" }
 shrimply-inspector-core = { path = "../../ui/inspector-core" }
 shrimply-wayland-pointer-lock = { path = "../../ui/wayland-pointer-lock" }
-shrimply-video = { path = "../../video/rendering" }
+shrimply-video-cuda = { path = "../../video/video-cuda" }
 shrimply-video-recording = { path = "../../video/video-recording" }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 shrimply-math-color = { path = "../../math/color", features = ["gdk"] }

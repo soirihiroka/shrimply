@@ -245,7 +245,7 @@ impl InspectorController {
             crate::paint::bump_serialized_revision(&mut value)?;
         }
         if reset.cancel_stabilization {
-            shrimply_video::video_stabilization::cancel(
+            shrimply_video_cuda::video_stabilization::cancel(
                 project
                     .video_item(address)
                     .expect("validated video item must remain available"),
@@ -442,7 +442,7 @@ impl InspectorController {
                 .video_item(address)
                 .expect("replaced video item must remain available");
             if item.stabilize_video {
-                shrimply_video::video_stabilization::request(item);
+                shrimply_video_cuda::video_stabilization::request(item);
             }
         }
         if commit_immediately {
@@ -584,14 +584,14 @@ impl InspectorController {
                 let item = project
                     .video_item(address)
                     .ok_or_else(|| "video item is no longer available".to_string())?;
-                if shrimply_video::video_stabilization::is_generating(item) {
-                    shrimply_video::video_stabilization::cancel(item);
+                if shrimply_video_cuda::video_stabilization::is_generating(item) {
+                    shrimply_video_cuda::video_stabilization::cancel(item);
                 } else {
                     let timeline_position = player_state::current_time(&self.player_state);
                     let source_position =
                         shrimply_project::project::video_source_time_at(item, timeline_position)
                             .unwrap_or(item.time_offset);
-                    shrimply_video::video_stabilization::rebuild(item, source_position);
+                    shrimply_video_cuda::video_stabilization::rebuild(item, source_position);
                 }
             }
             InspectorControlAction::ClearMaskSource { modifier_id } => {
@@ -677,7 +677,7 @@ impl InspectorController {
         self.project
             .borrow()
             .video_item(address)
-            .map(shrimply_video::video_stabilization::is_generating)
+            .map(shrimply_video_cuda::video_stabilization::is_generating)
     }
 }
 
@@ -957,7 +957,9 @@ fn stabilization_item(item: &VideoItem) -> VideoCard {
         )
         .subtitle(stabilization_status(item))
         .sensitive(!unavailable)
-        .busy(shrimply_video::video_stabilization::is_generating(item))
+        .busy(shrimply_video_cuda::video_stabilization::is_generating(
+            item,
+        ))
         .immediate_commit("video-stabilization-method"),
     );
     if method != VideoStabilizationMethod::Off {
@@ -1069,7 +1071,7 @@ fn stabilization_item(item: &VideoItem) -> VideoCard {
         );
     }
     if method != VideoStabilizationMethod::Off {
-        let generating = shrimply_video::video_stabilization::is_generating(item);
+        let generating = shrimply_video_cuda::video_stabilization::is_generating(item);
         section.add(
             InspectorControl::new(ControlKind::Action, "", "Stabilization cache")
                 .subtitle("Discard and reanalyze the current source-time chunk")
@@ -1176,11 +1178,11 @@ fn stabilization_status(item: &VideoItem) -> &'static str {
         "Unavailable while an alpha-mask stream is selected"
     } else if !item.stabilize_video {
         ""
-    } else if shrimply_video::video_stabilization::is_generating(item) {
+    } else if shrimply_video_cuda::video_stabilization::is_generating(item) {
         "Analyzing source motion…"
-    } else if shrimply_video::video_stabilization::has_failed(item) {
+    } else if shrimply_video_cuda::video_stabilization::has_failed(item) {
         "Analysis failed; use Rebuild to retry"
-    } else if shrimply_video::video_stabilization::is_ready(item) {
+    } else if shrimply_video_cuda::video_stabilization::is_ready(item) {
         "Using the reusable chunked analysis cache"
     } else {
         "Analysis starts as source-time chunks are viewed"

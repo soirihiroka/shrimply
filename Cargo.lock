@@ -3564,6 +3564,7 @@ dependencies = [
  "objc2-core-video",
  "objc2-foundation",
  "objc2-quartz-core",
+ "objc2-uniform-type-identifiers",
 ]
 
 [[package]]
@@ -3757,6 +3758,17 @@ dependencies = [
  "objc2-core-video",
  "objc2-foundation",
  "objc2-metal",
+]
+
+[[package]]
+name = "objc2-uniform-type-identifiers"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7902ac02859fc1f7045f8b598c63f1ae0cc7efeaa06a9bc9f3d9a3c955974fa4"
+dependencies = [
+ "block2",
+ "objc2",
+ "objc2-foundation",
 ]
 
 [[package]]
@@ -5467,14 +5479,30 @@ dependencies = [
 name = "shrimply-editor-appkit"
 version = "0.1.0"
 dependencies = [
+ "block2",
+ "glam 0.33.5",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "objc2-uniform-type-identifiers",
  "shrimply-component-core",
+ "shrimply-cross-ui-core",
  "shrimply-cross-ui-theme",
+ "shrimply-evaluation",
+ "shrimply-export-core",
+ "shrimply-math-core",
+ "shrimply-paint-edit",
+ "shrimply-preview-core",
+ "shrimply-preview-interaction-core",
+ "shrimply-preview-metal",
+ "shrimply-project",
  "shrimply-skia-adw-core",
  "shrimply-skia-metal",
+ "shrimply-state",
+ "shrimply-support",
+ "shrimply-timeline-core",
  "skia-safe",
+ "tempfile",
 ]
 
 [[package]]
@@ -5517,7 +5545,7 @@ dependencies = [
  "shrimply-timeline-gtk",
  "shrimply-transcription",
  "shrimply-tts",
- "shrimply-video",
+ "shrimply-video-cuda",
  "shrimply-video-modifiers",
  "tracing",
  "uuid",
@@ -5587,7 +5615,7 @@ dependencies = [
  "shrimply-math-core",
  "shrimply-math-media",
  "shrimply-project",
- "shrimply-video",
+ "shrimply-video-cuda",
  "tracing",
 ]
 
@@ -5739,7 +5767,7 @@ dependencies = [
  "shrimply-text-3d",
  "shrimply-timeline",
  "shrimply-tts",
- "shrimply-video",
+ "shrimply-video-cuda",
  "shrimply-video-modifiers",
  "skia-safe",
  "strum",
@@ -5791,7 +5819,7 @@ dependencies = [
  "shrimply-timeline",
  "shrimply-tts",
  "shrimply-tts-gtk",
- "shrimply-video",
+ "shrimply-video-cuda",
  "shrimply-video-generation",
  "shrimply-video-generation-gtk",
  "shrimply-video-modifiers",
@@ -6327,10 +6355,44 @@ dependencies = [
  "shrimply-skia-adw-core",
  "shrimply-state",
  "shrimply-timeline",
- "shrimply-video",
+ "shrimply-video-cuda",
  "shrimply-video-modifiers",
  "skia-safe",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "shrimply-preview-interaction-core"
+version = "0.1.0"
+dependencies = [
+ "glam 0.33.5",
+ "shrimply-3dgs",
+ "shrimply-core",
+ "shrimply-cross-ui-theme",
+ "shrimply-evaluation",
+ "shrimply-math-color",
+ "shrimply-preview-core",
+ "shrimply-project",
+ "shrimply-skia-adw-core",
+ "shrimply-video-core",
+ "skia-safe",
+ "uuid",
+]
+
+[[package]]
+name = "shrimply-preview-metal"
+version = "0.1.0"
+dependencies = [
+ "objc2",
+ "shrimply-math-core",
+ "shrimply-math-geometry",
+ "shrimply-preview-render-core",
+ "shrimply-project",
+ "shrimply-render-core",
+ "shrimply-render-metal",
+ "shrimply-video-core",
+ "skia-safe",
  "uuid",
 ]
 
@@ -6355,7 +6417,30 @@ dependencies = [
  "shrimply-timeline",
  "shrimply-timeline-gtk",
  "shrimply-timeline-qt",
- "shrimply-video",
+ "shrimply-video-cuda",
+ "skia-safe",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "shrimply-preview-render-core"
+version = "0.1.0"
+dependencies = [
+ "ffmpeg-next",
+ "glam 0.33.5",
+ "shrimply-audio",
+ "shrimply-background",
+ "shrimply-evaluation",
+ "shrimply-math-core",
+ "shrimply-math-geometry",
+ "shrimply-paint-skia",
+ "shrimply-pdf",
+ "shrimply-preview-core",
+ "shrimply-project",
+ "shrimply-render-core",
+ "shrimply-video-core",
+ "shrimply-video-modifiers",
  "skia-safe",
  "tracing",
  "uuid",
@@ -6368,6 +6453,7 @@ dependencies = [
  "glam 0.33.5",
  "glow",
  "libc",
+ "shrimply-3dgs",
  "shrimply-audio",
  "shrimply-core",
  "shrimply-cross-ui-theme",
@@ -6378,11 +6464,12 @@ dependencies = [
  "shrimply-math-core",
  "shrimply-playback-performance",
  "shrimply-preview-core",
+ "shrimply-preview-interaction-core",
  "shrimply-project",
  "shrimply-skia-adw-core",
  "shrimply-skia-gl",
  "shrimply-state",
- "shrimply-video",
+ "shrimply-video-cuda",
  "skia-safe",
  "tracing",
  "uuid",
@@ -6557,6 +6644,19 @@ name = "shrimply-render-cuda"
 version = "0.1.0"
 dependencies = [
  "shrimply-slang-build",
+]
+
+[[package]]
+name = "shrimply-render-metal"
+version = "0.1.0"
+dependencies = [
+ "objc2",
+ "objc2-foundation",
+ "objc2-metal",
+ "serde_json",
+ "shrimply-render-core",
+ "shrimply-slang-build",
+ "skia-safe",
 ]
 
 [[package]]
@@ -6738,17 +6838,28 @@ dependencies = [
  "glam 0.33.5",
  "hashbrown 0.17.1",
  "shrimply-3dgs",
+ "shrimply-audio",
  "shrimply-blender",
  "shrimply-core",
+ "shrimply-cross-ui-theme",
+ "shrimply-i18n-core",
+ "shrimply-layered-image",
+ "shrimply-math-color",
  "shrimply-math-core",
+ "shrimply-math-media",
  "shrimply-pdf",
+ "shrimply-playback-performance",
  "shrimply-project",
+ "shrimply-property-transfer",
  "shrimply-resource-pipeline",
  "shrimply-scene-3d",
+ "shrimply-skia-adw-core",
  "shrimply-state",
  "shrimply-timeline",
- "shrimply-video",
+ "shrimply-timeline-snap",
  "shrimply-video-modifiers",
+ "skia-safe",
+ "tracing",
  "uuid",
 ]
 
@@ -6787,7 +6898,7 @@ dependencies = [
  "shrimply-transcription",
  "shrimply-tts",
  "shrimply-tts-gtk",
- "shrimply-video",
+ "shrimply-video-cuda",
  "shrimply-video-modifiers",
  "shrimply-video-recording",
  "shrimply-wayland-pointer-lock",
@@ -6882,7 +6993,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-video"
+name = "shrimply-video-core"
+version = "0.1.0"
+dependencies = [
+ "cached",
+ "cairo-rs",
+ "glam 0.33.5",
+ "glib",
+ "pango",
+ "pangocairo",
+ "shrimply-background",
+ "shrimply-core",
+ "shrimply-evaluation",
+ "shrimply-math-geometry",
+ "shrimply-math-media",
+ "shrimply-paint-skia",
+ "shrimply-preview-skia",
+ "shrimply-project",
+ "shrimply-render-core",
+ "shrimply-text-3d",
+ "shrimply-video-modifiers",
+ "skia-safe",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "shrimply-video-cuda"
 version = "0.1.0"
 dependencies = [
  "ash",
@@ -6927,6 +7064,7 @@ dependencies = [
  "shrimply-optix-denoiser",
  "shrimply-paint-skia",
  "shrimply-pdf",
+ "shrimply-preview-core",
  "shrimply-preview-skia",
  "shrimply-project",
  "shrimply-render-3d",
@@ -6938,6 +7076,7 @@ dependencies = [
  "shrimply-slang-build",
  "shrimply-text-3d",
  "shrimply-transform-3d",
+ "shrimply-video-core",
  "shrimply-video-decoder",
  "shrimply-video-modifiers",
  "shrimply-visual-frame",

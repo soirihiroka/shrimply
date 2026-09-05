@@ -1,0 +1,16 @@
+[package]
+name = "shrimply-preview-metal"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+shrimply-preview-render-core = { path = "../preview-render-core" }
+shrimply-render-metal = { path = "../../render-metal" }
+shrimply-render-core = { path = "../../render-core" }
+shrimply-video-core = { path = "../../video/video-core" }
+shrimply-project = { path = "../../project/project" }
+shrimply-math-core = { path = "../../math/core" }
+shrimply-math-geometry = { path = "../../math/geometry" }
+skia-safe.workspace = true
+objc2.workspace = true
+uuid.workspace = true

@@ -3,6 +3,8 @@ mod macos;
 
 #[cfg(target_os = "macos")]
 fn main() {
+    shrimply_support::crash::install();
+    shrimply_support::diagnostics::init();
     let mut args = std::env::args_os().skip(1);
     let project = args.next().map(std::path::PathBuf::from);
     assert!(

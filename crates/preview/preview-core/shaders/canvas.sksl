@@ -1,0 +1,73 @@
+uniform float4 u_content_rect;
+uniform float4 u_background_color;
+uniform float u_shadow_size;
+uniform float u_pixel_scale;
+const float CHECKER_SIZE = 32.0;
+const float CHECKER_DARK = 0.21;
+const float CHECKER_LIGHT = 0.29;
+const float3 SHADOW_COLOR = float3(0.0, 0.0, 6.0 / 255.0);
+const float ADW_SHADOW_SIZE = 6.0;
+const float OUTLINE_OPACITY = 0.03;
+const float NEAR_SHADOW_OPACITY = 0.07;
+const float FAR_SHADOW_OPACITY = 0.03;
+
+float box_distance(float2 point, float2 center, float2 half_size) {
+    float2 offset = abs(point - center) - half_size;
+    return length(max(offset, float2(0.0))) + min(max(offset.x, offset.y), 0.0);
+}
+
+float shadow_layer(
+    float2 point,
+    float2 center,
+    float2 half_size,
+    float offset_y,
+    float spread,
+    float blur
+) {
+    float distance = box_distance(
+        point - float2(0.0, offset_y),
+        center,
+        half_size + float2(spread)
+    );
+    return 1.0 - smoothstep(-blur, blur, distance);
+}
+
+half4 main(float2 point) {
+    float2 local = point - u_content_rect.xy;
+    if (local.x >= 0.0 && local.y >= 0.0 && local.x < u_content_rect.z && local.y < u_content_rect.w) {
+        float2 tile = floor(local * u_pixel_scale / CHECKER_SIZE);
+        float value = mod(tile.x + tile.y, 2.0) < 1.0 ? CHECKER_DARK : CHECKER_LIGHT;
+        return half4(value, value, value, 1.0);
+    }
+    float2 pixel = point * u_pixel_scale;
+    float2 center = (u_content_rect.xy + u_content_rect.zw * 0.5) * u_pixel_scale;
+    float2 half_size = u_content_rect.zw * 0.5 * u_pixel_scale;
+    float shadow_alpha = 0.0;
+    if (u_shadow_size > 0.0) {
+        float scale = u_shadow_size * u_pixel_scale / ADW_SHADOW_SIZE;
+        float outline = shadow_layer(pixel, center, half_size, 0.0, 0.0, 1.0 * scale)
+            * OUTLINE_OPACITY;
+        float near_shadow = shadow_layer(
+            pixel,
+            center,
+            half_size,
+            1.0 * scale,
+            1.0 * scale,
+            3.0 * scale
+        ) * NEAR_SHADOW_OPACITY;
+        float far_shadow = shadow_layer(
+            pixel,
+            center,
+            half_size,
+            2.0 * scale,
+            2.0 * scale,
+            6.0 * scale
+        ) * FAR_SHADOW_OPACITY;
+        shadow_alpha = 1.0
+            - (1.0 - outline) * (1.0 - near_shadow) * (1.0 - far_shadow);
+    }
+    float alpha = shadow_alpha + u_background_color.a * (1.0 - shadow_alpha);
+    float3 premultiplied = SHADOW_COLOR * shadow_alpha
+        + u_background_color.rgb * u_background_color.a * (1.0 - shadow_alpha);
+    return half4(premultiplied, alpha);
+}

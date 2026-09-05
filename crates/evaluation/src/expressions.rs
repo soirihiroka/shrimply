@@ -1235,24 +1235,30 @@ fn fraction_to_int(value: Fraction) -> INT {
 
 fn expression_volume(indices: &[INT]) -> Result<FLOAT, Box<EvalAltResult>> {
     with_expression_state(|state| {
-        if indices.is_empty() {
-            return Ok(FLOAT::from(state.volume_mixer.all()));
+        let value = if indices.is_empty() {
+            state.volume_mixer.all()
+        } else {
+            let indices = indices
+                .iter()
+                .map(|&index| {
+                    usize::try_from(index)
+                        .map_err(|_| arithmetic_error("audio track index cannot be negative"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            state
+                .volume_mixer
+                .selected(&indices)
+                .map_err(|error| arithmetic_error(&error.to_string()))?
+        };
+        match value {
+            shrimply_math_media::VolumeValue::Ready(value) => Ok(FLOAT::from(value)),
+            shrimply_math_media::VolumeValue::Pending => {
+                Err(arithmetic_error("audio volume analysis is pending"))
+            }
+            shrimply_math_media::VolumeValue::Failed(error) => Err(arithmetic_error(&error)),
         }
-        let indices = indices
-            .iter()
-            .map(|&index| {
-                usize::try_from(index)
-                    .map_err(|_| arithmetic_error("audio track index cannot be negative"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        state
-            .volume_mixer
-            .selected(&indices)
-            .map(FLOAT::from)
-            .map_err(|error| arithmetic_error(&error.to_string()))
     })
 }
-
 fn expression_mouth(indices: &[INT]) -> Result<rhai::ImmutableString, Box<EvalAltResult>> {
     with_expression_state(|state| {
         let value = if indices.is_empty() {

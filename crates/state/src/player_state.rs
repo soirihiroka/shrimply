@@ -13,6 +13,7 @@ pub struct Snapshot {
     pub duration: Time,
     pub frame_rate: Fraction,
     pub playing: bool,
+    pub scrubbing: bool,
     pub playback_speed: Fraction,
     pub revision: u64,
 }
@@ -55,6 +56,7 @@ pub struct PlayerState {
     duration: Time,
     frame_rate: Fraction,
     playing: bool,
+    scrubbing: bool,
     playback_speed: Fraction,
     clock: Option<PlaybackAnchor>,
     revision: u64,
@@ -83,6 +85,7 @@ pub fn new(duration: Time, frame_rate: Fraction) -> SharedPlayerState {
         duration: duration.max(Time::ZERO),
         frame_rate,
         playing: false,
+        scrubbing: false,
         playback_speed: default_playback_speed(),
         clock: None,
         revision: 0,
@@ -147,6 +150,11 @@ pub fn seek_time(state: &SharedPlayerState, requested: Time) {
     update(state, |state| seek_inner(state, requested));
 }
 
+/// Interaction quality hint; seeking itself remains the source of position events.
+pub fn set_scrubbing(state: &SharedPlayerState, scrubbing: bool) {
+    state.borrow_mut().scrubbing = scrubbing;
+}
+
 pub fn set_duration(state: &SharedPlayerState, duration: Time) {
     update(state, |state| {
         let duration = duration.max(Time::ZERO);
@@ -163,6 +171,9 @@ pub fn set_duration(state: &SharedPlayerState, duration: Time) {
 
 pub fn set_playing(state: &SharedPlayerState, playing: bool) {
     update(state, |state| {
+        if playing {
+            state.scrubbing = false;
+        }
         let now = Instant::now();
         let position_changed = advance_to(state, now);
         if state.playing == playing {
@@ -259,6 +270,7 @@ fn snapshot_inner(state: &PlayerState) -> Snapshot {
         duration: state.duration,
         frame_rate: state.frame_rate,
         playing: state.playing,
+        scrubbing: state.scrubbing,
         playback_speed: state.playback_speed,
         revision: state.revision,
     }

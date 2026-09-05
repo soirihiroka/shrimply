@@ -734,7 +734,7 @@ pub fn activate_family(family: MaterializedFamily) -> Result<(), String> {
     );
     drop(active);
     for path in paths {
-        shrimply_video::text_layout::register_application_font(path)?;
+        shrimply_video_cuda::text_layout::register_application_font(path)?;
     }
     Ok(())
 }

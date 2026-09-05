@@ -3,7 +3,7 @@ import color;
 import common;
 import math;
 
-[CudaKernel] void invert(uniform uint *input, uniform uint *out,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void invert(uniform uint *input, uniform uint *out,
                          uniform uint64_t out_len, uniform float amount,
                          uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -15,7 +15,7 @@ import math;
                                c.b + (1.0f - 2.0f * c.b) * amount, c.a));
 }
 
-    [CudaKernel] void posterize(uniform uint *input, uniform uint *out,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void posterize(uniform uint *input, uniform uint *out,
                                 uniform uint64_t out_len, uniform float levels,
                                 uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -27,7 +27,7 @@ import math;
                                rust_round(c.b * n) / n, c.a));
 }
 
-[CudaKernel] void channel_mixer(uniform uint *input, uniform uint *out,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void channel_mixer(uniform uint *input, uniform uint *out,
                                 uniform uint64_t out_len,
                                 uniform ChannelMixerParams params,
                                 uint3 id : SV_DispatchThreadID) {
@@ -39,7 +39,7 @@ import math;
   out[i] = color_to_rgba(color(mixed.x, mixed.y, mixed.z, c.a));
 }
 
-    [CudaKernel] void color_correction(uniform uint *input, uniform uint *out,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void color_correction(uniform uint *input, uniform uint *out,
                                        uniform uint64_t out_len,
                                        uniform ColorCorrectionParams params,
                                        uint3 id : SV_DispatchThreadID) {
@@ -49,7 +49,7 @@ import math;
   out[i] = color_to_rgba(color_corrected(color_from_rgba(input[i]), params));
 }
 
-[CudaKernel] void colorize_duotone(uniform uint *input, uniform uint *out,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void colorize_duotone(uniform uint *input, uniform uint *out,
                                    uniform uint64_t out_len,
                                    uniform ColorizeDuotoneParams params,
                                    uint3 id : SV_DispatchThreadID) {
@@ -61,7 +61,7 @@ import math;
       color_lerp(params.shadow, params.highlight, rec709_luma(c)), c.a));
 }
 
-    [CudaKernel] void chromatic_aberration(
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void chromatic_aberration(
         uniform uint *input, uniform uint width, uniform uint height,
         uniform uint *out, uniform uint64_t out_len,
         uniform ChromaticAberrationParams params,
@@ -90,7 +90,7 @@ float input_luminance(uint *input, uint width, uint height, int x, int y) {
       input[clamp_index(y, height) * width + clamp_index(x, width)]));
 }
 
-[CudaKernel] void edge_detection(uniform uint *input, uniform uint width,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void edge_detection(uniform uint *input, uniform uint width,
                                  uniform uint height, uniform uint *out,
                                  uniform uint64_t out_len,
                                  uniform EdgeDetectionParams params,
@@ -118,7 +118,7 @@ float input_luminance(uint *input, uint width, uint height, int x, int y) {
                        color_from_rgba(input[i]).a));
 }
 
-    [CudaKernel] void emboss(uniform uint *input, uniform uint width,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void emboss(uniform uint *input, uniform uint width,
                              uniform uint height, uniform uint *out,
                              uniform uint64_t out_len, uniform float direction,
                              uniform float depth, uniform float amount,
@@ -154,7 +154,7 @@ float grain_hash(uint x) {
   return float(x) / float(0xffffffffu);
 }
 
-[CudaKernel] void film_grain(uniform uint *input, uniform uint width,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void film_grain(uniform uint *input, uniform uint width,
                              uniform uint *out, uniform uint64_t out_len,
                              uniform float amount, uniform float size,
                              uniform float colored, uniform float seed,
@@ -176,7 +176,7 @@ float grain_hash(uint x) {
             c.b + mono * (1.0f - mix_amount) + nb * mix_amount, c.a));
 }
 
-    [CudaKernel] void scanlines_crt(uniform uint *input, uniform uint width,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void scanlines_crt(uniform uint *input, uniform uint width,
                                     uniform uint height, uniform uint *out,
                                     uniform uint64_t out_len,
                                     uniform ScanlinesCrtParams params,
@@ -207,7 +207,7 @@ float grain_hash(uint x) {
       color(c.r * line * mr, c.g * line * mg, c.b * line * mb, c.a));
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 threshold(uniform uint *input, uniform uint *out, uniform uint64_t out_len,
           uniform ThresholdParams params, uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
@@ -219,7 +219,7 @@ threshold(uniform uint *input, uniform uint *out, uniform uint64_t out_len,
   out[i] = color_to_rgba(color_with_alpha(selected, c.a));
 }
 
-    [CudaKernel] void vignette(uniform uint *input, uniform uint width,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void vignette(uniform uint *input, uniform uint width,
                                uniform uint height, uniform uint *out,
                                uniform uint64_t out_len, uniform float amount,
                                uniform float midpoint, uniform float softness,
@@ -238,7 +238,7 @@ threshold(uniform uint *input, uniform uint *out, uniform uint64_t out_len,
   out[i] = color_to_rgba(color(c.r * shade, c.g * shade, c.b * shade, c.a));
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 alpha_outline_horizontal(uniform uint *input, uniform uint width,
                          uniform float *out, uniform uint64_t out_len,
                          uniform uint radius, uint3 id : SV_DispatchThreadID) {
@@ -255,7 +255,7 @@ alpha_outline_horizontal(uniform uint *input, uniform uint width,
   out[i] = alpha;
 }
 
-    [CudaKernel] void alpha_outline_vertical(
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void alpha_outline_vertical(
         uniform uint *input, uniform float *horizontal, uniform uint width,
         uniform uint height, uniform uint *out, uniform uint64_t out_len,
         uniform uint radius, uniform uint outline_value,
@@ -337,7 +337,7 @@ void nearest_palette_colors(float r, float g, float b, uint *palette,
           : 0.0f;
 }
 
-[CudaKernel] void dithering(uniform uint *input, uniform uint width,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void dithering(uniform uint *input, uniform uint width,
                             uniform uint *out, uniform uint64_t out_len,
                             uniform DitheringParams params,
                             uint3 id : SV_DispatchThreadID) {
@@ -386,7 +386,7 @@ void nearest_palette_colors(float r, float g, float b, uint *palette,
     out[i] = input[i];
 }
 
-    [CudaKernel] void drop_shadow_horizontal(
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void drop_shadow_horizontal(
         uniform uint *input, uniform uint width, uniform uint height,
         uniform float *out, uniform uint64_t out_len,
         uniform DropShadowParams params, uint3 id : SV_DispatchThreadID) {
@@ -405,7 +405,7 @@ void nearest_palette_colors(float r, float g, float b, uint *palette,
   out[i] = alpha / float(2 * radius + 1);
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 drop_shadow_vertical(uniform uint *input, uniform float *horizontal,
                      uniform uint width, uniform uint height, uniform uint *out,
                      uniform uint64_t out_len, uniform DropShadowParams params,
@@ -448,7 +448,7 @@ float halftone_dot(float x, float y, float cell, float angle, float offset_x,
   return distance < sqrt(value) ? 1.0f : 0.0f;
 }
 
-[CudaKernel] void halftone(uniform uint *input, uniform uint width,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void halftone(uniform uint *input, uniform uint width,
                            uniform uint *out, uniform uint64_t out_len,
                            uniform HalftoneParams params,
                            uint3 id : SV_DispatchThreadID) {

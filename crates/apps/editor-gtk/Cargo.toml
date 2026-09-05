@@ -45,7 +45,7 @@ shrimply-timeline-gtk = { path = "../../timeline/timeline-gtk" }
 shrimply-transcription = { path = "../../audio/transcription" }
 shrimply-tts = { path = "../../audio/tts" }
 shrimply-gtk-components = { path = "../../ui/gtk-components" }
-shrimply-video = { path = "../../video/rendering" }
+shrimply-video-cuda = { path = "../../video/video-cuda" }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 tracing.workspace = true
 uuid.workspace = true

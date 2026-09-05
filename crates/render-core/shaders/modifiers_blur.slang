@@ -50,7 +50,7 @@ Color sample_premultiplied(uint *input, uint width, uint height, float x,
   return color_lerp(color_lerp(tl, tr, fx), color_lerp(bl, br, fx), fy);
 }
 
-[CudaKernel] void directional_blur(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void directional_blur(uint3 id : SV_DispatchThreadID,
                                    uniform uint *input, uniform uint width,
                                    uniform uint height, uniform uint *output,
                                    uniform uint64_t output_count,
@@ -92,13 +92,13 @@ void morphology_horizontal(uint3 id, uint *input, uint width, float *output,
   }
   output[i] = alpha;
 }
-[CudaKernel] void erode_horizontal(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void erode_horizontal(uint3 id : SV_DispatchThreadID,
                                    uniform uint *input, uniform uint width,
                                    uniform float *output,
                                    uniform uint64_t output_count,
                                    uniform uint radius) {
   morphology_horizontal(id, input, width, output, output_count, radius, true);
-}[CudaKernel] void dilate_horizontal(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void dilate_horizontal(uint3 id : SV_DispatchThreadID,
                                      uniform uint *input, uniform uint width,
                                      uniform float *output,
                                      uniform uint64_t output_count,
@@ -122,7 +122,7 @@ void morphology_vertical(uint3 id, uint *source, float *horizontal, uint width,
   Color value = color_from_rgba(source[i]);
   output[i] = color_to_rgba(color(value.r, value.g, value.b, alpha));
 }
-[CudaKernel] void erode_vertical(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void erode_vertical(uint3 id : SV_DispatchThreadID,
                                  uniform uint *source,
                                  uniform float *horizontal, uniform uint width,
                                  uniform uint height, uniform uint *output,
@@ -130,7 +130,7 @@ void morphology_vertical(uint3 id, uint *source, float *horizontal, uint width,
                                  uniform uint radius) {
   morphology_vertical(id, source, horizontal, width, height, output,
                       output_count, radius, true);
-}[CudaKernel] void dilate_vertical(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void dilate_vertical(uint3 id : SV_DispatchThreadID,
                                    uniform uint *source,
                                    uniform float *horizontal,
                                    uniform uint width, uniform uint height,
@@ -141,14 +141,14 @@ void morphology_vertical(uint3 id, uint *source, float *horizontal, uint width,
                       output_count, radius, false);
 }
 
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 gaussian_blur_horizontal(uint3 id : SV_DispatchThreadID, uniform uint *input,
                          uniform uint width, uniform uint *output,
                          uniform uint64_t output_count, uniform uint radius) {
   uint i = id.x;
   if (i < output_count)
     output[i] = gaussian_horizontal(input, i, width, radius);
-}[CudaKernel] void gaussian_blur_vertical(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void gaussian_blur_vertical(uint3 id : SV_DispatchThreadID,
                                           uniform uint *input,
                                           uniform uint *original,
                                           uniform uint width,
@@ -169,7 +169,7 @@ gaussian_blur_horizontal(uint3 id : SV_DispatchThreadID, uniform uint *input,
       blur_rgb ? blurred.b : source.b, blur_alpha ? blurred.a : source.a));
 }
 
-[CudaKernel] void glow_bloom_horizontal(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void glow_bloom_horizontal(uint3 id : SV_DispatchThreadID,
                                         uniform uint *input, uniform uint width,
                                         uniform Color *output,
                                         uniform uint64_t output_count,
@@ -194,7 +194,7 @@ gaussian_blur_horizontal(uint3 id : SV_DispatchThreadID, uniform uint *input,
   float scale = 1.0f / float(radius * 2 + 1);
   output[i] =
       color(glow.r * scale, glow.g * scale, glow.b * scale, glow.a * scale);
-}[CudaKernel] void glow_bloom_vertical(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void glow_bloom_vertical(uint3 id : SV_DispatchThreadID,
                                        uniform uint *input,
                                        uniform Color *horizontal,
                                        uniform uint width, uniform uint height,
@@ -231,7 +231,7 @@ void accumulate(inout float4 value, uint pixel) {
   Color c = color_from_rgba(pixel);
   value += float4(c.r, c.g, c.b, rec709_luma(c) * rec709_luma(c));
 }
-[CudaKernel] void kuwahara_horizontal_statistics(
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void kuwahara_horizontal_statistics(
     uint3 id : SV_DispatchThreadID, uniform uint *input, uniform uint width,
     uniform float *output, uniform uint64_t output_count, uniform uint radius) {
   uint i = id.x;
@@ -260,7 +260,7 @@ void accumulate(inout float4 value, uint pixel) {
   float mean = 0.2126f * rgb.x + 0.7152f * rgb.y + 0.0722f * rgb.z;
   return max(region.w / area - mean * mean, 0.0f);
 }
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
                   uniform float *statistics, uniform uint width,
                   uniform uint height, uniform uint *output,
@@ -312,7 +312,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
   output[i] = color_to_rgba(color(rgb.x, rgb.y, rgb.z, alpha));
 }
 
-    [CudaKernel] void radial_blur(uint3 id : SV_DispatchThreadID,
+    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void radial_blur(uint3 id : SV_DispatchThreadID,
                                   uniform uint *input, uniform uint width,
                                   uniform uint height, uniform uint *output,
                                   uniform uint64_t output_count,
@@ -338,7 +338,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
   output[i] = color_to_rgba(
       color(sum.x / divisor, sum.y / divisor, sum.z / divisor, alpha));
 }
-[CudaKernel] void zoom_blur(uint3 id : SV_DispatchThreadID, uniform uint *input,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void zoom_blur(uint3 id : SV_DispatchThreadID, uniform uint *input,
                             uniform uint width, uniform uint height,
                             uniform uint *output, uniform uint64_t output_count,
                             uniform ZoomBlurParams params) {
@@ -360,7 +360,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
   float alpha = sum.w / float(count), divisor = max(sum.w, 0.00001f);
   output[i] = color_to_rgba(
       color(sum.x / divisor, sum.y / divisor, sum.z / divisor, alpha));
-}[CudaKernel] void sharpen_blur_horizontal(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void sharpen_blur_horizontal(uint3 id : SV_DispatchThreadID,
                                            uniform uint *input,
                                            uniform uint width,
                                            uniform uint *output,
@@ -370,7 +370,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
   if (i < output_count)
     output[i] = gaussian_horizontal(input, i, width, radius);
 }
-[CudaKernel] void sharpen_blur_vertical(uint3 id : SV_DispatchThreadID,
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void sharpen_blur_vertical(uint3 id : SV_DispatchThreadID,
                                         uniform uint *input, uniform uint width,
                                         uniform uint height,
                                         uniform uint *output,
@@ -379,7 +379,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
   uint i = id.x;
   if (i < output_count)
     output[i] = gaussian_vertical(input, i, width, height, radius);
-}[CudaKernel] void unsharp_mask(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void unsharp_mask(uint3 id : SV_DispatchThreadID,
                                 uniform uint *original, uniform uint *blurred,
                                 uniform uint *output,
                                 uniform uint64_t output_count,

@@ -8,11 +8,27 @@ name = "shrimply-editor-appkit"
 path = "src/main.rs"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+tempfile.workspace = true
+objc2-uniform-type-identifiers = "0.3.2"
+shrimply-export-core = { path = "../../export/export-core", default-features = false }
+shrimply-support = { path = "../../support" }
 shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
 shrimply-skia-metal = { path = "../../ui/skia-metal" }
 shrimply-cross-ui-theme = { path = "../../ui/cross-ui-theme" }
 shrimply-component-core = { path = "../../ui/component-core" }
 skia-safe.workspace = true
 objc2.workspace = true
-objc2-app-kit.workspace = true
+objc2-app-kit = { workspace = true, features = ["objc2-uniform-type-identifiers"] }
 objc2-foundation.workspace = true
+shrimply-timeline-core = { path = "../../timeline/timeline-core" }
+shrimply-cross-ui-core = { path = "../../ui/cross-ui-core" }
+shrimply-preview-metal = { path = "../../preview/preview-metal" }
+shrimply-preview-interaction-core = { path = "../../preview/preview-interaction-core" }
+shrimply-project = { path = "../../project/project" }
+shrimply-state = { path = "../../state" }
+shrimply-math-core = { path = "../../math/core" }
+glam.workspace = true
+shrimply-preview-core = { path = "../../preview/preview-core" }
+shrimply-evaluation = { path = "../../evaluation" }
+shrimply-paint-edit = { path = "../../paint/paint-edit" }

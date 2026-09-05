@@ -101,88 +101,19 @@ pub(in crate::interaction::pointer) fn begin_pointer_action(
         crate::recording::stop_before_backward_seek(runtime, player_state, position);
         player_state::seek_time(player_state, position);
         DragMode::Seek
-    } else if let Some(hit) = hit_clip_transition_at(project, runtime.view, x, y) {
-        let context = SequenceTimeline::for_item(project, &hit.outgoing)
-            .expect("clip transition item must have a valid operation scope");
-        let selected = select_item_in_context(
-            &context,
-            project,
-            selection_state,
-            hit.outgoing.clone(),
-            false,
-            false,
-        );
-        if !selected {
-            DragMode::None
+    } else if let Some(gesture) = shrimply_timeline_core::transitions::Gesture::begin(
+        project,
+        selection_state,
+        runtime.view,
+        glam::DVec2::new(x, y),
+    ) {
+        runtime.clip_transition_drag = gesture.clip;
+        runtime.transition_drag = gesture.item;
+        if runtime.clip_transition_drag.is_some() || runtime.transition_drag.is_some() {
+            runtime.pending_pause_playback = true;
+            DragMode::Transition
         } else {
-            if hit.duration.is_some() {
-                selection_state::set_focused_transition(selection_state, TransitionSide::Outro);
-            }
-            if matches!(hit.action, ClipTransitionHitAction::Body) {
-                DragMode::None
-            } else {
-                runtime.clip_transition_drag = Some(ClipTransitionDrag {
-                    outgoing: hit.outgoing,
-                    incoming: hit.incoming,
-                    cut: hit.cut,
-                    target_cut: hit.cut,
-                    original_duration: hit.duration,
-                    target_duration: hit.duration,
-                    center_resize: matches!(hit.action, ClipTransitionHitAction::CenterHandle),
-                    handle: match hit.action {
-                        ClipTransitionHitAction::StartHandle => Some(ItemEdge::Start),
-                        ClipTransitionHitAction::EndHandle => Some(ItemEdge::End),
-                        ClipTransitionHitAction::Create | ClipTransitionHitAction::CenterHandle => {
-                            None
-                        }
-                        ClipTransitionHitAction::Body => {
-                            unreachable!("transition body handled above")
-                        }
-                    },
-                });
-                runtime.pending_pause_playback = true;
-                DragMode::Transition
-            }
-        }
-    } else if let Some(hit) = hit_transition_at(project, runtime.view, x, y) {
-        let context = SequenceTimeline::for_item(project, &hit.key)
-            .expect("transition item must have a valid operation scope");
-        let selected = select_item_in_context(
-            &context,
-            project,
-            selection_state,
-            hit.key.clone(),
-            false,
-            false,
-        );
-        if !selected {
             DragMode::None
-        } else {
-            selection_state::set_focused_transition(selection_state, hit.side);
-            if matches!(hit.action, TransitionHitAction::Body) {
-                DragMode::None
-            } else {
-                let (timeline_intro, timeline_outro) =
-                    transition_durations(project, &hit.key).unwrap_or_default();
-                let (intro, outro) = context
-                    .transition_durations(project, &hit.key)
-                    .unwrap_or_default();
-                runtime.transition_drag = Some(TransitionDrag {
-                    key: hit.key,
-                    side: hit.side,
-                    target_duration: match hit.side {
-                        TransitionSide::Intro => intro.unwrap_or(Time::ZERO),
-                        TransitionSide::Outro => outro.unwrap_or(Time::ZERO),
-                    },
-                    target_timeline_duration: match hit.side {
-                        TransitionSide::Intro => timeline_intro.unwrap_or(Time::ZERO),
-                        TransitionSide::Outro => timeline_outro.unwrap_or(Time::ZERO),
-                    },
-                    remove: false,
-                });
-                runtime.pending_pause_playback = true;
-                DragMode::Transition
-            }
         }
     } else if let Some(hit) =
         crate::folded_sequence::hit_projected_item(project, runtime.view, x, y)

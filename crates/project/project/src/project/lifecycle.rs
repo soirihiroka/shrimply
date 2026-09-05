@@ -755,7 +755,7 @@ impl Project {
     }
 }
 
-fn validate_visual_transitions(item: &VisualItem) -> Result<(), String> {
+pub fn validate_visual_transitions(item: &VisualItem) -> Result<(), String> {
     validate_transition_durations(
         item.end.saturating_sub(item.start),
         item.transitions.intro.as_ref().map(|value| value.duration),

@@ -78,6 +78,10 @@ struct DragState {
 }
 
 impl Lifecycle {
+    pub fn hit_test(&self, scrollbar: Scrollbar, pointer: Vec2) -> bool {
+        hovered(self.interaction_scrollbar(scrollbar, false), Some(pointer))
+    }
+
     pub fn frame(&mut self, scrollbar: Option<Scrollbar>, pointer: Option<Vec2>) -> Frame {
         let (scrollbar, resizing) =
             update_resize(&mut self.resize, scrollbar, pointer, self.drag.is_some());

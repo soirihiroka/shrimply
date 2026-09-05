@@ -22,7 +22,7 @@ pub use shrimply_render_core::math;
 pub use shrimply_state::player_state;
 pub use shrimply_state::preview_focus;
 pub use shrimply_timeline::selection_state;
-pub use shrimply_video as video;
+pub use shrimply_video_cuda as video;
 pub use shrimply_video_modifiers as modifiers;
 
 pub mod preferences {
@@ -50,12 +50,12 @@ use gtk::{gdk, gio, glib};
 use shrimply_paint_edit::{PAINT_PREVIEW_STATE, PaintPreviewMode as PaintMode, PaintPreviewState};
 use shrimply_playback_performance as playback_performance;
 
-const STEP_REPEAT_TICK: Duration = Duration::from_millis(200);
+use shrimply_preview_core::playback::STEP_REPEAT_TICK;
 const LOADING_SPINNER_SIZE: i32 = 16;
 const LOADING_SPINNER_DELAY: Duration = Duration::from_nanos(1_000_000_000 / 24);
 const PREVIEW_FULLSCREEN_ICON: &str = "arrows-pointing-outward-symbolic";
 const PREVIEW_TOOLBAR_ICON_SIZE: i32 = 20;
-const DEFAULT_PAINT_ERASER_SCALE: f32 = 2.0;
+use shrimply_paint_edit::DEFAULT_PAINT_ERASER_SCALE;
 type PaintPaletteStructure = Rc<RefCell<Option<(uuid::Uuid, Vec<uuid::Uuid>)>>>;
 
 trait PaintSurfaceState {

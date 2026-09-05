@@ -1,9 +1,5 @@
 use super::*;
-
-pub(super) struct TimelineSoftwareCursor {
-    pub(super) position: Vec2,
-    pub(super) cursor: shrimply_skia_adw_core::cursor::SoftwareCursor,
-}
+pub use shrimply_timeline_core::draw_state::*;
 
 pub(super) struct TimelineRuntime {
     pub(super) renderer: TimelineRenderer,
@@ -94,14 +90,7 @@ impl TimelineRuntime {
     ) -> Self {
         let tools = ToolState::from_preferences(&preferences);
         let mut view = TimelineViewState::default();
-        if let Some(zoom) = timeline_zoom.filter(|zoom| *zoom > Time::ZERO) {
-            let seconds_per_pixel = zoom.as_secs_f64();
-            if seconds_per_pixel.is_finite() {
-                view.seconds_per_pixel = seconds_per_pixel;
-                view.drag_start_seconds_per_pixel = seconds_per_pixel;
-                view.initialized = true;
-            }
-        }
+        view.restore_zoom(timeline_zoom);
         Self {
             renderer: TimelineRenderer::new(),
             snap_enabled: tools.magnet,
@@ -195,17 +184,6 @@ pub(super) struct TimelineModifiers {
     pub(super) shift: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub(crate) enum TrackLabelAction {
-    Select,
-    Toggle,
-    Add,
-    AudioRecord,
-    VideoRecord,
-}
-
-pub(crate) type TrackButtonId = (TrackKey, TrackLabelAction);
-
 pub(super) struct TrackAddMenuRequest {
     pub(super) key: TrackKey,
     pub(super) import_targets: Vec<TrackKey>,
@@ -224,83 +202,4 @@ pub(super) struct ActiveVideoRecording {
     pub(super) recording: video_recording::ScreenRecording,
     pub(super) ready: bool,
     pub(super) stopping: bool,
-}
-
-pub(super) struct LiveRecordingDraw {
-    pub(super) key: TrackKey,
-    pub(super) item: AudioItem,
-    pub(super) waveform: waveform::Waveform,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct LiveVideoRecordingDraw {
-    pub(super) key: TrackKey,
-    pub(super) start: Time,
-    pub(super) end: Time,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum WaveformState<'a> {
-    Loading,
-    Loaded(Option<&'a waveform::Waveform>),
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct NaturalEndMarker {
-    pub(super) start: Time,
-    pub(super) end: Time,
-    pub(super) position: Option<Time>,
-    pub(super) repeat_interval: Option<Time>,
-    pub(super) real_start: Option<Time>,
-    pub(super) real_end: Option<Time>,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct TimedItemBox {
-    pub(super) marker: NaturalEndMarker,
-    pub(super) bounds: Rect,
-    pub(super) fill: Color,
-    pub(super) timeline_x: f64,
-    pub(super) view: TimelineViewState,
-    pub(super) selected: bool,
-    pub(super) selected_border_color: Color,
-}
-
-#[derive(Clone, Copy)]
-pub(super) enum PreviewTimeMode {
-    Move,
-    Resize,
-}
-
-pub(super) struct TimelineDraw<'a> {
-    pub(super) painter: &'a TimelinePainter,
-    pub(super) waveforms: &'a WaveformMap,
-    pub(super) timeline_x: f64,
-    pub(super) timeline_width: f64,
-    pub(super) waveform_chunks_per_second: u32,
-    pub(super) view: TimelineViewState,
-    pub(super) animation_seconds: f64,
-}
-
-pub(super) struct TrackControlDraw<'a> {
-    pub(super) animation_active: &'a mut bool,
-    pub(super) buttons: &'a mut HashMap<TrackButtonId, shrimply_skia_adw_core::button::Button>,
-    pub(super) active_audio_recording_key: Option<TrackKey>,
-    pub(super) active_video_recording_key: Option<TrackKey>,
-}
-
-#[derive(Clone)]
-pub(super) struct TimelineImportPreview {
-    pub(super) source: crate::project::Asset,
-    pub(super) duration: Time,
-    pub(super) visual_kind: Option<import::VisualMediaKind>,
-    pub(super) preview: import::ImportPreview,
-    pub(super) y: f64,
-}
-
-#[derive(Clone)]
-pub(super) struct TimelineCut {
-    pub(super) key: crate::project::ItemAddress,
-    pub(super) time: Time,
-    pub(super) keys: Vec<crate::project::ItemAddress>,
 }

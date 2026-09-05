@@ -124,6 +124,7 @@ pub struct MediaInfo {
     pub video_sizes: VideoSizes,
     pub video_fps: Option<Fraction>,
     pub layered_image_layers: Vec<LayerVisibility>,
+    pub caption_cues: Vec<VttCue>,
 }
 
 pub struct ImportResult {
@@ -346,6 +347,27 @@ pub fn inspect(
     let snapshot = source.snapshot()?;
     let path = snapshot.path();
     let file_kind = file_kind(path).ok_or_else(|| "unsupported file type".to_string())?;
+    if file_kind == FileKind::Vtt {
+        let caption_cues = parse_vtt_contents(&snapshot.read_to_string()?);
+        let duration = caption_cues
+            .iter()
+            .map(|cue| cue.end)
+            .max()
+            .ok_or_else(|| format!("{} has no VTT cues", path.display()))?;
+        snapshot.verify_current()?;
+        return Ok(MediaInfo {
+            source,
+            snapshot,
+            duration,
+            video_streams: 0,
+            audio_streams: 0,
+            visual_kind: None,
+            video_sizes: Vec::new(),
+            video_fps: None,
+            layered_image_layers: Vec::new(),
+            caption_cues,
+        });
+    }
     if matches!(file_kind, FileKind::Python | FileKind::Blender) {
         let duration = if file_kind == FileKind::Blender {
             Time {
@@ -371,6 +393,7 @@ pub fn inspect(
             video_fps: None,
             audio_streams: 0,
             layered_image_layers: Vec::new(),
+            caption_cues: Vec::new(),
         });
     }
     if file_kind == FileKind::Svg {
@@ -389,6 +412,7 @@ pub fn inspect(
             video_fps: None,
             audio_streams: 0,
             layered_image_layers: Vec::new(),
+            caption_cues: Vec::new(),
         });
     }
     if file_kind == FileKind::Pdf {
@@ -406,10 +430,11 @@ pub fn inspect(
             video_fps: None,
             audio_streams: 0,
             layered_image_layers: Vec::new(),
+            caption_cues: Vec::new(),
         });
     }
     if file_kind == FileKind::LayeredImage {
-        let image = shrimply_video::load_layered_image(source.clone())?;
+        let image = shrimply_layered_image::load(source.clone())?;
         snapshot.ensure_current()?;
         let layered_image_layers = image
             .entries
@@ -430,6 +455,7 @@ pub fn inspect(
             video_fps: None,
             audio_streams: 0,
             layered_image_layers,
+            caption_cues: Vec::new(),
         });
     }
     if matches!(file_kind, FileKind::Obj | FileKind::Ply) {
@@ -465,6 +491,7 @@ pub fn inspect(
             video_fps: None,
             audio_streams: 0,
             layered_image_layers: Vec::new(),
+            caption_cues: Vec::new(),
         });
     }
 
@@ -572,6 +599,7 @@ pub fn inspect(
         video_sizes,
         video_fps,
         audio_streams,
+        caption_cues: Vec::new(),
         layered_image_layers: Vec::new(),
     })
 }
@@ -710,18 +738,30 @@ pub fn apply_vtt_to_tracks(
     track_indices: &[usize],
     start: Time,
 ) -> Result<ImportResult, String> {
-    let step = project.frame_step();
-    let start = start.max(Time::ZERO).snapped(step);
     let cues = parse_vtt(path)?;
     if cues.is_empty() {
         return Err(format!("{} has no VTT cues", path.display()));
     }
+    apply_vtt_cues_to_tracks(project, &cues, track_indices, start)
+}
+
+pub fn apply_vtt_cues_to_tracks(
+    project: &mut Project,
+    cues: &[VttCue],
+    track_indices: &[usize],
+    start: Time,
+) -> Result<ImportResult, String> {
+    if cues.is_empty() {
+        return Err("file has no VTT cues".into());
+    }
+    let step = project.frame_step();
+    let start = start.max(Time::ZERO).snapped(step);
 
     for &track_index in track_indices {
         let Some(track) = project.caption_tracks.get(track_index) else {
             return Err(format!("caption track {} does not exist", track_index + 1));
         };
-        for cue in &cues {
+        for cue in cues {
             let item_start = start.saturating_add(cue.start).snapped(step);
             let item_end = start
                 .saturating_add(cue.end)
@@ -742,7 +782,7 @@ pub fn apply_vtt_to_tracks(
         let Some(track) = project.caption_tracks.get_mut(track_index) else {
             continue;
         };
-        for cue in &cues {
+        for cue in cues {
             let item_start = start.saturating_add(cue.start).snapped(step);
             let item_end = start
                 .saturating_add(cue.end)
@@ -996,7 +1036,7 @@ pub fn repeat_strategy_for_import(info: &MediaInfo) -> RepeatStrategy {
 }
 
 #[derive(Clone)]
-struct VttCue {
+pub struct VttCue {
     start: Time,
     end: Time,
     text: String,
@@ -1005,6 +1045,10 @@ struct VttCue {
 fn parse_vtt(path: &Path) -> Result<Vec<VttCue>, String> {
     let contents = fs::read_to_string(path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    Ok(parse_vtt_contents(&contents))
+}
+
+fn parse_vtt_contents(contents: &str) -> Vec<VttCue> {
     let contents = contents
         .trim_start_matches('\u{feff}')
         .replace("\r\n", "\n");
@@ -1056,7 +1100,7 @@ fn parse_vtt(path: &Path) -> Result<Vec<VttCue>, String> {
             cues.push(VttCue { start, end, text });
         }
     }
-    Ok(cues)
+    cues
 }
 
 fn skip_vtt_block<'a>(lines: &mut std::iter::Peekable<std::str::Lines<'a>>) {
@@ -1214,3 +1258,5 @@ fn image_extension(extension: &str) -> bool {
         "jpg" | "jpeg" | "png" | "webp" | "avif"
     )
 }
+
+pub use crate::import_placement::*;

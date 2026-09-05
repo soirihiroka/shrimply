@@ -59,8 +59,8 @@ pub(super) fn finish(
         guides::commit_edit(&project.borrow());
     }
     let mut controller = controller.borrow_mut();
-    controller.sequence = PointerSequence::Idle;
-    controller.context_invalidated = changed;
+    controller.core.sequence = PointerSequence::Idle;
+    controller.core.context_invalidated = changed;
     drop(controller);
     area.set_cursor_from_name(None);
     area.queue_render();
@@ -76,7 +76,7 @@ pub(super) fn cancel(
         .borrow_mut()
         .pointer_cancel(&mut project.borrow_mut().preview_guides);
     if canceled {
-        controller.borrow_mut().sequence = PointerSequence::Idle;
+        controller.borrow_mut().core.sequence = PointerSequence::Idle;
         area.set_cursor_from_name(None);
         area.queue_render();
     }

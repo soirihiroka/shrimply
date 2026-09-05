@@ -23,6 +23,7 @@ use crate::{append_samples, erase_objects, erase_sweep, move_samples, toggle_fil
 pub const PAINT_PREVIEW_FACET: PreviewFacetKey = PreviewFacetKey::new("paint");
 pub const PAINT_PREVIEW_STATE: PreviewExtensionKey =
     PreviewExtensionKey::new("paint.preview-state");
+pub const DEFAULT_PAINT_ERASER_SCALE: f32 = 2.0;
 
 #[derive(Clone, Copy)]
 pub struct ResolvedShakyPath {

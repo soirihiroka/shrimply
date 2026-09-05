@@ -1,12 +1,14 @@
 mod about;
-mod audio_meter;
+mod canvas;
+mod fullscreen;
 mod layout;
+mod media;
 mod menus;
 mod timeline;
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send};
+use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
     NSBackingStoreType, NSControlStateValueOff, NSControlStateValueOn, NSMenuItem, NSToolbar,
@@ -17,16 +19,27 @@ use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect,
     NSString, ns_string,
 };
-use std::cell::{Cell, OnceCell};
+use shrimply_cross_ui_core::editor::EditorSession;
+use shrimply_state::player_state;
+use std::cell::{Cell, OnceCell, RefCell};
 use std::path::Path;
+use std::rc::Rc;
+
+const DISPLAY_RATE: u32 = 60;
 
 struct EditorIvars {
+    session: OnceCell<Rc<EditorSession>>,
+    imports: Rc<RefCell<media::Imports>>,
+    timer: OnceCell<Retained<objc2_foundation::NSTimer>>,
+    last_error: RefCell<Option<String>>,
     window: OnceCell<Retained<NSWindow>>,
     layout: OnceCell<layout::Layout>,
     view_items: OnceCell<Vec<Retained<NSMenuItem>>>,
     inspector_visible: Cell<bool>,
     timeline_visible: Cell<bool>,
     fullscreen_preview: Cell<bool>,
+    fullscreen: RefCell<fullscreen::State>,
+    event_monitor: OnceCell<Retained<objc2::runtime::AnyObject>>,
     title: String,
 }
 
@@ -74,19 +87,38 @@ define_class!(
             window.center();
             window.makeKeyAndOrderFront(None);
             self.ivars().window.set(window).expect("window already installed");
+            self.install_fullscreen_events();
             app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
             app.activate();
+            let timer = unsafe {
+                objc2_foundation::NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+                    1.0 / f64::from(DISPLAY_RATE), self, sel!(renderFrame:), None, true,
+                )
+            };
+            unsafe { objc2_foundation::NSRunLoop::mainRunLoop().addTimer_forMode(&timer, objc2_foundation::NSRunLoopCommonModes); }
+            self.ivars().timer.set(timer).expect("frame timer already installed");
+
         }
     }
 
     unsafe impl NSWindowDelegate for Editor {
         #[unsafe(method(windowWillClose:))]
         fn will_close(&self, _notification: &NSNotification) {
+            if let Some(timer) = self.ivars().timer.get() { timer.invalidate(); }
+            if let Some(monitor) = self.ivars().event_monitor.get() {
+                unsafe { objc2_app_kit::NSEvent::removeMonitor(monitor); }
+            }
             NSApplication::sharedApplication(self.mtm()).terminate(None);
         }
 
         #[unsafe(method(windowDidExitFullScreen:))]
         fn did_exit_fullscreen(&self, _notification: &NSNotification) {
+            self.ivars().fullscreen_preview.set(false);
+            self.sync_panels();
+        }
+
+        #[unsafe(method(windowDidFailToEnterFullScreen:))]
+        fn failed_to_enter_fullscreen(&self, _window: &NSWindow) {
             self.ivars().fullscreen_preview.set(false);
             self.sync_panels();
         }
@@ -110,6 +142,69 @@ define_class!(
     }
 
     impl Editor {
+        #[unsafe(method(renderFrame:))]
+        fn render_frame(&self, _timer: &objc2_foundation::NSTimer) {
+            let session = self.ivars().session.get().expect("project loaded");
+            let imported = self.ivars().imports.borrow_mut().poll(session);
+            if let Err(error) = imported { self.show_error(&error); }
+            let update = session.poll();
+            if let Some(error) = update.audio_playback_stopped { self.show_error(&error); }
+            if let Some(title) = update.title { self.ivars().window.get().expect("window installed").setTitle(&NSString::from_str(&title.text)); }
+            let layout = self.ivars().layout.get().expect("layout installed");
+            let player = player_state::snapshot(&session.player_state);
+            self.tick_fullscreen(player.playing);
+            layout.progress.setDoubleValue(shrimply_math_core::time_ratio_f64(player.position, player.duration));
+            layout.time.setStringValue(&NSString::from_str(&format!("{} / {}", shrimply_project::time_format::playback_time(player.position), shrimply_project::time_format::playback_time(player.duration))));
+            let speed = shrimply_preview_core::playback::playback_speed_label(player.playback_speed);
+            layout.speed.setStringValue(&NSString::from_str(&speed));
+            layout.speed.setToolTip(Some(&NSString::from_str(&format!("Playback speed {speed}"))));
+            layout.play.setToolTip(Some(&NSString::from_str(if player.playing { "Pause" } else { "Play" })));
+            layout.play.setImage
+(Some(&layout::symbol(if player.playing { "pause.fill" } else { "play.fill" }, if player.playing { "Pause" } else { "Play" })));
+            for canvas in &layout.canvases {
+                if let Err(error) = canvas.render() {
+                    player_state::set_playing(&session.player_state, false);
+                    if self.ivars().last_error.borrow().as_ref() != Some(&error) {
+                        self.ivars().last_error.replace(Some(error.clone()));
+                        self.show_error(&error);
+                    }
+                }
+            }
+        }
+
+        #[unsafe(method(togglePlayback:))]
+        fn toggle_playback(&self, _sender: &NSObject) {
+            player_state::toggle_playing(&self.ivars().session.get().expect("project loaded").player_state);
+        }
+
+        #[unsafe(method(stepBackward:))]
+        fn step_backward(&self, _sender: &NSObject) { self.step(false); }
+
+        #[unsafe(method(stepForward:))]
+        fn step_forward(&self, _sender: &NSObject) { self.step(true); }
+
+        #[unsafe(method(seek:))]
+        fn seek(&self, sender: &objc2_app_kit::NSSlider) {
+            let session = self.ivars().session.get().expect("project loaded");
+            let scrubbing = NSApplication::sharedApplication(self.mtm()).currentEvent().is_some_and(|event| {
+                matches!(event.r#type(), objc2_app_kit::NSEventType::LeftMouseDown | objc2_app_kit::NSEventType::LeftMouseDragged)
+            });
+            player_state::set_scrubbing(&session.player_state, scrubbing);
+            let player = player_state::snapshot(&session.player_state);
+            player_state::seek_time(&session.player_state, player.duration.scaled(shrimply_math_core::fraction_from_f64(sender.doubleValue())));
+        }
+
+        #[unsafe(method(importMedia:))]
+        fn import_media(&self, _sender: &NSObject) {
+            if let Err(error) = media::choose_files(&self.ivars().imports, self.ivars().session.get().expect("project loaded"), &[], self.mtm()) { self.show_error(&error); }
+        }
+
+        #[unsafe(method(saveProject:))]
+
+        fn save_project(&self, _sender: &NSObject) {
+            if let Err(error) = self.ivars().session.get().expect("project loaded").save() { self.show_error(&error); }
+        }
+
         #[unsafe(method(showAbout:))]
         fn show_about(&self, _sender: &NSObject) {
             about::show(self.mtm());
@@ -129,30 +224,50 @@ define_class!(
 
         #[unsafe(method(togglePreviewFullscreen:))]
         fn toggle_fullscreen(&self, _sender: &NSObject) {
-            let fullscreen = !self.ivars().fullscreen_preview.get();
-            self.ivars().fullscreen_preview.set(fullscreen);
-            self.sync_panels();
-            let window = self.ivars().window.get().expect("editor window must exist");
-            if window.styleMask().contains(NSWindowStyleMask::FullScreen) != fullscreen {
-                window.toggleFullScreen(None);
-            }
+            self.toggle_preview_fullscreen();
         }
 
         #[unsafe(method(showShortcuts:))]
         fn show_shortcuts(&self, _sender: &NSObject) {
             let alert = NSAlert::new(self.mtm());
             alert.setMessageText(ns_string!("Keyboard Shortcuts"));
-            alert.setInformativeText(ns_string!("⌘1  Toggle Inspector\n⌘2  Toggle Timeline\n⌃⌘F  Fullscreen Preview\n⌘W  Close Window\n⌘Q  Quit\n\nEditing, playback, and export are unavailable in this layout preview."));
+            alert.setInformativeText(ns_string!("⌘1  Toggle Inspector\n⌘2  Toggle Timeline\n⌃⌘F  Fullscreen Preview\n⌘W  Close Window\n⌘Q  Quit\n\nSpace  Play / Pause"));
             alert.runModal();
         }
     }
 );
 
 impl Editor {
+    fn show_error(&self, error: &str) {
+        let alert = NSAlert::new(self.mtm());
+        alert.setMessageText(ns_string!("Shrimply"));
+        alert.setInformativeText(&NSString::from_str(error));
+        alert.runModal();
+    }
+
+    fn step(&self, forward: bool) {
+        let session = self.ivars().session.get().expect("project loaded");
+        player_state::set_playing(&session.player_state, false);
+        let time = player_state::current_time(&session.player_state);
+        let step = session.project.borrow().frame_step();
+        player_state::seek_time(
+            &session.player_state,
+            if forward {
+                time.saturating_add(step)
+            } else {
+                time.saturating_sub(step)
+            },
+        );
+    }
+
     fn sync_panels(&self) {
+        self.sync_fullscreen_layout();
         let ivars = self.ivars();
         let layout = ivars.layout.get().expect("layout must exist");
         let fullscreen = ivars.fullscreen_preview.get();
+        for canvas in &layout.canvases {
+            canvas.set_preview_fullscreen(fullscreen);
+        }
         layout
             .inspector
             .setCollapsed(fullscreen || !ivars.inspector_visible.get());
@@ -188,17 +303,50 @@ pub fn run(project: Option<&Path>) {
     .expect("the embedded Shrimply icon must be valid");
     unsafe { app.setApplicationIconImage(Some(&icon)) };
     NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
-    let title = project.and_then(Path::file_name).map_or_else(
-        || "Shrimply — Layout Preview".to_string(),
-        |name| format!("{} — Layout Preview", name.to_string_lossy()),
+    let chosen;
+    let path = if let Some(path) = project {
+        path
+    } else {
+        let panel = objc2_app_kit::NSOpenPanel::openPanel(mtm);
+        panel.setCanChooseDirectories(false);
+        if panel.runModal() != objc2_app_kit::NSModalResponseOK {
+            return;
+        }
+        chosen = panel
+            .URL()
+            .expect("selected project URL")
+            .to_file_path()
+            .expect("local project file");
+        &chosen
+    };
+    let prepared = match shrimply_project::project::prepare_project(path) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let alert = NSAlert::new(mtm);
+            alert.setMessageText(ns_string!("Could not open project"));
+            alert.setInformativeText(&NSString::from_str(&format!("{error:?}")));
+            alert.runModal();
+            return;
+        }
+    };
+    let session = Rc::new(
+        EditorSession::new(shrimply_project::project::activate_project(prepared))
+            .expect("initialize editor playback"),
     );
+    let title = session.title().text;
     let editor = Editor::alloc(mtm).set_ivars(EditorIvars {
+        session: OnceCell::from(session),
+        imports: Rc::new(RefCell::new(media::Imports::default())),
+        timer: OnceCell::new(),
+        last_error: RefCell::new(None),
         window: OnceCell::new(),
         layout: OnceCell::new(),
         view_items: OnceCell::new(),
         inspector_visible: Cell::new(true),
         timeline_visible: Cell::new(true),
         fullscreen_preview: Cell::new(false),
+        fullscreen: RefCell::new(fullscreen::State::default()),
+        event_monitor: OnceCell::new(),
         title,
     });
     let editor: Retained<Editor> = unsafe { msg_send![super(editor), init] };

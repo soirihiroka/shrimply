@@ -26,7 +26,7 @@ shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
 shrimply-state = { path = "../../state" }
 shrimply-timeline = { path = "../../timeline/timeline" }
 shrimply-gtk-components = { path = "../../ui/gtk-components" }
-shrimply-video = { path = "../../video/rendering" }
+shrimply-video-cuda = { path = "../../video/video-cuda" }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 shrimply-math-color = { path = "../../math/color", features = ["gdk"] }
 skia-safe = { workspace = true, features = ["textlayout"] }

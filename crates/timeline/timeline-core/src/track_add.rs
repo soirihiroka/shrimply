@@ -31,13 +31,32 @@ pub fn activate_track_add(
     action: TrackAddAction,
     settings: TrackAddSettings<'_>,
 ) -> TrackAddOutcome {
+    activate_track_add_checked(
+        project,
+        player_state,
+        selection_state,
+        key,
+        action,
+        settings,
+    )
+    .expect("could not commit generated timeline item")
+}
+
+pub fn activate_track_add_checked(
+    project: &Rc<RefCell<Project>>,
+    player_state: &SharedPlayerState,
+    selection_state: &SharedSelectionState,
+    key: TrackKey,
+    action: TrackAddAction,
+    settings: TrackAddSettings<'_>,
+) -> Result<TrackAddOutcome, String> {
     if action == TrackAddAction::Import {
-        return TrackAddOutcome::Import;
+        return Ok(TrackAddOutcome::Import);
     }
 
-    let mut project_state = project.borrow_mut();
+    let mut project_state = project.borrow().clone();
     let Some(track_address) = selection_state::track_address(&project_state, key) else {
-        return TrackAddOutcome::Unchanged;
+        return Ok(TrackAddOutcome::Unchanged);
     };
     let frame_step = project_state.frame_step();
     let start = player_state::snapshot(player_state)
@@ -58,10 +77,10 @@ pub fn activate_track_add(
                 }
             })
     else {
-        return TrackAddOutcome::Unchanged;
+        return Ok(TrackAddOutcome::Unchanged);
     };
     if occupied {
-        return TrackAddOutcome::Unchanged;
+        return Ok(TrackAddOutcome::Unchanged);
     }
     let mut end = start
         .saturating_add(settings.default_visual_duration)
@@ -70,7 +89,7 @@ pub fn activate_track_add(
         end = end.min(next_start);
     }
     if end <= start {
-        return TrackAddOutcome::Unchanged;
+        return Ok(TrackAddOutcome::Unchanged);
     }
 
     let canvas_size = project_state.canvas_size;
@@ -114,13 +133,13 @@ pub fn activate_track_add(
         TrackAddAction::Import => unreachable!(),
     };
     let Some(item_address) = project_state.insert_item(&track_address, item) else {
-        return TrackAddOutcome::Unchanged;
+        return Ok(TrackAddOutcome::Unchanged);
     };
     let selected = selection_state::item_key(&project_state, &item_address)
         .expect("inserted track item must have a root item key");
     let duration = project_state.duration();
-    shrimply_project::project::commit_edit(&project_state, "create-generated-item");
-    drop(project_state);
+    shrimply_project::project::commit_edit_checked(&project_state, "create-generated-item")?;
+    *project.borrow_mut() = project_state;
 
     selection_state::set_selected_items(selection_state, vec![selected], Some(selected));
     player_state::refresh_project(
@@ -134,7 +153,7 @@ pub fn activate_track_add(
             ..ProjectChange::default()
         },
     );
-    TrackAddOutcome::Changed
+    Ok(TrackAddOutcome::Changed)
 }
 
 fn track_span(items: impl Iterator<Item = (Time, Time)>, start: Time) -> (bool, Option<Time>) {

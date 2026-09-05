@@ -12,10 +12,10 @@ use shrimply_math_core::{Fraction, frame_count, time_from_frame};
 
 use shrimply_audio::streaming;
 use shrimply_project::project::{self, Project, Time};
-use shrimply_video::compositor::{
+use shrimply_video_cuda::compositor::{
     EXPORT_ASSETS_LOADING, RenderResourceConfig, VideoExportRenderer,
 };
-use shrimply_video::gpu::ExportPixelFormat;
+use shrimply_video_cuda::gpu::ExportPixelFormat;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -223,13 +223,13 @@ where
     check_cancelled(&cancelled)?;
     ffmpeg::init().map_err(|error| error.to_string())?;
     project.validate()?;
-    shrimply_video::validate_sam2_cache(&project)?;
-    shrimply_video::validate_transparent_fill_cache(&project)?;
+    shrimply_video_cuda::validate_sam2_cache(&project)?;
+    shrimply_video_cuda::validate_transparent_fill_cache(&project)?;
     validate_settings(&project, &settings)?;
     crate::ensure_output_is_not_an_asset(&project, &settings.path)?;
     let assets = crate::snapshot_assets(&project)?;
     progress(ExportProgress::SettingUp("Stabilizing source video"));
-    shrimply_video::video_stabilization::ensure_project(&project)?;
+    shrimply_video_cuda::video_stabilization::ensure_project(&project)?;
     crate::ensure_assets_current(&assets)?;
     check_cancelled(&cancelled)?;
     let _span = tracing::info_span!(

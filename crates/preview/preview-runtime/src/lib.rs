@@ -8,7 +8,7 @@ pub use shrimply_math_color::Color;
 pub use shrimply_project::{caption, project, time_format};
 pub use shrimply_skia_gl::gl_loader;
 pub use shrimply_state::player_state;
-pub use shrimply_video as video;
+pub use shrimply_video_cuda as video;
 
 use player_state::SharedPlayerState;
 use preferences::store as preferences_store;
@@ -18,10 +18,9 @@ use video::compositor::{
     self, CompositeAccuracy, RenderResourceConfig, VideoCommand, VideoCommandSender, VideoEvent,
 };
 
-pub mod captions;
+pub use shrimply_preview_interaction_core::captions;
 mod cuda_gl;
-pub mod geometry;
-pub mod guides;
+pub use shrimply_preview_interaction_core::{geometry, guides};
 mod media;
 pub mod provider;
 pub mod renderer;
@@ -52,18 +51,7 @@ pub fn playback_time_label(position: Time, duration: Time) -> String {
     )
 }
 
-pub fn playback_speed_label(speed: shrimply_math_core::Fraction) -> String {
-    use shrimply_math_core::{fraction_denominator, fraction_numerator};
-    if fraction_denominator(speed) == 1 {
-        format!("x{}", fraction_numerator(speed))
-    } else {
-        format!(
-            "x{}/{}",
-            fraction_numerator(speed),
-            fraction_denominator(speed)
-        )
-    }
-}
+pub use shrimply_preview_core::playback::playback_speed_label;
 
 pub fn rendered_frame_rate_label(render_elapsed: Duration) -> Option<String> {
     use shrimply_math_core::{fraction_round_nonnegative_u64, frame_rate_from_duration};
@@ -74,3 +62,4 @@ pub fn rendered_frame_rate_label(render_elapsed: Duration) -> Option<String> {
             .to_string()
     })
 }
+pub use shrimply_preview_interaction_core::controller;

@@ -67,13 +67,22 @@ pub(super) fn timeline_gtk(
         } else {
             Vec::new()
         };
-        runtime.snap_repository = crate::snapping::SnapRepo::new(crate::snapping::snappables(
+        runtime.snap_repository = crate::snapping::repository(
             &project,
-            runtime,
-            beats,
-            player.position,
-            frame_step(&project),
-        ));
+            crate::snapping::Request {
+                folded_drag: runtime.folded_drag.as_ref(),
+                dragged_group: runtime.dragged_group.as_ref(),
+                resize_drag: runtime.resize_drag.as_ref(),
+                beats,
+                playhead: player.position,
+                distance: runtime.snap_enabled.then(|| {
+                    shrimply_timeline_core::math::snap_distance(
+                        runtime.view,
+                        runtime.snap_radius_px,
+                    )
+                }),
+            },
+        );
     }
 
     interaction::handle_timeline_input(

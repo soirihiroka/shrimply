@@ -55,24 +55,22 @@ use super::items::{
     dragged_group_for_hit, expand_grouped_selection, fold_items, group_item_addresses,
     hit_clip_transition_at, hit_gap_at, hit_item_at, hit_resize_handle_at, hit_transition_at,
     item_group_id, item_identity, item_key_for_identity, move_dragged_group, paste_items,
-    resize_drag_for_hit, selected_item_addresses, split_item_addresses, transition_durations,
-    ungroup_item_addresses, update_dragged_group, update_resize_drag,
+    resize_drag_for_hit, selected_item_addresses, split_item_addresses, ungroup_item_addresses,
+    update_dragged_group, update_resize_drag,
 };
 use super::renderer::{Vec2, vec2};
 use super::silence;
 use super::snapping::SnapRepo;
 use super::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 use super::{
-    CLICK_DRAG_TOLERANCE, ClipTransitionDrag, DragMode, ITEM_RESIZE_HANDLE_WIDTH,
-    MAX_SECONDS_PER_PIXEL, RULER_HEIGHT, SCROLL_PIXELS_PER_STEP, TRACK_HEIGHT, TimelineCursor,
-    TimelineCut, TimelineModifiers, TimelineOverscroll, TimelineOverscrollEdge, TimelineRuntime,
-    TimelineScrollEvent, TimelineSelection, TimelineViewState, TrackAddMenuRequest, TrackButtonId,
-    TrackKey, TrackLabelAction, TransitionDrag, WAVEFORM_POLL_INTERVAL, frame_step_seconds,
-    horizontal_scrollbar, import, min_seconds_per_pixel, selected_timeline_items,
-    selected_timeline_tracks, timeline_width, timeline_x, track_button_at, track_label_action_at,
-    vertical_scrollbar, x_to_time,
+    CLICK_DRAG_TOLERANCE, DragMode, ITEM_RESIZE_HANDLE_WIDTH, MAX_SECONDS_PER_PIXEL, RULER_HEIGHT,
+    SCROLL_PIXELS_PER_STEP, TRACK_HEIGHT, TimelineCursor, TimelineModifiers, TimelineOverscroll,
+    TimelineOverscrollEdge, TimelineRuntime, TimelineScrollEvent, TimelineSelection,
+    TimelineViewState, TrackAddMenuRequest, TrackButtonId, TrackKey, TrackLabelAction,
+    WAVEFORM_POLL_INTERVAL, frame_step_seconds, horizontal_scrollbar, import,
+    min_seconds_per_pixel, selected_timeline_items, selected_timeline_tracks, timeline_width,
+    timeline_x, track_button_at, track_label_action_at, vertical_scrollbar, x_to_time,
 };
-const SCROLLBAR_WHEEL_PAGE_FRACTION: f64 = 0.25;
 
 pub(crate) use context_actions::folded_items::move_item_out_of_sequence_core;
 pub(crate) use context_actions::folded_tracks::create_folded_track_core;

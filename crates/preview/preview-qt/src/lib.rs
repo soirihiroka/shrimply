@@ -17,8 +17,8 @@ use shrimply_skia_adw_core::canvas::UVec2;
 use shrimply_skia_adw_core::canvas::{Rect, vec2};
 use shrimply_skia_gl::GlAudioMeter;
 use shrimply_state::player_state::{self, SharedPlayerState};
-use shrimply_video::compositor::{CompositeAccuracy, VideoCommand, VideoCommandSender, VideoEvent};
-use shrimply_video::gpu::CompositedVideoFrame;
+use shrimply_video_cuda::compositor::{CompositeAccuracy, VideoCommand, VideoCommandSender, VideoEvent};
+use shrimply_video_cuda::gpu::CompositedVideoFrame;
 use std::cell::RefCell;
 use std::rc::Rc;
 

@@ -10,9 +10,8 @@ use gtk::prelude::*;
 use gtk::{gdk, glib};
 use shrimply_preview_core::{
     CursorUpdate, Key, KeyState, KeyboardEvent, Modifiers, PointerButton, PointerEvent,
-    PointerInput, PointerSample, PointerTool, PreviewEditSink, PreviewExtensionKey,
-    PreviewItemGeometry, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
-    PreviewViewport, SnapScene,
+    PointerInput, PointerSample, PointerTool, PreviewExtensionKey, PreviewRefresh, PreviewResponse,
+    PreviewTarget,
 };
 
 use crate::player_state::{self, SharedPlayerState};
@@ -21,7 +20,7 @@ use crate::preview_focus::{self, FocusedPreview, SharedPreviewFocus};
 use crate::project::{ItemAddress, PreviewGuides, Project, Time};
 use crate::selection_state::{self, SharedSelectionState};
 use crate::timeline::renderer::{Color, Rect, vec2};
-use crate::transform_eval::{FrameAudioAnalysis, TransformExpressionCache, VisualEvaluation};
+use crate::transform_eval::{FrameAudioAnalysis, TransformExpressionCache};
 use crate::video::compositor::{CompositeAccuracy, VideoCommand, VideoCommandSender};
 use crate::video::gpu::CompositedVideoFrame;
 
@@ -39,11 +38,9 @@ mod geometry;
 #[path = "preview_surface/gtk_guides.rs"]
 mod gtk_guides;
 use geometry::surface_viewport;
+use shrimply_preview_runtime::controller::PreparedProvider;
 use shrimply_preview_runtime::geometry::preview_viewport;
 use shrimply_preview_runtime::guides;
-use shrimply_preview_runtime::provider::{
-    BuildContext, SnapPreparation, prepare_geometry, prepare_snap_scene, update_text_source_size,
-};
 use shrimply_preview_runtime::renderer::{Appearance, VideoRenderer};
 
 #[derive(Clone)]
@@ -86,37 +83,21 @@ struct VideoSurfaceState {
 }
 
 struct PreviewControllerState {
-    provider: Option<PreparedProvider>,
-    retiring_provider: Option<PreparedProvider>,
-    extensions: HashMap<PreviewExtensionKey, Box<dyn Any>>,
-    sequence: PointerSequence,
-    context_invalidated: bool,
-    frame_pending: bool,
-    live_base_pending: bool,
-    live_base_in_flight: Option<u64>,
-    base_exclusion: Option<uuid::Uuid>,
-    presented_base_exclusion: Option<uuid::Uuid>,
+    core: shrimply_preview_runtime::controller::Controller,
     video_tx: VideoCommandSender,
 }
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
-enum PointerSequence {
-    #[default]
-    Idle,
-    Active,
-    Guide,
-    Suppressed,
-}
+use shrimply_preview_runtime::controller::PointerSequence;
 
 fn set_base_exclusion(
     controller: &mut PreviewControllerState,
     item_id: Option<uuid::Uuid>,
     position: Time,
 ) {
-    if controller.base_exclusion == item_id {
+    if controller.core.base_exclusion == item_id {
         return;
     }
-    controller.base_exclusion = item_id;
+    controller.core.base_exclusion = item_id;
     for command in [
         VideoCommand::SetPreviewExclusion(item_id),
         VideoCommand::Render {
@@ -168,16 +149,7 @@ impl PreviewController {
             fullscreen: false,
         }));
         let controller = Rc::new(RefCell::new(PreviewControllerState {
-            provider: None,
-            retiring_provider: None,
-            extensions: HashMap::new(),
-            sequence: PointerSequence::Idle,
-            context_invalidated: false,
-            frame_pending: false,
-            live_base_pending: false,
-            live_base_in_flight: None,
-            base_exclusion: None,
-            presented_base_exclusion: None,
+            core: Default::default(),
             video_tx,
         }));
 
@@ -255,7 +227,7 @@ impl PreviewController {
             state.snap_enabled = preference.timeline_magnet == "true";
             state.snap_radius_px = preference.timeline_snap_radius_px;
             drop(state);
-            preference_controller.borrow_mut().context_invalidated = true;
+            preference_controller.borrow_mut().core.context_invalidated = true;
             preference_area.queue_render();
         });
         let style = adw::StyleManager::for_display(&area.display());
@@ -277,6 +249,7 @@ impl PreviewController {
     ) -> R {
         let controller = self.controller.borrow();
         let value = controller
+            .core
             .extensions
             .get(&key)
             .and_then(|value| value.downcast_ref())
@@ -288,6 +261,7 @@ impl PreviewController {
         assert!(
             self.controller
                 .borrow_mut()
+                .core
                 .extensions
                 .insert(key, Box::new(value))
                 .is_none(),
@@ -303,6 +277,7 @@ impl PreviewController {
         let result = {
             let mut controller = self.controller.borrow_mut();
             let value = controller
+                .core
                 .extensions
                 .get_mut(&key)
                 .and_then(|value| value.downcast_mut())
@@ -321,24 +296,12 @@ impl PreviewController {
         excluded_item_id: Option<uuid::Uuid>,
     ) {
         let mut controller = self.controller.borrow_mut();
-        if excluded_item_id != controller.base_exclusion {
+        if !controller
+            .core
+            .accept_base_frame(revision, excluded_item_id)
+        {
             return;
         }
-        controller.presented_base_exclusion = excluded_item_id;
-        controller.retiring_provider = None;
-        if controller
-            .live_base_in_flight
-            .is_some_and(|requested| revision >= requested)
-        {
-            controller.live_base_in_flight = None;
-        }
-        let sequence_idle = controller.sequence == PointerSequence::Idle;
-        let mut context_invalidated = false;
-        if let Some(provider) = controller.provider.as_mut() {
-            provider.provider.on_base_frame_presented(revision);
-            context_invalidated = sequence_idle && revision >= provider.project_revision;
-        }
-        controller.context_invalidated |= context_invalidated;
         drop(controller);
         self.surface.set_frame(frame, audio_analysis);
     }
@@ -350,24 +313,12 @@ impl PreviewController {
         excluded_item_id: Option<uuid::Uuid>,
     ) {
         let mut controller = self.controller.borrow_mut();
-        if excluded_item_id != controller.base_exclusion {
+        if !controller
+            .core
+            .accept_base_frame(revision, excluded_item_id)
+        {
             return;
         }
-        controller.presented_base_exclusion = excluded_item_id;
-        controller.retiring_provider = None;
-        if controller
-            .live_base_in_flight
-            .is_some_and(|requested| revision >= requested)
-        {
-            controller.live_base_in_flight = None;
-        }
-        let sequence_idle = controller.sequence == PointerSequence::Idle;
-        let mut context_invalidated = false;
-        if let Some(provider) = controller.provider.as_mut() {
-            provider.provider.on_base_frame_presented(revision);
-            context_invalidated = sequence_idle && revision >= provider.project_revision;
-        }
-        controller.context_invalidated |= context_invalidated;
         drop(controller);
         self.surface.clear_frame(audio_analysis);
     }
@@ -451,87 +402,6 @@ impl VideoSurface {
     }
 }
 
-struct PreparedProvider {
-    item: ItemAddress,
-    project_revision: u64,
-    context: PreparedContext,
-    provider: Box<dyn PreviewProvider>,
-    deferred_refresh: PreviewRefresh,
-}
-
-struct PreparedContext {
-    evaluation: VisualEvaluation,
-    timeline_position: Time,
-    keyframe_time: Time,
-    viewport: PreviewViewport,
-    geometry: PreviewItemGeometry,
-    source_sizes: HashMap<uuid::Uuid, GlamVec2>,
-    snap_scene: Option<SnapScene>,
-    tracked_camera: Option<crate::project::TrackedCameraPreview>,
-    item_id: uuid::Uuid,
-}
-
-impl PreparedContext {
-    fn context<'a>(
-        &'a self,
-        expression_cache: &'a RefCell<TransformExpressionCache>,
-        extensions: Option<&'a HashMap<PreviewExtensionKey, Box<dyn Any>>>,
-    ) -> BuildContext<'a> {
-        BuildContext::new(
-            &self.evaluation,
-            self.timeline_position,
-            expression_cache,
-            self.viewport,
-            &self.source_sizes,
-            self.item_id,
-        )
-        .geometry(self.geometry)
-        .snapping(self.snap_scene.as_ref())
-        .tracked_camera(self.tracked_camera.as_ref())
-        .extensions(extensions)
-    }
-}
-
-struct Edits<'a> {
-    project: &'a mut Project,
-    extensions: &'a mut HashMap<PreviewExtensionKey, Box<dyn Any>>,
-    item: &'a ItemAddress,
-    keyframe_time: Time,
-    context: BuildContext<'a>,
-}
-
-impl PreviewEditSink for Edits<'_> {
-    fn keyframe_time(&self) -> Time {
-        self.keyframe_time
-    }
-
-    fn target_mut(&mut self, target: PreviewTarget) -> &mut dyn Any {
-        self.project
-            .preview_target_mut(target)
-            .expect("preview target is missing")
-    }
-
-    fn updated_geometry(&self, _target: PreviewTarget) -> Option<PreviewItemGeometry> {
-        let item = self.project.video_item(self.item)?;
-        let mut source_sizes = self.context.source_sizes().clone();
-        update_text_source_size(
-            &mut source_sizes,
-            item,
-            self.context.evaluation(),
-            self.context.expression_cache(),
-        );
-        item.preview_geometry(&self.context.with_source_sizes(&source_sizes))
-    }
-
-    fn extension_mut(
-        &mut self,
-        _target: PreviewTarget,
-        key: PreviewExtensionKey,
-    ) -> Option<&mut dyn Any> {
-        self.extensions.get_mut(&key).map(|value| value.as_mut())
-    }
-}
-
 #[derive(Clone, Copy)]
 struct Preparation<'a> {
     surface: IVec2,
@@ -583,62 +453,27 @@ fn prepare_target(
     position: Time,
     preparation: Preparation<'_>,
 ) -> Option<PreparedProvider> {
-    let item = project.video_item(key)?;
-    if !item.owns_preview_target(target) {
-        return None;
-    }
-    let viewport = preview_viewport(
-        preparation.surface,
-        project.canvas_size,
-        preparation.padding_px,
-    );
-    let mut prepared = prepare_geometry(
+    shrimply_preview_runtime::controller::prepare_target(
         project,
         key,
+        target,
         position,
-        preparation.audio_analysis,
-        preparation.expression_cache,
-        viewport,
-        Some(preparation.extensions),
-    )?;
-    let snap_scene = preparation.snap_enabled.then(|| {
-        prepare_snap_scene(
-            project,
-            key,
-            position,
-            viewport,
-            &mut prepared.source_sizes,
-            SnapPreparation {
-                audio_analysis: preparation.audio_analysis,
-                expression_cache: preparation.expression_cache,
-                extensions: preparation.extensions,
-                guides: preparation.guides,
-                radius_px: preparation.snap_radius_px,
-            },
-        )
-    });
-    let context = prepared
-        .context(position, preparation.expression_cache, viewport)
-        .snapping(snap_scene.as_ref())
-        .extensions(Some(preparation.extensions));
-    let provider = item.preview_provider(target, &context)?;
-    Some(PreparedProvider {
-        item: key.clone(),
-        project_revision: preparation.project_revision,
-        context: PreparedContext {
-            evaluation: prepared.evaluation,
-            timeline_position: position,
-            keyframe_time: prepared.keyframe_time,
-            viewport,
-            geometry: prepared.geometry,
-            source_sizes: prepared.source_sizes,
-            snap_scene,
-            tracked_camera: prepared.tracked_camera,
-            item_id: prepared.item_id,
+        shrimply_preview_runtime::controller::Preparation {
+            project_revision: preparation.project_revision,
+            viewport: preview_viewport(
+                preparation.surface,
+                project.canvas_size,
+                preparation.padding_px,
+            ),
+            audio_analysis: preparation.audio_analysis,
+            expression_cache: preparation.expression_cache,
+            snap_enabled: preparation.snap_enabled,
+            snap_radius_px: preparation.snap_radius_px,
+            guides: preparation.guides,
+            camera_sampler: shrimply_preview_runtime::provider::sample_camera,
         },
-        provider,
-        deferred_refresh: PreviewRefresh::NONE,
-    })
+        preparation.extensions,
+    )
 }
 
 fn attach_render(
@@ -687,15 +522,15 @@ fn attach_render(
             state.fullscreen,
         );
         let content_rect = viewport.content_rect;
-        let stale_provider = controller.context_invalidated
-            || controller.provider.as_ref().is_some_and(|prepared| {
+        let stale_provider = controller.core.context_invalidated
+            || controller.core.provider.as_ref().is_some_and(|prepared| {
                 prepared.project_revision != player.revision
                     || prepared.context.timeline_position != position
                     || prepared.context.viewport != viewport
             });
-        if stale_provider && controller.sequence == PointerSequence::Idle {
-            controller.provider = None;
-            controller.context_invalidated = false;
+        if stale_provider && controller.core.sequence == PointerSequence::Idle {
+            controller.core.provider = None;
+            controller.core.context_invalidated = false;
         }
         let background_color = shrimply_preview_runtime::background_color(
             geometry::theme_window_color(area),
@@ -721,13 +556,7 @@ fn attach_render(
             expression_cache,
             ..
         } = &mut *state;
-        let PreviewControllerState {
-            provider,
-            retiring_provider,
-            presented_base_exclusion,
-            extensions,
-            ..
-        } = &mut *controller;
+        let core = &mut controller.core;
         let result = renderer
             .as_mut()
             .expect("preview renderer was initialized")
@@ -771,10 +600,10 @@ fn attach_render(
                             selection_color,
                         );
                     }
-                    if provider.is_none()
+                    if core.provider.is_none()
                         && let Some(key) = focused_video.as_ref()
                     {
-                        *provider = prepare(
+                        core.provider = prepare(
                             &project,
                             key,
                             focused_preview.as_ref(),
@@ -785,38 +614,18 @@ fn attach_render(
                                 padding_px,
                                 audio_analysis,
                                 expression_cache,
-                                extensions,
+                                extensions: &core.extensions,
                                 snap_enabled,
                                 snap_radius_px,
                                 guides,
                             },
                         );
                     }
-                    let current_covers_base = provider.as_ref().is_some_and(|prepared| {
-                        prepared.provider.base_frame_exclusion() == *presented_base_exclusion
-                    });
-                    if !current_covers_base
-                        && let Some(prepared) = retiring_provider.as_mut()
-                        && prepared.provider.base_frame_exclusion() == *presented_base_exclusion
-                    {
-                        let context = prepared.context.context(expression_cache, Some(extensions));
-                        prepared
-                            .provider
-                            .on_draw(timeline_painter.canvas(), &context);
-                    }
-                    let Some(prepared) = provider.as_mut() else {
-                        return;
-                    };
-                    if prepared.provider.base_frame_exclusion() != *presented_base_exclusion {
-                        return;
-                    }
-                    let context = prepared.context.context(expression_cache, Some(extensions));
-                    prepared
-                        .provider
-                        .on_draw(timeline_painter.canvas(), &context);
+                    core.draw(timeline_painter.canvas(), expression_cache);
                 },
             );
-        let exclusion = provider
+        let exclusion = core
+            .provider
             .as_ref()
             .and_then(|prepared| prepared.provider.base_frame_exclusion());
         set_base_exclusion(&mut controller, exclusion, position);
@@ -844,17 +653,17 @@ fn ensure_provider(surface: &ProviderDispatch<'_>) -> bool {
         let state = surface.state.borrow();
         let viewport = geometry::surface_viewport(surface.area, &project, &state);
         let mut controller = surface.controller.borrow_mut();
-        let stale = controller.context_invalidated
-            || controller.provider.as_ref().is_some_and(|prepared| {
+        let stale = controller.core.context_invalidated
+            || controller.core.provider.as_ref().is_some_and(|prepared| {
                 prepared.project_revision != player.revision
                     || prepared.context.timeline_position != player.position
                     || prepared.context.viewport != viewport
             });
-        if stale && controller.sequence == PointerSequence::Idle {
-            controller.provider = None;
-            controller.context_invalidated = false;
+        if stale && controller.core.sequence == PointerSequence::Idle {
+            controller.core.provider = None;
+            controller.core.context_invalidated = false;
         }
-        if controller.provider.is_some() {
+        if controller.core.provider.is_some() {
             return true;
         }
     }
@@ -873,7 +682,7 @@ fn ensure_provider(surface: &ProviderDispatch<'_>) -> bool {
                 padding_px: state.padding_px(),
                 audio_analysis: &state.audio_analysis,
                 expression_cache: &state.expression_cache,
-                extensions: &controller.extensions,
+                extensions: &controller.core.extensions,
                 snap_enabled: state.snap_enabled,
                 snap_radius_px: state.snap_radius_px as f32,
                 guides: state
@@ -886,115 +695,39 @@ fn ensure_provider(surface: &ProviderDispatch<'_>) -> bool {
         .as_ref()
         .and_then(|prepared| prepared.provider.base_frame_exclusion());
     let mut controller = surface.controller.borrow_mut();
-    controller.provider = prepared;
+    controller.core.provider = prepared;
     set_base_exclusion(&mut controller, exclusion, player.position);
     drop(controller);
-    surface.controller.borrow().provider.is_some()
+    surface.controller.borrow().core.provider.is_some()
 }
 
 fn dispatch_pointer(surface: ProviderDispatch<'_>, event: PointerEvent<'_>) -> PreviewResponse {
-    {
-        let mut controller = surface.controller.borrow_mut();
-        match event {
-            PointerEvent::Begin(_) if controller.sequence != PointerSequence::Idle => {
-                return PreviewResponse::IGNORED;
-            }
-            PointerEvent::Samples { .. } if controller.sequence != PointerSequence::Active => {
-                return PreviewResponse::IGNORED;
-            }
-            PointerEvent::End(_) | PointerEvent::Cancel
-                if controller.sequence == PointerSequence::Suppressed =>
-            {
-                controller.sequence = PointerSequence::Idle;
-                if controller.context_invalidated {
-                    controller.provider = None;
-                    controller.context_invalidated = false;
-                }
-                return PreviewResponse::IGNORED;
-            }
-            PointerEvent::End(_) | PointerEvent::Cancel
-                if controller.sequence != PointerSequence::Active =>
-            {
-                return PreviewResponse::IGNORED;
-            }
-            _ => {}
-        }
-    }
-    if !ensure_provider(&surface) {
-        if matches!(event, PointerEvent::Begin(_)) {
-            surface.controller.borrow_mut().sequence = PointerSequence::Suppressed;
-        }
+    if !surface.controller.borrow_mut().core.accepts_pointer(event) {
         return PreviewResponse::IGNORED;
     }
-    if matches!(event, PointerEvent::Begin(_)) {
-        let mut controller = surface.controller.borrow_mut();
-        controller.sequence = PointerSequence::Active;
-        controller.live_base_pending = false;
-        controller.live_base_in_flight = None;
-    }
-    let ProviderDispatch {
-        area,
-        project,
-        player_state,
-        state,
-        controller,
-        ..
-    } = surface;
-    let terminal = matches!(event, PointerEvent::End(_) | PointerEvent::Cancel);
-    let mut prepared = controller
-        .borrow_mut()
-        .provider
-        .take()
-        .expect("preview provider disappeared during pointer dispatch");
-    let mut response = {
-        let mut project = project.borrow_mut();
-        let state = state.borrow();
-        let mut controller = controller.borrow_mut();
-        let context = prepared.context.context(&state.expression_cache, None);
-        prepared.provider.on_pointer(
-            event,
-            &context,
-            &mut Edits {
-                project: &mut project,
-                extensions: &mut controller.extensions,
-                item: &prepared.item,
-                keyframe_time: prepared.context.keyframe_time,
-                context,
-            },
-        )
+    ensure_provider(&surface);
+    let response = {
+        let mut project = surface.project.borrow_mut();
+        let state = surface.state.borrow();
+        surface
+            .controller
+            .borrow_mut()
+            .core
+            .pointer(&mut project, &state.expression_cache, event)
     };
-    if matches!(event, PointerEvent::Cancel) {
-        response.edit = response.edit.canceled();
-    }
-    if response.edit.changed() && !response.edit.commits() && !terminal {
-        if response.edit.refresh.contains(PreviewRefresh::PREVIEW) {
-            controller.borrow_mut().live_base_pending = true;
-        }
-        prepared.deferred_refresh |= response.edit.refresh;
-        response.edit.refresh = PreviewRefresh::NONE;
-    } else if response.edit.commits() || terminal {
-        response.edit.refresh |= prepared.deferred_refresh;
-        prepared.deferred_refresh = PreviewRefresh::NONE;
-        let mut controller = controller.borrow_mut();
-        controller.live_base_pending = false;
-    }
-    let mut controller_state = controller.borrow_mut();
-    controller_state.provider = Some(prepared);
-    controller_state.frame_pending |= response.redraw;
-    if terminal {
-        controller_state.sequence = PointerSequence::Idle;
-    }
-    drop(controller_state);
-    apply_response(area, project, player_state, response, "preview-provider");
+    apply_response(
+        surface.area,
+        surface.project,
+        surface.player_state,
+        response,
+        "preview-provider",
+    );
     if response.edit.commits() {
-        let revision = player_state::snapshot(player_state).revision;
-        let mut controller = controller.borrow_mut();
-        if let Some(provider) = controller.provider.as_mut() {
-            provider.project_revision = revision;
-            provider.provider.on_project_committed(revision);
-            let invalidate = !provider.provider.keeps_frame_until_base();
-            controller.context_invalidated = invalidate;
-        }
+        surface
+            .controller
+            .borrow_mut()
+            .core
+            .project_committed(player_state::snapshot(surface.player_state).revision);
     }
     response
 }
@@ -1003,50 +736,28 @@ fn dispatch_keyboard(surface: ProviderDispatch<'_>, event: KeyboardEvent) -> Pre
     if !ensure_provider(&surface) {
         return PreviewResponse::IGNORED;
     }
-    let ProviderDispatch {
-        area,
-        project,
-        player_state,
-        state,
-        controller,
-        ..
-    } = surface;
-    let mut prepared = controller
-        .borrow_mut()
-        .provider
-        .take()
-        .expect("preview provider disappeared during keyboard dispatch");
     let response = {
-        let mut project = project.borrow_mut();
-        let state = state.borrow();
-        let mut controller = controller.borrow_mut();
-        let context = prepared.context.context(&state.expression_cache, None);
-        prepared.provider.on_keyboard(
-            event,
-            &context,
-            &mut Edits {
-                project: &mut project,
-                extensions: &mut controller.extensions,
-                item: &prepared.item,
-                keyframe_time: prepared.context.keyframe_time,
-                context,
-            },
-        )
+        let mut project = surface.project.borrow_mut();
+        let state = surface.state.borrow();
+        surface
+            .controller
+            .borrow_mut()
+            .core
+            .keyboard(&mut project, &state.expression_cache, event)
     };
-    let mut controller_state = controller.borrow_mut();
-    controller_state.provider = Some(prepared);
-    controller_state.frame_pending |= response.redraw;
-    drop(controller_state);
-    apply_response(area, project, player_state, response, "preview-keyboard");
+    apply_response(
+        surface.area,
+        surface.project,
+        surface.player_state,
+        response,
+        "preview-keyboard",
+    );
     if response.edit.commits() {
-        let revision = player_state::snapshot(player_state).revision;
-        let mut controller = controller.borrow_mut();
-        if let Some(provider) = controller.provider.as_mut() {
-            provider.project_revision = revision;
-            provider.provider.on_project_committed(revision);
-            let invalidate = !provider.provider.keeps_frame_until_base();
-            controller.context_invalidated = invalidate;
-        }
+        surface
+            .controller
+            .borrow_mut()
+            .core
+            .project_committed(player_state::snapshot(surface.player_state).revision);
     }
     response
 }
@@ -1058,46 +769,20 @@ fn cancel_provider(
     state: &Rc<RefCell<VideoSurfaceState>>,
     controller: &Rc<RefCell<PreviewControllerState>>,
 ) {
-    let mut controller_state = controller.borrow_mut();
-    controller_state.sequence = if controller_state.sequence == PointerSequence::Active {
-        PointerSequence::Suppressed
-    } else {
-        PointerSequence::Idle
-    };
-    controller_state.context_invalidated = false;
-    let Some(mut prepared) = controller_state.provider.take() else {
-        let position = player_state::snapshot(player_state).position;
-        set_base_exclusion(&mut controller_state, None, position);
-        return;
-    };
-    drop(controller_state);
-    let mut response = {
+    let response = {
         let mut project = project.borrow_mut();
         let state = state.borrow();
-        let mut controller = controller.borrow_mut();
-        let context = prepared.context.context(&state.expression_cache, None);
-        prepared.provider.on_cancel(
-            &context,
-            &mut Edits {
-                project: &mut project,
-                extensions: &mut controller.extensions,
-                item: &prepared.item,
-                keyframe_time: prepared.context.keyframe_time,
-                context,
-            },
-        )
+        controller
+            .borrow_mut()
+            .core
+            .cancel(&mut project, &state.expression_cache)
     };
-    response.edit.refresh |= prepared.deferred_refresh;
-    response.edit = response.edit.canceled();
     apply_response(area, project, player_state, response, "preview-cancel");
-    let position = player_state::snapshot(player_state).position;
-    let mut controller = controller.borrow_mut();
-    controller.retiring_provider = prepared
-        .provider
-        .base_frame_exclusion()
-        .is_some()
-        .then_some(prepared);
-    set_base_exclusion(&mut controller, None, position);
+    set_base_exclusion(
+        &mut controller.borrow_mut(),
+        None,
+        player_state::snapshot(player_state).position,
+    );
 }
 
 fn attach_input(
@@ -1127,7 +812,7 @@ fn attach_input(
     let motion_guides = guide_input.clone();
     motion.connect_motion(move |source, x, y| {
         let position = GlamVec2::new(x as f32, y as f32);
-        if motion_controller.borrow().sequence != PointerSequence::Idle {
+        if motion_controller.borrow().core.sequence != PointerSequence::Idle {
             if motion_state
                 .borrow_mut()
                 .caption_split_hover
@@ -1214,7 +899,7 @@ fn attach_input(
         {
             leave_area.queue_render();
         }
-        if leave_controller.borrow().sequence != PointerSequence::Idle {
+        if leave_controller.borrow().core.sequence != PointerSequence::Idle {
             return;
         }
         leave_guides.borrow_mut().pointer_leave();
@@ -1264,7 +949,7 @@ fn attach_input(
                 input.sample.position,
             );
             if began_guide {
-                begin_controller.borrow_mut().sequence = PointerSequence::Guide;
+                begin_controller.borrow_mut().core.sequence = PointerSequence::Guide;
                 begin_area.set_cursor_from_name(begin_guides.borrow().cursor().name());
                 begin_area.queue_render();
                 return;

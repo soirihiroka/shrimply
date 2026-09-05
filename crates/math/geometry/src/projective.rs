@@ -1,6 +1,7 @@
 use glam::{Mat3, Vec2};
 
 const PROJECTIVE_EPSILON: f32 = 0.000_001;
+pub const UNIT_QUAD: [Vec2; 4] = [Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y];
 
 /// Returns the homography that maps a corner-pin destination back to the unit source rectangle.
 /// Corners are ordered top-left, top-right, bottom-right, bottom-left.
@@ -8,11 +9,7 @@ pub fn corner_pin_inverse(corners: [Vec2; 4]) -> Option<Mat3> {
     if !is_convex(corners) {
         return None;
     }
-    solve_projective(
-        corners
-            .into_iter()
-            .zip([Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y]),
-    )
+    solve_projective(corners.into_iter().zip(UNIT_QUAD))
 }
 
 fn is_convex(points: [Vec2; 4]) -> bool {

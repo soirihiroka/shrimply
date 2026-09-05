@@ -498,7 +498,7 @@ pub fn visual_modifier_presentations(
                                 value,
                                 index,
                                 modifier.id,
-                                shrimply_video::transparent_fill_analysis::status(
+                                shrimply_video_cuda::transparent_fill_analysis::status(
                                     project,
                                     address,
                                     modifier.id,
@@ -1564,7 +1564,7 @@ impl InspectorController {
             });
         drop(project);
         if cached {
-            shrimply_video::modifier_cache::invalidate(id)?;
+            shrimply_video_cuda::modifier_cache::invalidate(id)?;
         }
         self.edit_visual_modifier_chain(target, id, VisualModifierChainAction::Remove)
     }

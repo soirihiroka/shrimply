@@ -807,7 +807,7 @@ uint blend_pixel(uint source_value, uint destination_value, LayerBlendMode mode,
         float(blend_noise(seed, index)) <= alpha * 4294967295.0f ? 1.0f : 0.0f;
   return color_to_rgba(blend_over(source, destination, mode, alpha, false));
 }
-[CudaKernel] void composite_layered_image_layer(
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void composite_layered_image_layer(
     uint3 id : SV_DispatchThreadID, uniform LayerCompositeParams params,
     uniform uint *output, uniform uint64_t output_count) {
   uint i = id.x;
@@ -879,7 +879,7 @@ uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
   }
   return pixel;
 }
-[CudaKernel] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 composite_nv12_layers(uint3 id : SV_DispatchThreadID,
                       uniform Nv12LayerParams *layers,
                       uniform uint64_t layer_count, uniform Mat3 *transforms,
@@ -894,7 +894,7 @@ composite_nv12_layers(uint3 id : SV_DispatchThreadID,
   uint x = i % layers[0].canvas_width, y = i / layers[0].canvas_width;
   output[i] = composite_pixel(layers, layer_count, transforms, transform_count,
                               x, y, background);
-}[CudaKernel] void tone_map_hdr(uint3 id : SV_DispatchThreadID,
+}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void tone_map_hdr(uint3 id : SV_DispatchThreadID,
                                 uniform Color *input, uniform Color *background,
                                 uniform uint *output,
                                 uniform uint64_t output_count,

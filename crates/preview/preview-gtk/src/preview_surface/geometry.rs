@@ -1,5 +1,6 @@
 use super::*;
 use glib::translate::{ToGlibPtrMut, from_glib};
+use shrimply_preview_core::PreviewViewport;
 
 impl VideoSurfaceState {
     pub(super) fn padding_px(&self) -> u32 {

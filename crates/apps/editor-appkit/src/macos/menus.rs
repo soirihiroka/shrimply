@@ -75,7 +75,14 @@ pub fn install(editor: &Editor) {
     );
 
     let file = submenu(&main, "File", mtm);
-    item(&file, "Save", "s", None, mtm);
+    let import = item(&file, "Import Media…", "i", Some(sel!(importMedia:)), mtm);
+    unsafe {
+        import.setTarget(Some(editor));
+    }
+    let save = item(&file, "Save", "s", Some(sel!(saveProject:)), mtm);
+    unsafe {
+        save.setTarget(Some(editor));
+    }
     let save_as = item(&file, "Save As…", "s", None, mtm);
     save_as
         .setKeyEquivalentModifierMask(NSEventModifierFlags::Command | NSEventModifierFlags::Shift);

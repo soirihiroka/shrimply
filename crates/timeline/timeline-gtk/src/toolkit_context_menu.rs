@@ -637,38 +637,7 @@ impl ToolkitTimeline {
     }
 }
 
-pub(crate) fn prepare_selected_video_frame(
-    project: &Rc<RefCell<Project>>,
-    player_state: &SharedPlayerState,
-    selection_state: &SharedSelectionState,
-    selection: VideoFrameSelection,
-) -> (Project, Time, Vec<uuid::Uuid>) {
-    let project = project.borrow().clone();
-    let item_ids = match selection {
-        VideoFrameSelection::Items => selected_timeline_items(selection_state)
-            .iter()
-            .filter(|key| key.kind == TrackKind::Video)
-            .filter_map(|key| {
-                project
-                    .video_tracks
-                    .get(key.track_index)
-                    .and_then(|track| track.items.get(key.item_index))
-                    .map(|item| item.id)
-            })
-            .collect(),
-        VideoFrameSelection::Tracks => selected_timeline_tracks(selection_state)
-            .iter()
-            .filter(|key| key.kind == TrackKind::Video)
-            .filter_map(|key| project.video_tracks.get(key.track_index))
-            .flat_map(|track| track.items.iter().map(|item| item.id))
-            .collect(),
-    };
-    (
-        project,
-        player_state::snapshot(player_state).position,
-        item_ids,
-    )
-}
+pub(crate) use shrimply_timeline_core::video_selection::prepare_selected_video_frame;
 
 pub(crate) fn render_video_frame(
     project: Project,
@@ -676,7 +645,7 @@ pub(crate) fn render_video_frame(
     item_ids: &[uuid::Uuid],
 ) -> Result<RenderedVideoFrame, String> {
     let canvas_size = project.canvas_size;
-    let mut renderer = shrimply_video::compositor::VideoExportRenderer::new(48_000)?;
+    let mut renderer = shrimply_video_cuda::compositor::VideoExportRenderer::new(48_000)?;
     let frame = renderer.render_items(&project, position, 0, item_ids)?;
     let mut rgba = ffmpeg_next::frame::Video::new(
         ffmpeg_next::format::Pixel::RGBA,

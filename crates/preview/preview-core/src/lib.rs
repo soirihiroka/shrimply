@@ -1,4 +1,6 @@
 use std::any::Any;
+pub mod accuracy;
+pub mod playback;
 
 use glam::{Mat3, Vec2};
 pub use shrimply_math_color::{Color, LayerBlendMode};
@@ -967,3 +969,6 @@ pub fn draw_keypoints(canvas: &PreviewCanvas, positions: &[Vec2], color: Color) 
 pub fn hit_keypoint(pointer: Vec2, position: Vec2) -> bool {
     pointer.distance_squared(position) <= KEYPOINT_HIT_RADIUS * KEYPOINT_HIT_RADIUS
 }
+
+pub mod canvas;
+pub mod math;

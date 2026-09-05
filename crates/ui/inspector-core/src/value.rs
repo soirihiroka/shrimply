@@ -254,11 +254,11 @@ impl InspectorController {
         if item.stabilization_method() == method {
             return Ok(());
         }
-        shrimply_video::video_stabilization::cancel(item);
+        shrimply_video_cuda::video_stabilization::cancel(item);
         item.stabilize_video = !matches!(method, VideoStabilizationMethod::Off);
         item.stabilization_method = method;
         if item.stabilize_video {
-            shrimply_video::video_stabilization::request(item);
+            shrimply_video_cuda::video_stabilization::request(item);
         }
         shrimply_project::project::commit_edit(&project, "video-stabilization-method");
         drop(project);
