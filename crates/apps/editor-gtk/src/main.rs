@@ -113,10 +113,19 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     window.connect_destroy(move |_| {
         mcp_server.borrow_mut().take();
     });
-    let video_player = video_player::new(
+    let timeline = timeline::new(
         project.clone(),
         player_state.clone(),
         playback_performance.clone(),
+        selection_state.clone(),
+        preferences.clone(),
+        audio_levels,
+        property_clipboard,
+    );
+    let video_player = video_player::new(
+        project.clone(),
+        player_state.clone(),
+        playback_performance,
         selection_state.clone(),
         preview_focus.clone(),
         preferences.clone(),
@@ -141,15 +150,6 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     top.set_shrink_start_child(false);
     top.set_shrink_end_child(false);
 
-    let timeline = timeline::new(
-        project.clone(),
-        player_state.clone(),
-        playback_performance,
-        selection_state.clone(),
-        preferences.clone(),
-        audio_levels,
-        property_clipboard,
-    );
     let layout = gtk::Paned::new(gtk::Orientation::Vertical);
     layout.set_wide_handle(false);
     layout.set_start_child(Some(&top));

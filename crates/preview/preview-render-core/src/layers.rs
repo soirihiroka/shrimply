@@ -35,10 +35,7 @@ impl Scene {
             item.modifier_output_state()?;
             shrimply_project::project::validate_visual_transitions(item)?;
             let evaluation = VisualEvaluation::for_item_with_audio(project, item, time, audio);
-            if item.stabilize_video
-                || item.alpha_mask_video.is_some()
-                || item.compositing.alpha_mask.is_some()
-            {
+            if item.stabilize_video {
                 return Err(format!(
                     "Clip {} requires an effect pipeline that is not yet connected to Metal",
                     item.id
@@ -87,7 +84,7 @@ impl Scene {
                     project.canvas_size,
                     transform.composed(),
                     generated_transition,
-                    match self.media.frame(&prepared.address) {
+                    match self.media.frame(&prepared.address, media::Plane::Content) {
                         Some(media::Frame::Svg(svg)) => Some(svg.clone()),
                         _ => None,
                     },
@@ -259,8 +256,134 @@ impl Scene {
                         project.canvas_size.height,
                     )
                 }
+                VideoItemContent::Manim(_) => {
+                    let fps =
+                        if item.playback_fps == shrimply_project::project::native_playback_fps() {
+                            project.fps
+                        } else {
+                            item.playback_fps
+                        };
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        self.manim.entry(item.id)
+                    {
+                        entry.insert(shrimply_manim_wgpu::Source::new(
+                            item,
+                            project.canvas_size,
+                            fps,
+                        )?);
+                    }
+                    let source = self
+                        .manim
+                        .get_mut(&item.id)
+                        .expect("Manim source was initialized");
+                    let outcome = source.poll(item, project.canvas_size, fps, time);
+                    let source_revision = source.source_revision();
+                    let scene = source.scene().to_string();
+                    let input_parameters = source.input_parameters().clone();
+                    let duration = source.take_duration();
+                    let parameters = source.take_parameters();
+                    if let Some(duration) = duration {
+                        self.manim_updates
+                            .push(shrimply_state::manim_status::Update::Duration {
+                                item_id: item.id,
+                                source_revision,
+                                scene: scene.clone(),
+                                input_parameters: input_parameters.clone(),
+                                duration,
+                            });
+                    }
+                    if let Some((parameters, render_is_current)) = parameters {
+                        self.manim_updates
+                            .push(shrimply_state::manim_status::Update::Parameters {
+                                item_id: item.id,
+                                source_revision,
+                                scene: scene.clone(),
+                                input_parameters: input_parameters.clone(),
+                                parameters,
+                                render_is_current,
+                            });
+                    }
+                    match outcome {
+                        Err(error) => {
+                            self.manim_updates
+                                .push(shrimply_state::manim_status::Update::Error {
+                                    item_id: item.id,
+                                    source_revision,
+                                    scene: scene.clone(),
+                                    input_parameters: input_parameters.clone(),
+                                    error: Some(error.clone()),
+                                });
+                            return Err(error);
+                        }
+                        Ok(Ok(frame)) => {
+                            let source_width = frame.prepared.scene().width.max(1);
+                            let source_height = frame.prepared.scene().height.max(1);
+                            (
+                                Source::Manim(ManimFrame {
+                                    item_id: item.id,
+                                    prepared: frame.prepared,
+                                    frame_index: frame.frame_index,
+                                }),
+                                source_width,
+                                source_height,
+                            )
+                        }
+                        Ok(Err(shrimply_manim_wgpu::SourceStatus::Loading {
+                            progress,
+                            changed,
+                        })) => {
+                            self.manim_loading = true;
+                            if changed && progress.is_none() {
+                                self.manim_updates.push(
+                                    shrimply_state::manim_status::Update::Error {
+                                        item_id: item.id,
+                                        source_revision,
+                                        scene: scene.clone(),
+                                        input_parameters: input_parameters.clone(),
+                                        error: None,
+                                    },
+                                );
+                            }
+                            if !changed {
+                                self.manim_pending = true;
+                                return Ok(Vec::new());
+                            }
+                            let pixels = shrimply_manim_wgpu::loading_pixels(
+                                project.canvas_size.width,
+                                project.canvas_size.height,
+                                progress,
+                            )?;
+                            let info = skia_safe::ImageInfo::new(
+                                (
+                                    project.canvas_size.width as i32,
+                                    project.canvas_size.height as i32,
+                                ),
+                                skia_safe::ColorType::RGBA8888,
+                                skia_safe::AlphaType::Unpremul,
+                                None,
+                            );
+                            let image = skia_safe::images::raster_from_data(
+                                &info,
+                                skia_safe::Data::new_copy(&pixels),
+                                project.canvas_size.width as usize * size_of::<u32>(),
+                            )
+                            .ok_or("Could not create the Manim loading frame")?;
+                            (
+                                Source::Image(image),
+                                project.canvas_size.width,
+                                project.canvas_size.height,
+                            )
+                        }
+                        Ok(Err(shrimply_manim_wgpu::SourceStatus::NeedsParameters)) => {
+                            self.manim_loading = true;
+                            self.manim_pending = true;
+                            return Ok(Vec::new());
+                        }
+                    }
+                }
                 _ => {
-                    let Some(media::Frame::Image(image)) = self.media.frame(&prepared.address)
+                    let Some(media::Frame::Image(image)) =
+                        self.media.frame(&prepared.address, media::Plane::Content)
                     else {
                         return Err("This visual source is not yet connected to Metal".into());
                     };
@@ -276,17 +399,12 @@ impl Scene {
                     .iter()
                     .filter(|modifier| modifier.enabled)
                     .map(|modifier| {
-                        let effect = match (&modifier.effect, &modifier.alpha_mask) {
-                            (shrimply_video_modifiers::ModifierEffect::Raster(effect), None) => {
-                                shrimply_video_core::raster_modifiers::operation(
-                                    effect,
-                                    &evaluation,
-                                    &mut self.expressions,
-                                    self.requested_accuracy.content_accurate(),
-                                )?
-                            }
-                            _ => None,
-                        };
+                        let effect = shrimply_video_core::raster_modifiers::modifier(
+                            modifier,
+                            &evaluation,
+                            &mut self.expressions,
+                            self.requested_accuracy.content_accurate(),
+                        )?;
                         effect.ok_or_else(|| {
                             format!(
                                 "Clip {} has a modifier or mask that is not yet connected to Metal",
@@ -323,6 +441,36 @@ impl Scene {
                 _padding_0: [0; 4],
             };
             let layer = Layer {
+                video_mask: prepared
+                    .video_mask
+                    .map(|size| {
+                        let Some(media::Frame::Image(image)) =
+                            self.media.frame(&address, media::Plane::Alpha)
+                        else {
+                            return Err("Alpha video stream did not produce a raster image".into());
+                        };
+                        Ok::<_, String>(VideoMask {
+                            image: image.clone(),
+                            size: (size.width, size.height),
+                            sampling: shrimply_video_core::generated::sampling(
+                                item.sample_method.value_at(evaluation.local_time()),
+                                self.requested_accuracy.content_accurate(),
+                            ),
+                        })
+                    })
+                    .transpose()?,
+                alpha_mask: item
+                    .compositing
+                    .alpha_mask
+                    .as_ref()
+                    .filter(|mask| mask.enabled)
+                    .map(|mask| {
+                        shrimply_video_core::alpha_mask::resolve(
+                            mask,
+                            &evaluation,
+                            &mut self.expressions,
+                        )
+                    }),
                 transform: raster_transform,
                 motion_blur,
                 parameters,
@@ -393,6 +541,8 @@ impl Scene {
                     color,
                 );
                 layers.push(Layer {
+                    video_mask: None,
+                    alpha_mask: None,
                     transform: shrimply_render_core::math::Mat3::IDENTITY,
                     motion_blur: None,
                     parameters: Nv12LayerParams {
@@ -434,6 +584,10 @@ impl Scene {
         let incoming = incoming.layer;
         if !outgoing.effects.is_empty()
             || !incoming.effects.is_empty()
+            || outgoing.alpha_mask.is_some()
+            || incoming.alpha_mask.is_some()
+            || outgoing.video_mask.is_some()
+            || incoming.video_mask.is_some()
             || outgoing
                 .transitions
                 .iter()
@@ -493,6 +647,8 @@ impl Scene {
             _ => return Err("Morph endpoints must remain generated vectors".into()),
         };
         Ok(Layer {
+            video_mask: None,
+            alpha_mask: None,
             parameters,
             transform: shrimply_render_core::math::Mat3::IDENTITY,
             source: Source::Generated(Box::new(shrimply_video_core::generated::GeneratedFrame {

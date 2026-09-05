@@ -23,11 +23,19 @@ pub struct Layer {
     pub transform: shrimply_render_core::math::Mat3,
     pub source: Source,
     pub transitions: Vec<TransitionStage>,
-    pub effects: Vec<shrimply_video_core::raster_modifiers::Operation>,
+    pub effects: Vec<shrimply_video_core::raster_modifiers::Modifier>,
     pub render_size: (u32, u32),
     pub output_transform: shrimply_render_core::math::Mat3,
     pub motion_blur: Option<Vec<shrimply_math_geometry::ComposedTransform2D>>,
     pub morph_scene: Option<shrimply_video_core::vector_morph::MorphScene>,
+    pub alpha_mask: Option<shrimply_video_core::alpha_mask::ResolvedShapeAlphaMask>,
+    pub video_mask: Option<VideoMask>,
+}
+
+pub struct VideoMask {
+    pub image: Image,
+    pub size: (u32, u32),
+    pub sampling: shrimply_render_core::VideoSampleMethod,
 }
 
 pub enum Source {
@@ -35,6 +43,13 @@ pub enum Source {
     Group(Vec<Layer>),
     Image(Image),
     Background(Box<shrimply_render_core::background_spirv::BackgroundUniforms>),
+    Manim(ManimFrame),
+}
+
+pub struct ManimFrame {
+    pub item_id: uuid::Uuid,
+    pub prepared: std::sync::Arc<shrimply_manim_wgpu::PreparedAnimation>,
+    pub frame_index: usize,
 }
 
 pub struct TransitionStage {
@@ -45,6 +60,7 @@ pub struct TransitionStage {
 pub struct FramePlan {
     pub time: Time,
     pub accuracy: CompositeAccuracy,
+    pub loading: bool,
     pub audio_analysis: FrameAudioAnalysis,
     pub layers: Vec<Layer>,
     pub width: u32,
@@ -87,9 +103,17 @@ pub struct Scene {
         MorphCacheKey,
         std::rc::Rc<shrimply_video_core::vector_morph::PreparedVectorMorph>,
     >,
+    manim: std::collections::HashMap<uuid::Uuid, shrimply_manim_wgpu::Source>,
+    manim_updates: Vec<shrimply_state::manim_status::Update>,
+    manim_loading: bool,
+    manim_pending: bool,
 }
 
 impl Scene {
+    pub fn take_manim_updates(&mut self) -> Vec<shrimply_state::manim_status::Update> {
+        std::mem::take(&mut self.manim_updates)
+    }
+
     pub fn set_exclusion(&mut self, excluded_item_id: Option<uuid::Uuid>) {
         if self.excluded_item_id != excluded_item_id {
             self.excluded_item_id = excluded_item_id;
@@ -100,6 +124,7 @@ impl Scene {
     pub fn needs_update(&self) -> bool {
         self.media.needs_update()
             || self.audio_pending
+            || self.manim_pending
             || self.scrubbing && self.requested_accuracy != CompositeAccuracy::FULLY_ACCURATE
     }
 
@@ -119,9 +144,16 @@ impl Scene {
         self.audio_pending = false;
         self.sampled_audio.clear();
         self.morphs.clear();
+        self.manim_loading = false;
+        self.manim_pending = false;
     }
 
     pub fn prepare(&mut self, project: &Project, time: Time) -> Result<Option<FramePlan>, String> {
+        self.manim.retain(|item_id, _| {
+            project
+                .video_item_by_id(*item_id)
+                .is_some_and(|item| matches!(item.content, VideoItemContent::Manim(_)))
+        });
         let now = Instant::now();
         if self.previous_time != Some(time) {
             let local = self.previous_time.is_some_and(|previous| {
@@ -165,10 +197,15 @@ impl Scene {
             return Ok(None);
         }
         let key = (time, self.media.revision(), accuracy);
-        if self.prepared == Some(key) && !self.audio_pending {
+        if self.prepared == Some(key) && !self.audio_pending && !self.manim_loading {
             return Ok(None);
         }
+        self.manim_loading = false;
+        self.manim_pending = false;
         let layers = self.layers(project, &audio, items)?;
+        if self.manim_pending {
+            return Ok(None);
+        }
         let failures = std::iter::once(&audio)
             .chain(&self.sampled_audio)
             .flat_map(FrameAudioAnalysis::failures)
@@ -186,6 +223,7 @@ impl Scene {
         Ok(Some(FramePlan {
             time,
             accuracy,
+            loading: self.manim_loading,
             audio_analysis: audio,
             layers,
             width: project.canvas_size.width,

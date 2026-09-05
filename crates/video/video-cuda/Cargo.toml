@@ -44,6 +44,7 @@ shrimply-math-color = { path = "../../math/color", features = ["cuda", "skia"] }
 shrimply-math-geometry = { path = "../../math/geometry", features = ["skia"] }
 shrimply-manim-parser = { path = "../../manim/manim-parser" }
 shrimply-manim-wgpu = { path = "../../manim/manim-wgpu" }
+shrimply-manim-cuda = { path = "../../manim/manim-cuda" }
 shrimply-mesh-flow-stabilization = { path = "../../stabilization/mesh-flow-stabilization" }
 shrimply-nvidia-optical-flow = { path = "../../stabilization/nvidia-optical-flow" }
 shrimply-optix-denoiser = { path = "../../3d/optix-denoiser" }
@@ -61,6 +62,7 @@ shrimply-text-3d = { path = "../../3d/text-3d" }
 shrimply-video-modifiers = { path = "../video-modifiers" }
 shrimply-video-decoder = { path = "../decoder" }
 shrimply-server-client = { path = "../../server-client" }
+shrimply-state = { path = "../../state" }
 skia-safe = { workspace = true, features = ["gl", "vulkan", "textlayout", "svg"] }
 tempfile.workspace = true
 tracing.workspace = true

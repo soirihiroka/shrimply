@@ -32,10 +32,22 @@ enum Kind {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Request {
-    id: ItemAddress,
+    id: Key,
     source: Source,
     time: Time,
     accuracy: CompositeAccuracy,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Plane {
+    Content,
+    Alpha,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Key {
+    address: ItemAddress,
+    plane: Plane,
 }
 
 impl Request {
@@ -44,6 +56,7 @@ impl Request {
         address: ItemAddress,
         time: Time,
         accuracy: CompositeAccuracy,
+        plane: Plane,
     ) -> Option<Self> {
         let kind = match item.content {
             VideoItemContent::Media | VideoItemContent::Gif => Kind::Video,
@@ -53,7 +66,7 @@ impl Request {
             _ => return None,
         };
         Some(Self {
-            id: address,
+            id: Key { address, plane },
             source: Source {
                 file: item.file.clone(),
                 track: item.track_id,
@@ -82,7 +95,7 @@ struct Batch {
 struct Completed {
     epoch: u64,
     generation: u64,
-    frames: Result<HashMap<ItemAddress, (Source, Frame)>, String>,
+    frames: Result<HashMap<Key, (Source, Frame)>, String>,
 }
 #[derive(Default)]
 struct Slots {
@@ -104,7 +117,7 @@ struct Shared {
 pub struct Media {
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
-    frames: HashMap<ItemAddress, (Source, Frame)>,
+    frames: HashMap<Key, (Source, Frame)>,
     requested: Vec<Request>,
     revision: u64,
     error: Option<String>,
@@ -223,8 +236,13 @@ impl Media {
         Ok(ready)
     }
 
-    pub fn frame(&self, address: &ItemAddress) -> Option<&Frame> {
-        self.frames.get(address).map(|(_, frame)| frame)
+    pub fn frame(&self, address: &ItemAddress, plane: Plane) -> Option<&Frame> {
+        self.frames
+            .get(&Key {
+                address: address.clone(),
+                plane,
+            })
+            .map(|(_, frame)| frame)
     }
 }
 
@@ -251,7 +269,7 @@ struct Cached {
 }
 
 fn worker(shared: Arc<Shared>) {
-    let mut cache = HashMap::<ItemAddress, Cached>::new();
+    let mut cache = HashMap::<Key, Cached>::new();
     let mut epoch = 0;
     loop {
         let batch = {
@@ -305,7 +323,7 @@ fn worker(shared: Arc<Shared>) {
 
 fn load(
     request: &Request,
-    cache: &mut HashMap<ItemAddress, Cached>,
+    cache: &mut HashMap<Key, Cached>,
     shared: &Shared,
     batch: &Batch,
 ) -> Result<Frame, String> {

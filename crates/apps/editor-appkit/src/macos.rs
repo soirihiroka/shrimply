@@ -1,5 +1,6 @@
 mod about;
 mod canvas;
+mod error_alert;
 mod fullscreen;
 mod layout;
 mod media;
@@ -245,10 +246,7 @@ define_class!(
 
 impl Editor {
     fn show_error(&self, error: &str) {
-        let alert = NSAlert::new(self.mtm());
-        alert.setMessageText(ns_string!("Shrimply"));
-        alert.setInformativeText(&NSString::from_str(error));
-        alert.runModal();
+        error_alert::show(self.mtm(), error);
     }
 
     fn step(&self, forward: bool) {
@@ -330,10 +328,7 @@ pub fn run(project: Option<&Path>) {
     let prepared = match shrimply_project::project::prepare_project(path) {
         Ok(prepared) => prepared,
         Err(error) => {
-            let alert = NSAlert::new(mtm);
-            alert.setMessageText(ns_string!("Could not open project"));
-            alert.setInformativeText(&NSString::from_str(&format!("{error:?}")));
-            alert.runModal();
+            error_alert::show(mtm, &format!("Could not open project: {error:?}"));
             return;
         }
     };

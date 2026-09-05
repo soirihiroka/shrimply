@@ -466,19 +466,13 @@ fn apply_alpha_mask_branch(
         GpuFrame::Nv12(frame) => glam::Vec2::new(frame.width() as f32, frame.height() as f32),
         GpuFrame::Rgba(frame) => glam::Vec2::new(frame.width() as f32, frame.height() as f32),
     };
-    let matrix = branch.state.transform.matrix;
-    let determinant = matrix.determinant();
-    if !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
-        return Err("alpha mask transform is not invertible".to_string());
-    }
-    let canvas_to_local = matrix.inverse();
     let blend_mode = state.compositing.blend_mode;
     let opacity = branch.state.compositing.opacity;
-    let affected_opacity = if opacity.abs() > f32::EPSILON {
-        state.compositing.opacity / opacity
-    } else {
-        1.0
-    };
+    let plan = shrimply_video_core::alpha_mask::branch(
+        branch.state.transform.matrix,
+        opacity,
+        state.compositing.opacity,
+    )?;
     let render_branch = |compositor: &mut CudaVideoCompositor,
                          frame,
                          state: VisualState,
@@ -499,12 +493,12 @@ fn apply_alpha_mask_branch(
         )
     };
     let original = render_branch(compositor, branch.original, branch.state, 1.0)?;
-    let affected = render_branch(compositor, affected, state, affected_opacity)?;
+    let affected = render_branch(compositor, affected, state, plan.affected_opacity)?;
     let frame = crate::alpha_mask::combine_shape(
         compositor,
         &affected,
         original,
-        canvas_to_local,
+        plan.canvas_to_local,
         source_size,
         branch.mask,
     )?;

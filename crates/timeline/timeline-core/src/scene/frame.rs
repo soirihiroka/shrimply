@@ -3,6 +3,7 @@ use crate::drawing::{TimelineInput, active_virtual_tracks, draw_timeline};
 use crate::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 
 pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, frame: Frame<'_>) {
+    let playback_performance = scene.performance.snapshot();
     let project = scene.project.clone();
     let player_state = scene.player.clone();
     let selection_state = scene.selection.clone();
@@ -12,7 +13,6 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
     let runtime = scene;
     let width = f64::from(size.x);
     let height = f64::from(size.y);
-    let playback_performance = frame.playback_performance;
     let accent_color = frame.accent_color;
     let timeline_width = timeline_width(width);
     if timeline_width <= 0.0 {
@@ -202,7 +202,7 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
     draw_timeline(TimelineInput {
         painter,
         project,
-        playback_performance,
+        playback_performance: &playback_performance,
         current_time,
         waveforms: &runtime.waveforms,
         beats: &runtime.beats,
@@ -259,7 +259,6 @@ fn apply_scrollbar_scroll_animation(runtime: &mut Scene) {
 /// Optional host data for the shared drawing pass; the component owns interaction state.
 pub struct Frame<'a> {
     pub before_seek: Option<&'a mut dyn FnMut(Time)>,
-    pub playback_performance: &'a playback_performance::Snapshot,
     pub accent_color: Color,
     pub active_audio_recording_key: Option<TrackKey>,
     pub active_video_recording_key: Option<TrackKey>,

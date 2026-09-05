@@ -5,16 +5,25 @@ edition = "2024"
 build = false
 
 [dependencies]
-ash-wgpu = { package = "ash", version = "0.38" }
 hashbrown.workspace = true
 pollster = "1"
+shrimply-asset = { path = "../../asset" }
+shrimply-i18n-core = { path = "../../ui/i18n-core" }
+shrimply-loading-screen = { path = "../../preview/loading-screen" }
 shrimply-manim-ir = { path = "../manim-ir" }
+shrimply-manim-parser = { path = "../manim-parser" }
+shrimply-math-color = { path = "../../math/color" }
+shrimply-math-core = { path = "../../math/core" }
+shrimply-project = { path = "../../project/project" }
 tracing.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]
 ffmpeg-next.workspace = true
-shrimply-asset = { path = "../../asset" }
-shrimply-manim-parser = { path = "../manim-parser" }
-shrimply-math-core = { path = "../../math/core" }
 tempfile.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+wgpu = { workspace = true, features = ["metal"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+wgpu = { workspace = true, features = ["vulkan"] }

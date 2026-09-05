@@ -157,7 +157,6 @@ impl Scene {
             size,
             Frame {
                 before_seek: None,
-                playback_performance: &playback_performance::Snapshot::default(),
                 accent_color: Color::BLUE3,
                 active_audio_recording_key: None,
                 active_video_recording_key: None,
@@ -196,6 +195,7 @@ impl Scene {
             return false;
         }
         let mut changed = self.poll_drop_preview();
+        changed |= self.performance.updated();
         if self
             .media_refresh
             .waveforms

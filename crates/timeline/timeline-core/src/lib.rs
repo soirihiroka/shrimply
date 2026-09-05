@@ -207,6 +207,7 @@ pub mod geometry;
 mod import_placement;
 pub mod items;
 pub mod metrics;
+mod performance;
 pub mod ruler;
 pub mod timeline_operation;
 pub mod track_controls;

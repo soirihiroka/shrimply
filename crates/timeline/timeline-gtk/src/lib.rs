@@ -119,7 +119,6 @@ pub struct TrackAddMenuPresentation {
 pub struct ToolkitTimeline {
     project: Rc<RefCell<Project>>,
     player_state: SharedPlayerState,
-    playback_performance: playback_performance::SharedCollector,
     selection_state: SharedSelectionState,
     tools: TimelineTools,
     context_menu: ContextMenu,
@@ -153,11 +152,11 @@ impl ToolkitTimeline {
             selection_state.clone(),
             preferences,
             property_clipboard,
+            playback_performance,
         )));
         Self {
             project,
             player_state,
-            playback_performance,
             selection_state,
             tools,
             context_menu: ContextMenu::default(),
@@ -197,7 +196,6 @@ impl ToolkitTimeline {
             &self.project,
             &self.player_state,
             &self.selection_state,
-            &playback_performance::snapshot(&self.playback_performance),
             &mut runtime,
             &painter,
             logical_width,
@@ -566,6 +564,7 @@ pub fn new(
         selection_state.clone(),
         preferences.clone(),
         property_clipboard,
+        playback_performance.clone(),
     )));
     let preference_area = area.downgrade();
     preferences_store::connect(&preferences, move |_| {
@@ -574,16 +573,6 @@ pub fn new(
         }
     });
     setup::watch_updates(&area, &runtime);
-    let performance_area = area.downgrade();
-    let performance_updates = playback_performance::subscribe(&playback_performance);
-    glib::spawn_future_local(async move {
-        while performance_updates.recv().await.is_ok() {
-            let Some(area) = performance_area.upgrade() else {
-                break;
-            };
-            area.queue_render();
-        }
-    });
     interaction::add_input_controllers(
         &area,
         project.clone(),
@@ -698,7 +687,6 @@ pub fn new(
     let render_project = project.clone();
     let render_player_state = player_state.clone();
     let render_selection_state = selection_state.clone();
-    let render_performance = playback_performance.clone();
     area.connect_render(move |area, _| {
         if let Some(error) = area.error() {
             tracing::error!("Timeline GLArea error: {error}");
@@ -754,7 +742,6 @@ pub fn new(
             &render_project,
             &render_player_state,
             &render_selection_state,
-            &playback_performance::snapshot(&render_performance),
             &mut runtime,
             &painter,
             width as f64,

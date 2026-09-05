@@ -19,6 +19,7 @@ impl TimelineRuntime {
         selection: SharedSelectionState,
         preferences: preferences_store::SharedPreferences,
         property_clipboard: shrimply_property_transfer::SharedClipboard,
+        playback_performance: playback_performance::SharedCollector,
     ) -> Self {
         Self {
             scene: shrimply_timeline_core::scene::Scene::new(
@@ -27,6 +28,7 @@ impl TimelineRuntime {
                 selection,
                 preferences,
                 property_clipboard,
+                playback_performance,
             ),
             renderer: TimelineRenderer::new(),
             animation_tick_active: false,

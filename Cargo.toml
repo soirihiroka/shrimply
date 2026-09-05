@@ -30,6 +30,8 @@ members = [
     "crates/manim/manim-parser",
     "crates/manim/manim-ir",
     "crates/manim/manim-wgpu",
+    "crates/manim/manim-cuda",
+    "crates/manim/manim-metal",
     "crates/media-info",
     "crates/mcp",
     "crates/paint/paint-edit",
@@ -219,7 +221,7 @@ uuid = "1"
 vtracer = { path = "external/vtracer/crates/vtracer" }
 wayland-client = "0.31"
 wayland-protocols = "0.32"
-wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "wgsl"] }
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [profile.dev]

@@ -83,6 +83,7 @@ pub struct Scene {
     player: SharedPlayerState,
     selection: SharedSelectionState,
     preferences: SharedPreferences,
+    performance: crate::performance::State,
     beat_updates: mpsc::Receiver<(uuid::Uuid, audio::beat::BeatUpdate)>,
     waveform_updates: mpsc::Receiver<(uuid::Uuid, waveform::WaveformUpdate)>,
     waveform_cancel: Arc<AtomicBool>,
@@ -133,6 +134,7 @@ impl Scene {
         selection: SharedSelectionState,
         preferences: SharedPreferences,
         property_clipboard: shrimply_property_transfer::SharedClipboard,
+        playback_performance: playback_performance::SharedCollector,
     ) -> Self {
         let (_, waveform_updates) = mpsc::channel();
         let (_, beat_updates) = mpsc::channel();
@@ -185,6 +187,8 @@ impl Scene {
         let tools = ToolState::from_preferences(&snapshot);
 
         let revision = player_state::snapshot(&player).revision;
+        let performance =
+            crate::performance::State::new(project.clone(), player.clone(), playback_performance);
         Self {
             snap_enabled: tools.magnet,
             beat_grid_enabled: tools.beat_grid,
@@ -242,6 +246,7 @@ impl Scene {
             player,
             selection,
             preferences,
+            performance,
             beat_updates,
             waveform_updates,
             waveform_cancel: Arc::new(AtomicBool::new(false)),

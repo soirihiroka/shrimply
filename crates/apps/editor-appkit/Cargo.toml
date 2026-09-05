@@ -30,5 +30,6 @@ shrimply-state = { path = "../../state" }
 shrimply-math-core = { path = "../../math/core" }
 glam.workspace = true
 shrimply-preview-core = { path = "../../preview/preview-core" }
+shrimply-playback-performance = { path = "../../preview/playback-performance" }
 shrimply-evaluation = { path = "../../evaluation" }
 shrimply-paint-edit = { path = "../../paint/paint-edit" }

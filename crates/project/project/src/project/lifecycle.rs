@@ -556,6 +556,30 @@ impl Project {
             .find_map(|track| track.items.iter().find(|item| item.is_media()))
     }
 
+    pub fn video_item_by_id(&self, id: Uuid) -> Option<&VideoItem> {
+        self.video_tracks
+            .iter()
+            .chain(
+                self.folded_sequences
+                    .iter()
+                    .flat_map(|sequence| &sequence.video_tracks),
+            )
+            .flat_map(|track| &track.items)
+            .find(|item| item.id == id)
+    }
+
+    pub fn video_item_by_id_mut(&mut self, id: Uuid) -> Option<&mut VideoItem> {
+        self.video_tracks
+            .iter_mut()
+            .chain(
+                self.folded_sequences
+                    .iter_mut()
+                    .flat_map(|sequence| &mut sequence.video_tracks),
+            )
+            .flat_map(|track| &mut track.items)
+            .find(|item| item.id == id)
+    }
+
     pub fn first_audio_item(&self) -> Option<&AudioItem> {
         self.audio_tracks.iter().find_map(|track| {
             track.items.iter().find(|item| {

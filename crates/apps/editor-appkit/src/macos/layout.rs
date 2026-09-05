@@ -306,6 +306,7 @@ pub fn build(editor: &Editor) -> Layout {
             loading_done,
             loading_spinner,
             frame_rate,
+            session.playback_performance.clone(),
         ))),
         session.clone(),
         editor.ivars().imports.clone(),

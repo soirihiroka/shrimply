@@ -4,7 +4,6 @@ pub(super) fn timeline_gtk(
     project: &Rc<RefCell<Project>>,
     player_state: &SharedPlayerState,
     _selection_state: &SharedSelectionState,
-    playback_performance: &playback_performance::Snapshot,
     runtime: &mut TimelineRuntime,
     painter: &TimelinePainter,
     width: f64,
@@ -54,7 +53,6 @@ pub(super) fn timeline_gtk(
         vec2(width as f32, height as f32),
         shrimply_timeline_core::scene::Frame {
             before_seek: Some(&mut before_seek),
-            playback_performance,
             accent_color,
             active_audio_recording_key,
             active_video_recording_key,

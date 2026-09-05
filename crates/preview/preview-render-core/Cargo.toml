@@ -11,6 +11,7 @@ shrimply-render-core = { path = "../../render-core" }
 ffmpeg-next.workspace = true
 skia-safe = { workspace = true, features = ["svg", "textlayout"] }
 shrimply-project = { path = "../../project/project" }
+shrimply-state = { path = "../../state" }
 shrimply-evaluation = { path = "../../evaluation" }
 shrimply-math-core = { path = "../../math/core" }
 shrimply-math-media = { path = "../../math/media" }
@@ -21,4 +22,5 @@ shrimply-preview-core = { path = "../preview-core" }
 shrimply-video-core = { path = "../../video/video-core" }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 shrimply-math-geometry = { path = "../../math/geometry" }
+shrimply-manim-wgpu = { path = "../../manim/manim-wgpu" }
 glam.workspace = true

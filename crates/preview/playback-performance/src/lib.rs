@@ -11,6 +11,8 @@ use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 
+pub use shrimply_preview_core::performance::RenderEvent;
+
 const SLOW_FPS: u128 = 10;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,20 +41,6 @@ pub struct Snapshot {
     pub generation: u64,
     pub visual_ranges: Vec<TimeRange>,
     pub performance_ranges: Vec<PerformanceRange>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum RenderEvent {
-    Requested {
-        request_id: u64,
-        position: Time,
-    },
-    Completed {
-        request_id: u64,
-        position: Time,
-        elapsed: Duration,
-        project_fps: Fraction,
-    },
 }
 
 #[derive(Clone)]

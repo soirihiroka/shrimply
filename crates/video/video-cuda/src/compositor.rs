@@ -21,14 +21,15 @@ use crate::visual_source::{
 use shrimply_evaluation::{FrameAudioAnalysis, VisualEvaluation};
 use shrimply_evaluation::{
     TransformExpressionCache, resolve, resolve_bool, resolve_item_transform_with_audio,
-    resolve_scalar, resolve_vec2,
+    resolve_scalar,
 };
 use shrimply_math_core::Fraction;
 use shrimply_project::project::{
-    AlphaMaskShape, Color, ItemAddress, LayerBlendMode, Project, SequenceReference,
-    TextureAddressMode, Time, TransitionSide, VideoItem, VideoSampleMethod, VisualAlphaMask,
-    VisualClipTransitionKind, VisualTransitionKind, video_source_time_at,
+    Color, ItemAddress, LayerBlendMode, Project, SequenceReference, TextureAddressMode, Time,
+    TransitionSide, VideoItem, VideoSampleMethod, VisualClipTransitionKind, VisualTransitionKind,
+    video_source_time_at,
 };
+use shrimply_video_core::alpha_mask::resolve as resolve_shape_alpha_mask;
 use shrimply_video_modifiers::{ModifierEffect, RasterModifierEffect};
 use uuid::Uuid;
 
@@ -47,38 +48,6 @@ mod sam2;
 use render::{FrameItemRenderer, render_project_frame};
 
 const PREVIEW_DISPLAY_SURFACES: usize = 2;
-
-fn manim_source_revision(item: &VideoItem) -> u64 {
-    item.file
-        .snapshot()
-        .map_or(0, |snapshot| snapshot.revision())
-}
-
-fn resolve_shape_alpha_mask(
-    mask: &VisualAlphaMask,
-    evaluation: &VisualEvaluation,
-    expressions: &mut TransformExpressionCache,
-) -> crate::alpha_mask::ResolvedShapeAlphaMask {
-    let size = resolve_vec2(&mask.size, evaluation, expressions).max(glam::Vec2::ZERO);
-    crate::alpha_mask::ResolvedShapeAlphaMask {
-        center: resolve_vec2(&mask.center, evaluation, expressions),
-        size,
-        rotation_degrees: resolve_scalar(&mask.rotation_degrees, evaluation, expressions),
-        feather: resolve_scalar(&mask.feather, evaluation, expressions).clamp(0.0, 1.0),
-        rounding: resolve_scalar(&mask.rounding, evaluation, expressions).clamp(0.0, 1.0),
-        shape: match mask.shape {
-            AlphaMaskShape::Rectangle => shrimply_render_core::ShapeAlphaMaskKind::Rectangle,
-            AlphaMaskShape::Ellipse => shrimply_render_core::ShapeAlphaMaskKind::Ellipse,
-            AlphaMaskShape::Polygon => shrimply_render_core::ShapeAlphaMaskKind::Polygon,
-        },
-        vertices: if mask.shape == AlphaMaskShape::Polygon {
-            mask.vertices.iter().map(|point| *point * size).collect()
-        } else {
-            Vec::new()
-        },
-        invert: mask.invert,
-    }
-}
 
 pub enum VideoCommand {
     SetProject {
@@ -133,21 +102,9 @@ pub struct VideoCommandSender {
     playback_observer: Option<PlaybackRenderObserver>,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum PlaybackRenderEvent {
-    Requested {
-        request_id: u64,
-        position: Time,
-    },
-    Completed {
-        request_id: u64,
-        position: Time,
-        elapsed: Duration,
-        project_fps: Fraction,
-    },
-}
-
-pub type PlaybackRenderObserver = Arc<dyn Fn(PlaybackRenderEvent) + Send + Sync>;
+pub use shrimply_preview_core::performance::{
+    RenderEvent as PlaybackRenderEvent, RenderObserver as PlaybackRenderObserver,
+};
 
 impl VideoCommandSender {
     pub fn render_generation_is_current(&self, generation: u64) -> bool {
@@ -298,23 +255,7 @@ pub enum VideoEvent {
         render_elapsed: Duration,
         render_generation: u64,
     },
-    ManimDuration {
-        item_id: Uuid,
-        source_revision: u64,
-        duration: Time,
-    },
-    ManimParameters {
-        item_id: Uuid,
-        source_revision: u64,
-        scene: String,
-        parameters: Vec<shrimply_project::project::ManimParameter>,
-        render_is_current: bool,
-    },
-    ManimStatus {
-        item_id: Uuid,
-        source_revision: u64,
-        error: Option<String>,
-    },
+    Manim(shrimply_state::manim_status::Update),
     Error(String),
 }
 
@@ -337,15 +278,7 @@ struct RenderedFrame {
     loading_placeholder: bool,
     clear: bool,
     errors: Vec<String>,
-    manim_durations: Vec<(Uuid, u64, Time)>,
-    manim_parameters: Vec<(
-        Uuid,
-        u64,
-        String,
-        Vec<shrimply_project::project::ManimParameter>,
-        bool,
-    )>,
-    manim_statuses: Vec<(Uuid, u64, Option<String>)>,
+    manim_updates: Vec<shrimply_state::manim_status::Update>,
     superseded: bool,
 }
 
@@ -1162,7 +1095,7 @@ fn video_compositor_worker(
                             shrimply_benchmarking::increment(
                                 "Temporal decoder / Accurate starts retried after GPU relief",
                             );
-                            rendered = render_project_frame(
+                            let mut retry = render_project_frame(
                                 &project,
                                 position,
                                 &mut sessions,
@@ -1176,6 +1109,10 @@ fn video_compositor_worker(
                                 preview_exclusion,
                                 Some(&decode_control),
                             );
+                            let mut updates = std::mem::take(&mut rendered.manim_updates);
+                            updates.append(&mut retry.manim_updates);
+                            retry.manim_updates = updates;
+                            rendered = retry;
                         }
                         Ok(()) => {}
                         Err(error) => rendered.errors.push(format!(
@@ -1185,23 +1122,10 @@ fn video_compositor_worker(
                     compositor.set_render_control(None);
                 }
                 let render_elapsed = render_started.elapsed();
-                // Parameter reflection is consumed from the Manim renderer only once. A newer
-                // preview request (for example, deselecting the item while it first loads) may
-                // supersede this frame after that happens, so publish the metadata independently
-                // of the frame. The UI validates the source revision, scene, and current values.
-                for (item_id, source_revision, scene, parameters, render_is_current) in
-                    &rendered.manim_parameters
-                {
-                    if event_tx
-                        .send(VideoEvent::ManimParameters {
-                            item_id: *item_id,
-                            source_revision: *source_revision,
-                            scene: scene.clone(),
-                            parameters: parameters.clone(),
-                            render_is_current: *render_is_current,
-                        })
-                        .is_err()
-                    {
+                // Manim metadata is consumed from its source once. Publish it even when a newer
+                // frame supersedes this one; the shared state layer rejects stale configurations.
+                for update in rendered.manim_updates.iter().cloned() {
+                    if event_tx.send(VideoEvent::Manim(update)).is_err() {
                         return;
                     }
                 }
@@ -1215,20 +1139,6 @@ fn video_compositor_worker(
                     shrimply_benchmarking::increment("Video / Superseded frames not published");
                     continue;
                 }
-                // Duration is a one-shot state update. Use backpressure so a full frame queue
-                // cannot silently discard it forever, but publish only from the current render.
-                for (item_id, source_revision, duration) in &rendered.manim_durations {
-                    if event_tx
-                        .send(VideoEvent::ManimDuration {
-                            item_id: *item_id,
-                            source_revision: *source_revision,
-                            duration: *duration,
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
                 if accuracy.continuous_playback()
                     && let Some(observer) = &playback_observer
                 {
@@ -1240,13 +1150,6 @@ fn video_compositor_worker(
                     });
                 }
                 let errors_changed = rendered.errors != last_errors;
-                for (item_id, source_revision, error) in rendered.manim_statuses {
-                    let _ = event_tx.try_send(VideoEvent::ManimStatus {
-                        item_id,
-                        source_revision,
-                        error,
-                    });
-                }
                 if errors_changed {
                     for error in &rendered.errors {
                         tracing::error!(

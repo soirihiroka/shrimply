@@ -480,7 +480,7 @@ async fn get_manim_clip(
     canceled: Arc<AtomicBool>,
 ) -> Result<Value, String> {
     let address = shrimply_mcp::query::model_item_address(&request.address)?;
-    let (source, source_revision, scene, parameters, error) = {
+    let (source, source_revision, scene, input_parameters, parameters, error) = {
         let project = live.borrow();
         let item = project
             .video_item(&address)
@@ -493,8 +493,19 @@ async fn get_manim_clip(
             item.file.clone(),
             source_revision,
             manim.scene.clone(),
-            shrimply_state::manim_status::parameters(item.id, source_revision, &manim.scene),
-            shrimply_state::manim_status::error(item.id, source_revision),
+            manim.parameters.clone(),
+            shrimply_state::manim_status::parameters(
+                item.id,
+                source_revision,
+                &manim.scene,
+                &manim.parameters,
+            ),
+            shrimply_state::manim_status::error(
+                item.id,
+                source_revision,
+                &manim.scene,
+                &manim.parameters,
+            ),
         )
     };
     let scenes = discover_manim_scenes(source.clone(), canceled.clone()).await?;
@@ -509,7 +520,10 @@ async fn get_manim_clip(
         let VideoItemContent::Manim(manim) = &item.content else {
             return Err("clip stopped being a Manim clip while it was being inspected".to_string());
         };
-        if item.file.snapshot()?.revision() != source_revision || manim.scene != scene {
+        if item.file.snapshot()?.revision() != source_revision
+            || manim.scene != scene
+            || manim.parameters != input_parameters
+        {
             return Err("Manim clip changed while it was being inspected; retry".to_string());
         }
     }
@@ -557,7 +571,12 @@ async fn set_manim_clip(
             item.file.clone(),
             source_revision,
             manim.scene.clone(),
-            shrimply_state::manim_status::parameters(item.id, source_revision, &manim.scene),
+            shrimply_state::manim_status::parameters(
+                item.id,
+                source_revision,
+                &manim.scene,
+                &manim.parameters,
+            ),
         )
     };
     if let Some(scene) = &request.scene {

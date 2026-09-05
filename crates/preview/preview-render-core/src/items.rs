@@ -11,6 +11,7 @@ pub(super) struct PreparedItem<'a> {
     pub clip_transition: Option<ActiveClipTransition>,
     pub morph_peer: Option<uuid::Uuid>,
     pub children: Option<Vec<PreparedItem<'a>>>,
+    pub video_mask: Option<shrimply_project::project::CanvasSize>,
 }
 
 #[derive(Default)]
@@ -115,11 +116,32 @@ impl Scene {
                     address.clone(),
                     source_time,
                     self.requested_accuracy,
+                    media::Plane::Content,
                 ) {
                     requests.push(request);
                 }
                 None
             };
+            let video_mask = item
+                .alpha_mask_video
+                .map(|stream| {
+                    let (source, size) = shrimply_video_core::alpha_mask::video_source(
+                        &item,
+                        stream,
+                        project.canvas_size,
+                    );
+                    let request = media::Request::new(
+                        &source,
+                        address.clone(),
+                        source_time,
+                        self.requested_accuracy,
+                        media::Plane::Alpha,
+                    )
+                    .ok_or("This source does not provide an alpha video stream")?;
+                    requests.push(request);
+                    Ok::<_, String>(size)
+                })
+                .transpose()?;
             items.push(PreparedItem {
                 item,
                 address,
@@ -128,6 +150,7 @@ impl Scene {
                 clip_transition: active.clip_transition,
                 morph_peer: morph.map(|(peer, _)| peer),
                 children,
+                video_mask,
             });
         }
         let prepared_ids = items

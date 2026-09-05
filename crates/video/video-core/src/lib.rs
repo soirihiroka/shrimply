@@ -1,3 +1,4 @@
+pub mod alpha_mask;
 pub mod background;
 pub mod clip_transition;
 pub mod generated;

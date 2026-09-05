@@ -113,13 +113,11 @@ pub trait VisualElement {
         Ok(())
     }
 
-    fn take_source_duration(&mut self) -> Option<Time> {
-        None
+    fn take_manim_updates(&mut self) -> Vec<shrimply_state::manim_status::Update> {
+        Vec::new()
     }
 
-    fn take_manim_parameters(
-        &mut self,
-    ) -> Option<(Vec<shrimply_project::project::ManimParameter>, bool)> {
+    fn manim_status(&self, _error: Option<String>) -> Option<shrimply_state::manim_status::Update> {
         None
     }
 

@@ -172,10 +172,11 @@ impl Preload for VideoPreload<'_> {
         if request.preload_alpha
             && let Some(media_track_id) = self.0.alpha_mask_video
         {
-            let mut alpha_item = self.0.clone();
-            alpha_item.track_id = media_track_id;
-            alpha_item.alpha_mask_video = None;
-            alpha_item.stabilize_video = false;
+            let (alpha_item, _) = shrimply_video_core::alpha_mask::video_source(
+                self.0,
+                media_track_id,
+                request.canvas_size,
+            );
             self.prepare_item(
                 &alpha_item,
                 &request,

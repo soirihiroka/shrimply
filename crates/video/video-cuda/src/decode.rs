@@ -1,4 +1,3 @@
-use shrimply_math_core::{Fraction, last_frame_time};
 use shrimply_project::project::{Time, VideoItem};
 pub use shrimply_video_decoder::{
     DEFAULT_VIDEO_DECODER_POOL_SIZE, DecodeControl, VideoDecoderOwner, VideoDecoderPool,
@@ -71,14 +70,7 @@ impl MediaDecodeMode {
 }
 
 fn decodable_source_position(item: &VideoItem, position: Time, frame_duration: Time) -> Time {
-    if position < item.source_duration || frame_duration <= Time::ZERO {
-        return position;
-    }
-    last_frame_time(
-        item.source_duration,
-        Fraction::from(1_u64) / frame_duration.seconds,
-    )
-    .unwrap_or(Time::ZERO)
+    shrimply_math_core::decodable_source_position(position, item.source_duration, frame_duration)
 }
 
 impl VideoElement {

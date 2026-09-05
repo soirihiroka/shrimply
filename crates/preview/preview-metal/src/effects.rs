@@ -6,6 +6,7 @@ use shrimply_render_metal::{Buffer, Renderer, Submission};
 
 // Keep forward spatial state until sampling, matching CUDA. A near-singular
 // transform can become renderable after another transform or a shutter sample.
+#[derive(Clone, Copy)]
 pub(super) struct State {
     pub parameters: Nv12LayerParams,
     pub transform: shrimply_render_core::math::Mat3,
@@ -65,13 +66,20 @@ pub(super) fn apply_modifiers(
     renderer: &mut Renderer,
     mut input: Buffer,
     mut state: State,
-    operations: &[shrimply_video_core::raster_modifiers::Operation],
+    operations: &[shrimply_video_core::raster_modifiers::Modifier],
     size: (u32, u32),
     submissions: &mut Vec<Submission>,
 ) -> Result<(State, Buffer), String> {
     use shrimply_video_core::raster_modifiers::Operation;
-    for operation in operations {
-        match operation {
+    for modifier in operations {
+        let original = modifier
+            .alpha_mask
+            .as_ref()
+            .map(|_| super::alpha_mask::Branch {
+                buffer: input.clone(),
+                state,
+            });
+        match &modifier.operation {
             Operation::Pixel(effect) => {
                 (state, input) = apply(
                     renderer,
@@ -87,6 +95,19 @@ pub(super) fn apply_modifiers(
             }
             Operation::Opacity(opacity) => state.parameters.opacity *= opacity,
             Operation::Sampling(method) => state.parameters.sample_method = *method,
+        }
+        if let Some(original) = original {
+            (state, input) = super::alpha_mask::combine(
+                renderer,
+                original,
+                super::alpha_mask::Branch {
+                    buffer: input,
+                    state,
+                },
+                modifier.alpha_mask.as_ref().expect("masked modifier"),
+                size,
+                submissions,
+            )?;
         }
     }
     Ok((state, input))

@@ -45,9 +45,9 @@ enum Fingerprint {
         #[cfg(unix)]
         inode: u64,
         #[cfg(unix)]
-        changed_seconds: i64,
+        identity_seconds: i64,
         #[cfg(unix)]
-        changed_nanoseconds: i64,
+        identity_nanoseconds: i64,
     },
 }
 
@@ -541,13 +541,23 @@ fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        #[cfg(target_os = "macos")]
+        let (identity_seconds, identity_nanoseconds) = (
+            std::os::macos::fs::MetadataExt::st_birthtime(&metadata),
+            std::os::macos::fs::MetadataExt::st_birthtime_nsec(&metadata),
+        );
+        #[cfg(not(target_os = "macos"))]
+        let (identity_seconds, identity_nanoseconds) =
+            (metadata.ctime(), metadata.ctime_nsec());
         Ok(Fingerprint::Present {
             len: metadata.len(),
             modified_ns,
             device: metadata.dev(),
             inode: metadata.ino(),
-            changed_seconds: metadata.ctime(),
-            changed_nanoseconds: metadata.ctime_nsec(),
+            // macOS ctime changes when File Provider or Powerbox updates access metadata.
+            // Birth time still identifies replacement files without restarting unchanged media.
+            identity_seconds,
+            identity_nanoseconds,
         })
     }
     #[cfg(not(unix))]

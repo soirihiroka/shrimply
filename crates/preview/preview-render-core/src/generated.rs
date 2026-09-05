@@ -10,7 +10,7 @@ pub(super) struct PreparedVector {
     pub frame: GeneratedFrame,
     pub is_vector: bool,
     pub sample_method: shrimply_render_core::VideoSampleMethod,
-    pub effects: Vec<shrimply_video_core::raster_modifiers::Operation>,
+    pub effects: Vec<shrimply_video_core::raster_modifiers::Modifier>,
     morph_scene: Option<shrimply_video_core::vector_morph::MorphScene>,
 }
 
@@ -88,7 +88,12 @@ impl Scene {
         let mut is_vector = true;
         let mut sample_method = item.sample_method.value_at(evaluation.local_time());
         for modifier in item.modifiers.iter().filter(|modifier| modifier.enabled) {
-            if modifier.alpha_mask.is_some() {
+            if is_vector
+                && modifier
+                    .alpha_mask
+                    .as_ref()
+                    .is_some_and(|mask| mask.enabled)
+            {
                 return Err("Vector modifier masks are not yet connected to Metal".into());
             }
             match &modifier.effect {
@@ -103,10 +108,10 @@ impl Scene {
                     is_vector = false;
                     sample_method = effect.sample_method.value_at(evaluation.local_time());
                 }
-                ModifierEffect::Raster(effect) if !is_vector => {
+                ModifierEffect::Raster(_) if !is_vector => {
                     effects.push(
-                        shrimply_video_core::raster_modifiers::operation(
-                            effect,
+                        shrimply_video_core::raster_modifiers::modifier(
+                            modifier,
                             &evaluation,
                             &mut self.expressions,
                             self.requested_accuracy.content_accurate(),

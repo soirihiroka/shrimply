@@ -10,6 +10,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+mod macos_source_access;
+
 use shrimply_asset::{Asset, AssetSnapshot};
 pub use shrimply_manim_ir::{CompiledAnimation, PacketBody, Progress, ProgressStage};
 use shrimply_math_core::Fraction;
@@ -332,6 +335,8 @@ pub fn discover_scenes(source: &Asset) -> Result<Vec<String>, String> {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    let _source_access = macos_source_access::RelatedSourceAccess::new(source.path())?;
     let python_project = Path::new(env!("CARGO_MANIFEST_DIR")).join("python");
     let output = Command::new(std::env::var_os("UV").unwrap_or_else(|| "uv".into()))
         .arg("run")
@@ -383,6 +388,8 @@ pub fn compile(
         return Err("Manim render dimensions must be positive".to_string());
     }
     let source = settings.source.snapshot()?;
+    #[cfg(target_os = "macos")]
+    let _source_access = macos_source_access::RelatedSourceAccess::new(source.path())?;
     let cache_key = cache::key(settings, &source)?;
     if let Some(animation) = cache::get(&cache_key)? {
         return Ok(animation);

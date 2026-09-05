@@ -67,6 +67,7 @@ pub fn build(
         session.selection_state.clone(),
         session.preferences.clone(),
         session.property_clipboard.clone(),
+        session.playback_performance.clone(),
     );
     let tracks = super::canvas::new(
         super::canvas::Content::Timeline(Box::new(scene)),

@@ -1,0 +1,17 @@
+[package]
+name = "shrimply-manim-cuda"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ash-wgpu = { package = "ash", version = "0.38" }
+hashbrown.workspace = true
+libc.workspace = true
+pollster = "1"
+shrimply-cuda.workspace = true
+shrimply-benchmarking = { path = "../../benchmarking" }
+shrimply-gpu-memory = { path = "../../video/gpu-memory" }
+shrimply-visual-frame = { path = "../../video/visual-frame" }
+shrimply-manim-wgpu = { path = "../manim-wgpu" }
+tracing.workspace = true
+wgpu = { workspace = true, features = ["vulkan"] }

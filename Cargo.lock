@@ -5492,6 +5492,7 @@ dependencies = [
  "shrimply-export-core",
  "shrimply-math-core",
  "shrimply-paint-edit",
+ "shrimply-playback-performance",
  "shrimply-preview-core",
  "shrimply-preview-interaction-core",
  "shrimply-preview-metal",
@@ -5995,6 +5996,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-manim-cuda"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "hashbrown 0.17.1",
+ "libc",
+ "pollster",
+ "shrimply-benchmarking",
+ "shrimply-cuda",
+ "shrimply-gpu-memory",
+ "shrimply-manim-wgpu",
+ "shrimply-visual-frame",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
 name = "shrimply-manim-ir"
 version = "0.1.0"
 dependencies = [
@@ -6008,11 +6026,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-manim-metal"
+version = "0.1.0"
+dependencies = [
+ "objc2",
+ "objc2-metal",
+ "pollster",
+ "shrimply-manim-wgpu",
+ "shrimply-render-metal",
+ "wgpu",
+]
+
+[[package]]
 name = "shrimply-manim-parser"
 version = "0.1.0"
 dependencies = [
  "hashbrown 0.17.1",
  "libc",
+ "objc2",
+ "objc2-foundation",
  "rmp-serde",
  "serde",
  "shrimply-asset",
@@ -6026,14 +6058,17 @@ dependencies = [
 name = "shrimply-manim-wgpu"
 version = "0.1.0"
 dependencies = [
- "ash",
  "ffmpeg-next",
  "hashbrown 0.17.1",
  "pollster",
  "shrimply-asset",
+ "shrimply-i18n-core",
+ "shrimply-loading-screen",
  "shrimply-manim-ir",
  "shrimply-manim-parser",
+ "shrimply-math-color",
  "shrimply-math-core",
+ "shrimply-project",
  "tempfile",
  "tracing",
  "wgpu",
@@ -6264,6 +6299,7 @@ dependencies = [
  "serde_json",
  "shrimply-math-core",
  "shrimply-math-media",
+ "shrimply-preview-core",
  "shrimply-project",
  "tracing",
  "uuid",
@@ -6387,12 +6423,15 @@ name = "shrimply-preview-metal"
 version = "0.1.0"
 dependencies = [
  "objc2",
+ "shrimply-manim-metal",
  "shrimply-math-core",
  "shrimply-math-geometry",
+ "shrimply-preview-core",
  "shrimply-preview-render-core",
  "shrimply-project",
  "shrimply-render-core",
  "shrimply-render-metal",
+ "shrimply-state",
  "shrimply-video-core",
  "skia-safe",
  "tracing",
@@ -6435,6 +6474,7 @@ dependencies = [
  "shrimply-audio",
  "shrimply-background",
  "shrimply-evaluation",
+ "shrimply-manim-wgpu",
  "shrimply-math-core",
  "shrimply-math-geometry",
  "shrimply-math-media",
@@ -6443,6 +6483,7 @@ dependencies = [
  "shrimply-preview-core",
  "shrimply-project",
  "shrimply-render-core",
+ "shrimply-state",
  "shrimply-video-core",
  "shrimply-video-modifiers",
  "skia-safe",
@@ -6839,6 +6880,7 @@ dependencies = [
 name = "shrimply-timeline-core"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "ffmpeg-next",
  "glam 0.33.5",
  "hashbrown 0.17.1",
@@ -7060,6 +7102,7 @@ dependencies = [
  "shrimply-i18n-core",
  "shrimply-layered-image",
  "shrimply-loading-screen",
+ "shrimply-manim-cuda",
  "shrimply-manim-parser",
  "shrimply-manim-wgpu",
  "shrimply-math-color",
@@ -7081,6 +7124,7 @@ dependencies = [
  "shrimply-server-client",
  "shrimply-shape-3d",
  "shrimply-slang-build",
+ "shrimply-state",
  "shrimply-text-3d",
  "shrimply-transform-3d",
  "shrimply-video-core",
@@ -8533,10 +8577,20 @@ dependencies = [
  "rustc-hash 1.1.0",
  "smallvec",
  "thiserror 2.0.20",
+ "wgpu-core-deps-apple",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-naga-bridge",
  "wgpu-types",
+]
+
+[[package]]
+name = "wgpu-core-deps-apple"
+version = "30.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "061f3d319a40d39d00b1ecc2c33b89fe21d4e6fe01859df3500a3a8ecccd6b68"
+dependencies = [
+ "wgpu-hal",
 ]
 
 [[package]]
@@ -8558,6 +8612,7 @@ dependencies = [
  "arrayvec",
  "ash",
  "bitflags 2.13.1",
+ "block2",
  "bytemuck",
  "cfg-if",
  "cfg_aliases",
@@ -8568,6 +8623,12 @@ dependencies = [
  "log",
  "naga",
  "naga-types",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "objc2-metal",
+ "objc2-quartz-core",
  "ordered-float 5.5.0",
  "parking_lot",
  "portable-atomic",

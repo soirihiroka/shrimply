@@ -10,6 +10,33 @@ pub enum Operation {
     Sampling(VideoSampleMethod),
 }
 
+pub struct Modifier {
+    pub operation: Operation,
+    pub alpha_mask: Option<crate::alpha_mask::ResolvedShapeAlphaMask>,
+}
+
+pub fn modifier(
+    modifier: &shrimply_project::project::VisualModifier,
+    evaluation: &VisualEvaluation,
+    expressions: &mut TransformExpressionCache,
+    content_accurate: bool,
+) -> Result<Option<Modifier>, String> {
+    let shrimply_video_modifiers::ModifierEffect::Raster(effect) = &modifier.effect else {
+        return Ok(None);
+    };
+    let alpha_mask = modifier
+        .alpha_mask
+        .as_ref()
+        .filter(|mask| mask.enabled)
+        .map(|mask| crate::alpha_mask::resolve(mask, evaluation, expressions));
+    Ok(
+        operation(effect, evaluation, expressions, content_accurate)?.map(|operation| Modifier {
+            operation,
+            alpha_mask,
+        }),
+    )
+}
+
 pub fn sampling(
     effect: &shrimply_video_modifiers::sampling::SamplingModifier,
     evaluation: &VisualEvaluation,

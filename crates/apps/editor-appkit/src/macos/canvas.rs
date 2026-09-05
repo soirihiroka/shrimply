@@ -413,9 +413,7 @@ impl CanvasView {
     }
 
     fn show_error(&self, error: &str) {
-        let alert = objc2_app_kit::NSAlert::new(self.mtm());
-        alert.setInformativeText(&objc2_foundation::NSString::from_str(error));
-        alert.runModal();
+        super::error_alert::show(self.mtm(), error);
     }
 
     fn drag_operation(&self, sender: &ProtocolObject<dyn NSDraggingInfo>) -> NSDragOperation {
@@ -549,6 +547,7 @@ impl CanvasView {
             (size.height * scale).ceil(),
         ));
         let mut result = Ok(());
+        let mut manim_updates = Vec::new();
         renderer.draw(|canvas| {
             canvas.clear(shrimply_cross_ui_theme::current().view_bg);
             canvas.scale((scale as f32, scale as f32));
@@ -611,6 +610,7 @@ impl CanvasView {
                             &self.ivars().session.player_state,
                         ),
                     );
+                    manim_updates.extend(preview.renderer.take_manim_updates());
                     canvas.restore();
                     let focused_caption =
                         shrimply_timeline_core::selection_state::focused_item_address(
@@ -647,6 +647,14 @@ impl CanvasView {
                 }
             }
         });
+        drop(renderer);
+        for update in manim_updates {
+            shrimply_state::manim_status::apply(
+                &self.ivars().session.project,
+                &self.ivars().session.player_state,
+                update,
+            );
+        }
         result
     }
 }

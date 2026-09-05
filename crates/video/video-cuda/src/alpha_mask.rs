@@ -5,19 +5,9 @@ use shrimply_cuda::LaunchConfig;
 use crate::gpu::VisualFrame;
 use crate::gpu::modifiers::{CanvasRgbaFrame, GpuModifier, ModifierContext};
 use crate::layer::{PreservingRasterModifier, Visual, VisualState};
-use shrimply_render_core::{AlphaMaskParams, ShapeAlphaMaskKind, ShapeAlphaMaskParams};
+use shrimply_render_core::{AlphaMaskParams, ShapeAlphaMaskParams};
 
-#[derive(Clone)]
-pub(crate) struct ResolvedShapeAlphaMask {
-    pub center: glam::Vec2,
-    pub size: glam::Vec2,
-    pub rotation_degrees: f32,
-    pub feather: f32,
-    pub rounding: f32,
-    pub shape: ShapeAlphaMaskKind,
-    pub vertices: Vec<glam::Vec2>,
-    pub invert: bool,
-}
+pub(crate) use shrimply_video_core::alpha_mask::ResolvedShapeAlphaMask;
 
 struct Resolved {
     mask: Option<Rc<VisualFrame>>,

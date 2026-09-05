@@ -1,0 +1,12 @@
+[package]
+name = "shrimply-manim-metal"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-metal.workspace = true
+pollster = "1"
+shrimply-manim-wgpu = { path = "../manim-wgpu" }
+shrimply-render-metal = { path = "../../render-metal" }
+wgpu = { workspace = true, features = ["metal"] }

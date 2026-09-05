@@ -8,7 +8,6 @@ pub(super) mod captions;
 mod context_menu;
 mod input;
 
-#[derive(Default)]
 pub struct State {
     pub renderer: shrimply_preview_metal::Renderer,
     pub viewport: Option<PreviewViewport>,
@@ -43,11 +42,38 @@ impl State {
         loading_done: Retained<objc2_app_kit::NSButton>,
         loading_spinner: Retained<objc2_app_kit::NSProgressIndicator>,
         frame_rate_label: Retained<objc2_app_kit::NSTextField>,
+        playback_performance: shrimply_playback_performance::SharedCollector,
     ) -> Self {
         use shrimply_paint_edit::{
             DEFAULT_PAINT_ERASER_SCALE, PAINT_PREVIEW_STATE, PaintPreviewState,
         };
-        let mut state = Self::default();
+        let renderer =
+            shrimply_preview_metal::Renderer::new(Some(std::sync::Arc::new(move |event| {
+                shrimply_playback_performance::record_render_event(&playback_performance, event);
+            })));
+        let mut state = Self {
+            renderer,
+            viewport: None,
+            guides_visible: false,
+            fullscreen: false,
+            caption_bottom_inset: 0.0,
+            guide_input: GuideInput::default(),
+            edited_guides: None,
+            baseline_guides: None,
+            guide_button: Some(guide_button),
+            loading_done: Some(loading_done),
+            loading_spinner: Some(loading_spinner),
+            frame_rate_label: Some(frame_rate_label),
+            loading_since: None,
+            controller: Controller::default(),
+            expressions: RefCell::default(),
+            audio_analysis: None,
+            presented_frame: None,
+            cursor_hidden: false,
+            last_sample: None,
+            modifiers: shrimply_preview_core::Modifiers::NONE,
+            caption_split_hover: None,
+        };
         state.controller.extensions.insert(
             PAINT_PREVIEW_STATE,
             Box::new(PaintPreviewState {
@@ -55,10 +81,6 @@ impl State {
                 ..Default::default()
             }),
         );
-        state.guide_button = Some(guide_button);
-        state.loading_done = Some(loading_done);
-        state.loading_spinner = Some(loading_spinner);
-        state.frame_rate_label = Some(frame_rate_label);
         state
     }
 

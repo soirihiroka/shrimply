@@ -1,5 +1,6 @@
 use std::any::Any;
 pub mod accuracy;
+pub mod performance;
 pub mod playback;
 
 use glam::{Mat3, Vec2};

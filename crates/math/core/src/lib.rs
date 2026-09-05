@@ -390,6 +390,13 @@ pub fn frame_span(position: Time, frame_rate: Fraction) -> Option<(Time, Time)> 
     ))
 }
 
+pub fn decodable_source_position(position: Time, duration: Time, frame_duration: Time) -> Time {
+    if position < duration || frame_duration <= Time::ZERO {
+        return position;
+    }
+    last_frame_time(duration, Fraction::from(1_u64) / frame_duration.seconds).unwrap_or(Time::ZERO)
+}
+
 pub fn last_frame_time(duration: Time, frame_rate: Fraction) -> Option<Time> {
     time_from_frame(
         frame_count(duration, frame_rate)?.checked_sub(1)?,

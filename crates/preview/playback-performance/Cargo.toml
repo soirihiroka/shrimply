@@ -11,5 +11,6 @@ serde_json.workspace = true
 shrimply-math-core = { path = "../../math/core" }
 shrimply-math-media = { path = "../../math/media" }
 shrimply-project = { path = "../../project/project" }
+shrimply-preview-core = { path = "../preview-core" }
 tracing.workspace = true
 uuid.workspace = true

@@ -91,6 +91,9 @@ impl Arguments {
 #[derive(Clone)]
 pub struct Buffer(Retained<ProtocolObject<dyn MTLBuffer>>);
 impl Buffer {
+    pub fn metal(&self) -> &Retained<ProtocolObject<dyn MTLBuffer>> {
+        &self.0
+    }
     pub fn address(&self) -> u64 {
         self.0.gpuAddress()
     }
@@ -183,6 +186,10 @@ impl Renderer {
         })
     }
 
+    pub fn device(&self) -> &Retained<ProtocolObject<dyn MTLDevice>> {
+        &self.device
+    }
+
     fn kernel(&mut self, name: &str) -> Result<&Kernel, String> {
         if !self.kernels.contains_key(name) {
             let (module, layout) = MODULES
@@ -220,6 +227,7 @@ impl Renderer {
             let mut reflection = None;
             // The entry was generated and validated by Slang and Metal at build time.
             let pipeline_started = std::time::Instant::now();
+            tracing::info!(kernel = name, "Creating shared Slang Metal pipeline");
             let pipeline = unsafe {
                 self.device
                     .newComputePipelineStateWithFunction_options_reflection_error(

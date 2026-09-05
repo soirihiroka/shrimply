@@ -1,5 +1,6 @@
 #![cfg(target_os = "macos")]
 
+mod alpha_mask;
 mod compositor;
 mod effects;
 pub use compositor::render_png;
@@ -8,6 +9,7 @@ use shrimply_math_core::Time;
 use shrimply_project::project::Project;
 use skia_safe::{Canvas, Image};
 use std::{
+    collections::BTreeMap,
     sync::{Arc, Condvar, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -29,20 +31,32 @@ struct Target {
 struct Request {
     target: Target,
     project: Arc<Project>,
+    request_id: u64,
+}
+
+#[derive(Clone, Copy)]
+struct RequestTiming {
+    target: Target,
+    started: Instant,
+    project_fps: shrimply_math_core::Fraction,
+    reported: bool,
 }
 
 #[derive(Default)]
 struct Slots {
     request: Option<Request>,
     completed: Option<(Target, Result<compositor::Presented, String>)>,
+    manim_updates: Vec<shrimply_state::manim_status::Update>,
     stop: bool,
 }
 
-#[derive(Default)]
 struct Shared {
     slots: Mutex<Slots>,
     wake: Condvar,
+    playback_observer: Option<PlaybackObserver>,
 }
+
+pub type PlaybackObserver = shrimply_preview_core::performance::RenderObserver;
 
 /// UI-side presentation only. The worker owns all shader compilation, source
 /// rasterization, pixel uploads, compute dispatch and completed-frame readback.
@@ -59,12 +73,24 @@ pub struct Renderer {
     playing: bool,
     scrubbing: bool,
     render_elapsed: Option<Duration>,
+    next_request_id: u64,
+    manim_updates: Vec<shrimply_state::manim_status::Update>,
     error: Option<String>,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
-        let shared = Arc::new(Shared::default());
+        Self::new(None)
+    }
+}
+
+impl Renderer {
+    pub fn new(playback_observer: Option<PlaybackObserver>) -> Self {
+        let shared = Arc::new(Shared {
+            slots: Mutex::new(Slots::default()),
+            wake: Condvar::new(),
+            playback_observer,
+        });
         let state = shared.clone();
         let worker = thread::Builder::new()
             .name("preview-metal".into())
@@ -83,12 +109,11 @@ impl Default for Renderer {
             playing: false,
             scrubbing: false,
             render_elapsed: None,
+            next_request_id: 0,
+            manim_updates: Vec::new(),
             error: None,
         }
     }
-}
-
-impl Renderer {
     pub fn set_project_revision(&mut self, revision: u64) {
         if self.project_revision != revision {
             self.project_revision = revision;
@@ -161,6 +186,7 @@ impl Renderer {
             .slots
             .lock()
             .expect("Metal preview slots poisoned");
+        self.manim_updates.append(&mut slots.manim_updates);
         // Present a completed scrub frame before replacing the requested target.
         if let Some((completed_target, result)) = slots.completed.take()
             && completed_target.revision == self.revision
@@ -180,12 +206,23 @@ impl Renderer {
             }
         }
         if self.requested != Some(target) {
+            self.next_request_id = self.next_request_id.wrapping_add(1);
+            let request_id = self.next_request_id;
+            if target.playing
+                && let Some(observer) = &self.shared.playback_observer
+            {
+                observer(shrimply_preview_core::performance::RenderEvent::Requested {
+                    request_id,
+                    position: target.time,
+                });
+            }
             let project = self
                 .project
                 .get_or_insert_with(|| Arc::new(project.clone()));
             slots.request = Some(Request {
                 target,
                 project: project.clone(),
+                request_id,
             });
             self.requested = Some(target);
             self.shared.wake.notify_one();
@@ -197,11 +234,16 @@ impl Renderer {
         self.error.clone().map_or(Ok(()), Err)
     }
 
+    pub fn take_manim_updates(&mut self) -> Vec<shrimply_state::manim_status::Update> {
+        std::mem::take(&mut self.manim_updates)
+    }
+
     pub fn loading(&self, tolerance: Time) -> bool {
         let (Some(requested), Some(presented)) = (self.requested, self.presented_target) else {
             return self.requested.is_some();
         };
-        requested.revision != presented.revision
+        self.presented.as_ref().is_some_and(|frame| frame.loading)
+            || requested.revision != presented.revision
             || requested.project_revision != presented.project_revision
             || requested.excluded_item_id != presented.excluded_item_id
             || if requested.playing {
@@ -232,6 +274,7 @@ impl Drop for Renderer {
 fn worker(shared: Arc<Shared>) {
     let mut renderer = compositor::Compositor::default();
     let mut current: Option<Request> = None;
+    let mut timings = BTreeMap::<u64, RequestTiming>::new();
     let mut active = false;
     let mut request_started = Instant::now();
     let mut slow_request_reported = false;
@@ -255,14 +298,25 @@ fn worker(shared: Arc<Shared>) {
             }
             renderer.set_interaction(request.target.playing, request.target.scrubbing);
             renderer.set_exclusion(request.target.excluded_item_id);
-            current = Some(request);
             request_started = Instant::now();
+            timings.insert(
+                request.request_id,
+                RequestTiming {
+                    target: request.target,
+                    started: request_started,
+                    project_fps: request.project.fps,
+                    reported: false,
+                },
+            );
+            current = Some(request);
             slow_request_reported = false;
         }
         drop(slots);
         let request = current.as_ref().expect("Metal preview request is active");
-        let result =
-            objc2::rc::autoreleasepool(|_| renderer.update(&request.project, request.target.time));
+        let result = objc2::rc::autoreleasepool(|_| {
+            renderer.update(&request.project, request.target.time, request.request_id)
+        });
+        let manim_updates = renderer.take_manim_updates();
         active = result.is_ok() && renderer.needs_update();
         let completed = match result {
             Ok(()) => renderer.take_presented().map(Ok),
@@ -281,7 +335,31 @@ fn worker(shared: Arc<Shared>) {
             );
         }
         let mut slots = shared.slots.lock().expect("Metal preview slots poisoned");
+        slots.manim_updates.extend(manim_updates);
         if let Some(completed) = completed {
+            let completed_request_id = completed
+                .as_ref()
+                .map_or(request.request_id, |frame| frame.request_id);
+            let completed_target = timings
+                .get(&completed_request_id)
+                .map_or(request.target, |timing| timing.target);
+            if let Ok(frame) = &completed
+                && !frame.loading
+                && completed_request_id == request.request_id
+                && let Some(timing) = timings.get_mut(&completed_request_id)
+                && timing.target.playing
+                && !timing.reported
+            {
+                timing.reported = true;
+                if let Some(observer) = &shared.playback_observer {
+                    observer(shrimply_preview_core::performance::RenderEvent::Completed {
+                        request_id: completed_request_id,
+                        position: frame.time,
+                        elapsed: timing.started.elapsed(),
+                        project_fps: timing.project_fps,
+                    });
+                }
+            }
             if slow_request_reported {
                 let completed_time = completed
                     .as_ref()
@@ -295,7 +373,8 @@ fn worker(shared: Arc<Shared>) {
                     "Metal preview frame finished"
                 );
             }
-            slots.completed = Some((request.target, completed));
+            slots.completed = Some((completed_target, completed));
+            timings.retain(|id, _| *id >= completed_request_id);
         }
         if active && slots.request.is_none() && !slots.stop {
             drop(

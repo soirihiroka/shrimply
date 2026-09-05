@@ -1,12 +1,41 @@
 use super::*;
 use objc2::sel;
-use objc2_app_kit::{NSMenu, NSMenuItem};
-use objc2_foundation::{NSPoint, NSString, ns_string};
+use objc2_app_kit::{NSImage, NSMenu, NSMenuItem};
+use objc2_foundation::{NSData, NSPoint, NSString, ns_string};
+use shrimply_skia_adw_core::{Color, Rect, icon};
 use shrimply_timeline_core::{
     TrackAddAction, TrackAddMenuEntry, TrackAddSettings, TrackKey,
     draw_state::{TrackButtonId, TrackLabelAction},
     selection_state,
 };
+
+const TRACK_ADD_MENU_ICON_SIZE: f32 = 16.0;
+
+fn menu_icon(action: TrackAddAction, label: &str) -> Retained<NSImage> {
+    // AppKit's PDF representation preserves the bundled SVG paths at any display scale.
+    let mut data = Vec::new();
+    let mut page = skia_safe::pdf::new_document(&mut data, None)
+        .begin_page((TRACK_ADD_MENU_ICON_SIZE, TRACK_ADD_MENU_ICON_SIZE), None);
+    icon::draw(
+        page.canvas(),
+        icon::Icon(action.icon()),
+        Rect::from_min_size(
+            glam::Vec2::ZERO,
+            glam::Vec2::splat(TRACK_ADD_MENU_ICON_SIZE),
+        ),
+        Color::from_srgba([0.0, 0.0, 0.0, 1.0]).into(),
+    );
+    page.end_page().close();
+    let image = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(&data))
+        .expect("the bundled track-menu icon must produce a valid PDF image");
+    image.setSize(NSSize::new(
+        TRACK_ADD_MENU_ICON_SIZE.into(),
+        TRACK_ADD_MENU_ICON_SIZE.into(),
+    ));
+    image.setTemplate(true);
+    image.setAccessibilityDescription(Some(&NSString::from_str(label)));
+    image
+}
 
 impl CanvasView {
     pub(super) fn activate_track_button(
@@ -70,21 +99,7 @@ impl CanvasView {
             unsafe {
                 item.setTarget(Some(self));
             }
-            let symbol = match action {
-                TrackAddAction::Import => "folder",
-                TrackAddAction::Text => "textformat",
-                TrackAddAction::Shape => "square.on.circle",
-                TrackAddAction::Paint => "paintbrush",
-                TrackAddAction::Background => "photo",
-                TrackAddAction::Scene3d => "cube",
-                TrackAddAction::VideoGeneration => "film",
-                TrackAddAction::TextToSpeech => "text.bubble",
-                TrackAddAction::AudioGenerator => "waveform",
-            };
-            item.setImage(Some(&super::super::layout::symbol(
-                symbol,
-                action.label(key.kind),
-            )));
+            item.setImage(Some(&menu_icon(*action, action.label(key.kind))));
             menu.addItem(&item);
         }
         self.ivars().menu_choice.set(None);

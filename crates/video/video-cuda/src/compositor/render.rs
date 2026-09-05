@@ -25,14 +25,12 @@ pub(super) fn render_project_frame(
             loading_placeholder: false,
             clear: false,
             errors: Vec::new(),
-            manim_durations: Vec::new(),
-            manim_parameters: Vec::new(),
-            manim_statuses: Vec::new(),
+            manim_updates: Vec::new(),
             superseded: true,
         };
     }
     let mut errors = Vec::new();
-    let mut manim_statuses = Vec::new();
+    let mut manim_updates = Vec::new();
     let mut active_items = Vec::new();
     let preload_during_playback = mode.accuracy().continuous_playback();
     let selected_needs_background = item_ids.is_some_and(|item_ids| {
@@ -93,9 +91,7 @@ pub(super) fn render_project_frame(
             loading_placeholder: false,
             clear: true,
             errors,
-            manim_durations: Vec::new(),
-            manim_parameters: Vec::new(),
-            manim_statuses,
+            manim_updates,
             superseded: false,
         };
     }
@@ -116,8 +112,7 @@ pub(super) fn render_project_frame(
         render_stack: Vec::new(),
         sequence_stack: Vec::new(),
         sequence_path: Vec::new(),
-        manim_durations: Vec::new(),
-        manim_parameters: Vec::new(),
+        manim_updates: Vec::new(),
         decode_control,
         superseded: false,
         clip_transition: None,
@@ -185,14 +180,6 @@ pub(super) fn render_project_frame(
                         "Could not render Morph transition from {} to {}: {error}",
                         active.item.id, incoming.item.id
                     ));
-                }
-            }
-            for item in [active.item, incoming.item] {
-                if matches!(
-                    item.content,
-                    shrimply_project::project::VideoItemContent::Manim(_)
-                ) {
-                    manim_statuses.push((item.id, manim_source_revision(item), None));
                 }
             }
             if renderer.loading || renderer.superseded {
@@ -273,17 +260,8 @@ pub(super) fn render_project_frame(
                 transmission_background.as_deref(),
             )
         };
-        let source_revision = match &item.content {
-            shrimply_project::project::VideoItemContent::Manim(_) => {
-                Some(manim_source_revision(item))
-            }
-            _ => None,
-        };
         match rendered {
             Ok(Some(layer)) => {
-                if let Some(source_revision) = source_revision {
-                    manim_statuses.push((active.item.id, source_revision, None));
-                }
                 if item_ids.is_some_and(|ids| ids.contains(&active.item.id)) {
                     selected_layers.push(layer.clone());
                 }
@@ -314,20 +292,13 @@ pub(super) fn render_project_frame(
                     }
                 }
             }
-            Ok(None) => {
-                if let Some(source_revision) = source_revision {
-                    manim_statuses.push((active.item.id, source_revision, None));
-                }
-            }
+            Ok(None) => {}
             Err(error) => {
                 abort_render_if_superseded!(renderer.decode_control, {
                     renderer.superseded = true;
                     break;
                 });
                 let error = format!("Could not render visual item {}: {error}", item.id);
-                if let Some(source_revision) = source_revision {
-                    manim_statuses.push((active.item.id, source_revision, Some(error.clone())));
-                }
                 errors.push(error);
             }
         }
@@ -407,9 +378,11 @@ pub(super) fn render_project_frame(
         loading_placeholder: renderer.loading_placeholder,
         clear,
         errors,
-        manim_durations: renderer.manim_durations,
-        manim_parameters: renderer.manim_parameters,
-        manim_statuses,
+        manim_updates: renderer
+            .manim_updates
+            .into_iter()
+            .chain(manim_updates)
+            .collect(),
         superseded,
     }
 }
@@ -429,14 +402,7 @@ pub(super) struct FrameItemRenderer<'a> {
     render_stack: Vec<Uuid>,
     pub(super) sequence_stack: Vec<Uuid>,
     pub(super) sequence_path: Vec<Uuid>,
-    manim_durations: Vec<(Uuid, u64, Time)>,
-    manim_parameters: Vec<(
-        Uuid,
-        u64,
-        String,
-        Vec<shrimply_project::project::ManimParameter>,
-        bool,
-    )>,
+    manim_updates: Vec<shrimply_state::manim_status::Update>,
     pub(super) decode_control: Option<&'a DecodeControl>,
     superseded: bool,
     pub(super) clip_transition: Option<ActiveClipTransition>,
@@ -707,6 +673,66 @@ impl FrameItemRenderer<'_> {
         ignore_visibility: bool,
         transmission_background: Option<&crate::gpu::VisualFrame>,
     ) -> Result<Option<crate::layer::VideoLayer>, String> {
+        let result = self.render_item_result(
+            track_index,
+            track_id,
+            item,
+            routes,
+            ignore_visibility,
+            transmission_background,
+        );
+        if matches!(item.content, VideoItemContent::Manim(_)) {
+            let element = self
+                .sessions
+                .elements
+                .iter_mut()
+                .find_map(|(key, element)| {
+                    matches!(
+                        key,
+                        VisualElementKey::Manim {
+                            sequence_path,
+                            track_id: source_track_id,
+                            item_id,
+                            ..
+                        } if sequence_path == &self.sequence_path
+                            && *source_track_id == track_id
+                            && *item_id == item.id
+                    )
+                    .then_some(element)
+                });
+            if let Some(element) = element {
+                self.manim_updates.extend(element.take_manim_updates());
+                if let Some(status) =
+                    element.manim_status(result.as_ref().err().map(ToString::to_string))
+                {
+                    self.manim_updates.push(status);
+                }
+            } else if let (Err(error), VideoItemContent::Manim(manim)) = (&result, &item.content) {
+                self.manim_updates
+                    .push(shrimply_state::manim_status::Update::Error {
+                        item_id: item.id,
+                        source_revision: item
+                            .file
+                            .snapshot()
+                            .map_or(0, |snapshot| snapshot.revision()),
+                        scene: manim.scene.clone(),
+                        input_parameters: manim.parameters.clone(),
+                        error: Some(error.clone()),
+                    });
+            }
+        }
+        result
+    }
+
+    fn render_item_result(
+        &mut self,
+        track_index: usize,
+        track_id: Uuid,
+        item: &VideoItem,
+        routes: VideoDecodeRoutes,
+        ignore_visibility: bool,
+        transmission_background: Option<&crate::gpu::VisualFrame>,
+    ) -> Result<Option<crate::layer::VideoLayer>, String> {
         abort_render_if_superseded!(self.decode_control, return Ok(None));
         let Some((visual, render_canvas)) = self.render_item_visual(
             track_index,
@@ -924,12 +950,8 @@ impl FrameItemRenderer<'_> {
             }
         }
 
-        let (rendered, source_duration, parameters) = if let Some(reference) = sequence_reference {
-            (
-                self.render_folded_sequence(item, reference, request.state)?,
-                None,
-                None,
-            )
+        let rendered = if let Some(reference) = sequence_reference {
+            self.render_folded_sequence(item, reference, request.state)?
         } else {
             let _measurement = shrimply_benchmarking::measure("Video item / Draw source");
             let element = self
@@ -937,38 +959,14 @@ impl FrameItemRenderer<'_> {
                 .elements
                 .get_mut(&key)
                 .expect("visual element was just created");
-            let rendered = element.draw(
+            element.draw(
                 request,
                 self.compositor,
                 track_id,
                 &mut self.sessions.sources,
-            )?;
-            (
-                rendered,
-                element.take_source_duration(),
-                element.take_manim_parameters(),
-            )
+            )?
         };
         abort_render_if_superseded!(self.decode_control, return Ok(None));
-        if let (Some(duration), shrimply_project::project::VideoItemContent::Manim(_)) =
-            (source_duration, &item.content)
-        {
-            self.manim_durations
-                .push((item.id, manim_source_revision(item), duration));
-        }
-        if let (
-            Some((parameters, render_is_current)),
-            shrimply_project::project::VideoItemContent::Manim(manim),
-        ) = (parameters, &item.content)
-        {
-            self.manim_parameters.push((
-                item.id,
-                manim_source_revision(item),
-                manim.scene.clone(),
-                parameters,
-                render_is_current,
-            ));
-        }
         let mut visual = match rendered {
             VisualRender::Ready(visual) => visual,
             VisualRender::Loading(_) => {
@@ -1459,22 +1457,11 @@ impl FrameItemRenderer<'_> {
         if let Some(layer) = self.alpha_mask_layers.get(&cache_key) {
             return Ok(Some(layer.clone()));
         }
-        let mut alpha_item = item.clone();
-        alpha_item.track_id = media_track_id;
-        alpha_item.alpha_mask_video = None;
-        alpha_item.stabilize_video = false;
-        let render_canvas = shrimply_project::project::CanvasSize {
-            width: if alpha_item.source_width > 0 {
-                alpha_item.source_width
-            } else {
-                self.project.canvas_size.width.max(1)
-            },
-            height: if alpha_item.source_height > 0 {
-                alpha_item.source_height
-            } else {
-                self.project.canvas_size.height.max(1)
-            },
-        };
+        let (alpha_item, render_canvas) = shrimply_video_core::alpha_mask::video_source(
+            item,
+            media_track_id,
+            self.project.canvas_size,
+        );
         let key = match &alpha_item.content {
             shrimply_project::project::VideoItemContent::Manim(_) => VisualElementKey::Manim {
                 sequence_path: self.sequence_path.clone(),

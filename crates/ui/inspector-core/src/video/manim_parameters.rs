@@ -106,9 +106,13 @@ pub fn presentation(item: &VideoItem) -> Option<ManimPresentation> {
         .file
         .snapshot()
         .map_or(0, |snapshot| snapshot.revision());
-    let reflected =
-        shrimply_state::manim_status::parameters(item.id, source_revision, &manim.scene)
-            .unwrap_or_default();
+    let reflected = shrimply_state::manim_status::parameters(
+        item.id,
+        source_revision,
+        &manim.scene,
+        &manim.parameters,
+    )
+    .unwrap_or_default();
     let anti_aliasing = reflected
         .iter()
         .find(|parameter| matches!(parameter.control, ManimParameterControl::AntiAliasing));
@@ -117,7 +121,12 @@ pub fn presentation(item: &VideoItem) -> Option<ManimPresentation> {
     if let Some(control) = anti_aliasing.and_then(anti_aliasing_control) {
         section.add(control);
     }
-    if let Some(error) = shrimply_state::manim_status::error(item.id, source_revision) {
+    if let Some(error) = shrimply_state::manim_status::error(
+        item.id,
+        source_revision,
+        &manim.scene,
+        &manim.parameters,
+    ) {
         section.add(InspectorControl::new(ControlKind::ReadOnly, "", "").value(error));
     }
 
@@ -434,13 +443,18 @@ impl InspectorController {
             .file
             .snapshot()
             .map_or(0, |snapshot| snapshot.revision());
-        shrimply_state::manim_status::parameters(item.id, source_revision, &manim.scene)
-            .and_then(|parameters| {
-                parameters
-                    .into_iter()
-                    .find(|parameter| parameter.key == key)
-            })
-            .ok_or_else(|| format!("Manim parameter {key:?} is no longer available"))
+        shrimply_state::manim_status::parameters(
+            item.id,
+            source_revision,
+            &manim.scene,
+            &manim.parameters,
+        )
+        .and_then(|parameters| {
+            parameters
+                .into_iter()
+                .find(|parameter| parameter.key == key)
+        })
+        .ok_or_else(|| format!("Manim parameter {key:?} is no longer available"))
     }
 }
 

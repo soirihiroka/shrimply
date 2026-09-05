@@ -4,11 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+shrimply-manim-metal = { path = "../../manim/manim-metal" }
 shrimply-preview-render-core = { path = "../preview-render-core" }
+shrimply-preview-core = { path = "../preview-core" }
 shrimply-render-metal = { path = "../../render-metal" }
 shrimply-render-core = { path = "../../render-core" }
 shrimply-video-core = { path = "../../video/video-core" }
 shrimply-project = { path = "../../project/project" }
+shrimply-state = { path = "../../state" }
 shrimply-math-core = { path = "../../math/core" }
 shrimply-math-geometry = { path = "../../math/geometry" }
 skia-safe.workspace = true
