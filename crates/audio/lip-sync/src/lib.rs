@@ -233,7 +233,10 @@ fn native_library_path() -> Result<PathBuf, String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("could not locate the shrimply executable: {error}"))?;
     if let Some(directory) = executable.parent() {
-        let path = directory.join("libshrimply-rhubarb.so");
+        let path = directory.join(format!(
+            "libshrimply-rhubarb{}",
+            std::env::consts::DLL_SUFFIX
+        ));
         if path.is_file() {
             return Ok(path);
         }

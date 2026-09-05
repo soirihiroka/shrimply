@@ -15,3 +15,6 @@
 [submodule "external/vtracer"]
 	path = external/vtracer
 	url = https://github.com/visioncortex/vtracer.git
+[submodule "external/qt-liquid-glass"]
+	path = external/qt-liquid-glass
+	url = https://github.com/fsalinas26/qt-liquid-glass.git

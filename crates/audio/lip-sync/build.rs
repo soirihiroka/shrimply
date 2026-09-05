@@ -111,12 +111,13 @@ fn main() {
                 .to_string(),
         ));
 
-    let library = native.join("libshrimply-rhubarb.so");
+    let library_name = format!("libshrimply-rhubarb{}", std::env::consts::DLL_SUFFIX);
+    let library = native.join(&library_name);
     let profile = out
         .ancestors()
         .nth(3)
         .expect("Cargo build output must be inside a target profile directory");
-    fs::copy(&library, profile.join("libshrimply-rhubarb.so")).unwrap_or_else(|error| {
+    fs::copy(&library, profile.join(library_name)).unwrap_or_else(|error| {
         panic!(
             "failed to stage {} in {}: {error}",
             library.display(),

@@ -5,9 +5,14 @@ edition = "2024"
 
 [dependencies]
 glam.workspace = true
-skia-safe.workspace = true
 shrimply-math-color = { path = "../../math/color", features = ["skia"] }
 shrimply-math-geometry = { path = "../../math/geometry" }
 shrimply-preview-skia = { path = "../preview-skia" }
 shrimply-timeline-value = { path = "../../timeline/timeline-value" }
 uuid.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+skia-safe = { workspace = true, features = ["all-linux"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+skia-safe = { workspace = true, features = ["all-macos"] }

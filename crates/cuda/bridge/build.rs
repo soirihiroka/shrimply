@@ -1,5 +1,10 @@
+#[cfg(not(target_os = "macos"))]
 use std::{env, path::PathBuf};
 
+#[cfg(target_os = "macos")]
+fn main() {}
+
+#[cfg(not(target_os = "macos"))]
 fn main() {
     println!("cargo:rerun-if-changed=bridge.c");
     println!("cargo:rerun-if-env-changed=CUDA_HOME");

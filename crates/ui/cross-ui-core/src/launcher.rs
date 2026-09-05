@@ -182,6 +182,12 @@ pub fn launch_editor(path: &Path) -> Result<Child, String> {
     launch_sibling_editor(path, "shrimply-editor")
 }
 
+#[cfg(target_os = "macos")]
+pub fn launch_qt_editor(_path: &Path) -> Result<Child, String> {
+    panic!("the Qt editor is not available on macOS");
+}
+
+#[cfg(not(target_os = "macos"))]
 pub fn launch_qt_editor(path: &Path) -> Result<Child, String> {
     launch_sibling_editor(path, "shrimply-editor-qt")
 }
