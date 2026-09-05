@@ -33,7 +33,7 @@ pub mod timeline {
     pub use shrimply_gtk_components::canvas as renderer;
 }
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::audio::AudioPlayer;
 use crate::player_state::SharedPlayerState;
@@ -42,7 +42,7 @@ use crate::preview_focus::SharedPreviewFocus;
 use crate::preview_surface::PreviewController;
 use crate::project::{Project, Time, scaled_time_delta};
 use crate::selection_state::SharedSelectionState;
-use crate::timeline::renderer::{Vec2, vec2};
+use crate::timeline::renderer::vec2;
 use crate::video::compositor::VideoEvent;
 use adw::prelude::AdwDialogExt;
 use gtk::prelude::*;
