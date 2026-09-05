@@ -126,12 +126,7 @@ pub(crate) fn create_folded_track_core(
 
 fn prepare_virtual_track_context_menu(runtime: &Rc<RefCell<TimelineRuntime>>) {
     let mut runtime = runtime.borrow_mut();
-    runtime.dragged_group = None;
-    runtime.resize_drag = None;
-    runtime.transition_drag = None;
-    runtime.cut_preview = None;
-    runtime.view.selection = None;
-    runtime.view.drag_mode = DragMode::None;
+    runtime.scene.pointer_cancelled();
     if let Some(existing) = runtime.active_context_menu.take() {
         existing.popdown();
     }

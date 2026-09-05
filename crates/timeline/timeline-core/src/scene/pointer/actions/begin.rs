@@ -1,12 +1,12 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::interaction::pointer) fn begin_pointer_action(
+pub(in crate::scene::pointer) fn begin_pointer_action(
     pos: Vec2,
     project: &Project,
     player_state: &SharedPlayerState,
     selection_state: &SharedSelectionState,
-    runtime: &mut TimelineRuntime,
+    runtime: &mut Scene,
     width: f64,
     timeline_width: f64,
     height: f64,
@@ -98,10 +98,10 @@ pub(in crate::interaction::pointer) fn begin_pointer_action(
             .max(0.0),
         );
         let position = runtime.snap_repository.snap(position).unwrap_or(position);
-        crate::recording::stop_before_backward_seek(runtime, player_state, position);
-        player_state::seek_time(player_state, position);
+        player_state::set_scrubbing(player_state, true);
+        runtime.pending_seek = Some(position);
         DragMode::Seek
-    } else if let Some(gesture) = shrimply_timeline_core::transitions::Gesture::begin(
+    } else if let Some(gesture) = crate::transitions::Gesture::begin(
         project,
         selection_state,
         runtime.view,
@@ -118,7 +118,8 @@ pub(in crate::interaction::pointer) fn begin_pointer_action(
     } else if let Some(hit) =
         crate::folded_sequence::hit_projected_item(project, runtime.view, x, y)
     {
-        let (item_x, item_width) = crate::item_rect(hit.start, hit.end, timeline_x(), runtime.view);
+        let (item_x, item_width) =
+            crate::drawing::item_rect(hit.start, hit.end, timeline_x(), runtime.view);
         let drag_kind = if x <= item_x + ITEM_RESIZE_HANDLE_WIDTH {
             crate::folded_sequence::FoldedDragKind::ResizeStart
         } else if x >= item_x + item_width - ITEM_RESIZE_HANDLE_WIDTH {

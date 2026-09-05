@@ -51,15 +51,5 @@ pub fn playback_time_label(position: Time, duration: Time) -> String {
     )
 }
 
-pub use shrimply_preview_core::playback::playback_speed_label;
-
-pub fn rendered_frame_rate_label(render_elapsed: Duration) -> Option<String> {
-    use shrimply_math_core::{fraction_round_nonnegative_u64, frame_rate_from_duration};
-    const MAX_DISPLAYED_FRAME_RATE: u64 = 999;
-    frame_rate_from_duration(render_elapsed).map(|frame_rate| {
-        fraction_round_nonnegative_u64(frame_rate)
-            .min(MAX_DISPLAYED_FRAME_RATE)
-            .to_string()
-    })
-}
+pub use shrimply_preview_core::playback::{playback_speed_label, rendered_frame_rate_label};
 pub use shrimply_preview_interaction_core::controller;

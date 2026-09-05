@@ -15,6 +15,11 @@ pub enum KeyAction {
     ToggleZoom,
 }
 
+/// An immutable selection captured before presenting a native confirmation dialog.
+pub struct TrackDeletion {
+    tracks: Vec<project::TrackAddress>,
+}
+
 impl KeyAction {
     /// GTK key bindings; the native adapter supplies its platform shortcut modifier.
     pub fn from_key(key: char, shortcut: bool, shift: bool) -> Option<Self> {
@@ -152,9 +157,18 @@ impl Scene {
         Ok(None)
     }
 
-    pub fn confirm_delete_selected_tracks(&mut self) -> Result<(), String> {
+    pub fn track_deletion(&self) -> TrackDeletion {
+        TrackDeletion {
+            tracks: self.context.tracks.clone(),
+        }
+    }
+
+    pub fn confirm_delete_selected_tracks(
+        &mut self,
+        deletion: TrackDeletion,
+    ) -> Result<(), String> {
         let mut edited = self.project.borrow().clone();
-        for track in &self.context.tracks {
+        for track in &deletion.tracks {
             if !edited.remove_track(track) {
                 return Err("Selected track no longer exists".into());
             }

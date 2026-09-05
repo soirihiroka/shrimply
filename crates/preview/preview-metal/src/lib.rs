@@ -10,10 +10,11 @@ use skia_safe::{Canvas, Image};
 use std::{
     sync::{Arc, Condvar, Mutex},
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const FRAME_POLL_INTERVAL: Duration = Duration::from_millis(1);
+const SLOW_FRAME_WARNING: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Target {
@@ -57,6 +58,7 @@ pub struct Renderer {
     revision: u64,
     playing: bool,
     scrubbing: bool,
+    render_elapsed: Option<Duration>,
     error: Option<String>,
 }
 
@@ -80,6 +82,7 @@ impl Default for Renderer {
             revision: 0,
             playing: false,
             scrubbing: false,
+            render_elapsed: None,
             error: None,
         }
     }
@@ -137,6 +140,10 @@ impl Renderer {
             .map(|frame| (frame.time, &frame.audio_analysis))
     }
 
+    pub fn render_elapsed(&self) -> Option<Duration> {
+        self.render_elapsed
+    }
+
     pub fn draw(&mut self, canvas: &Canvas, project: &Project, time: Time) -> Result<(), String> {
         if self.worker.is_finished() {
             return Err("Metal preview worker stopped unexpectedly".into());
@@ -164,6 +171,7 @@ impl Renderer {
                         time: image.time,
                         ..completed_target
                     };
+                    self.render_elapsed = Some(image.render_elapsed);
                     self.presented = Some(image);
                     self.presented_target = Some(completed_target);
                     self.error = None;
@@ -188,6 +196,24 @@ impl Renderer {
         }
         self.error.clone().map_or(Ok(()), Err)
     }
+
+    pub fn loading(&self, tolerance: Time) -> bool {
+        let (Some(requested), Some(presented)) = (self.requested, self.presented_target) else {
+            return self.requested.is_some();
+        };
+        requested.revision != presented.revision
+            || requested.project_revision != presented.project_revision
+            || requested.excluded_item_id != presented.excluded_item_id
+            || if requested.playing {
+                requested.time.abs_diff(presented.time) > tolerance
+            } else {
+                requested.time != presented.time
+                    || self.presented.as_ref().is_none_or(|frame| {
+                        frame.accuracy
+                            != shrimply_preview_render_core::CompositeAccuracy::FULLY_ACCURATE
+                    })
+            }
+    }
 }
 
 impl Drop for Renderer {
@@ -207,6 +233,8 @@ fn worker(shared: Arc<Shared>) {
     let mut renderer = compositor::Compositor::default();
     let mut current: Option<Request> = None;
     let mut active = false;
+    let mut request_started = Instant::now();
+    let mut slow_request_reported = false;
     loop {
         let mut slots = shared.slots.lock().expect("Metal preview slots poisoned");
         while !slots.stop && slots.request.is_none() && !active {
@@ -228,6 +256,8 @@ fn worker(shared: Arc<Shared>) {
             renderer.set_interaction(request.target.playing, request.target.scrubbing);
             renderer.set_exclusion(request.target.excluded_item_id);
             current = Some(request);
+            request_started = Instant::now();
+            slow_request_reported = false;
         }
         drop(slots);
         let request = current.as_ref().expect("Metal preview request is active");
@@ -238,8 +268,33 @@ fn worker(shared: Arc<Shared>) {
             Ok(()) => renderer.take_presented().map(Ok),
             Err(error) => Some(Err(error)),
         };
+        if !slow_request_reported && request_started.elapsed() >= SLOW_FRAME_WARNING {
+            slow_request_reported = true;
+            tracing::warn!(
+                time = %request.target.time.as_label(),
+                project_revision = request.target.project_revision,
+                playing = request.target.playing,
+                scrubbing = request.target.scrubbing,
+                active,
+                elapsed_ms = request_started.elapsed().as_millis(),
+                "Metal preview frame is still rendering"
+            );
+        }
         let mut slots = shared.slots.lock().expect("Metal preview slots poisoned");
         if let Some(completed) = completed {
+            if slow_request_reported {
+                let completed_time = completed
+                    .as_ref()
+                    .map_or(request.target.time, |frame| frame.time);
+                tracing::info!(
+                    completed_time = %completed_time.as_label(),
+                    requested_time = %request.target.time.as_label(),
+                    project_revision = request.target.project_revision,
+                    current_request_elapsed_ms = request_started.elapsed().as_millis(),
+                    success = completed.is_ok(),
+                    "Metal preview frame finished"
+                );
+            }
             slots.completed = Some((request.target, completed));
         }
         if active && slots.request.is_none() && !slots.stop {

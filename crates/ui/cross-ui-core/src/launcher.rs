@@ -201,11 +201,9 @@ pub fn launch_qt_editor(path: &Path) -> Result<Child, String> {
 }
 
 fn launch_sibling_editor(path: &Path, binary_name: &str) -> Result<Child, String> {
-    let sibling = std::env::current_exe()
+    let editor = std::env::current_exe()
         .map(|path| path.with_file_name(binary_name))
-        .ok()
-        .filter(|path| path.is_file());
-    let editor = sibling.unwrap_or_else(|| PathBuf::from(binary_name));
+        .unwrap_or_else(|_| PathBuf::from(binary_name));
     Command::new(&editor)
         .arg(path)
         .spawn()

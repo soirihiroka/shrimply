@@ -35,6 +35,12 @@ pub struct PreparedVectorMorph {
     target_center: glam::Vec2,
 }
 
+pub struct MorphPresentation<'a> {
+    pub scene: &'a MorphScene,
+    pub target_side: bool,
+    pub opacity: f32,
+}
+
 pub struct MorphFrame {
     morph: Rc<PreparedVectorMorph>,
     progress: f32,
@@ -72,12 +78,24 @@ impl PreparedVectorMorph {
         }
     }
 
-    pub fn source(&self) -> &MorphScene {
-        &self.source
-    }
-
-    pub fn target(&self) -> &MorphScene {
-        &self.target
+    pub fn presentation(
+        &self,
+        progress: f32,
+        source_opacity: f32,
+        target_opacity: f32,
+    ) -> MorphPresentation<'_> {
+        const TARGET_SIDE_START: f32 = 0.5;
+        let progress = progress.clamp(0.0, 1.0);
+        let target_side = progress >= TARGET_SIDE_START;
+        MorphPresentation {
+            scene: if target_side {
+                &self.target
+            } else {
+                &self.source
+            },
+            target_side,
+            opacity: shrimply_render_core::math::lerp(source_opacity, target_opacity, progress),
+        }
     }
 }
 

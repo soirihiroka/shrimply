@@ -18,7 +18,7 @@ pub(crate) fn import_path_at(
     let (canvas_size, default_visual_duration) = {
         let project = project.borrow();
         let runtime = runtime.borrow();
-        (project.canvas_size, runtime.default_visual_duration)
+        (project.canvas_size, runtime.scene.default_visual_duration)
     };
     let project = project.clone();
     let player_state = player_state.clone();
@@ -169,7 +169,7 @@ fn finish_media_import(
             frame_rate = Some(fps);
         }
     }
-    let collision_mode = runtime.borrow().drag_collision_mode;
+    let collision_mode = runtime.borrow().scene.drag_collision_mode;
     let preview = import::preview(
         &project_state,
         info.duration,
@@ -186,7 +186,7 @@ fn finish_media_import(
 
     {
         let mut runtime = runtime.borrow_mut();
-        runtime.import_preview = None;
+        runtime.scene.clear_drop_preview();
     }
     let focused_item = result.selection.first().copied();
     selection_state::set_selected_items(selection_state, result.selection, focused_item);
@@ -345,7 +345,7 @@ fn import_path_to_tracks(
     track_indices: Vec<usize>,
 ) {
     let start = player_state::snapshot(player_state).position;
-    let default_visual_duration = runtime.borrow().default_visual_duration;
+    let default_visual_duration = runtime.borrow().scene.default_visual_duration;
     let started = import::start_track_import(
         &mut project.borrow_mut(),
         path,
@@ -444,7 +444,7 @@ pub(crate) fn ask_remux_then_import_at(
                     target,
                 );
             } else {
-                runtime.borrow_mut().import_preview = None;
+                runtime.borrow_mut().scene.clear_drop_preview();
                 response_area.queue_render();
             }
         },
@@ -521,7 +521,7 @@ fn start_remux(
             glib::ControlFlow::Break
         }
         Ok(Err(error)) => {
-            runtime.borrow_mut().import_preview = None;
+            runtime.borrow_mut().scene.clear_drop_preview();
             show_error_dialog(&area, "Could not remux source file", &error);
             area.queue_render();
             glib::ControlFlow::Break

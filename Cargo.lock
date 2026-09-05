@@ -6321,6 +6321,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.5",
  "shrimply-math-color",
+ "shrimply-math-core",
  "shrimply-math-geometry",
  "shrimply-preview-skia",
  "shrimply-timeline-value",
@@ -6393,6 +6394,7 @@ dependencies = [
  "shrimply-render-metal",
  "shrimply-video-core",
  "skia-safe",
+ "tracing",
  "uuid",
 ]
 
@@ -6434,6 +6436,7 @@ dependencies = [
  "shrimply-evaluation",
  "shrimply-math-core",
  "shrimply-math-geometry",
+ "shrimply-math-media",
  "shrimply-paint-skia",
  "shrimply-pdf",
  "shrimply-preview-core",
@@ -6657,6 +6660,7 @@ dependencies = [
  "shrimply-render-core",
  "shrimply-slang-build",
  "skia-safe",
+ "tracing",
 ]
 
 [[package]]
@@ -6837,6 +6841,7 @@ dependencies = [
  "ffmpeg-next",
  "glam 0.33.5",
  "hashbrown 0.17.1",
+ "serde_json",
  "shrimply-3dgs",
  "shrimply-audio",
  "shrimply-blender",
@@ -6855,6 +6860,7 @@ dependencies = [
  "shrimply-scene-3d",
  "shrimply-skia-adw-core",
  "shrimply-state",
+ "shrimply-support",
  "shrimply-timeline",
  "shrimply-timeline-snap",
  "shrimply-video-modifiers",

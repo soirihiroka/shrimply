@@ -18,9 +18,7 @@ use super::interaction::{
     ask_remux_then_import_at, content_y, import_path_at, set_timeline_selection, show_error_dialog,
 };
 use super::items::{self, ItemKey, TrackKind};
-use super::{TimelineRuntime, import, timeline_x, x_to_time};
-
-pub use shrimply_timeline_core::external_content::TextPreview;
+use super::{TimelineRuntime, import, x_to_time};
 
 const CLIPBOARD_MEDIA_DIR: &str = "media/clipboard";
 
@@ -52,60 +50,6 @@ pub(super) enum Origin {
 pub(super) enum Placement {
     Playhead,
     Timeline { x: f64, y: f64 },
-}
-
-pub(super) fn text_preview(
-    project: &Project,
-    runtime: &TimelineRuntime,
-    text: String,
-    x: f64,
-    y: f64,
-) -> Option<TextPreview> {
-    if text.is_empty() || x < timeline_x() {
-        return None;
-    }
-    let (kind, track_index, _) = items::track_at_y(project, y + runtime.view.scroll_y)?;
-    let start = Time::from_seconds_f64(x_to_time(
-        x,
-        runtime.view.scroll_seconds,
-        runtime.view.seconds_per_pixel,
-    ));
-    let start = runtime.snap_repository.snap(start).unwrap_or(start);
-    let mut end = start
-        .saturating_add(runtime.default_visual_duration)
-        .snapped(project.frame_step());
-    match kind {
-        TrackKind::Caption => {
-            for item in &project.caption_tracks.get(track_index)?.items {
-                if item.start <= start && start < item.end {
-                    return None;
-                }
-                if item.start > start {
-                    end = end.min(item.start);
-                    break;
-                }
-            }
-        }
-        TrackKind::Video => {
-            for item in &project.video_tracks.get(track_index)?.items {
-                if item.start <= start && start < item.end {
-                    return None;
-                }
-                if item.start > start {
-                    end = end.min(item.start);
-                    break;
-                }
-            }
-        }
-        TrackKind::Audio => return None,
-    }
-    (end > start).then_some(TextPreview {
-        text,
-        kind,
-        track_index,
-        start,
-        end,
-    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -350,12 +294,12 @@ fn insert_file(
             let runtime = runtime.borrow();
             let start = Time::from_seconds_f64(x_to_time(
                 x,
-                runtime.view.scroll_seconds,
-                runtime.view.seconds_per_pixel,
+                runtime.scene.view().scroll_seconds,
+                runtime.scene.view().seconds_per_pixel,
             ));
             (
-                runtime.snap_repository.snap(start).unwrap_or(start),
-                items::NewItemTarget::AtY(content_y(runtime.view, y)),
+                runtime.scene.snap_repository.snap(start).unwrap_or(start),
+                items::NewItemTarget::AtY(content_y(runtime.scene.view(), y)),
             )
         }
     };
@@ -443,9 +387,11 @@ fn insert_text_core(
     let preview = match placement {
         Placement::Playhead => None,
         Placement::Timeline { x, y } => {
-            let project_state = project.borrow();
             let runtime = runtime.borrow();
-            let Some(preview) = text_preview(&project_state, &runtime, text.clone(), x, y) else {
+            let Some(preview) = runtime
+                .scene
+                .text_preview(text.clone(), super::vec2(x as f32, y as f32))
+            else {
                 return false;
             };
             Some(preview)
@@ -463,13 +409,13 @@ fn insert_text_core(
     let end = preview.as_ref().map_or_else(
         || {
             start
-                .saturating_add(runtime.borrow().default_visual_duration)
+                .saturating_add(runtime.borrow().scene.default_visual_duration)
                 .snapped(frame_step)
         },
         |p| p.end,
     );
     let text = preview.as_ref().map_or(text, |p| p.text.clone());
-    let default_text_font_family = runtime.borrow().default_text_font_family.clone();
+    let default_text_font_family = runtime.borrow().scene.default_text_font_family.clone();
     let mut project_state = project.borrow_mut();
     let (kind, track_index) = preview
         .as_ref()

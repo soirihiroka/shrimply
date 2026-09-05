@@ -27,7 +27,7 @@ pub(super) fn show_folded_item_context_menu(
             }
             Some(crate::project::ItemRef::Caption(_)) | None => false,
         };
-        let clipboard = runtime.borrow().property_clipboard.clone();
+        let clipboard = runtime.borrow().scene.property_clipboard.clone();
         let clipboard = clipboard.borrow();
         (
             folder,

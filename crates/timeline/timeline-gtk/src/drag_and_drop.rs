@@ -1,19 +1,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::player_state::SharedPlayerState;
-use crate::project::{Project, Time};
+use crate::project::Project;
 use crate::selection_state::SharedSelectionState;
 use uuid::Uuid;
 
+use super::TimelineRuntime;
 use super::external_content::{self, Content, Origin, Placement};
-use super::{RULER_HEIGHT, TimelineImportPreview, TimelineRuntime, import, x_to_time};
-
-const IMPORT_INSPECTION_DELIVERY_INTERVAL: Duration = Duration::from_millis(16);
 
 pub(super) fn setup(
     area: &gtk::GLArea,
@@ -29,7 +26,7 @@ pub(super) fn setup(
     mask_drop.connect_motion(move |_, x, y| {
         mask_target_at(
             &mask_motion_project.borrow(),
-            mask_motion_runtime.borrow().view,
+            mask_motion_runtime.borrow().scene.view(),
             x,
             y,
         )
@@ -68,7 +65,7 @@ pub(super) fn setup(
     mask_text_drop.connect_motion(move |_, x, y| {
         mask_target_at(
             &mask_motion_project.borrow(),
-            mask_motion_runtime.borrow().view,
+            mask_motion_runtime.borrow().scene.view(),
             x,
             y,
         )
@@ -111,32 +108,16 @@ pub(super) fn setup(
         .preload(true)
         .build();
     let enter_area = area.clone();
-    let enter_project = project.clone();
     let enter_runtime = runtime.clone();
     drop.connect_enter(move |target, x, y| {
-        update_preview(
-            &enter_area,
-            target.value().as_ref(),
-            &enter_project,
-            &enter_runtime,
-            x,
-            y,
-        );
+        update_preview(target.value().as_ref(), &enter_runtime, x, y);
         enter_area.queue_render();
         gdk::DragAction::COPY
     });
     let motion_area = area.clone();
-    let motion_project = project.clone();
     let motion_runtime = runtime.clone();
     drop.connect_motion(move |target, x, y| {
-        update_preview(
-            &motion_area,
-            target.value().as_ref(),
-            &motion_project,
-            &motion_runtime,
-            x,
-            y,
-        );
+        update_preview(target.value().as_ref(), &motion_runtime, x, y);
         motion_area.queue_render();
         gdk::DragAction::COPY
     });
@@ -144,8 +125,7 @@ pub(super) fn setup(
     let leave_runtime = runtime.clone();
     drop.connect_leave(move |_| {
         let mut runtime = leave_runtime.borrow_mut();
-        runtime.import_preview = None;
-        runtime.text_drop_preview = None;
+        runtime.scene.clear_drop_preview();
         leave_area.queue_render();
     });
     let drop_area = area.clone();
@@ -165,8 +145,7 @@ pub(super) fn setup(
         let content_kind = content.label();
         {
             let mut runtime = runtime.borrow_mut();
-            runtime.import_preview = None;
-            runtime.text_drop_preview = None;
+            runtime.scene.clear_drop_preview();
         }
         let inserted = external_content::insert(
             &drop_area,
@@ -209,7 +188,7 @@ fn assign_mask_source(
 ) -> bool {
     let source = {
         let project = project.borrow();
-        let Some(target) = mask_target_at(&project, runtime.borrow().view, x, y) else {
+        let Some(target) = mask_target_at(&project, runtime.borrow().scene.view(), x, y) else {
             return false;
         };
         let Some(track) = project.video_tracks.get(target.track_index) else {
@@ -250,167 +229,20 @@ fn assign_mask_source(
 }
 
 fn update_preview(
-    area: &gtk::GLArea,
     value: Option<&glib::Value>,
-    project: &Rc<RefCell<Project>>,
     runtime: &Rc<RefCell<TimelineRuntime>>,
     x: f64,
     y: f64,
 ) {
-    let path = match value.and_then(external_content::from_value) {
-        Some(Content::Text(text)) => {
-            let preview = {
-                let project = project.borrow();
-                let runtime = runtime.borrow();
-                external_content::text_preview(&project, &runtime, text, x, y)
-            };
-            let mut runtime = runtime.borrow_mut();
-            runtime.import_preview = None;
-            runtime.text_drop_preview = preview;
-            return;
-        }
-        Some(Content::File(path)) => path,
-        Some(Content::Texture(_)) | Some(Content::Url(_)) | None => {
-            let mut runtime = runtime.borrow_mut();
-            runtime.import_preview = None;
-            runtime.text_drop_preview = None;
-            return;
-        }
-    };
-    runtime.borrow_mut().text_drop_preview = None;
-    let Some(file_kind) = import::file_kind(&path) else {
-        runtime.borrow_mut().import_preview = None;
-        return;
-    };
-    let (visual_kind, video_streams, audio_streams) = match file_kind {
-        import::FileKind::Mp4
-        | import::FileKind::Mov
-        | import::FileKind::Mkv
-        | import::FileKind::WebM => (Some(import::VisualMediaKind::Video), 1, 1),
-        import::FileKind::Image => (Some(import::VisualMediaKind::Image), 1, 0),
-        import::FileKind::Gif => (Some(import::VisualMediaKind::Gif), 1, 0),
-        import::FileKind::Svg => (Some(import::VisualMediaKind::Svg), 1, 0),
-        import::FileKind::Pdf => (Some(import::VisualMediaKind::Pdf), 1, 0),
-        import::FileKind::Python => (Some(import::VisualMediaKind::Manim), 1, 0),
-        import::FileKind::Blender => (Some(import::VisualMediaKind::Blender), 1, 0),
-        import::FileKind::LayeredImage => (Some(import::VisualMediaKind::LayeredImage), 1, 0),
-        import::FileKind::Obj => (Some(import::VisualMediaKind::Obj), 1, 0),
-        import::FileKind::Ply => (Some(import::VisualMediaKind::Gaussian), 1, 0),
-        import::FileKind::Audio => (None, 0, 1),
-        import::FileKind::Vtt => {
-            runtime.borrow_mut().import_preview = None;
-            return;
-        }
-    };
-
-    let (canvas_size, default_visual_duration, new_source) = {
-        let project = project.borrow();
-        let mut runtime = runtime.borrow_mut();
-        let new_source = runtime
-            .import_preview
-            .as_ref()
-            .is_none_or(|preview| preview.source.path() != path);
-        let (source, duration, visual_kind, video_streams, audio_streams) = runtime
-            .import_preview
-            .as_ref()
-            .filter(|preview| preview.source.path() == path)
-            .map(|preview| {
-                (
-                    preview.source.clone(),
-                    preview.duration,
-                    preview.visual_kind,
-                    preview.preview.video_streams,
-                    preview.preview.audio_streams,
-                )
-            })
-            .unwrap_or_else(|| {
-                (
-                    crate::project::Asset::new(path.clone()),
-                    runtime.default_visual_duration,
-                    visual_kind,
-                    video_streams,
-                    audio_streams,
-                )
-            });
-        let view = runtime.view;
-        let start =
-            Time::from_seconds_f64(x_to_time(x, view.scroll_seconds, view.seconds_per_pixel));
-        let start = runtime.snap_repository.snap(start).unwrap_or(start);
-        let y = y.max(RULER_HEIGHT) + view.scroll_y;
-        let preview = import::preview(
-            &project,
-            duration,
-            video_streams,
-            audio_streams,
-            start,
-            super::items::NewItemTarget::AtY(y),
-            runtime.drag_collision_mode,
-        );
-        runtime.import_preview = Some(TimelineImportPreview {
-            source,
-            duration,
-            visual_kind,
-            preview,
-            y,
-        });
-        (
-            project.canvas_size,
-            runtime.default_visual_duration,
-            new_source,
-        )
-    };
-
-    if !new_source || file_kind == import::FileKind::Python {
-        return;
-    }
-
-    let subscription =
-        import::request_inspection(path.clone(), canvas_size, default_visual_duration);
-    let project = project.clone();
-    let runtime_for_result = runtime.clone();
-    let handle = shrimply_gtk_components::resource_pipeline::deliver(
-        area.downgrade(),
-        subscription,
-        IMPORT_INSPECTION_DELIVERY_INTERVAL,
-        move |area, event| match event {
-            shrimply_resource_pipeline::Event::Finished(info) => {
-                let project = project.borrow();
-                let mut runtime = runtime_for_result.borrow_mut();
-                let Some(current) = runtime
-                    .import_preview
-                    .as_ref()
-                    .filter(|preview| preview.source.path() == path)
-                else {
-                    return;
-                };
-                let start = current.preview.start;
-                let y = current.y;
-                let preview = import::preview(
-                    &project,
-                    info.duration,
-                    info.video_streams,
-                    info.audio_streams,
-                    start,
-                    super::items::NewItemTarget::AtY(y),
-                    runtime.drag_collision_mode,
-                );
-                runtime.import_preview = Some(TimelineImportPreview {
-                    source: info.source.clone(),
-                    duration: info.duration,
-                    visual_kind: info.visual_kind,
-                    preview,
-                    y,
-                });
-                area.queue_render();
-            }
-            shrimply_resource_pipeline::Event::Failed(error) => {
-                tracing::warn!("Could not inspect dropped media: {error}");
-            }
-            shrimply_resource_pipeline::Event::Progress(_)
-            | shrimply_resource_pipeline::Event::Cancelled => {}
-        },
-    );
     let mut runtime = runtime.borrow_mut();
-    runtime.resource_jobs.retain(|job| job.is_active());
-    runtime.resource_jobs.push(handle);
+    let point = super::vec2(x as f32, y as f32);
+    match value.and_then(external_content::from_value) {
+        Some(Content::Text(text)) => runtime.scene.update_text_drop_preview(text, point),
+        Some(Content::File(path)) => {
+            runtime.scene.update_drop_preview(path, point);
+        }
+        Some(Content::Texture(_)) | Some(Content::Url(_)) | None => {
+            runtime.scene.clear_drop_preview()
+        }
+    }
 }

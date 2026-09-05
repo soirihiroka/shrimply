@@ -117,6 +117,12 @@ define_class!(
             self.sync_panels();
         }
 
+        #[unsafe(method(windowDidEnterFullScreen:))]
+        fn did_enter_fullscreen(&self, _notification: &NSNotification) {
+            self.ivars().fullscreen_preview.set(true);
+            self.sync_panels();
+        }
+
         #[unsafe(method(windowDidFailToEnterFullScreen:))]
         fn failed_to_enter_fullscreen(&self, _window: &NSWindow) {
             self.ivars().fullscreen_preview.set(false);
@@ -261,19 +267,21 @@ impl Editor {
     }
 
     fn sync_panels(&self) {
-        self.sync_fullscreen_layout();
         let ivars = self.ivars();
         let layout = ivars.layout.get().expect("layout must exist");
         let fullscreen = ivars.fullscreen_preview.get();
-        for canvas in &layout.canvases {
-            canvas.set_preview_fullscreen(fullscreen);
-        }
         layout
             .inspector
             .setCollapsed(fullscreen || !ivars.inspector_visible.get());
         layout
             .timeline
             .setCollapsed(fullscreen || !ivars.timeline_visible.get());
+        self.sync_fullscreen_layout();
+        layout.root.view().setNeedsLayout(true);
+        layout.root.view().layoutSubtreeIfNeeded();
+        for canvas in &layout.canvases {
+            canvas.set_preview_fullscreen(fullscreen);
+        }
         if let Some(items) = ivars.view_items.get() {
             for (item, checked) in items.iter().zip([
                 ivars.inspector_visible.get(),

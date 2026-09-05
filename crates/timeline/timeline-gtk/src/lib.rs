@@ -1,9 +1,8 @@
-use hashbrown::HashMap;
-use std::cell::{Cell, RefCell};
+use shrimply_timeline_core::scene::{Event as TimelineEvent, PointerButton};
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Instant;
 
 pub use shrimply_audio as audio;
 pub use shrimply_gtk_components::{desktop_open, playback_shortcuts, skia_font, skia_system_font};
@@ -28,12 +27,11 @@ use shrimply_playback_performance as playback_performance;
 use shrimply_video_recording as video_recording;
 
 use crate::audio::SharedAudioLevels;
-use crate::audio::beat::{self, BeatMap};
-use crate::audio::waveform::{self, WaveformMap};
+use crate::audio::waveform;
 use crate::player_state::SharedPlayerState;
 use crate::preferences::store as preferences_store;
 use crate::project::{
-    AudioItem, FontFamily, Project, RepeatStrategy, Time, Transform, TransitionSide, VideoItem,
+    AudioItem, Project, RepeatStrategy, Time, Transform, TransitionSide, VideoItem,
     VideoItemContent, VideoSampleMethod, default_playback_speed,
 };
 use crate::selection_state::SharedSelectionState;
@@ -78,7 +76,7 @@ mod toolkit_context_menu;
 mod track_controls;
 pub use shrimply_timeline_core::view;
 
-use drawing::{TimelineInput, active_virtual_tracks, draw_timeline, item_rect, row_screen_y};
+use drawing::row_screen_y;
 use frame::timeline_gtk;
 use geometry::*;
 use recording::{
@@ -89,12 +87,11 @@ use renderer::{TimelinePainter, TimelineRenderer};
 use runtime::*;
 use setup::*;
 use track_controls::{
-    show_track_add_menu, timeline_sidebar, toggle_track_enabled, toggle_track_enabled_core,
-    track_button_at, track_label_action_at, track_label_button_y,
+    show_track_add_menu, timeline_sidebar, track_label_action_at, track_label_button_y,
 };
 use view::*;
 
-use items::{DraggedGroup, ItemKey, ResizeDrag, TimelineClipboard, TrackKind, target_item_times};
+use items::{ItemKey, TimelineClipboard, TrackKind};
 
 pub use shrimply_timeline_core::metrics::*;
 
@@ -104,16 +101,7 @@ pub enum ToolkitPointerButton {
     Middle,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(u8)]
-pub enum TimelineCursor {
-    #[default]
-    Default,
-    ResizeStart,
-    ResizeEnd,
-    ResizeHorizontal,
-    Crosshair,
-}
+pub use shrimply_timeline_core::view::TimelineCursor;
 
 pub struct RenderedVideoFrame {
     pub width: i32,
@@ -145,10 +133,7 @@ pub struct ToolkitTimeline {
     pending_track_import: Option<import::TrackImportInspection>,
     track_import_error: Option<String>,
     runtime: Rc<RefCell<TimelineRuntime>>,
-    waveform: Option<setup::WaveformSubscription>,
-    beats: Option<setup::BeatSubscription>,
     pointer_lock: Option<shrimply_wayland_pointer_lock::WaylandPointerLock>,
-    pointer_lock_bounds: Option<Rect>,
     pointer_lock_origin: Option<Vec2>,
 }
 
@@ -162,30 +147,13 @@ impl ToolkitTimeline {
         property_clipboard: shrimply_property_transfer::SharedClipboard,
     ) -> Self {
         let tools = TimelineTools::new(preferences.clone());
-        let playhead_visibility_requested = Rc::new(Cell::new(false));
-        let (timeline_zoom, timeline_center) = {
-            let project = project.borrow();
-            (
-                project.timeline_zoom,
-                project
-                    .timeline_zoom
-                    .filter(|zoom| *zoom > Time::ZERO)
-                    .and(project.cursor_position),
-            )
-        };
         let runtime = Rc::new(RefCell::new(TimelineRuntime::new(
-            WaveformMap::new(),
-            preferences_store::snapshot(&preferences),
-            playhead_visibility_requested,
-            timeline_zoom,
-            timeline_center,
+            project.clone(),
+            player_state.clone(),
+            selection_state.clone(),
+            preferences,
             property_clipboard,
         )));
-        let preference_runtime = runtime.clone();
-        preferences_store::connect(&preferences, move |snapshot| {
-            preference_runtime.borrow_mut().apply_preferences(&snapshot);
-        });
-        let (waveform, beats) = setup::toolkit_audio_loaders(&project.borrow());
         Self {
             project,
             player_state,
@@ -203,10 +171,7 @@ impl ToolkitTimeline {
             pending_track_import: None,
             track_import_error: None,
             runtime,
-            waveform: Some(waveform),
-            beats: Some(beats),
             pointer_lock: None,
-            pointer_lock_bounds: None,
             pointer_lock_origin: None,
         }
     }
@@ -221,17 +186,8 @@ impl ToolkitTimeline {
         self.poll_track_import();
         let logical_width = f64::from(width) / f64::from(pixels_per_point);
         let logical_height = f64::from(height) / f64::from(pixels_per_point);
-        self.pointer_lock_bounds = Some(Rect::from_min_max(
-            vec2(timeline_x() as f32, 0.0),
-            vec2(
-                (timeline_x() + timeline_width(logical_width)) as f32,
-                logical_height.max(0.0) as f32,
-            ),
-        ));
         self.poll_pointer_lock();
         let mut runtime = self.runtime.borrow_mut();
-        setup::poll_toolkit_audio_loaders(&mut runtime, &mut self.waveform, &mut self.beats);
-        runtime.track_controls_animating = false;
         let painter = runtime.renderer.begin_frame(
             glam::UVec2::new(width.max(1), height.max(1)),
             pixels_per_point,
@@ -248,22 +204,14 @@ impl ToolkitTimeline {
             logical_height,
             accent_color,
         );
-        runtime.finish_pointer_frame();
         runtime.renderer.end_frame()?;
-        let pending_track_toggle = runtime.pending_track_toggle.take();
-        let pending_sequence_toggle = runtime.pending_sequence_toggle.take();
-        let pending_track_add_menu = runtime.pending_track_add_menu.take();
-        let pending_pause_playback = std::mem::take(&mut runtime.pending_pause_playback);
-        let view = runtime.view;
+        let requests = runtime.scene.take_requests();
+        let pending_track_add_menu = requests.track_add;
+        let pending_pause_playback = requests.pause_playback;
+        let view = runtime.scene.view();
         drop(runtime);
         if pending_pause_playback {
             player_state::set_playing(&self.player_state, false);
-        }
-        if let Some(key) = pending_track_toggle {
-            toggle_track_enabled_core(&self.project, &self.player_state, key);
-        }
-        if let Some(path) = pending_sequence_toggle {
-            self.toggle_sequence(path);
         }
         if let Some(request) = pending_track_add_menu {
             let row = items::row_for_track(
@@ -291,9 +239,9 @@ impl ToolkitTimeline {
             return false;
         };
         let runtime = self.runtime.borrow();
-        let default_text_font_family = runtime.default_text_font_family.clone();
+        let default_text_font_family = runtime.scene.default_text_font_family.clone();
         let settings = shrimply_timeline_core::TrackAddSettings {
-            default_visual_duration: runtime.default_visual_duration,
+            default_visual_duration: runtime.scene.default_visual_duration,
             default_text_font_family: &default_text_font_family,
         };
         drop(runtime);
@@ -329,7 +277,7 @@ impl ToolkitTimeline {
             .map(|target| target.track_index)
             .collect::<Vec<_>>();
         let start = player_state::snapshot(&self.player_state).position;
-        let default_visual_duration = self.runtime.borrow().default_visual_duration;
+        let default_visual_duration = self.runtime.borrow().scene.default_visual_duration;
         let started = import::start_track_import(
             &mut self.project.borrow_mut(),
             path,
@@ -398,9 +346,6 @@ impl ToolkitTimeline {
     }
 
     fn poll_pointer_lock(&mut self) {
-        let Some(bounds) = self.pointer_lock_bounds else {
-            return;
-        };
         if let Some((delta_x, delta_y)) = self
             .pointer_lock
             .as_mut()
@@ -408,30 +353,21 @@ impl ToolkitTimeline {
         {
             let delta = vec2(delta_x as f32, delta_y as f32);
             let mut runtime = self.runtime.borrow_mut();
-            let display_position = runtime
-                .software_cursor
-                .as_ref()
-                .map(|cursor| cursor.position)
-                .or(runtime.pointer_pos)
-                .unwrap_or(bounds.min);
-            runtime.pointer_pos = Some(runtime.pointer_pos.unwrap_or(display_position) + delta);
-            runtime
-                .software_cursor
-                .as_mut()
-                .expect("toolkit pointer lock must own a software cursor")
-                .position = bounds.wrap_point(display_position + delta);
+            runtime.scene.relative_motion(delta);
         }
     }
 
     pub fn pointer_move(&self, x: f32, y: f32, ctrl: bool, shift: bool) {
         let mut runtime = self.runtime.borrow_mut();
-        runtime.modifiers = TimelineModifiers { ctrl, shift };
-        runtime.pointer_pos = Some(vec2(x, y));
+        runtime.scene.event(TimelineEvent::Motion {
+            point: vec2(x, y),
+            modifiers: TimelineModifiers { ctrl, shift },
+        });
     }
 
     pub fn pointer_cursor(&self) -> TimelineCursor {
         let runtime = self.runtime.borrow();
-        let Some(position) = runtime.pointer_pos else {
+        let Some(position) = runtime.scene.pointer_state().position else {
             return TimelineCursor::Default;
         };
         interaction::timeline_cursor(
@@ -444,8 +380,7 @@ impl ToolkitTimeline {
 
     pub fn pointer_leave(&self) {
         let mut runtime = self.runtime.borrow_mut();
-        runtime.pointer_pos = None;
-        runtime.cut_preview = None;
+        runtime.scene.event(TimelineEvent::Leave);
     }
 
     pub fn pointer_press(
@@ -457,21 +392,15 @@ impl ToolkitTimeline {
         shift: bool,
     ) {
         let mut runtime = self.runtime.borrow_mut();
-        runtime.modifiers = TimelineModifiers { ctrl, shift };
-        let position = vec2(x, y);
-        runtime.pointer_pos = Some(position);
-        runtime.pointer_press_origin = Some(position);
-        runtime.pointer_release_pos = None;
-        match button {
-            ToolkitPointerButton::Primary => {
-                runtime.primary_pressed = true;
-                runtime.primary_down = true;
-            }
-            ToolkitPointerButton::Middle => {
-                runtime.middle_pressed = true;
-                runtime.middle_down = true;
-            }
-        }
+        runtime.scene.event(TimelineEvent::Press {
+            point: vec2(x, y),
+            double: false,
+            modifiers: TimelineModifiers { ctrl, shift },
+            button: match button {
+                ToolkitPointerButton::Primary => PointerButton::Primary,
+                ToolkitPointerButton::Middle => PointerButton::Middle,
+            },
+        });
     }
 
     pub fn pointer_release(
@@ -483,20 +412,14 @@ impl ToolkitTimeline {
         shift: bool,
     ) {
         let mut runtime = self.runtime.borrow_mut();
-        runtime.modifiers = TimelineModifiers { ctrl, shift };
-        let position = vec2(x, y);
-        runtime.pointer_pos = Some(position);
-        runtime.pointer_release_pos = Some(position);
-        match button {
-            ToolkitPointerButton::Primary => {
-                runtime.primary_released = true;
-                runtime.primary_down = false;
-            }
-            ToolkitPointerButton::Middle => {
-                runtime.middle_released = true;
-                runtime.middle_down = false;
-            }
-        }
+        runtime.scene.event(TimelineEvent::Release {
+            point: vec2(x, y),
+            modifiers: TimelineModifiers { ctrl, shift },
+            button: match button {
+                ToolkitPointerButton::Primary => PointerButton::Primary,
+                ToolkitPointerButton::Middle => PointerButton::Middle,
+            },
+        });
     }
 
     /// Starts relative pointer input for toolkit-backed timelines.
@@ -520,11 +443,17 @@ impl ToolkitTimeline {
         }) else {
             return false;
         };
-        let position = self.runtime.borrow().pointer_pos.unwrap_or(Vec2::ZERO);
-        self.runtime.borrow_mut().software_cursor = Some(TimelineSoftwareCursor {
-            position,
-            cursor: software_cursor,
-        });
+        let position = self
+            .runtime
+            .borrow()
+            .scene
+            .pointer_state()
+            .position
+            .unwrap_or(Vec2::ZERO);
+        self.runtime
+            .borrow_mut()
+            .scene
+            .begin_relative_pointer(position, software_cursor);
         self.pointer_lock = Some(lock);
         self.pointer_lock_origin = Some(position);
         true
@@ -541,37 +470,42 @@ impl ToolkitTimeline {
             .expect("toolkit pointer lock must have a local origin");
         let cursor = self
             .runtime
-            .borrow()
-            .software_cursor
-            .as_ref()
-            .expect("toolkit pointer lock must own a software cursor")
-            .position;
+            .borrow_mut()
+            .scene
+            .end_relative_pointer()
+            .expect("toolkit pointer lock must own a software cursor");
         lock.restore_cursor_with_offset(
             f64::from(cursor.x - origin.x),
             f64::from(cursor.y - origin.y),
         );
         drop(lock);
         let mut runtime = self.runtime.borrow_mut();
-        runtime.software_cursor = None;
-        runtime.modifiers = TimelineModifiers { ctrl, shift };
-        runtime.pointer_release_pos = runtime.pointer_pos;
-        runtime.middle_released = true;
-        runtime.middle_down = false;
+        if let Some(point) = runtime.scene.pointer_state().position {
+            runtime.scene.event(TimelineEvent::Release {
+                point,
+                button: PointerButton::Middle,
+                modifiers: TimelineModifiers { ctrl, shift },
+            });
+        }
     }
 
     pub fn scroll(&self, dx: f32, dy: f32, ctrl: bool, shift: bool) {
         let mut runtime = self.runtime.borrow_mut();
         let modifiers = TimelineModifiers { ctrl, shift };
-        runtime.modifiers = modifiers;
-        let pointer = runtime.pointer_pos;
-        runtime.pending_scrolls.push(TimelineScrollEvent {
-            delta: vec2(
-                dx * SCROLL_PIXELS_PER_STEP as f32,
-                dy * SCROLL_PIXELS_PER_STEP as f32,
-            ),
-            ctrl,
-            pointer,
-        });
+        runtime
+            .scene
+            .event(shrimply_timeline_core::scene::Event::Modifiers(modifiers));
+        let pointer = runtime.scene.pointer_state().position;
+        runtime
+            .scene
+            .event(TimelineEvent::Scroll(TimelineScrollEvent {
+                delta: vec2(
+                    dx * SCROLL_PIXELS_PER_STEP as f32,
+                    dy * SCROLL_PIXELS_PER_STEP as f32,
+                ),
+                ctrl,
+                pointer,
+            }));
     }
 
     pub fn tool_state(&self) -> ToolState {
@@ -595,15 +529,9 @@ impl ToolkitTimeline {
     }
 
     pub fn destroy(&self) {
-        self.runtime.borrow_mut().renderer.destroy();
-    }
-
-    fn toggle_sequence(&self, path: Vec<uuid::Uuid>) {
-        shrimply_timeline_core::folded_sequence::toggle_sequence(
-            &self.project,
-            &self.selection_state,
-            path,
-        );
+        let mut runtime = self.runtime.borrow_mut();
+        runtime.scene.suspend();
+        runtime.renderer.destroy();
     }
 }
 
@@ -632,33 +560,20 @@ pub fn new(
         move || player_state::step_playback_speed_forward(&speed_state),
     );
 
-    let playhead_visibility_requested = Rc::new(Cell::new(false));
-    let (timeline_zoom, timeline_center) = {
-        let project = project.borrow();
-        (
-            project.timeline_zoom,
-            project
-                .timeline_zoom
-                .filter(|zoom| *zoom > Time::ZERO)
-                .and(project.cursor_position),
-        )
-    };
     let runtime = Rc::new(RefCell::new(TimelineRuntime::new(
-        WaveformMap::new(),
-        preferences_store::snapshot(&preferences),
-        playhead_visibility_requested.clone(),
-        timeline_zoom,
-        timeline_center,
+        project.clone(),
+        player_state.clone(),
+        selection_state.clone(),
+        preferences.clone(),
         property_clipboard,
     )));
-    let preference_runtime = runtime.clone();
-    let preference_area = area.clone();
-    preferences_store::connect(&preferences, move |snapshot| {
-        preference_runtime.borrow_mut().apply_preferences(&snapshot);
-        preference_area.queue_render();
+    let preference_area = area.downgrade();
+    preferences_store::connect(&preferences, move |_| {
+        if let Some(area) = preference_area.upgrade() {
+            area.queue_render();
+        }
     });
-    start_waveform_loader(&area, project.clone(), runtime.clone());
-    start_beat_loader(&area, project.clone(), runtime.clone());
+    setup::watch_updates(&area, &runtime);
     let performance_area = area.downgrade();
     let performance_updates = playback_performance::subscribe(&playback_performance);
     glib::spawn_future_local(async move {
@@ -678,111 +593,106 @@ pub fn new(
         preferences.clone(),
     );
 
-    let redraw = area.clone();
-    let redraw_project = project.clone();
-    let redraw_runtime = runtime.clone();
-    let waveform_reload_request = Rc::new(Cell::new(0_u64));
-    let redraw_playhead_visibility_requested = playhead_visibility_requested.clone();
-    player_state::connect_named(&player_state, "timeline redraw", move |event| {
-        if matches!(event, player_state::PlayerEvent::State(_)) {
-            redraw_playhead_visibility_requested.set(true);
-        }
-        if let player_state::PlayerEvent::Project(change) = event
-            && change.audio_waveforms
-        {
-            let request = waveform_reload_request.get().wrapping_add(1);
-            waveform_reload_request.set(request);
-            let redraw = redraw.clone();
-            let redraw_project = redraw_project.clone();
-            let redraw_runtime = redraw_runtime.clone();
-            let waveform_reload_request = waveform_reload_request.clone();
-            glib::timeout_add_local_once(WAVEFORM_RELOAD_DELAY, move || {
-                if waveform_reload_request.get() != request {
-                    return;
-                }
-                start_waveform_loader(&redraw, redraw_project, redraw_runtime);
-            });
-        }
-        if let player_state::PlayerEvent::Project(change) = event
-            && (change.audio || change.audio_beats)
-        {
-            let redraw = redraw.clone();
-            let redraw_project = redraw_project.clone();
-            let redraw_runtime = redraw_runtime.clone();
-            glib::idle_add_local_once(move || {
-                start_beat_loader(&redraw, redraw_project, redraw_runtime);
-            });
-        }
-        redraw.queue_render();
-    });
-
-    let recording_area = area.clone();
+    let redraw = area.downgrade();
+    let redraw_alive = redraw.clone();
+    player_state::connect_while_alive_named(
+        &player_state,
+        "timeline redraw",
+        move || redraw_alive.upgrade().is_some(),
+        move |_| {
+            if let Some(area) = redraw.upgrade() {
+                area.queue_render();
+            }
+        },
+    );
+    let recording_area = area.downgrade();
     let recording_project = project.clone();
-    let recording_runtime = runtime.clone();
+    let recording_runtime = Rc::downgrade(&runtime);
     let recording_player_state = player_state.clone();
     let recording_player_state_for_snapshot = player_state.clone();
-    player_state::connect_named(&player_state, "timeline recording refresh", move |event| {
-        if !matches!(event, player_state::PlayerEvent::State(_)) {
-            return;
-        }
-        let recording_area = recording_area.clone();
-        let recording_project = recording_project.clone();
-        let recording_runtime = recording_runtime.clone();
-        let recording_player_state = recording_player_state.clone();
-        let recording_player_state_for_idle = recording_player_state_for_snapshot.clone();
-        glib::idle_add_local_once(move || {
-            let snapshot = player_state::snapshot(&recording_player_state_for_idle);
-            if snapshot.playing {
-                let mut stop_at_boundary = false;
-                let mut runtime = recording_runtime.borrow_mut();
-                if runtime.active_audio_recording.is_some() {
-                    ensure_recording_duration(&recording_player_state_for_idle, snapshot.position);
+    let recording_alive = recording_runtime.clone();
+    player_state::connect_while_alive_named(
+        &player_state,
+        "timeline recording refresh",
+        move || recording_alive.strong_count() > 0,
+        move |event| {
+            let (Some(recording_area), Some(recording_runtime)) =
+                (recording_area.upgrade(), recording_runtime.upgrade())
+            else {
+                return;
+            };
+            if !matches!(event, player_state::PlayerEvent::State(_)) {
+                return;
+            }
+            let recording_area = recording_area.clone();
+            let recording_project = recording_project.clone();
+            let recording_runtime = recording_runtime.clone();
+            let recording_player_state = recording_player_state.clone();
+            let recording_player_state_for_idle = recording_player_state_for_snapshot.clone();
+            glib::idle_add_local_once(move || {
+                let snapshot = player_state::snapshot(&recording_player_state_for_idle);
+                if snapshot.playing {
+                    let mut stop_at_boundary = false;
+                    let mut runtime = recording_runtime.borrow_mut();
+                    if runtime.active_audio_recording.is_some() {
+                        ensure_recording_duration(
+                            &recording_player_state_for_idle,
+                            snapshot.position,
+                        );
+                    }
+                    if let Some(active) = runtime.active_video_recording.as_mut()
+                        && active.ready
+                        && !active.stopping
+                    {
+                        ensure_recording_duration(
+                            &recording_player_state_for_idle,
+                            snapshot.position,
+                        );
+                        if active
+                            .stop_at
+                            .is_some_and(|stop_at| snapshot.position >= stop_at)
+                        {
+                            active.stopping = true;
+                            active.recording.stop();
+                            stop_at_boundary = true;
+                        }
+                    }
+                    drop(runtime);
+                    if stop_at_boundary {
+                        player_state::set_playing(&recording_player_state_for_idle, false);
+                    }
+                    return;
                 }
-                if let Some(active) = runtime.active_video_recording.as_mut()
+                if let Some(active) = recording_runtime
+                    .borrow_mut()
+                    .active_video_recording
+                    .as_mut()
                     && active.ready
                     && !active.stopping
                 {
-                    ensure_recording_duration(&recording_player_state_for_idle, snapshot.position);
-                    if active
-                        .stop_at
-                        .is_some_and(|stop_at| snapshot.position >= stop_at)
-                    {
-                        active.stopping = true;
-                        active.recording.stop();
-                        stop_at_boundary = true;
-                    }
+                    active.stopping = true;
+                    active.recording.stop();
                 }
-                drop(runtime);
-                if stop_at_boundary {
-                    player_state::set_playing(&recording_player_state_for_idle, false);
+                let active = recording_runtime.borrow_mut().active_audio_recording.take();
+                let Some(active) = active else {
+                    return;
+                };
+                if let Err(error) = finish_audio_recording(
+                    &recording_area,
+                    &recording_project,
+                    &recording_player_state,
+                    active,
+                ) {
+                    interaction::show_error_dialog(
+                        &recording_area,
+                        "Could not record audio",
+                        &error,
+                    );
                 }
-                return;
-            }
-            if let Some(active) = recording_runtime
-                .borrow_mut()
-                .active_video_recording
-                .as_mut()
-                && active.ready
-                && !active.stopping
-            {
-                active.stopping = true;
-                active.recording.stop();
-            }
-            let active = recording_runtime.borrow_mut().active_audio_recording.take();
-            let Some(active) = active else {
-                return;
-            };
-            if let Err(error) = finish_audio_recording(
-                &recording_area,
-                &recording_project,
-                &recording_player_state,
-                active,
-            ) {
-                interaction::show_error_dialog(&recording_area, "Could not record audio", &error);
-            }
-            recording_area.queue_render();
-        });
-    });
+                recording_area.queue_render();
+            });
+        },
+    );
 
     let render_runtime = runtime.clone();
     let render_project = project.clone();
@@ -820,7 +730,6 @@ pub fn new(
             width, height, pixels_per_point
         ));
         let mut runtime = render_runtime.borrow_mut();
-        runtime.track_controls_animating = false;
         shrimply_support::crash::set_context("timeline render begin_frame");
         let painter = match runtime.renderer.begin_frame(
             screen_size_px,
@@ -838,7 +747,7 @@ pub fn new(
             .into();
         shrimply_support::crash::set_context(format!(
             "timeline render ui begin drag_mode={:?} playing={}",
-            runtime.view.drag_mode,
+            runtime.scene.view().drag_mode,
             player_state::snapshot(&render_player_state).playing
         ));
         timeline_gtk(
@@ -853,16 +762,16 @@ pub fn new(
             accent_color,
         );
         shrimply_support::crash::set_context(format!(
-            "timeline render ui end drag_mode={:?} pending_pause={}",
-            runtime.view.drag_mode, runtime.pending_pause_playback
+            "timeline render ui end drag_mode={:?}",
+            runtime.scene.view().drag_mode
         ));
-        runtime.finish_pointer_frame();
         shrimply_support::crash::set_context("timeline render end_frame");
         if let Err(error) = runtime.renderer.end_frame() {
             tracing::error!("Could not finalize skia timeline renderer: {error}");
             return glib::Propagation::Stop;
         }
-        let pending_audio_record = runtime.pending_audio_record.take();
+        let requests = runtime.scene.take_requests();
+        let pending_audio_record = requests.audio_record;
         let pause_after_audio_recording_stop = if let Some(key) = pending_audio_record {
             handle_audio_recording(
                 area,
@@ -874,7 +783,7 @@ pub fn new(
         } else {
             false
         };
-        let pending_video_record = runtime.pending_video_record.take();
+        let pending_video_record = requests.video_record;
         let pause_for_video_recording = if let Some(key) = pending_video_record {
             handle_video_recording(
                 area,
@@ -887,11 +796,9 @@ pub fn new(
         } else {
             false
         };
-        let pending_track_toggle = runtime.pending_track_toggle.take();
-        let pending_sequence_toggle = runtime.pending_sequence_toggle.take();
-        let pending_track_add_menu = runtime.pending_track_add_menu.take();
-        let pending_pause_playback = std::mem::take(&mut runtime.pending_pause_playback);
-        let track_controls_animating = runtime.track_controls_animating;
+        let pending_track_add_menu = requests.track_add;
+        let pending_pause_playback = requests.pause_playback;
+        let track_controls_animating = runtime.scene.animating();
         drop(runtime);
 
         if pause_after_audio_recording_stop || pause_for_video_recording || pending_pause_playback {
@@ -904,37 +811,6 @@ pub fn new(
         if track_controls_animating {
             area.queue_render();
             interaction::start_timeline_animation_tick(area, render_runtime.clone());
-        }
-        if let Some(key) = pending_track_toggle {
-            toggle_track_enabled(area, &render_project, &render_player_state, key);
-        }
-        if let Some(path) = pending_sequence_toggle {
-            let mut project = render_project.borrow_mut();
-            let collapsed = if let Some(index) = project
-                .expanded_sequence_paths
-                .iter()
-                .position(|expanded| *expanded == path)
-            {
-                project.expanded_sequence_paths.remove(index);
-                true
-            } else {
-                project.expanded_sequence_paths.push(path.clone());
-                false
-            };
-            crate::project::save_view_state(&project);
-            drop(project);
-            if collapsed {
-                let mut selected = selection_state::selected_nested_items(&render_selection_state);
-                selected.retain(|item| !item.sequence_path().starts_with(&path));
-                let focused = selection_state::focused_nested_item(&render_selection_state)
-                    .filter(|item| selected.contains(item));
-                selection_state::set_selected_nested_items(
-                    &render_selection_state,
-                    selected,
-                    focused,
-                );
-            }
-            area.queue_render();
         }
         if let Some(request) = pending_track_add_menu {
             show_track_add_menu(
@@ -956,6 +832,7 @@ pub fn new(
 
     let destroy_runtime = runtime.clone();
     area.connect_unrealize(move |area| {
+        destroy_runtime.borrow_mut().scene.suspend();
         area.make_current();
         destroy_runtime.borrow_mut().renderer.destroy();
     });

@@ -1,194 +1,42 @@
 use super::*;
 pub use shrimply_timeline_core::draw_state::*;
-
+pub use shrimply_timeline_core::scene::{
+    TimelineModifiers, TrackAddMenuRequest, selected_timeline_items, selected_timeline_tracks,
+};
 pub(super) struct TimelineRuntime {
+    pub(super) scene: shrimply_timeline_core::scene::Scene,
     pub(super) renderer: TimelineRenderer,
-    pub(super) snap_enabled: bool,
-    pub(super) beat_grid_enabled: bool,
-    pub(super) snap_radius_px: f64,
-    pub(super) cut_enabled: bool,
-    pub(super) drag_collision_mode: DragCollisionMode,
-    pub(super) suppress_double_click_selection: bool,
-    pub(super) started_at: Instant,
-    pub(super) pending_scrolls: Vec<TimelineScrollEvent>,
-    pub(super) overscroll: Option<TimelineOverscroll>,
     pub(super) animation_tick_active: bool,
-    pub(super) horizontal_scrollbar: shrimply_skia_adw_core::slider::Lifecycle,
-    pub(super) vertical_scrollbar: shrimply_skia_adw_core::slider::Lifecycle,
-    pub(super) modifiers: TimelineModifiers,
-    pub(super) pointer_pos: Option<Vec2>,
-    pub(super) software_cursor: Option<TimelineSoftwareCursor>,
-    pub(super) pointer_press_origin: Option<Vec2>,
-    pub(super) pointer_release_pos: Option<Vec2>,
-    pub(super) primary_pressed: bool,
-    pub(super) primary_down: bool,
-    pub(super) primary_released: bool,
-    pub(super) middle_pressed: bool,
-    pub(super) middle_down: bool,
-    pub(super) middle_released: bool,
-    pub(super) view: TimelineViewState,
-    pub(super) pending_track_toggle: Option<TrackKey>,
-    pub(super) pending_sequence_toggle: Option<Vec<uuid::Uuid>>,
-    pub(super) pending_track_add_menu: Option<TrackAddMenuRequest>,
-    pub(super) pending_audio_record: Option<TrackKey>,
-    pub(super) pending_video_record: Option<TrackKey>,
-    pub(super) pending_pause_playback: bool,
-    pub(super) playhead_visibility_requested: Rc<Cell<bool>>,
-    pub(super) last_playhead_position: Option<Time>,
-    pub(super) initial_center: Option<Time>,
     pub(super) active_audio_recording: Option<ActiveAudioRecording>,
     pub(super) active_video_recording: Option<ActiveVideoRecording>,
-    pub(super) track_buttons: HashMap<TrackButtonId, shrimply_skia_adw_core::button::Button>,
-    pub(super) hovered_track_button: Option<TrackButtonId>,
-    pub(super) pressed_track_button: Option<TrackButtonId>,
-    pub(super) pressed_track_selection: Option<TrackKey>,
-    pub(super) track_controls_animating: bool,
-    pub(super) dragged_group: Option<DraggedGroup>,
-    pub(super) folded_drag: Option<folded_sequence::FoldedDrag>,
-    pub(super) resize_drag: Option<ResizeDrag>,
-    pub(super) transition_drag: Option<TransitionDrag>,
-    pub(super) clip_transition_drag: Option<ClipTransitionDrag>,
-    pub(super) clipboard: Option<TimelineClipboard>,
-    pub(super) property_clipboard: shrimply_property_transfer::SharedClipboard,
     pub(super) active_context_menu: Option<gtk::Popover>,
     pub(super) resource_jobs: Vec<shrimply_gtk_components::resource_pipeline::UiSubscription>,
-    pub(super) import_preview: Option<TimelineImportPreview>,
-    pub(super) text_drop_preview: Option<external_content::TextPreview>,
-    pub(super) cut_preview: Option<TimelineCut>,
-    pub(super) waveforms: WaveformMap,
-    pub(super) waveform_job: Option<shrimply_gtk_components::resource_pipeline::UiSubscription>,
-    pub(super) beats: BeatMap,
-    pub(super) beat_job: Option<shrimply_gtk_components::resource_pipeline::UiSubscription>,
-    pub(super) snap_repository: crate::snapping::SnapRepo,
-    pub(super) default_visual_duration: Time,
-    pub(super) default_text_font_family: FontFamily,
 }
-
-pub(super) fn selected_timeline_items(selection_state: &SharedSelectionState) -> Vec<ItemKey> {
-    selection_state::selected_items(selection_state)
-}
-
-pub(super) fn selected_timeline_tracks(selection_state: &SharedSelectionState) -> Vec<TrackKey> {
-    selection_state::selected_tracks(selection_state)
-}
-
-pub(super) fn focused_timeline_transition(
-    selection_state: &SharedSelectionState,
-    project: &Project,
-) -> Option<(crate::project::ItemAddress, TransitionSide)> {
-    selection_state::focused_transition_address(selection_state, project)
-}
-
 impl TimelineRuntime {
     pub(super) fn new(
-        waveforms: WaveformMap,
-        preferences: preferences_store::PreferencesSnapshot,
-        playhead_visibility_requested: Rc<Cell<bool>>,
-        timeline_zoom: Option<Time>,
-        timeline_center: Option<Time>,
+        project: Rc<RefCell<Project>>,
+        player: SharedPlayerState,
+        selection: SharedSelectionState,
+        preferences: preferences_store::SharedPreferences,
         property_clipboard: shrimply_property_transfer::SharedClipboard,
     ) -> Self {
-        let tools = ToolState::from_preferences(&preferences);
-        let mut view = TimelineViewState::default();
-        view.restore_zoom(timeline_zoom);
         Self {
+            scene: shrimply_timeline_core::scene::Scene::new(
+                project,
+                player,
+                selection,
+                preferences,
+                property_clipboard,
+            ),
             renderer: TimelineRenderer::new(),
-            snap_enabled: tools.magnet,
-            beat_grid_enabled: tools.beat_grid,
-            snap_radius_px: f64::from(preferences.timeline_snap_radius_px),
-            cut_enabled: tools.cursor == CursorTool::Cut,
-            drag_collision_mode: tools.drag_collision,
-            suppress_double_click_selection: false,
-            started_at: Instant::now(),
-            pending_scrolls: Vec::new(),
-            overscroll: None,
             animation_tick_active: false,
-            horizontal_scrollbar: shrimply_skia_adw_core::slider::Lifecycle::default(),
-            vertical_scrollbar: shrimply_skia_adw_core::slider::Lifecycle::default(),
-            modifiers: TimelineModifiers::default(),
-            pointer_pos: None,
-            software_cursor: None,
-            pointer_press_origin: None,
-            pointer_release_pos: None,
-            primary_pressed: false,
-            primary_down: false,
-            primary_released: false,
-            middle_pressed: false,
-            middle_down: false,
-            middle_released: false,
-            view,
-            pending_track_toggle: None,
-            pending_sequence_toggle: None,
-            pending_track_add_menu: None,
-            pending_audio_record: None,
-            pending_video_record: None,
-            pending_pause_playback: false,
-            playhead_visibility_requested,
-            last_playhead_position: None,
-            initial_center: timeline_center,
             active_audio_recording: None,
             active_video_recording: None,
-            track_buttons: HashMap::new(),
-            hovered_track_button: None,
-            pressed_track_button: None,
-            pressed_track_selection: None,
-            track_controls_animating: false,
-            dragged_group: None,
-            folded_drag: None,
-            resize_drag: None,
-            transition_drag: None,
-            clip_transition_drag: None,
-            clipboard: None,
-            property_clipboard,
             active_context_menu: None,
             resource_jobs: Vec::new(),
-            import_preview: None,
-            text_drop_preview: None,
-            cut_preview: None,
-            waveforms,
-            waveform_job: None,
-            beats: BeatMap::new(),
-            beat_job: None,
-            snap_repository: crate::snapping::SnapRepo::default(),
-            default_visual_duration: preferences.default_visual_duration,
-            default_text_font_family: preferences.default_text_font_family,
         }
     }
-
-    pub(super) fn finish_pointer_frame(&mut self) {
-        self.primary_pressed = false;
-        self.primary_released = false;
-        self.pointer_release_pos = None;
-        self.middle_pressed = false;
-        self.middle_released = false;
-    }
-
-    pub(super) fn apply_preferences(
-        &mut self,
-        preferences: &preferences_store::PreferencesSnapshot,
-    ) {
-        let tools = ToolState::from_preferences(preferences);
-        self.snap_enabled = tools.magnet;
-        self.beat_grid_enabled = tools.beat_grid;
-        self.cut_enabled = tools.cursor == CursorTool::Cut;
-        self.drag_collision_mode = tools.drag_collision;
-        self.snap_radius_px = f64::from(preferences.timeline_snap_radius_px);
-        self.default_visual_duration = preferences.default_visual_duration;
-        self.default_text_font_family = preferences.default_text_font_family.clone();
-    }
 }
-
-#[derive(Clone, Copy, Default)]
-pub(super) struct TimelineModifiers {
-    pub(super) ctrl: bool,
-    pub(super) shift: bool,
-}
-
-pub(super) struct TrackAddMenuRequest {
-    pub(super) key: TrackKey,
-    pub(super) import_targets: Vec<TrackKey>,
-}
-
 pub(super) struct ActiveAudioRecording {
     pub(super) key: TrackKey,
     pub(super) start: Time,

@@ -1,12 +1,12 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::interaction::pointer) fn end_pointer_action(
+pub(in crate::scene::pointer) fn end_pointer_action(
     pos: Vec2,
     project: &Rc<RefCell<Project>>,
     player_state: &SharedPlayerState,
     selection_state: &SharedSelectionState,
-    runtime: &mut TimelineRuntime,
+    runtime: &mut Scene,
     _width: f64,
     _timeline_width: f64,
     _height: f64,
@@ -14,6 +14,7 @@ pub(in crate::interaction::pointer) fn end_pointer_action(
 ) {
     let x = pos.x as f64;
     let y = pos.y as f64;
+    let seeking = runtime.view.drag_mode == DragMode::Seek;
     if let Some(id) = runtime.pressed_track_button.take() {
         let response = runtime
             .track_buttons
@@ -112,7 +113,7 @@ pub(in crate::interaction::pointer) fn end_pointer_action(
         }
         DragMode::Item | DragMode::ResizeItem => {}
         DragMode::Transition => {
-            let mut gesture = shrimply_timeline_core::transitions::Gesture {
+            let mut gesture = crate::transitions::Gesture {
                 clip: runtime.clip_transition_drag.take(),
                 item: runtime.transition_drag.take(),
             };
@@ -251,8 +252,11 @@ pub(in crate::interaction::pointer) fn end_pointer_action(
     runtime.view.selection = None;
     runtime.horizontal_scrollbar.end_drag();
     runtime.vertical_scrollbar.end_drag();
+    if seeking {
+        player_state::set_scrubbing(player_state, false);
+    }
     runtime.view.drag_mode = DragMode::None;
     runtime.view.drag_moved = false;
 }
 
-use shrimply_timeline_core::selection::commit_rectangle_selection;
+use crate::selection::commit_rectangle_selection;

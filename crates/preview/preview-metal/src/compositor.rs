@@ -28,7 +28,9 @@ pub fn render_png(project: &Project, time: Time) -> Result<Vec<u8>, String> {
 }
 
 struct Pending {
+    started: std::time::Instant,
     time: Time,
+    accuracy: shrimply_preview_render_core::CompositeAccuracy,
     audio_analysis: shrimply_preview_render_core::FrameAudioAnalysis,
     frame: shrimply_render_metal::Frame,
     width: u32,
@@ -40,6 +42,8 @@ struct Pending {
 pub(super) struct Presented {
     pub image: Image,
     pub time: Time,
+    pub render_elapsed: Duration,
+    pub accuracy: shrimply_preview_render_core::CompositeAccuracy,
     pub audio_analysis: shrimply_preview_render_core::FrameAudioAnalysis,
 }
 
@@ -102,6 +106,8 @@ impl Compositor {
                     );
                     self.presented = Some(Presented {
                         time: pending.time,
+                        render_elapsed: pending.started.elapsed(),
+                        accuracy: pending.accuracy,
                         audio_analysis: pending.audio_analysis,
                         image: skia_safe::images::raster_from_data(
                             &info,
@@ -129,6 +135,7 @@ impl Compositor {
         }
         let mut effect_submissions = Vec::new();
         let mut used_sources = HashSet::new();
+        let started = std::time::Instant::now();
         let layers = self.render_layers(
             &plan.layers,
             (plan.width, plan.height),
@@ -142,7 +149,9 @@ impl Compositor {
             .expect("initialized Metal compositor")
             .composite_buffers(&layers, plan.width, plan.height, 0)?;
         self.pending = Some(Pending {
+            started,
             time: plan.time,
+            accuracy: plan.accuracy,
             audio_analysis: plan.audio_analysis,
             frame,
             width: plan.width,

@@ -248,6 +248,10 @@ impl CanvasView {
                 Ok(())
             }
             ContextMenuRequest::DeleteFoldedTrack { clip_count } | ContextMenuRequest::DeleteTracks { clip_count } => {
+                let deletion = match &*self.ivars().content.borrow() {
+                    Content::Timeline(scene) => Some(scene.track_deletion()),
+                    _ => None,
+                };
                 let alert = NSAlert::new(self.mtm());
                 alert.setMessageText(ns_string!("Delete Track?"));
                 alert.setInformativeText(&NSString::from_str(&format!("This track contains {clip_count} clips. Deleting it removes those clips.")));
@@ -259,7 +263,7 @@ impl CanvasView {
                 let mut content = self.ivars().content.borrow_mut();
                 if let Content::Timeline(scene) = &mut *content {
                     if matches!(request, ContextMenuRequest::DeleteTracks { .. }) {
-                        scene.confirm_delete_selected_tracks()
+                        scene.confirm_delete_selected_tracks(deletion.ok_or("Timeline was closed while confirming deletion")?)
                     } else {
                         scene.confirm_delete_context_track()
                     }

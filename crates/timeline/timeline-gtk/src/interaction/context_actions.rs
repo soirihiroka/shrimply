@@ -28,7 +28,7 @@ pub(super) fn show_timeline_item_context_menu(
     let folded_hit = {
         let project = project.borrow();
         let runtime = runtime.borrow();
-        crate::folded_sequence::hit_projected_item(&project, runtime.view, x, y)
+        crate::folded_sequence::hit_projected_item(&project, runtime.scene.view(), x, y)
     };
     if let Some(hit) = folded_hit {
         let context = SequenceTimeline::for_item(&project.borrow(), &hit.key)
@@ -51,7 +51,7 @@ pub(super) fn show_timeline_item_context_menu(
     let (hit, path, folder) = {
         let project_state = project.borrow();
         let runtime_state = runtime.borrow();
-        let Some(hit) = hit_item_at(&project_state, runtime_state.view, x, y) else {
+        let Some(hit) = hit_item_at(&project_state, runtime_state.scene.view(), x, y) else {
             drop(runtime_state);
             drop(project_state);
             show_track_context_menu(
@@ -108,7 +108,7 @@ pub(super) fn show_timeline_item_context_menu(
         let project = project.borrow();
         selection_state::selected_item_addresses(selection_state, &project)
     };
-    let property_clipboard = runtime.borrow().property_clipboard.clone();
+    let property_clipboard = runtime.borrow().scene.property_clipboard.clone();
     let (can_replace_properties, can_paste_modifiers) = {
         let project = project.borrow();
         let clipboard = property_clipboard.borrow();
@@ -432,12 +432,7 @@ fn prepare_item_context_menu(
 
 fn reset_item_context_menu(runtime: &Rc<RefCell<TimelineRuntime>>) {
     let mut runtime = runtime.borrow_mut();
-    runtime.dragged_group = None;
-    runtime.resize_drag = None;
-    runtime.transition_drag = None;
-    runtime.cut_preview = None;
-    runtime.view.selection = None;
-    runtime.view.drag_mode = DragMode::None;
+    runtime.scene.pointer_cancelled();
     if let Some(existing) = runtime.active_context_menu.take() {
         existing.popdown();
     }
@@ -960,19 +955,21 @@ fn show_track_context_menu(
         let runtime_state = runtime.borrow();
         let rows = crate::items::track_rows(&project_state);
         let row = (y >= RULER_HEIGHT).then(|| {
-            ((y + runtime_state.view.scroll_y - RULER_HEIGHT) / TRACK_HEIGHT).floor() as usize
+            ((y + runtime_state.scene.view().scroll_y - RULER_HEIGHT) / TRACK_HEIGHT).floor()
+                as usize
         });
         let track_row = ((0.0..timeline_x()).contains(&x))
             .then_some(row)
             .flatten()
             .and_then(|row| rows.get(row).cloned());
-        let key =
-            track_label_action_at(&project_state, runtime_state.view, x, y).map(|(key, _)| key);
+        let key = track_label_action_at(&project_state, runtime_state.scene.view(), x, y)
+            .map(|(key, _)| key);
         let over_track_handles = (0.0..timeline_x()).contains(&x);
         let empty_space_above = over_track_handles && (0.0..RULER_HEIGHT).contains(&y);
         let empty_space_below = over_track_handles
             && y >= RULER_HEIGHT
-            && y + runtime_state.view.scroll_y >= RULER_HEIGHT + rows.len() as f64 * TRACK_HEIGHT;
+            && y + runtime_state.scene.view().scroll_y
+                >= RULER_HEIGHT + rows.len() as f64 * TRACK_HEIGHT;
         (track_row, key, empty_space_above, empty_space_below)
     };
     if let Some(track_row) = track_row.filter(|row| row.root_key.is_none()) {
@@ -1363,12 +1360,7 @@ fn prepare_empty_track_context_menu(
 ) {
     set_timeline_selection(&project.borrow(), selection_state, Vec::new(), None);
     let mut runtime = runtime.borrow_mut();
-    runtime.dragged_group = None;
-    runtime.resize_drag = None;
-    runtime.transition_drag = None;
-    runtime.cut_preview = None;
-    runtime.view.selection = None;
-    runtime.view.drag_mode = DragMode::None;
+    runtime.scene.pointer_cancelled();
     if let Some(existing) = runtime.active_context_menu.take() {
         existing.popdown();
     }
@@ -1380,12 +1372,7 @@ fn prepare_track_context_menu(
     key: TrackKey,
 ) {
     let mut runtime = runtime.borrow_mut();
-    runtime.dragged_group = None;
-    runtime.resize_drag = None;
-    runtime.transition_drag = None;
-    runtime.cut_preview = None;
-    runtime.view.selection = None;
-    runtime.view.drag_mode = DragMode::None;
+    runtime.scene.pointer_cancelled();
     if !selected_timeline_tracks(selection_state).contains(&key) {
         select_track(selection_state, key, false, false);
     }
@@ -1457,7 +1444,7 @@ pub(super) fn cut_selected_timeline_items(
     runtime: &Rc<RefCell<TimelineRuntime>>,
 ) {
     copy_selected_timeline_items(area, project, player_state, selection_state, runtime);
-    if runtime.borrow().clipboard.is_some() {
+    if runtime.borrow().scene.clipboard.is_some() {
         delete_selected_addressed_items(area, project, player_state, selection_state, false);
     }
 }

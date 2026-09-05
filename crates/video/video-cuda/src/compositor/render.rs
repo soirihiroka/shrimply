@@ -1324,29 +1324,27 @@ impl FrameItemRenderer<'_> {
                 source_state,
                 target_state,
             } => {
-                let target_side = progress >= 0.5;
+                let presentation = morph.presentation(
+                    progress,
+                    source_state.compositing.opacity,
+                    target_state.compositing.opacity,
+                );
                 let frame = morph.frame(progress);
                 let frame = self.compositor.render_vector_morph(
                     &frame,
-                    if target_side {
-                        morph.target()
-                    } else {
-                        morph.source()
-                    },
-                    if target_side {
+                    presentation.scene,
+                    if presentation.target_side {
                         target_state.skia_drawing_strategy
                     } else {
                         source_state.skia_drawing_strategy
                     },
                 )?;
-                let mut state = if target_side {
+                let mut state = if presentation.target_side {
                     target_state.baked()
                 } else {
                     source_state.baked()
                 };
-                state.compositing.opacity = source_state.compositing.opacity
-                    + (target_state.compositing.opacity - source_state.compositing.opacity)
-                        * progress;
+                state.compositing.opacity = presentation.opacity;
                 Ok(vec![crate::layer::frame_layer(
                     GpuFrame::Rgba(frame),
                     state,

@@ -7,6 +7,7 @@ edition = "2024"
 glam.workspace = true
 shrimply-math-color = { path = "../../math/color", features = ["skia"] }
 shrimply-math-geometry = { path = "../../math/geometry" }
+shrimply-math-core = { path = "../../math/core" }
 shrimply-preview-skia = { path = "../preview-skia" }
 shrimply-timeline-value = { path = "../../timeline/timeline-value" }
 uuid.workspace = true

@@ -9,6 +9,7 @@ objc2-foundation.workspace = true
 objc2-metal.workspace = true
 shrimply-render-core = { path = "../render-core" }
 skia-safe = { workspace = true, features = ["metal"] }
+tracing.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 shrimply-slang-build = { path = "../slang-build" }

@@ -6,6 +6,18 @@ Implementation owner: primary agent. Other agents review and verify only; no imp
 
 ## Current priorities
 
+- [ ] Consolidate toolkit-independent Skia timeline state, rendering, cursor policy, input/edit handling, refresh decisions and job/subscription cleanup in `timeline-core`. GTK, Qt and AppKit adapters provide rendering contexts, native event translation and popup/callback integration. Audit existing GTK workflows before retiring duplicate runtime code.
+
+- [x] Keep the AppKit launcher and editor as separate processes. `make dev-mac` starts `shrimply-appkit`; selected/created projects spawn the sibling `shrimply-editor-appkit`, while the hidden launcher observes the child from a background thread.
+- [x] Flatten the AppKit preview-ready and guides toolbar buttons while preserving their native symbols and behavior.
+- [x] Launch the sibling AppKit editor directly. Remove the repeated binary file preflight and let process spawning report a missing or unexecutable editor while retaining project-path validation.
+- [x] Preserve playback while dragging the timeline playhead. Shared player state now owns the scrub hint while seeks retain `playing`; timeline-core/AppKit and GTK begin/end the same lifecycle, including cancellation.
+- [x] Clear GTK's shared scrub hint if the timeline is unrealized during a held ruler seek, matching AppKit cancellation and preventing a stale fast-scrub state.
+- [x] Keep this AppKit/Metal pass on macOS validation. Preserve Linux compile gates and backend separation without running Linux builds or platform checks.
+- [x] Connect AppKit's preview FPS label to the completed Metal frame duration and format it with the same shared calculation used by GTK. Timing stays attached to the submitted frame through presentation.
+- [x] Fix AppKit fullscreen sizing end to end. The preview host now leaves the editor split hierarchy, fills all four edges of the window content view, and returns to the preview stack on exit. User runtime verification confirms the full-window preview sizing.
+- [x] Wrap the AppKit fullscreen control in the same circular native Liquid Glass used by the transport controls and add toolkit-local spacing around both sides of the progress slider.
+- [ ] Reproduce the reported blank preview at 00:00:50.43 followed by recovery at 00:14:15.37. The Metal worker now reports slow-frame, shared-Slang-module and pipeline timing; AppKit uses GTK-equivalent loading semantics and the shared 1/24-second anti-flicker delay. First-use shader compilation remains possible but unproven. Read-only sampling after recovery found both preview workers idle.
 - [x] Remove blocking shader compilation, media decoding, rendering and readback from the UI thread.
 - [x] Verify the reported project loads and renders through the asynchronous Metal path.
 - [ ] Complete remaining source/effect orchestration using existing rendering logic, including Morph transitions and remaining modifiers.
@@ -51,6 +63,8 @@ Implementation owner: primary agent. Other agents review and verify only; no imp
 - [x] Metal fixture checks pass crossfade, fade-through-color, wipe, iris, clock wipe, dissolve, slide, push and zoom, including transparent outgoing fade color and interval boundaries (`target/preview-clip-transitions-probe.log`).
 - [x] Real-video decoding passes before/at/after the transition cut with both held-source intervals; all fixture changes remained in memory (`target/preview-clip-transitions-probe.log`).
 - [ ] Connect Morph clip transitions, remaining modifiers, alpha masks, generators and source types currently rejected by Metal. Reuse existing orchestration and Slang kernels.
+- [x] Share vector Morph endpoint selection and opacity interpolation between Metal and CUDA in video-core. Retain endpoint audio analysis gathered before visibility/source filtering and avoid caching audio-pending Morph scenes.
+- [ ] Finish deduplicating host orchestration: modifier-chain/vector-raster ordering, transition-stage assembly, motion inverse filtering/fallback and spatial-state materialization. Ported effect evaluation, shader formulas and dispatch plans are already shared; GPU allocation/ABI/execution remain backend-specific.
 - [x] Share Corner Pin evaluation and Slang dispatch between CUDA and Metal. Preserve corner order, clamps, exact identity bypass and degenerate-geometry errors. Native uniform matrices now use one reflected packing helper shared with Channel Mixer.
 - [x] Actual Metal Corner Pin checks pass identity, transparent bounds/alpha, normalized homography, bilinear sampling, projective/bilinear perspective modes, corner clamps and invalid geometry at either perspective endpoint (`target/preview-corner-probe.log`). Channel Mixer and existing color-effects regression rendering pass (`target/preview-color-effects-probe.log`). Candidate project edits remained in memory.
 - [x] Read-only semantic/ABI review, AppKit build/check/Clippy and Linux shared check/Clippy pass Corner Pin and fallible raster evaluation (`target/linux-corner-pin-check.log`). Full CUDA runtime remains unverified.
@@ -118,20 +132,23 @@ Implementation owner: primary agent. Other agents review and verify only; no imp
 - [x] Extract GTK provider preparation, edit sinks, pointer/keyboard dispatch, cancellation, refresh accumulation, frame acceptance and overlay drawing into `preview-interaction-core`; GTK delegates.
 - [x] Connect AppKit pointer, hover, keyboard, modifier-key and scroll events to the shared controller.
 - [x] Preserve actual presented-frame revision/exclusion for overlay handoff and retain the last completed image during scrubbing.
+- [x] Carry shared frame accuracy through Metal submission/presentation. Paused seeks and scrub refinement remain loading until a fully accurate frame arrives; playback alone uses the one-frame lag tolerance. Keep GTK's exact shared 1/24-second indicator delay and report slow Metal/Slang phases.
+- [x] Keep loading-indicator timing in preview core while sizing each toolkit's native indicator locally. AppKit uses a compact 16-point spinner inside the existing preview toolbar slot.
 - [x] Connect shared guides; cancel stale guide snapshots, synchronize visibility, and save only completed edits.
 - [x] Initialize paint interaction state with GTK defaults; balance native cursor visibility and suppress unchanged release samples.
 - [x] Shared-controller diagnostic on the real project passes hit testing, transform drag, cancellation rollback and suppressed mouse-up without a project commit (`target/preview-controller-probe.log`).
 - [x] Asynchronous real-project diagnostic: first frame 736 ms, 60 scrubs retained an image, maximum UI draw 2.8 ms; frame revision and exclusion handoff passed (`target/preview-async-probe.log`).
 - [ ] Verify native item transforms, overlays, guides, pointer/keyboard/trackpad input and checkerboard visually.
 - [x] Use the existing shared playback-speed label in AppKit and connect Space/L capture shortcuts to shared player state. GTK and AppKit now share the 200 ms frame-step repeat interval. Native buttons act on press and repeat without an extra release step; source/API review and Linux shared check/Clippy pass (`target/linux-chroma-playback-check.log`).
+- [x] Wrap the existing back/play/forward AppKit controls in individual circular native Liquid Glass views without replacing their actions, repeat behavior or SF Symbols. Keep the timecode in the native monospaced system font.
 - [ ] Verify native frame-step hold/cancellation and playback-speed shortcuts.
-- [ ] Complete paint tools and FPS/loading status.
+- [ ] Complete paint tools. AppKit FPS and delayed loading status are connected.
 - [x] Match GTK's preview Copy/Save Image context actions, including Control-click. Capture the already presented image before a picker, encode off-thread, preserve image dimensions/alpha, use preview folder preferences and reuse native scoped/atomic file and clipboard handling. Read-only review passes selected-frame export preservation and callback borrow lifetimes.
 - [ ] Verify native preview context gestures, clipboard and save picker.
 - [x] Extract GTK fullscreen pointer reveal policy and the three-second timeout into shared preview code; GTK and AppKit consume them. Preserve idle baseline, per-axis movement threshold and control motion behavior.
 - [x] AppKit fullscreen reparents the existing playbar into a bottom glass overlay, hides tools/toolbar, restores prior visibility and layout, handles Escape before preview tools, hides on timeout/playback and updates caption inset. Drag events refresh the timeout; failed fullscreen entry restores layout.
 - [x] Fullscreen policy diagnostic matches the original GTK implementation over 10,000 motion/hide/show/reset events, including one-pixel boundaries, repeated motion and NaN coordinates (`target/fullscreen-policy-probe.log`). Read-only source review, AppKit build/check/Clippy, Linux shared check/Clippy, formatting and source-size checks pass (`target/linux-fullscreen-check.log`).
-- [ ] Verify native fullscreen overlay sizing/resize, controls/dragging, hide/reveal, Escape and restoration. Native computer-use startup still fails after a fresh session reset; no native gestures were performed during that retry.
+- [ ] Verify remaining native fullscreen controls/dragging, hide/reveal, Escape and restoration. Full-window preview sizing is user-verified; native computer-use still cannot perform the remaining gestures.
 
 ## Timeline interactions
 
@@ -151,6 +168,13 @@ Implementation owner: primary agent. Other agents review and verify only; no imp
 - [x] Extract GTK snapping with shared grouped/nested move offsets, resize candidates, natural media boundaries and rational snap radius; source review and Linux shared check/Clippy pass.
 - [x] Connect GTK playhead visibility during held scrubbing/paused seeks, restore saved zoom/center, save wheel/pinch zoom, and use expanded-sequence bounds for scrollbars/panning.
 - [x] Match GTK rectangle snapping and drag-distance threshold.
+- [x] Share timeline hover/drag cursor hit testing between GTK and AppKit, including resize and transition handles; restore the correct cursor after release and Escape.
+- [x] Use shared project group expansion for AppKit item selection while preserving Shift's ungrouped selection behavior.
+- [x] Reload waveform data only when its shared cache signature changes. Placement-only root, nested and cross-scope moves retain cached waveforms; overwrite trims/splits, speed-scaled move-out, resizing, rolling audio transitions and grouped audio cuts invalidate them. GTK and AppKit use the same rule.
+- [x] Move drag/resize waveform-cache invalidation and item-kind refresh mapping into timeline-core by migrating the actual GTK gesture engine; remove the duplicate AppKit gesture implementation. Context edits calculate waveform invalidation from their before/after inputs in core.
+- [x] GTK, Qt and AppKit use the same core scene for drawing, grouped/root/nested selection, drag/resize, rectangle selection, cuts, transitions, scrollbar hit testing and cursor policy. Preserve native recording overlays, performance data, text-drop previews, accent color and relative software cursors through the drawing boundary.
+- [ ] Finish tightening the native adapter interface and review lifecycle/input migration: core owns media jobs and weak player subscriptions; adapters provide context, event delivery, scheduling and native callbacks. Native context-menu/service integration remains under review.
+- [ ] Consolidate GTK file-drop inspection and text-drop placement in the shared scene; preserve immediate previews, snapping and cancellation on leave. Latest gesture-engine AppKit build/check/Clippy passed before this follow-up (`target/appkit-timeline-core-migration-check.log`).
 - [x] Read-only review passes snapping parity, weak listener lifetime, seek callbacks, zoom persistence and expanded timeline bounds.
 - [ ] Verify seek-follow, restored zoom, middle-button panning, hover cuts and double-click behavior with native input.
 - [ ] Complete recording, transcription, silence-removal and speech-generation workflows.
@@ -164,10 +188,16 @@ Implementation owner: primary agent. Other agents review and verify only; no imp
 - [x] Linux shared check/Clippy passes after cut/pan/double-click extraction (`target/linux-timeline-input-check.log`). GTK source review found one stale import; removed.
 - [x] Linux shared check/Clippy passes after snapping extraction and zoom restoration (`target/linux-timeline-snapping-check.log`).
 - [x] Linux shared background checks/Clippy and CUDA source generation pass (`target/linux-background-check.log`, `target/linux-background-cuda-api-check.log`).
-- [ ] Full CUDA/GTK/Qt build remains unverified without NVCC/OptiX.
-- [ ] Full `make check` uses Linux native prerequisites. Its default pkg-config path is absent on macOS (`target/full-metal-check.log`); retrying with Homebrew pkg-config resolves Rubber Band and stops at missing PipeWire (`target/full-metal-native-check.log`).
+- [x] Linux shared check/Clippy passes after frame-accuracy loading and timeline cache/cursor changes; the Slang C++ API still generates all nine CUDA modules and 72 kernel exports (`target/linux-loading-check.log`, `target/linux-loading-cuda-api-check.log`).
+- [ ] Full CUDA/GTK/Qt build remains unverified without NVCC/OptiX; Linux validation is outside this AppKit/Metal pass.
 - [x] Latest targeted formatting and `git diff --check` pass.
 - [x] Source-size check passes (`make SHELL=/bin/zsh source-size-check`).
+- [x] Latest AppKit launcher/editor build, all-target check and Clippy with warnings denied pass after frame-accuracy loading, native glass playback controls, shared selection/cursor behavior and waveform invalidation (`target/appkit-selection-waveform-cursor-check.log`).
+- [x] AppKit launcher/editor build, all-target check and Clippy with warnings denied pass with toolkit-local spinner sizing (`target/appkit-spinner-toolkit-local-check.log`).
+- [x] AppKit launcher/editor build, all-target check and Clippy with warnings denied pass after completed-frame FPS timing, fullscreen fill constraints, the glass fullscreen control and slider spacing (`target/appkit-fps-fullscreen-final-check.log`).
+- [x] AppKit launcher/editor build, all-target check and Clippy with warnings denied pass after shared Morph presentation/audio handling and playback-preserving timeline scrubbing (`target/appkit-morph-timeline-scrub-check.log`).
+- [x] AppKit launcher/editor build, all-target check and Clippy with warnings denied pass after fullscreen reparents the preview host at the root and pins it to all four window edges (`target/appkit-fullscreen-root-host-check.log`).
+- [x] AppKit launcher/editor build, all-target check and Clippy with warnings denied pass with flat preview-toolbar buttons and the reviewed shared scrub lifecycle (`target/appkit-flat-preview-tools-check.log`).
 - [ ] Finish native UI verification.
 
 Native UI automation still cannot acquire the verification launcher. A process sample found AppKit waiting inside its saved-window recovery alert before applicationDidFinishLaunching (`target/appkit-native-sample.txt`). A fresh verification bundle identifier appeared in the UI inventory, but getApp rejected that same identifier as invalid. Owned verification processes were stopped. Native gesture verification remains open; diagnostics do not establish full UI parity.

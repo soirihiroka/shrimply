@@ -5,11 +5,15 @@ use objc2::{MainThreadOnly, sel};
 use objc2_app_kit::{
     NSBezelStyle, NSBox, NSBoxType, NSButton, NSColor, NSFont, NSGlassEffectView,
     NSGlassEffectViewStyle, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
-    NSLayoutConstraint, NSSlider, NSSplitViewController, NSSplitViewDividerStyle, NSSplitViewItem,
-    NSStackView, NSTextField, NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView,
-    NSViewController,
+    NSLayoutConstraint, NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow,
+    NSProgressIndicator, NSProgressIndicatorStyle, NSSlider, NSSplitViewController,
+    NSSplitViewDividerStyle, NSSplitViewItem, NSStackView, NSStackViewDistribution, NSTextField,
+    NSTitlePosition, NSUserInterfaceLayoutOrientation, NSView, NSViewController,
 };
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString};
+
+const PREVIEW_LOADING_INDICATOR_SIZE: f64 = 16.0;
+const PLAYBACK_SLIDER_PADDING: f64 = 6.0;
 
 pub const WINDOW_SIZE: NSSize = NSSize::new(1280.0, 800.0);
 pub const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(960.0, 640.0);
@@ -44,6 +48,7 @@ pub struct Layout {
     pub fullscreen_button: Retained<NSButton>,
     pub controls_overlay: Retained<NSGlassEffectView>,
     pub overlay_constraints: Vec<Retained<NSLayoutConstraint>>,
+    pub fullscreen_constraints: Vec<Retained<NSLayoutConstraint>>,
 }
 
 pub fn symbol(name: &str, label: &str) -> Retained<NSImage> {
@@ -69,6 +74,23 @@ pub fn button(icon: &str, label: &str, mtm: MainThreadMarker) -> Retained<NSButt
         .constraintEqualToConstant(BUTTON_SIZE)
         .setActive(true);
     button
+}
+
+fn circular_glass_button(button: &NSButton, mtm: MainThreadMarker) -> Retained<NSGlassEffectView> {
+    button.setBordered(false);
+    let glass = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), NSRect::ZERO);
+    glass.setStyle(NSGlassEffectViewStyle::Regular);
+    glass.setCornerRadius(BUTTON_SIZE / 2.0);
+    glass.setContentView(Some(button));
+    glass
+        .widthAnchor()
+        .constraintEqualToConstant(BUTTON_SIZE)
+        .setActive(true);
+    glass
+        .heightAnchor()
+        .constraintEqualToConstant(BUTTON_SIZE)
+        .setActive(true);
+    glass
 }
 
 pub fn stack(vertical: bool, mtm: MainThreadMarker) -> Retained<NSStackView> {
@@ -168,8 +190,51 @@ pub fn build(editor: &Editor) -> Layout {
         bottom: GAP,
         right: GAP,
     });
-    preview_tools.addArrangedSubview(&button("checkmark", "Loading status", mtm));
-    let [_, speed] = ["—", "x1"].map(|text| {
+    let loading_status = NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO);
+    loading_status
+        .widthAnchor()
+        .constraintEqualToConstant(BUTTON_SIZE)
+        .setActive(true);
+    loading_status
+        .heightAnchor()
+        .constraintEqualToConstant(BUTTON_SIZE)
+        .setActive(true);
+    let loading_done = button("checkmark", "Preview ready", mtm);
+    loading_done.setBordered(false);
+    loading_done.setTranslatesAutoresizingMaskIntoConstraints(false);
+    loading_status.addSubview(&loading_done);
+    let loading_spinner =
+        NSProgressIndicator::initWithFrame(NSProgressIndicator::alloc(mtm), NSRect::ZERO);
+    loading_spinner.setStyle(NSProgressIndicatorStyle::Spinning);
+    loading_spinner.setIndeterminate(true);
+    loading_spinner.setDisplayedWhenStopped(false);
+    loading_spinner.setHidden(true);
+    loading_spinner.setTranslatesAutoresizingMaskIntoConstraints(false);
+    loading_status.addSubview(&loading_spinner);
+    for constraint in [
+        loading_done
+            .centerXAnchor()
+            .constraintEqualToAnchor(&loading_status.centerXAnchor()),
+        loading_done
+            .centerYAnchor()
+            .constraintEqualToAnchor(&loading_status.centerYAnchor()),
+        loading_spinner
+            .centerXAnchor()
+            .constraintEqualToAnchor(&loading_status.centerXAnchor()),
+        loading_spinner
+            .centerYAnchor()
+            .constraintEqualToAnchor(&loading_status.centerYAnchor()),
+        loading_spinner
+            .widthAnchor()
+            .constraintEqualToConstant(PREVIEW_LOADING_INDICATOR_SIZE),
+        loading_spinner
+            .heightAnchor()
+            .constraintEqualToConstant(PREVIEW_LOADING_INDICATOR_SIZE),
+    ] {
+        constraint.setActive(true);
+    }
+    preview_tools.addArrangedSubview(&loading_status);
+    let [frame_rate, speed] = ["--", "x1"].map(|text| {
         let label = NSTextField::labelWithString(&NSString::from_str(text), mtm);
         label.setTextColor(Some(&NSColor::secondaryLabelColor()));
         label.setAlignment(objc2_app_kit::NSTextAlignment::Center);
@@ -180,8 +245,14 @@ pub fn build(editor: &Editor) -> Layout {
         preview_tools.addArrangedSubview(&label);
         label
     });
+    frame_rate.setFont(Some(&NSFont::monospacedSystemFontOfSize_weight(
+        NSFont::systemFontSize(),
+        unsafe { objc2_app_kit::NSFontWeightRegular },
+    )));
+    frame_rate.setToolTip(Some(&NSString::from_str("Frame rate")));
     speed.setToolTip(Some(&NSString::from_str("Playback speed")));
     let guides = button("ruler", "Guides", mtm);
+    guides.setBordered(false);
     guides.setEnabled(true);
     guides.setButtonType(objc2_app_kit::NSButtonType::PushOnPushOff);
     preview_tools.addArrangedSubview(&guides);
@@ -190,7 +261,12 @@ pub fn build(editor: &Editor) -> Layout {
     viewer.addArrangedSubview(&preview_tools);
     let session = editor.ivars().session.get().expect("project loaded");
     let preview_canvas = canvas::new(
-        canvas::Content::Preview(Box::new(canvas::preview::State::new(guides.clone()))),
+        canvas::Content::Preview(Box::new(canvas::preview::State::new(
+            guides.clone(),
+            loading_done,
+            loading_spinner,
+            frame_rate,
+        ))),
         session.clone(),
         editor.ivars().imports.clone(),
         mtm,
@@ -203,6 +279,11 @@ pub fn build(editor: &Editor) -> Layout {
 
     let playbar = stack(false, mtm);
     playbar.setAlignment(NSLayoutAttribute::CenterY);
+    playbar.setDistribution(NSStackViewDistribution::Fill);
+    playbar.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     playbar.setSpacing(GAP);
     playbar.setEdgeInsets(NSEdgeInsets {
         top: GAP,
@@ -236,7 +317,11 @@ pub fn build(editor: &Editor) -> Layout {
                 objc2_app_kit::NSEventMask::LeftMouseDown | objc2_app_kit::NSEventMask::Periodic,
             );
         }
-        playbar.addArrangedSubview(&control);
+        let glass = circular_glass_button(&control, mtm);
+        playbar.addArrangedSubview(&glass);
+        if label == "Step forward" {
+            playbar.setCustomSpacing_afterView(PLAYBACK_SLIDER_PADDING, &glass);
+        }
     }
     let progress = unsafe { NSSlider::sliderWithTarget_action(None, None, mtm) };
     progress.setEnabled(true);
@@ -248,11 +333,16 @@ pub fn build(editor: &Editor) -> Layout {
     );
     progress.setMinValue(0.0);
     progress.setMaxValue(1.0);
+    progress.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     unsafe {
         progress.setTarget(Some(editor));
         progress.setAction(Some(sel!(seek:)));
     }
     playbar.addArrangedSubview(&progress);
+    playbar.setCustomSpacing_afterView(PLAYBACK_SLIDER_PADDING, &progress);
     let time = NSTextField::labelWithString(&NSString::from_str("—:—:— / —:—:—"), mtm);
     time.setFont(Some(&NSFont::monospacedSystemFontOfSize_weight(
         NSFont::systemFontSize(),
@@ -270,8 +360,26 @@ pub fn build(editor: &Editor) -> Layout {
         fullscreen.setTarget(Some(editor));
         fullscreen.setAction(Some(sel!(togglePreviewFullscreen:)));
     }
-    playbar.addArrangedSubview(&fullscreen);
+    playbar.addArrangedSubview(&circular_glass_button(&fullscreen, mtm));
     let preview_host = NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO);
+    preview_host.setTranslatesAutoresizingMaskIntoConstraints(false);
+    preview_host.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    preview_host.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Vertical,
+    );
+    viewer.setDistribution(NSStackViewDistribution::Fill);
+    preview_canvas.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    preview_canvas.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Vertical,
+    );
     viewer.setTranslatesAutoresizingMaskIntoConstraints(false);
     preview_host.addSubview(&viewer);
     for constraint in [
@@ -294,6 +402,10 @@ pub fn build(editor: &Editor) -> Layout {
         NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), NSRect::ZERO);
     controls_overlay.setStyle(NSGlassEffectViewStyle::Regular);
     controls_overlay.setCornerRadius(PLAYBAR_HEIGHT / 2.0);
+    controls_overlay.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
     controls_overlay.setTranslatesAutoresizingMaskIntoConstraints(false);
     let overlay_constraints = vec![
         playbar
@@ -322,6 +434,7 @@ pub fn build(editor: &Editor) -> Layout {
             .constraintEqualToConstant(PLAYBAR_HEIGHT),
     ];
     let preview_layout = stack(true, mtm);
+    preview_layout.setDistribution(NSStackViewDistribution::Fill);
     preview_layout.addArrangedSubview(&preview_host);
     preview_layout.addArrangedSubview(&playbar);
     let preview = split_item(&preview_layout, mtm);
@@ -349,6 +462,20 @@ pub fn build(editor: &Editor) -> Layout {
     root.addSplitViewItem(&timeline);
     root.view()
         .setFrame(NSRect::new(NSPoint::ZERO, WINDOW_SIZE));
+    let fullscreen_constraints = vec![
+        preview_host
+            .leadingAnchor()
+            .constraintEqualToAnchor(&root.view().leadingAnchor()),
+        preview_host
+            .trailingAnchor()
+            .constraintEqualToAnchor(&root.view().trailingAnchor()),
+        preview_host
+            .topAnchor()
+            .constraintEqualToAnchor(&root.view().topAnchor()),
+        preview_host
+            .bottomAnchor()
+            .constraintEqualToAnchor(&root.view().bottomAnchor()),
+    ];
     Layout {
         root,
         canvases: vec![preview_canvas, timeline_canvas, meter_canvas],
@@ -366,5 +493,6 @@ pub fn build(editor: &Editor) -> Layout {
         fullscreen_button: fullscreen,
         controls_overlay,
         overlay_constraints,
+        fullscreen_constraints,
     }
 }

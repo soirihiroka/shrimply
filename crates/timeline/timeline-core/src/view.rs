@@ -32,6 +32,17 @@ pub enum DragMode {
     VerticalSliderMove,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub enum TimelineCursor {
+    #[default]
+    Default,
+    ResizeStart,
+    ResizeEnd,
+    ResizeHorizontal,
+    Crosshair,
+}
+
 #[derive(Clone)]
 pub struct TransitionDrag {
     pub key: crate::project::ItemAddress,

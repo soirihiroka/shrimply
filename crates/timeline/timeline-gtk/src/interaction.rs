@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, mpsc, mpsc::TryRecvError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use adw::prelude::*;
 use gtk::glib;
@@ -41,8 +41,8 @@ pub(super) use media_import::{
     ask_remux_then_import_at, import_path_at, open_track_import_dialog, show_error_dialog,
 };
 pub(crate) use pointer::select_item_in_context;
-pub(super) use pointer::{content_y, handle_timeline_input, set_timeline_selection};
-use pointer::{insert_caption_on_double_click, modifiers_from_state, push_modifiers, select_track};
+pub(super) use pointer::{content_y, set_timeline_selection};
+use pointer::{modifiers_from_state, push_modifiers, select_track};
 use transcription::{
     add_caption_item_context_actions, selected_audio_project, show_transcribe_dialog,
 };
@@ -50,26 +50,18 @@ use transcription::{
 use super::caption_tts;
 use super::context_menu;
 use super::items::{
-    ClipTransitionHitAction, ItemEdge, ItemKey, NewItemTarget, TimelineClipboard, TrackKind,
-    TransitionHitAction, apply_resize_drag, cut_time_for_address, delete_track_gap,
-    dragged_group_for_hit, expand_grouped_selection, fold_items, group_item_addresses,
-    hit_clip_transition_at, hit_gap_at, hit_item_at, hit_resize_handle_at, hit_transition_at,
-    item_group_id, item_identity, item_key_for_identity, move_dragged_group, paste_items,
-    resize_drag_for_hit, selected_item_addresses, split_item_addresses, ungroup_item_addresses,
-    update_dragged_group, update_resize_drag,
+    ItemKey, NewItemTarget, TimelineClipboard, TrackKind, delete_track_gap,
+    expand_grouped_selection, fold_items, group_item_addresses, hit_item_at, item_group_id,
+    paste_items, selected_item_addresses, ungroup_item_addresses,
 };
 use super::renderer::{Vec2, vec2};
 use super::silence;
-use super::snapping::SnapRepo;
 use super::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 use super::{
-    CLICK_DRAG_TOLERANCE, DragMode, ITEM_RESIZE_HANDLE_WIDTH, MAX_SECONDS_PER_PIXEL, RULER_HEIGHT,
-    SCROLL_PIXELS_PER_STEP, TRACK_HEIGHT, TimelineCursor, TimelineModifiers, TimelineOverscroll,
-    TimelineOverscrollEdge, TimelineRuntime, TimelineScrollEvent, TimelineSelection,
-    TimelineViewState, TrackAddMenuRequest, TrackButtonId, TrackKey, TrackLabelAction,
-    WAVEFORM_POLL_INTERVAL, frame_step_seconds, horizontal_scrollbar, import,
-    min_seconds_per_pixel, selected_timeline_items, selected_timeline_tracks, timeline_width,
-    timeline_x, track_button_at, track_label_action_at, vertical_scrollbar, x_to_time,
+    RULER_HEIGHT, SCROLL_PIXELS_PER_STEP, TRACK_HEIGHT, TimelineCursor, TimelineModifiers,
+    TimelineRuntime, TimelineScrollEvent, TrackAddMenuRequest, TrackKey, TrackLabelAction,
+    WAVEFORM_POLL_INTERVAL, import, selected_timeline_items, selected_timeline_tracks, timeline_x,
+    track_label_action_at, x_to_time,
 };
 
 pub(crate) use context_actions::folded_items::move_item_out_of_sequence_core;

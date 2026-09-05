@@ -1,5 +1,42 @@
 use super::*;
 
+/// Waveform inputs exclude placement and grouping; moving a clip preserves its cache.
+pub fn audio_waveform_cache_signature(project: &Project) -> Vec<(Uuid, String)> {
+    let mut signature = project
+        .audio_tracks
+        .iter()
+        .flat_map(|track| &track.items)
+        .chain(
+            project
+                .folded_sequences
+                .iter()
+                .flat_map(|sequence| &sequence.audio_tracks)
+                .flat_map(|track| &track.items),
+        )
+        .map(|item| {
+            (
+                item.id,
+                serde_json::to_string(&(
+                    item.end.saturating_sub(item.start),
+                    item.time_offset,
+                    item.source_duration,
+                    item.playback_speed.to_string(),
+                    item.repeat_strategy,
+                    item.speed_method,
+                    &item.source,
+                    &item.file,
+                    item.track_id,
+                    &item.gain,
+                    &item.modifiers,
+                ))
+                .expect("waveform input signature must serialize"),
+            )
+        })
+        .collect::<Vec<_>>();
+    signature.sort_unstable_by_key(|(id, _)| *id);
+    signature
+}
+
 pub trait OverwriteItem: Clone + TimeSlice {
     fn trim_start(&mut self, start: Time);
     fn set_end(&mut self, end: Time);

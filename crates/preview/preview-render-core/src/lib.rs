@@ -11,9 +11,8 @@ use shrimply_evaluation::{
     TransformExpressionCache, VisualEvaluation, resolve_bool, resolve_scalar,
 };
 use shrimply_math_core::Time;
-use shrimply_preview_core::accuracy::{
-    CompositeAccuracy, FINAL_PREVIEW_DELAY, LOCAL_SCRUB_WINDOW_SECONDS,
-};
+pub use shrimply_preview_core::accuracy::CompositeAccuracy;
+use shrimply_preview_core::accuracy::{FINAL_PREVIEW_DELAY, LOCAL_SCRUB_WINDOW_SECONDS};
 use shrimply_project::project::{Project, VideoItemContent, video_source_time_at};
 use shrimply_render_core::{LayerKind, Nv12LayerParams, TextureAddressMode};
 use skia_safe::Image;
@@ -28,6 +27,7 @@ pub struct Layer {
     pub render_size: (u32, u32),
     pub output_transform: shrimply_render_core::math::Mat3,
     pub motion_blur: Option<Vec<shrimply_math_geometry::ComposedTransform2D>>,
+    pub morph_scene: Option<shrimply_video_core::vector_morph::MorphScene>,
 }
 
 pub enum Source {
@@ -44,10 +44,21 @@ pub struct TransitionStage {
 
 pub struct FramePlan {
     pub time: Time,
+    pub accuracy: CompositeAccuracy,
     pub audio_analysis: FrameAudioAnalysis,
     pub layers: Vec<Layer>,
     pub width: u32,
     pub height: u32,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct MorphCacheKey {
+    sequence_path: Vec<uuid::Uuid>,
+    track_id: uuid::Uuid,
+    outgoing_id: uuid::Uuid,
+    incoming_id: uuid::Uuid,
+    width: u32,
+    height: u32,
 }
 
 /// Shared media scheduling and evaluated layer inputs. Pixel rendering belongs to
@@ -72,6 +83,10 @@ pub struct Scene {
     audio_revision: u64,
     audio_pending: bool,
     sampled_audio: Vec<FrameAudioAnalysis>,
+    morphs: std::collections::HashMap<
+        MorphCacheKey,
+        std::rc::Rc<shrimply_video_core::vector_morph::PreparedVectorMorph>,
+    >,
 }
 
 impl Scene {
@@ -103,6 +118,7 @@ impl Scene {
         self.audio_revision = self.audio_revision.wrapping_add(1);
         self.audio_pending = false;
         self.sampled_audio.clear();
+        self.morphs.clear();
     }
 
     pub fn prepare(&mut self, project: &Project, time: Time) -> Result<Option<FramePlan>, String> {
@@ -133,6 +149,7 @@ impl Scene {
         let audio = self
             .audio_sampler
             .sample(project, time, self.audio_revision);
+        self.sampled_audio.clear();
         let mut requests = Vec::new();
         let items = self.items(
             project,
@@ -151,24 +168,24 @@ impl Scene {
         if self.prepared == Some(key) && !self.audio_pending {
             return Ok(None);
         }
-        self.sampled_audio.clear();
         let layers = self.layers(project, &audio, items)?;
         let failures = std::iter::once(&audio)
             .chain(&self.sampled_audio)
-            .flat_map(|analysis| analysis.mouth.failures())
+            .flat_map(FrameAudioAnalysis::failures)
             .collect::<Vec<_>>();
         if !failures.is_empty() {
             return Err(failures.join("\n"));
         }
         self.audio_pending = std::iter::once(&audio)
             .chain(&self.sampled_audio)
-            .any(|analysis| analysis.mouth.pending());
+            .any(FrameAudioAnalysis::pending);
         if self.audio_pending && accuracy.content_accurate() {
             return Ok(None);
         }
         self.prepared = Some(key);
         Ok(Some(FramePlan {
             time,
+            accuracy,
             audio_analysis: audio,
             layers,
             width: project.canvas_size.width,

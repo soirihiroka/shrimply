@@ -1,8 +1,8 @@
 use super::*;
 
-pub(crate) use shrimply_timeline_core::selection::select_item_in_context;
-pub(in crate::interaction) fn activate_track_button(
-    runtime: &mut TimelineRuntime,
+pub(crate) use crate::selection::select_item_in_context;
+pub(in crate::scene) fn activate_track_button(
+    runtime: &mut Scene,
     selection_state: &SharedSelectionState,
     (key, action): TrackButtonId,
 ) {
@@ -25,7 +25,7 @@ pub(in crate::interaction) fn activate_track_button(
     }
 }
 
-pub(crate) fn set_timeline_selection(
+pub fn set_timeline_selection(
     project: &Project,
     selection_state: &SharedSelectionState,
     selected_items: Vec<ItemKey>,
@@ -34,9 +34,9 @@ pub(crate) fn set_timeline_selection(
     set_selection(project, selection_state, selected_items, focused_item, true);
 }
 
-pub(in crate::interaction) use shrimply_timeline_core::cutting::timeline_cut;
+pub(in crate::scene) use crate::cutting::timeline_cut;
 
-pub(in crate::interaction) fn set_selection(
+pub(in crate::scene) fn set_selection(
     project: &Project,
     selection_state: &SharedSelectionState,
     selected_items: Vec<ItemKey>,
@@ -93,9 +93,9 @@ pub(in crate::interaction) fn set_selection(
     selection_state::set_selected_items(selection_state, selected_for_state, focused_for_state);
 }
 
-pub(in crate::interaction) use shrimply_timeline_core::track_controls::select_track;
+pub(in crate::scene) use crate::track_controls::select_track;
 
-pub(in crate::interaction) fn item_key_sort_key(key: &ItemKey) -> (u8, usize, usize) {
+pub(in crate::scene) fn item_key_sort_key(key: &ItemKey) -> (u8, usize, usize) {
     let kind = match key.kind {
         TrackKind::Caption => 0_u8,
         TrackKind::Video => 1_u8,

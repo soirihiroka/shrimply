@@ -7,7 +7,9 @@ pub(super) struct PreparedItem<'a> {
     pub item: Cow<'a, VideoItem>,
     pub address: ItemAddress,
     pub time: Time,
+    pub audio: Option<FrameAudioAnalysis>,
     pub clip_transition: Option<ActiveClipTransition>,
+    pub morph_peer: Option<uuid::Uuid>,
     pub children: Option<Vec<PreparedItem<'a>>>,
 }
 
@@ -27,22 +29,37 @@ impl Scene {
         scope: &Scope,
         requests: &mut Vec<media::Request>,
     ) -> Result<Vec<PreparedItem<'a>>, String> {
+        let mut active_items =
+            shrimply_video_core::sequence::active_tracks(tracks, scope.time, None);
+        active_items.retain(|active| Some(active.item.id) != self.excluded_item_id);
         let mut items = Vec::new();
-        for active in shrimply_video_core::sequence::active_tracks(tracks, scope.time, None) {
-            if Some(active.item.id) == self.excluded_item_id {
-                continue;
-            }
-            let item = held_item(active.item, scope.time, active.clip_transition.is_some());
+        for (active_index, active) in active_items.iter().enumerate() {
+            let morph = morph_endpoint(&active_items, active_index);
+            let endpoint_time = morph.map(|(_, time)| time);
+            let item_time = endpoint_time.unwrap_or(scope.time);
+            let endpoint_audio = endpoint_time.map(|time| {
+                let audio = self
+                    .audio_sampler
+                    .sample(project, time, self.audio_revision);
+                self.sampled_audio.push(audio.clone());
+                audio
+            });
+            let item_audio = endpoint_audio.as_ref().unwrap_or(audio);
+            let item = if endpoint_time.is_some() {
+                Cow::Borrowed(active.item)
+            } else {
+                held_item(active.item, scope.time, active.clip_transition.is_some())
+            };
             if !resolve_bool(
                 &item.visibility,
-                &VisualEvaluation::for_item_with_audio(project, &item, scope.time, audio),
+                &VisualEvaluation::for_item_with_audio(project, &item, item_time, item_audio),
                 &mut self.expressions,
             ) {
                 continue;
             }
             let source_time = match item.content {
                 VideoItemContent::Media | VideoItemContent::Gif => {
-                    let Some(time) = video_source_time_at(&item, scope.time) else {
+                    let Some(time) = video_source_time_at(&item, item_time) else {
                         continue;
                     };
                     time
@@ -51,7 +68,7 @@ impl Scene {
                 | VideoItemContent::Shape(_)
                 | VideoItemContent::Text(_)
                 | VideoItemContent::Paint(_) => {
-                    if shrimply_project::project::generated_item_time(&item, scope.time).is_none() {
+                    if shrimply_project::project::generated_item_time(&item, item_time).is_none() {
                         continue;
                     }
                     Time::ZERO
@@ -68,7 +85,7 @@ impl Scene {
                     project,
                     &item,
                     reference,
-                    scope.time,
+                    item_time,
                     &scope.ancestors,
                 )?
                 else {
@@ -84,7 +101,7 @@ impl Scene {
                 let children = self.items(
                     project,
                     &sequence.video_tracks,
-                    audio,
+                    item_audio,
                     &child_scope,
                     requests,
                 )?;
@@ -106,11 +123,71 @@ impl Scene {
             items.push(PreparedItem {
                 item,
                 address,
-                time: scope.time,
+                time: item_time,
+                audio: endpoint_audio,
                 clip_transition: active.clip_transition,
+                morph_peer: morph.map(|(peer, _)| peer),
                 children,
             });
         }
+        let prepared_ids = items
+            .iter()
+            .map(|prepared| prepared.address.item_id())
+            .collect::<std::collections::HashSet<_>>();
+        items.retain(|prepared| {
+            prepared
+                .morph_peer
+                .is_none_or(|peer| prepared_ids.contains(&peer))
+        });
         Ok(items)
     }
+}
+
+fn morph_endpoint(
+    items: &[shrimply_video_core::sequence::ActiveVideoItem<'_>],
+    index: usize,
+) -> Option<(uuid::Uuid, Time)> {
+    use shrimply_project::project::VisualClipTransitionKind;
+    use shrimply_video_core::clip_transition::ClipTransitionRole;
+    let active = &items[index];
+    let transition = active
+        .clip_transition
+        .filter(|transition| transition.definition.kind == VisualClipTransitionKind::Morph)?;
+    let (peer, cut) = match transition.role {
+        ClipTransitionRole::Outgoing => {
+            let peer = items[index + 1..].iter().find(|candidate| {
+                candidate.track_id == active.track_id
+                    && candidate
+                        .clip_transition
+                        .is_some_and(|candidate_transition| {
+                            candidate_transition.definition.kind == VisualClipTransitionKind::Morph
+                                && candidate_transition.role == ClipTransitionRole::Incoming
+                                && candidate_transition.progress == transition.progress
+                        })
+            })?;
+            (peer.item.id, active.item.end)
+        }
+        ClipTransitionRole::Incoming => {
+            let peer = items[..index].iter().rev().find(|candidate| {
+                candidate.track_id == active.track_id
+                    && candidate
+                        .clip_transition
+                        .is_some_and(|candidate_transition| {
+                            candidate_transition.definition.kind == VisualClipTransitionKind::Morph
+                                && candidate_transition.role == ClipTransitionRole::Outgoing
+                                && candidate_transition.progress == transition.progress
+                        })
+            })?;
+            (peer.item.id, peer.item.end)
+        }
+    };
+    let (source, target) =
+        shrimply_math_media::clip_transition_bounds(cut, transition.definition.duration);
+    Some((
+        peer,
+        match transition.role {
+            ClipTransitionRole::Outgoing => source,
+            ClipTransitionRole::Incoming => target,
+        },
+    ))
 }

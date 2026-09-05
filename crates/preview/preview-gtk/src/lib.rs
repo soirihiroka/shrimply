@@ -50,9 +50,8 @@ use gtk::{gdk, gio, glib};
 use shrimply_paint_edit::{PAINT_PREVIEW_STATE, PaintPreviewMode as PaintMode, PaintPreviewState};
 use shrimply_playback_performance as playback_performance;
 
-use shrimply_preview_core::playback::STEP_REPEAT_TICK;
+use shrimply_preview_core::playback::{LOADING_INDICATOR_DELAY, STEP_REPEAT_TICK};
 const LOADING_SPINNER_SIZE: i32 = 16;
-const LOADING_SPINNER_DELAY: Duration = Duration::from_nanos(1_000_000_000 / 24);
 const PREVIEW_FULLSCREEN_ICON: &str = "arrows-pointing-outward-symbolic";
 const PREVIEW_TOOLBAR_ICON_SIZE: i32 = 20;
 use shrimply_paint_edit::DEFAULT_PAINT_ERASER_SCALE;
@@ -1131,7 +1130,7 @@ fn attach_frame_pump(
         }
         let show_loading = loading_since
             .get()
-            .is_some_and(|loading_since| loading_since.elapsed() >= LOADING_SPINNER_DELAY);
+            .is_some_and(|loading_since| loading_since.elapsed() >= LOADING_INDICATOR_DELAY);
         loading_spinner.set_visible(show_loading);
         loading_indicator.set_visible_child_name(if show_loading { "loading" } else { "done" });
         glib::ControlFlow::Continue

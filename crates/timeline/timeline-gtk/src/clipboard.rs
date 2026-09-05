@@ -69,7 +69,7 @@ pub(super) fn paste(
         let player_state = player_state.clone();
         let selection_state = selection_state.clone();
         let runtime = runtime.clone();
-        let timeline_clipboard = runtime.borrow().clipboard.clone();
+        let timeline_clipboard = runtime.borrow().scene.clipboard.clone();
         let timeline_sequence_scope = crate::selection_state::active_scope(&selection_state);
         clipboard.read_text_async(None::<&gio::Cancellable>, move |result| {
             let Some(text) = result.ok().flatten() else {

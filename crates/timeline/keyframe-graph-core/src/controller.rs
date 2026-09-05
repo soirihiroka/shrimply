@@ -505,7 +505,8 @@ impl FrameGraphState {
     pub fn replace_graph(&mut self, graph: KeyframeGraph) {
         self.view.minimum_seconds_per_pixel =
             matches!(graph, KeyframeGraph::Step { .. }).then(|| {
-                self.frame_step.as_secs_f64() / shrimply_discrete_keyframe_graph_core::MAX_FRAME_WIDTH
+                self.frame_step.as_secs_f64()
+                    / shrimply_discrete_keyframe_graph_core::MAX_FRAME_WIDTH
             });
         self.graph = graph;
         self.pending_step_graph = None;

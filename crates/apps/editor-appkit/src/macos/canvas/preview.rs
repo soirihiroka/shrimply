@@ -19,6 +19,10 @@ pub struct State {
     pub edited_guides: Option<Box<PreviewGuides>>,
     pub baseline_guides: Option<Box<PreviewGuides>>,
     pub guide_button: Option<Retained<objc2_app_kit::NSButton>>,
+    pub loading_done: Option<Retained<objc2_app_kit::NSButton>>,
+    pub loading_spinner: Option<Retained<objc2_app_kit::NSProgressIndicator>>,
+    pub frame_rate_label: Option<Retained<objc2_app_kit::NSTextField>>,
+    pub loading_since: Option<std::time::Instant>,
     pub controller: Controller,
     pub expressions: RefCell<shrimply_evaluation::TransformExpressionCache>,
     pub audio_analysis: Option<(
@@ -34,7 +38,12 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(guide_button: Retained<objc2_app_kit::NSButton>) -> Self {
+    pub fn new(
+        guide_button: Retained<objc2_app_kit::NSButton>,
+        loading_done: Retained<objc2_app_kit::NSButton>,
+        loading_spinner: Retained<objc2_app_kit::NSProgressIndicator>,
+        frame_rate_label: Retained<objc2_app_kit::NSTextField>,
+    ) -> Self {
         use shrimply_paint_edit::{
             DEFAULT_PAINT_ERASER_SCALE, PAINT_PREVIEW_STATE, PaintPreviewState,
         };
@@ -47,7 +56,52 @@ impl State {
             }),
         );
         state.guide_button = Some(guide_button);
+        state.loading_done = Some(loading_done);
+        state.loading_spinner = Some(loading_spinner);
+        state.frame_rate_label = Some(frame_rate_label);
         state
+    }
+
+    pub fn sync_loading(&mut self, tolerance: shrimply_math_core::Time) {
+        if let Some(label) = self
+            .renderer
+            .render_elapsed()
+            .and_then(shrimply_preview_core::playback::rendered_frame_rate_label)
+        {
+            self.frame_rate_label
+                .as_ref()
+                .expect("preview frame-rate label installed")
+                .setStringValue(&objc2_foundation::NSString::from_str(&label));
+        }
+        let loading = self.renderer.loading(tolerance);
+        if loading {
+            self.loading_since
+                .get_or_insert_with(std::time::Instant::now);
+        } else {
+            self.loading_since = None;
+        }
+        let visible = self.loading_since.is_some_and(|started| {
+            started.elapsed() >= shrimply_preview_core::playback::LOADING_INDICATOR_DELAY
+        });
+        let spinner = self
+            .loading_spinner
+            .as_ref()
+            .expect("preview loading spinner installed");
+        let done = self
+            .loading_done
+            .as_ref()
+            .expect("preview loading indicator installed");
+        if spinner.isHidden() == visible {
+            spinner.setHidden(!visible);
+            done.setHidden(visible);
+            unsafe {
+                if visible {
+                    spinner.startAnimation(None);
+                } else {
+                    spinner.stopAnimation(None);
+                }
+            }
+        }
     }
 
     pub fn sync_guides(&mut self, guides: &PreviewGuides, visible: bool) {

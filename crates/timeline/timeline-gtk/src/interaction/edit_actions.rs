@@ -57,7 +57,7 @@ pub(crate) fn paste_selected_item_properties_core(
     if targets.is_empty() {
         return None;
     }
-    let clipboard = runtime.borrow().property_clipboard.clone();
+    let clipboard = runtime.borrow().scene.property_clipboard.clone();
     let result = {
         let mut project = project.borrow_mut();
         let result = if modifiers_only {

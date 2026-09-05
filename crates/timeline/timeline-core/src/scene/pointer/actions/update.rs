@@ -1,12 +1,12 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::interaction::pointer) fn update_pointer_action(
+pub(in crate::scene::pointer) fn update_pointer_action(
     pos: Vec2,
     project: &Project,
-    player_state: &SharedPlayerState,
+    _player_state: &SharedPlayerState,
     selection_state: &SharedSelectionState,
-    runtime: &mut TimelineRuntime,
+    runtime: &mut Scene,
     width: f64,
     timeline_width: f64,
     height: f64,
@@ -35,8 +35,7 @@ pub(in crate::interaction::pointer) fn update_pointer_action(
                 .max(0.0),
             );
             let position = runtime.snap_repository.snap(position).unwrap_or(position);
-            crate::recording::stop_before_backward_seek(runtime, player_state, position);
-            player_state::seek_time(player_state, position);
+            runtime.pending_seek = Some(position);
         }
         DragMode::Select => {
             let end = Time::from_seconds_f64(
@@ -75,7 +74,7 @@ pub(in crate::interaction::pointer) fn update_pointer_action(
             dragging::update(runtime, project, glam::DVec2::new(x, y));
         }
         DragMode::Transition => {
-            let mut gesture = shrimply_timeline_core::transitions::Gesture {
+            let mut gesture = crate::transitions::Gesture {
                 clip: runtime.clip_transition_drag.take(),
                 item: runtime.transition_drag.take(),
             };

@@ -101,6 +101,14 @@ impl Editor {
             };
             layout.preview_tools.removeFromSuperview();
             layout.playbar.removeFromSuperview();
+            layout
+                .preview_layout
+                .removeArrangedSubview(&layout.preview_host);
+            layout.preview_host.removeFromSuperview();
+            layout.root.view().addSubview(&layout.preview_host);
+            for constraint in &layout.fullscreen_constraints {
+                constraint.setActive(true);
+            }
             layout.playbar.setHidden(false);
             layout
                 .playbar
@@ -135,8 +143,15 @@ impl Editor {
             for constraint in &layout.overlay_constraints {
                 constraint.setActive(false);
             }
+            for constraint in &layout.fullscreen_constraints {
+                constraint.setActive(false);
+            }
             layout.controls_overlay.setContentView(None);
             layout.controls_overlay.removeFromSuperview();
+            layout.preview_host.removeFromSuperview();
+            layout
+                .preview_layout
+                .insertArrangedSubview_atIndex(&layout.preview_host, 0);
             layout.preview_layout.addArrangedSubview(&layout.playbar);
             layout.playbar.setHidden(restore.controls_hidden);
             layout

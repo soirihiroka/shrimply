@@ -173,7 +173,7 @@ pub(super) fn show_track_add_menu(
     } = request;
     let row = items::row_for_track(&project.borrow(), key.kind, key.track_index)
         .expect("add menu track must exist");
-    let view = runtime.borrow().view;
+    let view = runtime.borrow().scene.view();
     let context = TrackAddContext {
         area: area.clone(),
         project: project.clone(),
@@ -244,9 +244,9 @@ fn activate_track_add_action(
         return;
     }
     let runtime = context.runtime.borrow();
-    let default_text_font_family = runtime.default_text_font_family.clone();
+    let default_text_font_family = runtime.scene.default_text_font_family.clone();
     let settings = shrimply_timeline_core::TrackAddSettings {
-        default_visual_duration: runtime.default_visual_duration,
+        default_visual_duration: runtime.scene.default_visual_duration,
         default_text_font_family: &default_text_font_family,
     };
     drop(runtime);
@@ -289,44 +289,4 @@ fn append_add_menu_item_i18n(
         activate();
     });
     menu.append(&button);
-}
-
-pub(super) fn toggle_track_enabled(
-    area: &gtk::GLArea,
-    project: &Rc<RefCell<Project>>,
-    player_state: &SharedPlayerState,
-    key: TrackKey,
-) {
-    if !toggle_track_enabled_core(project, player_state, key) {
-        return;
-    }
-    area.queue_render();
-}
-
-pub(super) fn toggle_track_enabled_core(
-    project: &Rc<RefCell<Project>>,
-    player_state: &SharedPlayerState,
-    key: TrackKey,
-) -> bool {
-    let mut project_state = project.borrow_mut();
-    let changed =
-        shrimply_timeline_core::track_controls::toggle_track_enabled(&mut project_state, key);
-    if !changed {
-        return false;
-    }
-    crate::project::commit_edit(&project_state, "toggle-track-enabled");
-    let duration = project_state.duration();
-    drop(project_state);
-    player_state::refresh_project(
-        player_state,
-        player_state::ProjectChange {
-            duration: Some(duration),
-            audio: key.kind == TrackKind::Audio,
-            video: key.kind == TrackKind::Video,
-            captions: key.kind == TrackKind::Caption,
-            inspector: true,
-            ..player_state::ProjectChange::default()
-        },
-    );
-    true
 }

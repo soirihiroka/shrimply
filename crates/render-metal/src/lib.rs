@@ -196,11 +196,22 @@ impl Renderer {
                 })
                 .ok_or_else(|| format!("Unknown shared Slang kernel {name}"))?;
             if !self.libraries.contains_key(module.name) {
+                let started = std::time::Instant::now();
+                tracing::info!(
+                    module = module.name,
+                    kernel = name,
+                    "Compiling shared Slang Metal module"
+                );
                 let library = self
                     .device
                     .newLibraryWithSource_options_error(&NSString::from_str(module.source), None)
                     .map_err(|error| format!("Compile Metal module {}: {error}", module.name))?;
                 self.libraries.insert(module.name, library);
+                tracing::info!(
+                    module = module.name,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "Compiled shared Slang Metal module"
+                );
             }
             let library = &self.libraries[module.name];
             let function = library
@@ -208,6 +219,7 @@ impl Renderer {
                 .ok_or_else(|| format!("Metal module {} has no kernel {name}", module.name))?;
             let mut reflection = None;
             // The entry was generated and validated by Slang and Metal at build time.
+            let pipeline_started = std::time::Instant::now();
             let pipeline = unsafe {
                 self.device
                     .newComputePipelineStateWithFunction_options_reflection_error(
@@ -217,6 +229,11 @@ impl Renderer {
                     )
             }
             .map_err(|error| format!("Create Metal kernel {name}: {error}"))?;
+            tracing::info!(
+                kernel = name,
+                elapsed_ms = pipeline_started.elapsed().as_millis(),
+                "Created shared Slang Metal pipeline"
+            );
             let bindings = reflection
                 .ok_or("Metal omitted pipeline reflection")?
                 .bindings();

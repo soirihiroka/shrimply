@@ -17,7 +17,7 @@ impl ToolkitTimeline {
         let folded_hit = {
             let project = self.project.borrow();
             let runtime = self.runtime.borrow();
-            folded_sequence::hit_projected_item(&project, runtime.view, x, y)
+            folded_sequence::hit_projected_item(&project, runtime.scene.view(), x, y)
         };
         if let Some(hit) = folded_hit {
             let project = self.project.borrow();
@@ -47,7 +47,7 @@ impl ToolkitTimeline {
                     }
                     Some(project::ItemRef::Caption(_)) | None => false,
                 };
-                let clipboard = self.runtime.borrow().property_clipboard.clone();
+                let clipboard = self.runtime.borrow().scene.property_clipboard.clone();
                 let clipboard = clipboard.borrow();
                 (
                     folder,
@@ -73,7 +73,7 @@ impl ToolkitTimeline {
         let hit = {
             let project = self.project.borrow();
             let runtime = self.runtime.borrow();
-            items::hit_item_at(&project, runtime.view, x, y)
+            items::hit_item_at(&project, runtime.scene.view(), x, y)
         };
         if let Some(hit) = hit {
             let (address, folder) = {
@@ -119,21 +119,23 @@ impl ToolkitTimeline {
             let runtime = self.runtime.borrow();
             let rows = items::track_rows(&project);
             let row = (y >= RULER_HEIGHT).then(|| {
-                ((y + runtime.view.scroll_y - RULER_HEIGHT) / TRACK_HEIGHT).floor() as usize
+                ((y + runtime.scene.view().scroll_y - RULER_HEIGHT) / TRACK_HEIGHT).floor() as usize
             });
             let over_handles = (0.0..timeline_x()).contains(&x);
             let track_row = over_handles
                 .then_some(row)
                 .flatten()
                 .and_then(|row| rows.get(row).cloned());
-            let key = track_label_action_at(&project, runtime.view, x, y).map(|(key, _)| key);
+            let key =
+                track_label_action_at(&project, runtime.scene.view(), x, y).map(|(key, _)| key);
             (
                 track_row,
                 key,
                 over_handles && (0.0..RULER_HEIGHT).contains(&y),
                 over_handles
                     && y >= RULER_HEIGHT
-                    && y + runtime.view.scroll_y >= RULER_HEIGHT + rows.len() as f64 * TRACK_HEIGHT,
+                    && y + runtime.scene.view().scroll_y
+                        >= RULER_HEIGHT + rows.len() as f64 * TRACK_HEIGHT,
             )
         };
         if empty_above || empty_below {
@@ -213,6 +215,7 @@ impl ToolkitTimeline {
                 );
                 self.runtime
                     .borrow()
+                    .scene
                     .clipboard
                     .as_ref()
                     .map(|_| ContextMenuRequest::SetTimelineClipboardMarker)
@@ -224,7 +227,7 @@ impl ToolkitTimeline {
                     &self.selection_state,
                     &self.runtime,
                 );
-                if self.runtime.borrow().clipboard.is_some() {
+                if self.runtime.borrow().scene.clipboard.is_some() {
                     interaction::delete_selected_addressed_items_core(
                         &self.project,
                         &self.player_state,
@@ -234,6 +237,7 @@ impl ToolkitTimeline {
                 }
                 self.runtime
                     .borrow()
+                    .scene
                     .clipboard
                     .as_ref()
                     .map(|_| ContextMenuRequest::SetTimelineClipboardMarker)
@@ -408,7 +412,7 @@ impl ToolkitTimeline {
 
     pub fn paste_context_clipboard_text(&self, text: String) {
         if text == shrimply_timeline_core::TIMELINE_CLIPBOARD_MARKER {
-            if let Some(clipboard) = self.runtime.borrow().clipboard.clone() {
+            if let Some(clipboard) = self.runtime.borrow().scene.clipboard.clone() {
                 interaction::paste_timeline_clipboard_core(
                     &self.project,
                     &self.player_state,
@@ -435,7 +439,7 @@ impl ToolkitTimeline {
                     let project = self.project.borrow();
                     selection_state::selected_item_addresses(&self.selection_state, &project)
                 };
-                let clipboard = self.runtime.borrow().property_clipboard.clone();
+                let clipboard = self.runtime.borrow().scene.property_clipboard.clone();
                 let clipboard = clipboard.borrow();
                 (
                     clipboard.can_replace_properties(&self.project.borrow(), &targets),
@@ -613,12 +617,7 @@ impl ToolkitTimeline {
 
     fn reset_context_interaction(&self) {
         let mut runtime = self.runtime.borrow_mut();
-        runtime.dragged_group = None;
-        runtime.resize_drag = None;
-        runtime.transition_drag = None;
-        runtime.cut_preview = None;
-        runtime.view.selection = None;
-        runtime.view.drag_mode = DragMode::None;
+        runtime.scene.pointer_cancelled();
     }
 
     fn create_track(&self, kind: TrackKind) {
@@ -691,7 +690,7 @@ pub(crate) fn copy_selected_timeline_items_core(
         )
     };
     let copied_any = copied.is_some();
-    let property_clipboard = runtime.borrow().property_clipboard.clone();
+    let property_clipboard = runtime.borrow().scene.property_clipboard.clone();
     if let Some(focused) = focused {
         property_clipboard
             .borrow_mut()
@@ -699,7 +698,7 @@ pub(crate) fn copy_selected_timeline_items_core(
     } else {
         property_clipboard.borrow_mut().clear();
     }
-    runtime.borrow_mut().clipboard = copied;
+    runtime.borrow_mut().scene.clipboard = copied;
     player_state::refresh_project(
         player_state,
         player_state::ProjectChange {

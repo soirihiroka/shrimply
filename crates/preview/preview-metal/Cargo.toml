@@ -14,3 +14,4 @@ shrimply-math-geometry = { path = "../../math/geometry" }
 skia-safe.workspace = true
 objc2.workspace = true
 uuid.workspace = true
+tracing.workspace = true

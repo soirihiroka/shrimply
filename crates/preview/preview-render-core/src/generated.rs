@@ -11,6 +11,24 @@ pub(super) struct PreparedVector {
     pub is_vector: bool,
     pub sample_method: shrimply_render_core::VideoSampleMethod,
     pub effects: Vec<shrimply_video_core::raster_modifiers::Operation>,
+    morph_scene: Option<shrimply_video_core::vector_morph::MorphScene>,
+}
+
+impl PreparedVector {
+    pub fn morph_scene(
+        &self,
+        native: CanvasSize,
+    ) -> Option<shrimply_video_core::vector_morph::MorphScene> {
+        (self.is_vector && self.frame.render_size == native)
+            .then(|| self.morph_scene.clone())
+            .flatten()
+            .and_then(|scene| {
+                shrimply_video_core::vector_morph::apply_vector_operations(
+                    scene,
+                    &self.frame.operations,
+                )
+            })
+    }
 }
 
 struct TextSource {
@@ -105,76 +123,88 @@ impl Scene {
             }
         }
         let masks = shrimply_video_core::text::take_masks(&mut operations);
-        let (visual, source_offset): (Box<dyn GeneratedVisual>, _) = match item.content {
-            VideoItemContent::Shape(_) => {
-                if !masks.is_empty() {
-                    return Err("TextMask requires a text source".into());
-                }
-                let shape = shrimply_video_core::shape::prepare(
-                    native,
-                    render_size,
-                    item,
-                    evaluation.clone(),
-                    transition,
-                    &mut self.expressions,
-                );
-                let offset = ComposedTransform2D {
-                    matrix: glam::Mat3::from_translation(-shape.content_offset),
-                };
-                (Box::new(shape), offset)
-            }
-            VideoItemContent::Text(_) => {
-                let text = shrimply_video_core::text::prepare(
-                    native,
-                    render_size,
-                    item,
-                    evaluation.clone(),
-                    transition,
-                    &mut self.expressions,
-                );
-                let offset = text.source_offset;
-                (Box::new(TextSource { text, masks }), offset)
-            }
-            VideoItemContent::Paint(_) => {
-                if !masks.is_empty() {
-                    return Err("TextMask requires a text source".into());
-                }
-                let paint = shrimply_video_core::paint::prepare(
-                    native,
-                    render_size,
-                    item,
-                    evaluation.clone(),
-                    transition,
-                    &mut self.expressions,
-                    self.paint_caches.entry(item.id).or_default().clone(),
-                )?;
-                (
-                    Box::new(paint),
-                    ComposedTransform2D {
-                        matrix: glam::Mat3::IDENTITY,
-                    },
-                )
-            }
-            VideoItemContent::Svg => {
-                if !masks.is_empty() {
-                    return Err("TextMask requires a text source".into());
-                }
-                (
-                    Box::new(SvgSource {
-                        svg: svg.ok_or("SVG source was not prepared")?,
-                        root_size: CanvasSize {
-                            width: item.source_width.max(1),
-                            height: item.source_height.max(1),
-                        },
+        let (visual, source_offset, morph_scene): (Box<dyn GeneratedVisual>, _, _) =
+            match item.content {
+                VideoItemContent::Shape(_) => {
+                    if !masks.is_empty() {
+                        return Err("TextMask requires a text source".into());
+                    }
+                    let shape = shrimply_video_core::shape::prepare(
+                        native,
+                        render_size,
+                        item,
+                        evaluation.clone(),
                         transition,
-                    }),
-                    ComposedTransform2D {
-                        matrix: glam::Mat3::IDENTITY,
-                    },
-                )
-            }
-            _ => return Err("Unsupported generated vector source".into()),
-        };
+                        &mut self.expressions,
+                    );
+                    let offset = ComposedTransform2D {
+                        matrix: glam::Mat3::from_translation(-shape.content_offset),
+                    };
+                    let morph_scene = shape.morph_scene();
+                    (Box::new(shape), offset, morph_scene)
+                }
+                VideoItemContent::Text(_) => {
+                    let text = shrimply_video_core::text::prepare(
+                        native,
+                        render_size,
+                        item,
+                        evaluation.clone(),
+                        transition,
+                        &mut self.expressions,
+                    );
+                    let offset = text.source_offset;
+                    let morph_scene = masks.is_empty().then(|| text.morph_scene()).flatten();
+                    (Box::new(TextSource { text, masks }), offset, morph_scene)
+                }
+                VideoItemContent::Paint(_) => {
+                    if !masks.is_empty() {
+                        return Err("TextMask requires a text source".into());
+                    }
+                    let paint = shrimply_video_core::paint::prepare(
+                        native,
+                        render_size,
+                        item,
+                        evaluation.clone(),
+                        transition,
+                        &mut self.expressions,
+                        self.paint_caches.entry(item.id).or_default().clone(),
+                    )?;
+                    let morph_scene = paint.morph_scene();
+                    (
+                        Box::new(paint),
+                        ComposedTransform2D {
+                            matrix: glam::Mat3::IDENTITY,
+                        },
+                        morph_scene,
+                    )
+                }
+                VideoItemContent::Svg => {
+                    if !masks.is_empty() {
+                        return Err("TextMask requires a text source".into());
+                    }
+                    let svg = svg.ok_or("SVG source was not prepared")?;
+                    let root_size = CanvasSize {
+                        width: item.source_width.max(1),
+                        height: item.source_height.max(1),
+                    };
+                    let morph_scene = svg.morph_scene(root_size, native, &evaluation);
+                    (
+                        Box::new(SvgSource {
+                            svg,
+                            root_size: CanvasSize {
+                                width: item.source_width.max(1),
+                                height: item.source_height.max(1),
+                            },
+                            transition,
+                        }),
+                        ComposedTransform2D {
+                            matrix: glam::Mat3::IDENTITY,
+                        },
+                        morph_scene,
+                    )
+                }
+                _ => return Err("Unsupported generated vector source".into()),
+            };
         operations.insert(
             0,
             VectorOperation::Transform(transform.compose(source_offset)),
@@ -191,6 +221,7 @@ impl Scene {
             is_vector,
             sample_method,
             effects,
+            morph_scene,
         })
     }
 }

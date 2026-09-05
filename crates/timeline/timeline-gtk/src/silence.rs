@@ -286,7 +286,7 @@ fn remove_silences(
             waveform_chunks_per_second_from_frame_step(frame_step_seconds(&project_state));
         detect_ranges(
             &project_state,
-            &runtime_state.waveforms,
+            &runtime_state.scene.waveforms,
             &selected_timeline_items(selection_state),
             &selected_timeline_tracks(selection_state),
             waveform_chunks_per_second,

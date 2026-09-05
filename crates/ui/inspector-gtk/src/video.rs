@@ -664,7 +664,8 @@ fn video_stabilization_rows(item: &VideoItem, context: &InspectorContext) -> Vec
                 return glib::ControlFlow::Break;
             };
             spinner.set_visible(
-                item.stabilize_video && shrimply_video_cuda::video_stabilization::is_generating(&item),
+                item.stabilize_video
+                    && shrimply_video_cuda::video_stabilization::is_generating(&item),
             );
             let generating = shrimply_video_cuda::video_stabilization::is_generating(&item);
             if was_generating && !generating {

@@ -10,6 +10,8 @@ impl Scene {
         selection: Option<Vec<ItemAddress>>,
     ) -> Result<(), String> {
         edited.normalize_clip_transitions();
+        let audio_waveforms = items::audio_waveform_cache_signature(&self.project.borrow())
+            != items::audio_waveform_cache_signature(&edited);
         project::commit_edit_checked(&edited, message)?;
         let duration = edited.duration();
         *self.project.borrow_mut() = edited;
@@ -33,7 +35,7 @@ impl Scene {
                 duration: Some(duration),
                 video: true,
                 audio: true,
-                audio_waveforms: true,
+                audio_waveforms,
                 audio_beats: true,
                 captions: true,
                 inspector: true,

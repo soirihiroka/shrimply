@@ -335,18 +335,19 @@ pub(super) fn ensure_recording_duration(player_state: &SharedPlayerState, positi
 }
 
 pub(super) fn stop_before_backward_seek(
-    runtime: &mut TimelineRuntime,
+    active_audio_recording: &Option<ActiveAudioRecording>,
+    active_video_recording: &mut Option<ActiveVideoRecording>,
     player_state: &SharedPlayerState,
     position: Time,
 ) {
     let snapshot = player_state::snapshot(player_state);
     if position >= snapshot.position
-        || (runtime.active_audio_recording.is_none() && runtime.active_video_recording.is_none())
+        || (active_audio_recording.is_none() && active_video_recording.is_none())
     {
         return;
     }
 
-    if let Some(active) = runtime.active_video_recording.as_mut()
+    if let Some(active) = active_video_recording.as_mut()
         && !active.stopping
     {
         active.stopping = true;

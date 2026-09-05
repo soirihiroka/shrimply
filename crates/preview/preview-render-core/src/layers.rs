@@ -1,6 +1,12 @@
 use super::*;
 use crate::items::PreparedItem;
 
+struct MorphEndpoint {
+    address: shrimply_project::project::ItemAddress,
+    layer: Layer,
+    audio_pending: bool,
+}
+
 impl Scene {
     pub(super) fn layers(
         &mut self,
@@ -9,9 +15,13 @@ impl Scene {
         items: Vec<PreparedItem<'_>>,
     ) -> Result<Vec<Layer>, String> {
         let mut layers = Vec::with_capacity(items.len());
+        let mut pending_morph = None;
         for prepared in items {
             let time = prepared.time;
             let clip_transition = prepared.clip_transition;
+            let paired_morph = prepared.morph_peer.is_some();
+            let audio = prepared.audio.as_ref().unwrap_or(audio);
+            let address = prepared.address.clone();
             let item = &prepared.item;
             let children = prepared
                 .children
@@ -177,38 +187,40 @@ impl Scene {
             if let Some(transition) = clip_transition {
                 use shrimply_video_core::clip_transition::{self, ClipTransitionRole};
                 if transition.definition.kind
-                    == shrimply_project::project::VisualClipTransitionKind::Morph
+                    != shrimply_project::project::VisualClipTransitionKind::Morph
                 {
-                    return Err("Morph clip transitions are not yet connected to Metal".into());
+                    let spatial = clip_transition::spatial(transition, render_canvas);
+                    opacity *= spatial.opacity;
+                    let stage_transform =
+                        if let Some(vector) = vector.as_mut().filter(|vector| vector.is_vector) {
+                            vector.frame.operations.push(
+                                shrimply_video_core::generated::VectorOperation::Transform(
+                                    shrimply_math_geometry::ComposedTransform2D {
+                                        matrix: spatial.transform,
+                                    },
+                                ),
+                            );
+                            shrimply_render_core::math::Mat3::IDENTITY
+                        } else {
+                            spatial.transform
+                        };
+                    let effect = (transition.role == ClipTransitionRole::Incoming)
+                        .then(|| {
+                            shrimply_video_core::transition::clip_mask(
+                                &transition.definition,
+                                transition.progress,
+                            )
+                        })
+                        .flatten();
+                    transitions.push(TransitionStage {
+                        transform: stage_transform,
+                        effect,
+                    });
                 }
-                let spatial = clip_transition::spatial(transition, render_canvas);
-                opacity *= spatial.opacity;
-                let stage_transform =
-                    if let Some(vector) = vector.as_mut().filter(|vector| vector.is_vector) {
-                        vector.frame.operations.push(
-                            shrimply_video_core::generated::VectorOperation::Transform(
-                                shrimply_math_geometry::ComposedTransform2D {
-                                    matrix: spatial.transform,
-                                },
-                            ),
-                        );
-                        shrimply_render_core::math::Mat3::IDENTITY
-                    } else {
-                        spatial.transform
-                    };
-                let effect = (transition.role == ClipTransitionRole::Incoming)
-                    .then(|| {
-                        shrimply_video_core::transition::clip_mask(
-                            &transition.definition,
-                            transition.progress,
-                        )
-                    })
-                    .flatten();
-                transitions.push(TransitionStage {
-                    transform: stage_transform,
-                    effect,
-                });
             }
+            let morph_scene = vector
+                .as_ref()
+                .and_then(|vector| vector.morph_scene(project.canvas_size));
             let vector_effects = vector
                 .as_mut()
                 .map(|vector| std::mem::take(&mut vector.effects));
@@ -310,7 +322,7 @@ impl Scene {
                 kind: LayerKind::Rgba,
                 _padding_0: [0; 4],
             };
-            layers.push(Layer {
+            let layer = Layer {
                 transform: raster_transform,
                 motion_blur,
                 parameters,
@@ -322,7 +334,56 @@ impl Scene {
                     project.canvas_size.width as f32 / render_canvas.width as f32,
                     project.canvas_size.height as f32 / render_canvas.height as f32,
                 )),
-            });
+                morph_scene,
+            };
+            if let Some(transition) = clip_transition.filter(|transition| {
+                paired_morph
+                    && transition.definition.kind
+                        == shrimply_project::project::VisualClipTransitionKind::Morph
+            }) {
+                use shrimply_video_core::clip_transition::ClipTransitionRole;
+                let audio_pending = audio.pending();
+                match transition.role {
+                    ClipTransitionRole::Outgoing => {
+                        if pending_morph.is_some() {
+                            return Err("Overlapping outgoing Morph transitions are invalid".into());
+                        }
+                        pending_morph = Some((
+                            transition.progress,
+                            MorphEndpoint {
+                                address,
+                                layer,
+                                audio_pending,
+                            },
+                        ));
+                    }
+                    ClipTransitionRole::Incoming => {
+                        let (progress, outgoing) = pending_morph
+                            .take()
+                            .ok_or("Morph transition is missing its outgoing clip")?;
+                        if outgoing.address.track_id() != address.track_id()
+                            || progress != transition.progress
+                        {
+                            return Err("Morph transition endpoints do not match".into());
+                        }
+                        layers.push(self.vector_morph_layer(
+                            project,
+                            outgoing,
+                            MorphEndpoint {
+                                address,
+                                layer,
+                                audio_pending,
+                            },
+                            progress,
+                        )?);
+                    }
+                }
+                continue;
+            }
+            if let Some((_, outgoing)) = pending_morph.take() {
+                layers.push(outgoing.layer);
+            }
+            layers.push(layer);
             if let Some((color, opacity)) =
                 clip_transition.and_then(shrimply_video_core::clip_transition::color_layer)
             {
@@ -349,9 +410,105 @@ impl Scene {
                     transitions: Vec::new(),
                     render_size: (project.canvas_size.width, project.canvas_size.height),
                     output_transform: shrimply_render_core::math::Mat3::IDENTITY,
+                    morph_scene: None,
                 });
             }
         }
+        if let Some((_, outgoing)) = pending_morph {
+            layers.push(outgoing.layer);
+        }
         Ok(layers)
+    }
+
+    fn vector_morph_layer(
+        &mut self,
+        project: &Project,
+        outgoing: MorphEndpoint,
+        incoming: MorphEndpoint,
+        progress: f32,
+    ) -> Result<Layer, String> {
+        let cacheable = !outgoing.audio_pending && !incoming.audio_pending;
+        let outgoing_address = outgoing.address;
+        let incoming_address = incoming.address;
+        let outgoing = outgoing.layer;
+        let incoming = incoming.layer;
+        if !outgoing.effects.is_empty()
+            || !incoming.effects.is_empty()
+            || outgoing
+                .transitions
+                .iter()
+                .any(|stage| stage.effect.is_some())
+            || incoming
+                .transitions
+                .iter()
+                .any(|stage| stage.effect.is_some())
+        {
+            return Err("Morph endpoints must remain vector operations".into());
+        }
+        let source = outgoing
+            .morph_scene
+            .clone()
+            .ok_or("Morph source requires a vector-only generated clip")?;
+        let target = incoming
+            .morph_scene
+            .clone()
+            .ok_or("Morph target requires a vector-only generated clip")?;
+        let key = MorphCacheKey {
+            sequence_path: outgoing_address.sequence_path().to_vec(),
+            track_id: outgoing_address.track_id(),
+            outgoing_id: outgoing_address.item_id(),
+            incoming_id: incoming_address.item_id(),
+            width: project.canvas_size.width,
+            height: project.canvas_size.height,
+        };
+        let morph = if let Some(morph) = self.morphs.get(&key) {
+            morph.clone()
+        } else {
+            let morph = std::rc::Rc::new(
+                shrimply_video_core::vector_morph::PreparedVectorMorph::new(source, target),
+            );
+            if cacheable {
+                self.morphs.insert(key, morph.clone());
+            }
+            morph
+        };
+        let presentation = morph.presentation(
+            progress,
+            outgoing.parameters.opacity,
+            incoming.parameters.opacity,
+        );
+        let selected = if presentation.target_side {
+            &incoming
+        } else {
+            &outgoing
+        };
+        let mut parameters = selected.parameters;
+        parameters.source_width = project.canvas_size.width;
+        parameters.source_height = project.canvas_size.height;
+        parameters.rgba_pitch = project.canvas_size.width as usize * size_of::<u32>();
+        parameters.inverse = shrimply_render_core::math::Mat3::IDENTITY;
+        parameters.opacity = presentation.opacity;
+        let drawing_strategy = match &selected.source {
+            Source::Generated(frame) => frame.drawing_strategy,
+            _ => return Err("Morph endpoints must remain generated vectors".into()),
+        };
+        Ok(Layer {
+            parameters,
+            transform: shrimply_render_core::math::Mat3::IDENTITY,
+            source: Source::Generated(Box::new(shrimply_video_core::generated::GeneratedFrame {
+                visual: Box::new(morph.frame(progress)),
+                evaluation: presentation.scene.evaluation.clone(),
+                operations: Vec::new(),
+                render_size: project.canvas_size,
+                canvas_size: project.canvas_size,
+                drawing_strategy,
+            })),
+            transitions: Vec::new(),
+            effects: Vec::new(),
+            render_size: (project.canvas_size.width, project.canvas_size.height),
+            output_transform: shrimply_render_core::math::Mat3::IDENTITY,
+            motion_blur: None,
+            morph_scene: None,
+        })
     }
 }

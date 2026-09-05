@@ -80,3 +80,26 @@ pub fn select_item_in_context(
     selection_state::set_selected_item_addresses(selection_state, project, selected, focused);
     hit_selected
 }
+
+pub fn select_item_group_in_context(
+    context: &dyn TimelineOperationContext,
+    project: &Project,
+    selection_state: &selection_state::SharedSelectionState,
+    hit: ItemAddress,
+) {
+    assert!(
+        context.contains_item(project, &hit),
+        "selected item must belong to its operation context"
+    );
+    let mut selected =
+        crate::items::expand_grouped_item_addresses(context, project, std::slice::from_ref(&hit));
+    let context_items = context.items(project);
+    selected.sort_by_key(|item| {
+        context_items
+            .iter()
+            .position(|candidate| candidate == item)
+            .unwrap_or(usize::MAX)
+    });
+    selected.dedup();
+    selection_state::set_selected_item_addresses(selection_state, project, selected, Some(hit));
+}

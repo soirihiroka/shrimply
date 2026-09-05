@@ -106,6 +106,7 @@ define_class!(
         fn mouse_exited(&self, _event: &NSEvent) {
             if let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 scene.pointer_exited();
+                objc2_app_kit::NSCursor::arrowCursor().set();
             }
             if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() { state.guide_input.pointer_leave(); }
             self.preview_pointer_event(PointerEvent::Leave);
@@ -115,6 +116,7 @@ define_class!(
         fn cancel_operation(&self, _sender: &objc2_foundation::NSObject) {
             if let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 scene.pointer_cancelled();
+                Self::set_timeline_cursor(scene.pointer_cursor());
             }
             self.cancel_preview_pointer();
         }
@@ -141,6 +143,7 @@ define_class!(
                 .expect("registered timeline tool");
             tool.activate(&shrimply_timeline_core::TimelineTools::new(self.ivars().session.preferences.clone()));
             self.sync_tools();
+            self.update_tracking();
             self.window().expect("canvas attached").makeFirstResponder(Some(self));
         }
 
@@ -164,6 +167,7 @@ define_class!(
             if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 self.window().expect("canvas must be attached").makeFirstResponder(Some(self));
                 scene.begin_pan(self.point(event));
+                objc2_app_kit::NSCursor::closedHandCursor().set();
             }
         }
 
@@ -171,6 +175,7 @@ define_class!(
         fn other_mouse_dragged(&self, event: &NSEvent) {
             if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 scene.pan_to(self.point(event));
+                objc2_app_kit::NSCursor::closedHandCursor().set();
             }
         }
 
@@ -178,6 +183,7 @@ define_class!(
         fn other_mouse_up(&self, event: &NSEvent) {
             if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 scene.end_pan(self.point(event));
+                Self::set_timeline_cursor(scene.pointer_cursor());
             }
         }
 
@@ -209,6 +215,7 @@ define_class!(
                 let extend = modifiers.contains(NSEventModifierFlags::Shift);
                 if event.clickCount() == 2 { scene.double_click_down(self.point(event), toggle, extend); }
                 else { scene.pointer_down(self.point(event), toggle, extend); }
+                Self::set_timeline_cursor(scene.pointer_cursor());
             }
             self.preview_pointer_down(self.point(event));
             self.preview_pointer_event(PointerEvent::Begin(self.preview_input(event)));
@@ -219,6 +226,7 @@ define_class!(
             if self.ivars().suppress_primary.get() { return; }
             if let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 scene.pointer_dragged(self.point(event));
+                Self::set_timeline_cursor(scene.pointer_cursor());
             }
             self.preview_pointer_move(self.point(event));
             let input = self.preview_input(event);
@@ -238,6 +246,9 @@ define_class!(
             }) {
                 Ok(()) => {},
                 Err(error) => self.show_error(&error),
+            }
+            if let Content::Timeline(scene) = &*self.ivars().content.borrow() {
+                Self::set_timeline_cursor(scene.pointer_cursor());
             }
             self.update_tracking();
             if let Err(error) = self.preview_pointer_up(point) { self.show_error(&error); }
@@ -333,8 +344,34 @@ impl CanvasView {
     fn update_pointer(&self, point: glam::Vec2) {
         if let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
             scene.pointer_moved(point);
+            Self::set_timeline_cursor(scene.pointer_cursor());
         }
         self.preview_pointer_move(point);
+    }
+
+    fn set_timeline_cursor(cursor: shrimply_timeline_core::view::TimelineCursor) {
+        use objc2_app_kit::{NSCursor, NSCursorFrameResizeDirections, NSCursorFrameResizePosition};
+        use shrimply_timeline_core::view::TimelineCursor;
+        match cursor {
+            TimelineCursor::Default => NSCursor::arrowCursor().set(),
+            TimelineCursor::ResizeStart => NSCursor::frameResizeCursorFromPosition_inDirections(
+                NSCursorFrameResizePosition::Left,
+                NSCursorFrameResizeDirections::All,
+            )
+            .set(),
+            TimelineCursor::ResizeEnd => NSCursor::frameResizeCursorFromPosition_inDirections(
+                NSCursorFrameResizePosition::Right,
+                NSCursorFrameResizeDirections::All,
+            )
+            .set(),
+            TimelineCursor::ResizeHorizontal => {
+                NSCursor::columnResizeCursorInDirections(
+                    objc2_app_kit::NSHorizontalDirections::All,
+                )
+                .set();
+            }
+            TimelineCursor::Crosshair => NSCursor::crosshairCursor().set(),
+        }
     }
 
     fn update_tracking(&self) {
@@ -446,10 +483,10 @@ impl CanvasView {
                 return false;
             };
             shrimply_timeline_core::import_queue::Placement {
-                start: shrimply_timeline_core::math::time_at_x(scene.view, point.x),
+                start: shrimply_timeline_core::math::time_at_x(scene.view(), point.x),
                 target: shrimply_timeline_core::items::NewItemTarget::AtY(
                     point.y.max(shrimply_timeline_core::metrics::RULER_HEIGHT)
-                        + scene.view.scroll_y,
+                        + scene.view().scroll_y,
                 ),
                 collision: shrimply_timeline_core::TimelineTools::new(
                     self.ivars().session.preferences.clone(),
@@ -603,6 +640,10 @@ impl CanvasView {
                         preview.controller.context_invalidated = true;
                     }
                     preview.controller.draw(canvas, &preview.expressions);
+                    preview.sync_loading(shrimply_project::project::scaled_time_delta(
+                        project.frame_step(),
+                        player.playback_speed,
+                    ));
                 }
             }
         });

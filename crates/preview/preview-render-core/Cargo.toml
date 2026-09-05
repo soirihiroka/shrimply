@@ -13,6 +13,7 @@ skia-safe = { workspace = true, features = ["svg", "textlayout"] }
 shrimply-project = { path = "../../project/project" }
 shrimply-evaluation = { path = "../../evaluation" }
 shrimply-math-core = { path = "../../math/core" }
+shrimply-math-media = { path = "../../math/media" }
 shrimply-background = { path = "../../background" }
 uuid.workspace = true
 tracing.workspace = true
