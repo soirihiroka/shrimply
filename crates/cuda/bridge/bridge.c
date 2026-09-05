@@ -1,9 +1,20 @@
 #include <cuda.h>
+#include <stddef.h>
 #include <stdint.h>
 
 CUresult shrimply_cuda_init(unsigned flags) { return cuInit(flags); }
 CUresult shrimply_cuda_device_get(CUdevice *device, int ordinal) {
   return cuDeviceGet(device, ordinal);
+}
+CUresult shrimply_cuda_device_uuid(unsigned char *uuid, CUdevice device) {
+  CUuuid value;
+  CUresult result = cuDeviceGetUuid(&value, device);
+  if (result == CUDA_SUCCESS) {
+    for (size_t index = 0; index < sizeof value.bytes; ++index) {
+      uuid[index] = (unsigned char)value.bytes[index];
+    }
+  }
+  return result;
 }
 CUresult shrimply_cuda_primary_retain(void **context, CUdevice device) {
   return cuDevicePrimaryCtxRetain((CUcontext *)context, device);

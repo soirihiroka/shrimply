@@ -1,0 +1,10 @@
+[package]
+name = "shrimply-manim-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+hashbrown.workspace = true
+shrimply-math-core = { path = "../../math/core" }
+shrimply-project = { path = "../../project/project" }
+uuid.workspace = true

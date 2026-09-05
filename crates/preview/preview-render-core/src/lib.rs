@@ -48,6 +48,7 @@ pub enum Source {
 
 pub struct ManimFrame {
     pub item_id: uuid::Uuid,
+    pub source: shrimply_manim_wgpu::SourceIdentity,
     pub prepared: std::sync::Arc<shrimply_manim_wgpu::PreparedAnimation>,
     pub frame_index: usize,
 }
@@ -124,6 +125,7 @@ impl Scene {
     pub fn needs_update(&self) -> bool {
         self.media.needs_update()
             || self.audio_pending
+            || self.manim_loading
             || self.manim_pending
             || self.scrubbing && self.requested_accuracy != CompositeAccuracy::FULLY_ACCURATE
     }

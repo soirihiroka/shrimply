@@ -6,7 +6,7 @@ Implementation owner: primary agent. Other agents review only; no implementation
 
 ## Current priorities
 
-- [ ] Finish Manim runtime integration. Keep compilation, scene state, progress, errors and WGPU rendering in shared Manim crates; keep exact-device interop in `manim-metal` and CUDA interop in `manim-cuda`.
+- [ ] Close the remaining Manim runtime identity gaps: report Metal initialization errors through shared status and bind cached WGPU/CUDA state to the source item and CUDA device that created it.
 - [ ] Implement AppKit Settings with the shared preferences/schema and GTK's available options; enable the application menu action and Command-comma.
 - [ ] Connect external video masks through the shared Slang kernel, including selected-stream EOF behavior.
 - [ ] Finish Metal source/effect orchestration for Morph transitions, remaining modifiers, alpha masks, generators and source types by reusing the shared plans and Slang kernels.

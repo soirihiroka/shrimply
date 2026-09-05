@@ -10,12 +10,14 @@ pollster = "1"
 shrimply-asset = { path = "../../asset" }
 shrimply-i18n-core = { path = "../../ui/i18n-core" }
 shrimply-loading-screen = { path = "../../preview/loading-screen" }
+shrimply-manim-core = { path = "../manim-core" }
 shrimply-manim-ir = { path = "../manim-ir" }
 shrimply-manim-parser = { path = "../manim-parser" }
 shrimply-math-color = { path = "../../math/color" }
 shrimply-math-core = { path = "../../math/core" }
 shrimply-project = { path = "../../project/project" }
 tracing.workspace = true
+uuid.workspace = true
 wgpu.workspace = true
 
 [dev-dependencies]

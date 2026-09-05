@@ -299,7 +299,7 @@ impl GeneratedGpuRenderer {
         destination: &VisualFrame,
     ) -> Result<(), String> {
         if self.manim.is_none() {
-            self.manim = Some(shrimply_manim_cuda::Renderer::new()?);
+            self.manim = Some(shrimply_manim_cuda::Renderer::new(&context)?);
         }
         self.manim
             .as_mut()

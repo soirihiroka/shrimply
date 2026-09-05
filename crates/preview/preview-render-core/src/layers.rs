@@ -257,12 +257,7 @@ impl Scene {
                     )
                 }
                 VideoItemContent::Manim(_) => {
-                    let fps =
-                        if item.playback_fps == shrimply_project::project::native_playback_fps() {
-                            project.fps
-                        } else {
-                            item.playback_fps
-                        };
+                    let fps = shrimply_manim_wgpu::effective_fps(item, project.fps);
                     if let std::collections::hash_map::Entry::Vacant(entry) =
                         self.manim.entry(item.id)
                     {
@@ -277,42 +272,11 @@ impl Scene {
                         .get_mut(&item.id)
                         .expect("Manim source was initialized");
                     let outcome = source.poll(item, project.canvas_size, fps, time);
-                    let source_revision = source.source_revision();
-                    let scene = source.scene().to_string();
-                    let input_parameters = source.input_parameters().clone();
-                    let duration = source.take_duration();
-                    let parameters = source.take_parameters();
-                    if let Some(duration) = duration {
-                        self.manim_updates
-                            .push(shrimply_state::manim_status::Update::Duration {
-                                item_id: item.id,
-                                source_revision,
-                                scene: scene.clone(),
-                                input_parameters: input_parameters.clone(),
-                                duration,
-                            });
-                    }
-                    if let Some((parameters, render_is_current)) = parameters {
-                        self.manim_updates
-                            .push(shrimply_state::manim_status::Update::Parameters {
-                                item_id: item.id,
-                                source_revision,
-                                scene: scene.clone(),
-                                input_parameters: input_parameters.clone(),
-                                parameters,
-                                render_is_current,
-                            });
-                    }
+                    let identity = source.identity();
+                    self.manim_updates.extend(source.take_updates());
                     match outcome {
                         Err(error) => {
-                            self.manim_updates
-                                .push(shrimply_state::manim_status::Update::Error {
-                                    item_id: item.id,
-                                    source_revision,
-                                    scene: scene.clone(),
-                                    input_parameters: input_parameters.clone(),
-                                    error: Some(error.clone()),
-                                });
+                            self.manim_updates.push(identity.error(Some(error.clone())));
                             return Err(error);
                         }
                         Ok(Ok(frame)) => {
@@ -321,6 +285,7 @@ impl Scene {
                             (
                                 Source::Manim(ManimFrame {
                                     item_id: item.id,
+                                    source: identity,
                                     prepared: frame.prepared,
                                     frame_index: frame.frame_index,
                                 }),
@@ -334,15 +299,7 @@ impl Scene {
                         })) => {
                             self.manim_loading = true;
                             if changed && progress.is_none() {
-                                self.manim_updates.push(
-                                    shrimply_state::manim_status::Update::Error {
-                                        item_id: item.id,
-                                        source_revision,
-                                        scene: scene.clone(),
-                                        input_parameters: input_parameters.clone(),
-                                        error: None,
-                                    },
-                                );
+                                self.manim_updates.push(identity.error(None));
                             }
                             if !changed {
                                 self.manim_pending = true;

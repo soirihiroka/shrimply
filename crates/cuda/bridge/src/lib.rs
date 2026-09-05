@@ -11,9 +11,12 @@ pub mod sys;
 
 use sys::{CUcontext, CUdevice, CUdeviceptr, CUevent, CUfunction, CUmodule, CUresult, CUstream};
 
+const DEVICE_UUID_BYTES: usize = 16;
+
 unsafe extern "C" {
     fn shrimply_cuda_init(flags: u32) -> CUresult;
     fn shrimply_cuda_device_get(device: *mut CUdevice, ordinal: i32) -> CUresult;
+    fn shrimply_cuda_device_uuid(uuid: *mut u8, device: CUdevice) -> CUresult;
     fn shrimply_cuda_primary_retain(context: *mut CUcontext, device: CUdevice) -> CUresult;
     fn shrimply_cuda_primary_release(device: CUdevice) -> CUresult;
     fn shrimply_cuda_context_get_current(context: *mut CUcontext) -> CUresult;
@@ -154,6 +157,11 @@ impl CudaContext {
     }
     pub fn cu_device(&self) -> CUdevice {
         self.device
+    }
+    pub fn device_uuid(&self) -> Result<[u8; DEVICE_UUID_BYTES], DriverError> {
+        let mut uuid = [0; DEVICE_UUID_BYTES];
+        check(unsafe { shrimply_cuda_device_uuid(uuid.as_mut_ptr(), self.device) })?;
+        Ok(uuid)
     }
     pub fn cu_ctx(&self) -> CUcontext {
         self.context

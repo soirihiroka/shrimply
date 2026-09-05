@@ -708,8 +708,8 @@ impl FrameItemRenderer<'_> {
                     self.manim_updates.push(status);
                 }
             } else if let (Err(error), VideoItemContent::Manim(manim)) = (&result, &item.content) {
-                self.manim_updates
-                    .push(shrimply_state::manim_status::Update::Error {
+                self.manim_updates.push(
+                    shrimply_manim_wgpu::SourceIdentity {
                         item_id: item.id,
                         source_revision: item
                             .file
@@ -717,8 +717,9 @@ impl FrameItemRenderer<'_> {
                             .map_or(0, |snapshot| snapshot.revision()),
                         scene: manim.scene.clone(),
                         input_parameters: manim.parameters.clone(),
-                        error: Some(error.clone()),
-                    });
+                    }
+                    .error(Some(error.clone())),
+                );
             }
         }
         result

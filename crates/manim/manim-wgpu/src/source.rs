@@ -6,6 +6,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 
 use shrimply_asset::AssetSnapshot;
+use shrimply_manim_core::{SourceIdentity, Update};
 use shrimply_manim_ir::CompiledAnimation;
 use shrimply_manim_parser::{Progress, Settings, compile, reflected_parameters};
 use shrimply_math_color::Color;
@@ -34,6 +35,7 @@ pub enum SourceStatus {
 }
 
 pub struct Source {
+    item_id: uuid::Uuid,
     snapshot: AssetSnapshot,
     source_available: bool,
     scene: String,
@@ -83,6 +85,7 @@ impl Source {
             return Err("Manim source received a non-Manim visual".into());
         };
         Ok(Self {
+            item_id: item.id,
             snapshot: item.file.snapshot()?,
             source_available: true,
             scene: manim.scene.clone(),
@@ -154,7 +157,7 @@ impl Source {
         )
     }
 
-    pub fn source_revision(&self) -> u64 {
+    fn source_revision(&self) -> u64 {
         if self.source_available {
             self.snapshot.revision()
         } else {
@@ -162,15 +165,16 @@ impl Source {
         }
     }
 
-    pub fn scene(&self) -> &str {
-        &self.scene
+    pub fn identity(&self) -> SourceIdentity {
+        SourceIdentity {
+            item_id: self.item_id,
+            source_revision: self.source_revision(),
+            scene: self.scene.clone(),
+            input_parameters: self.parameters.clone(),
+        }
     }
 
-    pub fn input_parameters(&self) -> &hashbrown::HashMap<String, ManimParameterValue> {
-        &self.parameters
-    }
-
-    pub fn take_duration(&mut self) -> Option<Time> {
+    fn take_duration(&mut self) -> Option<Time> {
         if self.duration_reported {
             return None;
         }
@@ -183,7 +187,7 @@ impl Source {
         })
     }
 
-    pub fn take_parameters(&mut self) -> Option<(Vec<ManimParameter>, bool)> {
+    fn take_parameters(&mut self) -> Option<(Vec<ManimParameter>, bool)> {
         if self.parameters_reported {
             return None;
         }
@@ -194,6 +198,18 @@ impl Source {
         };
         self.parameters_reported = true;
         Some((parameters.clone(), current))
+    }
+
+    pub fn take_updates(&mut self) -> Vec<Update> {
+        let source = self.identity();
+        let mut updates = Vec::new();
+        if let Some(duration) = self.take_duration() {
+            updates.push(source.duration(duration));
+        }
+        if let Some((parameters, render_is_current)) = self.take_parameters() {
+            updates.push(source.parameters(parameters, render_is_current));
+        }
+        updates
     }
 
     fn update_source(
@@ -371,6 +387,14 @@ impl Source {
                 worker.join().expect("Manim compiler thread panicked");
             }
         }
+    }
+}
+
+pub fn effective_fps(item: &VideoItem, project_fps: Fraction) -> Fraction {
+    if item.playback_fps == shrimply_project::project::native_playback_fps() {
+        project_fps
+    } else {
+        item.playback_fps
     }
 }
 

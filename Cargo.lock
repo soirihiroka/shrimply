@@ -5996,6 +5996,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-manim-core"
+version = "0.1.0"
+dependencies = [
+ "hashbrown 0.17.1",
+ "shrimply-math-core",
+ "shrimply-project",
+ "uuid",
+]
+
+[[package]]
 name = "shrimply-manim-cuda"
 version = "0.1.0"
 dependencies = [
@@ -6064,6 +6074,7 @@ dependencies = [
  "shrimply-asset",
  "shrimply-i18n-core",
  "shrimply-loading-screen",
+ "shrimply-manim-core",
  "shrimply-manim-ir",
  "shrimply-manim-parser",
  "shrimply-math-color",
@@ -6071,6 +6082,7 @@ dependencies = [
  "shrimply-project",
  "tempfile",
  "tracing",
+ "uuid",
  "wgpu",
 ]
 
@@ -6825,6 +6837,7 @@ version = "0.1.0"
 dependencies = [
  "hashbrown 0.17.1",
  "shrimply-benchmarking",
+ "shrimply-manim-core",
  "shrimply-math-core",
  "shrimply-preferences-core",
  "shrimply-preview-core",

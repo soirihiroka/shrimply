@@ -2,7 +2,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use shrimply_manim_parser::Progress;
-use shrimply_math_core::Fraction;
 use shrimply_project::project::{CanvasSize, VideoItem, VideoItemContent};
 use uuid::Uuid;
 
@@ -11,7 +10,6 @@ use crate::layer::{GpuFrame, RasterVisual, Visual};
 use crate::visual_source::{VisualElement, VisualRender, VisualRenderRequest, VisualSourceCache};
 
 pub struct ManimElement {
-    item_id: Uuid,
     source: shrimply_manim_wgpu::Source,
     canvas_size: CanvasSize,
     render_slot: Arc<()>,
@@ -24,7 +22,6 @@ pub struct ManimElement {
 impl ManimElement {
     pub fn new(item: &VideoItem, canvas_size: CanvasSize) -> Result<Self, String> {
         Ok(Self {
-            item_id: item.id,
             source: shrimply_manim_wgpu::Source::new(item, canvas_size, item.playback_fps)?,
             canvas_size,
             render_slot: Arc::new(()),
@@ -77,40 +74,11 @@ impl VisualElement for ManimElement {
     }
 
     fn take_manim_updates(&mut self) -> Vec<shrimply_state::manim_status::Update> {
-        let source_revision = self.source.source_revision();
-        let scene = self.source.scene().to_string();
-        let input_parameters = self.source.input_parameters().clone();
-        let mut updates = Vec::new();
-        if let Some(duration) = self.source.take_duration() {
-            updates.push(shrimply_state::manim_status::Update::Duration {
-                item_id: self.item_id,
-                source_revision,
-                scene: scene.clone(),
-                input_parameters: input_parameters.clone(),
-                duration,
-            });
-        }
-        if let Some((parameters, render_is_current)) = self.source.take_parameters() {
-            updates.push(shrimply_state::manim_status::Update::Parameters {
-                item_id: self.item_id,
-                source_revision,
-                scene,
-                input_parameters,
-                parameters,
-                render_is_current,
-            });
-        }
-        updates
+        self.source.take_updates()
     }
 
     fn manim_status(&self, error: Option<String>) -> Option<shrimply_state::manim_status::Update> {
-        Some(shrimply_state::manim_status::Update::Error {
-            item_id: self.item_id,
-            source_revision: self.source.source_revision(),
-            scene: self.source.scene().to_string(),
-            input_parameters: self.source.input_parameters().clone(),
-            error,
-        })
+        Some(self.source.identity().error(error))
     }
 
     fn draw(
@@ -128,12 +96,7 @@ impl VisualElement for ManimElement {
         {
             return Ok(VisualRender::Empty);
         }
-        let fps: Fraction =
-            if request.item.playback_fps == shrimply_project::project::native_playback_fps() {
-                request.project.fps
-            } else {
-                request.item.playback_fps
-            };
+        let fps = shrimply_manim_wgpu::effective_fps(request.item, request.project.fps);
         let compiled =
             match self
                 .source

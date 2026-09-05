@@ -29,6 +29,7 @@ members = [
     "crates/math/media",
     "crates/manim/manim-parser",
     "crates/manim/manim-ir",
+    "crates/manim/manim-core",
     "crates/manim/manim-wgpu",
     "crates/manim/manim-cuda",
     "crates/manim/manim-metal",

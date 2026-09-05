@@ -39,15 +39,30 @@ struct Target {
     raw_device: ash_wgpu::Device,
 }
 impl Renderer {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(cuda_device_uuid: [u8; vk::UUID_SIZE]) -> Result<Self, String> {
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
         descriptor.backends = wgpu::Backends::VULKAN;
         let instance = wgpu::Instance::new(descriptor);
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))
-        .map_err(|error| format!("request Manim WGPU adapter: {error}"))?;
+        let adapter = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN))
+            .into_iter()
+            .find(|adapter| unsafe {
+                adapter
+                    .as_hal::<wgpu::hal::api::Vulkan>()
+                    .is_some_and(|adapter| {
+                        let mut identity = vk::PhysicalDeviceIDProperties::default();
+                        let mut properties =
+                            vk::PhysicalDeviceProperties2::default().push_next(&mut identity);
+                        adapter
+                            .shared_instance()
+                            .raw_instance()
+                            .get_physical_device_properties2(
+                                adapter.raw_physical_device(),
+                                &mut properties,
+                            );
+                        identity.device_uuid == cuda_device_uuid
+                    })
+            })
+            .ok_or("Manim cannot find the Vulkan device used by the CUDA context")?;
         let info = adapter.get_info();
         let descriptor = wgpu::DeviceDescriptor {
             label: Some("Shrimply Manim WGPU device"),

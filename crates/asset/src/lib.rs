@@ -547,8 +547,7 @@ fn fingerprint(path: &Path) -> Result<Fingerprint, String> {
             std::os::macos::fs::MetadataExt::st_birthtime_nsec(&metadata),
         );
         #[cfg(not(target_os = "macos"))]
-        let (identity_seconds, identity_nanoseconds) =
-            (metadata.ctime(), metadata.ctime_nsec());
+        let (identity_seconds, identity_nanoseconds) = (metadata.ctime(), metadata.ctime_nsec());
         Ok(Fingerprint::Present {
             len: metadata.len(),
             modified_ns,

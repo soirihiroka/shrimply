@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 hashbrown.workspace = true
 shrimply-benchmarking = { path = "../benchmarking" }
+shrimply-manim-core = { path = "../manim/manim-core" }
 shrimply-math-core = { path = "../math/core" }
 shrimply-preferences-core = { path = "../preferences/preferences-core" }
 shrimply-project = { path = "../project/project" }

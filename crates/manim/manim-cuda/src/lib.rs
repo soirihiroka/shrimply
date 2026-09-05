@@ -27,13 +27,11 @@ fn cuda_check(result: sys::CUresult, operation: &str) -> Result<(), String> {
 }
 pub struct Renderer {
     sources: HashMap<usize, CachedManimSource>,
-    serial: u64,
     renderer: vulkan::Renderer,
 }
 
 struct CachedManimSource {
     owner: Weak<()>,
-    last_used: u64,
     source: ManimCudaSource,
 }
 
@@ -54,16 +52,19 @@ struct ImportedManimImage {
 }
 
 impl Renderer {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(context: &CudaContext) -> Result<Self, String> {
         let started = std::time::Instant::now();
-        let renderer = vulkan::Renderer::new()?;
+        let renderer = vulkan::Renderer::new(
+            context
+                .device_uuid()
+                .map_err(|error| format!("read CUDA device identity: {error}"))?,
+        )?;
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
             "Manim WGPU renderer initialized",
         );
         Ok(Self {
             sources: HashMap::new(),
-            serial: 0,
             renderer,
         })
     }
@@ -136,7 +137,6 @@ impl Renderer {
                 slot_id,
                 CachedManimSource {
                     owner: Arc::downgrade(slot),
-                    last_used: self.serial,
                     source,
                 },
             );
@@ -149,12 +149,10 @@ impl Renderer {
                 "imported persistent Manim WGPU image into CUDA",
             );
         }
-        self.serial = self.serial.wrapping_add(1);
         let source = self
             .sources
             .get_mut(&slot_id)
             .expect("Manim source was imported");
-        source.last_used = self.serial;
         let _copy = shrimply_benchmarking::measure("Manim WGPU to CUDA copy");
         copy_manim_source(
             context,

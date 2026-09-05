@@ -1,4 +1,6 @@
 use hashbrown::HashMap;
+use shrimply_manim_core::SourceIdentity;
+pub use shrimply_manim_core::Update;
 use std::sync::{Mutex, OnceLock};
 
 use uuid::Uuid;
@@ -27,79 +29,60 @@ struct ParameterUpdate {
     render_is_current: bool,
 }
 
-#[derive(Clone)]
-pub enum Update {
-    Duration {
-        item_id: Uuid,
-        source_revision: u64,
-        scene: String,
-        input_parameters: HashMap<String, shrimply_project::project::ManimParameterValue>,
-        duration: shrimply_math_core::Time,
-    },
-    Parameters {
-        item_id: Uuid,
-        source_revision: u64,
-        scene: String,
-        input_parameters: HashMap<String, shrimply_project::project::ManimParameterValue>,
-        parameters: Vec<shrimply_project::project::ManimParameter>,
-        render_is_current: bool,
-    },
-    Error {
-        item_id: Uuid,
-        source_revision: u64,
-        scene: String,
-        input_parameters: HashMap<String, shrimply_project::project::ManimParameterValue>,
-        error: Option<String>,
-    },
-}
-
 pub fn apply(
     project: &std::rc::Rc<std::cell::RefCell<shrimply_project::project::Project>>,
     player: &crate::player_state::SharedPlayerState,
     update: Update,
 ) {
     match update {
-        Update::Duration {
-            item_id,
-            source_revision,
-            scene,
-            input_parameters,
-            duration,
-        } => apply_duration(
-            project,
-            player,
-            item_id,
-            source_revision,
-            &scene,
-            &input_parameters,
-            duration,
-        ),
-        Update::Parameters {
-            item_id,
-            source_revision,
-            scene,
-            input_parameters,
-            parameters,
-            render_is_current,
-        } => apply_parameters(
-            project,
-            player,
-            ParameterUpdate {
+        Update::Duration { source, duration } => {
+            let SourceIdentity {
                 item_id,
                 source_revision,
                 scene,
                 input_parameters,
-                parameters,
-                render_is_current,
-            },
-        ),
-        Update::Error {
-            item_id,
-            source_revision,
-            scene,
-            input_parameters,
-            error,
+            } = source;
+            apply_duration(
+                project,
+                player,
+                item_id,
+                source_revision,
+                &scene,
+                &input_parameters,
+                duration,
+            )
+        }
+        Update::Parameters {
+            source,
+            parameters,
+            render_is_current,
         } => {
+            let SourceIdentity {
+                item_id,
+                source_revision,
+                scene,
+                input_parameters,
+            } = source;
+            apply_parameters(
+                project,
+                player,
+                ParameterUpdate {
+                    item_id,
+                    source_revision,
+                    scene,
+                    input_parameters,
+                    parameters,
+                    render_is_current,
+                },
+            )
+        }
+        Update::Error { source, error } => {
+            let SourceIdentity {
+                item_id,
+                source_revision,
+                scene,
+                input_parameters,
+            } = source;
             let current = project
                 .borrow()
                 .video_item_by_id(item_id)

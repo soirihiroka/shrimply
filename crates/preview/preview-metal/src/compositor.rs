@@ -74,6 +74,7 @@ pub(super) struct Presented {
 #[derive(Default)]
 pub(super) struct Compositor {
     scene: Scene,
+    manim_updates: Vec<shrimply_state::manim_status::Update>,
     compute: Option<shrimply_render_metal::Renderer>,
     pending: Option<Pending>,
     queued: Option<FramePlan>,
@@ -108,7 +109,9 @@ impl Compositor {
     }
 
     pub fn take_manim_updates(&mut self) -> Vec<shrimply_state::manim_status::Update> {
-        self.scene.take_manim_updates()
+        let mut updates = self.scene.take_manim_updates();
+        updates.append(&mut self.manim_updates);
+        updates
     }
 
     pub fn needs_update(&self) -> bool {
@@ -285,7 +288,18 @@ impl Compositor {
                             slot,
                             &frame.prepared,
                             frame.frame_index,
-                        )?;
+                        );
+                    let rendered = match rendered {
+                        Ok(rendered) => {
+                            self.manim_updates.push(frame.source.error(None));
+                            rendered
+                        }
+                        Err(error) => {
+                            self.manim_updates
+                                .push(frame.source.error(Some(error.clone())));
+                            return Err(error);
+                        }
+                    };
                     (rendered.buffer, Some(rendered.row_bytes))
                 }
             };
