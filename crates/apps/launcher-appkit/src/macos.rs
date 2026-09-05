@@ -8,9 +8,10 @@ use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
     NSAutoresizingMaskOptions, NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSControlSize,
-    NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSMenu, NSMenuItem, NSModalResponseOK,
-    NSOpenPanel, NSSavePanel, NSSearchField, NSTitlebarSeparatorStyle, NSView, NSWindow,
-    NSWindowDelegate, NSWindowStyleMask, NSWorkspace,
+    NSFont, NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSMenu, NSMenuItem,
+    NSModalResponseOK, NSOpenPanel, NSSavePanel, NSSearchField, NSTextField,
+    NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
+    NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -92,8 +93,11 @@ define_class!(
             };
             unsafe { window.setReleasedWhenClosed(false) };
             window.setTitle(ns_string!("Shrimply"));
+            window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
             window.setTitlebarAppearsTransparent(true);
             window.setTitlebarSeparatorStyle(NSTitlebarSeparatorStyle::None);
+            window.setToolbar(Some(&NSToolbar::init(NSToolbar::alloc(mtm))));
+            window.setToolbarStyle(NSWindowToolbarStyle::UnifiedCompact);
             window.setContentMinSize(MINIMUM_WINDOW_SIZE);
             window.setOpaque(false);
             window.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -188,6 +192,17 @@ define_class!(
 
             let right_origin = SIDEBAR_WIDTH + CONTENT_MARGIN;
             let right_width = WINDOW_SIZE.width - right_origin - CONTENT_MARGIN;
+            let title = NSTextField::labelWithString(ns_string!("Shrimply"), mtm);
+            title.setFont(Some(&NSFont::titleBarFontOfSize(0.0)));
+            title.sizeToFit();
+            let title_size = title.frame().size;
+            title.setFrameOrigin(NSPoint::new(
+                right_origin,
+                WINDOW_SIZE.height - (TITLEBAR_HEIGHT + title_size.height) / 2.0,
+            ));
+            title.setAutoresizingMask(NSAutoresizingMaskOptions::ViewMinYMargin);
+            content.addSubview(&title);
+
             let search = NSSearchField::initWithFrame(
                 NSSearchField::alloc(mtm),
                 NSRect::new(

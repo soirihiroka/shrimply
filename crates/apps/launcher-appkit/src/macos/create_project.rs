@@ -1,9 +1,9 @@
-use block2::StackBlock;
 use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSControl, NSFont, NSPopUpButton, NSStepper,
-    NSTextAlignment, NSTextField, NSView, NSWindow,
+    NSApplication, NSBackingStoreType, NSBezelStyle, NSButton, NSControl, NSControlSize, NSFont,
+    NSModalResponseCancel, NSModalResponseOK, NSPopUpButton, NSStepper, NSTextAlignment,
+    NSTextField, NSView, NSWindow, NSWindowStyleMask,
 };
 use objc2_foundation::{
     MainThreadMarker, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, ns_string,
@@ -41,6 +41,16 @@ define_class!(
     unsafe impl NSObjectProtocol for Dialog {}
 
     impl Dialog {
+        #[unsafe(method(createProject:))]
+        fn create_project(&self, _sender: &NSButton) {
+            NSApplication::sharedApplication(self.mtm()).stopModalWithCode(NSModalResponseOK);
+        }
+
+        #[unsafe(method(cancel:))]
+        fn cancel(&self, _sender: &NSButton) {
+            NSApplication::sharedApplication(self.mtm()).stopModalWithCode(NSModalResponseCancel);
+        }
+
         #[unsafe(method(presetChanged:))]
         fn preset_changed(&self, sender: &NSPopUpButton) {
             let index = usize::try_from(sender.indexOfSelectedItem())
@@ -311,20 +321,67 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
         .unwrap_or_else(|_| panic!("frame-rate control must only be created once"));
     dialog.sync_controls();
 
-    let alert = NSAlert::new(mtm);
-    alert.setMessageText(ns_string!("Create Project"));
-    alert.setAccessoryView(Some(&form));
-    alert.addButtonWithTitle(ns_string!("Create Project"));
-    alert.addButtonWithTitle(ns_string!("Cancel"));
-    alert.layout();
-    alert.window().makeFirstResponder(Some(&name));
+    let sheet = unsafe {
+        NSWindow::initWithContentRect_styleMask_backing_defer(
+            NSWindow::alloc(mtm),
+            NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(500.0, 350.0)),
+            NSWindowStyleMask::Titled,
+            NSBackingStoreType::Buffered,
+            false,
+        )
+    };
+    unsafe { sheet.setReleasedWhenClosed(false) };
+    sheet.setTitle(ns_string!("Create Project"));
+
+    let content = NSView::initWithFrame(
+        NSView::alloc(mtm),
+        NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(500.0, 350.0)),
+    );
+    form.setFrameOrigin(NSPoint::new(30.0, 82.0));
+    content.addSubview(&form);
+
+    let create = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Create Project"),
+            Some(&*dialog),
+            Some(sel!(createProject:)),
+            mtm,
+        )
+    };
+    create.setFrame(NSRect::new(
+        NSPoint::new(140.0, 42.0),
+        NSSize::new(220.0, 32.0),
+    ));
+    create.setControlSize(NSControlSize::Large);
+    create.setBezelStyle(NSBezelStyle::Push);
+    create.setKeyEquivalent(ns_string!("\r"));
+    content.addSubview(&create);
+
+    let cancel = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Cancel"),
+            Some(&*dialog),
+            Some(sel!(cancel:)),
+            mtm,
+        )
+    };
+    cancel.setFrame(NSRect::new(
+        NSPoint::new(140.0, 6.0),
+        NSSize::new(220.0, 32.0),
+    ));
+    cancel.setControlSize(NSControlSize::Large);
+    cancel.setBezelStyle(NSBezelStyle::Push);
+    cancel.setKeyEquivalent(ns_string!("\u{1b}"));
+    content.addSubview(&cancel);
+
+    sheet.setContentView(Some(&content));
+    sheet.makeFirstResponder(Some(&name));
+    parent.beginSheet_completionHandler(&sheet, None);
+    let app = NSApplication::sharedApplication(mtm);
 
     loop {
-        let completion = StackBlock::new(move |response| {
-            NSApplication::sharedApplication(mtm).stopModalWithCode(response)
-        });
-        alert.beginSheetModalForWindow_completionHandler(parent, Some(&completion));
-        if alert.runModal() != NSAlertFirstButtonReturn {
+        if app.runModalForWindow(&sheet) != NSModalResponseOK {
+            parent.endSheet(&sheet);
             return None;
         }
         let project_name = name.stringValue().to_string().trim().to_string();
@@ -363,13 +420,14 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
             .zip(frame_rate)
             .map(|((width, height), frame_rate)| (width, height, frame_rate))
         else {
-            alert.setInformativeText(ns_string!("Invalid project settings."));
+            sheet.makeFirstResponder(Some(&name));
             continue;
         };
         if project_name.is_empty() {
-            alert.setInformativeText(ns_string!("Project name must not be empty."));
+            sheet.makeFirstResponder(Some(&name));
             continue;
         }
+        parent.endSheet(&sheet);
         return Some(Request {
             name: project_name,
             canvas_size: CanvasSize { width, height },
