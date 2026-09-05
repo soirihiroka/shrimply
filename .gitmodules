@@ -1,6 +1,3 @@
-[submodule "external/rhubarb-lip-sync"]
-	path = external/rhubarb-lip-sync
-	url = https://github.com/DanielSWolf/rhubarb-lip-sync.git
 [submodule "external/slang"]
 	path = external/slang
 	url = https://github.com/shader-slang/slang.git
