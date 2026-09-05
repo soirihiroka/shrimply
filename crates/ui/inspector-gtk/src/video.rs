@@ -903,7 +903,7 @@ fn video_generation_editor(
         .borrow()
         .video_item(&key)
         .is_some_and(|item| !item.file.as_os_str().is_empty());
-    shrimply_video_generation_ui::editor(
+    shrimply_video_generation_gtk::editor(
         id,
         context.preferences.clone(),
         settings,

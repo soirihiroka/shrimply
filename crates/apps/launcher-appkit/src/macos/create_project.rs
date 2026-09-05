@@ -1,12 +1,15 @@
 use objc2::rc::Retained;
+use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
-    NSApplication, NSBackingStoreType, NSBezelStyle, NSButton, NSControl, NSControlSize, NSFont,
-    NSModalResponseCancel, NSModalResponseOK, NSPopUpButton, NSStepper, NSTextAlignment,
-    NSTextField, NSView, NSWindow, NSWindowStyleMask,
+    NSApplication, NSBackingStoreType, NSBezelStyle, NSButton, NSControl, NSControlSize,
+    NSControlTextEditingDelegate, NSFont, NSModalResponseCancel, NSModalResponseOK, NSPopUpButton,
+    NSStepper, NSTextAlignment, NSTextField, NSTextFieldDelegate, NSView, NSWindow,
+    NSWindowStyleMask,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, ns_string,
+    MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
+    NSString, ns_string,
 };
 use shrimply_component_core::project_settings::{CUSTOM_PRESET_INDEX, ProjectSettings};
 use shrimply_math_core::Fraction;
@@ -22,6 +25,8 @@ pub struct Request {
 }
 
 struct DialogIvars {
+    name: OnceCell<Retained<NSTextField>>,
+    create: OnceCell<Retained<NSButton>>,
     settings: Cell<ProjectSettings>,
     updating: Cell<bool>,
     preset: OnceCell<Retained<NSPopUpButton>>,
@@ -39,6 +44,15 @@ define_class!(
     struct Dialog;
 
     unsafe impl NSObjectProtocol for Dialog {}
+    unsafe impl NSTextFieldDelegate for Dialog {}
+    unsafe impl NSControlTextEditingDelegate for Dialog {
+        #[unsafe(method(controlTextDidChange:))]
+        fn name_changed(&self, _notification: &NSNotification) {
+            let enabled = !self.ivars().name.get().expect("name field must exist")
+                .stringValue().to_string().trim().is_empty();
+            self.ivars().create.get().expect("create button must exist").setEnabled(enabled);
+        }
+    }
 
     impl Dialog {
         #[unsafe(method(createProject:))]
@@ -110,6 +124,8 @@ define_class!(
 impl Dialog {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(DialogIvars {
+            name: OnceCell::new(),
+            create: OnceCell::new(),
             settings: Cell::new(ProjectSettings::default()),
             updating: Cell::new(false),
             preset: OnceCell::new(),
@@ -179,6 +195,13 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
         NSRect::new(NSPoint::new(120.0, 214.0), NSSize::new(320.0, 28.0)),
     );
     name.setStringValue(ns_string!("Untitled Project"));
+    // The dialog remains alive until the modal sheet finishes.
+    unsafe { name.setDelegate(Some(ProtocolObject::from_ref(&*dialog))) };
+    dialog
+        .ivars()
+        .name
+        .set(name.clone())
+        .expect("name field already installed");
     form.addSubview(&name);
 
     let preset_label = NSTextField::labelWithString(ns_string!("Preset"), mtm);
@@ -356,6 +379,11 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
     create.setBezelStyle(NSBezelStyle::Push);
     create.setKeyEquivalent(ns_string!("\r"));
     content.addSubview(&create);
+    dialog
+        .ivars()
+        .create
+        .set(create)
+        .expect("create button already installed");
 
     let cancel = unsafe {
         NSButton::buttonWithTitle_target_action(

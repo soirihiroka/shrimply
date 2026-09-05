@@ -1,5 +1,5 @@
 [package]
-name = "shrimply-editor-qt-ui"
+name = "shrimply-editor-qt"
 version = "0.1.0"
 edition = "2024"
 

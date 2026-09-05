@@ -357,7 +357,7 @@ fn tts_editor(
     let changed_target = target.clone();
     let commit_controller = context.inspector_core.clone();
     let generated_controller = context.inspector_core.clone();
-    shrimply_tts_ui::editor(
+    shrimply_tts_gtk::editor(
         id,
         context.preferences.clone(),
         settings,

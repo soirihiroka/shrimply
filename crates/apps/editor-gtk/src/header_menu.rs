@@ -309,19 +309,20 @@ fn show_error_dialog(window: &adw::ApplicationWindow, heading: &str, body: &str)
 }
 
 fn show_about_dialog(window: &adw::ApplicationWindow) {
+    use shrimply_component_core::about;
     let dialog = adw::AboutDialog::builder()
-        .application_name("Shrimply")
-        .application_icon("dev.shrimply.Shrimply")
+        .application_name(about::NAME)
+        .application_icon(about::ICON_NAME)
         .version(env!("CARGO_PKG_VERSION"))
-        .comments("A simple video editor")
-        .developer_name("Soiri Hiroka")
-        .developers(["Soiri Hiroka"])
-        .website("https://github.com/soirihiroka/shrimply")
-        .issue_url("https://github.com/soirihiroka/shrimply/issues/new")
+        .comments(about::DESCRIPTION)
+        .developer_name(about::DEVELOPER)
+        .developers([about::DEVELOPER])
+        .website(about::WEBSITE)
+        .issue_url(about::ISSUE_URL)
         .license_type(gtk::License::Gpl30)
         .title(tr!("About Shrimply").as_ref())
         .build();
-    dialog.add_credit_section(Some("Built with help from"), &["Codex", "Gemini"]);
+    dialog.add_credit_section(Some(about::CREDIT_HEADING), about::CREDITS);
     dialog.present(Some(window));
 }
 

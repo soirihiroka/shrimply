@@ -151,7 +151,7 @@ pub(super) fn show_dialog(
 
     let settings = Rc::new(RefCell::new(shrimply_tts::TtsSettings::default()));
     let models = Rc::new(RefCell::new(Vec::<shrimply_tts::TtsModel>::new()));
-    let configuration = shrimply_tts_ui::caption_configuration(
+    let configuration = shrimply_tts_gtk::caption_configuration(
         preferences.clone(),
         settings.clone(),
         models.clone(),
@@ -374,7 +374,7 @@ fn run_generation(
                 !cancelled.load(Ordering::Relaxed)
             })
         })
-        .and_then(shrimply_tts_ui::save_speech);
+        .and_then(shrimply_tts_gtk::save_speech);
         active_job
             .lock()
             .expect("caption TTS active job poisoned")

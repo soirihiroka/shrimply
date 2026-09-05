@@ -178,6 +178,14 @@ pub fn last_edited(path: &Path) -> Option<String> {
         .map(|date| date.to_string())
 }
 
+#[cfg(target_os = "macos")]
+pub fn launch_appkit_editor(path: &Path) -> Result<Child, String> {
+    if !path.is_file() {
+        return Err(format!("Project does not exist: {}", path.display()));
+    }
+    launch_sibling_editor(path, "shrimply-editor-appkit")
+}
+
 pub fn launch_editor(path: &Path) -> Result<Child, String> {
     launch_sibling_editor(path, "shrimply-editor")
 }

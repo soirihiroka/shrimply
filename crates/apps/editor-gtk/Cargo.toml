@@ -1,5 +1,5 @@
 [package]
-name = "shrimply-editor-ui"
+name = "shrimply-editor-gtk"
 version = "0.1.0"
 edition = "2024"
 default-run = "shrimply-editor"
@@ -22,6 +22,7 @@ shrimply-audio = { path = "../../audio/audio" }
 shrimply-blender = { path = "../../blender/blender-bridge" }
 shrimply-asset = { path = "../../asset" }
 shrimply-cross-ui-core = { path = "../../ui/cross-ui-core" }
+shrimply-component-core = { path = "../../ui/component-core" }
 shrimply-cross-ui-theme = { path = "../../ui/cross-ui-theme" }
 shrimply-export-gtk = { path = "../../export/export-gtk" }
 shrimply-inspector-gtk = { path = "../../ui/inspector-gtk" }

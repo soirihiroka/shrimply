@@ -1,0 +1,14 @@
+[package]
+name = "shrimply-editor-appkit"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "shrimply-editor-appkit"
+path = "src/main.rs"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+shrimply-component-core = { path = "../../ui/component-core" }
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true

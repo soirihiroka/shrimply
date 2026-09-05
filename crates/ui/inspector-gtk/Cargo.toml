@@ -34,13 +34,13 @@ shrimply-server-client = { path = "../../server-client" }
 shrimply-shape-3d = { path = "../../3d/shape-3d" }
 shrimply-state = { path = "../../state" }
 shrimply-tts = { path = "../../audio/tts" }
-shrimply-tts-ui = { path = "../../audio/tts-ui" }
+shrimply-tts-gtk = { path = "../../audio/tts-gtk" }
 shrimply-support = { path = "../../support" }
 shrimply-timeline = { path = "../../timeline/timeline" }
 shrimply-gtk-components = { path = "../gtk-components" }
 shrimply-video-modifiers = { path = "../../video/video-modifiers" }
 shrimply-video-generation = { path = "../../video/video-generation" }
-shrimply-video-generation-ui = { path = "../../video/video-generation-ui" }
+shrimply-video-generation-gtk = { path = "../../video/video-generation-gtk" }
 shrimply-video = { path = "../../video/rendering" }
 shrimply-math-color = { path = "../../math/color", features = ["gdk"] }
 shrimply-cross-ui-theme = { path = "../cross-ui-theme" }

@@ -1,5 +1,5 @@
 [package]
-name = "shrimply-tts-ui"
+name = "shrimply-tts-gtk"
 version = "0.1.0"
 edition = "2024"
 

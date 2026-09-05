@@ -48,24 +48,26 @@ $(EXPORT_CUBIN): SLANG_ENTRIES := rgba_to_nv12_luma rgba_to_nv12_chroma rgba_to_
 APP_NAME := Shrimply
 BIN_NAME := shrimply
 EDITOR_BIN_NAME := shrimply-editor
-EDITOR_PACKAGE := shrimply-editor-ui
-QT_EDITOR_PACKAGE := shrimply-editor-qt-ui
-LAUNCHER_PACKAGE := shrimply-launcher-ui
-QT_LAUNCHER_PACKAGE := shrimply-launcher-qt-ui
+EDITOR_PACKAGE := shrimply-editor-gtk
+QT_EDITOR_PACKAGE := shrimply-editor-qt
+LAUNCHER_PACKAGE := shrimply-launcher-gtk
+QT_LAUNCHER_PACKAGE := shrimply-launcher-qt
 APPKIT_LAUNCHER_PACKAGE := shrimply-launcher-appkit
+APPKIT_EDITOR_PACKAGE := shrimply-editor-appkit
 GTK_COMPONENTS_PACKAGE := shrimply-gtk-components
 QT_COMPONENTS_PACKAGE := shrimply-qt-components
 GTK_COMPONENTS_DEMO_PACKAGE := shrimply-gtk-components-demo
 QT_COMPONENTS_DEMO_PACKAGE := shrimply-qt-components-demo
 QT_BIN_NAME := shrimply-qt
 APPKIT_BIN_NAME := shrimply-appkit
+APPKIT_EDITOR_BIN_NAME := shrimply-editor-appkit
 QT_EDITOR_BIN_NAME := shrimply-editor-qt
 MCP_PACKAGE := shrimply-mcp
 MCP_BIN_NAME := shrimply-mcp
 MCP_SERVER_NAME ?= shrimply
 CODEX ?= codex
 AGY ?= agy
-RUST_LOG ?= info,shrimply=debug,shrimply_editor=debug,shrimply_launcher=debug,shrimply_launcher_qt_ui=debug,shrimply_timeline_ui=debug
+RUST_LOG ?= info,shrimply=debug,shrimply_editor=debug,shrimply_launcher=debug,shrimply_launcher_qt=debug,shrimply_timeline_ui=debug
 DEV_LOG ?= target/$(BIN_NAME)-dev.log
 QT_DEV_LOG ?= target/$(QT_BIN_NAME)-dev.log
 CRASH_CORE ?= target/$(EDITOR_BIN_NAME).core
@@ -81,6 +83,9 @@ ICONDIR ?= $(DATADIR)/icons/hicolor/scalable/apps
 DESKTOP_FILE := assets/dev.shrimply.Shrimply.desktop
 QT_DESKTOP_FILE := assets/dev.shrimply.Shrimply.Qt.desktop
 APP_ICON := assets/icons/dev.shrimply.Shrimply.svg
+APPKIT_ICON := assets/icons/dev.shrimply.Shrimply.png
+APPKIT_ICON_SIZE := 512
+RSVG_CONVERT ?= rsvg-convert
 LIP_SYNC_MODEL := target/release/res/lip-sync/pocketsphinx-ci.model
 LIP_SYNC_RESOURCE_DIR := $(DATADIR)/shrimply/lip-sync
 LIP_SYNC_LICENSE_DIR := $(DATADIR)/licenses/shrimply
@@ -157,9 +162,21 @@ dev: native-deps cuda-artifacts
 	fi; \
 	exit $$status
 
-dev-mac:
+APPKIT_BUILD_ENV = RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@18)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@18)/lib" SLANG_SOURCE_DIR=$(SLANG_SOURCE_DIR) SLANG_BUILD_DIR=$(SLANG_BUILD_DIR)
+
+.PHONY: appkit-build appkit-check
+$(APPKIT_ICON): $(APP_ICON)
+	$(RSVG_CONVERT) --width $(APPKIT_ICON_SIZE) --height $(APPKIT_ICON_SIZE) $< --output $@
+
+appkit-build: $(APPKIT_ICON)
 	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
-	RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@18)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@18)/lib" SLANG_SOURCE_DIR=$(SLANG_SOURCE_DIR) SLANG_BUILD_DIR=$(SLANG_BUILD_DIR) CARGO_TERM_COLOR=always $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) --bin $(APPKIT_BIN_NAME)
+	$(APPKIT_BUILD_ENV) $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
+
+appkit-check: $(APPKIT_ICON)
+	$(APPKIT_BUILD_ENV) $(CARGO) check -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) --all-targets
+	$(APPKIT_BUILD_ENV) $(CARGO) clippy -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) --all-targets -- -D warnings
+
+dev-mac: appkit-build
 	RUST_LOG=$(RUST_LOG) target/debug/$(APPKIT_BIN_NAME)
 
 qt-build: native-deps qt-native-deps cuda-artifacts

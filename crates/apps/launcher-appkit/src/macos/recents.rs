@@ -1,11 +1,14 @@
 use objc2::runtime::AnyObject;
-use objc2::{MainThreadOnly, sel};
+use objc2::{AnyThread, MainThreadOnly, sel};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSColor, NSFont, NSGlassEffectView,
-    NSGlassEffectViewStyle, NSImage, NSMenu, NSMenuItem, NSPopUpArrowPosition, NSPopUpButton,
-    NSPopUpButtonCell, NSScrollElasticity, NSScrollView, NSTextAlignment, NSTextField, NSView,
+    NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSColor, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSMenu,
+    NSMenuItem, NSPopUpArrowPosition, NSPopUpButton, NSPopUpButtonCell, NSScrollElasticity,
+    NSScrollView, NSTextAlignment, NSTextField, NSView,
 };
-use objc2_foundation::{MainThreadMarker, NSPoint, NSRect, NSSize, NSString, ns_string};
+use objc2_foundation::{
+    MainThreadMarker, NSMutableAttributedString, NSPoint, NSRect, NSSize, NSString, ns_string,
+};
 use shrimply_cross_ui_core::launcher;
 use shrimply_support::recent_projects::RecentProject;
 
@@ -114,38 +117,46 @@ impl List {
             );
             row.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
 
-            let name = NSString::from_str(&project.name);
+            let edited = launcher::last_edited(&project.path)
+                .map(|date| format!("Last edited {date}"))
+                .unwrap_or_else(|| "Last edited time unavailable".to_string());
+            let title = NSString::from_str(&format!("{}\n{edited}", project.name));
+            let attributed = NSMutableAttributedString::initWithString(
+                NSMutableAttributedString::alloc(),
+                &title,
+            );
+            unsafe {
+                attributed.addAttribute_value_range(
+                    NSFontAttributeName,
+                    &NSFont::systemFontOfSize(15.0),
+                    title.rangeOfString(&NSString::from_str(&project.name)),
+                );
+                attributed.addAttribute_value_range(
+                    NSForegroundColorAttributeName,
+                    &NSColor::secondaryLabelColor(),
+                    title.rangeOfString(&NSString::from_str(&edited)),
+                );
+            }
             let open = unsafe {
                 NSButton::buttonWithTitle_target_action(
-                    &name,
+                    &title,
                     Some(target),
                     Some(sel!(openRecent:)),
                     mtm,
                 )
             };
+            open.setAttributedTitle(&attributed);
             open.setTag(index as isize);
             open.setAlignment(NSTextAlignment::Left);
-            open.setFont(Some(&NSFont::systemFontOfSize(15.0)));
             open.setBordered(false);
+            // The whole card, excluding its options button, opens the project.
             open.setFrame(NSRect::new(
-                NSPoint::new(8.0, 30.0),
-                NSSize::new(viewport.width - 52.0, 26.0),
+                NSPoint::new(8.0, 0.0),
+                NSSize::new(viewport.width - 52.0, ROW_HEIGHT),
             ));
             open.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
             open.setToolTip(Some(&NSString::from_str(&project.path.to_string_lossy())));
             row.addSubview(&open);
-
-            let edited = launcher::last_edited(&project.path)
-                .map(|date| format!("Last edited {date}"))
-                .unwrap_or_else(|| "Last edited time unavailable".to_string());
-            let subtitle = NSTextField::labelWithString(&NSString::from_str(&edited), mtm);
-            subtitle.setTextColor(Some(&NSColor::secondaryLabelColor()));
-            subtitle.setFrame(NSRect::new(
-                NSPoint::new(16.0, 10.0),
-                NSSize::new(viewport.width - 60.0, 20.0),
-            ));
-            subtitle.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable);
-            row.addSubview(&subtitle);
 
             let options = NSPopUpButton::initWithFrame_pullsDown(
                 NSPopUpButton::alloc(mtm),

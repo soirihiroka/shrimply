@@ -8,7 +8,7 @@ use std::process::Child;
 #[cxx_qt::bridge]
 pub mod qobject {
     unsafe extern "C++" {
-        include!("shrimply-launcher-qt-ui/include/icon_theme.h");
+        include!("shrimply-launcher-qt/include/icon_theme.h");
         #[namespace = "shrimply"]
         fn set_breeze_icon_fallback();
 

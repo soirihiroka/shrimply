@@ -9,9 +9,9 @@ use objc2_app_kit::{
     NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
     NSAutoresizingMaskOptions, NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSControlSize,
     NSFont, NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSMenu, NSMenuItem,
-    NSModalResponseOK, NSOpenPanel, NSSavePanel, NSSearchField, NSTextField,
-    NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow, NSWindowDelegate, NSWindowStyleMask,
-    NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
+    NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSSavePanel, NSSearchField,
+    NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow, NSWindowDelegate,
+    NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
@@ -20,7 +20,7 @@ use objc2_foundation::{
 use shrimply_cross_ui_core::launcher;
 use shrimply_support::recent_projects::{self, RecentProject};
 use std::cell::{OnceCell, RefCell};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const WINDOW_SIZE: NSSize = NSSize::new(760.0, 560.0);
 const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(560.0, 420.0);
@@ -304,6 +304,17 @@ define_class!(
         }
     }
 
+    unsafe impl NSOpenSavePanelDelegate for Delegate {
+        #[unsafe(method(panel:shouldEnableURL:))]
+        fn should_enable_project(&self, _sender: &objc2::runtime::AnyObject, url: &NSURL) -> bool {
+            url.hasDirectoryPath() || url.lastPathComponent().is_some_and(|name| {
+                let name = name.to_string().to_lowercase();
+                launcher::PROJECT_FILE_PATTERNS.iter()
+                    .any(|pattern| name.ends_with(pattern.trim_start_matches('*')))
+            })
+        }
+    }
+
     impl Delegate {
         #[unsafe(method(searchChanged:))]
         fn search_changed(&self, sender: &NSSearchField) {
@@ -320,10 +331,7 @@ define_class!(
         #[unsafe(method(openRecent:))]
         fn open_recent(&self, sender: &NSButton) {
             let project = self.recent_project(sender.tag());
-            panic!(
-                "the editor is not available on macOS; cannot open {}",
-                project.path.display()
-            );
+            self.open_in_editor(&project.path);
         }
 
         #[unsafe(method(recentInfo:))]
@@ -391,25 +399,25 @@ define_class!(
                 .and_then(|url| url.path())
                 .map(|path| PathBuf::from(path.to_string()))
                 .expect("the selected save location must be a file path");
-            let path = launcher::create_project(
-                path,
-                &request.name,
-                request.canvas_size,
-                request.fps,
-            )
-            .unwrap_or_else(|error| panic!("could not create project: {error}"));
+            let path = match launcher::create_project(
+                path, &request.name, request.canvas_size, request.fps,
+            ) {
+                Ok(path) => path,
+                Err(error) => {
+                    self.show_error("Could not create project", &error);
+                    return;
+                }
+            };
             recent_projects::touch(&path, &request.name)
                 .unwrap_or_else(|error| panic!("could not update recent projects: {error}"));
             self.refresh_current_search();
-            panic!(
-                "the editor is not available on macOS; created {}",
-                path.display()
-            );
+            self.open_in_editor(&path);
         }
 
         #[unsafe(method(openProject:))]
         fn open_project(&self, _sender: &NSButton) {
             let panel = NSOpenPanel::openPanel(self.mtm());
+            unsafe { panel.setDelegate(Some(ProtocolObject::from_ref(self))) };
             panel.setTitle(Some(ns_string!("Open Project")));
             panel.setPrompt(Some(ns_string!("Open")));
             panel.setCanChooseFiles(true);
@@ -431,15 +439,57 @@ define_class!(
                 .and_then(|url| url.path())
                 .map(|path| PathBuf::from(path.to_string()))
                 .expect("the selected project must be a file path");
-            panic!(
-                "the editor is not available on macOS; cannot open {}",
-                path.display()
-            );
+            self.open_in_editor(&path);
         }
     }
 );
 
 impl Delegate {
+    fn open_in_editor(&self, path: &Path) {
+        let mut child = match launcher::launch_appkit_editor(path) {
+            Ok(child) => child,
+            Err(error) => {
+                self.show_error("Could not start editor", &error);
+                return;
+            }
+        };
+        self.ivars()
+            .window
+            .get()
+            .expect("launcher window must exist")
+            .orderOut(None);
+        NSApplication::sharedApplication(self.mtm()).hide(None);
+        // Match GTK: hide the launcher, keep it alive, and propagate the editor's exit.
+        std::thread::spawn(move || {
+            let result = child.wait();
+            let completed = block2::RcBlock::new(move || match &result {
+                Ok(status) if status.success() => {
+                    let mtm =
+                        MainThreadMarker::new().expect("completion must run on the main thread");
+                    NSApplication::sharedApplication(mtm).terminate(None);
+                }
+                Ok(status) => {
+                    eprintln!("editor exited with {status}");
+                    std::process::exit(status.code().unwrap_or(1));
+                }
+                Err(error) => {
+                    eprintln!("could not wait for editor: {error}");
+                    std::process::exit(1);
+                }
+            });
+            unsafe {
+                objc2_foundation::NSOperationQueue::mainQueue().addOperationWithBlock(&completed)
+            };
+        });
+    }
+
+    fn show_error(&self, heading: &str, body: &str) {
+        let alert = NSAlert::new(self.mtm());
+        alert.setMessageText(&NSString::from_str(heading));
+        alert.setInformativeText(&NSString::from_str(body));
+        alert.runModal();
+    }
+
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(DelegateIvars {
             window: OnceCell::new(),
@@ -486,6 +536,7 @@ impl Delegate {
 pub fn run() {
     shrimply_support::diagnostics::init();
     let mtm = MainThreadMarker::new().expect("AppKit must start on the main thread");
+    NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
     let app = NSApplication::sharedApplication(mtm);
     let delegate = Delegate::new(mtm);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));

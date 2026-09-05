@@ -5479,32 +5479,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-editor-qt-ui"
+name = "shrimply-editor-appkit"
 version = "0.1.0"
 dependencies = [
- "cxx",
- "cxx-qt",
- "cxx-qt-build",
- "cxx-qt-lib",
- "ffmpeg-next",
- "shrimply-cross-ui-core",
- "shrimply-export-qt",
- "shrimply-i18n-qt",
- "shrimply-inspector-qt",
- "shrimply-math-core",
- "shrimply-preferences-qt",
- "shrimply-preview-qt",
- "shrimply-preview-runtime",
- "shrimply-project",
- "shrimply-qt-components",
- "shrimply-qt-helpers",
- "shrimply-state",
- "shrimply-support",
- "tracing",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "shrimply-component-core",
 ]
 
 [[package]]
-name = "shrimply-editor-ui"
+name = "shrimply-editor-gtk"
 version = "0.1.0"
 dependencies = [
  "async-channel",
@@ -5519,6 +5504,7 @@ dependencies = [
  "shrimply-asset",
  "shrimply-audio",
  "shrimply-blender",
+ "shrimply-component-core",
  "shrimply-cross-ui-core",
  "shrimply-cross-ui-theme",
  "shrimply-export-gtk",
@@ -5546,6 +5532,31 @@ dependencies = [
  "shrimply-video-modifiers",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "shrimply-editor-qt"
+version = "0.1.0"
+dependencies = [
+ "cxx",
+ "cxx-qt",
+ "cxx-qt-build",
+ "cxx-qt-lib",
+ "ffmpeg-next",
+ "shrimply-cross-ui-core",
+ "shrimply-export-qt",
+ "shrimply-i18n-qt",
+ "shrimply-inspector-qt",
+ "shrimply-math-core",
+ "shrimply-preferences-qt",
+ "shrimply-preview-qt",
+ "shrimply-preview-runtime",
+ "shrimply-project",
+ "shrimply-qt-components",
+ "shrimply-qt-helpers",
+ "shrimply-state",
+ "shrimply-support",
+ "tracing",
 ]
 
 [[package]]
@@ -5789,10 +5800,10 @@ dependencies = [
  "shrimply-text-3d",
  "shrimply-timeline",
  "shrimply-tts",
- "shrimply-tts-ui",
+ "shrimply-tts-gtk",
  "shrimply-video",
  "shrimply-video-generation",
- "shrimply-video-generation-ui",
+ "shrimply-video-generation-gtk",
  "shrimply-video-modifiers",
  "skia-safe",
  "sourceview5",
@@ -5907,7 +5918,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-launcher-qt-ui"
+name = "shrimply-launcher-gtk"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+ "libadwaita",
+ "shrimply-cross-ui-core",
+ "shrimply-gtk-components",
+ "shrimply-project",
+ "shrimply-support",
+ "tracing",
+]
+
+[[package]]
+name = "shrimply-launcher-qt"
 version = "0.1.0"
 dependencies = [
  "cxx",
@@ -5917,19 +5941,6 @@ dependencies = [
  "shrimply-cross-ui-core",
  "shrimply-i18n-qt",
  "shrimply-qt-helpers",
- "shrimply-support",
- "tracing",
-]
-
-[[package]]
-name = "shrimply-launcher-ui"
-version = "0.1.0"
-dependencies = [
- "gtk4",
- "libadwaita",
- "shrimply-cross-ui-core",
- "shrimply-gtk-components",
- "shrimply-project",
  "shrimply-support",
  "tracing",
 ]
@@ -6755,7 +6766,7 @@ dependencies = [
  "shrimply-timeline-snap",
  "shrimply-transcription",
  "shrimply-tts",
- "shrimply-tts-ui",
+ "shrimply-tts-gtk",
  "shrimply-video",
  "shrimply-video-modifiers",
  "shrimply-video-recording",
@@ -6818,7 +6829,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-tts-ui"
+name = "shrimply-tts-gtk"
 version = "0.1.0"
 dependencies = [
  "async-channel",
@@ -6937,7 +6948,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-video-generation-ui"
+name = "shrimply-video-generation-gtk"
 version = "0.1.0"
 dependencies = [
  "async-channel",

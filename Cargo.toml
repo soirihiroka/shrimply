@@ -1,11 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/apps/editor-appkit",
     "crates/cuda/bridge",
-    "crates/apps/editor-qt-ui",
-    "crates/apps/editor-ui",
-    "crates/apps/launcher-ui",
-    "crates/apps/launcher-qt-ui",
+    "crates/apps/editor-qt",
+    "crates/apps/editor-gtk",
+    "crates/apps/launcher-gtk",
+    "crates/apps/launcher-qt",
     "crates/apps/launcher-appkit",
     "crates/asset",
     "crates/audio/audio",
@@ -13,7 +14,7 @@ members = [
     "crates/audio/lip-sync",
     "crates/audio/transcription",
     "crates/audio/tts",
-    "crates/audio/tts-ui",
+    "crates/audio/tts-gtk",
     "crates/background",
     "crates/benchmarking",
     "crates/blender/blender-bridge",
@@ -97,7 +98,7 @@ members = [
     "crates/video/video-modifiers",
     "crates/video/video-recording",
     "crates/video/video-generation",
-    "crates/video/video-generation-ui",
+    "crates/video/video-generation-gtk",
     "crates/video/anime4k",
     "crates/video/decoder",
     "crates/video/decoder-pool",
@@ -115,7 +116,7 @@ members = [
     "crates/3d/text-3d",
     "crates/3d/transform-3d",
 ]
-default-members = ["crates/apps/editor-ui", "crates/apps/launcher-ui"]
+default-members = ["crates/apps/editor-gtk", "crates/apps/launcher-gtk"]
 exclude = ["external/vtracer"]
 
 [workspace.dependencies]
@@ -221,8 +222,8 @@ lto = "off"
 [profile.dev.package."*"]
 debug = 0
 
-[profile.dev.package.shrimply-editor-ui]
+[profile.dev.package.shrimply-editor-gtk]
 opt-level = 0
 
-[profile.dev.package.shrimply-launcher-ui]
+[profile.dev.package.shrimply-launcher-gtk]
 opt-level = 0

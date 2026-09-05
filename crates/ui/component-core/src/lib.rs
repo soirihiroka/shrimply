@@ -1,3 +1,4 @@
+pub mod about;
 pub mod color;
 pub mod file_picker;
 pub mod layered;

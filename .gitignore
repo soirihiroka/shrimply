@@ -1,4 +1,5 @@
 target/
+/assets/icons/dev.shrimply.Shrimply.png
 .qmlls.ini
 /.slang-artifacts
 /video-generation-cache
