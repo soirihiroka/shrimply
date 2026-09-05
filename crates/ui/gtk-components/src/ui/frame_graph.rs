@@ -4,12 +4,13 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gdk, glib};
 use shrimply_interpolation::Interpolation;
-use shrimply_keyframe_graph_ui::{
+use shrimply_keyframe_graph_core::{
     FrameGraphAction, FrameGraphComponentAction, FrameGraphComponents, FrameGraphKey,
     FrameGraphModifiers, FrameGraphPointerButton, FrameGraphPointerPosition, FrameGraphScrollInput,
     FrameGraphState, FrameGraphStatus,
 };
-use shrimply_skia_adw_ui::canvas::{TimelineRenderer, UVec2};
+use shrimply_skia_adw_core::canvas::UVec2;
+use shrimply_skia_gl::TimelineRenderer;
 
 use super::modifier_menu::{SearchMenuItem, searchable_popover};
 

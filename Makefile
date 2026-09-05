@@ -4,6 +4,7 @@ CARGO := $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 CUDA_HOME ?= /usr/local/cuda
 CUDA_TOOLKIT_PATH ?= $(CUDA_HOME)
 CUDA_TARGET ?= sm_86
+CUDA_HOST_CXX ?= g++-15
 SOURCE_LINE_LIMIT ?= 2000
 SLANG_SOURCE_DIR ?= $(CURDIR)/external/slang
 SLANG_BUILD_DIR ?= $(SLANG_SOURCE_DIR)/build
@@ -13,37 +14,16 @@ INSTALL ?= install
 PKG_CONFIG ?= /usr/bin/pkg-config
 PKG_CONFIG_PATH ?= /usr/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
 QT_QMAKE ?= qmake6
+SLANG_LIBRARY_ENV = LD_LIBRARY_PATH="$(SLANG_BUILD_DIR)/Release/lib:$${LD_LIBRARY_PATH}" DYLD_LIBRARY_PATH="$(SLANG_BUILD_DIR)/Release/lib:$${DYLD_LIBRARY_PATH}"
 BUILD_ENV := CUDA_HOME=$(CUDA_HOME) CUDA_TOOLKIT_PATH=$(CUDA_TOOLKIT_PATH) PATH=$(CUDA_HOME)/bin:$(PATH) PKG_CONFIG=$(PKG_CONFIG) PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) SLANG_SOURCE_DIR=$(SLANG_SOURCE_DIR) SLANG_BUILD_DIR=$(SLANG_BUILD_DIR) OPTIX_ROOT=$(OPTIX_ROOT)
+BUILD_ENV += $(SLANG_LIBRARY_ENV)
 RUST_LIBDIR := $(shell $(RUSTUP) run $(RUST_TOOLCHAIN) rustc --print target-libdir)
 DEV_RUSTFLAGS ?= -C prefer-dynamic -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)
 DEV_BUILD_ENV := $(BUILD_ENV) RUSTFLAGS="$(DEV_RUSTFLAGS)"
-SLANGC := $(SLANG_BUILD_DIR)/Release/bin/slangc
 SLANG_COMPILER_STAMP := $(SLANG_BUILD_DIR)/.shrimply-compiler
 SLANG_CONFIGURE_STAMP := $(SLANG_BUILD_DIR)/.shrimply-configure
 SLANG_GIT_HEAD := $(shell git -C $(SLANG_SOURCE_DIR) rev-parse --git-path HEAD 2>/dev/null)
 SLANG_GIT_REF := $(shell ref=$$(git -C $(SLANG_SOURCE_DIR) symbolic-ref -q HEAD 2>/dev/null); test -z "$$ref" || git -C $(SLANG_SOURCE_DIR) rev-parse --git-path "$$ref")
-NVCC := $(CUDA_HOME)/bin/nvcc
-CUDA_HOST_CXX ?= g++-15
-CUDA_ARTIFACT_DIR := $(CURDIR)/.slang-artifacts/cuda/$(CUDA_TARGET)
-PREVIEW_CUBIN := $(CUDA_ARTIFACT_DIR)/preview.cubin
-ANIME4K_CUBIN := $(CUDA_ARTIFACT_DIR)/anime4k.cubin
-MODIFIERS_CUBIN := $(CUDA_ARTIFACT_DIR)/modifiers.cubin
-MODIFIERS_BLUR_CUBIN := $(CUDA_ARTIFACT_DIR)/modifiers_blur.cubin
-MODIFIERS_GEOMETRY_CUBIN := $(CUDA_ARTIFACT_DIR)/modifiers_geometry.cubin
-MODIFIERS_MATTE_CUBIN := $(CUDA_ARTIFACT_DIR)/modifiers_matte.cubin
-STABILIZATION_CUBIN := $(CUDA_ARTIFACT_DIR)/stabilization.cubin
-EXPORT_CUBIN := $(CUDA_ARTIFACT_DIR)/export.cubin
-CUDA_CUBINS := $(PREVIEW_CUBIN) $(ANIME4K_CUBIN) $(MODIFIERS_CUBIN) $(MODIFIERS_BLUR_CUBIN) $(MODIFIERS_GEOMETRY_CUBIN) $(MODIFIERS_MATTE_CUBIN) $(STABILIZATION_CUBIN) $(EXPORT_CUBIN)
-COMPOSITOR_SHADER_DIR := crates/render-core/shaders
-COMPOSITOR_SHADER_MODULES := $(shell find $(COMPOSITOR_SHADER_DIR)/modules -type f -name '*.slang')
-$(PREVIEW_CUBIN): SLANG_ENTRIES := composite_layered_image_layer composite_nv12_layers tone_map_hdr
-$(ANIME4K_CUBIN): SLANG_ENTRIES := rgba_to_float nv12_to_float convolution depth_to_space_x2 float_to_rgba_opaque float_to_rgba_alpha
-$(MODIFIERS_CUBIN): SLANG_ENTRIES := invert posterize channel_mixer color_correction colorize_duotone chromatic_aberration edge_detection emboss film_grain scanlines_crt threshold vignette alpha_outline_horizontal alpha_outline_vertical dithering drop_shadow_horizontal drop_shadow_vertical halftone
-$(MODIFIERS_BLUR_CUBIN): SLANG_ENTRIES := directional_blur erode_horizontal dilate_horizontal erode_vertical dilate_vertical gaussian_blur_horizontal gaussian_blur_vertical glow_bloom_horizontal glow_bloom_vertical kuwahara_horizontal_statistics kuwahara_vertical radial_blur zoom_blur sharpen_blur_horizontal sharpen_blur_vertical unsharp_mask
-$(MODIFIERS_GEOMETRY_CUBIN): SLANG_ENTRIES := bulge_pinch displacement_map fisheye kaleidoscope lens_distortion mirror pixelate_mosaic twirl wave_ripple corner_pin
-$(MODIFIERS_MATTE_CUBIN): SLANG_ENTRIES := alpha_mask shape_alpha_mask chroma_key luma_key mask sam2_proxy sam2_apply_mask transparent_fill_apply_mask visual_transition_mask origami_transition transition_gaussian_blur_horizontal transition_gaussian_blur_vertical transition_pixelate
-$(STABILIZATION_CUBIN): SLANG_ENTRIES := affine_stabilization
-$(EXPORT_CUBIN): SLANG_ENTRIES := rgba_to_nv12_luma rgba_to_nv12_chroma rgba_to_p010_luma rgba_to_p010_chroma
 
 APP_NAME := Shrimply
 BIN_NAME := shrimply
@@ -67,7 +47,7 @@ MCP_BIN_NAME := shrimply-mcp
 MCP_SERVER_NAME ?= shrimply
 CODEX ?= codex
 AGY ?= agy
-RUST_LOG ?= info,shrimply=debug,shrimply_editor=debug,shrimply_launcher=debug,shrimply_launcher_qt=debug,shrimply_timeline_ui=debug
+RUST_LOG ?= info,shrimply=debug,shrimply_editor=debug,shrimply_launcher=debug,shrimply_launcher_qt=debug,shrimply_timeline_gtk=debug
 DEV_LOG ?= target/$(BIN_NAME)-dev.log
 QT_DEV_LOG ?= target/$(QT_BIN_NAME)-dev.log
 CRASH_CORE ?= target/$(EDITOR_BIN_NAME).core
@@ -131,23 +111,20 @@ qt-native-deps:
 
 slang-compiler: $(SLANG_COMPILER_STAMP)
 
-$(SLANG_CONFIGURE_STAMP): $(SLANG_SOURCE_DIR)/CMakeLists.txt
-	cmake -S $(SLANG_SOURCE_DIR) -B $(SLANG_BUILD_DIR) -G "Ninja Multi-Config" -DSLANG_ENABLE_SLANGC=ON -DSLANG_ENABLE_SLANG_RHI=OFF -DSLANG_ENABLE_GFX=OFF -DSLANG_ENABLE_TESTS=OFF -DSLANG_ENABLE_EXAMPLES=OFF -DSLANG_ENABLE_SLANGD=OFF -DSLANG_ENABLE_SLANGI=OFF -DSLANG_ENABLE_SLANGRT=OFF -DSLANG_ENABLE_SPLIT_DEBUG_INFO=OFF -DSLANG_ENABLE_SLANG_GLSLANG=ON -DSLANG_ENABLE_REPLAYER=OFF -DSLANG_SLANG_LLVM_FLAVOR=DISABLE -DSLANG_ENABLE_DXIL=OFF
+$(SLANG_CONFIGURE_STAMP): $(SLANG_SOURCE_DIR)/CMakeLists.txt Makefile
+	cmake -S $(SLANG_SOURCE_DIR) -B $(SLANG_BUILD_DIR) -G "Ninja Multi-Config" -DSLANG_ENABLE_SLANGC=OFF -DSLANG_ENABLE_SLANG_RHI=OFF -DSLANG_ENABLE_GFX=OFF -DSLANG_ENABLE_TESTS=OFF -DSLANG_ENABLE_EXAMPLES=OFF -DSLANG_ENABLE_SLANGD=OFF -DSLANG_ENABLE_SLANGI=OFF -DSLANG_ENABLE_SLANGRT=OFF -DSLANG_ENABLE_SPLIT_DEBUG_INFO=OFF -DSLANG_ENABLE_SLANG_GLSLANG=ON -DSLANG_ENABLE_REPLAYER=OFF -DSLANG_SLANG_LLVM_FLAVOR=DISABLE -DSLANG_ENABLE_DXIL=OFF
 	@touch $@
 
 $(SLANG_COMPILER_STAMP): $(SLANG_CONFIGURE_STAMP) $(SLANG_GIT_HEAD) $(SLANG_GIT_REF)
-	cmake --build $(SLANG_BUILD_DIR) --config Release --target slangc slang-glslang
+	cmake --build $(SLANG_BUILD_DIR) --config Release --target slang slang-glslang
 	@touch $@
 
 cuda-target-check:
+	@test "$$(uname -s)" = Linux || { echo "CUDA kernels require Linux" >&2; exit 1; }
 	@test "$(CUDA_TARGET)" = sm_86 || { echo "CUDA_TARGET=$(CUDA_TARGET) is unsupported: host binaries embed sm_86 CUDA artifacts" >&2; exit 1; }
 
-cuda-artifacts: cuda-target-check $(CUDA_CUBINS)
-
-$(CUDA_ARTIFACT_DIR)/%.cubin: $(COMPOSITOR_SHADER_DIR)/%.slang $(COMPOSITOR_SHADER_MODULES) $(SLANG_COMPILER_STAMP) | cuda-target-check
-	@mkdir -p $(CUDA_ARTIFACT_DIR)
-	$(SLANGC) $< -I $(COMPOSITOR_SHADER_DIR)/modules -target cuda -capability cuda_sm_8_0 -O2 -fp-mode precise $(foreach entry,$(SLANG_ENTRIES),-entry $(entry) -stage compute) -o $(CUDA_ARTIFACT_DIR)/$*.cu
-	$(NVCC) --compiler-bindir=$(CUDA_HOST_CXX) --cubin --gpu-architecture=$(CUDA_TARGET) -O2 -w $(CUDA_ARTIFACT_DIR)/$*.cu -o $@
+cuda-artifacts: cuda-target-check slang-compiler
+	$(BUILD_ENV) CUDA_TARGET=$(CUDA_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) $(CARGO) build -p shrimply-render-cuda
 
 dev: SHELL := /bin/bash
 dev: native-deps cuda-artifacts
@@ -162,7 +139,7 @@ dev: native-deps cuda-artifacts
 	fi; \
 	exit $$status
 
-APPKIT_BUILD_ENV = RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@18)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@18)/lib" SLANG_SOURCE_DIR=$(SLANG_SOURCE_DIR) SLANG_BUILD_DIR=$(SLANG_BUILD_DIR)
+APPKIT_BUILD_ENV = $(SLANG_LIBRARY_ENV) RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@18)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@18)/lib" SLANG_SOURCE_DIR=$(SLANG_SOURCE_DIR) SLANG_BUILD_DIR=$(SLANG_BUILD_DIR)
 
 .PHONY: appkit-build appkit-check
 $(APPKIT_ICON): $(APP_ICON)
@@ -172,7 +149,7 @@ appkit-build: $(APPKIT_ICON)
 	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
 
-appkit-check: $(APPKIT_ICON)
+appkit-check: appkit-build
 	$(APPKIT_BUILD_ENV) $(CARGO) check -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) --all-targets
 	$(APPKIT_BUILD_ENV) $(CARGO) clippy -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) --all-targets -- -D warnings
 

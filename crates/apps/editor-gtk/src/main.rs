@@ -9,7 +9,7 @@ use shrimply_gtk_components::project_settings::ProjectSettingsSelector;
 use shrimply_inspector_gtk as inspector;
 use shrimply_preview_gtk as video_player;
 use shrimply_state::player_state;
-use shrimply_timeline_ui as timeline;
+use shrimply_timeline_gtk as timeline;
 
 pub use shrimply_audio as audio;
 pub use shrimply_project::project;

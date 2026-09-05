@@ -1,9 +1,9 @@
 use crate::canvas::vec2;
 use gtk::gdk;
 use gtk::gdk::prelude::*;
-use shrimply_skia_adw_ui::cursor::SoftwareCursor;
+use shrimply_skia_adw_core::cursor::SoftwareCursor;
 
-pub use shrimply_skia_adw_ui::cursor::{PlayheadStyle, draw_playhead};
+pub use shrimply_skia_adw_core::cursor::{PlayheadStyle, draw_playhead};
 
 pub const DEFAULT_CURSOR_THEME_SIZE: i32 = 24;
 

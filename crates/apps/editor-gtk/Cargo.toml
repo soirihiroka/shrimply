@@ -41,7 +41,7 @@ shrimply-server-client = { path = "../../server-client" }
 shrimply-state = { path = "../../state" }
 shrimply-support = { path = "../../support" }
 shrimply-timeline = { path = "../../timeline/timeline" }
-shrimply-timeline-ui = { path = "../../timeline/timeline-ui" }
+shrimply-timeline-gtk = { path = "../../timeline/timeline-gtk" }
 shrimply-transcription = { path = "../../audio/transcription" }
 shrimply-tts = { path = "../../audio/tts" }
 shrimply-gtk-components = { path = "../../ui/gtk-components" }

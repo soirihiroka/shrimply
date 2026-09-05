@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 pub use shrimply_audio as audio;
 pub use shrimply_math_color::Color;
 pub use shrimply_project::{caption, project, time_format};
-pub use shrimply_skia_adw_ui::gl_loader;
+pub use shrimply_skia_gl::gl_loader;
 pub use shrimply_state::player_state;
 pub use shrimply_video as video;
 
@@ -33,7 +33,7 @@ pub mod preferences {
 }
 
 pub mod timeline {
-    pub use shrimply_skia_adw_ui::canvas as renderer;
+    pub use shrimply_skia_adw_core::canvas as renderer;
 }
 
 pub fn background_color(window_color: Color, fullscreen: bool) -> Color {

@@ -3735,7 +3735,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
 dependencies = [
  "bitflags 2.13.1",
+ "block2",
+ "dispatch2",
  "objc2",
+ "objc2-core-foundation",
  "objc2-foundation",
 ]
 
@@ -3746,8 +3749,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96c1358452b371bf9f104e21ec536d37a650eb10f7ee379fff67d2e08d537f1f"
 dependencies = [
  "bitflags 2.13.1",
+ "block2",
+ "libc",
  "objc2",
  "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-core-video",
  "objc2-foundation",
  "objc2-metal",
 ]
@@ -5380,7 +5387,7 @@ dependencies = [
  "rhai",
  "shrimply-core",
  "shrimply-interpolation",
- "shrimply-keyframe-graph-ui",
+ "shrimply-keyframe-graph-core",
  "shrimply-math-core",
  "shrimply-video-modifiers",
  "uuid",
@@ -5432,28 +5439,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-cross-ui-tl"
-version = "0.1.0"
-dependencies = [
- "ffmpeg-next",
- "glam 0.33.5",
- "hashbrown 0.17.1",
- "shrimply-3dgs",
- "shrimply-blender",
- "shrimply-core",
- "shrimply-math-core",
- "shrimply-pdf",
- "shrimply-project",
- "shrimply-resource-pipeline",
- "shrimply-scene-3d",
- "shrimply-state",
- "shrimply-timeline",
- "shrimply-video",
- "shrimply-video-modifiers",
- "uuid",
-]
-
-[[package]]
 name = "shrimply-cuda"
 version = "0.1.0"
 dependencies = [
@@ -5470,12 +5455,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-discrete-keyframe-graph-ui"
+name = "shrimply-discrete-keyframe-graph-core"
 version = "0.1.0"
 dependencies = [
  "shrimply-math-color",
  "shrimply-math-core",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
 ]
 
 [[package]]
@@ -5486,6 +5471,10 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "shrimply-component-core",
+ "shrimply-cross-ui-theme",
+ "shrimply-skia-adw-core",
+ "shrimply-skia-metal",
+ "skia-safe",
 ]
 
 [[package]]
@@ -5525,7 +5514,7 @@ dependencies = [
  "shrimply-state",
  "shrimply-support",
  "shrimply-timeline",
- "shrimply-timeline-ui",
+ "shrimply-timeline-gtk",
  "shrimply-transcription",
  "shrimply-tts",
  "shrimply-video",
@@ -5663,13 +5652,14 @@ dependencies = [
  "shrimply-cross-ui-theme",
  "shrimply-i18n-gtk",
  "shrimply-interpolation",
- "shrimply-keyframe-graph-ui",
+ "shrimply-keyframe-graph-core",
  "shrimply-math-color",
  "shrimply-math-core",
  "shrimply-math-geometry",
  "shrimply-project-core",
  "shrimply-resource-pipeline",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
+ "shrimply-skia-gl",
  "shrimply-wayland-pointer-lock",
  "skia-safe",
  "sourceview5",
@@ -5689,7 +5679,7 @@ dependencies = [
  "shrimply-components-demo-core",
  "shrimply-cross-ui-theme",
  "shrimply-gtk-components",
- "shrimply-keyframe-graph-ui",
+ "shrimply-keyframe-graph-core",
  "shrimply-math-color",
 ]
 
@@ -5734,7 +5724,7 @@ dependencies = [
  "shrimply-core",
  "shrimply-evaluation",
  "shrimply-i18n-core",
- "shrimply-keyframe-graph-ui",
+ "shrimply-keyframe-graph-core",
  "shrimply-manim-parser",
  "shrimply-math-core",
  "shrimply-media-info",
@@ -5778,7 +5768,7 @@ dependencies = [
  "shrimply-component-core",
  "shrimply-core",
  "shrimply-cross-ui-theme",
- "shrimply-discrete-keyframe-graph-ui",
+ "shrimply-discrete-keyframe-graph-core",
  "shrimply-evaluation",
  "shrimply-gtk-components",
  "shrimply-inspector-core",
@@ -5794,7 +5784,7 @@ dependencies = [
  "shrimply-scene-3d",
  "shrimply-server-client",
  "shrimply-shape-3d",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
  "shrimply-state",
  "shrimply-support",
  "shrimply-text-3d",
@@ -5872,17 +5862,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-keyframe-graph-ui"
+name = "shrimply-keyframe-graph-core"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.5",
  "shrimply-cross-ui-theme",
- "shrimply-discrete-keyframe-graph-ui",
+ "shrimply-discrete-keyframe-graph-core",
  "shrimply-interpolation",
  "shrimply-math-color",
  "shrimply-math-core",
  "shrimply-math-geometry",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
  "skia-safe",
  "uuid",
 ]
@@ -6334,7 +6324,7 @@ dependencies = [
  "shrimply-preview-runtime",
  "shrimply-project",
  "shrimply-render-core",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
  "shrimply-state",
  "shrimply-timeline",
  "shrimply-video",
@@ -6359,11 +6349,12 @@ dependencies = [
  "shrimply-preview-core",
  "shrimply-preview-runtime",
  "shrimply-project",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
+ "shrimply-skia-gl",
  "shrimply-state",
  "shrimply-timeline",
+ "shrimply-timeline-gtk",
  "shrimply-timeline-qt",
- "shrimply-timeline-ui",
  "shrimply-video",
  "skia-safe",
  "tracing",
@@ -6388,7 +6379,8 @@ dependencies = [
  "shrimply-playback-performance",
  "shrimply-preview-core",
  "shrimply-project",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
+ "shrimply-skia-gl",
  "shrimply-state",
  "shrimply-video",
  "skia-safe",
@@ -6489,12 +6481,13 @@ dependencies = [
  "shrimply-cross-ui-theme",
  "shrimply-i18n-qt",
  "shrimply-interpolation",
- "shrimply-keyframe-graph-ui",
+ "shrimply-keyframe-graph-core",
  "shrimply-math-color",
  "shrimply-math-core",
  "shrimply-project-core",
  "shrimply-qt-helpers",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
+ "shrimply-skia-gl",
  "shrimply-support",
  "shrimply-wayland-pointer-lock",
  "uuid",
@@ -6510,7 +6503,7 @@ dependencies = [
  "cxx-qt-lib",
  "shrimply-benchmarking",
  "shrimply-components-demo-core",
- "shrimply-keyframe-graph-ui",
+ "shrimply-keyframe-graph-core",
  "shrimply-math-core",
  "shrimply-qt-components",
  "shrimply-qt-helpers",
@@ -6556,6 +6549,13 @@ dependencies = [
  "shrimply-cuda",
  "shrimply-math-color",
  "shrimply-math-geometry",
+ "shrimply-slang-build",
+]
+
+[[package]]
+name = "shrimply-render-cuda"
+version = "0.1.0"
+dependencies = [
  "shrimply-slang-build",
 ]
 
@@ -6632,15 +6632,36 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-skia-adw-ui"
+name = "shrimply-skia-adw-core"
 version = "0.1.0"
 dependencies = [
  "async-channel",
  "cached",
- "glow",
  "hashbrown 0.17.1",
+ "shrimply-cross-ui-theme",
  "shrimply-math-color",
  "shrimply-math-geometry",
+ "skia-safe",
+]
+
+[[package]]
+name = "shrimply-skia-gl"
+version = "0.1.0"
+dependencies = [
+ "glow",
+ "libc",
+ "shrimply-cross-ui-theme",
+ "shrimply-skia-adw-core",
+ "skia-safe",
+]
+
+[[package]]
+name = "shrimply-skia-metal"
+version = "0.1.0"
+dependencies = [
+ "objc2",
+ "objc2-metal",
+ "objc2-quartz-core",
  "skia-safe",
 ]
 
@@ -6648,6 +6669,7 @@ dependencies = [
 name = "shrimply-slang-build"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "serde_json",
 ]
 
@@ -6709,31 +6731,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-timeline-gtk"
+name = "shrimply-timeline-core"
 version = "0.1.0"
 dependencies = [
- "gtk4",
- "shrimply-cross-ui-tl",
- "shrimply-gtk-components",
-]
-
-[[package]]
-name = "shrimply-timeline-qt"
-version = "0.1.0"
-dependencies = [
- "shrimply-cross-ui-tl",
- "shrimply-timeline",
-]
-
-[[package]]
-name = "shrimply-timeline-snap"
-version = "0.1.0"
-dependencies = [
+ "ffmpeg-next",
+ "glam 0.33.5",
+ "hashbrown 0.17.1",
+ "shrimply-3dgs",
+ "shrimply-blender",
+ "shrimply-core",
  "shrimply-math-core",
+ "shrimply-pdf",
+ "shrimply-project",
+ "shrimply-resource-pipeline",
+ "shrimply-scene-3d",
+ "shrimply-state",
+ "shrimply-timeline",
+ "shrimply-video",
+ "shrimply-video-modifiers",
+ "uuid",
 ]
 
 [[package]]
-name = "shrimply-timeline-ui"
+name = "shrimply-timeline-gtk"
 version = "0.1.0"
 dependencies = [
  "async-channel",
@@ -6746,7 +6766,6 @@ dependencies = [
  "shrimply-audio",
  "shrimply-core",
  "shrimply-cross-ui-theme",
- "shrimply-cross-ui-tl",
  "shrimply-export-core",
  "shrimply-gtk-components",
  "shrimply-inspector-core",
@@ -6758,11 +6777,12 @@ dependencies = [
  "shrimply-property-transfer",
  "shrimply-resource-pipeline",
  "shrimply-server-client",
- "shrimply-skia-adw-ui",
+ "shrimply-skia-adw-core",
+ "shrimply-skia-gl",
  "shrimply-state",
  "shrimply-support",
  "shrimply-timeline",
- "shrimply-timeline-gtk",
+ "shrimply-timeline-core",
  "shrimply-timeline-snap",
  "shrimply-transcription",
  "shrimply-tts",
@@ -6774,6 +6794,21 @@ dependencies = [
  "skia-safe",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "shrimply-timeline-qt"
+version = "0.1.0"
+dependencies = [
+ "shrimply-timeline",
+ "shrimply-timeline-core",
+]
+
+[[package]]
+name = "shrimply-timeline-snap"
+version = "0.1.0"
+dependencies = [
+ "shrimply-math-core",
 ]
 
 [[package]]

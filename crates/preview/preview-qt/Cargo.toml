@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-skia-gl = { path = "../../ui/skia-gl" }
 glam.workspace = true
 shrimply-audio = { path = "../../audio/audio" }
 shrimply-cross-ui-core = { path = "../../ui/cross-ui-core" }
@@ -17,9 +18,9 @@ shrimply-paint-edit = { path = "../../paint/paint-edit" }
 shrimply-preview-core = { path = "../preview-core" }
 shrimply-preview-runtime = { path = "../preview-runtime" }
 shrimply-project = { path = "../../project/project" }
-shrimply-skia-adw-ui = { path = "../../ui/skia-adw-ui" }
+shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
 shrimply-state = { path = "../../state" }
-shrimply-timeline-ui = { path = "../../timeline/timeline-ui" }
+shrimply-timeline-gtk = { path = "../../timeline/timeline-gtk" }
 shrimply-video = { path = "../../video/rendering" }
 skia-safe.workspace = true
 tracing.workspace = true

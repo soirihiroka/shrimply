@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-skia-gl = { path = "../skia-gl" }
 async-channel.workspace = true
 hashbrown.workspace = true
 adw.workspace = true
@@ -19,11 +20,11 @@ shrimply-resource-pipeline = { path = "../../resource-pipeline" }
 shrimply-math-color = { path = "../../math/color", features = ["gdk", "skia"] }
 shrimply-math-core = { path = "../../math/core" }
 shrimply-math-geometry = { path = "../../math/geometry", features = ["skia"] }
-shrimply-skia-adw-ui = { path = "../skia-adw-ui" }
+shrimply-skia-adw-core = { path = "../skia-adw-core" }
 shrimply-wayland-pointer-lock = { path = "../wayland-pointer-lock" }
 shrimply-i18n-gtk = { path = "../i18n-gtk" }
 shrimply-interpolation = { path = "../../interpolation" }
-shrimply-keyframe-graph-ui = { path = "../../timeline/keyframe-graph-ui" }
+shrimply-keyframe-graph-core = { path = "../../timeline/keyframe-graph-core" }
 skia-safe = { workspace = true, features = ["gl", "vulkan", "textlayout"] }
 sourceview5.workspace = true
 strum.workspace = true

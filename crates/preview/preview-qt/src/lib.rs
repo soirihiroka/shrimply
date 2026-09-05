@@ -4,7 +4,7 @@ mod system_cursor;
 
 pub use preview::ToolkitPreview;
 
-use shrimply_audio::AudioPlayer;
+use shrimply_audio::{AudioPlayer, SharedAudioLevels};
 use shrimply_playback_performance as playback_performance;
 use shrimply_preview_core::PreviewViewport;
 use shrimply_preview_runtime::captions::{CaptionAppearance, draw_captions};
@@ -13,7 +13,9 @@ use shrimply_preview_runtime::preferences::store as preferences_store;
 use shrimply_preview_runtime::renderer::{Appearance, VideoRenderer};
 use shrimply_preview_runtime::{PreviewMedia, StepDirection, rendered_frame_rate_label};
 use shrimply_project::project::{Project, Time};
-use shrimply_skia_adw_ui::canvas::{Rect, vec2};
+use shrimply_skia_adw_core::canvas::UVec2;
+use shrimply_skia_adw_core::canvas::{Rect, vec2};
+use shrimply_skia_gl::GlAudioMeter;
 use shrimply_state::player_state::{self, SharedPlayerState};
 use shrimply_video::compositor::{CompositeAccuracy, VideoCommand, VideoCommandSender, VideoEvent};
 use shrimply_video::gpu::CompositedVideoFrame;
@@ -22,12 +24,10 @@ use std::rc::Rc;
 
 use shrimply_cross_ui_core::editor::EditorSession;
 use shrimply_math_color::Color;
+use shrimply_timeline_gtk::{RenderedVideoFrame, ToolkitPointerButton, ToolkitTimeline};
 use shrimply_timeline_qt::{
     ContextMenuControl, ContextMenuRequest, CursorTool, DragCollisionMode,
     TIMELINE_CLIPBOARD_MARKER,
-};
-use shrimply_timeline_ui::{
-    RenderedVideoFrame, ToolkitAudioMeter, ToolkitPointerButton, ToolkitTimeline,
 };
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -46,7 +46,8 @@ struct Surfaces {
     context_delete_clip_count: usize,
     context_action_error: String,
     preview: ToolkitPreview,
-    audio_meter: ToolkitAudioMeter,
+    audio_meter: GlAudioMeter,
+    audio_levels: SharedAudioLevels,
 }
 
 thread_local! {
@@ -71,7 +72,7 @@ pub fn install(session: &EditorSession) -> Result<(), String> {
         session.preferences.clone(),
         session.audio_player.clone(),
     )?;
-    let audio_meter = ToolkitAudioMeter::new(session.audio_levels.clone());
+    let audio_meter = GlAudioMeter::default();
     SURFACES.with_borrow_mut(|surfaces| {
         assert!(
             surfaces.is_none(),
@@ -92,6 +93,7 @@ pub fn install(session: &EditorSession) -> Result<(), String> {
             context_action_error: String::new(),
             preview,
             audio_meter,
+            audio_levels: session.audio_levels.clone(),
         });
     });
     tracing::info!(thread = ?std::thread::current().id(), "installed Qt GPU surfaces");
@@ -401,7 +403,11 @@ pub extern "C" fn shrimply_qt_render_audio_meter(
             return missing("audio meter");
         };
         render(
-            surfaces.audio_meter.render(width, height, scale),
+            surfaces.audio_meter.render(
+                surfaces.audio_levels.take_peaks(),
+                UVec2::new(width, height),
+                scale,
+            ),
             "audio meter",
         )
     })

@@ -8,7 +8,11 @@ name = "shrimply-editor-appkit"
 path = "src/main.rs"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
+shrimply-skia-metal = { path = "../../ui/skia-metal" }
+shrimply-cross-ui-theme = { path = "../../ui/cross-ui-theme" }
 shrimply-component-core = { path = "../../ui/component-core" }
+skia-safe.workspace = true
 objc2.workspace = true
 objc2-app-kit.workspace = true
 objc2-foundation.workspace = true

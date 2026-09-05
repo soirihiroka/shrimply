@@ -19,7 +19,7 @@ shrimply-3dgs = { path = "../../3d/3dgs" }
 shrimply-core = { path = "../../core" }
 shrimply-evaluation = { path = "../../evaluation" }
 shrimply-i18n-core = { path = "../i18n-core" }
-shrimply-keyframe-graph-ui = { path = "../../timeline/keyframe-graph-ui" }
+shrimply-keyframe-graph-core = { path = "../../timeline/keyframe-graph-core" }
 shrimply-manim-parser = { path = "../../manim/manim-parser" }
 shrimply-math-core = { path = "../../math/core" }
 shrimply-media-info = { path = "../../media-info" }

@@ -11,5 +11,5 @@ shrimply-component-core = { path = "../component-core" }
 shrimply-components-demo-core = { path = "../components-demo-core" }
 shrimply-cross-ui-theme = { path = "../cross-ui-theme" }
 shrimply-gtk-components = { path = "../gtk-components" }
-shrimply-keyframe-graph-ui = { path = "../../timeline/keyframe-graph-ui" }
+shrimply-keyframe-graph-core = { path = "../../timeline/keyframe-graph-core" }
 shrimply-math-color = { path = "../../math/color" }

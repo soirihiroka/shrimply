@@ -20,7 +20,7 @@ shrimply-3dgs = { path = "../../3d/3dgs" }
 shrimply-core = { path = "../../core" }
 shrimply-component-core = { path = "../component-core" }
 shrimply-evaluation = { path = "../../evaluation" }
-shrimply-discrete-keyframe-graph-ui = { path = "../../timeline/discrete-keyframe-graph-ui" }
+shrimply-discrete-keyframe-graph-core = { path = "../../timeline/discrete-keyframe-graph-core" }
 shrimply-interpolation = { path = "../../interpolation" }
 shrimply-inspector-core = { path = "../inspector-core" }
 shrimply-media-info = { path = "../../media-info" }
@@ -47,7 +47,7 @@ shrimply-cross-ui-theme = { path = "../cross-ui-theme" }
 shrimply-math-geometry = { path = "../../math/geometry" }
 shrimply-math-core = { path = "../../math/core" }
 skia-safe = { workspace = true, features = ["gl", "textlayout"] }
-shrimply-skia-adw-ui = { path = "../skia-adw-ui" }
+shrimply-skia-adw-core = { path = "../skia-adw-core" }
 sourceview5.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }

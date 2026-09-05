@@ -9,7 +9,7 @@ cxx-qt.workspace = true
 cxx-qt-lib = { workspace = true, features = ["qt_full"] }
 shrimply-benchmarking = { path = "../../benchmarking" }
 shrimply-components-demo-core = { path = "../components-demo-core" }
-shrimply-keyframe-graph-ui = { path = "../../timeline/keyframe-graph-ui" }
+shrimply-keyframe-graph-core = { path = "../../timeline/keyframe-graph-core" }
 shrimply-math-core = { path = "../../math/core" }
 shrimply-qt-components = { path = "../qt-components" }
 shrimply-qt-helpers = { path = "../qt-helpers" }

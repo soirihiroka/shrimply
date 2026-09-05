@@ -97,19 +97,19 @@ pub fn generate_module(
     output
 }
 
-pub fn generate_cuda_abi(reflection: &Value, abi_reflection: &[u8]) -> String {
+pub fn generate_abi(reflection: &Value, abi_reflection: &[u8]) -> String {
     let entry_points = reflection
         .get("entryPoints")
         .and_then(Value::as_array)
         .expect("Slang reflection has no entryPoints array");
     let abi = parse_abi(abi_reflection);
-    let mut output = String::from("// @generated from Slang CUDA reflection.\n");
+    let mut output = String::from("// @generated from Slang host reflection.\n");
     generate_enums(&abi.enums, &abi.rust_types, true, &mut output);
     let mut generated_structs = HashSet::new();
     for entry_point in entry_points {
         for parameter in required(entry_point, "parameters")
             .as_array()
-            .expect("Slang CUDA entry point parameters must be an array")
+            .expect("Slang entry point parameters must be an array")
         {
             let ty = required(parameter, "type");
             if required_string(ty, "kind") != "struct" {
@@ -282,7 +282,7 @@ fn generate_enums(
         output.push_str("    }\n");
         if device_copy {
             output.push_str(&format!(
-                "    unsafe impl shrimply_cuda::DeviceCopy for {name} {{}}\n"
+                "    #[cfg(all(feature = \"cuda\", target_os = \"linux\"))]\n    unsafe impl shrimply_cuda::DeviceCopy for {name} {{}}\n"
             ));
         }
     }
@@ -426,7 +426,7 @@ fn generate_struct(
     output.push_str("    }\n");
     if device_copy {
         output.push_str(&format!(
-            "    unsafe impl shrimply_cuda::DeviceCopy for {name} {{}}\n"
+            "    #[cfg(all(feature = \"cuda\", target_os = \"linux\"))]\n    unsafe impl shrimply_cuda::DeviceCopy for {name} {{}}\n"
         ));
     }
     output.push_str(&format!(

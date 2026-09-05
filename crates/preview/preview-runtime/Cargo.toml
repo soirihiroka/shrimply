@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-skia-gl = { path = "../../ui/skia-gl" }
 shrimply-cuda.workspace = true
 glam.workspace = true
 glow.workspace = true
@@ -18,7 +19,7 @@ shrimply-math-core = { path = "../../math/core" }
 shrimply-playback-performance = { path = "../playback-performance" }
 shrimply-project = { path = "../../project/project" }
 shrimply-preview-core = { path = "../preview-core" }
-shrimply-skia-adw-ui = { path = "../../ui/skia-adw-ui" }
+shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
 shrimply-state = { path = "../../state" }
 shrimply-video = { path = "../../video/rendering" }
 skia-safe = { workspace = true, features = ["textlayout"] }

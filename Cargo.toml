@@ -60,6 +60,7 @@ members = [
     "crates/layered-image/kra-parser",
     "crates/layered-image/psd-parser",
     "crates/render-core",
+    "crates/render-cuda",
     "crates/resource-pipeline",
     "crates/server-client",
     "crates/slang-build",
@@ -69,14 +70,13 @@ members = [
     "crates/state",
     "crates/support",
     "crates/timeline/timeline",
-    "crates/timeline/cross-ui-tl",
+    "crates/timeline/timeline-core",
     "crates/timeline/timeline-gtk",
     "crates/timeline/timeline-qt",
     "crates/timeline/timeline-snap",
-    "crates/timeline/timeline-ui",
     "crates/timeline/timeline-value",
-    "crates/timeline/keyframe-graph-ui",
-    "crates/timeline/discrete-keyframe-graph-ui",
+    "crates/timeline/keyframe-graph-core",
+    "crates/timeline/discrete-keyframe-graph-core",
     "crates/ui/inspector-core",
     "crates/ui/inspector-gtk",
     "crates/ui/inspector-qt",
@@ -90,7 +90,9 @@ members = [
     "crates/ui/qt-helpers",
     "crates/ui/qt-components",
     "crates/ui/qt-components-demo",
-    "crates/ui/skia-adw-ui",
+    "crates/ui/skia-adw-core",
+    "crates/ui/skia-metal",
+    "crates/ui/skia-gl",
     "crates/ui/gtk-components",
     "crates/ui/gtk-components-demo",
     "crates/ui/wayland-pointer-lock",
@@ -171,6 +173,8 @@ objc2 = "0.6.2"
 block2 = "0.6.2"
 objc2-app-kit = "0.3.2"
 objc2-foundation = "0.3.2"
+objc2-metal = "0.3.2"
+objc2-quartz-core = "0.3.2"
 oklab = "1"
 opencv = { version = "0.100", default-features = false, features = ["calib3d", "clang-runtime", "imgproc", "video", "videoio"] }
 pango = "0.22"

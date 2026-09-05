@@ -12,7 +12,12 @@ num-traits.workspace = true
 serde = { workspace = true, features = ["derive"] }
 shrimply-math-color = { path = "../math/color" }
 shrimply-math-geometry = { path = "../math/geometry" }
-shrimply-cuda.workspace = true
+
+[features]
+cuda = ["dep:shrimply-cuda"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+shrimply-cuda = { workspace = true, optional = true }
 
 [build-dependencies]
 serde_json.workspace = true

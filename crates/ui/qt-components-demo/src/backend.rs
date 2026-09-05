@@ -109,10 +109,10 @@ impl qobject::DemoLogic {
 fn raw_graph(
     value: f64,
 ) -> (
-    Vec<shrimply_keyframe_graph_ui::KeyframePoint>,
-    Vec<shrimply_keyframe_graph_ui::RawSegment>,
+    Vec<shrimply_keyframe_graph_core::KeyframePoint>,
+    Vec<shrimply_keyframe_graph_core::RawSegment>,
 ) {
-    let shrimply_keyframe_graph_ui::KeyframeGraph::RawValue {
+    let shrimply_keyframe_graph_core::KeyframeGraph::RawValue {
         points, segments, ..
     } = shrimply_components_demo_core::property_graph(value)
     else {

@@ -1,242 +1,121 @@
 use std::{
-    env, fs,
-    fs::OpenOptions,
-    io::{BufRead, BufReader, Write},
+    ffi::{CString, c_char, c_int},
+    fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    thread,
 };
 
-const CONFIGURATION: &str = "Release";
-const EXTENSION: &str = "slang";
-const GLSLANG_PREFIX: &str = "libslang-glslang-";
-
-pub struct Artifacts {
-    pub spirv_filename: String,
-    pub reflection: Vec<u8>,
-    pub abi: Vec<u8>,
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub enum Target {
+    Spirv,
+    Cuda,
+    Metal,
+    Host,
 }
 
-pub struct CudaReflection {
+#[repr(C)]
+struct CompileRequest {
+    directory: *const c_char,
+    module: *const c_char,
+    target: Target,
+    code_path: *const c_char,
+    reflection_path: *const c_char,
+    abi_path: *const c_char,
+    entries: *const *const c_char,
+    entry_count: usize,
+}
+
+unsafe extern "C" {
+    fn shrimply_slang_compile(request: *const CompileRequest) -> c_int;
+}
+
+pub struct Artifacts {
+    pub filename: String,
     pub reflection: Vec<u8>,
     pub abi: Vec<u8>,
 }
 
 pub struct Compiler {
-    executable: PathBuf,
-    reflector: PathBuf,
+    directory: PathBuf,
+    output: PathBuf,
 }
 
 impl Compiler {
-    pub fn new(manifest: &Path, output: &Path) -> Self {
-        let source = env::var_os("SLANG_SOURCE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| manifest.join("../..").join("external/slang"));
-        let build = env::var_os("SLANG_BUILD_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| source.join("build"));
-        let executable = build.join(CONFIGURATION).join("bin").join("slangc");
-
-        assert!(
-            source.join("CMakeLists.txt").is_file(),
-            "Slang source checkout not found at {}; set SLANG_SOURCE_DIR",
-            source.display()
-        );
-        fs::create_dir_all(&build)
-            .unwrap_or_else(|error| panic!("create Slang build directory: {error}"));
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(build.join("shrimply.lock"))
-            .unwrap_or_else(|error| panic!("open Slang build lock: {error}"));
-        lock.lock()
-            .unwrap_or_else(|error| panic!("lock Slang build: {error}"));
-        if !executable.is_file() || !has_glslang(&build) {
-            configure(&source, &build);
-            run(
-                Command::new("cmake").arg("--build").arg(&build).args([
-                    "--config",
-                    CONFIGURATION,
-                    "--target",
-                    "slangc",
-                    "slang-glslang",
-                ]),
-                "build Slang compiler and SPIR-V optimizer",
-            );
-        }
-        drop(lock);
-        println!("cargo:rerun-if-changed={}", executable.display());
-        println!(
-            "cargo:rerun-if-changed={}",
-            build
-                .join(CONFIGURATION)
-                .join("lib/libslang-compiler.so.0.0.0.0")
-                .display()
-        );
-        let reflector = output.join("slang-reflect");
-        build_reflector(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("reflect.cpp"),
-            &source,
-            &build,
-            &reflector,
-        );
+    pub fn new(directory: &Path, output: &Path) -> Self {
+        println!("cargo:rerun-if-changed={}", directory.display());
         Self {
-            executable,
-            reflector,
+            directory: directory.to_owned(),
+            output: output.to_owned(),
         }
     }
 
-    pub fn compile(&self, directory: &Path, source: &Path, output: &Path) -> Artifacts {
+    pub fn compile(&self, source: &Path, target: Target, entries: &[&str]) -> Artifacts {
         let module = source
             .file_stem()
             .and_then(|name| name.to_str())
             .expect("Slang module filename must be UTF-8");
-        let spirv_filename = format!("{module}.spv");
-        let spirv = output.join(&spirv_filename);
-        let reflection = output.join(format!("{module}.reflection.json"));
-        let abi = output.join(format!("{module}.abi"));
-        run(
-            Command::new(&self.executable)
-                .arg(source)
-                .arg("-I")
-                .arg(directory)
-                .arg("-I")
-                .arg(directory.join("modules"))
-                .args([
-                    "-target",
-                    "spirv",
-                    "-profile",
-                    "glsl_460+spirv_1_5",
-                    "-capability",
-                    "spvGroupNonUniform+spvGroupNonUniformBallot",
-                    "-matrix-layout-column-major",
-                    "-emit-spirv-directly",
-                    "-O2",
-                    "-reflection-json",
-                ])
-                .arg(&reflection)
-                .arg("-o")
-                .arg(&spirv),
-            &format!("compile Slang module `{module}` and reflect its bindings"),
-        );
-        run(
-            Command::new(&self.reflector)
-                .arg(directory)
-                .arg(module)
-                .arg(&abi),
-            &format!("reflect Slang ABI declarations in module `{module}`"),
+        let extension = match target {
+            Target::Spirv => "spv",
+            Target::Cuda => "cu",
+            Target::Metal => "metal",
+            Target::Host => "cpp",
+        };
+        let filename = format!("{module}.{extension}");
+        let code = self.output.join(&filename);
+        let reflection = self
+            .output
+            .join(format!("{module}.{extension}.reflection.json"));
+        let abi = self.output.join(format!("{module}.{extension}.abi"));
+        let strings = [
+            self.directory.as_path(),
+            Path::new(module),
+            &code,
+            &reflection,
+            &abi,
+        ]
+        .map(|path| {
+            CString::new(path.as_os_str().as_encoded_bytes()).expect("Slang path contains NUL")
+        });
+        let [directory, module_name, code_path, reflection_path, abi_path] = &strings;
+        let entries: Vec<_> = entries
+            .iter()
+            .map(|entry| CString::new(*entry).expect("entry point contains NUL"))
+            .collect();
+        let entry_pointers: Vec<_> = entries.iter().map(|entry| entry.as_ptr()).collect();
+        let request = CompileRequest {
+            directory: directory.as_ptr(),
+            module: module_name.as_ptr(),
+            target,
+            code_path: code_path.as_ptr(),
+            reflection_path: reflection_path.as_ptr(),
+            abi_path: abi_path.as_ptr(),
+            entries: entry_pointers.as_ptr(),
+            entry_count: entry_pointers.len(),
+        };
+        // The synchronous C++ API call borrows only the strings owned above.
+        let result = unsafe { shrimply_slang_compile(&request) };
+        assert_eq!(
+            result, 0,
+            "compile Slang module {module} for {target:?}; see compiler diagnostics"
         );
         Artifacts {
-            spirv_filename,
+            filename,
             reflection: fs::read(&reflection)
                 .unwrap_or_else(|error| panic!("read Slang reflection for {module}: {error}")),
             abi: fs::read(&abi)
                 .unwrap_or_else(|error| panic!("read Slang ABI for {module}: {error}")),
         }
     }
-
-    pub fn reflect_cuda(
-        &self,
-        directory: &Path,
-        source: &Path,
-        output: &Path,
-        entry_point: &str,
-    ) -> CudaReflection {
-        let module = source
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .expect("Slang module filename must be UTF-8");
-        let cuda = output.join(format!("{module}.cu"));
-        let reflection = output.join(format!("{module}.cuda-reflection.json"));
-        let abi = output.join(format!("{module}.cuda-abi"));
-        run(
-            Command::new(&self.executable)
-                .arg(source)
-                .arg("-I")
-                .arg(directory)
-                .arg("-I")
-                .arg(directory.join("modules"))
-                .args([
-                    "-target",
-                    "cuda",
-                    "-capability",
-                    "cuda_sm_8_0",
-                    "-stage",
-                    "compute",
-                    "-entry",
-                    entry_point,
-                    "-fp-mode",
-                    "precise",
-                    "-O2",
-                    "-reflection-json",
-                ])
-                .arg(&reflection)
-                .arg("-o")
-                .arg(&cuda),
-            &format!("reflect Slang CUDA module `{module}`"),
-        );
-        run(
-            Command::new(&self.reflector)
-                .arg(directory)
-                .arg(module)
-                .arg(&abi)
-                .arg("cuda"),
-            &format!("reflect Slang CUDA ABI declarations in module `{module}`"),
-        );
-        CudaReflection {
-            reflection: fs::read(&reflection)
-                .unwrap_or_else(|error| panic!("read Slang CUDA reflection for {module}: {error}")),
-            abi: fs::read(&abi)
-                .unwrap_or_else(|error| panic!("read Slang CUDA ABI for {module}: {error}")),
-        }
-    }
-}
-
-fn build_reflector(source: &Path, slang: &Path, build: &Path, output: &Path) {
-    let header = slang.join("include/slang.h");
-    if is_current(output, &[source, &header]) {
-        return;
-    }
-    let library = build.join(CONFIGURATION).join("lib");
-    let compiler = env::var_os("CXX").unwrap_or_else(|| "c++".into());
-    run(
-        Command::new(compiler)
-            .args(["-std=c++17", "-O2"])
-            .arg(source)
-            .arg("-I")
-            .arg(slang.join("include"))
-            .arg("-L")
-            .arg(&library)
-            .arg(format!("-Wl,-rpath,{}", library.display()))
-            .arg("-lslang")
-            .arg("-o")
-            .arg(output),
-        "build Slang ABI reflector",
-    );
-}
-
-fn is_current(output: &Path, inputs: &[&Path]) -> bool {
-    let Ok(output_modified) = output.metadata().and_then(|metadata| metadata.modified()) else {
-        return false;
-    };
-    inputs.iter().all(|input| {
-        input
-            .metadata()
-            .and_then(|metadata| metadata.modified())
-            .is_ok_and(|modified| modified <= output_modified)
-    })
 }
 
 pub fn shader_sources(directory: &Path) -> Vec<PathBuf> {
     let mut sources: Vec<_> = directory
         .read_dir()
         .unwrap_or_else(|error| panic!("read shader directory {}: {error}", directory.display()))
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
+        .map(|entry| entry.expect("read shader directory entry").path())
         .filter(|path| {
             path.extension()
-                .is_some_and(|extension| extension == EXTENSION)
+                .is_some_and(|extension| extension == "slang")
         })
         .collect();
     sources.sort();
@@ -246,86 +125,4 @@ pub fn shader_sources(directory: &Path) -> Vec<PathBuf> {
         directory.display()
     );
     sources
-}
-
-fn configure(source: &Path, build: &Path) {
-    run(
-        Command::new("cmake")
-            .arg("-S")
-            .arg(source)
-            .arg("-B")
-            .arg(build)
-            .args([
-                "-G",
-                "Ninja Multi-Config",
-                "-DSLANG_ENABLE_SLANGC=ON",
-                "-DSLANG_ENABLE_SLANG_RHI=OFF",
-                "-DSLANG_ENABLE_GFX=OFF",
-                "-DSLANG_ENABLE_TESTS=OFF",
-                "-DSLANG_ENABLE_EXAMPLES=OFF",
-                "-DSLANG_ENABLE_SLANGD=OFF",
-                "-DSLANG_ENABLE_SLANGI=OFF",
-                "-DSLANG_ENABLE_SLANGRT=OFF",
-                "-DSLANG_ENABLE_SPLIT_DEBUG_INFO=OFF",
-                "-DSLANG_ENABLE_SLANG_GLSLANG=ON",
-                "-DSLANG_ENABLE_REPLAYER=OFF",
-                "-DSLANG_SLANG_LLVM_FLAVOR=DISABLE",
-                "-DSLANG_ENABLE_DXIL=OFF",
-            ]),
-        "configure Slang compiler",
-    );
-}
-
-fn has_glslang(build: &Path) -> bool {
-    build
-        .join(CONFIGURATION)
-        .join("lib")
-        .read_dir()
-        .is_ok_and(|entries| {
-            entries.filter_map(Result::ok).any(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(GLSLANG_PREFIX)
-            })
-        })
-}
-
-fn run(command: &mut Command, action: &str) {
-    if let Ok(mut terminal) = OpenOptions::new().write(true).open("/dev/tty") {
-        writeln!(terminal, "[slang] {action}").expect("write build progress");
-        let stderr = terminal.try_clone().expect("clone build terminal");
-        let status = command
-            .stdout(Stdio::from(terminal))
-            .stderr(Stdio::from(stderr))
-            .status()
-            .unwrap_or_else(|error| panic!("failed to {action}: {error}"));
-        assert!(status.success(), "failed to {action}: {status}");
-        return;
-    }
-
-    println!("[shrimply] {action}");
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|error| panic!("failed to {action}: {error}"));
-    let stdout = child.stdout.take().expect("capture command stdout");
-    let stderr = child.stderr.take().expect("capture command stderr");
-    let stdout = thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            println!("{}", line.expect("read command stdout"));
-        }
-    });
-    let stderr = thread::spawn(move || {
-        for line in BufReader::new(stderr).lines() {
-            eprintln!("{}", line.expect("read command stderr"));
-        }
-    });
-    let status = child
-        .wait()
-        .unwrap_or_else(|error| panic!("failed to wait while trying to {action}: {error}"));
-    stdout.join().expect("relay command stdout");
-    stderr.join().expect("relay command stderr");
-    assert!(status.success(), "failed to {action}: {status}");
 }

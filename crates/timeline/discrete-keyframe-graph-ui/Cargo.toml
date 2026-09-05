@@ -1,9 +1,0 @@
-[package]
-name = "shrimply-discrete-keyframe-graph-ui"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-shrimply-math-core = { path = "../../math/core" }
-shrimply-math-color = { path = "../../math/color" }
-shrimply-skia-adw-ui = { path = "../../ui/skia-adw-ui" }

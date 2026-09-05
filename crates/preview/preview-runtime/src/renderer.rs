@@ -5,8 +5,9 @@ use shrimply_math_color::Color;
 use crate::cuda_gl::CudaTexture;
 use crate::gl_loader;
 use crate::preferences::store::{PreviewDownsampleMethod, PreviewUpsampleMethod};
-use crate::timeline::renderer::{Rect, TimelinePainter, TimelineRenderer};
+use crate::timeline::renderer::{Rect, TimelinePainter};
 use crate::video::gpu::{CompositedFrameStorageKey, CompositedVideoFrame};
+use shrimply_skia_gl::TimelineRenderer;
 
 #[derive(Clone, Copy)]
 pub struct Appearance {

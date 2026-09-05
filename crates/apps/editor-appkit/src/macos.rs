@@ -1,4 +1,5 @@
 mod about;
+mod audio_meter;
 mod layout;
 mod menus;
 mod timeline;

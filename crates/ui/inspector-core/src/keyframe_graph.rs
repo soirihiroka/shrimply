@@ -1,6 +1,6 @@
 use shrimply_project::project::{ItemAddress, Time};
 
-pub use shrimply_keyframe_graph_ui::*;
+pub use shrimply_keyframe_graph_core::*;
 
 use crate::section::{ControlKind, InspectorControl, InspectorSection, NumberMapping};
 use crate::{InspectorController, InspectorTarget};

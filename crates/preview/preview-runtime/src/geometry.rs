@@ -1,7 +1,7 @@
 use glam::{IVec2, vec2};
 use shrimply_preview_core::PreviewViewport;
 use shrimply_project::project::CanvasSize;
-use shrimply_skia_adw_ui::Rect;
+use shrimply_skia_adw_core::Rect;
 
 pub fn video_content_rect(surface: IVec2, canvas: CanvasSize, padding_px: u32) -> Rect {
     let surface_width = surface.x.max(1) as f32;

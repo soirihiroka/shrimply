@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-shrimply-cross-ui-tl = { path = "../cross-ui-tl" }
+shrimply-timeline-core = { path = "../timeline-core" }
 shrimply-timeline = { path = "../timeline" }

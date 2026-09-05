@@ -8,4 +8,4 @@ hashbrown.workspace = true
 shrimply-cuda.workspace = true
 glam.workspace = true
 shrimply-gpu-memory = { path = "../gpu-memory" }
-shrimply-render-core = { path = "../../render-core" }
+shrimply-render-core = { path = "../../render-core", features = ["cuda"] }

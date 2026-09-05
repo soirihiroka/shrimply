@@ -1,20 +1,15 @@
-use super::layout::{
-    BUTTON_SIZE, GAP, TOOLBAR_WIDTH, button, placeholder, split_item, stack, surface,
-};
+use super::layout::{BUTTON_SIZE, TOOLBAR_WIDTH, button, placeholder, split_item, stack, surface};
 use objc2::MainThreadOnly;
 use objc2::rc::Retained;
 use objc2_app_kit::{
-    NSBox, NSBoxType, NSColor, NSFont, NSSplitViewController, NSSplitViewDividerStyle,
-    NSStackViewDistribution, NSTextField, NSView,
+    NSBox, NSBoxType, NSColor, NSSplitViewController, NSSplitViewDividerStyle, NSView,
 };
-use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSRect, NSString};
+use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSRect};
 
 // Match the GTK timeline's tool rail, track labels, ruler, and audio-meter widths.
 const TRACK_HEADER_WIDTH: f64 = 158.0;
 const RULER_HEIGHT: f64 = 44.0;
-const AUDIO_METER_WIDTH: f64 = 54.0;
-const METER_CHANNEL_WIDTH: f64 = 6.0;
-const METER_FONT_SIZE: f64 = 8.0;
+const AUDIO_METER_WIDTH: f64 = shrimply_skia_adw_core::audio_meter::DEFAULT_WIDTH as f64;
 const DIVIDER_WIDTH: f64 = 1.0;
 const TOOL_GAP: f64 = 4.0;
 const TIMELINE_MIN_WIDTH: f64 = 480.0;
@@ -82,35 +77,7 @@ pub fn build(mtm: MainThreadMarker) -> Retained<NSSplitViewController> {
     timeline.addArrangedSubview(&headers);
     timeline.addArrangedSubview(&tracks);
 
-    // Empty stereo meter: no simulated audio levels in the layout placeholder.
-    let meter = stack(false, mtm);
-    meter.setSpacing(DIVIDER_WIDTH);
-    meter.setEdgeInsets(NSEdgeInsets {
-        top: GAP,
-        left: GAP,
-        bottom: GAP,
-        right: GAP,
-    });
-    for _ in 0..2 {
-        let channel = surface(mtm);
-        channel.setFillColor(&NSColor::separatorColor());
-        channel
-            .widthAnchor()
-            .constraintEqualToConstant(METER_CHANNEL_WIDTH)
-            .setActive(true);
-        meter.addArrangedSubview(&channel);
-    }
-    let scale = stack(true, mtm);
-    scale.setDistribution(NSStackViewDistribution::EqualSpacing);
-    for level in [
-        "0", "−6", "−12", "−18", "−24", "−30", "−36", "−42", "−48", "−54", "−60",
-    ] {
-        let label = NSTextField::labelWithString(&NSString::from_str(level), mtm);
-        label.setFont(Some(&NSFont::systemFontOfSize(METER_FONT_SIZE)));
-        label.setTextColor(Some(&NSColor::secondaryLabelColor()));
-        scale.addArrangedSubview(&label);
-    }
-    meter.addArrangedSubview(&scale);
+    let meter = super::audio_meter::new(mtm);
     let meter = split_item(&meter, mtm);
     meter.setMinimumThickness(AUDIO_METER_WIDTH);
     meter.setMaximumThickness(AUDIO_METER_WIDTH + BUTTON_SIZE);

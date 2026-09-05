@@ -225,12 +225,12 @@ struct FontBrowserState {
     on_change: Rc<dyn Fn(FontFamily)>,
     scroll: Rc<Cell<f32>>,
     pointer: Rc<Cell<Option<Vec2>>>,
-    scrollbar: Rc<RefCell<shrimply_skia_adw_ui::slider::Lifecycle>>,
+    scrollbar: Rc<RefCell<shrimply_skia_adw_core::slider::Lifecycle>>,
     scrollbar_drag_y: Rc<Cell<Option<f64>>>,
     hovered: Rc<Cell<Option<usize>>>,
     pressed: Rc<Cell<Option<usize>>>,
-    buttons: Rc<RefCell<Vec<shrimply_skia_adw_ui::button::Button>>>,
-    font_loader: Rc<RefCell<shrimply_skia_adw_ui::font_grid::FontLoader<TypefaceKey>>>,
+    buttons: Rc<RefCell<Vec<shrimply_skia_adw_core::button::Button>>>,
+    font_loader: Rc<RefCell<shrimply_skia_adw_core::font_grid::FontLoader<TypefaceKey>>>,
     remote_families: Arc<Mutex<HashMap<String, GoogleFamily>>>,
     needs_animation: Rc<Cell<bool>>,
     started_at: Instant,
@@ -297,14 +297,14 @@ fn show_font_dialog(
         scroll: Rc::new(Cell::new(0.0)),
         pointer: Rc::new(Cell::new(None)),
         scrollbar: Rc::new(RefCell::new(
-            shrimply_skia_adw_ui::slider::Lifecycle::default(),
+            shrimply_skia_adw_core::slider::Lifecycle::default(),
         )),
         scrollbar_drag_y: Rc::new(Cell::new(None)),
         hovered: Rc::new(Cell::new(None)),
         pressed: Rc::new(Cell::new(None)),
         buttons: Rc::new(RefCell::new(Vec::new())),
         font_loader: Rc::new(RefCell::new(
-            shrimply_skia_adw_ui::font_grid::FontLoader::new(
+            shrimply_skia_adw_core::font_grid::FontLoader::new(
                 worker_count,
                 MAX_TYPEFACE_CACHE_ENTRIES,
                 move |key| load_typeface(key, &loader_remote_families),
@@ -338,7 +338,7 @@ impl FontBrowserState {
         self.hovered.set(None);
         self.pressed.set(None);
         self.buttons.replace(vec![
-            shrimply_skia_adw_ui::button::Button::default();
+            shrimply_skia_adw_core::button::Button::default();
             visible.len()
         ]);
         self.visible_families.replace(visible);
@@ -386,7 +386,7 @@ impl FontBrowserState {
     }
 
     fn update_hover(&self, x: f64, y: f64) {
-        let next = shrimply_skia_adw_ui::font_grid::hit_test(
+        let next = shrimply_skia_adw_core::font_grid::hit_test(
             self.area.width().max(1) as f32,
             self.scroll.get(),
             glam::Vec2::new(x as f32, y as f32),
@@ -398,10 +398,10 @@ impl FontBrowserState {
         }
         let mut buttons = self.buttons.borrow_mut();
         if let Some(index) = previous.and_then(|index| buttons.get_mut(index)) {
-            index.event(shrimply_skia_adw_ui::button::Event::PointerLeft);
+            index.event(shrimply_skia_adw_core::button::Event::PointerLeft);
         }
         if let Some(index) = next.and_then(|index| buttons.get_mut(index)) {
-            index.event(shrimply_skia_adw_ui::button::Event::PointerEntered);
+            index.event(shrimply_skia_adw_core::button::Event::PointerEntered);
         }
         self.area.set_cursor_from_name(next.map(|_| "pointer"));
         self.needs_animation.set(true);
@@ -469,7 +469,7 @@ fn connect_canvas(state: &FontBrowserState) {
             } else {
                 Color::VIEW_FG_LIGHT
             };
-            let maximum_scroll = (shrimply_skia_adw_ui::font_grid::content_height(
+            let maximum_scroll = (shrimply_skia_adw_core::font_grid::content_height(
                 width as f32,
                 state.visible_families.borrow().len(),
             ) - height as f32)
@@ -518,14 +518,14 @@ fn connect_canvas(state: &FontBrowserState) {
                     name.eq_ignore_ascii_case(&family.name)
                         && *google == (family.source == FontSource::Google)
                 });
-                animating |= shrimply_skia_adw_ui::font_grid::draw_specimen(
+                animating |= shrimply_skia_adw_core::font_grid::draw_specimen(
                     painter.canvas(),
-                    shrimply_skia_adw_ui::font_grid::cell_bounds(
+                    shrimply_skia_adw_core::font_grid::cell_bounds(
                         width as f32,
                         state.scroll.get(),
                         index,
                     ),
-                    shrimply_skia_adw_ui::font_grid::Specimen {
+                    shrimply_skia_adw_core::font_grid::Specimen {
                         label: &family.name,
                         label_typeface: label_typeface.as_ref(),
                         typeface: typeface.as_ref(),
@@ -549,7 +549,7 @@ fn connect_canvas(state: &FontBrowserState) {
                 .borrow_mut()
                 .frame(scrollbar, state.pointer.get());
             if let Some(scrollbar) = scrollbar.scrollbar {
-                shrimply_skia_adw_ui::draw_scrollbar(painter.canvas(), scrollbar);
+                shrimply_skia_adw_core::draw_scrollbar(painter.canvas(), scrollbar);
             }
             animating |= scrollbar.animating;
             state.needs_animation.set(animating);
@@ -596,7 +596,7 @@ fn connect_canvas(state: &FontBrowserState) {
             if let Some(index) = state.hovered.take() {
                 let mut buttons = state.buttons.borrow_mut();
                 if let Some(button) = buttons.get_mut(index) {
-                    button.event(shrimply_skia_adw_ui::button::Event::PointerLeft);
+                    button.event(shrimply_skia_adw_core::button::Event::PointerLeft);
                 }
             }
             state.area.set_cursor_from_name(None);
@@ -621,7 +621,7 @@ fn connect_canvas(state: &FontBrowserState) {
                             scroll = value;
                         }
                     ),
-                    shrimply_skia_adw_ui::slider::Begin::Drag
+                    shrimply_skia_adw_core::slider::Begin::Drag
                 ) {
                     state.scroll.set(scroll as f32);
                     state.scrollbar_drag_y.set(Some(y));
@@ -635,7 +635,7 @@ fn connect_canvas(state: &FontBrowserState) {
             if let Some(index) = pressed {
                 let mut buttons = state.buttons.borrow_mut();
                 if let Some(button) = buttons.get_mut(index) {
-                    button.event(shrimply_skia_adw_ui::button::Event::Pressed);
+                    button.event(shrimply_skia_adw_core::button::Event::Pressed);
                 }
             }
             state.needs_animation.set(true);
@@ -680,7 +680,7 @@ fn connect_canvas(state: &FontBrowserState) {
                 .and_then(|index| {
                     state.buttons.borrow_mut().get_mut(index).map(|button| {
                         button
-                            .event(shrimply_skia_adw_ui::button::Event::Released)
+                            .event(shrimply_skia_adw_core::button::Event::Released)
                             .clicked
                     })
                 })
@@ -702,9 +702,9 @@ fn connect_canvas(state: &FontBrowserState) {
                 return glib::Propagation::Proceed;
             };
             let input = if controller.unit() == gtk::gdk::ScrollUnit::Wheel {
-                shrimply_skia_adw_ui::slider::ScrollInput::Wheel
+                shrimply_skia_adw_core::slider::ScrollInput::Wheel
             } else {
-                shrimply_skia_adw_ui::slider::ScrollInput::Surface
+                shrimply_skia_adw_core::slider::ScrollInput::Surface
             };
             let mut value = f64::from(state.scroll.get());
             let event = state.scrollbar.borrow_mut().scroll_at(
@@ -721,7 +721,7 @@ fn connect_canvas(state: &FontBrowserState) {
             if let Some(index) = state.hovered.take() {
                 let mut buttons = state.buttons.borrow_mut();
                 if let Some(button) = buttons.get_mut(index) {
-                    button.event(shrimply_skia_adw_ui::button::Event::PointerLeft);
+                    button.event(shrimply_skia_adw_core::button::Event::PointerLeft);
                 }
             }
             state.area.queue_render();
@@ -768,7 +768,7 @@ fn load_label_typeface() -> Result<Typeface, String> {
         .ok_or_else(|| "no UI typeface is available".to_string())
 }
 
-fn current_font_scrollbar(state: &FontBrowserState) -> Option<shrimply_skia_adw_ui::Scrollbar> {
+fn current_font_scrollbar(state: &FontBrowserState) -> Option<shrimply_skia_adw_core::Scrollbar> {
     let dark = adw::StyleManager::for_display(&state.area.display()).is_dark();
     let (foreground, background) = if dark {
         (Color::VIEW_FG_DARK, Color::VIEW_BG_DARK)
@@ -792,17 +792,17 @@ fn font_scrollbar(
     value: f32,
     color: Color,
     outline_color: Color,
-) -> Option<shrimply_skia_adw_ui::Scrollbar> {
-    let content_length = shrimply_skia_adw_ui::font_grid::content_height(width, item_count);
-    (content_length > height).then_some(shrimply_skia_adw_ui::Scrollbar {
-        axis: shrimply_skia_adw_ui::Axis::Vertical,
-        bounds: shrimply_skia_adw_ui::Rect::from_xywh(0.0, 0.0, width, height),
+) -> Option<shrimply_skia_adw_core::Scrollbar> {
+    let content_length = shrimply_skia_adw_core::font_grid::content_height(width, item_count);
+    (content_length > height).then_some(shrimply_skia_adw_core::Scrollbar {
+        axis: shrimply_skia_adw_core::Axis::Vertical,
+        bounds: shrimply_skia_adw_core::Rect::from_xywh(0.0, 0.0, width, height),
         content_length: f64::from(content_length),
         viewport_length: f64::from(height),
         value: f64::from(value),
         color,
         outline_color,
-        state: shrimply_skia_adw_ui::slider::idle_state(),
+        state: shrimply_skia_adw_core::slider::idle_state(),
     })
 }
 

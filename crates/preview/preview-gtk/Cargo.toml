@@ -22,7 +22,7 @@ shrimply-preview-core = { path = "../preview-core" }
 shrimply-preview-runtime = { path = "../preview-runtime" }
 shrimply-playback-performance = { path = "../playback-performance" }
 shrimply-render-core = { path = "../../render-core" }
-shrimply-skia-adw-ui = { path = "../../ui/skia-adw-ui" }
+shrimply-skia-adw-core = { path = "../../ui/skia-adw-core" }
 shrimply-state = { path = "../../state" }
 shrimply-timeline = { path = "../../timeline/timeline" }
 shrimply-gtk-components = { path = "../../ui/gtk-components" }

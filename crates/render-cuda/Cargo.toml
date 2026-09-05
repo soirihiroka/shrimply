@@ -1,0 +1,7 @@
+[package]
+name = "shrimply-render-cuda"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+shrimply-slang-build = { path = "../slang-build" }

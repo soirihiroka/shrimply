@@ -1,0 +1,13 @@
+[package]
+name = "shrimply-skia-gl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+glow.workspace = true
+shrimply-skia-adw-core = { path = "../skia-adw-core" }
+shrimply-cross-ui-theme = { path = "../cross-ui-theme" }
+skia-safe = { workspace = true, features = ["gl"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true

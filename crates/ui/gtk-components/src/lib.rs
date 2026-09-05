@@ -1,4 +1,9 @@
-pub use shrimply_skia_adw_ui::{canvas, gl_loader, skia_font, skia_system_font};
+pub use shrimply_skia_adw_core::{skia_font, skia_system_font};
+pub use shrimply_skia_gl::gl_loader;
+pub mod canvas {
+    pub use shrimply_skia_adw_core::canvas::*;
+    pub use shrimply_skia_gl::TimelineRenderer;
+}
 pub mod cursor;
 pub mod desktop_open;
 pub mod export_feedback;

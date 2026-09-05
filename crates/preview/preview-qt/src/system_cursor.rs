@@ -1,5 +1,5 @@
-use shrimply_skia_adw_ui::Vec2;
-use shrimply_skia_adw_ui::cursor::SoftwareCursor;
+use shrimply_skia_adw_core::Vec2;
+use shrimply_skia_adw_core::cursor::SoftwareCursor;
 use std::ffi::{CString, c_char, c_int};
 use std::ptr;
 

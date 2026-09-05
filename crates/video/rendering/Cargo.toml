@@ -50,7 +50,7 @@ shrimply-paint-skia = { path = "../../paint/paint-skia" }
 shrimply-pdf = { path = "../../pdf" }
 shrimply-preview-skia = { path = "../../preview/preview-skia" }
 shrimply-project = { path = "../../project/project" }
-shrimply-render-core = { path = "../../render-core" }
+shrimply-render-core = { path = "../../render-core", features = ["cuda"] }
 shrimply-render-3d = { path = "../../3d/render-3d" }
 shrimply-resource-pipeline = { path = "../../resource-pipeline" }
 shrimply-scene-3d = { path = "../../3d/scene-3d" }

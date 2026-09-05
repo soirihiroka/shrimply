@@ -5,14 +5,15 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QPoint, QString, QStringList};
 use shrimply_interpolation::Interpolation;
-use shrimply_keyframe_graph_ui::{
+use shrimply_keyframe_graph_core::{
     FrameGraphAction, FrameGraphComponentAction, FrameGraphComponents, FrameGraphKey,
     FrameGraphKeyMove, FrameGraphModifiers, FrameGraphPointerButton, FrameGraphPointerPosition,
     FrameGraphScrollInput, FrameGraphState, KeyframeGraph, KeyframePoint, RawSegment, SpeedSegment,
 };
 use shrimply_math_color::Color;
 use shrimply_math_core::{Time, fraction_denominator, fraction_numerator};
-use shrimply_skia_adw_ui::canvas::{TimelineRenderer, UVec2};
+use shrimply_skia_adw_core::canvas::UVec2;
+use shrimply_skia_gl::TimelineRenderer;
 use uuid::Uuid;
 
 type SharedGraph = Arc<Mutex<GraphModel>>;

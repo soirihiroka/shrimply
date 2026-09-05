@@ -1,7 +1,7 @@
 use rhai::{Engine, Scope};
 use shrimply_core::modifier_model::ModifierModel;
 use shrimply_interpolation::Interpolation;
-use shrimply_keyframe_graph_ui::{
+use shrimply_keyframe_graph_core::{
     FrameGraphComponents, FrameGraphState, KeyframeGraph, KeyframePoint, RawSegment,
 };
 use shrimply_math_core::Time;

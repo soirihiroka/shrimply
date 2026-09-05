@@ -1,0 +1,10 @@
+[package]
+name = "shrimply-skia-metal"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-metal.workspace = true
+objc2-quartz-core.workspace = true
+skia-safe = { workspace = true, features = ["metal"] }

@@ -1,4 +1,4 @@
-pub use shrimply_cross_ui_tl::{
+pub use shrimply_timeline_core::{
     ContextMenu, ContextMenuAction, ContextMenuControl, ContextMenuEntry, ContextMenuItem,
     ContextMenuRequest, CursorTool, DragCollisionMode, TIMELINE_CLIPBOARD_MARKER, TrackAddAction,
     TrackAddMenuEntry, VideoFrameSelection,
@@ -19,7 +19,7 @@ pub struct TrackAddMenuModel {
 impl TrackAddMenuModel {
     pub fn new(kind: shrimply_timeline::TrackKind) -> Self {
         Self {
-            entries: shrimply_cross_ui_tl::track_add_menu(kind).to_vec(),
+            entries: shrimply_timeline_core::track_add_menu(kind).to_vec(),
         }
     }
 
