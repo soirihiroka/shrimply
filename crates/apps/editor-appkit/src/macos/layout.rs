@@ -14,6 +14,7 @@ use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSPoint, NSRect, NSSize, 
 
 const PREVIEW_LOADING_INDICATOR_SIZE: f64 = 16.0;
 const PLAYBACK_SLIDER_PADDING: f64 = 6.0;
+const SOLID_SELECTION_CORNER_RADIUS: f64 = 7.0;
 
 pub const WINDOW_SIZE: NSSize = NSSize::new(1280.0, 800.0);
 pub const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(960.0, 640.0);
@@ -74,6 +75,45 @@ pub fn button(icon: &str, label: &str, mtm: MainThreadMarker) -> Retained<NSButt
         .constraintEqualToConstant(BUTTON_SIZE)
         .setActive(true);
     button
+}
+
+pub enum ToggleStyle {
+    Solid,
+    Grouped,
+}
+
+pub fn set_toggle_selected(button: &NSButton, selected: bool, style: ToggleStyle) {
+    // Keep native content metrics identical in both states; only the decoration changes.
+    button.setBordered(false);
+    button.setWantsLayer(true);
+    let accent = NSColor::controlAccentColor();
+    let (background, foreground, radius) = match style {
+        ToggleStyle::Solid => (
+            accent.clone(),
+            NSColor::whiteColor(),
+            SOLID_SELECTION_CORNER_RADIUS,
+        ),
+        ToggleStyle::Grouped => (NSColor::clearColor(), accent, 0.0),
+    };
+    let layer = button.layer().expect("layer-backed toggle button");
+    layer.setCornerRadius(radius);
+    let background = if selected {
+        background.CGColor()
+    } else {
+        NSColor::clearColor().CGColor()
+    };
+    layer.setBackgroundColor(Some(&background));
+    let foreground = if selected {
+        foreground
+    } else {
+        NSColor::labelColor()
+    };
+    button.setContentTintColor(Some(&foreground));
+    button.setState(if selected {
+        objc2_app_kit::NSControlStateValueOn
+    } else {
+        objc2_app_kit::NSControlStateValueOff
+    });
 }
 
 fn circular_glass_button(button: &NSButton, mtm: MainThreadMarker) -> Retained<NSGlassEffectView> {

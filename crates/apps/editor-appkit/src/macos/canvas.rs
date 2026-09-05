@@ -334,11 +334,11 @@ impl CanvasView {
             shrimply_timeline_core::TimelineTools::new(self.ivars().session.preferences.clone())
                 .state();
         for (tool, button) in self.ivars().tools.borrow().iter() {
-            button.setState(if tool.selected(state) {
-                objc2_app_kit::NSControlStateValueOn
-            } else {
-                objc2_app_kit::NSControlStateValueOff
-            });
+            super::layout::set_toggle_selected(
+                button,
+                tool.selected(state),
+                super::layout::ToggleStyle::Grouped,
+            );
         }
     }
     fn update_pointer(&self, point: glam::Vec2) {

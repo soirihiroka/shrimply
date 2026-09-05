@@ -1,13 +1,16 @@
 use super::layout::{BUTTON_SIZE, TOOLBAR_WIDTH, button, stack};
 use objc2::rc::Retained;
 use objc2::{MainThreadOnly, sel};
-use objc2_app_kit::{NSBox, NSBoxType, NSStackView, NSView};
+use objc2_app_kit::{
+    NSBox, NSBoxType, NSGlassEffectView, NSGlassEffectViewStyle, NSStackView, NSView,
+};
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSRect};
 
 // Match the GTK timeline's tool rail, track labels, ruler, and audio-meter widths.
 const AUDIO_METER_WIDTH: f64 = shrimply_skia_adw_core::audio_meter::DEFAULT_WIDTH as f64;
 const DIVIDER_WIDTH: f64 = 1.0;
 const TOOL_GAP: f64 = 4.0;
+const TOOL_GROUP_WIDTH: f64 = BUTTON_SIZE + TOOL_GAP * 2.0;
 
 #[derive(Clone, Copy)]
 #[repr(isize)]
@@ -116,6 +119,14 @@ pub fn build(
                 .setActive(true);
             tools.addArrangedSubview(&divider);
         }
+        let buttons = stack(true, mtm);
+        buttons.setSpacing(TOOL_GAP);
+        buttons.setEdgeInsets(NSEdgeInsets {
+            top: TOOL_GAP,
+            left: TOOL_GAP,
+            bottom: TOOL_GAP,
+            right: TOOL_GAP,
+        });
         for (tool, icon, label) in group {
             let button = button(icon, label, mtm);
             button.setEnabled(true);
@@ -126,8 +137,23 @@ pub fn build(
                 button.setAction(Some(sel!(changeTimelineTool:)));
             }
             tracks.register_tool(*tool, button.clone());
-            tools.addArrangedSubview(&button);
+            buttons.addArrangedSubview(&button);
         }
+        let glass = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), NSRect::ZERO);
+        glass.setStyle(NSGlassEffectViewStyle::Regular);
+        glass.setCornerRadius(TOOL_GROUP_WIDTH / 2.0);
+        glass.setContentView(Some(&buttons));
+        glass
+            .widthAnchor()
+            .constraintEqualToConstant(TOOL_GROUP_WIDTH)
+            .setActive(true);
+        glass
+            .heightAnchor()
+            .constraintEqualToConstant(
+                group.len() as f64 * BUTTON_SIZE + (group.len() + 1) as f64 * TOOL_GAP,
+            )
+            .setActive(true);
+        tools.addArrangedSubview(&glass);
     }
     tools.addArrangedSubview(&NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO));
 

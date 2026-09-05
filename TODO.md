@@ -6,10 +6,15 @@ Implementation owner: primary agent. Other agents review and verify only; no imp
 
 ## Current priorities
 
-- [ ] Consolidate toolkit-independent Skia timeline state, rendering, cursor policy, input/edit handling, refresh decisions and job/subscription cleanup in `timeline-core`. GTK, Qt and AppKit adapters provide rendering contexts, native event translation and popup/callback integration. Audit existing GTK workflows before retiring duplicate runtime code.
+- [ ] Connect compositing shape alpha masks on Metal through the existing Slang kernel. Move CUDA's mask evaluation into video-core, preserve final-canvas ordering, and verify rectangle/ellipse/polygon, inversion, feathering and transformed/generated sources on Metal. Modifier-branch and external video masks remain separate follow-ups.
+
+- [x] Keep the three vertical glass timeline groups; show selection only through the system-accent icon color, with no individual selection backgrounds. Preserve actions, separators and rail width. AppKit build/check/Clippy pass (`target/appkit-timeline-glass-check.log`).
+- [x] Keep ruler icon geometry fixed while toggling. Use a stable borderless button with a solid selected background instead of switching AppKit bezel metrics; keep the existing white selected symbol. AppKit build/check/Clippy pass (`target/appkit-timeline-glass-check.log`).
+
+- [x] Consolidate the Skia timeline scene, rendering, selection, drag/resize engine, cursor policy, refresh decisions and media-job/subscription cleanup in `timeline-core`. GTK, Qt and AppKit consume the same engine through native event/context/callback adapters. Remaining native service orchestration and gesture verification are tracked below.
 
 - [x] Keep the AppKit launcher and editor as separate processes. `make dev-mac` starts `shrimply-appkit`; selected/created projects spawn the sibling `shrimply-editor-appkit`, while the hidden launcher observes the child from a background thread.
-- [x] Flatten the AppKit preview-ready and guides toolbar buttons while preserving their native symbols and behavior.
+- [x] Keep the AppKit preview-ready button flat; keep the guides button flat only while off and show its standard solid selected bezel while the ruler/guides are on, including restored preference state.
 - [x] Launch the sibling AppKit editor directly. Remove the repeated binary file preflight and let process spawning report a missing or unexecutable editor while retaining project-path validation.
 - [x] Preserve playback while dragging the timeline playhead. Shared player state now owns the scrub hint while seeks retain `playing`; timeline-core/AppKit and GTK begin/end the same lifecycle, including cancellation.
 - [x] Clear GTK's shared scrub hint if the timeline is unrealized during a held ruler seek, matching AppKit cancellation and preventing a stale fast-scrub state.
@@ -173,8 +178,11 @@ Implementation owner: primary agent. Other agents review and verify only; no imp
 - [x] Reload waveform data only when its shared cache signature changes. Placement-only root, nested and cross-scope moves retain cached waveforms; overwrite trims/splits, speed-scaled move-out, resizing, rolling audio transitions and grouped audio cuts invalidate them. GTK and AppKit use the same rule.
 - [x] Move drag/resize waveform-cache invalidation and item-kind refresh mapping into timeline-core by migrating the actual GTK gesture engine; remove the duplicate AppKit gesture implementation. Context edits calculate waveform invalidation from their before/after inputs in core.
 - [x] GTK, Qt and AppKit use the same core scene for drawing, grouped/root/nested selection, drag/resize, rectangle selection, cuts, transitions, scrollbar hit testing and cursor policy. Preserve native recording overlays, performance data, text-drop previews, accent color and relative software cursors through the drawing boundary.
-- [ ] Finish tightening the native adapter interface and review lifecycle/input migration: core owns media jobs and weak player subscriptions; adapters provide context, event delivery, scheduling and native callbacks. Native context-menu/service integration remains under review.
-- [ ] Consolidate GTK file-drop inspection and text-drop placement in the shared scene; preserve immediate previews, snapping and cancellation on leave. Latest gesture-engine AppKit build/check/Clippy passed before this follow-up (`target/appkit-timeline-core-migration-check.log`).
+- [x] Tighten the native adapter interface around scene events, drawing, cursor output and native requests. Gesture fields are private; core owns media jobs, weak player subscriptions, pointer cancellation and suspension/resumption. GTK/Qt retain native pointer lock and recording hooks.
+- [x] Consolidate GTK file-drop inspection and text-drop placement in the shared scene; preserve immediate previews, snapping and cancellation on leave. Adapters poll the scene for redraw requests instead of owning inspection jobs.
+- [x] Final read-only drop-preview review passes: GTK imports/private-field access, inspection-completion redraw, stale-result cancellation and text insertion borrow lifetimes. No native gesture or Linux build verification was performed.
+- [x] Fix review findings in core: ordinary click expands an isolated grouped selection, primary/middle release applies final pointer coordinates, cancellation clears deferred seeks, and track-deletion confirmation captures stable addresses before the native dialog opens.
+- [ ] Continue consolidating native context/service command orchestration where GTK/Qt still expose service helpers (recording, stabilization, clipboard/import and other native workflows); those helpers use shared project operations but are not all scene-owned yet.
 - [x] Read-only review passes snapping parity, weak listener lifetime, seek callbacks, zoom persistence and expanded timeline bounds.
 - [ ] Verify seek-follow, restored zoom, middle-button panning, hover cuts and double-click behavior with native input.
 - [ ] Complete recording, transcription, silence-removal and speech-generation workflows.
@@ -182,6 +190,7 @@ Implementation owner: primary agent. Other agents review and verify only; no imp
 
 ## Verification and limitations
 
+- [x] AppKit launcher/editor build, all-target check and Clippy with warnings denied pass after the timeline scene, gesture engine, lifecycle and drop-preview migration (`target/appkit-timeline-core-migration-check.log`). GTK/Qt receive source review only in this pass; native gestures remain unverified.
 - [x] Latest `make appkit-check` passes after shared source rendering, caption/context/fullscreen changes, motion blur, forward spatial state and Corner Pin: launcher/editor build, all-target checks and Clippy with warnings denied (`target/appkit-metal-check.log`).
 - [x] Linux shared timeline/preview/Skia/export checks passed during extraction; latest effects and transition checks/Clippy pass (`target/linux-more-effects-check.log`).
 - [x] Linux check/Clippy passes after root click-selection, transitions and the eight-modifier extension (`target/linux-eight-effects-check.log`).

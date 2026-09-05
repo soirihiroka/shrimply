@@ -114,11 +114,11 @@ impl State {
         }
         self.guides_visible = visible;
         if let Some(button) = &self.guide_button {
-            button.setState(if visible {
-                objc2_app_kit::NSControlStateValueOn
-            } else {
-                objc2_app_kit::NSControlStateValueOff
-            });
+            super::super::layout::set_toggle_selected(
+                button,
+                visible,
+                super::super::layout::ToggleStyle::Solid,
+            );
         }
     }
 
