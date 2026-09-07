@@ -1,0 +1,178 @@
+name: Flatpak build
+
+# See TODO.md ("Flatpak packaging") for the milestone plan this follows and
+# packaging/flatpak/README.md for the manual rebuild recipe. This workflow
+# runs `make dist` (build the manifest, export a single-file .flatpak bundle
+# -- TODO.md's chosen distribution model, not Flathub) and uploads the result
+# as a workflow artifact, plus four caches that make repeat runs fast:
+#
+# - ~/.local/share/flatpak: the user-installation OSTree repo holding the
+#   SDK/runtime pair (org.gnome.Platform//50 + org.gnome.Sdk//50) and the two
+#   Sdk extensions (rust-nightly, llvm22) -- together a multi-GB download.
+#   flatpak-builder --user reads its base runtimes from here, so caching it
+#   turns the `make dist` install steps (flatpak-sdk/-rust-sdk/-llvm-sdk)
+#   into near-instant no-ops. Key pins the runtime major (50) and extension
+#   branch (25.08) literally -- bump them here when Makefile's
+#   FLATPAK_RUNTIME_VERSION / FLATPAK_SDK_EXTENSION_BRANCH change.
+# - .flatpak-builder: flatpak-builder's own per-module cache. Once the M6
+#   dependency modules (rubberband/ffmpeg/poppler/vte/openblas/opencv/slang)
+#   have built successfully once, this lets every later run skip them
+#   entirely as long as the manifest doesn't change -- see TODO.md's M7
+#   section for how this was discovered (module cache keys are invalidated
+#   by ANY change to global build-options, so keep manifest edits scoped to
+#   module-level build-options where possible to avoid needless rebuilds).
+# - ~/.cache/shrimply-flatpak-cargo-cache: the shrimply app module's own
+#   source is always a fresh `dir` checkout of the live repo, so it can
+#   never get a flatpak-builder cache hit -- this is a separate bind-mounted
+#   cargo registry + target dir (see the manifest's shrimply module) that
+#   persists cargo's downloaded crates and compiled build artifacts across
+#   runs instead.
+# - crates/render-cuda/prebuilt: the M4 CUDA cubins (see
+#   packaging/flatpak/README.md) are gitignored, not committed, so they don't
+#   exist in a fresh checkout. `make dist` depends on `flatpak-cuda-vendor`,
+#   which only runs the (Docker + full CUDA toolkit) rebuild when this
+#   directory is empty -- restoring it here before `make dist` turns that
+#   into a no-op on a cache hit. Keyed on the shader sources, build.rs, and
+#   the cuda-artifacts Dockerfile: any of those changing means the cubins
+#   need regenerating.
+#
+# Cache keys are STATIC (input hash only, no per-run component). The warm set
+# is already ~8-12 GB and GitHub Free evicts at 10 GB/repo across all
+# branches, so a rolling `<hash>-<run_id>` key -- which keeps a second
+# generation live until eviction -- would thrash the cache and make repeat
+# runs slower, not faster. The tradeoff: actions/cache never re-saves once the
+# primary key hits exactly (and it saves on job failure too), so if the first
+# cold build times out partway (240 min limit), the partial target/ / module
+# set it saved is frozen under that key and later identical-input runs won't
+# add to it. Escape hatch: bump the `-vN` suffix in the affected key below
+# (or delete that one entry in the repo's Actions > Caches UI) to force a
+# fresh save. In normal use Cargo.lock / the manifest change every few PRs,
+# which rotates the keys often enough on its own. The CUDA cubin cache keeps a
+# single exact key with no restore-keys on purpose: any change to its keyed
+# inputs means the cubins genuinely must be regenerated.
+#
+# None of the caches is required for correctness -- a cold cache just means a
+# slower (multi-hour) first build, same as a fresh clone on a new machine.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+    branches: [main, feature/flatpak]
+    paths:
+      - "packaging/flatpak/**"
+      - "packaging/docker/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "assets/**"
+      - "Makefile"
+      - ".github/workflows/flatpak.yml"
+  pull_request:
+    paths:
+      - "packaging/flatpak/**"
+      - "packaging/docker/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "assets/**"
+      - "Makefile"
+
+# Least-privilege GITHUB_TOKEN: artifact upload/download is governed by the
+# `contents` scope (not `actions`, which is for workflow-run operations like
+# cancellation), and write includes the read access checkout needs. Without
+# this, org/repo settings that default GITHUB_TOKEN to read-only would make
+# the artifact upload step fail.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # M6+M7 modules together are a genuinely long build cold (FFmpeg, OpenCV
+    # and the full Rust workspace all compile from source) -- see TODO.md.
+    timeout-minutes: 240
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        # Submodules are initialized by `make flatpak-submodules` below
+        # (only the 3 actually needed: slang, optix-dev, vtracer -- NOT
+        # external/manim, which is explicitly out of scope, see TODO.md).
+
+      - name: Install flatpak, flatpak-builder, and make dist's other tool deps
+        # Docker is already preinstalled on ubuntu-latest runners (needed by
+        # flatpak-cuda-vendor, now that the .cubin files aren't committed --
+        # see packaging/flatpak/README.md). appstream/desktop-file-utils
+        # provide appstreamcli/desktop-file-validate, which `make dist`
+        # requires via metainfo-check/desktop-file-check. Installing all of
+        # these via apt-get here means the Makefile's own install-if-missing
+        # fallbacks (pacman-based, see Makefile's PACMAN comment) never
+        # trigger in CI -- they're gated on `command -v`, which succeeds
+        # once these are already on PATH.
+        #
+        # The flathub remote and all SDK/runtime/extension installs are
+        # user-scoped (--user): a system-wide `flatpak install` on the runner
+        # goes through polkit, which denies "Deploy" non-interactively
+        # ("Flatpak system operation Deploy not allowed for user"). The
+        # `make dist` step below passes FLATPAK/FLATPAK_BUILDER overrides so
+        # the Makefile's own install steps and flatpak-builder match.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder appstream desktop-file-utils
+          flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Cache flatpak SDK/runtime/extensions (user installation)
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/flatpak
+          # Runtime major (50) and extension branch (25.08) pinned literally:
+          # keep in sync with Makefile's FLATPAK_RUNTIME_VERSION and
+          # FLATPAK_SDK_EXTENSION_BRANCH. The manifest hash covers the rest
+          # (e.g. an added sdk-extension). Bump -v1 to force a fresh save.
+          key: flatpak-sdk-v1-gnome50-ext25.08-${{ hashFiles('packaging/flatpak/dev.shrimply.Shrimply.yaml') }}
+          restore-keys: |
+            flatpak-sdk-v1-gnome50-ext25.08-
+
+      - name: Cache flatpak-builder module cache
+        uses: actions/cache@v4
+        with:
+          # Bump -v1 if a timed-out cold build freezes a partial module set.
+          path: .flatpak-builder
+          key: flatpak-builder-v1-${{ hashFiles('packaging/flatpak/dev.shrimply.Shrimply.yaml') }}
+          restore-keys: |
+            flatpak-builder-v1-
+
+      - name: Cache cargo cache (registry + target, mounted into the sandbox)
+        uses: actions/cache@v4
+        with:
+          # Bump -v1 if a timed-out cold build freezes a partial target/ dir.
+          path: ~/.cache/shrimply-flatpak-cargo-cache
+          key: shrimply-cargo-v1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            shrimply-cargo-v1-
+
+      - name: Restore vendored CUDA cubins (see packaging/flatpak/README.md)
+        uses: actions/cache@v4
+        with:
+          path: crates/render-cuda/prebuilt
+          key: cuda-cubins-${{ hashFiles('crates/render-core/shaders/**', 'crates/render-cuda/build.rs', 'packaging/docker/cuda-artifacts.Dockerfile') }}
+
+      - name: Build flatpak bundle (installs SDK/runtime/extensions, submodules, builds manifest, exports a .flatpak)
+        run: make dist
+        env:
+          # Force user-scoped flatpak: see the remote-add step above. Both
+          # vars are `?=` overrides in the Makefile (FLATPAK, FLATPAK_BUILDER).
+          FLATPAK: flatpak --user
+          FLATPAK_BUILDER: flatpak-builder --user
+
+      - name: Upload flatpak bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev.shrimply.Shrimply
+          path: dev.shrimply.Shrimply.flatpak
+          if-no-files-found: error
+
+      - name: Remove app/repo output before caching (keep only the caches above)
+        if: always()
+        run: rm -rf build repo

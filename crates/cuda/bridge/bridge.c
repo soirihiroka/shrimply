@@ -130,7 +130,7 @@ CUresult shrimply_cuda_mem_alloc_managed(uint64_t *pointer, size_t bytes,
 CUresult shrimply_cuda_mem_get_info(size_t *free_bytes, size_t *total_bytes) {
   return cuMemGetInfo(free_bytes, total_bytes);
 }
-#if CUDA_VERSION >= 13020
+#if CUDA_VERSION >= 13000
 CUresult shrimply_cuda_mem_advise_v2(uint64_t pointer, size_t bytes,
                                      unsigned advice, CUmemLocation location) {
   return cuMemAdvise((CUdeviceptr)pointer, bytes, (CUmem_advise)advice,

@@ -49,6 +49,21 @@ Shrimply's main application is written in Rust and uses these technologies:
 - **Media**: FFmpeg and PipeWire
 - **Compute server**: Python
 
+### Building a Flatpak
+
+```
+make dist
+```
+
+This installs flatpak, flatpak-builder, the GNOME runtime/SDK, and required
+SDK extensions; initializes the submodules the build needs; regenerates the
+vendored CUDA cubins if missing (needs Docker); and builds
+`packaging/flatpak/dev.shrimply.Shrimply.yaml` from scratch into a
+single-file `dev.shrimply.Shrimply.flatpak` bundle. It's a long build
+(FFmpeg, OpenCV, and the whole Rust workspace all compile from source) — see
+`packaging/flatpak/README.md` for details, caching notes, and the manual
+step-by-step equivalent.
+
 ### Finding Things to Work On
 
 Browse the [open issues](https://github.com/soirihiroka/shrimply/issues) for

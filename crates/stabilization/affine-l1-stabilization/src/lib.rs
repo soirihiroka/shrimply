@@ -11,7 +11,7 @@ use opencv::core::{
 };
 use opencv::prelude::MatTraitConstManual;
 use opencv::prelude::*;
-use opencv::{calib3d, imgproc, video, videoio};
+use opencv::{features, geometry, imgproc, video, videoio};
 use shrimply_cuda::{CudaContext, CudaStream};
 use shrimply_gpu_memory::GpuBuffer as DeviceBuffer;
 use shrimply_math_core::{Time, fraction_as_u32_ratio, frame_rate_from_f64};
@@ -256,7 +256,7 @@ pub fn estimate_affine(previous: &Mat, current: &Mat) -> Result<Mat3, String> {
         .map_err(|error| error.to_string())?;
 
     let mut previous_points = Vector::<Point2f>::new();
-    imgproc::good_features_to_track(
+    features::good_features_to_track(
         &previous_gray,
         &mut previous_points,
         MAXIMUM_FEATURES,
@@ -329,11 +329,11 @@ fn estimate_affine_from_points(
     previous: &Vector<Point2f>,
 ) -> Result<Mat3, String> {
     let mut inliers = Mat::default();
-    let affine = calib3d::estimate_affine_2d(
+    let affine = geometry::estimate_affine_2d(
         current,
         previous,
         &mut inliers,
-        calib3d::RANSAC,
+        geometry::RANSAC,
         RANSAC_REPROJECTION_THRESHOLD,
         RANSAC_MAXIMUM_ITERATIONS,
         RANSAC_CONFIDENCE,

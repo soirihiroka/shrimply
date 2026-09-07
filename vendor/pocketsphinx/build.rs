@@ -74,10 +74,22 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=SHRIMPLY_POCKETSPHINX_CACHE");
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
+    // Locate the profile directory (target/<profile>) by name rather than by
+    // a fixed ancestor count: OUT_DIR's standard layout is
+    // target/<profile>/build/<pkg>-<hash>/out, but that's 3 levels up from
+    // `out` only when every component is present as assumed -- a fixed
+    // `.nth(3)` silently lands one level off (target/<profile>/build) if the
+    // actual layout differs, which happened building this crate for real for
+    // the first time (staged the model there instead of
+    // target/<profile>/res/lip-sync). PROFILE is a Cargo-guaranteed env var
+    // naming the profile directory itself, so search for that component
+    // instead of guessing its depth.
+    let profile_name = env::var("PROFILE").expect("PROFILE is set by Cargo");
     let profile = out
         .ancestors()
-        .nth(3)
-        .expect("standard Cargo OUT_DIR layout");
+        .find(|path| path.file_name().is_some_and(|name| name == profile_name.as_str()))
+        .expect("OUT_DIR contains a Cargo profile directory component")
+        .to_path_buf();
     let target = profile
         .parent()
         .expect("Cargo profile directory has a parent");

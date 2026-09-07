@@ -198,7 +198,7 @@ objc2-core-media = "0.3.2"
 objc2-screen-capture-kit = { version = "0.3.2", default-features = false }
 objc2-vision = "0.3.2"
 oklab = "1"
-opencv = { version = "0.100", default-features = false, features = ["calib3d", "clang-runtime", "imgproc", "video", "videoio"] }
+opencv = { version = "0.100", default-features = false, features = ["clang-runtime", "features", "geometry", "imgproc", "video", "videoio"] }
 pango = "0.22"
 pangocairo = "0.22"
 pest = "2.9"

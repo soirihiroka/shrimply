@@ -23,7 +23,7 @@ fn main() {
                 .flatten()
         })
         .unwrap_or_else(|| panic!("CUDA_VERSION is missing from {}", header.display()));
-    if version >= 13_020 {
+    if version >= 13_000 {
         println!("cargo:rustc-cfg=cuda_uses_mem_location");
     }
 }

@@ -1,7 +1,16 @@
 target/
+/.flatpak-builder
+/build
+/repo
+/*.flatpak
+packaging/flatpak/.flatpak-builder
+packaging/flatpak/build
 /assets/icons/dev.shrimply.Shrimply.png
 .qmlls.ini
 /.slang-artifacts
+# M4 flatpak CUDA cubins: built by `make cuda-artifacts-image`/`flatpak-cuda-vendor`
+# (see packaging/flatpak/README.md), not committed -- CI regenerates and caches them.
+crates/render-cuda/prebuilt/*/*.cubin
 /video-generation-cache
 
 # Python bytecode
