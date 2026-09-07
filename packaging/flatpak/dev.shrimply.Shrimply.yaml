@@ -290,6 +290,9 @@ modules:
         - --filesystem=~/.cache/shrimply-flatpak-cargo-cache:create
     build-commands:
       - install -Dm644 dev.shrimply.Shrimply.metainfo.xml /app/share/metainfo/dev.shrimply.Shrimply.metainfo.xml
+      # `make install` installs the app's LICENSE; this adds the bundled-deps
+      # attribution + corresponding-source pointer for the Flatpak.
+      - install -Dm644 packaging/flatpak/NOTICE /app/share/licenses/shrimply/NOTICE
       - mkdir -p cuda-stub/lib/stubs
       - ln -sf libcuda.so cuda-stub/lib/stubs/libcuda.so.1
       - mkdir -p external/slang/build/Release/lib

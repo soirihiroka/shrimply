@@ -1,0 +1,65 @@
+Shrimply — third-party components bundled in the Flatpak
+========================================================
+
+Shrimply itself is licensed under GPL-3.0-or-later (see the accompanying
+Shrimply.txt / the LICENSE file in the source tree). The Flatpak bundle links
+the libraries below, built from the exact upstream releases listed here. The
+combined work is distributed under the GNU GPL version 3.
+
+Corresponding source
+--------------------
+The complete corresponding source is:
+  - the upstream release archives identified by URL and SHA-256 below, and
+  - Shrimply's own source together with the Flatpak build manifest
+    (packaging/flatpak/dev.shrimply.Shrimply.yaml), which records every
+    source URL, revision and build option used.
+Shrimply's repository: https://github.com/soirihiroka/shrimply
+
+Bundled libraries
+-----------------
+Rubber Band Library 4.0.0        GPL-2.0-or-later
+  https://breakfastquay.com/files/releases/rubberband-4.0.0.tar.bz2
+
+x264 (b35605ace3ddf7c1a5d67a2eb553f034aef41d55)   GPL-2.0-or-later
+  https://code.videolan.org/videolan/x264.git
+
+LAME 3.100 (libmp3lame only)     LGPL-2.0-or-later
+  https://sourceforge.net/projects/lame/files/lame/3.100/
+
+FFmpeg 9.0.1                     LGPL-2.1-or-later, with GPL parts enabled
+  (--enable-gpl; effectively GPL-2.0-or-later)
+  https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz
+
+poppler 26.09.0                  GPL-2.0-or-later
+  https://poppler.freedesktop.org/poppler-26.09.0.tar.xz
+
+VTE 0.84.1                       LGPL-3.0-or-later
+  https://download.gnome.org/sources/vte/0.84/vte-0.84.1.tar.xz
+
+OpenBLAS 0.3.34                  BSD-3-Clause
+  https://github.com/OpenMathLib/OpenBLAS/releases/tag/v0.3.34
+
+OpenCV 5.0.0                     Apache-2.0
+  https://github.com/opencv/opencv/archive/refs/tags/5.0.0.tar.gz
+
+Slang (961e4e59ee0181ad645825c5db3a677d5a829a9f)  Apache-2.0 WITH LLVM-exception
+  https://github.com/shader-slang/slang
+
+Compiled into the Shrimply binaries
+-----------------------------------
+PocketSphinx                     BSD-2-Clause (see PocketSphinx-code.txt)
+PocketSphinx acoustic model      BSD-style (see PocketSphinx-model.txt)
+Rhubarb Lip Sync                 MIT (see Rhubarb-Lip-Sync.txt)
+CUDA kernels (*.cubin)           Shrimply's own shader source, compiled to
+                                 GPU code with the NVIDIA CUDA toolchain
+                                 (NVIDIA CUDA EULA governs the toolchain).
+
+Provided by the runtime, not bundled here
+-----------------------------------------
+org.gnome.Platform // 50 and its libraries (GTK, cairo, pango, gnutls, ICU,
+libvorbis, libopus, …) are supplied by the Flatpak runtime under their own
+licenses. libcuda.so is supplied at runtime by
+org.freedesktop.Platform.GL.nvidia-*.
+
+Full license texts: GPL-3.0 in Shrimply.txt. GPL-2.0, LGPL-2.0/2.1, LGPL-3.0
+and Apache-2.0 texts accompany each upstream release archive above.
