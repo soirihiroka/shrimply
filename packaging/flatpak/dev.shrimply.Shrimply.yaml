@@ -82,15 +82,11 @@ modules:
   # what's intentionally out of scope. fft/resampler stay at "auto", which
   # resolves to the builtin implementation (no external FFT/resampler lib
   # needed) -- confirmed by the module actually linking below.
-  # -Dlibdir=lib / -DCMAKE_INSTALL_LIBDIR=lib on every meson/cmake module
-  # below: org.gnome.Sdk//50 has a real /usr/lib64, so meson's and CMake's
-  # libdir heuristics resolve to `lib64` and the module installs
-  # libfoo.so + foo.pc under /app/lib64{,/pkgconfig}. Nothing searches there
-  # -- flatpak's default PKG_CONFIG_PATH and runtime linker path are /app/lib
-  # only (and the shrimply module's `cp /app/lib/libslang*` assumes it too) --
-  # so ffmpeg's ./configure failed with "libfdk_aac not found" despite fdk-aac
-  # having built fine. Forcing /app/lib keeps build-time pkg-config, build-time
-  # linking and runtime loading all working with no PKG_CONFIG_PATH hacks.
+  # -Dlibdir=lib / -DCMAKE_INSTALL_LIBDIR=lib on every meson/cmake module below:
+  # org.gnome.Sdk//50 has a real /usr/lib64, so meson and CMake install
+  # libfoo.so + foo.pc under /app/lib64, which nothing searches -- flatpak's
+  # PKG_CONFIG_PATH and runtime linker path are /app/lib only. Without this,
+  # ffmpeg's ./configure fails with "libfdk_aac not found".
   - name: rubberband
     buildsystem: meson
     config-opts:
