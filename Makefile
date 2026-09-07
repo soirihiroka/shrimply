@@ -223,7 +223,9 @@ FLATPAK_REPO_DIR ?= repo
 FLATPAK_BUNDLE ?= $(FLATPAK_APP_ID).flatpak
 dist: flatpak-sdk flatpak-rust-sdk flatpak-llvm-sdk flatpak-cuda-vendor metainfo-check desktop-file-check
 	$(FLATPAK_BUILDER) --repo=$(FLATPAK_REPO_DIR) --force-clean $(FLATPAK_BUILD_DIR) $(FLATPAK_MANIFEST)
-	$(FLATPAK) build-bundle $(FLATPAK_REPO_DIR) $(FLATPAK_BUNDLE) $(FLATPAK_APP_ID)
+	# build-bundle acts on a repo dir, not an installation, and rejects the
+	# --user/--system flags the install steps need -- firstword drops them.
+	$(firstword $(FLATPAK)) build-bundle $(FLATPAK_REPO_DIR) $(FLATPAK_BUNDLE) $(FLATPAK_APP_ID)
 	@echo "Flatpak bundle: $(FLATPAK_BUNDLE)"
 
 dev: SHELL := /bin/bash
