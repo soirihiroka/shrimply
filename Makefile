@@ -21,10 +21,7 @@ FLATPAK_BUILDER ?= flatpak-builder
 FLATPAK_RUNTIME_VERSION ?= 50
 FLATPAK_MANIFEST ?= packaging/flatpak/dev.shrimply.Shrimply.yaml
 FLATPAK_BUILD_DIR ?= build
-# Matches org.gnome.Sdk//50's own base (confirmed via
-# `flatpak info --show-metadata org.gnome.Sdk//50`: its GL/GStreamer/etc
-# extension points are all pinned to 25.08) -- the rust-nightly extension has
-# no "50" branch of its own, see TODO.md M5.
+# org.gnome.Sdk//50's base; the Sdk extensions have no "50" branch of their own.
 FLATPAK_SDK_EXTENSION_BRANCH ?= 25.08
 PKG_CONFIG ?= /usr/bin/pkg-config
 PKG_CONFIG_PATH ?= /usr/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
@@ -148,14 +145,10 @@ cuda-target-check:
 cuda-artifacts: cuda-target-check slang-compiler
 	$(BUILD_ENV) CUDA_TARGET=$(CUDA_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) $(CARGO) build -p shrimply-render-cuda
 
-# Occasional, heavy, explicit-only: builds the prebuilt .cubin files vendored
-# for the flatpak sandbox (M4 — see TODO.md), where nvcc never runs. Not a
-# dependency of `check`/`dev`/`cuda-artifacts` itself. Runs `make
-# cuda-artifacts` inside a Docker image that has nvcc (this machine has no
-# GPU driver in the container, same as the top-level Dockerfile), then copies
-# the resulting cubins out to crates/render-cuda/prebuilt/$(CUDA_TARGET)/,
-# which build.rs picks up automatically on the next `cargo build -p
-# shrimply-render-cuda` (in-sandbox or not).
+# Builds the prebuilt .cubin files vendored for the flatpak sandbox (where nvcc
+# never runs) by running `make cuda-artifacts` in a Docker image that has nvcc,
+# then copying the cubins to $(CUDA_ARTIFACTS_PREBUILT_DIR)/ where build.rs
+# picks them up. Heavy and explicit-only -- not a dependency of check/dev.
 cuda-artifacts-image:
 	@command -v $(DOCKER) >/dev/null 2>&1 || { echo "Installing docker..."; $(PACMAN) -S --noconfirm docker; sudo systemctl enable --now docker; }
 	$(DOCKER) build -f $(CUDA_ARTIFACTS_DOCKERFILE) -t $(CUDA_ARTIFACTS_IMAGE) .
@@ -167,11 +160,9 @@ cuda-artifacts-image:
 	-chown -R "$$(id -u):$$(id -g)" $(CUDA_ARTIFACTS_PREBUILT_DIR) 2>/dev/null
 	$(DOCKER) rm -f $(CUDA_ARTIFACTS_CONTAINER) >/dev/null 2>&1
 
-# Idempotent: installs flatpak, flatpak-builder, the flathub remote, and the
-# org.gnome Platform/Sdk pair if missing, skips anything already present.
-# Package names are assumed to be pacman's (this repo's target machine is
-# CachyOS/Arch per CLAUDE.md) -- override PACMAN if that's wrong for your
-# host.
+# Idempotent installs of flatpak, flatpak-builder, the flathub remote and the
+# org.gnome Platform/Sdk pair. Package names assume pacman (the target machine
+# is Arch, per CLAUDE.md) -- override PACMAN otherwise.
 PACMAN ?= sudo pacman
 flatpak-sdk:
 	@command -v $(FLATPAK) >/dev/null 2>&1 || { echo "Installing flatpak..."; $(PACMAN) -S --noconfirm flatpak; }
@@ -180,20 +171,16 @@ flatpak-sdk:
 	@$(FLATPAK) info org.gnome.Platform//$(FLATPAK_RUNTIME_VERSION) >/dev/null 2>&1 || $(FLATPAK) install -y flathub org.gnome.Platform//$(FLATPAK_RUNTIME_VERSION)
 	@$(FLATPAK) info org.gnome.Sdk//$(FLATPAK_RUNTIME_VERSION) >/dev/null 2>&1 || $(FLATPAK) install -y flathub org.gnome.Sdk//$(FLATPAK_RUNTIME_VERSION)
 
-# Only the submodules the flatpak build path actually needs (slang for
-# cuda-artifacts and the M6 slang module, optix-dev/vtracer as
-# shrimply-render-cuda/-video-core path deps). external/manim is out of
-# scope -- see TODO.md. slang needs --recursive: its own build (glslang,
-# spirv-tools, etc., see M6) pulls in nested submodules under
-# external/slang/external/ that a plain (non-recursive) init leaves empty.
+# Only the submodules the flatpak build needs. slang needs --recursive: its
+# build pulls in nested submodules under external/slang/external/ that a plain
+# init leaves empty.
 flatpak-submodules:
 	@test -e external/slang/external/glslang/CMakeLists.txt || git submodule update --init --recursive external/slang
 	@test -e external/optix-dev/README.md || git submodule update --init external/optix-dev
 	@test -e external/vtracer/Cargo.toml || git submodule update --init external/vtracer
 
-# Skips the (heavy, Docker-based) rebuild if cubins are already vendored --
-# see M4 in TODO.md. Delete crates/render-cuda/prebuilt/$(CUDA_TARGET)/ first
-# to force regeneration (e.g. after a shader change).
+# Skips the Docker rebuild if cubins are already vendored. Delete
+# $(CUDA_ARTIFACTS_PREBUILT_DIR)/ to force regeneration (e.g. after a shader change).
 flatpak-cuda-vendor: flatpak-submodules
 	@if [ -z "$$(ls -A $(CUDA_ARTIFACTS_PREBUILT_DIR) 2>/dev/null)" ]; then \
 		$(MAKE) cuda-artifacts-image; \
@@ -204,53 +191,33 @@ flatpak-cuda-vendor: flatpak-submodules
 flatpak-skeleton: flatpak-sdk metainfo-check desktop-file-check
 	$(FLATPAK_BUILDER) --force-clean $(FLATPAK_BUILD_DIR) $(FLATPAK_MANIFEST)
 
-# M5 (see TODO.md): installs the Rust nightly Sdk extension the flatpak build
-# uses for its toolchain. Idempotent like flatpak-sdk.
+# Rust nightly Sdk extension: the flatpak build's toolchain.
 flatpak-rust-sdk:
 	@$(FLATPAK) info org.freedesktop.Sdk.Extension.rust-nightly//$(FLATPAK_SDK_EXTENSION_BRANCH) >/dev/null 2>&1 || $(FLATPAK) install -y flathub org.freedesktop.Sdk.Extension.rust-nightly//$(FLATPAK_SDK_EXTENSION_BRANCH)
 
-# M7: installs the LLVM Sdk extension (bindgen/opencv-binding-generator need
-# libclang.so + the clang binary, org.gnome.Sdk//50 has neither). Idempotent.
+# LLVM Sdk extension: bindgen / opencv-binding-generator need libclang + clang,
+# which org.gnome.Sdk doesn't ship.
 flatpak-llvm-sdk:
 	@$(FLATPAK) info org.freedesktop.Sdk.Extension.llvm22//$(FLATPAK_SDK_EXTENSION_BRANCH) >/dev/null 2>&1 || $(FLATPAK) install -y flathub org.freedesktop.Sdk.Extension.llvm22//$(FLATPAK_SDK_EXTENSION_BRANCH)
 
-# In-sandbox only -- has no business running on the host, which has no
-# `/usr/lib/sdk/rust-nightly` and normally drives cargo through rustup
-# instead (see CARGO's definition above). A manifest build-command sources
-# the extension's enable.sh for PATH, then invokes this with `CARGO=cargo` to
-# override the rustup-wrapped default, e.g.:
+# In-sandbox smoke test -- run with CARGO=cargo after sourcing the extension's
+# enable.sh, e.g.:
 #   source /usr/lib/sdk/rust-nightly/enable.sh && make flatpak-rust-check CARGO=cargo
-# Checks a single leaf crate (shrimply-math-core: no native deps, nothing
-# else in the workspace depends on it) rather than the whole workspace --
-# M6's native deps (ffmpeg/poppler/opencv/...) don't exist in the sandbox
-# yet, see TODO.md M5.
+# Checks one leaf crate (no native deps) rather than the whole workspace.
 flatpak-rust-check:
 	rustc --version
 	$(CARGO) --version
 	$(CARGO) check -p shrimply-math-core
 
-# Reproduces the flatpak packaging work done through M6 (see TODO.md) from a
-# fresh clone in one command: installs flatpak-builder + the SDK/runtime pair
-# + the rust-nightly and llvm22 Sdk extensions, initializes the submodules
-# the build needs, vendors the CUDA cubins if not already present (needs
-# Docker), then runs flatpak-skeleton -- which, now that M6's 6 dependency
-# modules and M7's app module are in the manifest, is no longer a quick
-# metadata-only build: it's a real, possibly hour-plus build of
-# rubberband/ffmpeg/poppler/vte/opencv/slang/shrimply from source.
-# `--share=network` is still on, so this also needs network access for the
-# module sources. See TODO.md's M7 section for the ~/.cache/
-# shrimply-flatpak-cargo-cache CI caching notes.
+# Full flatpak build from a fresh clone in one command: SDK/runtime, both Sdk
+# extensions, submodules, vendored cubins, then the manifest build (a real
+# hour-plus compile of all the dependency modules from source). Needs Docker
+# and network access.
 flatpak-bootstrap: flatpak-sdk flatpak-rust-sdk flatpak-llvm-sdk flatpak-cuda-vendor flatpak-skeleton
-	@echo "Flatpak packaging reproduced through M7."
+	@echo "Flatpak packaging reproduced."
 
-# M7: `dist` was deliberately left unimplemented (listed in .PHONY with no
-# recipe) until a real app module landed -- see TODO.md's "Decided" section.
-# It has now, so this is real: produces a single-file .flatpak bundle, the
-# distribution model TODO.md's Target section actually calls for (self-hosted
-# repo or single-file bundle, NOT Flathub -- blocked by the NVIDIA
-# redistributables and the pinned Rust nightly). `dist-image` was the other
-# historical option floated for this and is deleted, not implemented, per
-# that same note.
+# Produces a single-file .flatpak bundle (the distribution model, not Flathub --
+# blocked by the NVIDIA redistributables and the pinned Rust nightly).
 FLATPAK_APP_ID ?= dev.shrimply.Shrimply
 FLATPAK_REPO_DIR ?= repo
 FLATPAK_BUNDLE ?= $(FLATPAK_APP_ID).flatpak

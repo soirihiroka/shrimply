@@ -1,16 +1,7 @@
-# Leaner image for producing prebuilt CUDA cubins outside the flatpak sandbox
-# (M4, see TODO.md). Mirrors the toolchain setup in the top-level Dockerfile
-# (rustup, CUDA toolkit from NVIDIA's repo) but stops there: it does NOT run
-# `make release qt-release` or any of the runtime-bundling steps below it in
-# the top-level Dockerfile — this image only needs to run `make
-# cuda-artifacts`, which builds `shrimply-render-cuda` (slangc + nvcc) and
-# nothing else.
-#
-# Built and run via `make cuda-artifacts-image` (see Makefile). Kept as a
-# separate file rather than folded into the top-level Dockerfile as a build
-# stage: the two images serve different, occasional purposes and touching the
-# working top-level Dockerfile to add staging risks breaking it for no
-# benefit here.
+# Builds the prebuilt CUDA cubins for the flatpak sandbox: just the toolchain
+# (rustup + CUDA from NVIDIA's repo) needed to run `make cuda-artifacts`, none
+# of the top-level Dockerfile's runtime-bundling. Built via
+# `make cuda-artifacts-image`.
 FROM fedora:44
 WORKDIR /src
 
@@ -19,8 +10,7 @@ RUN dnf install -y curl git make patchelf rustup && dnf clean all
 RUN rustup-init -y --default-toolchain none --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# deps-fedora expects the RPMFusion repos to exist even though cuda-artifacts
-# itself never touches ffmpeg/rubberband/opencv etc.
+# deps-fedora expects the RPMFusion repos to exist.
 RUN dnf install -y \
         "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
         "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" \
@@ -50,17 +40,10 @@ RUN test -e external/slang/CMakeLists.txt || { \
 ENV CUDA_HOME=/usr/local/cuda
 ENV CUDA_TOOLKIT_PATH=/usr/local/cuda
 
-# No NVIDIA driver in the build container; stub libcuda.so.1 so nvcc's link
-# step resolves (same trick as the top-level Dockerfile).
+# No NVIDIA driver in the container; stub libcuda.so.1 so nvcc's link resolves.
 RUN ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
 
-# `make cuda-artifacts` builds slang (slangc/slang-glslang) itself via the
-# slang-compiler Makefile target, then compiles the kernels with nvcc.
-#
-# CUDA_HOST_CXX override: the Makefile's default (g++-15) assumes a
-# version-suffixed binary that doesn't exist on this Fedora 44 image (or on
-# this host either) — only plain `g++` (GCC 16) is installed. Overridden here
-# rather than in the Makefile default since that default is a separate,
-# pre-existing concern unrelated to this packaging work.
+# CUDA_HOST_CXX=g++: the Makefile default (g++-15) isn't installed here, only
+# plain g++.
 CMD ["make", "cuda-artifacts", "CUDA_HOST_CXX=g++"]

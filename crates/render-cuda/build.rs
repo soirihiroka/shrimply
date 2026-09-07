@@ -36,18 +36,11 @@ fn main() {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/usr/local/cuda"));
     let host = env::var("CUDA_HOST_CXX").unwrap_or_else(|_| "g++-15".to_owned());
-    // Flatpak M4: nvcc doesn't run inside the org.gnome.Sdk sandbox, so cubins
-    // for that build are prebuilt outside it (see Dockerfile /
-    // `make cuda-artifacts-image`) and vendored on disk here -- gitignored,
-    // not committed (see packaging/flatpak/README.md); `make
-    // flatpak-cuda-vendor` regenerates them when missing and CI caches the
-    // result. If a module's cubin is already present at
-    // `prebuilt/<CUDA_TARGET>/<module>.cubin`, skip slangc+nvcc for that
-    // module entirely and just copy the vendored file to the expected output
-    // path — this applies to every build, sandboxed or not, since the
-    // vendored files are just part of the source tree. Editing a shader and
-    // expecting a normal `make cuda-artifacts` to pick it up requires
-    // deleting the corresponding file under `prebuilt/` first.
+    // nvcc doesn't run inside the flatpak sandbox, so cubins can be prebuilt
+    // outside it and vendored at `prebuilt/<CUDA_TARGET>/<module>.cubin`
+    // (gitignored; `make flatpak-cuda-vendor` regenerates them). When a
+    // vendored cubin is present, copy it instead of running slangc+nvcc --
+    // delete it to force a rebuild after editing that shader.
     let prebuilt = manifest.join("prebuilt").join(CUDA_TARGET);
     let mut bindings = String::new();
     for module in MODULES.lines() {

@@ -1,68 +1,38 @@
-# M4 CUDA note (see TODO.md's M4 plan): no separate CUDA module here. nvcc
-# never runs inside org.gnome.Sdk//50, so cubins are prebuilt outside the
-# sandbox with `make cuda-artifacts-image` (packaging/docker/
-# cuda-artifacts.Dockerfile) and committed directly into git at
-# crates/render-cuda/prebuilt/sm_86/*.cubin. Since they're just part of the
-# source tree, the M7 app module's normal build picks them up like any other
-# source file — no pinned sources or dedicated module needed. See
-# packaging/flatpak/README.md for the full rebuild recipe and the host-dev
-# staleness caveat this creates.
+# No CUDA module: nvcc never runs inside org.gnome.Sdk//50, so cubins are
+# prebuilt outside the sandbox (`make cuda-artifacts-image`) and vendored at
+# crates/render-cuda/prebuilt/sm_86/*.cubin (gitignored). The shrimply module's
+# build picks them up like any other source file. See packaging/flatpak/README.md.
 id: dev.shrimply.Shrimply
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
-# M7: uncommented now that the shrimply module below actually installs a real
-# /app/bin/shrimply (shrimply-launcher-gtk's binary, see the module's
-# build-commands). Was commented out from M3 through M6 because
-# flatpak-builder's "Finishing app" stage validates this against /app/bin,
-# and no module installed that binary yet -- see TODO.md's M3 correction note
-# for the history.
+# The shrimply module installs /app/bin/shrimply; flatpak-builder validates
+# `command` against /app/bin at the "Finishing app" stage.
 command: shrimply
 
-# M5 (see TODO.md): the pinned nightly-2026-04-03 toolchain (rust-toolchain.toml)
-# is provided by this Sdk extension rather than vendored. It has no branch
-# matching a specific date -- 25.08 is the branch that matches this runtime's
-# own base (confirmed via org.gnome.Sdk//50's own extension points, all
-# pinned to 25.08) and tracks whatever nightly Flathub last built for it
-# (verified 2026-09-07: rustc 1.99.0-nightly (2026-08-08), ~4 months newer
-# than the pin). Acceptable because nothing in this workspace uses
-# rustc_driver/rustc_interface (rustc-dev's unstable-API surface) — see
-# TODO.md M5 status for the full reasoning.
+# Provides the pinned nightly toolchain (rust-toolchain.toml). The extension has
+# no date-specific branch; 25.08 matches this runtime's base and tracks whatever
+# nightly Flathub last built. OK because nothing here uses the rustc-dev
+# unstable-API surface.
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-nightly
-  # M7: ffmpeg-sys-next and opencv's "clang-runtime" feature both run
-  # bindgen at build time, which needs libclang.so -- org.gnome.Sdk//50 has
-  # no system libclang. 25.08 matches the runtime's own extension branch
-  # (same reasoning as the rust-nightly extension above); llvm22 is
-  # flathub's current stable LLVM extension on that branch.
+  # ffmpeg-sys-next and opencv's clang-runtime feature run bindgen at build
+  # time, which needs libclang -- org.gnome.Sdk has none.
   - org.freedesktop.Sdk.Extension.llvm22
 
-# --share=network is needed by later milestones' module build-commands (cargo/pip
-# fetches, etc). M8 removes this once sources are vendored for an offline build.
+# --share=network: module build-commands fetch sources (cargo, etc).
 build-options:
-  # M5: puts the Sdk extension's rustc/cargo/rustfmt/clippy on PATH, plus the
-  # self-contained lld it bundles under rustlib/<target>/bin/gcc-ld -- this
-  # Sdk has no system lld of its own, but rustc's own copy (shipped by this
-  # same extension) satisfies .cargo/config.toml's `-fuse-ld=lld` without
-  # touching that shared, host-dev-affecting file. Verified inside a real
-  # `flatpak-builder` build, not just `flatpak run`.
-  #
-  # M7's clang/bindgen PATH+env additions live on the `shrimply` module's own
-  # build-options below, NOT here: flatpak-builder's per-module cache key
-  # includes the global build-options, so every edit here invalidates every
-  # module's cache -- rubberband through slang all rebuilt from scratch three
-  # times in a row over one afternoon chasing bindgen env vars before this was
-  # noticed. Module-level build-options only invalidate that one module.
+  # rust-nightly's rustc/cargo, plus the self-contained lld it bundles (this Sdk
+  # has no system lld, and .cargo/config.toml sets -fuse-ld=lld). Keep additions
+  # here minimal -- the per-module cache key includes the global build-options,
+  # so an edit here rebuilds every module. Module-specific env (clang/bindgen)
+  # lives on the shrimply module instead.
   append-path: /usr/lib/sdk/rust-nightly/bin:/usr/lib/sdk/rust-nightly/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld
   build-args:
     - --share=network
 
-# M7 (see TODO.md): exactly the list TODO.md specifies, no speculative
-# extras. wayland+fallback-x11 for the GTK window, ipc for the usual
-# GTK/DBus plumbing, device=dri for GPU (GL) access, pulseaudio for audio
-# output, filesystem=host so the app can open/save project files and media
-# anywhere on disk, and network for the localhost:8787 Python compute server
-# (see the M7 section below -- that server stays external, unbundled).
+# wayland/x11 window, ipc for DBus, dri for GPU, pulseaudio, filesystem=host for
+# project/media files, network for the external localhost:8787 compute server.
 finish-args:
   - --socket=wayland
   - --socket=fallback-x11
@@ -73,15 +43,9 @@ finish-args:
   - --share=network
 
 modules:
-  # M6 (see TODO.md): Rubber Band Library. Upstream dropped autotools at v3;
-  # meson is the only build system as of 4.0.0. Non-default features
-  # (vamp/ladspa/lv2/jni/cmdline/tests) are explicitly disabled rather than
-  # left at their "auto" default -- none of their optional deps
-  # (vamp-plugin-sdk, ladspa.h, lv2, jni.h) exist in org.gnome.Sdk//50, so
-  # "auto" would silently no-op the same way, but explicit is clearer about
-  # what's intentionally out of scope. fft/resampler stay at "auto", which
-  # resolves to the builtin implementation (no external FFT/resampler lib
-  # needed) -- confirmed by the module actually linking below.
+  # Rubber Band (meson-only since v3). Optional features disabled explicitly;
+  # fft/resampler use the builtin implementation.
+  #
   # -Dlibdir=lib / -DCMAKE_INSTALL_LIBDIR=lib on every meson/cmake module below:
   # org.gnome.Sdk//50 has a real /usr/lib64, so meson and CMake install
   # libfoo.so + foo.pc under /app/lib64, which nothing searches -- flatpak's
@@ -104,11 +68,7 @@ modules:
         url: https://breakfastquay.com/files/releases/rubberband-4.0.0.tar.bz2
         sha256: af050313ee63bc18b35b2e064e5dce05b276aaf6d1aa2b8a82ced1fe2f8028e9
 
-  # M6: FFmpeg's own codec libs, needed before the ffmpeg module below.
-  # pkg-config --exists checks inside org.gnome.Sdk//50 confirmed vorbis and
-  # opus are already present in the runtime, but x264/fdk-aac/libmp3lame are
-  # not -- same "add the smallest missing module" allowance TODO.md gives
-  # poppler's transitive deps, applied here to ffmpeg's.
+  # FFmpeg codec libs missing from org.gnome.Sdk//50 (vorbis/opus are present).
   - name: x264
     buildsystem: simple
     build-commands:
@@ -136,10 +96,7 @@ modules:
     config-opts:
       - --disable-static
       - --enable-nasm
-      # the lame CLI (frontend) fails to link: it wants termcap symbols
-      # (tgetstr/tgetent/tgetnum) that org.gnome.Sdk//50's libncurses
-      # doesn't expose. Not needed -- only libmp3lame.so is, for
-      # ffmpeg-next's --enable-libmp3lame.
+      # the lame CLI won't link (termcap symbols absent); only libmp3lame.so is needed.
       - --disable-frontend
     sources:
       - type: archive
@@ -147,23 +104,10 @@ modules:
         sha256: ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
         dest-filename: lame-3.100.tar.gz
 
-  # M6 module 2: FFmpeg 9.x itself. The runtime's libavcodec.so.61 is FFmpeg
-  # 7.1 -- two sonames behind what ffmpeg-sys-next 9.0.0 needs -- so this
-  # must land in /app/lib and be found ahead of the runtime copy via /app's
-  # normal linker precedence, no rpath tricks needed.
-  #
-  # Codec selection is scoped to exactly what the Rust crates call
-  # ffmpeg::codec::encoder::find_by_name with (grepped, not guessed):
-  # libx264 (video/decoder, video-cuda transparent_fill), libfdk_aac,
-  # libmp3lame, libvorbis, libopus (export-core audio/video), plus the
-  # builtin aac/flac/pcm_s16le/gif encoders (need nothing extra) and
-  # h264_nvenc/hevc_nvenc (video-cuda, video-recording, export-core).
-  # ffnvcodec (nv-codec-headers) is already provided by org.gnome.Sdk//50
-  # (confirmed via pkg-config, version 13.1.15.0.1) -- nvenc needs no
-  # separate module, just --enable-nonfree to unlock it.
-  # --enable-gpl is required for libx264; --enable-nonfree for libfdk-aac
-  # and nvenc. --disable-programs skips the ffmpeg/ffplay/ffprobe CLI
-  # tools -- only the libraries matter for the Rust bindings.
+  # FFmpeg 9.x: the runtime ships 7.1, too old for ffmpeg-sys-next 9.0.0. Lands
+  # in /app/lib, found ahead of the runtime copy. Codecs enabled = exactly what
+  # the Rust crates request by name (x264/fdk-aac/mp3lame/vorbis/opus, plus
+  # nvenc via --enable-nonfree; ffnvcodec headers are already in the Sdk).
   - name: ffmpeg
     buildsystem: simple
     build-commands:
@@ -181,23 +125,9 @@ modules:
         url: https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz
         sha256: cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635
 
-  # M6 modules 3: poppler + poppler-glib.
-  #
-  # Correction to TODO.md's plan (written when poppler-glib still shipped as
-  # a separate tarball): current poppler releases are a single unified
-  # CMake project where ENABLE_GLIB=ON builds the glib wrapper as a
-  # subdirectory of the same build, not a second source tree. So this is one
-  # flatpak module, not two -- it still lands both libpoppler.so and
-  # libpoppler-glib.so in /app, which is what mattered.
-  #
-  # Its usual awkward transitive deps (fontconfig, freetype, cairo,
-  # harfbuzz, libjpeg, libtiff, libopenjp2, lcms2, nss, gpgme, libcurl) are
-  # all confirmed present in org.gnome.Sdk//50 via pkg-config -- verified
-  # per-lib rather than assumed. boost is genuinely absent, but it's only
-  # used for Splash backend performance (ENABLE_BOOST), not a hard
-  # requirement -- disabled rather than adding a module for it. Qt5/Qt6
-  # wrappers are disabled: this manifest targets the GTK frontend only, and
-  # there's no qmake in this Sdk anyway (confirmed).
+  # poppler + poppler-glib (one unified CMake project since the glib wrapper
+  # moved in-tree). Transitive deps (fontconfig/freetype/cairo/...) are all in
+  # the Sdk; boost (Splash perf only) and the Qt wrappers are off.
   - name: poppler
     buildsystem: cmake-ninja
     config-opts:
@@ -222,19 +152,9 @@ modules:
         url: https://poppler.freedesktop.org/poppler-26.09.0.tar.xz
         sha256: 8059eadb6805340768f138c465b57f8164c92b4a0773c37ef031ea6c0d987b2e
 
-  # M6 module 4: VTE, built with only the GTK4 widget (-Dgtk3=false
-  # -Dgtk4=true) -- there's no GTK3 in org.gnome.Platform//50 to pair it
-  # with anyway. meson.build's dependency list goes well beyond what
-  # TODO.md's plan anticipated for a "small, unremarkable" module: besides
-  # the expected cairo/pango/pcre2/fribidi/gnutls/icu (all present in
-  # org.gnome.Sdk//50, verified via pkg-config), it also needs liblz4 and
-  # fmt (present too) plus simdutf and fast_float (genuinely absent as
-  # system libs) -- but both of those ship as full vendored sources under
-  # vte's own subprojects/, not just download-stub .wrap files, so meson
-  # builds them from the same tarball with no extra module and no network.
-  # -D_systemd=false (sandboxed build, no systemd socket activation needed),
-  # -Dapp=false/-Dglade=false/-Ddocs=false trim the standalone terminal app,
-  # glade catalog and docs -- nothing here uses them.
+  # VTE, GTK4 widget only (no GTK3 in the runtime). simdutf/fast_float are
+  # absent as system libs but ship vendored in vte's subprojects/, so meson
+  # builds them with no extra module.
   - name: vte
     buildsystem: meson
     config-opts:
@@ -251,14 +171,8 @@ modules:
         url: https://download.gnome.org/sources/vte/0.84/vte-0.84.1.tar.xz
         sha256: aca1caa8478aebcdbb1d67897fb3511eb7601debae6810e16a15b6fa25f31ac8
 
-  # M6 module 5: OpenBLAS, a prerequisite for opencv below, not one of the
-  # six libraries TODO.md's "verified absent" list named -- but the plan
-  # explicitly calls for linking OpenBLAS directly (rather than the
-  # Dockerfile's FlexiBLAS workaround), and pkg-config confirmed
-  # org.gnome.Sdk//50 has no openblas/cblas/lapack at all. Same "add the
-  # smallest missing module" allowance as poppler's/ffmpeg's transitive
-  # deps. gfortran (needed for OpenBLAS's bundled reference LAPACK) is
-  # confirmed present in the Sdk.
+  # OpenBLAS: opencv's LAPACK provider (the Sdk has no blas/lapack). gfortran
+  # for the bundled reference LAPACK is present.
   - name: openblas
     buildsystem: simple
     build-commands:
@@ -269,52 +183,15 @@ modules:
         url: https://github.com/OpenMathLib/OpenBLAS/releases/download/v0.3.34/OpenBLAS-0.3.34.tar.gz
         sha256: cd7e129868320cc2d033afa920e31202dfe0b8066a5b66661900ccc0f197dfed
 
-  # M6 module 5: OpenCV, trimmed to what `Cargo.toml`'s opencv crate
-  # features actually need plus their transitive module deps per OpenCV's
-  # own module graph. imgcodecs is videoio's optional dep (image-sequence
-  # capture). core is implicit in every module. No python/java/highgui/
-  # apps/tests/docs -- none of those are used, and skipping them avoids
-  # needing GTK/Qt-in-OpenCV or a Python toolchain. WITH_FFMPEG picks up the
-  # ffmpeg module built above (found via its .pc files in
-  # /app/lib/pkgconfig, ahead of anything from the runtime). LAPACK_IMPL=
-  # OpenBLAS points at the OpenBLAS module above directly -- this is what
-  # makes the Dockerfile's FlexiBLAS workaround unnecessary, per TODO.md's
-  # explicit instruction.
-  #
-  # M7 corrections, both found by actually inspecting the built headers
-  # rather than guessing from the Cargo.toml feature list alone:
-  #
-  # 1. `dnn` was missing. It's not one of the Cargo.toml-requested opencv
-  #    crate features, but the `opencv` crate's own Cargo.toml declares
-  #    `video = ["dnn"]` -- Cargo therefore enables the "dnn" Rust feature
-  #    transitively, and opencv-binding-generator needs opencv_dnn's headers
-  #    present to generate the `video` Rust module (and several others
-  #    failed silently alongside it once this was missing). `WITH_PROTOBUF=ON`
-  #    (the opencv default) auto-builds opencv's own bundled protobuf
-  #    snapshot since `org.freedesktop.Sdk`//50 has no system protobuf --
-  #    needs network at cmake-configure time, already available via
-  #    --share=network.
-  #
-  # 2. `calib3d`/`features2d` are OpenCV 4.x module names -- OpenCV 5.0.0
-  #    renamed them to `calib`/`features` on disk (confirmed:
-  #    modules/{calib,features,geometry} exist, modules/calib3d and
-  #    modules/features2d do not) and additionally split camera-geometry
-  #    functions (estimateAffine2D, the RANSAC enum, etc.) out into a new
-  #    `geometry` module -- confirmed by grepping the actual built headers
-  #    (`build/files/include/opencv5/opencv2/geometry/3d.hpp` declares both).
-  #    `BUILD_LIST`'s old `calib3d,features2d` entries were silently
-  #    ignored (unrecognized module names), so neither module -- nor
-  #    `geometry`, nor the Rust bindings depending on any of them -- ever
-  #    built. Cargo.toml and `crates/stabilization/affine-l1-stabilization`
-  #    are updated to match (`geometry`/`features` Cargo features and Rust
-  #    module names, not `calib3d`/`calib`, since nothing in this workspace
-  #    actually calls OpenCV's camera-calibration API, only the
-  #    RANSAC-affine-estimation functions that moved to `geometry`).
+  # OpenCV, trimmed to the modules Cargo.toml's opencv features need + their
+  # deps. dnn is pulled in transitively (the opencv crate's `video = ["dnn"]`);
+  # WITH_PROTOBUF builds opencv's bundled protobuf (needs network at configure).
+  # OpenCV 5.0 renamed calib3d/features2d -> calib/features and split the
+  # RANSAC-affine functions into a new `geometry` module -- the Rust code and
+  # Cargo.toml features track that.
   - name: opencv
     buildsystem: cmake-ninja
-    # opencv's CMakeLists.txt hard-refuses in-source builds (unlike
-    # poppler/fdk-aac above); `builddir: true` makes flatpak-builder build
-    # in a separate directory instead of the source tree.
+    # opencv refuses in-source builds.
     builddir: true
     config-opts:
       - -DCMAKE_INSTALL_LIBDIR=lib  # see rubberband
@@ -353,19 +230,13 @@ modules:
         url: https://github.com/opencv/opencv/archive/refs/tags/5.0.0.tar.gz
         sha256: b0528f5a1d379d59d4701cb28c36e22214cc51cf64594e5b56f2d3e6c0233095
         dest-filename: opencv-5.0.0.tar.gz
-      # Fixes modules/videoio failing to compile against our vendored
-      # FFmpeg 9.x: opencv still reads AVCodec::pix_fmts and
-      # AVCodec::supported_framerates directly, both removed from the
-      # public struct in FFmpeg 8+. No newer opencv tag fixes this (checked
-      # 5.x branch HEAD) -- see TODO.md's M6 section for the full writeup.
+      # opencv's videoio reads AVCodec fields removed in FFmpeg 8+; no opencv
+      # tag fixes this yet.
       - type: patch
         path: patches/opencv-ffmpeg9-avcodec-config.patch
 
-  # M6 module 6: slang, from the external/slang git submodule. Same
-  # SLANG_ENABLE_* flags as the Makefile's slang-compiler target (the
-  # CUDA path from M4), minus -G "Ninja Multi-Config" -- flatpak-builder's
-  # cmake-ninja buildsystem already drives a single-config Ninja build,
-  # which is what we want for a one-shot Release install into /app.
+  # slang, from the external/slang submodule. Same SLANG_ENABLE_* flags as the
+  # Makefile's slang-compiler target.
   - name: slang
     buildsystem: cmake-ninja
     builddir: true
@@ -385,120 +256,44 @@ modules:
       - -DSLANG_ENABLE_REPLAYER=OFF
       - -DSLANG_SLANG_LLVM_FLAVOR=DISABLE
       - -DSLANG_ENABLE_DXIL=OFF
-    # cmake-ninja's default `ninja` (then `ninja install`) isn't enough here:
-    # source/slang-glsl-module/CMakeLists.txt marks the slang-glsl-module
-    # target EXCLUDE_FROM_ALL (so plain `ninja`/`ninja all` skips building
-    # it) but still registers an unconditional install() rule for it once
-    # SLANG_ENABLE_SLANG_GLSLANG=ON, so `ninja install` then fails with
-    # "file INSTALL cannot find .../libslang-glsl-module-0.0.0.so" -- it was
-    # never built. The Makefile's own `cmake --build --target slang
-    # slang-glslang` (M4's CUDA path) never hits this because it never runs
-    # install at all (consumes the build in place via LD_LIBRARY_PATH).
-    # Building slang-glsl-module explicitly alongside slang/slang-glslang
-    # before installing is the fix, not disabling the install rule.
+    # slang-glsl-module is EXCLUDE_FROM_ALL but has an unconditional install()
+    # rule, so it must be built explicitly before `ninja install`.
     build-commands:
       - ninja slang slang-glslang slang-glsl-module
       - ninja install
-    # M7 correction: was `type: dir` pointing at the local ../../external/slang
-    # checkout. flatpak-builder can't compute a stable cache key for a `dir`
-    # source (no commit/checksum), so this module -- and everything after it
-    # -- was a guaranteed cache miss on every single build, forcing a full
-    # rebuild even when nothing here changed.
-    #
-    # Tried enumerating all 18 nested submodules as individual pinned `git`
-    # sources first (matching TODO.md's M8 wording literally) -- that broke:
-    # flatpak-builder's `git` source recursively clones submodules on its own
-    # by default (`disable-submodules` defaults to false), using the exact
-    # commits recorded in the parent commit's gitlinks. Declaring them AGAIN
-    # as separate sources collided with that automatic checkout ("cp: cannot
-    # overwrite non-directory '.../external/glslang/.git' with directory").
-    # A single pinned commit on the top-level repo is sufficient: it
-    # transitively pins every submodule commit already, and gives this
-    # module the same kind of real, stable cache key the M6 dependency
-    # modules have.
+    # A single pinned commit, not `type: dir`: flatpak-builder needs a
+    # commit/checksum for a stable cache key, and it clones submodules
+    # recursively on its own, so they aren't re-declared here.
     sources:
       - type: git
         url: https://github.com/shader-slang/slang.git
         commit: 961e4e59ee0181ad645825c5db3a677d5a829a9f
 
-  # M7: the actual app. `make install DESTDIR=/ PREFIX=/app` (Makefile:442)
-  # already installs the desktop file (sed-rewriting Exec=/TryExec= to the
-  # real install path, then `install -Dm644`) and the icon (via its
-  # `desktop-icon` prerequisite, `install -Dm644` into ICONDIR, plus
-  # `cp -a assets/icons/.` into ICONS_RESOURCE_DIR for in-app icon lookups) --
-  # confirmed by reading the `install:`/`desktop-icon:` recipes directly, not
-  # assumed. Only the metainfo.xml install survives from the old 3-file
-  # `simple` module below; installing the desktop file and icon a second time
-  # via explicit `install -Dm644` commands would just be redundant with what
-  # `make install` already does to the exact same destinations.
-  #
-  # `make install`'s `release` prerequisite (native-deps + cuda-artifacts,
-  # then a real `cargo build --release` of the GTK bins) needs several
-  # sandbox-specific overrides, all passed as `make` command-line variable
-  # assignments (which win over the Makefile's own `?=`/`:=` defaults, same
-  # trick M5's `flatpak-rust-check CARGO=cargo` already uses):
-  #
-  # - CARGO=cargo: the Makefile normally drives cargo via
-  #   `$(RUSTUP) run $(RUST_TOOLCHAIN) cargo`, but the sandbox has no rustup,
-  #   only the raw rust-nightly Sdk extension's `cargo` (already on PATH via
-  #   this manifest's `build-options.append-path`) -- exactly the problem
-  #   M5's `flatpak-rust-check` target already solved, same fix reused here.
-  #
-  # - the slang-compiler stamp files are pre-touched so `make`'s dependency
-  #   check treats `cuda-artifacts`'s `slang-compiler` prerequisite as already
-  #   satisfied, and a real `libslang.so` (copied from what the `slang`
-  #   module above just installed into /app) is staged at the exact path
-  #   `crates/slang-build/build.rs` and `crates/render-cuda/build.rs` expect
-  #   (`external/slang/build/Release/lib/`) via `SLANG_BUILD_DIR`'s default.
-  #   Without this, `slang-compiler`'s recipe would `cmake`+`ninja` build all
-  #   of external/slang a second time from scratch -- the exact "genuinely
-  #   slow/redundant" case TODO.md flagged as worth checking empirically; it
-  #   is, so this skips it the same way M4 skips nvcc when a cubin already
-  #   exists. `shrimply-slang-build`'s `Compiler` still needs the actual
-  #   library loadable at process start (it's a hard ELF NEEDED, not lazy),
-  #   so this stages the real installed .so, not an empty stub.
-  #
-  # - a small NVIDIA `cuda_cudart` redistributable (~1.4MB: just
-  #   `include/cuda.h` and `lib/stubs/libcuda.so`, not the ~4GB toolkit --
-  #   see TODO.md's Established Facts on CUDA build surface) is unpacked to
-  #   `cuda-stub/` and used as `CUDA_HOME`/`CUDA_TOOLKIT_PATH` so
-  #   `crates/cuda/bridge/build.rs` finds `cuda.h` to compile `bridge.c`
-  #   against, with a `libcuda.so.1` symlink added next to the stub (same
-  #   thing the Dockerfile does at `/usr/local/cuda/lib64/stubs`) and
-  #   `LIBRARY_PATH` pointed at it so the final link resolves `-lcuda`. This
-  #   stub is build-only and never installed into /app: the real
-  #   `libcuda.so.1` is supplied at runtime by
-  #   `org.freedesktop.Platform.GL.nvidia-*`, and shipping a fake one would
-  #   shadow it.
-  #
-  # cuda-artifacts itself needs no nvcc/CUDA_HOST_CXX handling beyond this:
-  # all 9 `.cubin` modules are vendored under
-  # `crates/render-cuda/prebuilt/sm_86/` (M4), so `render-cuda`'s build.rs
-  # copies them instead of invoking nvcc at all -- confirmed by the build log
-  # rather than assumed.
+  # The app. `make install` (Makefile) installs the binary, desktop file, icon
+  # and metainfo; only the metainfo also has an explicit install below (it's a
+  # separate source). `make install`'s `release` prereq runs a real
+  # `cargo build --release`, which needs sandbox overrides, passed as `make`
+  # variable assignments:
+  #  - CARGO=cargo: no rustup in the sandbox, just the rust-nightly extension's cargo
+  #  - slang stamp files pre-touched + the real libslang.so staged where
+  #    slang-build/build.rs and render-cuda/build.rs expect it, so slang isn't
+  #    rebuilt from scratch (it's a hard ELF NEEDED, so a real .so, not a stub)
+  #  - a ~1.4 MB cuda_cudart redist unpacked to cuda-stub/ for cuda.h (bridge.c)
+  #    and the -lcuda link stub. Build-only, never installed -- the real
+  #    libcuda comes from org.freedesktop.Platform.GL.nvidia-* at runtime.
+  # No nvcc handling needed: the vendored cubins are just copied.
   - name: shrimply
     buildsystem: simple
-    # M7: scoped to this module only (not the top-level build-options) so
-    # iterating on these doesn't invalidate every earlier module's cache --
-    # see the note on the top-level build-options above.
+    # Module-scoped so iterating on bindgen env doesn't rebuild earlier modules.
     build-options:
       append-path: /usr/lib/sdk/llvm22/bin
       env:
         LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
         BINDGEN_EXTRA_CLANG_ARGS: -resource-dir=/usr/lib/sdk/llvm22/lib/clang/22
-      # CI caching (GitHub Actions runners): this module's own source is
-      # always a fresh `dir` checkout (see below), so unlike the M6
-      # dependency modules it can never get a flatpak-builder cache hit --
-      # every build re-runs the full Rust workspace compile. `~` expands to
-      # the invoking user's home dir (flatpak's own convention, works the
-      # same in build-args as in finish-args) -- mounting a fixed path there
-      # means a CI workflow just needs to restore/save
-      # ~/.cache/shrimply-flatpak-cargo-cache between runs (e.g. actions/
-      # cache) to get cargo's downloaded crates AND compiled target/ dir
-      # back, without this manifest needing to know it's running in CI.
-      # Harmless locally too: bwrap creates it empty on first use if it
-      # doesn't exist (":create"), and an empty cache just means a cold
-      # first build, same as today.
+      # A fixed host path bind-mounted into the sandbox: a CI job restores/saves
+      # ~/.cache/shrimply-flatpak-cargo-cache between runs to persist cargo's
+      # registry + target/ (this module's source is a fresh checkout every
+      # build, so it never gets a flatpak-builder cache hit). Empty = cold build.
       build-args:
         - --filesystem=~/.cache/shrimply-flatpak-cargo-cache:create
     build-commands:
@@ -506,23 +301,13 @@ modules:
       - mkdir -p cuda-stub/lib/stubs
       - ln -sf libcuda.so cuda-stub/lib/stubs/libcuda.so.1
       - mkdir -p external/slang/build/Release/lib
-      # `libslang.so` is a symlink to `libslang-compiler.so.0.0.0.0` -- the
-      # narrower `libslang.so*` glob copied only the symlink, not its target
-      # (different filename, doesn't match), leaving it dangling. Broken
-      # symlink -> `Path::is_file()` in crates/slang-build/build.rs returns
-      # false -> it silently rebuilt all of slang via cmake from scratch
-      # every time, ignoring this module's real, already-built libslang.so
-      # entirely. `libslang*` covers the real target file too.
+      # `libslang*`, not `libslang.so*`: libslang.so is a symlink to
+      # libslang-compiler.so.*, and copying only the dangling symlink made
+      # slang-build/build.rs rebuild slang every time.
       - cp -a /app/lib/libslang* external/slang/build/Release/lib/
       - touch external/slang/build/.shrimply-configure external/slang/build/.shrimply-compiler
-      # A symlink, not a CARGO_TARGET_DIR env var: the Makefile's `install`
-      # target hardcodes relative paths like `target/release/shrimply` --
-      # pointing CARGO_TARGET_DIR at the cache dir directly made cargo build
-      # everything there while `make install` kept looking in `./target`,
-      # failing with "cannot stat 'target/release/shrimply'". Symlinking
-      # `target` itself to the cache dir keeps `make install`'s hardcoded
-      # paths working transparently while still caching every compiled
-      # artifact across runs.
+      # Symlink `target` rather than setting CARGO_TARGET_DIR: `make install`
+      # hardcodes relative `target/...` paths.
       - mkdir -p "$HOME/.cache/shrimply-flatpak-cargo-cache/target"
       - ln -sfn "$HOME/.cache/shrimply-flatpak-cargo-cache/target" target
       - >-
