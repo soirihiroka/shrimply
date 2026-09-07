@@ -82,9 +82,19 @@ modules:
   # what's intentionally out of scope. fft/resampler stay at "auto", which
   # resolves to the builtin implementation (no external FFT/resampler lib
   # needed) -- confirmed by the module actually linking below.
+  # -Dlibdir=lib / -DCMAKE_INSTALL_LIBDIR=lib on every meson/cmake module
+  # below: org.gnome.Sdk//50 has a real /usr/lib64, so meson's and CMake's
+  # libdir heuristics resolve to `lib64` and the module installs
+  # libfoo.so + foo.pc under /app/lib64{,/pkgconfig}. Nothing searches there
+  # -- flatpak's default PKG_CONFIG_PATH and runtime linker path are /app/lib
+  # only (and the shrimply module's `cp /app/lib/libslang*` assumes it too) --
+  # so ffmpeg's ./configure failed with "libfdk_aac not found" despite fdk-aac
+  # having built fine. Forcing /app/lib keeps build-time pkg-config, build-time
+  # linking and runtime loading all working with no PKG_CONFIG_PATH hacks.
   - name: rubberband
     buildsystem: meson
     config-opts:
+      - -Dlibdir=lib
       - -Dfft=auto
       - -Dresampler=auto
       - -Djni=disabled
@@ -118,6 +128,7 @@ modules:
   - name: fdk-aac
     buildsystem: cmake-ninja
     config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=lib  # see rubberband
       - -DBUILD_SHARED_LIBS=ON
     sources:
       - type: archive
@@ -194,6 +205,7 @@ modules:
   - name: poppler
     buildsystem: cmake-ninja
     config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=lib  # see rubberband
       - -DBUILD_SHARED_LIBS=ON
       - -DENABLE_GLIB=ON
       - -DENABLE_GOBJECT_INTROSPECTION=ON
@@ -230,6 +242,7 @@ modules:
   - name: vte
     buildsystem: meson
     config-opts:
+      - -Dlibdir=lib  # see rubberband
       - -Dgtk3=false
       - -Dgtk4=true
       - -D_systemd=false
@@ -308,6 +321,7 @@ modules:
     # in a separate directory instead of the source tree.
     builddir: true
     config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=lib  # see rubberband
       - -DCMAKE_BUILD_TYPE=Release
       - -DBUILD_SHARED_LIBS=ON
       - -DBUILD_LIST=core,flann,imgproc,imgcodecs,features,geometry,video,videoio,dnn
@@ -360,6 +374,7 @@ modules:
     buildsystem: cmake-ninja
     builddir: true
     config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=lib  # see rubberband; the shrimply module's `cp /app/lib/libslang*` needs it here
       - -DCMAKE_BUILD_TYPE=Release
       - -DSLANG_ENABLE_SLANGC=OFF
       - -DSLANG_ENABLE_SLANG_RHI=OFF
