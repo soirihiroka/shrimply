@@ -36,20 +36,30 @@ name: Flatpak build
 #   the cuda-artifacts Dockerfile: any of those changing means the cubins
 #   need regenerating.
 #
-# Cache keys are STATIC (input hash only, no per-run component). The warm set
-# is already ~8-12 GB and GitHub Free evicts at 10 GB/repo across all
-# branches, so a rolling `<hash>-<run_id>` key -- which keeps a second
-# generation live until eviction -- would thrash the cache and make repeat
-# runs slower, not faster. The tradeoff: actions/cache never re-saves once the
-# primary key hits exactly (and it saves on job failure too), so if the first
-# cold build times out partway (240 min limit), the partial target/ / module
-# set it saved is frozen under that key and later identical-input runs won't
-# add to it. Escape hatch: bump the `-vN` suffix in the affected key below
-# (or delete that one entry in the repo's Actions > Caches UI) to force a
-# fresh save. In normal use Cargo.lock / the manifest change every few PRs,
-# which rotates the keys often enough on its own. The CUDA cubin cache keeps a
-# single exact key with no restore-keys on purpose: any change to its keyed
-# inputs means the cubins genuinely must be regenerated.
+# Each cache is a restore step (actions/cache/restore, before the build) plus a
+# guarded save step (actions/cache/save, if: always()) after it, rather than
+# the one-shot actions/cache. Two reasons:
+#  - the one-shot action does NOT save when the job fails, so a build that dies
+#    partway (a manifest bug caught only once the M6/M7 modules compile, say)
+#    would persist nothing and the next attempt starts fully cold -- SDK
+#    re-download, the ~15 min CUDA Docker rebuild, every module from scratch.
+#    The always() save keeps whatever stages completed (flatpak-builder commits
+#    each module to its cache as it finishes; a partial target/ is fine for
+#    cargo to resume from).
+#  - it never re-saves once the primary key hits exactly. The save steps are
+#    guarded on `cache-hit != 'true'` -- save only when the key rotated or
+#    missed -- so an unchanged-input run is a no-op and a changed-input run
+#    always writes a fresh entry.
+#
+# Keys are STATIC (input hash only, no run id). The warm set is ~8-12 GB and
+# GitHub Free evicts at 10 GB/repo across all branches, so a rolling
+# `<hash>-<run_id>` key would keep a second generation live until eviction and
+# thrash. During development Cargo.lock and the manifest change often enough to
+# rotate the keys on their own, and the restore-keys prefix still warm-starts
+# from the previous entry. Escape hatch if a key gets stuck on a bad partial:
+# bump its `-vN` suffix, or delete the entry in Actions > Caches. The CUDA
+# cubin cache has no restore-keys on purpose -- any change to its keyed inputs
+# means the cubins must be regenerated.
 #
 # None of the caches is required for correctness -- a cold cache just means a
 # slower (multi-hour) first build, same as a fresh clone on a new machine.
@@ -122,8 +132,9 @@ jobs:
           sudo apt-get install -y flatpak flatpak-builder appstream desktop-file-utils
           flatpak --user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
-      - name: Cache flatpak SDK/runtime/extensions (user installation)
-        uses: actions/cache@v4
+      - name: Restore flatpak SDK/runtime/extensions (user installation)
+        id: cache-flatpak-sdk
+        uses: actions/cache/restore@v4
         with:
           path: ~/.local/share/flatpak
           # Runtime major (50) and extension branch (25.08) pinned literally:
@@ -134,26 +145,29 @@ jobs:
           restore-keys: |
             flatpak-sdk-v1-gnome50-ext25.08-
 
-      - name: Cache flatpak-builder module cache
-        uses: actions/cache@v4
+      - name: Restore flatpak-builder module cache
+        id: cache-flatpak-builder
+        uses: actions/cache/restore@v4
         with:
-          # Bump -v1 if a timed-out cold build freezes a partial module set.
+          # Bump -v1 if a key gets stuck on a partial module set.
           path: .flatpak-builder
           key: flatpak-builder-v1-${{ hashFiles('packaging/flatpak/dev.shrimply.Shrimply.yaml') }}
           restore-keys: |
             flatpak-builder-v1-
 
-      - name: Cache cargo cache (registry + target, mounted into the sandbox)
-        uses: actions/cache@v4
+      - name: Restore cargo cache (registry + target, mounted into the sandbox)
+        id: cache-cargo
+        uses: actions/cache/restore@v4
         with:
-          # Bump -v1 if a timed-out cold build freezes a partial target/ dir.
+          # Bump -v1 if a key gets stuck on a partial target/ dir.
           path: ~/.cache/shrimply-flatpak-cargo-cache
           key: shrimply-cargo-v1-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             shrimply-cargo-v1-
 
       - name: Restore vendored CUDA cubins (see packaging/flatpak/README.md)
-        uses: actions/cache@v4
+        id: cache-cuda
+        uses: actions/cache/restore@v4
         with:
           path: crates/render-cuda/prebuilt
           key: cuda-cubins-${{ hashFiles('crates/render-core/shaders/**', 'crates/render-cuda/build.rs', 'packaging/docker/cuda-artifacts.Dockerfile') }}
@@ -166,13 +180,45 @@ jobs:
           FLATPAK: flatpak --user
           FLATPAK_BUILDER: flatpak-builder --user
 
+      - name: Remove app/repo output before caching (not in any cache path, just tidy)
+        if: always()
+        run: rm -rf build repo
+
+      # Save steps run even when the build failed (if: always()), so a run that
+      # dies in a late module still persists the earlier work. Guarded on
+      # cache-hit != 'true' so an exact-key hit (nothing changed) is a no-op
+      # instead of a "cache already exists" warning.
+      - name: Save flatpak SDK/runtime/extensions cache
+        if: always() && steps.cache-flatpak-sdk.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.local/share/flatpak
+          key: ${{ steps.cache-flatpak-sdk.outputs.cache-primary-key }}
+
+      - name: Save flatpak-builder module cache
+        if: always() && steps.cache-flatpak-builder.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .flatpak-builder
+          key: ${{ steps.cache-flatpak-builder.outputs.cache-primary-key }}
+
+      - name: Save cargo cache
+        if: always() && steps.cache-cargo.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/shrimply-flatpak-cargo-cache
+          key: ${{ steps.cache-cargo.outputs.cache-primary-key }}
+
+      - name: Save vendored CUDA cubins cache
+        if: always() && steps.cache-cuda.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: crates/render-cuda/prebuilt
+          key: ${{ steps.cache-cuda.outputs.cache-primary-key }}
+
       - name: Upload flatpak bundle
         uses: actions/upload-artifact@v4
         with:
           name: dev.shrimply.Shrimply
           path: dev.shrimply.Shrimply.flatpak
           if-no-files-found: error
-
-      - name: Remove app/repo output before caching (keep only the caches above)
-        if: always()
-        run: rm -rf build repo
