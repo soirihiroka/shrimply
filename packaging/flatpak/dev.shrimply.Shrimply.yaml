@@ -81,16 +81,6 @@ modules:
         # pinned commit on the "stable" branch (no tagged releases upstream)
         commit: b35605ace3ddf7c1a5d67a2eb553f034aef41d55
 
-  - name: fdk-aac
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DCMAKE_INSTALL_LIBDIR=lib  # see rubberband
-      - -DBUILD_SHARED_LIBS=ON
-    sources:
-      - type: archive
-        url: https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v2.0.3.tar.gz
-        sha256: e25671cd96b10bad896aa42ab91a695a9e573395262baed4e4a2ff178d6a3a78
-
   - name: lame
     buildsystem: autotools
     config-opts:
@@ -105,9 +95,11 @@ modules:
         dest-filename: lame-3.100.tar.gz
 
   # FFmpeg 9.x: the runtime ships 7.1, too old for ffmpeg-sys-next 9.0.0. Lands
-  # in /app/lib, found ahead of the runtime copy. Codecs enabled = exactly what
-  # the Rust crates request by name (x264/fdk-aac/mp3lame/vorbis/opus, plus
-  # nvenc via --enable-nonfree; ffnvcodec headers are already in the Sdk).
+  # in /app/lib, found ahead of the runtime copy. Codecs enabled = what the
+  # Rust crates request by name (x264/mp3lame/vorbis/opus + the builtin aac);
+  # nvenc comes from the Sdk's ffnvcodec headers and needs no extra flag. No
+  # --enable-nonfree: it would make the build non-redistributable and is only
+  # needed for libfdk_aac, which is GPL-incompatible anyway (the app is GPLv3).
   - name: ffmpeg
     buildsystem: simple
     build-commands:
@@ -115,8 +107,8 @@ modules:
         ./configure --prefix=/app
         --enable-shared --disable-static --enable-pic
         --disable-programs --disable-doc
-        --enable-gpl --enable-nonfree
-        --enable-libx264 --enable-libfdk-aac --enable-libmp3lame
+        --enable-gpl
+        --enable-libx264 --enable-libmp3lame
         --enable-libvorbis --enable-libopus
       - make -j$(nproc)
       - make install

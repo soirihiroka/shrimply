@@ -419,11 +419,10 @@ fn open_export_page(
     let audio_encoder_row = TypedComboRow::new(
         "Audio Encoder",
         [
-            (video::ExportAudioEncoder::FdkAac, "FDK AAC"),
             (video::ExportAudioEncoder::Aac, "AAC"),
             (video::ExportAudioEncoder::Opus, "Opus"),
         ],
-        video::ExportAudioEncoder::FdkAac,
+        video::ExportAudioEncoder::Aac,
     );
 
     let audio_sample_rate_row = TypedComboRow::new(

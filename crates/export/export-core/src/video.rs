@@ -82,7 +82,6 @@ pub enum ExportProfile {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExportAudioEncoder {
-    FdkAac,
     Aac,
     Opus,
 }
@@ -621,7 +620,6 @@ fn open_audio_encoder(
     global_header: bool,
 ) -> Result<ffmpeg::codec::encoder::audio::Encoder, String> {
     let encoder_name = match settings.audio_encoder {
-        ExportAudioEncoder::FdkAac => "libfdk_aac",
         ExportAudioEncoder::Aac => "aac",
         ExportAudioEncoder::Opus => "libopus",
     };
@@ -1142,9 +1140,6 @@ fn sample_i16(sample: f32) -> i16 {
 
 fn audio_sample_format(encoder: ExportAudioEncoder) -> ffmpeg::format::Sample {
     match encoder {
-        ExportAudioEncoder::FdkAac => {
-            ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed)
-        }
         ExportAudioEncoder::Aac => {
             ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar)
         }

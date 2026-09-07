@@ -719,9 +719,8 @@ fn profile(index: i32) -> video::ExportProfile {
 
 fn audio_encoder(index: i32) -> video::ExportAudioEncoder {
     match index {
-        0 => video::ExportAudioEncoder::FdkAac,
-        1 => video::ExportAudioEncoder::Aac,
-        2 => video::ExportAudioEncoder::Opus,
+        0 => video::ExportAudioEncoder::Aac,
+        1 => video::ExportAudioEncoder::Opus,
         value => panic!("unknown audio encoder index {value}"),
     }
 }
