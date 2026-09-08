@@ -684,4 +684,109 @@ mod tests {
         );
         assert_eq!(frame_rate_from_duration(Duration::ZERO), None);
     }
+
+    fn shown(frame: i64, rate: Fraction, drop_frame: bool) -> Option<String> {
+        smpte_timecode(frame, rate, drop_frame).map(format_smpte_timecode)
+    }
+
+    fn ntsc(nominal: u64) -> Fraction {
+        Fraction::new(nominal * 1_000, 1_001u64)
+    }
+
+    /// Drop-frame is a counting rule, not a rounding one, so it is pinned to the
+    /// numbers the standard names rather than to whatever this returns today.
+    ///
+    /// 29.97 drops the first two frame numbers of every minute except every
+    /// tenth, which makes a minute 1798 frames, a ten-minute block 17982, and an
+    /// hour exactly 107892. Each landmark below is a boundary that moves if any
+    /// of those three constants is wrong: the last frame of a minute, the first
+    /// of the next, and the tenth minute where nothing is dropped.
+    #[test]
+    fn drop_frame_at_2997_counts_the_way_smpte_says() {
+        let rate = ntsc(30);
+        for (frame, want) in [
+            (0i64, "00:00:00;00"),
+            (1_799, "00:00:59;29"),
+            (1_800, "00:01:00;02"),
+            (3_597, "00:01:59;29"),
+            (3_598, "00:02:00;02"),
+            (5_395, "00:02:59;29"),
+            (5_396, "00:03:00;02"),
+            // The tenth minute keeps its first two frames.
+            (17_981, "00:09:59;29"),
+            (17_982, "00:10:00;00"),
+            (107_891, "00:59:59;29"),
+            (107_892, "01:00:00;00"),
+        ] {
+            assert_eq!(
+                shown(frame, rate, true).as_deref(),
+                Some(want),
+                "frame {frame}"
+            );
+        }
+    }
+
+    /// 59.94 drops four frame numbers instead of two, so every constant doubles:
+    /// 3596 to a minute, 35964 to a block, 215784 to an hour.
+    #[test]
+    fn drop_frame_at_5994_drops_four_rather_than_two() {
+        let rate = ntsc(60);
+        for (frame, want) in [
+            (0i64, "00:00:00;00"),
+            (3_599, "00:00:59;59"),
+            (3_600, "00:01:00;04"),
+            (7_195, "00:01:59;59"),
+            (7_196, "00:02:00;04"),
+            (35_963, "00:09:59;59"),
+            (35_964, "00:10:00;00"),
+            (215_783, "00:59:59;59"),
+            (215_784, "01:00:00;00"),
+        ] {
+            assert_eq!(
+                shown(frame, rate, true).as_deref(),
+                Some(want),
+                "frame {frame}"
+            );
+        }
+    }
+
+    /// Without drop-frame the separator is a colon and no frame number is
+    /// skipped, including at the NTSC rates where drop-frame is possible.
+    #[test]
+    fn without_drop_frame_nothing_is_skipped() {
+        assert_eq!(
+            shown(25, Fraction::new(25u64, 1u64), false).as_deref(),
+            Some("00:00:01:00")
+        );
+        assert_eq!(
+            shown(86_400, Fraction::new(24u64, 1u64), false).as_deref(),
+            Some("01:00:00:00")
+        );
+        assert_eq!(shown(24, ntsc(24), false).as_deref(), Some("00:00:01:00"));
+        assert_eq!(shown(30, ntsc(30), false).as_deref(), Some("00:00:01:00"));
+    }
+
+    /// A rate that names no frames, and a frame before the start, are answered
+    /// with `None` rather than with a timecode or a panic.
+    #[test]
+    fn a_rate_that_is_not_a_rate_has_no_timecode() {
+        assert_eq!(smpte_timecode(100, Fraction::new(0u64, 1u64), false), None);
+        assert_eq!(smpte_timecode(100, Fraction::nan(), false), None);
+        assert_eq!(smpte_timecode(100, Fraction::infinity(), false), None);
+        assert_eq!(smpte_timecode(-1, Fraction::new(25u64, 1u64), false), None);
+    }
+
+    /// The frame field widens with the rate so a three-digit frame number is not
+    /// printed into a two-digit field.
+    #[test]
+    fn the_frame_field_is_as_wide_as_the_rate_needs() {
+        let width = |nominal: u64| {
+            smpte_timecode(0, Fraction::new(nominal, 1u64), false)
+                .expect("a whole frame rate has a timecode")
+                .frame_width
+        };
+        assert_eq!(width(25), 2);
+        assert_eq!(width(120), 3);
+        assert_eq!(width(1_000), 4);
+    }
 }
