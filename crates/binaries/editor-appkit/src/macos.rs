@@ -249,7 +249,9 @@ define_class!(
                 return;
             }
             let layout = self.ivars().layout.get().expect("layout installed");
-            layout.inspector_controller.poll(self.mtm());
+            for error in layout.inspector_controller.poll(self.mtm()) {
+                self.show_error(&format!("Could not inspect Manim scenes:\n{error}"));
+            }
             let player = player_state::snapshot(&session.player_state);
             self.tick_fullscreen(player.playing);
             layout.progress.setDoubleValue(shrimply_math_core::time_ratio_f64(player.position, player.duration));
@@ -363,17 +365,18 @@ define_class!(
 
         #[unsafe(method(changeNumericPreference:))]
         fn change_numeric_preference(&self, sender: &NSControl) {
-            let Some((id, scale)) = settings::numeric_preference(sender.tag()) else { return };
-            let value = (sender.doubleValue() * scale as f64).round() as i64;
             let store = &self.ivars().session.get().expect("project loaded").preferences;
-            if let Err(error) = shrimply_editor_state::preferences::set_value(
-                store,
-                id,
-                shrimply_editor_state::preferences::PreferenceValue::Integer(value),
-            ) {
+            if let Err(error) = settings::change_numeric(store, sender) {
                 self.show_error(error);
             }
-            sender.setDoubleValue(settings::numeric_value(store, id, scale));
+        }
+
+        #[unsafe(method(changePreviewFilter:))]
+        fn change_preview_filter(&self, sender: &NSPopUpButton) {
+            let store = &self.ivars().session.get().expect("project loaded").preferences;
+            if let Err(error) = settings::change_filter(store, sender) {
+                self.show_error(error);
+            }
         }
 
         #[unsafe(method(changeDefaultFont:))]

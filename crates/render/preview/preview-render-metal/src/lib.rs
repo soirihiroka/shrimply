@@ -31,9 +31,10 @@ pub struct ExportRenderer {
 }
 
 impl ExportRenderer {
-    pub fn new(background_alpha: u8) -> Self {
+    pub fn new(background_alpha: u8, maximum_decoders: usize) -> Self {
         let mut compositor = compositor::Compositor::default();
         compositor.set_background_alpha(background_alpha);
+        compositor.set_decoder_limit(maximum_decoders);
         Self { compositor }
     }
 
@@ -84,6 +85,7 @@ struct RequestTiming {
 #[derive(Default)]
 struct Slots {
     request: Option<Request>,
+    decoder_limit: Option<usize>,
     completed: Option<(Target, Result<compositor::Presented, String>)>,
     manim_updates: Vec<shrimply_manim_state::Update>,
     sam2_errors: Vec<String>,
@@ -125,6 +127,8 @@ pub struct Renderer {
     next_request_id: u64,
     manim_updates: Vec<shrimply_manim_state::Update>,
     error: Option<String>,
+    decoder_limit: Option<usize>,
+    mipmapped: Option<(u32, Image)>,
 }
 
 impl Default for Renderer {
@@ -175,8 +179,18 @@ impl Renderer {
             next_request_id: 0,
             manim_updates: Vec::new(),
             error: None,
+            decoder_limit: None,
+            mipmapped: None,
         }
     }
+    pub fn set_decoder_limit(&mut self, maximum: usize) {
+        assert!(maximum > 0, "video decoder limit must be positive");
+        if self.decoder_limit == Some(maximum) { return; }
+        self.decoder_limit = Some(maximum);
+        self.shared.slots.lock().expect("Metal preview slots poisoned").decoder_limit = Some(maximum);
+        self.shared.wake.notify_one();
+    }
+
     pub fn set_project_revision(&mut self, revision: u64) {
         if self.project_revision != revision {
             self.project_revision = revision;
@@ -236,10 +250,18 @@ impl Renderer {
         self.render_elapsed
     }
 
-    pub fn draw(&mut self, canvas: &Canvas, project: &Project, time: Time) -> Result<(), String> {
+    pub fn draw(&mut self, canvas: &Canvas, project: &Project, time: Time, sampling: skia_safe::SamplingOptions) -> Result<(), String> {
         let result = self.prepare(project, time);
         if let Some(image) = &self.presented {
-            canvas.draw_image(&image.image, (0.0, 0.0), None);
+            let image = &image.image;
+            let image = if sampling.mipmap != skia_safe::MipmapMode::None {
+                if self.mipmapped.as_ref().is_none_or(|(id, _)| *id != image.unique_id()) {
+                    self.mipmapped = Some((image.unique_id(), image.with_default_mipmaps()
+                        .filter(Image::has_mipmaps).ok_or("Could not generate preview mipmaps")?));
+                }
+                &self.mipmapped.as_ref().expect("preview mipmaps generated").1
+            } else { image };
+            canvas.draw_image_with_sampling_options(image, (0.0, 0.0), sampling, None);
         }
         result
     }
@@ -288,6 +310,7 @@ impl Renderer {
                     };
                     self.render_elapsed = Some(image.render_elapsed);
                     self.presented = Some(image);
+                    self.mipmapped = None;
                     self.presented_target = Some(completed_target);
                     self.error = None;
                 }
@@ -409,7 +432,7 @@ fn worker(
     let mut slow_request_reported = false;
     loop {
         let mut slots = shared.slots.lock().expect("Metal preview slots poisoned");
-        while !slots.stop && slots.request.is_none() && !slots.schedule_sam2 && !active {
+        while !slots.stop && slots.request.is_none() && slots.decoder_limit.is_none() && !slots.schedule_sam2 && !active {
             slots = shared
                 .wake
                 .wait(slots)
@@ -417,6 +440,12 @@ fn worker(
         }
         if slots.stop {
             return;
+        }
+        if let Some(maximum) = slots.decoder_limit.take() {
+            renderer.set_decoder_limit(maximum);
+        }
+        if current.is_none() && slots.request.is_none() && !slots.schedule_sam2 {
+            continue;
         }
         let schedule_sam2 = std::mem::take(&mut slots.schedule_sam2);
         if schedule_sam2 {

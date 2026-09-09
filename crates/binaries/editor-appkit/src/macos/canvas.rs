@@ -967,6 +967,7 @@ impl CanvasView {
                     let prefs = shrimply_editor_state::preferences::snapshot(
                         &self.ivars().session.preferences,
                     );
+                    preview.renderer.set_decoder_limit(prefs.temporal_decoder_pool_size as usize);
                     preview.sync_guides(&project.preview_guides, prefs.preview_guides_visible);
                     let viewport = shrimply_preview_interaction_skia::guides::viewport(
                         glam::IVec2::new(size.width as i32, size.height as i32),
@@ -997,12 +998,29 @@ impl CanvasView {
                         None,
                         false,
                     );
+                    use shrimply_editor_state::preferences::{PreviewDownsampleMethod, PreviewUpsampleMethod};
+                    use skia_safe::{FilterMode, MipmapMode, SamplingOptions};
+                    let downsampling = content.width() * (scale as f32) < frame.width as f32
+                        || content.height() * (scale as f32) < frame.height as f32;
+                    let sampling = if downsampling {
+                        match prefs.preview_downsample_method {
+                            PreviewDownsampleMethod::Nearest => FilterMode::Nearest.into(),
+                            PreviewDownsampleMethod::Bilinear => FilterMode::Linear.into(),
+                            PreviewDownsampleMethod::Trilinear => SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear),
+                        }
+                    } else {
+                        match prefs.preview_upsample_method {
+                            PreviewUpsampleMethod::Nearest => FilterMode::Nearest.into(),
+                            PreviewUpsampleMethod::Bilinear => FilterMode::Linear.into(),
+                        }
+                    };
                     result = preview.renderer.draw(
                         canvas,
                         &project,
                         shrimply_editor_state::player_state::current_time(
                             &self.ivars().session.player_state,
                         ),
+                        sampling,
                     );
                     manim_updates.extend(preview.renderer.take_manim_updates());
                     canvas.restore();

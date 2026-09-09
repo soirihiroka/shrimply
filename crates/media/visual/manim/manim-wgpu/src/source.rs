@@ -416,6 +416,10 @@ pub fn loading_pixels(
     use shrimply_manim_bridge::ProgressStage;
     let counter = match progress {
         Some(Progress {
+            stage: ProgressStage::PreparingEnvironment,
+            ..
+        }) => shrimply_i18n::text("Starting uv…").into_owned(),
+        Some(Progress {
             stage: ProgressStage::StreamingFrames,
             completed,
             total,

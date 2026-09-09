@@ -139,7 +139,7 @@ impl Inspector {
         self.state.host.view()
     }
 
-    pub fn poll(&self, mtm: MainThreadMarker) {
+    pub fn poll(&self, mtm: MainThreadMarker) -> Vec<String> {
         #[cfg(debug_assertions)]
         if self.state.layout_diagnostic_pending.get()
             && self.view().window().is_some()
@@ -154,6 +154,7 @@ impl Inspector {
         if shrimply_inspector_document::poll(&self.state.controller) {
             self.state.dirty.set(true);
         }
+        let errors = shrimply_inspector_core::manim_parameters::take_scene_errors();
         for poll in self.state.polls.borrow().iter() {
             poll();
         }
@@ -167,11 +168,12 @@ impl Inspector {
                     == Some(objc2_app_kit::NSEventTrackingRunLoopMode)
             }
         {
-            return;
+            return errors;
         }
         if self.state.dirty.replace(false) {
             self.state.rebuild(mtm);
         }
+        errors
     }
 }
 

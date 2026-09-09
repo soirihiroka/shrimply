@@ -168,6 +168,10 @@ pub struct Scene {
 }
 
 impl Scene {
+    pub fn set_decoder_limit(&mut self, maximum: usize) {
+        self.media.set_decoder_limit(maximum);
+    }
+
     pub fn take_manim_updates(&mut self) -> Vec<shrimply_manim_state::Update> {
         std::mem::take(&mut self.manim_updates)
     }

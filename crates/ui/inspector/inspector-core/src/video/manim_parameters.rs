@@ -82,6 +82,7 @@ struct LoadedScenes {
 struct SceneCache {
     results: HashMap<SceneCacheKey, Result<Vec<String>, String>>,
     pending: HashSet<SceneCacheKey>,
+    errors: Vec<String>,
     sender: mpsc::Sender<LoadedScenes>,
     receiver: mpsc::Receiver<LoadedScenes>,
 }
@@ -92,6 +93,7 @@ impl Default for SceneCache {
         Self {
             results: HashMap::new(),
             pending: HashSet::new(),
+            errors: Vec::new(),
             sender,
             receiver,
         }
@@ -211,6 +213,16 @@ pub fn scenes(source: &Asset, current: &str) -> ManimScenes {
 pub fn poll_scenes() -> bool {
     let cache = scene_cache();
     receive_scenes(&mut cache.lock().expect("Manim scene cache mutex poisoned"))
+}
+
+pub fn take_scene_errors() -> Vec<String> {
+    let cache = scene_cache();
+    std::mem::take(
+        &mut cache
+            .lock()
+            .expect("Manim scene cache mutex poisoned")
+            .errors,
+    )
 }
 
 fn resolve_scenes(options: Vec<String>, current: &str) -> Result<ManimSceneDiscovery, String> {
@@ -741,6 +753,9 @@ fn receive_scenes(cache: &mut SceneCache) -> bool {
         changed = true;
         if !loaded.snapshot.is_current() {
             continue;
+        }
+        if let Err(error) = &loaded.result {
+            cache.errors.push(error.clone());
         }
         cache
             .results

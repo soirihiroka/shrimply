@@ -3,8 +3,8 @@ use objc2::rc::Retained;
 use objc2::{DefinedClass, MainThreadOnly, sel};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAutoresizingMaskOptions, NSBackingStoreType, NSButton,
-    NSColor, NSColorWell, NSFont, NSFontManager, NSImage, NSModalResponseOK, NSOpenPanel,
-    NSPopUpButton, NSScrollView, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem,
+    NSColor, NSColorWell, NSControl, NSFont, NSFontManager, NSImage, NSModalResponseOK, NSOpenPanel,
+    NSPopUpButton, NSScrollView, NSStepper, NSTabViewController, NSTabViewControllerTabStyle, NSTabViewItem,
     NSTextAlignment, NSTextField, NSView, NSViewController, NSWindow, NSWindowButton,
     NSWindowStyleMask, NSWindowTabbingMode, NSWindowToolbarStyle,
 };
@@ -28,12 +28,19 @@ const SERVER_BUTTON_WIDTH: f64 = 90.0;
 const SERVER_BUTTON_GAP: f64 = 8.0;
 const FEATURES_HEIGHT: f64 = 44.0;
 const INTEGRATIONS_HEIGHT: f64 = 720.0;
+const APPEARANCE_HEIGHT: f64 = 620.0;
+const STEPPER_WIDTH: f64 = 20.0;
+const STEPPER_GAP: f64 = 8.0;
+const STEPPER_TAG_OFFSET: isize = 100;
 
 const TAG_CAPTION_FONT_SIZE: isize = 1;
 const TAG_DEFAULT_VISUAL_DURATION: isize = 2;
 const TAG_TIMELINE_SNAP_RADIUS: isize = 3;
 const TAG_PREVIEW_PADDING: isize = 4;
 const TAG_PREVIEW_SHADOW: isize = 5;
+const TAG_DECODER_POOL_SIZE: isize = 6;
+const TAG_UPSAMPLE: isize = 7;
+const TAG_DOWNSAMPLE: isize = 8;
 const TAG_BLENDER_CHOOSE: isize = 201;
 const TAG_BLENDER_CLEAR: isize = 202;
 const TAG_SERVER_SELECTOR: isize = 210;
@@ -55,25 +62,60 @@ pub(super) type ServerProbe = (
     Result<preferences::ComputeServerPresentation, String>,
 );
 
-pub(super) fn numeric_preference(tag: isize) -> Option<(PreferenceId, i64)> {
-    Some(match tag {
-        TAG_CAPTION_FONT_SIZE => (PreferenceId::CaptionFontSize, 1),
-        TAG_DEFAULT_VISUAL_DURATION => (
-            PreferenceId::DefaultVisualDuration,
-            preferences::integer_range(PreferenceId::DefaultVisualDuration)?.scale,
-        ),
-        TAG_TIMELINE_SNAP_RADIUS => (PreferenceId::TimelineSnapRadius, 1),
-        TAG_PREVIEW_PADDING => (PreferenceId::PreviewPadding, 1),
-        TAG_PREVIEW_SHADOW => (PreferenceId::PreviewShadowSize, 1),
-        _ => return None,
-    })
+fn numeric_preference(tag: isize) -> PreferenceId {
+    match tag {
+        TAG_CAPTION_FONT_SIZE => PreferenceId::CaptionFontSize,
+        TAG_DEFAULT_VISUAL_DURATION => PreferenceId::DefaultVisualDuration,
+        TAG_TIMELINE_SNAP_RADIUS => PreferenceId::TimelineSnapRadius,
+        TAG_PREVIEW_PADDING => PreferenceId::PreviewPadding,
+        TAG_PREVIEW_SHADOW => PreferenceId::PreviewShadowSize,
+        TAG_DECODER_POOL_SIZE => PreferenceId::TemporalDecoderPoolSize,
+        _ => panic!("unknown numeric preference control"),
+    }
 }
 
-pub(super) fn numeric_value(store: &SharedPreferences, id: PreferenceId, scale: i64) -> f64 {
-    match preferences::value(store, id) {
-        PreferenceValue::Integer(value) => value as f64 / scale as f64,
-        _ => panic!("numeric preference must store an integer"),
-    }
+pub(super) fn change_numeric(store: &SharedPreferences, sender: &NSControl) -> Result<(), &'static str> {
+    use shrimply_math_core::{fraction_from_integer, fraction_round_nonnegative_u64};
+    let is_stepper = sender.tag() >= STEPPER_TAG_OFFSET;
+    let tag = if is_stepper { sender.tag() - STEPPER_TAG_OFFSET } else { sender.tag() };
+    let id = numeric_preference(tag);
+    let range = preferences::integer_range(id).expect("numeric preference range");
+    let value = if is_stepper {
+        Some(sender.integerValue() as i64)
+    } else {
+        shrimply_components_core::number::parse_fraction(sender.stringValue().to_string().trim())
+            .map(|value| {
+                let value = value.clamp(
+                    fraction_from_integer(range.minimum) / fraction_from_integer(range.scale),
+                    fraction_from_integer(range.maximum) / fraction_from_integer(range.scale),
+                );
+                fraction_round_nonnegative_u64(value * fraction_from_integer(range.scale)) as i64
+            })
+    };
+    let result = value.ok_or("Enter a valid number.").and_then(|value| {
+        preferences::set_value(store, id, PreferenceValue::Integer(value.clamp(range.minimum, range.maximum)))
+    });
+    let PreferenceValue::Integer(value) = preferences::value(store, id) else {
+        panic!("numeric preference must store an integer");
+    };
+    let content = sender.superview().expect("numeric preference pane");
+    tagged::<NSTextField>(&content, tag, "numeric field").setDoubleValue(value as f64 / range.scale as f64);
+    tagged::<NSStepper>(&content, tag + STEPPER_TAG_OFFSET, "numeric stepper").setIntegerValue(value as isize);
+    result
+}
+
+pub(super) fn change_filter(store: &SharedPreferences, sender: &NSPopUpButton) -> Result<(), &'static str> {
+    let id = match sender.tag() {
+        TAG_UPSAMPLE => PreferenceId::PreviewUpsampleMethod,
+        TAG_DOWNSAMPLE => PreferenceId::PreviewDownsampleMethod,
+        _ => panic!("unknown preview filter control"),
+    };
+    let result = preferences::set_value(store, id, PreferenceValue::Integer(sender.indexOfSelectedItem() as i64));
+    let PreferenceValue::Integer(value) = preferences::value(store, id) else {
+        panic!("preview filter must store an integer");
+    };
+    sender.selectItemAtIndex(value as isize);
+    result
 }
 
 pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
@@ -88,7 +130,7 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
         )
     };
     unsafe { window.setReleasedWhenClosed(false) };
-    window.setTitle(ns_string!("General"));
+    window.setTitle(ns_string!("Appearance"));
     window.setTabbingMode(NSWindowTabbingMode::Disallowed);
     window.setToolbarStyle(NSWindowToolbarStyle::Preference);
     for button in [
@@ -108,75 +150,57 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
         .preferences;
     let snapshot = preferences::snapshot(store);
 
-    let general = pane(mtm);
-    let mut y = initial_y();
-    section(&general, "Appearance", &mut y, mtm);
-    numeric_row(
-        &general,
-        editor,
-        "Caption font size",
-        TAG_CAPTION_FONT_SIZE,
-        f64::from(snapshot.caption_font_size),
-        &mut y,
-        mtm,
-    );
-    color_row(
-        &general,
-        editor,
-        snapshot.caption_background_color,
-        &mut y,
-        mtm,
-    );
-    font_row(
-        &general,
-        editor,
-        snapshot.default_text_font_family.name(),
-        &mut y,
-        mtm,
-    );
+    let (appearance_root, appearance) = scrolling_pane(mtm, APPEARANCE_HEIGHT);
+    let mut y = APPEARANCE_HEIGHT - CONTENT_MARGIN - LABEL_HEIGHT;
+    section(&appearance, "Captions", &mut y, mtm);
+    numeric_row(&appearance, editor, "Font size", TAG_CAPTION_FONT_SIZE, &mut y);
+    color_row(&appearance, editor, snapshot.caption_background_color, &mut y, mtm);
+    section(&appearance, "Text", &mut y, mtm);
+    font_row(&appearance, editor, snapshot.default_text_font_family.name(), &mut y, mtm);
+    section(&appearance, "Preview", &mut y, mtm);
+    numeric_row(&appearance, editor, "Padding (pixels)", TAG_PREVIEW_PADDING, &mut y);
+    numeric_row(&appearance, editor, "Shadow size (pixels)", TAG_PREVIEW_SHADOW, &mut y);
+    for (title, tag, id, choices, help) in [
+        ("Preview upsample method", TAG_UPSAMPLE, PreferenceId::PreviewUpsampleMethod,
+            &["Nearest", "Bilinear"][..], "Filter used when the preview is larger than the video"),
+        ("Preview downsample method", TAG_DOWNSAMPLE, PreferenceId::PreviewDownsampleMethod,
+            &["Nearest", "Bilinear", "Trilinear"][..], "Filter used when the preview is smaller than the video"),
+    ] {
+        label(&appearance, title, y, mtm);
+        let popup = NSPopUpButton::initWithFrame_pullsDown(
+            NSPopUpButton::alloc(mtm),
+            NSRect::new(NSPoint::new(CONTROL_X, y - CONTROL_Y_OFFSET), NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT)),
+            false,
+        );
+        for choice in choices { popup.addItemWithTitle(&NSString::from_str(choice)); }
+        let PreferenceValue::Integer(value) = preferences::value(store, id) else {
+            panic!("preview filter must store an integer");
+        };
+        popup.selectItemAtIndex(value as isize);
+        popup.setTag(tag);
+        popup.setToolTip(Some(&NSString::from_str(help)));
+        unsafe {
+            popup.setTarget(Some(editor));
+            popup.setAction(Some(sel!(changePreviewFilter:)));
+        }
+        appearance.addSubview(&popup);
+        y -= ROW_HEIGHT;
+    }
+    section(&appearance, "Timeline", &mut y, mtm);
+    numeric_row(&appearance, editor, "Default visual duration (seconds)", TAG_DEFAULT_VISUAL_DURATION, &mut y);
+    numeric_row(&appearance, editor, "Snap attraction radius (pixels)", TAG_TIMELINE_SNAP_RADIUS, &mut y);
 
-    section(&general, "Timeline", &mut y, mtm);
-    numeric_row(
-        &general,
-        editor,
-        "Default visual duration (seconds)",
-        TAG_DEFAULT_VISUAL_DURATION,
-        snapshot.default_visual_duration.as_secs_f64(),
-        &mut y,
-        mtm,
-    );
-    numeric_row(
-        &general,
-        editor,
-        "Snap attraction radius (pixels)",
-        TAG_TIMELINE_SNAP_RADIUS,
-        f64::from(snapshot.timeline_snap_radius_px),
-        &mut y,
-        mtm,
-    );
-
-    let preview = pane(mtm);
+    let performance = pane(mtm);
     let mut y = initial_y();
-    section(&preview, "Preview", &mut y, mtm);
-    numeric_row(
-        &preview,
-        editor,
-        "Padding (pixels)",
-        TAG_PREVIEW_PADDING,
-        f64::from(snapshot.preview_padding_px),
-        &mut y,
-        mtm,
+    section(&performance, "Performance", &mut y, mtm);
+    numeric_row(&performance, editor, "Temporal decoder pool size", TAG_DECODER_POOL_SIZE, &mut y);
+    let help = NSTextField::wrappingLabelWithString(
+        ns_string!("Maximum number of open video decoder sessions per renderer. Lower values reduce memory use; higher values keep more clips ready for playback. Applies to preview and new exports."), mtm,
     );
-    numeric_row(
-        &preview,
-        editor,
-        "Shadow size (pixels)",
-        TAG_PREVIEW_SHADOW,
-        f64::from(snapshot.preview_shadow_size_px),
-        &mut y,
-        mtm,
-    );
-    let (integrations_root, integrations) = scrolling_pane(mtm);
+    help.setTextColor(Some(&NSColor::secondaryLabelColor()));
+    help.setFrame(NSRect::new(NSPoint::new(CONTENT_MARGIN, y - FEATURES_HEIGHT), NSSize::new(PANE_WIDTH - CONTENT_MARGIN * 2.0, FEATURES_HEIGHT + LABEL_HEIGHT)));
+    performance.addSubview(&help);
+    let (integrations_root, integrations) = scrolling_pane(mtm, INTEGRATIONS_HEIGHT);
     let mut y = INTEGRATIONS_HEIGHT - CONTENT_MARGIN - LABEL_HEIGHT;
     section(&integrations, "Integrations", &mut y, mtm);
     compute_server_rows(&integrations, editor, store, &mut y, mtm);
@@ -193,8 +217,8 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
     tabs.setCanPropagateSelectedChildViewControllerTitle(true);
     for item in [
-        tab("General", "gearshape", general, mtm),
-        tab("Preview", "play.rectangle", preview, mtm),
+        tab("Appearance", "paintpalette", appearance_root, mtm),
+        tab("Performance", "speedometer", performance, mtm),
         tab(
             "Integrations",
             "puzzlepiece.extension",
@@ -366,7 +390,7 @@ fn pane(mtm: MainThreadMarker) -> objc2::rc::Retained<NSView> {
     view
 }
 
-fn scrolling_pane(mtm: MainThreadMarker) -> (Retained<NSView>, Retained<NSView>) {
+fn scrolling_pane(mtm: MainThreadMarker, height: f64) -> (Retained<NSView>, Retained<NSView>) {
     let scroll = NSScrollView::initWithFrame(
         NSScrollView::alloc(mtm),
         NSRect::new(NSPoint::ZERO, NSSize::new(PANE_WIDTH, PANE_HEIGHT)),
@@ -379,11 +403,11 @@ fn scrolling_pane(mtm: MainThreadMarker) -> (Retained<NSView>, Retained<NSView>)
     scroll.setAutohidesScrollers(true);
     let content = NSView::initWithFrame(
         NSView::alloc(mtm),
-        NSRect::new(NSPoint::ZERO, NSSize::new(PANE_WIDTH, INTEGRATIONS_HEIGHT)),
+        NSRect::new(NSPoint::ZERO, NSSize::new(PANE_WIDTH, height)),
     );
     scroll.setDocumentView(Some(&content));
     let clip = scroll.contentView();
-    clip.scrollToPoint(NSPoint::new(0.0, INTEGRATIONS_HEIGHT - PANE_HEIGHT));
+    clip.scrollToPoint(NSPoint::new(0.0, height - PANE_HEIGHT));
     scroll.reflectScrolledClipView(&clip);
     (scroll.into_super(), content)
 }
@@ -434,31 +458,41 @@ fn label(content: &NSView, title: &str, y: f64, mtm: MainThreadMarker) {
     content.addSubview(&label);
 }
 
-fn numeric_row(
-    content: &NSView,
-    editor: &Editor,
-    title: &str,
-    tag: isize,
-    value: f64,
-    y: &mut f64,
-    mtm: MainThreadMarker,
-) {
+fn numeric_row(content: &NSView, editor: &Editor, title: &str, tag: isize, y: &mut f64) {
+    let mtm = content.mtm();
+    let store = &editor.ivars().session.get().expect("project loaded").preferences;
+    let id = numeric_preference(tag);
+    let range = preferences::integer_range(id).expect("numeric preference range");
+    let PreferenceValue::Integer(value) = preferences::value(store, id) else {
+        panic!("numeric preference must store an integer");
+    };
     label(content, title, *y, mtm);
     let field = NSTextField::initWithFrame(
         NSTextField::alloc(mtm),
-        NSRect::new(
-            NSPoint::new(CONTROL_X, *y - CONTROL_Y_OFFSET),
-            NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT),
-        ),
+        NSRect::new(NSPoint::new(CONTROL_X, *y - CONTROL_Y_OFFSET),
+            NSSize::new(CONTROL_WIDTH - STEPPER_WIDTH - STEPPER_GAP, CONTROL_HEIGHT)),
     );
     field.setAlignment(NSTextAlignment::Right);
-    field.setDoubleValue(value);
+    field.setDoubleValue(value as f64 / range.scale as f64);
     field.setTag(tag);
+    field.cell().expect("numeric text cell").setSendsActionOnEndEditing(true);
+    let stepper = NSStepper::initWithFrame(NSStepper::alloc(mtm),
+        NSRect::new(NSPoint::new(PANE_WIDTH - CONTENT_MARGIN - STEPPER_WIDTH, *y - CONTROL_Y_OFFSET),
+            NSSize::new(STEPPER_WIDTH, CONTROL_HEIGHT)));
+    stepper.setMinValue(range.minimum as f64);
+    stepper.setMaxValue(range.maximum as f64);
+    stepper.setIncrement(range.step as f64);
+    stepper.setValueWraps(false);
+    stepper.setIntegerValue(value as isize);
+    stepper.setTag(tag + STEPPER_TAG_OFFSET);
     unsafe {
         field.setTarget(Some(editor));
         field.setAction(Some(sel!(changeNumericPreference:)));
+        stepper.setTarget(Some(editor));
+        stepper.setAction(Some(sel!(changeNumericPreference:)));
     }
     content.addSubview(&field);
+    content.addSubview(&stepper);
     *y -= ROW_HEIGHT;
 }
 

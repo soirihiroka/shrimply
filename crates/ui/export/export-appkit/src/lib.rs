@@ -90,7 +90,7 @@ define_class!(
     }
 );
 
-pub fn choose_settings(parent: &NSWindow, project: &Project) -> Option<ExportSettings> {
+pub fn choose_settings(parent: &NSWindow, project: &Project, maximum_temporal_decoders: usize) -> Option<ExportSettings> {
     let mtm = parent.mtm();
     let dialog = Dialog::alloc(mtm).set_ivars(DialogIvars {
         sheet: OnceCell::new(),
@@ -281,6 +281,7 @@ pub fn choose_settings(parent: &NSWindow, project: &Project) -> Option<ExportSet
         }
     };
     Some(ExportSettings {
+        maximum_temporal_decoders,
         path: PathBuf::new(),
         video_codec,
         container,

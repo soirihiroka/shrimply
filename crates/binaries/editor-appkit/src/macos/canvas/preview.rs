@@ -353,6 +353,9 @@ impl CanvasView {
             let Content::Preview(preview) = &mut *content else {
                 return Ok(StartupStatus::Ready);
             };
+            preview.renderer.set_decoder_limit(
+                shrimply_editor_state::preferences::snapshot(&session.preferences).temporal_decoder_pool_size as usize,
+            );
             preview.renderer.set_project_revision(player.revision);
             let result = preview
                 .renderer

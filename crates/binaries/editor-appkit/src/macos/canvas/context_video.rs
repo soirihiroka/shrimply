@@ -50,6 +50,8 @@ impl CanvasView {
         let Some(mut settings) = shrimply_export_appkit::choose_settings(
             &self.window().expect("canvas must be attached"),
             &project,
+            shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences)
+                .temporal_decoder_pool_size as usize,
         ) else {
             return Ok(());
         };

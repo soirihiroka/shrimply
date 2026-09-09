@@ -41,6 +41,7 @@ pub enum H264Entropy {
 
 #[derive(Clone, Debug)]
 pub struct ExportSettings {
+    pub maximum_temporal_decoders: usize,
     pub path: PathBuf,
     pub video_codec: ExportVideoCodec,
     pub container: ExportContainer,
@@ -170,7 +171,7 @@ impl VideoBackend for VideoToolboxBackend {
         settings: &core::ExportSettings,
         _cancelled: &AtomicBool,
     ) -> Result<(), String> {
-        self.renderer = Some(ExportRenderer::new(settings.background_alpha));
+        self.renderer = Some(ExportRenderer::new(settings.background_alpha, self.settings.maximum_temporal_decoders));
         Ok(())
     }
 

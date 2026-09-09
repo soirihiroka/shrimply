@@ -202,7 +202,7 @@ fn uv_executable() -> Result<PathBuf, String> {
     Ok(std::env::var_os("UV").unwrap_or_else(|| "uv".into()).into())
 }
 
-fn python_command(module: &str) -> Result<Command, String> {
+fn python_command(module: &str) -> Result<(Command, bool), String> {
     let executable = uv_executable()?;
     let macos = executable
         .parent()
@@ -213,8 +213,11 @@ fn python_command(module: &str) -> Result<Command, String> {
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("python"));
     let mut command = Command::new(&executable);
     command.args(["run", "--python", "3.14", "--project"]).arg(&project);
+    let environment = std::env::var_os("UV_PROJECT_ENVIRONMENT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| project.join(".venv"));
     #[cfg(target_os = "macos")]
-    if macos.is_some() {
+    let environment = if macos.is_some() {
         use objc2_foundation::{NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};
 
         let cache = NSFileManager::defaultManager()
@@ -225,20 +228,30 @@ fn python_command(module: &str) -> Result<Command, String> {
             .firstObject()
             .and_then(|url| url.to_file_path())
             .ok_or("could not locate the Manim environment cache")?;
+        let environment = cache.join("dev.shrimply.Shrimply/manim");
         command
             .args(["--frozen", "--no-dev", "--no-editable"])
-            .env("UV_PROJECT_ENVIRONMENT", cache.join("dev.shrimply.Shrimply/manim"))
+            .env("UV_PROJECT_ENVIRONMENT", &environment)
             .env("PYTHONDONTWRITEBYTECODE", "1");
-    }
+        environment
+    } else {
+        environment
+    };
+    let environment_ready = environment.join("pyvenv.cfg").is_file();
     command
         .arg("python")
         .arg(project.join(format!("shrimply_manim/{module}.py")));
-    Ok(command)
+    Ok((command, environment_ready))
 }
 
 impl WorkerHandle {
-    fn spawn(settings: &Settings, worker_socket: &Path, source: &Path) -> Result<Self, String> {
-        let child = python_command("ir_worker")?
+    fn spawn(
+        settings: &Settings,
+        worker_socket: &Path,
+        source: &Path,
+    ) -> Result<(Self, bool), String> {
+        let (mut command, environment_ready) = python_command("ir_worker")?;
+        let child = command
             .arg("--socket")
             .arg(worker_socket)
             .arg("--source")
@@ -267,14 +280,17 @@ impl WorkerHandle {
             fps = %settings.fps,
             "spawned Manim compiler",
         );
-        Ok(Self {
-            child,
-            active: true,
-            description: WorkerDescription {
-                source: source.to_path_buf(),
-                scene: settings.scene.clone(),
+        Ok((
+            Self {
+                child,
+                active: true,
+                description: WorkerDescription {
+                    source: source.to_path_buf(),
+                    scene: settings.scene.clone(),
+                },
             },
-        })
+            environment_ready,
+        ))
     }
 
     fn exit_code(&mut self) -> Result<Option<i32>, String> {
@@ -381,13 +397,19 @@ pub fn discover_scenes(source: &Asset) -> Result<Vec<String>, String> {
 
     #[cfg(target_os = "macos")]
     let _source_access = macos_source_access::RelatedSourceAccess::new(source.path())?;
-    let output = python_command("scene_discovery")?
+    let (mut command, _) = python_command("scene_discovery")?;
+    let output = command
         .arg(source.path())
         .output()
         .map_err(|error| format!("inspect Manim scenes with uv: {error}"));
     let result = output.and_then(|output| {
         if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if error.is_empty() {
+                format!("Manim scene discovery exited with {}", output.status)
+            } else {
+                error
+            });
         }
         let scenes: Vec<String> = rmp_serde::from_slice(&output.stdout)
             .map_err(|error| format!("decode Manim scene list: {error}"))?;
@@ -466,7 +488,15 @@ pub fn compile(
         compiler_queue_ms = waiting_for_compiler.elapsed().as_millis(),
         "Manim compilation started",
     );
-    let mut child = WorkerHandle::spawn(settings, &socket_path, source.path())?;
+    let (mut child, environment_ready) =
+        WorkerHandle::spawn(settings, &socket_path, source.path())?;
+    if !environment_ready {
+        on_progress(Progress {
+            stage: ProgressStage::PreparingEnvironment,
+            completed: 0,
+            total: 0,
+        });
+    }
     let mut socket = accept_worker(&listener, &mut child, cancelled, started)?;
     send_parameters(&mut socket, &settings.parameters, cancelled, started)?;
     let mut builder = shrimply_manim_ir::CompiledAnimationBuilder::new();

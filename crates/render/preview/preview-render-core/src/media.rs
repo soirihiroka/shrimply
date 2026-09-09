@@ -12,6 +12,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
+    time::Instant,
 };
 
 #[derive(Clone, PartialEq)]
@@ -129,6 +130,7 @@ struct Completed {
 #[derive(Default)]
 struct Slots {
     pending: Option<Batch>,
+    decoder_limit: Option<usize>,
     completed: Option<Completed>,
     stop: bool,
     working: bool,
@@ -150,6 +152,7 @@ pub struct Media {
     requested: Vec<Request>,
     revision: u64,
     error: Option<String>,
+    decoder_limit: Option<usize>,
 }
 
 impl Default for Media {
@@ -167,11 +170,20 @@ impl Default for Media {
             requested: Vec::new(),
             revision: 0,
             error: None,
+            decoder_limit: None,
         }
     }
 }
 
 impl Media {
+    pub fn set_decoder_limit(&mut self, maximum: usize) {
+        assert!(maximum > 0, "video decoder limit must be positive");
+        if self.decoder_limit == Some(maximum) { return; }
+        self.decoder_limit = Some(maximum);
+        self.shared.slots.lock().expect("preview media slots poisoned").decoder_limit = Some(maximum);
+        self.shared.wake.notify_one();
+    }
+
     pub fn needs_update(&self) -> bool {
         let slots = self
             .shared
@@ -294,16 +306,18 @@ struct Cached {
     source: Source,
     snapshot: AssetSnapshot,
     decoder: Option<decode::Decoder>,
+    last_used: Instant,
     frame: Option<(Time, CompositeAccuracy, Result<Frame, String>)>,
 }
 
 fn worker(shared: Arc<Shared>) {
     let mut cache = HashMap::<Key, Cached>::new();
     let mut epoch = 0;
+    let mut decoder_limit = usize::MAX;
     loop {
         let batch = {
             let mut slots = shared.slots.lock().expect("preview media slots poisoned");
-            while slots.pending.is_none() && !slots.stop {
+            while slots.pending.is_none() && slots.decoder_limit.is_none() && !slots.stop {
                 slots = shared
                     .wake
                     .wait(slots)
@@ -312,8 +326,16 @@ fn worker(shared: Arc<Shared>) {
             if slots.stop {
                 return;
             }
-            slots.working = true;
-            slots.pending.take().expect("pending preview request")
+            let maximum = slots.decoder_limit.take();
+            let batch = slots.pending.take();
+            slots.working = batch.is_some();
+            drop(slots);
+            if let Some(maximum) = maximum {
+                decoder_limit = maximum;
+                trim_decoders(&mut cache, decoder_limit);
+            }
+            let Some(batch) = batch else { continue; };
+            batch
         };
         if batch.epoch != epoch {
             cache.clear();
@@ -327,7 +349,7 @@ fn worker(shared: Arc<Shared>) {
             {
                 return Err("preview request cancelled".into());
             }
-            let frame = load(request, &mut cache, &shared, &batch).map_err(|error| {
+            let frame = load(request, &mut cache, &shared, &batch, decoder_limit).map_err(|error| {
                 format!(
                     "Could not render {}: {error}",
                     request.source.file.path().display()
@@ -350,11 +372,25 @@ fn worker(shared: Arc<Shared>) {
     }
 }
 
+// Only decoder contexts are evicted. Frames remain available to complete a batch
+// even when it contains more video layers than the configured session limit.
+fn trim_decoders(cache: &mut HashMap<Key, Cached>, maximum: usize) {
+    let count = cache.values().filter(|entry| entry.decoder.is_some()).count();
+    for _ in maximum..count {
+        let oldest = cache.values_mut()
+            .filter(|entry| entry.decoder.is_some())
+            .min_by_key(|entry| entry.last_used)
+            .expect("open decoder to release");
+        oldest.decoder = None;
+    }
+}
+
 fn load(
     request: &Request,
     cache: &mut HashMap<Key, Cached>,
     shared: &Shared,
     batch: &Batch,
+    decoder_limit: usize,
 ) -> Result<Frame, String> {
     let source = &request.source;
     let snapshot = source.file.snapshot()?;
@@ -369,15 +405,21 @@ fn load(
             source: source.clone(),
             snapshot,
             decoder: None,
+            last_used: Instant::now(),
             frame: None,
         });
     }
-    let entry = cache.get_mut(&request.id).expect("preview cache inserted");
+    let entry = cache.get(&request.id).expect("preview cache inserted");
     if let Some((time, accuracy, frame)) = &entry.frame
         && (source.kind != Kind::Video || (*time == request.time && *accuracy == request.accuracy))
     {
         return frame.clone();
     }
+    if source.kind == Kind::Video && entry.decoder.is_none() {
+        trim_decoders(cache, decoder_limit - 1);
+    }
+    let entry = cache.get_mut(&request.id).expect("preview cache inserted");
+    entry.last_used = Instant::now();
     let result = (|| {
         let frame = match source.kind {
             Kind::Video => {
