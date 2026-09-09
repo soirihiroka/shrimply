@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import socket
 import struct
@@ -120,6 +121,14 @@ def run(args: WorkerArguments) -> None:
         )
         send(sock, packet("finished"))
     except Exception as exception:
+        if (
+            isinstance(exception, OSError)
+            and exception.errno == getattr(errno, "ENEEDAUTH", None)
+        ):
+            exception.add_note(
+                f"macOS could not authenticate the filesystem containing {args.source}. "
+                "Open the file in Finder and authenticate or download it, then retry."
+            )
         if isinstance(exception, ModuleNotFoundError) and exception.name == "manim":
             exception.add_note(
                 "Shrimply uses ManimGL (`manimlib`), not Manim Community Edition "

@@ -397,6 +397,7 @@ pub fn discover_scenes(source: &Asset) -> Result<Vec<String>, String> {
 
     #[cfg(target_os = "macos")]
     let _source_access = macos_source_access::RelatedSourceAccess::new(source.path())?;
+    key.read()?;
     let (mut command, _) = python_command("scene_discovery")?;
     let output = command
         .arg(source.path())
@@ -468,6 +469,7 @@ pub fn compile(
     if let Some(animation) = cache::get(&cache_key)? {
         return Ok(animation);
     }
+    source.read()?;
     let socket_path = std::env::temp_dir().join(format!(
         "shrimply-manim-ir-{}-{}.sock",
         std::process::id(),
