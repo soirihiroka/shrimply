@@ -27,6 +27,40 @@ and ``nvcc`` packages the CUDA artifacts. The supported CUDA
 Toolkit version is 12.9. In theory, NVIDIA GeForce GTX 900-series through RTX
 50-series GPUs should work, but this full range has not been verified.
 
+Nix development environment
+---------------------------
+
+The checked-in flake provides the pinned Rust nightly, CUDA toolkit, Slang, and
+native dependencies for the GTK and Qt applications on ``x86_64-linux``.
+Initialize the required source submodules, then enter the shell:
+
+.. code-block:: console
+
+   $ git submodule update --init --recursive
+   $ nix develop --accept-flake-config
+   $ make dev
+
+The flake requests the `NixOS CUDA binary cache
+<https://wiki.nixos.org/wiki/CUDA#Setting_up_CUDA_Binary_Cache>`__. Multi-user
+Nix installations may require adding that cache to the system Nix
+configuration before the daemon will trust it.
+
+Build the default GTK package with the pinned submodule sources:
+
+.. code-block:: console
+
+   $ nix build --accept-flake-config
+   $ ./result/bin/shrimply
+
+A compatible NVIDIA driver is still required at runtime. The package currently
+embeds CUDA kernels for compute capability ``sm_86``.
+
+The development shell sets the tool and library paths expected by the existing
+Makefile, so commands such as ``make dev`` and ``make dev-qt`` work unchanged. It
+also sets ``SLANG_LIBRARY_DIR`` and ``SLANG_INCLUDE_DIR`` to the same prebuilt
+Slang release the Cargo build scripts would otherwise download, so builds stay
+offline and reproducible.
+
 Build and check
 ---------------
 

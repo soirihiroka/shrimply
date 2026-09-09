@@ -4,10 +4,8 @@ Getting Started
 Run Shrimply
 ------------
 
-Shrimply is currently pre-alpha software. To try the Flatpak, download it from
-the `GitHub releases page <https://github.com/soirihiroka/shrimply/releases>`__.
-The Flatpak is missing some features, including MCP support, and its project
-lockfile support is currently broken.
+Shrimply is currently pre-alpha software. On Linux, see :doc:`flatpak` for
+installation, updates, and known limitations.
 
 To build Shrimply from source, see :doc:`development`.
 
