@@ -29,6 +29,7 @@ __pycache__/
 *.o
 *.lock
 !/Cargo.lock
+!/flake.lock
 !/server/uv.lock
 !/docs/uv.lock
 /docs/build

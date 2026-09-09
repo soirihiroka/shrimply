@@ -1,7 +1,8 @@
 RUSTUP ?= rustup
 RUST_TOOLCHAIN ?= nightly-2026-04-03
 HOST_OS := $(shell uname -s)
-CARGO := $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
+CARGO ?= $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
+RUSTC ?= $(RUSTUP) run $(RUST_TOOLCHAIN) rustc
 CARGO_TARGET_DIR ?= target
 CUDA_HOME ?= /usr/local/cuda
 CUDA_TOOLKIT_PATH ?= $(CUDA_HOME)
@@ -20,7 +21,7 @@ QT_QMAKE ?= qmake6
 BUILD_ENV := CUDA_HOME=$(CUDA_HOME) CUDA_TOOLKIT_PATH=$(CUDA_TOOLKIT_PATH) CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PATH=$(CUDA_HOME)/bin:$(PATH) PKG_CONFIG=$(PKG_CONFIG) PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) OPTIX_ROOT=$(OPTIX_ROOT)
 BUILD_ENV += LD_LIBRARY_PATH="/run/host/usr/local/libclang-deps:$${LD_LIBRARY_PATH}"
 BUILD_ENV += BINDGEN_EXTRA_CLANG_ARGS="$(if $(wildcard /run/host/usr/lib/llvm-18/lib/clang/18/include),-isystem /run/host/usr/lib/llvm-18/lib/clang/18/include)"
-RUST_LIBDIR := $(shell $(RUSTUP) run $(RUST_TOOLCHAIN) rustc --print target-libdir)
+RUST_LIBDIR := $(shell $(RUSTC) --print target-libdir)
 DEV_RUSTFLAGS ?= -C prefer-dynamic -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)
 DEV_BUILD_ENV := $(BUILD_ENV) RUSTFLAGS="$(DEV_RUSTFLAGS)"
 

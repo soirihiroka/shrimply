@@ -1,0 +1,117 @@
+{
+  "nodes": {
+    "manim": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787087026,
+        "narHash": "sha256-tWehkVPi7VwMomrL7F2Rq6F6X3BYVOfNqNQN9ip/FFA=",
+        "owner": "3b1b",
+        "repo": "manim",
+        "rev": "9d57bcf9edea2486f214e190931de2a5537f23c1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "3b1b",
+        "repo": "manim",
+        "rev": "9d57bcf9edea2486f214e190931de2a5537f23c1",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1788752844,
+        "narHash": "sha256-VaWGJ6+cIYN2erfSecbRV+4ljI185Ty2wUrXyvQbgOw=",
+        "type": "tarball",
+        "url": "https://github.com/NixOS/nixpkgs/archive/dc5d91f840324650bac8c379428c7037a416959a.tar.gz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://github.com/NixOS/nixpkgs/archive/dc5d91f840324650bac8c379428c7037a416959a.tar.gz"
+      }
+    },
+    "optix": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1765499288,
+        "narHash": "sha256-DZqsXSbuvCsh1EXFS29H4zCm20zwBYxVKj/pvZRvSTE=",
+        "owner": "NVIDIA",
+        "repo": "optix-dev",
+        "rev": "f1f6dd803f3159992d248178f6e09421c6eb8b6d",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NVIDIA",
+        "repo": "optix-dev",
+        "rev": "f1f6dd803f3159992d248178f6e09421c6eb8b6d",
+        "type": "github"
+      }
+    },
+    "rhubarb": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1743666205,
+        "narHash": "sha256-w6TgklwHtwzSHsyz4akT6Nqr/mD8IOGppTMXpikMIHo=",
+        "owner": "DanielSWolf",
+        "repo": "rhubarb-lip-sync",
+        "rev": "9b9573cd21b253c9ba58739bbd1aa0b50b991bff",
+        "type": "github"
+      },
+      "original": {
+        "owner": "DanielSWolf",
+        "repo": "rhubarb-lip-sync",
+        "rev": "9b9573cd21b253c9ba58739bbd1aa0b50b991bff",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "manim": "manim",
+        "nixpkgs": "nixpkgs",
+        "optix": "optix",
+        "rhubarb": "rhubarb",
+        "rust-overlay": "rust-overlay",
+        "vtracer": "vtracer"
+      }
+    },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788765185,
+        "narHash": "sha256-pp8lb5CrKjmscZbTK34HuCaq18zDU4Q6zlaD5dS+Hi4=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "ca7f624be3935a5bc46d2c240515491ab8675503",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "ca7f624be3935a5bc46d2c240515491ab8675503",
+        "type": "github"
+      }
+    },
+    "vtracer": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786793761,
+        "narHash": "sha256-qAodpINmerqdLircQlnbdDWtfCtQ4r7Ytp2OCid4CT8=",
+        "owner": "visioncortex",
+        "repo": "vtracer",
+        "rev": "1ddc9ebbf7120af7d2b92518f1b56ddd95430db1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "visioncortex",
+        "repo": "vtracer",
+        "rev": "1ddc9ebbf7120af7d2b92518f1b56ddd95430db1",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

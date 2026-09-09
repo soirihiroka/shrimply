@@ -50,6 +50,39 @@ Shrimply's main application is written in Rust and uses these technologies:
 - **Media**: FFmpeg and PipeWire
 - **Compute server**: Python
 
+### Nix development environment
+
+The checked-in flake provides the pinned Rust nightly, CUDA toolkit, Slang, and
+native dependencies for the GTK and Qt applications on `x86_64-linux`.
+Initialize the required source submodules, then enter the shell:
+
+```sh
+git submodule update --init --recursive
+nix develop --accept-flake-config
+make dev
+```
+
+The flake requests the [NixOS CUDA binary
+cache](https://wiki.nixos.org/wiki/CUDA#Setting_up_CUDA_Binary_Cache). Multi-user
+Nix installations may require adding that cache to the system Nix
+configuration before the daemon will trust it.
+
+Build the default GTK package with the pinned submodule sources:
+
+```sh
+nix build --accept-flake-config
+./result/bin/shrimply
+```
+
+A compatible NVIDIA driver is still required at runtime. The package currently
+embeds CUDA kernels for compute capability `sm_86`.
+
+The development shell sets the tool and library paths expected by the existing
+Makefile, so commands such as `make dev` and `make dev-qt` work unchanged. It
+also sets `SLANG_LIBRARY_DIR` and `SLANG_INCLUDE_DIR` to the same prebuilt
+Slang release the Cargo build scripts would otherwise download, so builds stay
+offline and reproducible.
+
 ### Finding Things to Work On
 
 Browse the [open issues](https://github.com/soirihiroka/shrimply/issues) for
