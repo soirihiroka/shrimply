@@ -6,7 +6,7 @@ use shrimply_components_appkit::{
     ActionButton, FrameGraph, MultilineTextInput, column_append_intrinsic, column_stack,
     control_row_with_suffix, row_stack,
 };
-use shrimply_inspector_core::{InspectorControl, keyframe_graph::FrameGraphAction};
+use shrimply_inspector_core::{ControlKind, InspectorControl, keyframe_graph::FrameGraphAction};
 use std::{cell::RefCell, rc::Rc};
 
 pub(super) fn view(
@@ -67,10 +67,18 @@ pub(super) fn view(
         .view()
         .setEnabled(control.editable && control.sensitive);
     suffix.addArrangedSubview(expression.view());
-    column_append_intrinsic(
-        &root,
-        &control_row_with_suffix(&control.label, editor, Some(&suffix), mtm),
-    );
+    if control.kind == ControlKind::LayeredText {
+        column_append_intrinsic(
+            &root,
+            &control_row_with_suffix(&control.label, &NSView::new(mtm), Some(&suffix), mtm),
+        );
+        column_append_intrinsic(&root, editor);
+    } else {
+        column_append_intrinsic(
+            &root,
+            &control_row_with_suffix(&control.label, editor, Some(&suffix), mtm),
+        );
+    }
     if control.layered.keyframes {
         match shrimply_inspector_core::document::graph::frame_graph(control) {
             Ok(state) => {
