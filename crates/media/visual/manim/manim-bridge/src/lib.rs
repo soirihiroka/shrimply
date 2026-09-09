@@ -184,7 +184,7 @@ fn send_parameters(
     write_all_cancelled(socket, &parameters, cancelled, started)
 }
 
-#[cached::proc_macro::cached(result = true)]
+#[cached::proc_macro::cached]
 fn uv_executable() -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     {

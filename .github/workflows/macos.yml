@@ -110,8 +110,16 @@ jobs:
           install -m 755 target/release/shrimply-appkit "${contents}/MacOS/shrimply-appkit"
           install -m 755 target/release/shrimply-editor-appkit "${contents}/MacOS/shrimply-editor-appkit"
           install -m 644 packaging/macos/Info.plist "${contents}/Info.plist"
-          install -m 755 target/release/uv "${contents}/MacOS/uv"
-          ditto target/release/manim-worker "${contents}/Resources/manim-worker"
+          install -m 755 "$(command -v uv)" "${contents}/MacOS/uv"
+          python_project="crates/media/visual/manim/manim-bridge/python"
+          bundled_project="${contents}/Resources/manim-worker"
+          mkdir -p "${bundled_project}"
+          rsync -a --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc' --exclude='uv.lock' \
+            "${python_project}/" "${bundled_project}/"
+          manim_revision="$(git -C external/manim rev-parse HEAD)"
+          sed "s|^manimgl = .*|manimgl = { url = \"https://github.com/3b1b/manim/archive/${manim_revision}.tar.gz\" }|" \
+            "${python_project}/pyproject.toml" > "${bundled_project}/pyproject.toml"
+          uv lock --python 3.14 --project "${bundled_project}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "${contents}/Info.plist"
 
           for size in 16 32 128 256 512; do
