@@ -3,10 +3,6 @@ name = "shrimply-editor-appkit"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "shrimply-editor-appkit"
-path = "src/main.rs"
-
 [target.'cfg(target_os = "macos")'.dependencies]
 shrimply-caption-export-core.workspace = true
 block2.workspace = true
