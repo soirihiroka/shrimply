@@ -185,7 +185,7 @@ pub fn fraction_new(numerator: i64, denominator: i64) -> Fraction {
     if denominator == 0 {
         return FRACTION_ZERO;
     }
-    if numerator < 0 {
+    if numerator != 0 && (numerator < 0) != (denominator < 0) {
         GenericFraction::Rational(
             Sign::Minus,
             fraction::Ratio::new(numerator.unsigned_abs(), denominator.unsigned_abs()),
@@ -193,7 +193,7 @@ pub fn fraction_new(numerator: i64, denominator: i64) -> Fraction {
     } else {
         GenericFraction::Rational(
             Sign::Plus,
-            fraction::Ratio::new(numerator as u64, denominator.unsigned_abs()),
+            fraction::Ratio::new(numerator.unsigned_abs(), denominator.unsigned_abs()),
         )
     }
 }
@@ -683,5 +683,35 @@ mod tests {
             60,
         );
         assert_eq!(frame_rate_from_duration(Duration::ZERO), None);
+    }
+
+    #[test]
+    fn a_negative_denominator_makes_the_fraction_negative() {
+        assert_eq!(fraction_new(1, -2), fraction_new(-1, 2));
+        assert_eq!(fraction_as_f64(fraction_new(1, -2)), -0.5);
+    }
+
+    #[test]
+    fn two_negatives_make_the_fraction_positive() {
+        assert_eq!(fraction_new(-1, -2), fraction_new(1, 2));
+        assert_eq!(fraction_as_f64(fraction_new(-1, -2)), 0.5);
+    }
+
+    #[test]
+    fn positive_denominators_are_unchanged() {
+        assert_eq!(fraction_as_f64(fraction_new(1, 2)), 0.5);
+        assert_eq!(fraction_as_f64(fraction_new(-1, 2)), -0.5);
+        assert_eq!(fraction_as_f64(fraction_new(3, 1)), 3.0);
+        assert_eq!(fraction_new(2, 4), fraction_new(1, 2));
+    }
+
+    #[test]
+    fn a_zero_stays_a_plain_zero() {
+        assert_eq!(fraction_new(0, -1), FRACTION_ZERO);
+        assert_eq!(fraction_new(0, 5), FRACTION_ZERO);
+        assert_eq!(fraction_new(1, 0), FRACTION_ZERO);
+        assert_eq!(fraction_new(-1, 0), FRACTION_ZERO);
+        assert!(fraction_new(0, -1) <= FRACTION_ZERO);
+        assert!(fraction_new(0, -1) >= FRACTION_ZERO);
     }
 }
