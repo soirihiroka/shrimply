@@ -10,18 +10,6 @@ Visit the `Shrimply repository on GitHub
 <https://github.com/soirihiroka/shrimply>`__ to browse the source code, report
 issues, and contribute.
 
-Installation
-------------
-
-* :doc:`Flatpak <flatpak>` covers installing and updating the Linux package.
-
-.. toctree::
-   :maxdepth: 2
-   :hidden:
-   :caption: Installation
-
-   Flatpak <flatpak>
-
 Getting started
 ---------------
 
@@ -36,6 +24,18 @@ Getting started
 
    getting-started
    guides/editor
+
+Installation
+------------
+
+* :doc:`Flatpak <flatpak>` covers installing and updating the Linux package.
+
+.. toctree::
+   :maxdepth: 2
+   :hidden:
+   :caption: Installation
+
+   Flatpak <flatpak>
 
 Editing
 -------
