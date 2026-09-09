@@ -255,21 +255,40 @@ impl ResolvedTransform3D {
 }
 
 pub fn rotation(degrees: Vec3, order: RotationOrder) -> Quat {
+    let [first, second, third] = axes(order);
     Quat::from_euler(
         euler(order),
-        degrees.x.to_radians(),
-        degrees.y.to_radians(),
-        degrees.z.to_radians(),
+        degrees[first].to_radians(),
+        degrees[second].to_radians(),
+        degrees[third].to_radians(),
     )
 }
 
 pub fn rotation_degrees(rotation: Quat, order: RotationOrder) -> Vec3 {
-    let (x, y, z) = rotation.to_euler(euler(order));
-    Vec3::new(x.to_degrees(), y.to_degrees(), z.to_degrees())
+    let (first_angle, second_angle, third_angle) = rotation.to_euler(euler(order));
+    let [first, second, third] = axes(order);
+    let mut degrees = Vec3::ZERO;
+    degrees[first] = first_angle.to_degrees();
+    degrees[second] = second_angle.to_degrees();
+    degrees[third] = third_angle.to_degrees();
+    degrees
 }
 
 pub fn camera_world(position: Vec3, rotation_degrees: Vec3) -> Mat4 {
     Mat4::from_rotation_translation(rotation(rotation_degrees, RotationOrder::Xyz), position)
+}
+
+/// The `degrees` components that the euler sequence takes its angles from, in
+/// sequence order, so that each component always turns about its own axis.
+fn axes(order: RotationOrder) -> [usize; 3] {
+    match order {
+        RotationOrder::Xyz => [0, 1, 2],
+        RotationOrder::Xzy => [0, 2, 1],
+        RotationOrder::Yxz => [1, 0, 2],
+        RotationOrder::Yzx => [1, 2, 0],
+        RotationOrder::Zxy => [2, 0, 1],
+        RotationOrder::Zyx => [2, 1, 0],
+    }
 }
 
 fn euler(order: RotationOrder) -> EulerRot {
@@ -280,5 +299,61 @@ fn euler(order: RotationOrder) -> EulerRot {
         RotationOrder::Yzx => EulerRot::YZX,
         RotationOrder::Zxy => EulerRot::ZXY,
         RotationOrder::Zyx => EulerRot::ZYX,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ORDERS: [RotationOrder; 6] = [
+        RotationOrder::Xyz,
+        RotationOrder::Xzy,
+        RotationOrder::Yxz,
+        RotationOrder::Yzx,
+        RotationOrder::Zxy,
+        RotationOrder::Zyx,
+    ];
+
+    const PROBE: Vec3 = Vec3::new(1.0, 2.0, 3.0);
+
+    fn close(left: Vec3, right: Vec3) -> bool {
+        (left - right).abs().max_element() <= 1e-4
+    }
+
+    #[test]
+    fn one_nonzero_angle_turns_about_its_own_axis_whatever_the_order() {
+        let quarter = 90f32.to_radians();
+        for (degrees, expected) in [
+            (Vec3::new(90.0, 0.0, 0.0), Quat::from_rotation_x(quarter)),
+            (Vec3::new(0.0, 90.0, 0.0), Quat::from_rotation_y(quarter)),
+            (Vec3::new(0.0, 0.0, 90.0), Quat::from_rotation_z(quarter)),
+        ] {
+            let expected = expected * PROBE;
+            for order in ORDERS {
+                let actual = rotation(degrees, order) * PROBE;
+                assert!(
+                    close(actual, expected),
+                    "{degrees:?} {order:?}: {actual:?} {expected:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn degrees_round_trip_through_every_order() {
+        let degrees = Vec3::new(10.0, 20.0, 30.0);
+        for order in ORDERS {
+            let actual = rotation_degrees(rotation(degrees, order), order);
+            assert!(close(actual, degrees), "{order:?}: {actual:?}");
+        }
+    }
+
+    #[test]
+    fn the_order_still_changes_a_three_axis_rotation() {
+        let degrees = Vec3::new(10.0, 20.0, 30.0);
+        let first = rotation(degrees, RotationOrder::Xyz) * PROBE;
+        let second = rotation(degrees, RotationOrder::Zyx) * PROBE;
+        assert!(!close(first, second), "{first:?} {second:?}");
     }
 }
