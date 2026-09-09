@@ -347,10 +347,7 @@ pub struct TextItem {
     pub font_style: TimelineValue<TextFontStyle>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub font_variations: Vec<FontVariation>,
-    #[serde(
-        default = "default_text_font_weight",
-        skip_serializing_if = "is_default_text_font_weight"
-    )]
+    #[serde(default = "default_text_font_weight")]
     pub font_weight: TimelineValue<f32>,
     #[serde(default)]
     pub tracking: TimelineValue<f32>,
@@ -424,13 +421,6 @@ fn default_cross_arm_thickness_percent() -> TimelineValue<f32> {
 
 fn default_ellipse_completion_degrees() -> TimelineValue<f32> {
     TimelineValue::<f32>::new_const(360.0)
-}
-
-fn is_default_text_font_weight(value: &TimelineValue<f32>) -> bool {
-    matches!(
-        (&value.base, &value.expression),
-        (shrimply_property_model::timeline_value::TimelineBase::Const(weight), None) if *weight == 400.0
-    )
 }
 
 impl VisualItem {
