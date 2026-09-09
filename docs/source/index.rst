@@ -10,12 +10,23 @@ Visit the `Shrimply repository on GitHub
 <https://github.com/soirihiroka/shrimply>`__ to browse the source code, report
 issues, and contribute.
 
+Installation
+------------
+
+* :doc:`Flatpak <flatpak>` covers installing and updating the Linux package.
+
+.. toctree::
+   :maxdepth: 2
+   :hidden:
+   :caption: Installation
+
+   Flatpak <flatpak>
+
 Getting started
 ---------------
 
 * :doc:`Getting started <getting-started>` explains how to launch Shrimply,
   create a project, edit the timeline, and export it.
-* :doc:`Flatpak installation <flatpak>` covers installing and updating the Linux package.
 * :doc:`Editor <guides/editor>` describes the main workspaces and shortcuts.
 
 .. toctree::
@@ -24,7 +35,6 @@ Getting started
    :caption: Getting started
 
    getting-started
-   flatpak
    guides/editor
 
 Editing
