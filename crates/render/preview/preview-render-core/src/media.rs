@@ -178,9 +178,15 @@ impl Default for Media {
 impl Media {
     pub fn set_decoder_limit(&mut self, maximum: usize) {
         assert!(maximum > 0, "video decoder limit must be positive");
-        if self.decoder_limit == Some(maximum) { return; }
+        if self.decoder_limit == Some(maximum) {
+            return;
+        }
         self.decoder_limit = Some(maximum);
-        self.shared.slots.lock().expect("preview media slots poisoned").decoder_limit = Some(maximum);
+        self.shared
+            .slots
+            .lock()
+            .expect("preview media slots poisoned")
+            .decoder_limit = Some(maximum);
         self.shared.wake.notify_one();
     }
 
@@ -334,7 +340,9 @@ fn worker(shared: Arc<Shared>) {
                 decoder_limit = maximum;
                 trim_decoders(&mut cache, decoder_limit);
             }
-            let Some(batch) = batch else { continue; };
+            let Some(batch) = batch else {
+                continue;
+            };
             batch
         };
         if batch.epoch != epoch {
@@ -349,12 +357,13 @@ fn worker(shared: Arc<Shared>) {
             {
                 return Err("preview request cancelled".into());
             }
-            let frame = load(request, &mut cache, &shared, &batch, decoder_limit).map_err(|error| {
-                format!(
-                    "Could not render {}: {error}",
-                    request.source.file.path().display()
-                )
-            })?;
+            let frame =
+                load(request, &mut cache, &shared, &batch, decoder_limit).map_err(|error| {
+                    format!(
+                        "Could not render {}: {error}",
+                        request.source.file.path().display()
+                    )
+                })?;
             frames.insert(request.id.clone(), (request.source.clone(), frame));
             Ok(())
         });
@@ -375,9 +384,13 @@ fn worker(shared: Arc<Shared>) {
 // Only decoder contexts are evicted. Frames remain available to complete a batch
 // even when it contains more video layers than the configured session limit.
 fn trim_decoders(cache: &mut HashMap<Key, Cached>, maximum: usize) {
-    let count = cache.values().filter(|entry| entry.decoder.is_some()).count();
+    let count = cache
+        .values()
+        .filter(|entry| entry.decoder.is_some())
+        .count();
     for _ in maximum..count {
-        let oldest = cache.values_mut()
+        let oldest = cache
+            .values_mut()
             .filter(|entry| entry.decoder.is_some())
             .min_by_key(|entry| entry.last_used)
             .expect("open decoder to release");

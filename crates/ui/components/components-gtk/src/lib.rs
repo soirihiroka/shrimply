@@ -12,6 +12,7 @@ pub mod icons;
 pub mod i18n {
     pub use shrimply_i18n::{init_system_locale, text, text_args};
 }
+pub mod pinch_zoom;
 pub mod playback_shortcuts;
 pub mod project_open;
 pub mod project_save;

@@ -185,9 +185,15 @@ impl Renderer {
     }
     pub fn set_decoder_limit(&mut self, maximum: usize) {
         assert!(maximum > 0, "video decoder limit must be positive");
-        if self.decoder_limit == Some(maximum) { return; }
+        if self.decoder_limit == Some(maximum) {
+            return;
+        }
         self.decoder_limit = Some(maximum);
-        self.shared.slots.lock().expect("Metal preview slots poisoned").decoder_limit = Some(maximum);
+        self.shared
+            .slots
+            .lock()
+            .expect("Metal preview slots poisoned")
+            .decoder_limit = Some(maximum);
         self.shared.wake.notify_one();
     }
 
@@ -250,17 +256,38 @@ impl Renderer {
         self.render_elapsed
     }
 
-    pub fn draw(&mut self, canvas: &Canvas, project: &Project, time: Time, sampling: skia_safe::SamplingOptions) -> Result<(), String> {
+    pub fn draw(
+        &mut self,
+        canvas: &Canvas,
+        project: &Project,
+        time: Time,
+        sampling: skia_safe::SamplingOptions,
+    ) -> Result<(), String> {
         let result = self.prepare(project, time);
         if let Some(image) = &self.presented {
             let image = &image.image;
             let image = if sampling.mipmap != skia_safe::MipmapMode::None {
-                if self.mipmapped.as_ref().is_none_or(|(id, _)| *id != image.unique_id()) {
-                    self.mipmapped = Some((image.unique_id(), image.with_default_mipmaps()
-                        .filter(Image::has_mipmaps).ok_or("Could not generate preview mipmaps")?));
+                if self
+                    .mipmapped
+                    .as_ref()
+                    .is_none_or(|(id, _)| *id != image.unique_id())
+                {
+                    self.mipmapped = Some((
+                        image.unique_id(),
+                        image
+                            .with_default_mipmaps()
+                            .filter(Image::has_mipmaps)
+                            .ok_or("Could not generate preview mipmaps")?,
+                    ));
                 }
-                &self.mipmapped.as_ref().expect("preview mipmaps generated").1
-            } else { image };
+                &self
+                    .mipmapped
+                    .as_ref()
+                    .expect("preview mipmaps generated")
+                    .1
+            } else {
+                image
+            };
             canvas.draw_image_with_sampling_options(image, (0.0, 0.0), sampling, None);
         }
         result
@@ -432,7 +459,12 @@ fn worker(
     let mut slow_request_reported = false;
     loop {
         let mut slots = shared.slots.lock().expect("Metal preview slots poisoned");
-        while !slots.stop && slots.request.is_none() && slots.decoder_limit.is_none() && !slots.schedule_sam2 && !active {
+        while !slots.stop
+            && slots.request.is_none()
+            && slots.decoder_limit.is_none()
+            && !slots.schedule_sam2
+            && !active
+        {
             slots = shared
                 .wake
                 .wait(slots)

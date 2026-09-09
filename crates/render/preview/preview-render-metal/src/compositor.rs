@@ -16,7 +16,11 @@ type ExternalMaskBuffers = Vec<(
 /// Renders an accurate frame through the preview compositor and encodes it as PNG.
 /// This blocks on media decoding and GPU completion; call it from a worker thread.
 /// Caption overlays use preview-pixel sizing and are drawn separately by the host.
-pub fn render_png(project: &Project, time: Time, maximum_decoders: usize) -> Result<Vec<u8>, String> {
+pub fn render_png(
+    project: &Project,
+    time: Time,
+    maximum_decoders: usize,
+) -> Result<Vec<u8>, String> {
     objc2::rc::autoreleasepool(|_| {
         let mut renderer = Compositor::default();
         renderer.set_decoder_limit(maximum_decoders);

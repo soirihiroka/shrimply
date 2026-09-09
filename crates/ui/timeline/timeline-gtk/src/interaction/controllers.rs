@@ -235,43 +235,29 @@ pub(crate) fn add_input_controllers(
     });
     area.add_controller(scroll);
 
-    let zoom = gtk::GestureZoom::new();
-    let previous_scale = Rc::new(std::cell::Cell::new(1.0));
-    zoom.connect_begin({
-        let previous_scale = previous_scale.clone();
-        move |_, _| previous_scale.set(1.0)
-    });
-    zoom.connect_end({
-        let previous_scale = previous_scale.clone();
-        move |_, _| previous_scale.set(1.0)
-    });
-    zoom.connect_cancel({
-        let previous_scale = previous_scale.clone();
-        move |_, _| previous_scale.set(1.0)
-    });
-    zoom.connect_scale_changed({
-        let area = area.clone();
-        let runtime = runtime.clone();
-        move |gesture, scale| {
-            let Some(magnification) =
-                shrimply_math_core::pinch_magnification(scale, previous_scale.get())
-            else {
-                return;
-            };
-            previous_scale.set(scale);
-            let mut runtime = runtime.borrow_mut();
-            let point = gesture
-                .bounding_box_center()
-                .or_else(|| gesture.current_event().and_then(|event| event.position()))
-                .map(|(x, y)| vec2(x as f32, y as f32))
-                .or(runtime.scene.pointer_state().position)
-                .unwrap_or_else(|| vec2(area.width() as f32 / 2.0, area.height() as f32 / 2.0));
-            runtime.scene.magnify(point, magnification);
-            drop(runtime);
-            area.queue_render();
-        }
-    });
-    area.add_controller(zoom);
+    shrimply_components_gtk::pinch_zoom::connect_pinch_zoom(
+        area,
+        {
+            let runtime = runtime.clone();
+            move || {
+                runtime
+                    .borrow()
+                    .scene
+                    .pointer_state()
+                    .position
+                    .map(|point| (f64::from(point.x), f64::from(point.y)))
+            }
+        },
+        {
+            let runtime = runtime.clone();
+            move |(x, y), magnification| {
+                runtime
+                    .borrow_mut()
+                    .scene
+                    .magnify(vec2(x as f32, y as f32), magnification);
+            }
+        },
+    );
 
     crate::drag_and_drop::setup(area, runtime);
 }

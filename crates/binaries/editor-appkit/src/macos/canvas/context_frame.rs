@@ -181,9 +181,9 @@ impl CanvasView {
             cancelled: Arc::clone(&cancelled),
             alert: alert.clone(),
         };
-        let maximum_decoders = shrimply_editor_state::preferences::snapshot(
-            &self.ivars().session.preferences,
-        ).temporal_decoder_pool_size as usize;
+        let maximum_decoders =
+            shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences)
+                .temporal_decoder_pool_size as usize;
         let source_scopes = self.ivars().imports.borrow().retain_scopes();
         std::thread::Builder::new()
             .name("frame-capture".into())
@@ -198,7 +198,11 @@ impl CanvasView {
                     }
                     let png = match source {
                         Source::Selected { project, position } => {
-                            shrimply_preview_render_metal::render_png(&project, position, maximum_decoders)?
+                            shrimply_preview_render_metal::render_png(
+                                &project,
+                                position,
+                                maximum_decoders,
+                            )?
                         }
                         Source::Presented(image) => {
                             skia_safe::png_encoder::encode_image(None, &image, &Default::default())

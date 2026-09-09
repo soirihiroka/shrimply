@@ -171,7 +171,10 @@ impl VideoBackend for VideoToolboxBackend {
         settings: &core::ExportSettings,
         _cancelled: &AtomicBool,
     ) -> Result<(), String> {
-        self.renderer = Some(ExportRenderer::new(settings.background_alpha, self.settings.maximum_temporal_decoders));
+        self.renderer = Some(ExportRenderer::new(
+            settings.background_alpha,
+            self.settings.maximum_temporal_decoders,
+        ));
         Ok(())
     }
 

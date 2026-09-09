@@ -984,12 +984,14 @@ impl FrameGraphState {
         if !magnification.is_finite() {
             return;
         }
+        self.scrollbar.cancel_scroll();
         self.view.initialize(self.item_range, width);
         self.view.clamp(self.item_range, width);
         let domain = self.view.domain(self.item_range, width);
         let pointer_time = time_at_x(pointer_x, width, domain);
         let pointer_plot_x = (pointer_x - GRAPH_PAD).clamp(0.0, graph_plot_width(width));
         self.view.seconds_per_pixel /= magnification.exp();
+        self.view.clamp(self.item_range, width);
         self.view.scroll_seconds =
             pointer_time.as_secs_f64() - pointer_plot_x * self.view.seconds_per_pixel;
         self.view.clamp(self.item_range, width);
@@ -1150,6 +1152,7 @@ impl FrameGraphState {
     }
 
     fn zoom(&mut self, delta: f64, pointer_x: f64, width: f64) {
+        self.scrollbar.cancel_scroll();
         self.view.initialize(self.item_range, width);
         self.view.clamp(self.item_range, width);
         let domain = self.view.domain(self.item_range, width);
@@ -1157,6 +1160,7 @@ impl FrameGraphState {
         let scale = if delta < 0.0 { 0.8 } else { 1.25 };
         let pointer_plot_x = (pointer_x - GRAPH_PAD).clamp(0.0, graph_plot_width(width));
         self.view.seconds_per_pixel *= scale;
+        self.view.clamp(self.item_range, width);
         self.view.scroll_seconds =
             pointer_time.as_secs_f64() - pointer_plot_x * self.view.seconds_per_pixel;
         self.view.clamp(self.item_range, width);

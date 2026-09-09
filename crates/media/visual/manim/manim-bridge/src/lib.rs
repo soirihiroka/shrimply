@@ -188,8 +188,8 @@ fn send_parameters(
 fn uv_executable() -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     {
-        let executable = std::env::current_exe()
-            .map_err(|error| format!("locate bundled uv: {error}"))?;
+        let executable =
+            std::env::current_exe().map_err(|error| format!("locate bundled uv: {error}"))?;
         if let Some(macos) = executable.parent()
             && macos.file_name().is_some_and(|name| name == "MacOS")
             && let Some(contents) = macos.parent()
@@ -212,7 +212,9 @@ fn python_command(module: &str) -> Result<(Command, bool), String> {
         .map(|contents| contents.join("Resources/manim-worker"))
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("python"));
     let mut command = Command::new(&executable);
-    command.args(["run", "--python", "3.14", "--project"]).arg(&project);
+    command
+        .args(["run", "--python", "3.14", "--project"])
+        .arg(&project);
     let environment = std::env::var_os("UV_PROJECT_ENVIRONMENT")
         .map(PathBuf::from)
         .unwrap_or_else(|| project.join(".venv"));
