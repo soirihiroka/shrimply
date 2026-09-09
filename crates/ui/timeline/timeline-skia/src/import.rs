@@ -510,6 +510,13 @@ pub fn inspect(
     let mut stream_duration_seconds = 0.0_f64;
 
     for stream in input.streams() {
+        // Cover art is reported as video, but has no playback timestamps.
+        if stream
+            .disposition()
+            .contains(format::stream::Disposition::ATTACHED_PIC)
+        {
+            continue;
+        }
         match stream.parameters().medium() {
             media::Type::Video if file_kind != FileKind::Audio => {
                 video_streams += 1;

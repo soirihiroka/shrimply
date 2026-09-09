@@ -56,6 +56,10 @@ impl Decoder {
         let stream = input
             .streams()
             .filter(|s| s.parameters().medium() == media::Type::Video)
+            .filter(|s| {
+                !s.disposition()
+                    .contains(format::stream::Disposition::ATTACHED_PIC)
+            })
             .nth(track as usize)
             .ok_or("video stream does not exist")?;
         let decoder = open_decoder(stream.parameters(), stream.time_base())?;

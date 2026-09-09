@@ -219,6 +219,11 @@ pub(super) fn video_stream_count(file: &std::path::Path) -> usize {
         input
             .streams()
             .filter(|stream| stream.parameters().medium() == media::Type::Video)
+            .filter(|stream| {
+                !stream
+                    .disposition()
+                    .contains(format::stream::Disposition::ATTACHED_PIC)
+            })
             .count()
     })
 }

@@ -89,6 +89,11 @@ impl VideoDecoderSession {
             let stream = input
                 .streams()
                 .filter(|stream| stream.parameters().medium() == ffmpeg::media::Type::Video)
+                .filter(|stream| {
+                    !stream
+                        .disposition()
+                        .contains(ffmpeg::format::stream::Disposition::ATTACHED_PIC)
+                })
                 .nth(source.media_track_id as usize)
                 .ok_or_else(|| format!("video stream {} not found", source.media_track_id))?;
             let mut frame_rate = stream.avg_frame_rate();
