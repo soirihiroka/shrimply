@@ -98,7 +98,8 @@ pub(super) fn change_numeric(store: &SharedPreferences, sender: &NSControl) -> R
     let PreferenceValue::Integer(value) = preferences::value(store, id) else {
         panic!("numeric preference must store an integer");
     };
-    let content = sender.superview().expect("numeric preference pane");
+    // Settings controls and their containing pane are accessed on the main thread.
+    let content = unsafe { sender.superview() }.expect("numeric preference pane");
     tagged::<NSTextField>(&content, tag, "numeric field").setDoubleValue(value as f64 / range.scale as f64);
     tagged::<NSStepper>(&content, tag + STEPPER_TAG_OFFSET, "numeric stepper").setIntegerValue(value as isize);
     result
