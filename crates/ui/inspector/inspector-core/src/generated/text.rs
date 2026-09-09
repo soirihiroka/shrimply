@@ -551,3 +551,207 @@ fn set_font_variation(text: &mut TextItem, axis: &str, value: &str) -> Result<bo
     }
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ControlKind, InspectorControl, InspectorController, InspectorTarget};
+    use shrimply_math_core::Fraction;
+    use shrimply_project_document::project::{
+        CanvasSize, ItemAddress, ItemRef, Project, Time, VideoItem, VideoItemContent, VisualTrack,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn test_controller() -> (
+        InspectorController,
+        Rc<RefCell<Project>>,
+        InspectorTarget,
+        InspectorControl,
+    ) {
+        let canvas_size = CanvasSize {
+            width: 1920,
+            height: 1080,
+        };
+        let text_item = VideoItem::text_item(canvas_size, Time::ZERO, Time::from_seconds(5));
+        let item_id = text_item.id;
+
+        let track_id = uuid::Uuid::new_v4();
+        let mut track = VisualTrack::default();
+        track.id = track_id;
+        track.items.push(text_item);
+
+        let project = Project {
+            format_version: shrimply_project_document::project::PROJECT_FORMAT_VERSION,
+            name: "Test Project".to_string(),
+            fps: Fraction::from(30),
+            canvas_size,
+            caption_tracks: Vec::new(),
+            video_tracks: vec![track],
+            audio_tracks: Vec::new(),
+            folded_sequences: Vec::new(),
+            expanded_sequence_paths: Vec::new(),
+            cursor_position: None,
+            timeline_zoom: None,
+            preview_guides: Default::default(),
+        };
+
+        let project_cell = Rc::new(RefCell::new(project));
+        let player =
+            shrimply_editor_state::player_state::new(Time::from_seconds(5), Fraction::from(30));
+        let selection = shrimply_timeline_edit::selection_state::new();
+        let controller = InspectorController::new(project_cell.clone(), player, selection);
+        let target = InspectorTarget::Item(ItemAddress::Video {
+            sequence_path: Vec::new(),
+            track_id,
+            item_id,
+        });
+        let control = InspectorControl::new(
+            ControlKind::LayeredNumber,
+            "/content/font_weight",
+            "Font weight",
+        )
+        .live_commit(SCALAR_EDIT_COMMIT);
+        (controller, project_cell, target, control)
+    }
+
+    fn current_font_weight(project_cell: &Rc<RefCell<Project>>, target: &InspectorTarget) -> f32 {
+        let project = project_cell.borrow();
+        let InspectorTarget::Item(address) = target else {
+            panic!("expected item target");
+        };
+        let ItemRef::Video(video_item) = project.item(address).expect("video item") else {
+            panic!("expected video item");
+        };
+        let VideoItemContent::Text(text) = &video_item.content else {
+            panic!("expected text item");
+        };
+        text.font_weight.value_at(Time::ZERO)
+    }
+
+    #[test]
+    fn case_1_fresh_default_weight_to_non_default() {
+        let (controller, project, target, control) = test_controller();
+        assert_eq!(current_font_weight(&project, &target), 400.0);
+
+        controller
+            .set_basic_control_value(&target, &control, "500")
+            .expect("changing font weight 400 -> 500 must succeed");
+        assert_eq!(current_font_weight(&project, &target), 500.0);
+    }
+
+    #[test]
+    fn case_2_normal_non_default_editing() {
+        let (controller, project, target, control) = test_controller();
+        controller
+            .set_basic_control_value(&target, &control, "500")
+            .expect("initial edit 400 -> 500 must succeed");
+        assert_eq!(current_font_weight(&project, &target), 500.0);
+
+        controller
+            .set_basic_control_value(&target, &control, "600")
+            .expect("editing font weight 500 -> 600 must succeed");
+        assert_eq!(current_font_weight(&project, &target), 600.0);
+    }
+
+    #[test]
+    fn case_3_return_to_default_then_edit_again() {
+        let (controller, project, target, control) = test_controller();
+        controller
+            .set_basic_control_value(&target, &control, "500")
+            .expect("initial edit 400 -> 500 must succeed");
+        assert_eq!(current_font_weight(&project, &target), 500.0);
+
+        controller
+            .set_basic_control_value(&target, &control, "400")
+            .expect("returning font weight 500 -> 400 must succeed");
+        assert_eq!(current_font_weight(&project, &target), 400.0);
+
+        controller
+            .set_basic_control_value(&target, &control, "700")
+            .expect("editing font weight 400 -> 700 after returning to default must succeed");
+        assert_eq!(current_font_weight(&project, &target), 700.0);
+    }
+
+    #[test]
+    fn case_4_serialization_and_deserialization_at_default_weight() {
+        let (controller, _project, target, _control) = test_controller();
+        let (serialized, _) = controller
+            .control_graph_source(&target)
+            .expect("target must serialize");
+
+        let font_weight_json = serialized
+            .pointer("/content/font_weight")
+            .expect("/content/font_weight must be present in serialized JSON");
+        assert_eq!(
+            font_weight_json.pointer("/base/const"),
+            Some(&serde_json::json!(400.0))
+        );
+
+        let deserialized: VideoItem =
+            serde_json::from_value(serialized).expect("serialized video item must deserialize");
+        let VideoItemContent::Text(text) = deserialized.content else {
+            panic!("expected text item");
+        };
+        assert_eq!(text.font_weight.value_at(Time::ZERO), 400.0);
+    }
+
+    #[test]
+    fn case_5_backward_compatibility_when_font_weight_absent() {
+        let (controller, _project, target, _control) = test_controller();
+        let (mut serialized, _) = controller
+            .control_graph_source(&target)
+            .expect("target must serialize");
+
+        let content = serialized
+            .pointer_mut("/content")
+            .and_then(|c| c.as_object_mut())
+            .expect("content object must exist");
+        content.remove("font_weight");
+        assert!(serialized.pointer("/content/font_weight").is_none());
+
+        let deserialized: VideoItem = serde_json::from_value(serialized)
+            .expect("older video item without font_weight must deserialize");
+        let VideoItemContent::Text(text) = deserialized.content else {
+            panic!("expected text item");
+        };
+        assert_eq!(text.font_weight.value_at(Time::ZERO), 400.0);
+    }
+
+    #[test]
+    fn case_6_reset_appearance_and_subsequent_edits() {
+        let (controller, project, target, control) = test_controller();
+        controller
+            .set_basic_control_value(&target, &control, "700")
+            .expect("initial edit 400 -> 700 must succeed");
+        assert_eq!(current_font_weight(&project, &target), 700.0);
+
+        let reset = {
+            let p = project.borrow();
+            let InspectorTarget::Item(address) = &target else {
+                panic!("expected item target");
+            };
+            let ItemRef::Video(video_item) = p.item(address).expect("video item") else {
+                panic!("expected video item");
+            };
+            let VideoItemContent::Text(text) = &video_item.content else {
+                panic!("expected text item");
+            };
+            let text_cards = cards(text, p.canvas_size, InspectorRuntime::default(), None);
+            text_cards[1]
+                .reset
+                .clone()
+                .expect("appearance card must have reset")
+        };
+
+        controller
+            .reset_video(&target, &reset)
+            .expect("resetting appearance card must succeed");
+        assert_eq!(current_font_weight(&project, &target), 400.0);
+
+        controller
+            .set_basic_control_value(&target, &control, "500")
+            .expect("editing font weight 400 -> 500 after reset must succeed");
+        assert_eq!(current_font_weight(&project, &target), 500.0);
+    }
+}
