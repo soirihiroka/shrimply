@@ -3,20 +3,22 @@ use super::{
     preview::{Key, SPECIMEN_EDGE},
 };
 use objc2::{
-    AnyThread, ClassType, DefinedClass, MainThreadOnly, define_class, msg_send, rc::Retained,
-    runtime::ProtocolObject, sel,
+    AnyThread, ClassType, DefinedClass, MainThreadOnly, define_class, msg_send,
+    rc::{Allocated, Retained},
+    runtime::ProtocolObject,
+    sel,
 };
 use objc2_app_kit::{
     NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
     NSAutoresizingMaskOptions, NSBox, NSBoxType, NSCollectionView, NSCollectionViewDataSource,
-    NSCollectionViewFlowLayout, NSCollectionViewItem, NSColor, NSControlTextEditingDelegate,
-    NSEvent, NSFont, NSImage, NSImageScaling, NSImageView, NSIndexPathNSCollectionViewAdditions,
-    NSScrollView, NSSearchField, NSSearchFieldDelegate, NSTextAlignment, NSTextField,
-    NSTextFieldDelegate, NSView,
+    NSCollectionViewElement, NSCollectionViewFlowLayout, NSCollectionViewItem, NSColor,
+    NSControlTextEditingDelegate, NSEvent, NSFont, NSImage, NSImageScaling, NSImageView,
+    NSIndexPathNSCollectionViewAdditions, NSScrollView, NSSearchField, NSSearchFieldDelegate,
+    NSTextAlignment, NSTextField, NSTextFieldDelegate, NSUserInterfaceItemIdentification, NSView,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSData, NSEdgeInsets, NSIndexPath, NSInteger, NSNotification,
-    NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
+    MainThreadMarker, NSArray, NSBundle, NSData, NSEdgeInsets, NSIndexPath, NSInteger,
+    NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSet, NSSize, NSString,
 };
 use std::rc::Weak;
 
@@ -27,6 +29,44 @@ const STATUS_TAG: NSInteger = 1;
 pub(super) struct Ivars {
     state: Weak<State>,
 }
+
+define_class!(
+    #[unsafe(super(NSCollectionViewItem))]
+    #[thread_kind = MainThreadOnly]
+    struct SpecimenItem;
+    unsafe impl NSObjectProtocol for SpecimenItem {}
+    unsafe impl NSUserInterfaceItemIdentification for SpecimenItem {}
+    unsafe impl NSCollectionViewElement for SpecimenItem {
+        #[unsafe(method(prepareForReuse))]
+        fn prepare_for_reuse(&self) {
+            unsafe { let _: () = msg_send![super(self), prepareForReuse]; }
+            self.imageView().expect("font image").setImage(None);
+            self.textField().expect("font label").setStringValue(&NSString::from_str(""));
+            self.view().setToolTip(None);
+        }
+    }
+    impl SpecimenItem {
+        #[unsafe(method(setSelected:))]
+        fn set_selected(&self, selected: bool) {
+            unsafe { let _: () = msg_send![super(self), setSelected: selected]; }
+            if self.isViewLoaded() {
+                let card = self.view().subviews().objectAtIndex(0).downcast::<NSBox>().expect("font card box");
+                let color = if selected { NSColor::controlAccentColor() } else { NSColor::separatorColor() };
+                card.setBorderColor(&color);
+                card.setBorderWidth(if selected { 3.0 } else { 1.0 });
+            }
+        }
+        #[unsafe(method_id(init))]
+        fn init(this: Allocated<Self>) -> Retained<Self> {
+            let this = this.set_ivars(());
+            unsafe { msg_send![super(this), initWithNibName: None::<&NSString>, bundle: None::<&NSBundle>] }
+        }
+        #[unsafe(method(loadView))]
+        fn load_view(&self) {
+            build_card(self, self.mtm());
+        }
+    }
+);
 
 define_class!(
     #[unsafe(super(NSCollectionView))]
@@ -79,15 +119,31 @@ define_class!(
         #[unsafe(method_id(collectionView:itemForRepresentedObjectAtIndexPath:))]
         fn item(&self, collection: &NSCollectionView, path: &NSIndexPath) -> Retained<NSCollectionViewItem> {
             let item = collection.makeItemWithIdentifier_forIndexPath(&NSString::from_str("FontSpecimen"), path);
-            if !item.isViewLoaded() { build_card(&item, self.mtm()); }
+            // Loading our registered item builds its outlets before AppKit lays it out.
+            let view = item.view();
             let state = self.ivars().state.upgrade().expect("font picker is alive while providing items");
             let entries = state.items.borrow();
             let entry = &entries[path.item() as usize];
             item.textField().expect("font label").setStringValue(&NSString::from_str(&entry.name));
             item.imageView().expect("font image").setImage(None);
-            item.view().setToolTip(Some(&NSString::from_str(&entry.name)));
+            view.setToolTip(Some(&NSString::from_str(&entry.name)));
             let status = item.view().viewWithTag(STATUS_TAG).expect("font status").downcast::<NSTextField>().expect("font status label");
-            status.setStringValue(&NSString::from_str("Loading preview…"));
+            let (scale, dark) = state.appearance.get().unwrap_or_else(|| display_style(&state));
+            let key = Key { id: entry.id.clone(), scale, dark };
+            match state.previews.borrow().cached(&key) {
+                Some(Ok(bytes)) => {
+                    let data = NSData::with_bytes(&bytes);
+                    let preview = NSImage::initWithData(NSImage::alloc(), &data).expect("valid encoded font preview");
+                    preview.setSize(NSSize::new(SPECIMEN_EDGE, SPECIMEN_EDGE));
+                    item.imageView().expect("font image").setImage(Some(&preview));
+                    status.setStringValue(&NSString::from_str(entry.source.as_deref().unwrap_or("")));
+                }
+                Some(Err(error)) => {
+                    status.setStringValue(&NSString::from_str("Preview unavailable"));
+                    view.setToolTip(Some(&NSString::from_str(&error)));
+                }
+                None => status.setStringValue(&NSString::from_str("Loading preview…")),
+            }
             item
         }
     }
@@ -143,7 +199,7 @@ pub(super) fn new(
     grid.setCollectionViewLayout(Some(&layout));
     unsafe {
         grid.registerClass_forItemWithIdentifier(
-            Some(NSCollectionViewItem::class()),
+            Some(SpecimenItem::class()),
             &NSString::from_str("FontSpecimen"),
         );
     }
@@ -161,6 +217,7 @@ pub(super) fn new(
 
 fn build_card(item: &NSCollectionViewItem, mtm: MainThreadMarker) {
     let root = NSView::initWithFrame(NSView::alloc(mtm), NSRect::new(NSPoint::ZERO, ITEM_SIZE));
+    item.setView(&root);
     let card_frame = NSRect::new(
         NSPoint::new(10.0, CARD_Y),
         NSSize::new(SPECIMEN_EDGE, SPECIMEN_EDGE),
@@ -195,11 +252,9 @@ fn build_card(item: &NSCollectionViewItem, mtm: MainThreadMarker) {
     ));
     status.setTag(STATUS_TAG);
     root.addSubview(&status);
-    item.setView(&root);
 }
 
-pub(super) fn refresh(picker: &FontPicker) {
-    let state = &picker.0;
+fn display_style(state: &State) -> (u32, bool) {
     let scale = state.window.backingScaleFactor().ceil().max(1.0) as u32;
     let appearance = state.grid.effectiveAppearance();
     let dark = unsafe {
@@ -210,75 +265,42 @@ pub(super) fn refresh(picker: &FontPicker) {
             ]))
             .is_some_and(|name| *name == *NSAppearanceNameDarkAqua)
     };
-    let changed = state.appearance.replace(Some((scale, dark))) != Some((scale, dark));
-    let paths = state.grid.indexPathsForVisibleItems();
+    (scale, dark)
+}
+
+pub(super) fn refresh(picker: &FontPicker) {
+    let state = &picker.0;
+    let (scale, dark) = display_style(state);
+    let appearance_changed = state.appearance.replace(Some((scale, dark))) != Some((scale, dark));
     let entries = state.items.borrow();
-    let visible = paths
+    let visible = state
+        .grid
+        .indexPathsForVisibleItems()
         .iter()
         .filter_map(|path| {
-            let entry = entries.get(path.item() as usize)?;
-            Some((
-                path,
-                entry,
-                Key {
-                    id: entry.id.clone(),
-                    scale,
-                    dark,
-                },
-            ))
+            let entry = entries.get(path.item() as usize)?.clone();
+            let key = Key {
+                id: entry.id.clone(),
+                scale,
+                dark,
+            };
+            Some((path, entry, key))
         })
         .collect::<Vec<_>>();
+    drop(entries);
     let mut previews = state.previews.borrow_mut();
-    previews.visible(visible.iter().map(|(_, _, key)| key.clone()).collect());
+    let changed = previews.visible(visible.iter().map(|(_, _, key)| key.clone()).collect());
+    let mut reload = Vec::new();
     for (path, entry, key) in visible {
-        let Some(item) = state.grid.itemAtIndexPath(&path) else {
-            continue;
-        };
-        let card = item
-            .view()
-            .subviews()
-            .objectAtIndex(0)
-            .downcast::<NSBox>()
-            .expect("font card box");
-        let border_width = if item.isSelected() { 3.0 } else { 1.0 };
-        if changed || card.borderWidth() != border_width {
-            let border_color = if item.isSelected() {
-                NSColor::controlAccentColor()
-            } else {
-                NSColor::separatorColor()
-            };
-            card.setBorderColor(&border_color);
-            card.setBorderWidth(border_width);
+        previews.request(&key, &entry);
+        if appearance_changed || changed.contains(&key) {
+            reload.push(path);
         }
-        let image = item.imageView().expect("font image");
-        if changed {
-            image.setImage(None);
-        }
-        if image.image().is_some() {
-            continue;
-        }
-        let status = item
-            .view()
-            .viewWithTag(STATUS_TAG)
-            .expect("font status")
-            .downcast::<NSTextField>()
-            .expect("font status label");
-        match previews.get(&key, entry) {
-            Some(Ok(bytes)) => {
-                let data = NSData::with_bytes(&bytes);
-                let preview = NSImage::initWithData(NSImage::alloc(), &data)
-                    .expect("valid encoded font preview");
-                preview.setSize(NSSize::new(SPECIMEN_EDGE, SPECIMEN_EDGE));
-                image.setImage(Some(&preview));
-                status.setStringValue(&NSString::from_str(entry.source.as_deref().unwrap_or("")));
-            }
-            Some(Err(error)) => {
-                status.setStringValue(&NSString::from_str("Preview unavailable"));
-                item.view().setToolTip(Some(&NSString::from_str(&error)));
-            }
-            None => {
-                status.setStringValue(&NSString::from_str("Loading preview…"));
-            }
-        }
+    }
+    drop(previews);
+    if !reload.is_empty() {
+        state
+            .grid
+            .reloadItemsAtIndexPaths(&NSSet::from_retained_slice(&reload));
     }
 }

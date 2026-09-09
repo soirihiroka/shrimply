@@ -66,13 +66,15 @@ impl Previews {
         }
     }
 
-    pub fn visible(&mut self, keys: HashSet<Key>) {
+    pub fn visible(&mut self, keys: HashSet<Key>) -> HashSet<Key> {
+        let mut changed = HashSet::new();
         self.failures.retain(|key, _| keys.contains(key));
         *self.wanted.lock().expect("preview viewport lock") = keys;
         while let Ok((key, result)) = self.results.try_recv() {
             self.pending.remove(&key);
             match result {
                 Ok(bytes) => {
+                    changed.insert(key.clone());
                     let mut cache = CACHE
                         .get_or_init(Mutex::default)
                         .lock()
@@ -82,14 +84,16 @@ impl Previews {
                     cache.truncate(CACHE_ENTRIES);
                 }
                 Err(error) if !error.is_empty() => {
+                    changed.insert(key.clone());
                     self.failures.insert(key, error);
                 }
                 Err(_) => {}
             }
         }
+        changed
     }
 
-    pub fn get(&mut self, key: &Key, item: &FontPickerItem) -> Option<Result<Pixels, String>> {
+    pub fn cached(&self, key: &Key) -> Option<Result<Pixels, String>> {
         let mut cache = CACHE
             .get_or_init(Mutex::default)
             .lock()
@@ -101,16 +105,17 @@ impl Previews {
             return Some(Ok(bytes));
         }
         drop(cache);
-        if let Some(error) = self.failures.get(key) {
-            return Some(Err(error.clone()));
-        }
-        if !self.pending.contains(key)
+        self.failures.get(key).map(|error| Err(error.clone()))
+    }
+
+    pub fn request(&mut self, key: &Key, item: &FontPickerItem) {
+        if self.cached(key).is_none()
+            && !self.pending.contains(key)
             && let Some(jobs) = &self.jobs
             && jobs.try_send((key.clone(), item.clone())).is_ok()
         {
             self.pending.insert(key.clone());
         }
-        None
     }
 
     pub fn close(&mut self) {
