@@ -6348,6 +6348,7 @@ dependencies = [
  "objc2-foundation",
  "shrimply-components-core",
  "shrimply-cross-ui-core",
+ "shrimply-editor-appkit",
  "shrimply-math-core",
  "shrimply-process-reporting",
  "shrimply-project-types",

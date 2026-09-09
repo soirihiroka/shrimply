@@ -5,7 +5,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>Shrimply</string>
 	<key>CFBundleExecutable</key>
-	<string>shrimply-appkit</string>
+	<string>Shrimply</string>
 	<key>CFBundleIconFile</key>
 	<string>Shrimply</string>
 	<key>CFBundleIdentifier</key>

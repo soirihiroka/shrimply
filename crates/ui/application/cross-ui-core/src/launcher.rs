@@ -186,7 +186,11 @@ pub fn launch_appkit_editor(path: &Path) -> Result<Child, String> {
     if !path.is_file() {
         return Err(format!("Project does not exist: {}", path.display()));
     }
-    launch_sibling_editor(path, "shrimply-editor-appkit")
+    let editor = std::env::current_exe().map_err(|error| format!("locate Shrimply: {error}"))?;
+    Command::new(&editor)
+        .arg(path)
+        .spawn()
+        .map_err(|error| format!("could not launch {}: {error}", editor.display()))
 }
 
 pub fn launch_editor(path: &Path) -> Result<Child, String> {

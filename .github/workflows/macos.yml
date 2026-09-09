@@ -107,8 +107,7 @@ jobs:
           contents="${MACOS_APP}/Contents"
           iconset="${RUNNER_TEMP}/Shrimply.iconset"
           mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources" "${iconset}"
-          install -m 755 target/release/shrimply-appkit "${contents}/MacOS/shrimply-appkit"
-          install -m 755 target/release/shrimply-editor-appkit "${contents}/MacOS/shrimply-editor-appkit"
+          install -m 755 target/release/shrimply-appkit "${contents}/MacOS/Shrimply"
           install -m 644 packaging/macos/Info.plist "${contents}/Info.plist"
           install -m 755 "$(command -v uv)" "${contents}/MacOS/uv"
           python_project="crates/media/visual/manim/manim-bridge/python"
@@ -137,8 +136,7 @@ jobs:
           if ! dylibbundler \
             --bundle-deps \
             --overwrite-dir \
-            --fix-file "${contents}/MacOS/shrimply-appkit" \
-            --fix-file "${contents}/MacOS/shrimply-editor-appkit" \
+            --fix-file "${contents}/MacOS/Shrimply" \
             --fix-file "${contents}/MacOS/uv" \
             --dest-dir "${contents}/Frameworks" \
             --install-path '@executable_path/../Frameworks/' \
@@ -164,9 +162,8 @@ jobs:
           contents="${MACOS_APP}/Contents"
           plutil -lint "${contents}/Info.plist"
           codesign --verify --deep --strict "${MACOS_APP}"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "shrimply-appkit"
-          test "$(lipo -archs "${contents}/MacOS/shrimply-appkit")" = "arm64"
-          test "$(lipo -archs "${contents}/MacOS/shrimply-editor-appkit")" = "arm64"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "Shrimply"
+          test "$(lipo -archs "${contents}/MacOS/Shrimply")" = "arm64"
           env PATH=/usr/bin:/bin "${contents}/MacOS/uv" --version
           test -s "${contents}/Resources/manim-worker/pyproject.toml"
           test -s "${contents}/Resources/manim-worker/uv.lock"
@@ -182,11 +179,11 @@ jobs:
             exit 1
           fi
 
-          if "${contents}/MacOS/shrimply-appkit" "${RUNNER_TEMP}/missing.shrimp"; then
+          if "${contents}/MacOS/Shrimply" "${RUNNER_TEMP}/missing.shrimp"; then
             echo "Launcher unexpectedly accepted a missing project" >&2
             exit 1
           fi
-          if "${contents}/MacOS/shrimply-editor-appkit" first.shrimp second.shrimp; then
+          if "${contents}/MacOS/Shrimply" first.shrimp second.shrimp; then
             echo "Editor unexpectedly accepted multiple projects" >&2
             exit 1
           fi
