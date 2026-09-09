@@ -184,17 +184,61 @@ fn send_parameters(
     write_all_cancelled(socket, &parameters, cancelled, started)
 }
 
+#[cached::proc_macro::cached(result = true)]
+fn uv_executable() -> Result<PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("locate bundled uv: {error}"))?;
+        if let Some(macos) = executable.parent()
+            && macos.file_name().is_some_and(|name| name == "MacOS")
+            && let Some(contents) = macos.parent()
+            && contents.file_name().is_some_and(|name| name == "Contents")
+        {
+            return Ok(macos.join("uv"));
+        }
+    }
+
+    Ok(std::env::var_os("UV").unwrap_or_else(|| "uv".into()).into())
+}
+
+fn python_command(module: &str) -> Result<Command, String> {
+    let executable = uv_executable()?;
+    let macos = executable
+        .parent()
+        .filter(|path| path.file_name().is_some_and(|name| name == "MacOS"));
+    let project = macos
+        .and_then(Path::parent)
+        .map(|contents| contents.join("Resources/manim-worker"))
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("python"));
+    let mut command = Command::new(&executable);
+    command.args(["run", "--python", "3.14", "--project"]).arg(&project);
+    #[cfg(target_os = "macos")]
+    if macos.is_some() {
+        use objc2_foundation::{NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};
+
+        let cache = NSFileManager::defaultManager()
+            .URLsForDirectory_inDomains(
+                NSSearchPathDirectory::CachesDirectory,
+                NSSearchPathDomainMask::UserDomainMask,
+            )
+            .firstObject()
+            .and_then(|url| url.to_file_path())
+            .ok_or("could not locate the Manim environment cache")?;
+        command
+            .args(["--frozen", "--no-dev", "--no-editable"])
+            .env("UV_PROJECT_ENVIRONMENT", cache.join("dev.shrimply.Shrimply/manim"))
+            .env("PYTHONDONTWRITEBYTECODE", "1");
+    }
+    command
+        .arg("python")
+        .arg(project.join(format!("shrimply_manim/{module}.py")));
+    Ok(command)
+}
+
 impl WorkerHandle {
     fn spawn(settings: &Settings, worker_socket: &Path, source: &Path) -> Result<Self, String> {
-        let python_project = Path::new(env!("CARGO_MANIFEST_DIR")).join("python");
-        let child = Command::new(std::env::var_os("UV").unwrap_or_else(|| "uv".into()))
-            .arg("run")
-            .arg("--python")
-            .arg("3.14")
-            .arg("--project")
-            .arg(&python_project)
-            .arg("python")
-            .arg(python_project.join("shrimply_manim/ir_worker.py"))
+        let child = python_command("ir_worker")?
             .arg("--socket")
             .arg(worker_socket)
             .arg("--source")
@@ -337,15 +381,7 @@ pub fn discover_scenes(source: &Asset) -> Result<Vec<String>, String> {
 
     #[cfg(target_os = "macos")]
     let _source_access = macos_source_access::RelatedSourceAccess::new(source.path())?;
-    let python_project = Path::new(env!("CARGO_MANIFEST_DIR")).join("python");
-    let output = Command::new(std::env::var_os("UV").unwrap_or_else(|| "uv".into()))
-        .arg("run")
-        .arg("--python")
-        .arg("3.14")
-        .arg("--project")
-        .arg(&python_project)
-        .arg("python")
-        .arg(python_project.join("shrimply_manim/scene_discovery.py"))
+    let output = python_command("scene_discovery")?
         .arg(source.path())
         .output()
         .map_err(|error| format!("inspect Manim scenes with uv: {error}"));

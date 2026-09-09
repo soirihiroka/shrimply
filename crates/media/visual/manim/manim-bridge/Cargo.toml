@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cached = { workspace = true, features = ["proc_macro"] }
 hashbrown.workspace = true
 libc.workspace = true
 rmp-serde.workspace = true

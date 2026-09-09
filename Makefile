@@ -151,7 +151,7 @@ dev: desktop-icon native-deps cuda-artifacts
 
 APPKIT_BUILD_ENV = RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@18)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@18)/lib"
 
-.PHONY: appkit-build appkit-release appkit-check appkit-lint appkit-components-check appkit-components-showcase
+.PHONY: appkit-build appkit-release appkit-resources appkit-check appkit-lint appkit-components-check appkit-components-showcase
 $(APPKIT_ICON): $(APPKIT_ICON_SOURCE)
 	$(RSVG_CONVERT) --width $(APPKIT_ICON_SIZE) --height $(APPKIT_ICON_SIZE) $< --output $@
 
@@ -162,6 +162,16 @@ appkit-build: $(APPKIT_ICON)
 appkit-release: $(APPKIT_ICON)
 	@test "$$(uname -s)" = Darwin || { echo "AppKit release requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) RUSTFLAGS="" CARGO_TERM_COLOR=always MACOSX_DEPLOYMENT_TARGET=$(APPKIT_DEPLOYMENT_TARGET) $(CARGO) build --release -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
+	$(MAKE) appkit-resources
+
+appkit-resources:
+	mkdir -p "$(CARGO_TARGET_DIR)/release/manim-worker"
+	$(INSTALL) -m755 "$$(command -v uv)" "$(CARGO_TARGET_DIR)/release/uv"
+	rsync -a --delete --exclude='.venv' --exclude='__pycache__' --exclude='*.pyc' --exclude='uv.lock' crates/media/visual/manim/manim-bridge/python/ "$(CARGO_TARGET_DIR)/release/manim-worker/"
+	@revision="$$(git -C external/manim rev-parse HEAD)"; \
+	sed "s|^manimgl = .*|manimgl = { url = \"https://github.com/3b1b/manim/archive/$${revision}.tar.gz\" }|" \
+		crates/media/visual/manim/manim-bridge/python/pyproject.toml > "$(CARGO_TARGET_DIR)/release/manim-worker/pyproject.toml"
+	uv lock --python 3.14 --project "$(CARGO_TARGET_DIR)/release/manim-worker"
 
 appkit-check: appkit-build
 	$(APPKIT_BUILD_ENV) $(CARGO) check -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets
