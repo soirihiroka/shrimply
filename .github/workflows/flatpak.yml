@@ -7,13 +7,18 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: flatpak-prerelease
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 env:
+  TZ: UTC
   CARGO_HOME: /usr/local/cargo
   CUDA_KEYRING_SHA256: d2a6b11c096396d868758b86dab1823b25e14d70333f1dfa74da5ddaf6a06dba
   CUDA_SERIES: 12-9
@@ -22,13 +27,19 @@ env:
   FLATPAK_BUNDLE: dist/shrimply-gtk.flatpak
   FLATPAK_REPO_DIR: target/flatpak-gtk/repo
   FLATPAK_STATE_DIR: target/flatpak-gtk/state
+  FLATPAK_PAGES_DIR: target/flatpak-pages
+  FLATPAK_PAGES_URL: https://soirihiroka.github.io/shrimply
   GNOME_RUNTIME_VERSION: "50"
   RUSTUP_HOME: /usr/local/rustup
 
 jobs:
-  build-and-release:
+  build:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      timestamp: ${{ steps.release.outputs.timestamp }}
+      commit: ${{ steps.release.outputs.commit }}
 
     steps:
       - uses: actions/checkout@v7
@@ -53,6 +64,8 @@ jobs:
             flatpak-builder \
             g++ \
             git \
+            gnupg \
+            ostree \
             libclang-dev \
             librsvg2-common \
             make \
@@ -231,11 +244,6 @@ jobs:
             --install-deps-from=flathub \
             "${FLATPAK_BUILD_DIR}" \
             "${{ steps.source.outputs.manifest }}"
-          flatpak build-bundle \
-            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
-            "${FLATPAK_REPO_DIR}" \
-            "${FLATPAK_BUNDLE}" \
-            dev.shrimply.Shrimply
           df -h /
 
       - name: Save Flatpak application cache
@@ -247,48 +255,126 @@ jobs:
             ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
 
+      - name: Prepare signed repository and bundle
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+        run: bash packaging/flatpak/prepare-repository.sh
+
+      - name: Prepare release identity
+        id: release
+        run: |
+          commit="$(ostree --repo="${FLATPAK_REPO_DIR}" rev-parse app/dev.shrimply.Shrimply/x86_64/master)"
+          {
+            echo "tag=flatpak-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "timestamp=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "commit=${commit}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Verify Flatpak bundle
         run: |
-          test -s "${FLATPAK_BUNDLE}"
-          checksum="${FLATPAK_BUNDLE}.sha256"
-          bundle_name="$(basename "${FLATPAK_BUNDLE}")"
-          (
-            cd "$(dirname "${FLATPAK_BUNDLE}")"
-            sha256sum "${bundle_name}" > "${bundle_name}.sha256"
-            sha256sum --check "${bundle_name}.sha256"
-          )
           verify_repo="${RUNNER_TEMP}/flatpak-verify"
           ostree init --repo="${verify_repo}" --mode=archive-z2
           flatpak build-import-bundle "${verify_repo}" "${FLATPAK_BUNDLE}"
-          test -s "${checksum}"
+          test "$(ostree --repo="${verify_repo}" rev-parse app/dev.shrimply.Shrimply/x86_64/master)" = "${{ steps.release.outputs.commit }}"
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.release.outputs.tag }}
+          path: |
+            ${{ env.FLATPAK_BUNDLE }}
+            ${{ env.FLATPAK_BUNDLE }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload Pages repository
+        uses: actions/upload-pages-artifact@v4
+        with:
+          name: pages-${{ steps.release.outputs.tag }}
+          path: ${{ env.FLATPAK_PAGES_DIR }}
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.build.outputs.tag }}
+      RELEASE_TIMESTAMP: ${{ needs.build.outputs.timestamp }}
+      EXPECTED_COMMIT: ${{ needs.build.outputs.commit }}
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.tag }}
+          path: dist
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Deploy Pages repository
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          artifact_name: pages-${{ needs.build.outputs.tag }}
+
+      - name: Verify published remote
+        run: |
+          for source in /etc/apt/sources.list.d/*; do
+            if grep -q 'dl.google.com/linux/chrome' "${source}"; then
+              sudo mv "${source}" "${source}.disabled"
+            fi
+          done
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flatpak
+          export FLATPAK_USER_DIR="${RUNNER_TEMP}/flatpak-user"
+          descriptor="${RUNNER_TEMP}/shrimply-prerelease.flatpakrepo"
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 5 \
+            "${FLATPAK_PAGES_URL}/shrimply-prerelease.flatpakrepo" --output "${descriptor}"
+          flatpak remote-add --user shrimply-prerelease "${descriptor}"
+          actual_commit="$(flatpak remote-info --user --show-commit shrimply-prerelease dev.shrimply.Shrimply/x86_64/master)"
+          test "${actual_commit}" = "${EXPECTED_COMMIT}"
 
       - name: Publish prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
+          (cd dist && sha256sum --check shrimply-gtk.flatpak.sha256)
           short_sha="${GITHUB_SHA:0:12}"
-          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-          tag="flatpak-${timestamp}"
           release_notes="${RUNNER_TEMP}/flatpak-release.md"
           {
-            echo "Automated GTK Flatpak build of commit [\`${short_sha}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+            echo "Pre-alpha GTK Flatpak build of commit [\`${short_sha}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+            echo
+            echo "Built ${RELEASE_TIMESTAMP}. Updates track main."
             echo
             echo '```console'
-            echo 'flatpak install --user ./shrimply-gtk.flatpak'
+            echo "flatpak install --user ${FLATPAK_PAGES_URL}/shrimply-prerelease.flatpakref"
+            echo 'flatpak update --user dev.shrimply.Shrimply'
             echo '```'
+            echo
+            echo "Alternatively, install the attached bundle with \`flatpak install --user ./shrimply-gtk.flatpak\`; it also receives updates from the prerelease remote."
           } > "${release_notes}"
 
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            assets="$(gh release view "${tag}" --json assets --jq '.assets[].name')"
-            grep -qx 'shrimply-gtk.flatpak' <<< "${assets}"
-            grep -qx 'shrimply-gtk.flatpak.sha256' <<< "${assets}"
-            echo "Release ${tag} already exists with both assets"
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            existing_assets="${RUNNER_TEMP}/existing-release"
+            mkdir -p "${existing_assets}"
+            gh release download "${RELEASE_TAG}" --dir "${existing_assets}" \
+              --pattern shrimply-gtk.flatpak --pattern shrimply-gtk.flatpak.sha256
+            cmp "${FLATPAK_BUNDLE}.sha256" "${existing_assets}/shrimply-gtk.flatpak.sha256"
+            (cd "${existing_assets}" && sha256sum --check shrimply-gtk.flatpak.sha256)
           else
-            gh release create "${tag}" \
+            gh release create "${RELEASE_TAG}" \
               "${FLATPAK_BUNDLE}#Shrimply GTK Flatpak" \
               "${FLATPAK_BUNDLE}.sha256#SHA-256 checksum" \
               --target "${GITHUB_SHA}" \
-              --title "Shrimply Flatpak ${timestamp}" \
+              --title "Shrimply Prerelease ${RELEASE_TIMESTAMP}" \
               --notes-file "${release_notes}" \
               --prerelease \
               --latest=false
@@ -297,7 +383,7 @@ jobs:
           gh release list --limit 100 --json tagName,isPrerelease \
             --jq '.[] | select(.isPrerelease and (.tagName | startswith("flatpak-"))) | .tagName' \
             | while IFS= read -r old_tag; do
-                if [[ "${old_tag}" != "${tag}" ]]; then
+                if [[ "${old_tag}" != "${RELEASE_TAG}" ]]; then
                   gh release delete "${old_tag}" --cleanup-tag --yes
                 fi
               done
