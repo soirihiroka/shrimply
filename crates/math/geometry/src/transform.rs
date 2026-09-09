@@ -191,21 +191,21 @@ impl ResolvedTransform2D {
     /// Composition is `translation(position) * rotation * shear * scale *
     /// translation(-anchor)`, so rotation and scale occur around the anchor.
     pub fn matrix(self) -> Mat3 {
-        Mat3::from_scale_angle_translation(
-            self.scale,
-            self.rotation_degrees.to_radians(),
-            self.position,
-        ) * Mat3::from_cols_array(&[
-            1.0,
-            self.shear.y,
-            0.0,
-            self.shear.x,
-            1.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-        ]) * Mat3::from_translation(-self.anchor)
+        Mat3::from_translation(self.position)
+            * Mat3::from_angle(self.rotation_degrees.to_radians())
+            * Mat3::from_cols_array(&[
+                1.0,
+                self.shear.y,
+                0.0,
+                self.shear.x,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+            ])
+            * Mat3::from_scale(self.scale)
+            * Mat3::from_translation(-self.anchor)
     }
 
     pub fn composed(self) -> ComposedTransform2D {
@@ -276,4 +276,83 @@ pub fn relative_motion_transforms(
             .map(|sample| sample.compose(inverse))
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approx(left: Vec2, right: Vec2) -> bool {
+        (left - right).abs().max_element() <= 1e-5
+    }
+
+    #[test]
+    fn shear_is_applied_after_scale() {
+        // scale (2, 4) then an x-shear of 0.5 maps (1, 1) to (1, 1) * scale = (2, 4),
+        // then (2 + 0.5 * 4, 4) = (4, 4). Composing the other way round shears the
+        // unscaled point first and reaches (3, 4) instead.
+        let transform = ResolvedTransform2D {
+            scale: Vec2::new(2.0, 4.0),
+            shear: Vec2::new(0.5, 0.0),
+            ..ResolvedTransform2D::IDENTITY
+        };
+        let point = transform.matrix().transform_point2(Vec2::ONE);
+        assert!(approx(point, Vec2::new(4.0, 4.0)), "{point:?}");
+    }
+
+    #[test]
+    fn the_matrix_is_the_documented_composition() {
+        let transform = ResolvedTransform2D {
+            position: Vec2::new(30.0, -10.0),
+            anchor: Vec2::new(4.0, 7.0),
+            scale: Vec2::new(3.0, 0.5),
+            shear: Vec2::new(0.25, -0.75),
+            rotation_degrees: 35.0,
+        };
+        let shear = Mat3::from_cols_array(&[
+            1.0,
+            transform.shear.y,
+            0.0,
+            transform.shear.x,
+            1.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+        ]);
+        let documented = Mat3::from_translation(transform.position)
+            * Mat3::from_angle(transform.rotation_degrees.to_radians())
+            * shear
+            * Mat3::from_scale(transform.scale)
+            * Mat3::from_translation(-transform.anchor);
+        for point in [Vec2::ZERO, Vec2::X, Vec2::Y, Vec2::new(-6.0, 11.0)] {
+            let actual = transform.matrix().transform_point2(point);
+            let expected = documented.transform_point2(point);
+            assert!(
+                approx(actual, expected),
+                "{point:?}: {actual:?} {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_transform_without_shear_is_unchanged() {
+        let transform = ResolvedTransform2D {
+            position: Vec2::new(120.0, 80.0),
+            anchor: Vec2::new(16.0, 9.0),
+            scale: Vec2::new(2.0, 3.0),
+            shear: Vec2::ZERO,
+            rotation_degrees: 90.0,
+        };
+        // Rotating a quarter turn about the anchor, then translating to the position.
+        let anchor = transform.matrix().transform_point2(transform.anchor);
+        assert!(approx(anchor, transform.position), "{anchor:?}");
+        let corner = transform
+            .matrix()
+            .transform_point2(transform.anchor + Vec2::X);
+        assert!(
+            approx(corner, transform.position + Vec2::Y * 2.0),
+            "{corner:?}"
+        );
+    }
 }
