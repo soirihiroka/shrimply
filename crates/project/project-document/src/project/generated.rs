@@ -345,7 +345,7 @@ pub struct TextItem {
     pub font_families: Vec<FontFamily>,
     #[serde(default, deserialize_with = "deserialize_timeline_value")]
     pub font_style: TimelineValue<TextFontStyle>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub font_variations: Vec<FontVariation>,
     #[serde(default = "default_text_font_weight")]
     pub font_weight: TimelineValue<f32>,
