@@ -95,10 +95,12 @@ impl CanvasView {
                     },
                 )?;
                 if had_provider != state.controller.provider.is_some() || invalidated {
+                    shrimply_process_reporting::diagnostics::count("Preview invalidation / provider preparation");
                     self.ivars().surface_dirty.set(true);
                 }
             } else if state.controller.sequence == PointerSequence::Idle {
                 if state.controller.provider.take().is_some() {
+                    shrimply_process_reporting::diagnostics::count("Preview invalidation / provider removed");
                     self.ivars().surface_dirty.set(true);
                 }
             }
@@ -290,6 +292,7 @@ impl CanvasView {
         response: PreviewResponse,
     ) -> Result<(), String> {
         if response.redraw {
+            shrimply_process_reporting::diagnostics::count("Preview invalidation / interaction response");
             self.ivars().surface_dirty.set(true);
         }
         self.set_preview_cursor(response.cursor);

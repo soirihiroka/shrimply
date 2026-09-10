@@ -38,6 +38,7 @@ struct EditorIvars {
     display_link: OnceCell<Retained<objc2_quartz_core::CADisplayLink>>,
     last_error: RefCell<Option<String>>,
     playback_display: Cell<Option<player_state::Snapshot>>,
+    last_callback: Cell<Option<std::time::Instant>>,
     window: OnceCell<Retained<NSWindow>>,
     layout: OnceCell<layout::Layout>,
     view_items: OnceCell<Vec<Retained<NSMenuItem>>>,
@@ -230,6 +231,12 @@ define_class!(
 
         #[unsafe(method(renderFrame:))]
         fn render_frame(&self, _display_link: &objc2_quartz_core::CADisplayLink) {
+            shrimply_process_reporting::diagnostics::flush_timings();
+            let now = std::time::Instant::now();
+            if let Some(previous) = self.ivars().last_callback.replace(Some(now)) {
+                shrimply_process_reporting::diagnostics::record_timing("UI callback start-to-start interval", now.duration_since(previous));
+            }
+            shrimply_process_reporting::diagnostics::count("Display-link callback");
             let _timing = shrimply_process_reporting::diagnostics::timing("UI callback total");
             if self.ivars().session.get().is_none() {
                 self.poll_project_load();
@@ -262,6 +269,7 @@ define_class!(
                 self.show_error(&format!("Could not inspect Manim scenes:\n{error}"));
             }
             let player = player_state::snapshot(&session.player_state);
+            shrimply_process_reporting::diagnostics::count(if player.playing { "Callback / playing" } else { "Callback / paused" });
             self.tick_fullscreen(player.playing);
             let previous = self.ivars().playback_display.replace(Some(player));
             if previous.is_none_or(|old| old.position != player.position || old.duration != player.duration) {
@@ -858,6 +866,7 @@ pub fn run(project: Option<&Path>) -> Result<bool, ()> {
         session: OnceCell::new(),
         imports: Rc::new(RefCell::new(media::Imports::default())),
         display_link: OnceCell::new(),
+        last_callback: Cell::new(None),
         last_error: RefCell::new(None),
         playback_display: Cell::new(None),
         window: OnceCell::new(),

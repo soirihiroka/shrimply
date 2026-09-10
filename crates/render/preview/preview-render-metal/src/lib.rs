@@ -128,7 +128,7 @@ pub struct Renderer {
     manim_updates: Vec<shrimply_manim_state::Update>,
     error: Option<String>,
     decoder_limit: Option<usize>,
-    mipmapped: Option<(u32, Image)>,
+    texture: Option<(u32, Image)>,
 }
 
 impl Default for Renderer {
@@ -180,7 +180,7 @@ impl Renderer {
             manim_updates: Vec::new(),
             error: None,
             decoder_limit: None,
-            mipmapped: None,
+            texture: None,
         }
     }
     pub fn set_decoder_limit(&mut self, maximum: usize) {
@@ -264,29 +264,31 @@ impl Renderer {
     ) -> Result<(), String> {
         if let Some(image) = &self.presented {
             let image = &image.image;
-            let image = if sampling.mipmap != skia_safe::MipmapMode::None {
-                if self
-                    .mipmapped
-                    .as_ref()
-                    .is_none_or(|(id, _)| *id != image.unique_id())
-                {
-                    self.mipmapped = Some((
-                        image.unique_id(),
-                        image
-                            .with_default_mipmaps()
-                            .filter(Image::has_mipmaps)
-                            .ok_or("Could not generate preview mipmaps")?,
-                    ));
-                }
-                &self
-                    .mipmapped
-                    .as_ref()
-                    .expect("preview mipmaps generated")
-                    .1
-            } else {
-                image
-            };
-            canvas.draw_image_with_sampling_options(image, (0.0, 0.0), sampling, None);
+            use skia_safe::gpu::{Budgeted, Mipmapped, images};
+            let mut context = canvas.direct_context().ok_or("Metal preview requires a GPU canvas")?;
+            if self.texture.as_ref().is_none_or(|(id, _)| *id != image.unique_id()) {
+                let _timing = shrimply_process_reporting::diagnostics::timing("Preview texture / base upload");
+                // Upload only the base level. Asking Skia to mipmap a raster image
+                // invokes SkMipmap::Build on the calling (UI) thread.
+                let texture = images::texture_from_image(
+                    &mut context, image, Mipmapped::No, Budgeted::Yes,
+                ).ok_or("Could not upload preview texture")?;
+                self.texture = Some((image.unique_id(), texture));
+            }
+            let (_, texture) = self.texture.as_mut().expect("preview texture uploaded");
+            if sampling.mipmap != skia_safe::MipmapMode::None
+                && (texture.width() > 1 || texture.height() > 1)
+                && !texture.has_mipmaps()
+            {
+                let _timing = shrimply_process_reporting::diagnostics::timing("Preview texture / GPU mipmap preparation");
+                // The source is now GPU-backed: Skia copies the base level on the
+                // GPU and regenerates its mip chain during submission, not on CPU.
+                *texture = images::texture_from_image(
+                    &mut context, texture, Mipmapped::Yes, Budgeted::Yes,
+                ).filter(Image::has_mipmaps).ok_or("Could not create GPU preview mipmaps")?;
+            }
+            let _timing = shrimply_process_reporting::diagnostics::timing("Preview texture / draw");
+            canvas.draw_image_with_sampling_options(&*texture, (0.0, 0.0), sampling, None);
         }
         Ok(())
     }
@@ -335,7 +337,7 @@ impl Renderer {
                     };
                     self.render_elapsed = Some(image.render_elapsed);
                     self.presented = Some(image);
-                    self.mipmapped = None;
+                    self.texture = None;
                     self.presented_target = Some(completed_target);
                     self.error = None;
                 }

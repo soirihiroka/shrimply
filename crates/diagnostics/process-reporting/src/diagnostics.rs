@@ -1,11 +1,13 @@
 use tracing_subscriber::EnvFilter;
-use std::{cell::RefCell, collections::HashMap, time::{Duration, Instant}};
+use std::{cell::RefCell, collections::{BTreeMap, HashMap}, time::{Duration, Instant}};
 
 const DEFAULT_FILTER: &str = "info,shrimply=debug";
 const TIMING_LOG_INTERVAL: Duration = Duration::from_secs(1);
 
 thread_local! {
-    static TIMINGS: RefCell<HashMap<&'static str, (Instant, u64, Duration, Duration)>> = RefCell::new(HashMap::new());
+    static TIMINGS: RefCell<HashMap<&'static str, (u64, Duration, Duration)>> = RefCell::new(HashMap::new());
+    static COUNTS: RefCell<BTreeMap<&'static str, u64>> = const { RefCell::new(BTreeMap::new()) };
+    static WINDOW: RefCell<Instant> = RefCell::new(Instant::now());
 }
 
 /// Plain periodic log summaries; independent of the performance inspector.
@@ -20,26 +22,52 @@ pub struct Timing {
 
 impl Drop for Timing {
     fn drop(&mut self) {
-        let elapsed = self.started.elapsed();
-        let summary = TIMINGS.with(|timings| {
-            let mut timings = timings.borrow_mut();
-            let (since, calls, total, maximum) = timings.entry(self.stage)
-                .or_insert((Instant::now(), 0, Duration::ZERO, Duration::ZERO));
-            *calls += 1;
-            *total += elapsed;
-            *maximum = (*maximum).max(elapsed);
-            if since.elapsed() < TIMING_LOG_INTERVAL { return None; }
-            let summary = (*calls, total.as_micros(), maximum.as_micros());
-            *since = Instant::now();
-            *calls = 0;
-            *total = Duration::ZERO;
-            *maximum = Duration::ZERO;
-            Some(summary)
-        });
-        if let Some((calls, total_us, max_us)) = summary {
-            tracing::info!(stage = self.stage, calls, total_us, average_us = total_us / u128::from(calls), max_us, "UI lifecycle timing");
-        }
+        record_timing(self.stage, self.started.elapsed());
     }
+}
+
+pub fn record_timing(stage: &'static str, elapsed: Duration) {
+    TIMINGS.with(|timings| {
+        let mut timings = timings.borrow_mut();
+        let (calls, total, maximum) = timings.entry(stage).or_default();
+        *calls += 1;
+        *total += elapsed;
+        *maximum = (*maximum).max(elapsed);
+    });
+}
+
+/// Count causes, including multiple causes for one redraw, without logging per frame.
+pub fn count(event: &'static str) {
+    COUNTS.with(|counts| *counts.borrow_mut().entry(event).or_default() += 1);
+}
+
+/// Called at the start of the UI callback: all completed stages share one window,
+/// including stages that stopped running. Sparse draws cannot retain old samples.
+pub fn flush_timings() {
+    let window = WINDOW.with(|since| {
+        let mut since = since.borrow_mut();
+        let now = Instant::now();
+        let elapsed = now.duration_since(*since);
+        if elapsed < TIMING_LOG_INTERVAL { return None; }
+        *since = now;
+        Some(elapsed)
+    });
+    let Some(window) = window else { return; };
+    let window_us = window.as_micros();
+    TIMINGS.with(|timings| {
+        for (stage, samples) in timings.borrow_mut().iter_mut() {
+            let (calls, total, maximum) = std::mem::take(samples);
+            let total_us = total.as_micros();
+            tracing::info!(stage, window_us, calls, total_us,
+                average_us = total_us.checked_div(u128::from(calls)).unwrap_or(0),
+                max_us = maximum.as_micros(), "UI lifecycle timing");
+        }
+    });
+    COUNTS.with(|counts| {
+        let mut counts = counts.borrow_mut();
+        tracing::info!(window_us, counts = ?*counts, "UI lifecycle counts");
+        for count in counts.values_mut() { *count = 0; }
+    });
 }
 
 /// Installs the process-wide diagnostics subscriber.

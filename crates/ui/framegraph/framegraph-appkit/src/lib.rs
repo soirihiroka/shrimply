@@ -358,7 +358,7 @@ impl FrameGraphView {
         if renderer.layer().drawableSize() != drawable_size {
             renderer.layer().setDrawableSize(drawable_size);
         }
-        renderer.draw(|canvas| {
+        renderer.draw("Framegraph", |canvas| {
             canvas.clear(shrimply_cross_ui_theme::current().view_bg);
             canvas.scale((scale as f32, scale as f32));
             let painter = TimelinePainter::new(canvas);

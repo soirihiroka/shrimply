@@ -990,6 +990,16 @@ impl CanvasView {
             renderer.layer().setDrawableSize(drawable_size);
         }
         let mut result = Ok(());
+        let surface_label = match &*self.ivars().content.borrow() {
+            Content::Timeline(_) => "Timeline",
+            Content::Preview(_) => "Preview",
+            Content::Meter(_) => "Meter",
+        };
+        if matches!(&*self.ivars().content.borrow(), Content::Preview(_)) {
+            if redraw { shrimply_process_reporting::diagnostics::count("Preview redraw / controller request"); }
+            if resized { shrimply_process_reporting::diagnostics::count("Preview redraw / resize or scale"); }
+            if self.ivars().surface_dirty.get() { shrimply_process_reporting::diagnostics::count("Preview redraw / invalidated surface"); }
+        }
         if redraw || resized {
             self.ivars().surface_dirty.set(true);
         }
@@ -999,7 +1009,7 @@ impl CanvasView {
                 Content::Preview(_) => "Preview UI surface submission",
                 Content::Meter(_) => "Meter UI surface submission",
             });
-            renderer.draw(|canvas| {
+            renderer.draw(surface_label, |canvas| {
             self.ivars().surface_dirty.set(false);
             canvas.clear(shrimply_cross_ui_theme::current().view_bg);
             canvas.scale((scale as f32, scale as f32));
@@ -1070,7 +1080,10 @@ impl CanvasView {
                             PreviewUpsampleMethod::Bilinear => FilterMode::Linear.into(),
                         }
                     };
-                    result = preview.renderer.draw(canvas, sampling);
+                    {
+                        let _timing = shrimply_process_reporting::diagnostics::timing("Preview paint / image and mipmaps");
+                        result = preview.renderer.draw(canvas, sampling);
+                    }
                     canvas.restore();
                     let focused_caption =
                         shrimply_timeline_skia::selection_state::focused_item_address(
@@ -1078,6 +1091,7 @@ impl CanvasView {
                             &project,
                         )
                         .filter(|address| project.caption_item(address).is_some());
+                    let captions_timing = shrimply_process_reporting::diagnostics::timing("Preview paint / captions and guides");
                     preview::captions::draw(
                         canvas,
                         preview,
@@ -1087,9 +1101,17 @@ impl CanvasView {
                         focused_caption.as_ref(),
                     );
                     preview::draw_guides(canvas, preview, &project, size);
+                    drop(captions_timing);
+                    let _timing = shrimply_process_reporting::diagnostics::timing("Preview paint / interaction overlay");
                     preview.controller.draw(canvas, &preview.expressions);
                 }
             }
+            });
+        } else {
+            shrimply_process_reporting::diagnostics::count(match &*self.ivars().content.borrow() {
+                Content::Timeline(_) => "Timeline / skipped unchanged surface",
+                Content::Preview(_) => "Preview / skipped unchanged surface",
+                Content::Meter(_) => "Meter / skipped unchanged surface",
             });
         }
         drop(renderer);

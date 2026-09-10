@@ -6938,6 +6938,7 @@ dependencies = [
  "shrimply-math-media",
  "shrimply-preview-provider-skia",
  "shrimply-preview-render-core",
+ "shrimply-process-reporting",
  "shrimply-project-document",
  "shrimply-render-3d-metal",
  "shrimply-render-core",
@@ -7271,6 +7272,7 @@ dependencies = [
  "objc2-quartz-core",
  "shrimply-process-reporting",
  "skia-safe",
+ "tracing",
 ]
 
 [[package]]
