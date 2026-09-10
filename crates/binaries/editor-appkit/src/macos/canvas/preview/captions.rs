@@ -68,7 +68,7 @@ impl CanvasView {
                     None
                 };
             if previous != state.caption_split_hover {
-                self.setNeedsDisplay(true);
+                self.ivars().surface_dirty.set(true);
             }
             if state.caption_split_hover.is_some() {
                 objc2_app_kit::NSCursor::IBeamCursor().set();
@@ -112,7 +112,7 @@ impl CanvasView {
                 ..Default::default()
             },
         );
-        self.setNeedsDisplay(true);
+        self.ivars().surface_dirty.set(true);
         Ok(true)
     }
 }

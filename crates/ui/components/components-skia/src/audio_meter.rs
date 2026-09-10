@@ -51,11 +51,13 @@ impl AudioMeter {
         draw_meter(&TimelinePainter::new(canvas), width, height, self.channels);
     }
 
-    pub fn update(&mut self, peaks: [f32; 2], now: Instant) {
+    pub fn update(&mut self, peaks: [f32; 2], now: Instant) -> bool {
         let release = RELEASE_DB_PER_SECOND * now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
+        let mut changed = false;
 
         for (channel, amplitude) in self.channels.iter_mut().zip(peaks) {
+            let previous = (channel.level_db, channel.peak_db);
             let level = amplitude_to_db(amplitude);
             channel.level_db = if level >= channel.level_db {
                 level
@@ -71,7 +73,9 @@ impl AudioMeter {
                     .max(channel.level_db)
                     .max(MIN_DB);
             }
+            changed |= previous != (channel.level_db, channel.peak_db);
         }
+        changed
     }
 }
 

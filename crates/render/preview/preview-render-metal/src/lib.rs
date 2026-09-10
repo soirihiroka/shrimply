@@ -256,14 +256,12 @@ impl Renderer {
         self.render_elapsed
     }
 
+    /// Paint the frame collected by `prepare`, without polling or requesting worker work.
     pub fn draw(
         &mut self,
         canvas: &Canvas,
-        project: &Project,
-        time: Time,
         sampling: skia_safe::SamplingOptions,
     ) -> Result<(), String> {
-        let result = self.prepare(project, time);
         if let Some(image) = &self.presented {
             let image = &image.image;
             let image = if sampling.mipmap != skia_safe::MipmapMode::None {
@@ -290,7 +288,7 @@ impl Renderer {
             };
             canvas.draw_image_with_sampling_options(image, (0.0, 0.0), sampling, None);
         }
-        result
+        Ok(())
     }
 
     /// Request and collect preview frames without attaching an editor view to a window.

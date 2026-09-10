@@ -925,6 +925,12 @@ fn cache_button(
     let dirty = context.dirty.clone();
     let previous = RefCell::new(None::<shrimply_inspector_core::CacheControlPresentation>);
     let poll = move || {
+        // Initialize once before attachment, then poll only visible controls.
+        if previous.borrow().is_some()
+            && (button.view().window().is_none() || button.view().isHiddenOrHasHiddenAncestor())
+        {
+            return;
+        }
         let current = shrimply_inspector_core::cache_control_presentation(
             controller.cache_status(&target, kind, id),
             "Click to cancel baking",

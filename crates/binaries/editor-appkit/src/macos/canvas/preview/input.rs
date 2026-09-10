@@ -64,6 +64,9 @@ impl CanvasView {
                     *revision == player.revision && *time == player.position
                 })
             {
+                let had_provider = state.controller.provider.is_some();
+                let invalidated = state.controller.context_invalidated
+                    && state.controller.sequence == PointerSequence::Idle;
                 state.controller.ensure(
                     &project,
                     selection,
@@ -91,8 +94,13 @@ impl CanvasView {
                         },
                     },
                 )?;
+                if had_provider != state.controller.provider.is_some() || invalidated {
+                    self.ivars().surface_dirty.set(true);
+                }
             } else if state.controller.sequence == PointerSequence::Idle {
-                state.controller.provider = None;
+                if state.controller.provider.take().is_some() {
+                    self.ivars().surface_dirty.set(true);
+                }
             }
             let excluded = state
                 .controller
@@ -281,6 +289,9 @@ impl CanvasView {
         &self,
         response: PreviewResponse,
     ) -> Result<(), String> {
+        if response.redraw {
+            self.ivars().surface_dirty.set(true);
+        }
         self.set_preview_cursor(response.cursor);
         let session = &self.ivars().session;
         if response.edit.commits() {

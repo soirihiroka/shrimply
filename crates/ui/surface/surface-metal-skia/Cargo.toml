@@ -8,3 +8,4 @@ objc2.workspace = true
 objc2-metal.workspace = true
 objc2-quartz-core.workspace = true
 skia-safe = { workspace = true, features = ["metal"] }
+shrimply-process-reporting.workspace = true

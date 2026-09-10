@@ -33,6 +33,7 @@ pub enum Content {
 
 pub struct CanvasState {
     renderer: RefCell<Renderer>,
+    surface_dirty: Rc<Cell<bool>>,
     content: RefCell<Content>,
     session: Rc<EditorSession>,
     imports: Rc<RefCell<super::media::Imports>>,
@@ -121,6 +122,18 @@ define_class!(
     }
 
     impl CanvasView {
+        #[unsafe(method(viewDidChangeEffectiveAppearance))]
+        fn appearance_changed(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidChangeEffectiveAppearance]; }
+            self.ivars().surface_dirty.set(true);
+        }
+
+        #[unsafe(method(viewDidUnhide))]
+        fn did_unhide(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidUnhide]; }
+            self.ivars().surface_dirty.set(true);
+        }
+
         #[unsafe(method(updateTrackingAreas))]
         fn update_tracking_areas(&self) {
             unsafe { let _: () = msg_send![super(self), updateTrackingAreas]; }
@@ -911,6 +924,11 @@ impl CanvasView {
     }
 
     pub fn render(&self) -> Result<(), String> {
+        let _timing = shrimply_process_reporting::diagnostics::timing(match &*self.ivars().content.borrow() {
+            Content::Timeline(_) => "Timeline lifecycle total",
+            Content::Preview(_) => "Preview lifecycle total",
+            Content::Meter(_) => "Meter lifecycle total",
+        });
         self.sync_tools();
         self.sync_paint_tools();
         self.poll_audio_export()?;
@@ -939,13 +957,21 @@ impl CanvasView {
             return Ok(());
         }
         self.refresh_live_preview();
-        self.prepare_preview()?;
+        self.poll_preview()?;
+        {
+            let _timing = shrimply_process_reporting::diagnostics::timing("Preview provider preparation");
+            self.prepare_preview()?;
+        }
         let scale = self.window().expect("attached canvas").backingScaleFactor();
         let redraw = match &mut *self.ivars().content.borrow_mut() {
             Content::Timeline(scene) => {
                 scene.needs_redraw(glam::Vec2::new(size.width as f32, size.height as f32))
             }
-            _ => true,
+            Content::Meter(meter) => meter.update(
+                self.ivars().session.audio_levels.take_peaks(),
+                std::time::Instant::now(),
+            ),
+            Content::Preview(preview) => std::mem::take(&mut preview.controller.frame_pending),
         };
         let mut renderer = self.ivars().renderer.borrow_mut();
         let resized = renderer.layer().contentsScale() != scale
@@ -964,9 +990,17 @@ impl CanvasView {
             renderer.layer().setDrawableSize(drawable_size);
         }
         let mut result = Ok(());
-        let mut manim_updates = Vec::new();
         if redraw || resized {
+            self.ivars().surface_dirty.set(true);
+        }
+        if self.ivars().surface_dirty.get() {
+            let _timing = shrimply_process_reporting::diagnostics::timing(match &*self.ivars().content.borrow() {
+                Content::Timeline(_) => "Timeline UI surface submission",
+                Content::Preview(_) => "Preview UI surface submission",
+                Content::Meter(_) => "Meter UI surface submission",
+            });
             renderer.draw(|canvas| {
+            self.ivars().surface_dirty.set(false);
             canvas.clear(shrimply_cross_ui_theme::current().view_bg);
             canvas.scale((scale as f32, scale as f32));
             match &mut *self.ivars().content.borrow_mut() {
@@ -975,27 +1009,17 @@ impl CanvasView {
                     glam::Vec2::new(size.width as f32, size.height as f32),
                 ),
                 Content::Meter(meter) => {
-                    meter.update(
-                        self.ivars().session.audio_levels.take_peaks(),
-                        std::time::Instant::now(),
-                    );
                     meter.draw(canvas, size.width as f32, size.height as f32);
                 }
                 Content::Preview(preview) => {
                     let player = shrimply_editor_state::player_state::snapshot(
                         &self.ivars().session.player_state,
                     );
-                    preview
-                        .renderer
-                        .set_interaction(player.playing, player.scrubbing);
                     let project = self.ivars().session.project.borrow();
                     let frame = project.canvas_size;
                     let prefs = shrimply_editor_state::preferences::snapshot(
                         &self.ivars().session.preferences,
                     );
-                    preview
-                        .renderer
-                        .set_decoder_limit(prefs.temporal_decoder_pool_size as usize);
                     preview.sync_guides(&project.preview_guides, prefs.preview_guides_visible);
                     let viewport = shrimply_preview_interaction_skia::guides::viewport(
                         glam::IVec2::new(size.width as i32, size.height as i32),
@@ -1046,15 +1070,7 @@ impl CanvasView {
                             PreviewUpsampleMethod::Bilinear => FilterMode::Linear.into(),
                         }
                     };
-                    result = preview.renderer.draw(
-                        canvas,
-                        &project,
-                        shrimply_editor_state::player_state::current_time(
-                            &self.ivars().session.player_state,
-                        ),
-                        sampling,
-                    );
-                    manim_updates.extend(preview.renderer.take_manim_updates());
+                    result = preview.renderer.draw(canvas, sampling);
                     canvas.restore();
                     let focused_caption =
                         shrimply_timeline_skia::selection_state::focused_item_address(
@@ -1071,23 +1087,7 @@ impl CanvasView {
                         focused_caption.as_ref(),
                     );
                     preview::draw_guides(canvas, preview, &project, size);
-                    if let Some((id, revision, exclusion)) = preview.renderer.presented_frame()
-                        && preview.presented_frame != Some(id)
-                        && preview.controller.accept_base_frame(revision, exclusion)
-                    {
-                        preview.presented_frame = Some(id);
-                        let (time, audio) = preview
-                            .renderer
-                            .presented_audio()
-                            .expect("accepted frame has audio analysis");
-                        preview.audio_analysis = Some((revision, time, audio.clone()));
-                        preview.controller.context_invalidated = true;
-                    }
                     preview.controller.draw(canvas, &preview.expressions);
-                    preview.sync_loading(shrimply_project_document::project::scaled_time_delta(
-                        project.frame_step(),
-                        player.playback_speed,
-                    ));
                 }
             }
             });
@@ -1132,13 +1132,6 @@ impl CanvasView {
             if let Err(error) = self.handle_transcription_update(update) {
                 self.show_error(&error);
             }
-        }
-        for update in manim_updates {
-            shrimply_editor_state::manim_status::apply(
-                &self.ivars().session.project,
-                &self.ivars().session.player_state,
-                update,
-            );
         }
         result
     }
@@ -1203,6 +1196,7 @@ pub fn new(
     mtm: MainThreadMarker,
 ) -> Retained<CanvasView> {
     let view = CanvasView::alloc(mtm).set_ivars(CanvasState {
+        surface_dirty: Rc::new(Cell::new(true)),
         tools: RefCell::new(Vec::new()),
         paint_tools: RefCell::new(Vec::new()),
         tracking_area: RefCell::new(None),
@@ -1231,6 +1225,9 @@ pub fn new(
     // Layer-hosting views are presented by the display link; drawRect is not invoked for a CAMetalLayer.
     view.setLayer(Some(view.ivars().renderer.borrow().layer()));
     view.setWantsLayer(true);
+    if matches!(*view.ivars().content.borrow(), Content::Preview(_)) {
+        view.connect_preview_redraw();
+    }
     if matches!(*view.ivars().content.borrow(), Content::Timeline(_)) {
         let mask_type = NSString::from_str(MASK_PASTEBOARD_TYPE);
         view.registerForDraggedTypes(&NSArray::from_slice(&[

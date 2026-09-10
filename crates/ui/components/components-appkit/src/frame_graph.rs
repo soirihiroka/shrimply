@@ -123,31 +123,37 @@ impl FrameGraph {
 
         let sync = {
             let state = state.clone();
-            let previous = previous.clone();
-            let toggle = toggle.clone();
-            let next = next.clone();
+            let previous = Weak::new(&*previous);
+            let toggle = Weak::new(&*toggle);
+            let next = Weak::new(&*next);
             let handlers = status_handlers.clone();
             Rc::new(move || {
                 let status = state.status();
-                previous.setEnabled(status.can_previous);
-                next.setEnabled(status.can_next);
-                toggle.setImage(Some(&symbol(
-                    if status.key_at_playhead {
-                        "minus"
+                if let Some(previous) = previous.load() {
+                    previous.setEnabled(status.can_previous);
+                }
+                if let Some(next) = next.load() {
+                    next.setEnabled(status.can_next);
+                }
+                if let Some(toggle) = toggle.load() {
+                    toggle.setImage(Some(&symbol(
+                        if status.key_at_playhead {
+                            "minus"
+                        } else {
+                            "plus"
+                        },
+                        if status.key_at_playhead {
+                            "Delete keyframe"
+                        } else {
+                            "Add keyframe"
+                        },
+                    )));
+                    toggle.setToolTip(Some(&NSString::from_str(if status.key_at_playhead {
+                        "Delete keyframe at playhead"
                     } else {
-                        "plus"
-                    },
-                    if status.key_at_playhead {
-                        "Delete keyframe"
-                    } else {
-                        "Add keyframe"
-                    },
-                )));
-                toggle.setToolTip(Some(&NSString::from_str(if status.key_at_playhead {
-                    "Delete keyframe at playhead"
-                } else {
-                    "Add keyframe at playhead"
-                })));
+                        "Add keyframe at playhead"
+                    })));
+                }
                 for handler in handlers.borrow().iter() {
                     handler(status);
                 }

@@ -50,8 +50,15 @@ impl Renderer {
     }
 
     pub fn draw(&mut self, paint: impl FnOnce(&Canvas)) {
+        // Drain autoreleased drawable/command references after each submission,
+        // rather than retaining them until the surrounding AppKit run-loop pool drains.
+        objc2::rc::autoreleasepool(|_| {
         // An occluded or detached layer may have no drawable available.
-        let Some(drawable) = self.layer.nextDrawable() else {
+        let drawable = {
+            let _timing = shrimply_process_reporting::diagnostics::timing("Metal drawable acquisition");
+            self.layer.nextDrawable()
+        };
+        let Some(drawable) = drawable else {
             return;
         };
         let size = self.layer.drawableSize();
@@ -69,9 +76,16 @@ impl Renderer {
             None,
         )
         .expect("wrap Metal drawable in Skia surface");
-        paint(surface.canvas());
-        self.context.flush_and_submit();
+        {
+            let _timing = shrimply_process_reporting::diagnostics::timing("Metal UI painting");
+            paint(surface.canvas());
+        }
+        {
+            let _timing = shrimply_process_reporting::diagnostics::timing("Metal Skia flush and submit");
+            self.context.flush_and_submit();
+        }
         drop(surface);
+        let _timing = shrimply_process_reporting::diagnostics::timing("Metal presentation commit");
         let command = self
             .queue
             .commandBuffer()
@@ -79,5 +93,6 @@ impl Renderer {
         let drawable: Retained<ProtocolObject<dyn MTLDrawable>> = (&drawable).into();
         command.presentDrawable(&drawable);
         command.commit();
+        });
     }
 }

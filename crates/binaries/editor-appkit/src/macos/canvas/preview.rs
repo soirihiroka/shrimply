@@ -162,6 +162,95 @@ impl Drop for State {
 }
 
 impl CanvasView {
+    pub(super) fn connect_preview_redraw(&self) {
+        use shrimply_editor_state::{player_state, preferences, preview_focus};
+        let session = &self.ivars().session;
+        let dirty = Rc::downgrade(&self.ivars().surface_dirty);
+        let alive = dirty.clone();
+        player_state::connect_while_alive_named(
+            &session.player_state,
+            "preview redraw",
+            move || alive.strong_count() > 0,
+            move |_| {
+                if let Some(dirty) = dirty.upgrade() {
+                    dirty.set(true);
+                }
+            },
+        );
+        let dirty = Rc::downgrade(&self.ivars().surface_dirty);
+        shrimply_timeline_skia::selection_state::connect_named(
+            &session.selection_state,
+            "preview redraw",
+            move || {
+                if let Some(dirty) = dirty.upgrade() {
+                    dirty.set(true);
+                }
+            },
+        );
+        let dirty = Rc::downgrade(&self.ivars().surface_dirty);
+        preferences::connect(&session.preferences, move |_| {
+            if let Some(dirty) = dirty.upgrade() {
+                dirty.set(true);
+            }
+        });
+        let dirty = Rc::downgrade(&self.ivars().surface_dirty);
+        let alive = dirty.clone();
+        preview_focus::connect_while_alive_named(
+            &session.preview_focus,
+            "preview redraw",
+            move || alive.strong_count() > 0,
+            move || {
+                if let Some(dirty) = dirty.upgrade() {
+                    dirty.set(true);
+                }
+            },
+        );
+    }
+
+    // Worker progress and native loading indicators must not depend on painting a drawable.
+    pub(super) fn poll_preview(&self) -> Result<(), String> {
+        let session = &self.ivars().session;
+        let (result, updates) = {
+            let mut content = self.ivars().content.borrow_mut();
+            let Content::Preview(preview) = &mut *content else {
+                return Ok(());
+            };
+            let _timing = shrimply_process_reporting::diagnostics::timing("Preview frame polling");
+            let player = shrimply_editor_state::player_state::snapshot(&session.player_state);
+            let prefs = shrimply_editor_state::preferences::snapshot(&session.preferences);
+            let project = session.project.borrow();
+            preview.renderer.set_interaction(player.playing, player.scrubbing);
+            preview.renderer.set_project_revision(player.revision);
+            preview.renderer.set_decoder_limit(prefs.temporal_decoder_pool_size as usize);
+            let previous = preview.renderer.presented_frame();
+            let result = preview.renderer.prepare(&project, player.position);
+            if previous != preview.renderer.presented_frame() {
+                self.ivars().surface_dirty.set(true);
+            }
+            if let Some((id, revision, exclusion)) = preview.renderer.presented_frame()
+                && preview.presented_frame != Some(id)
+                && preview.controller.accept_base_frame(revision, exclusion)
+            {
+                preview.presented_frame = Some(id);
+                let (time, audio) = preview.renderer.presented_audio()
+                    .expect("accepted frame has audio analysis");
+                preview.audio_analysis = Some((revision, time, audio.clone()));
+                preview.controller.context_invalidated = true;
+                self.ivars().surface_dirty.set(true);
+            }
+            preview.sync_loading(shrimply_project_document::project::scaled_time_delta(
+                project.frame_step(), player.playback_speed,
+            ));
+            (result, preview.renderer.take_manim_updates())
+        };
+        for update in updates {
+            shrimply_editor_state::manim_status::apply(
+                &session.project, &session.player_state, update,
+            );
+        }
+        result
+    }
+
     pub(super) fn preview_pointer_move(&self, point: glam::Vec2) {
         let mut content = self.ivars().content.borrow_mut();
         let Content::Preview(state) = &mut *content else {
@@ -181,6 +270,7 @@ impl CanvasView {
             .pointer_move(&mut guides, viewport, state.guides_visible, point);
         if state.guide_input.active() {
             state.edited_guides = Some(guides);
+            self.ivars().surface_dirty.set(true);
         }
         match state.guide_input.cursor() {
             GuideCursor::Default => objc2_app_kit::NSCursor::arrowCursor().set(),
@@ -214,6 +304,7 @@ impl CanvasView {
             state.edited_guides = Some(guides);
             state.baseline_guides = Some(baseline);
             state.controller.sequence = PointerSequence::Guide;
+            self.ivars().surface_dirty.set(true);
         }
     }
 
@@ -259,6 +350,7 @@ impl CanvasView {
     }
 
     fn finish_preview_pointer(&self, teardown: bool) {
+        self.ivars().surface_dirty.set(true);
         let reset_cursor = matches!(&*self.ivars().content.borrow(), Content::Preview(state)
             if state.controller.provider.is_some() || state.guide_input.active() || state.cursor_hidden || state.caption_split_hover.is_some());
         let response = if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() {
@@ -304,8 +396,11 @@ impl CanvasView {
     }
 
     pub fn set_preview_fullscreen(&self, fullscreen: bool) {
-        if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() {
+        if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut()
+            && state.fullscreen != fullscreen
+        {
             state.fullscreen = fullscreen;
+            self.ivars().surface_dirty.set(true);
         }
     }
 
@@ -314,7 +409,7 @@ impl CanvasView {
             && state.caption_bottom_inset != inset
         {
             state.caption_bottom_inset = inset;
-            self.setNeedsDisplay(true);
+            self.ivars().surface_dirty.set(true);
         }
     }
 }

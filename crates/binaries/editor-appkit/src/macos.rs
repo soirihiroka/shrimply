@@ -230,6 +230,7 @@ define_class!(
 
         #[unsafe(method(renderFrame:))]
         fn render_frame(&self, _display_link: &objc2_quartz_core::CADisplayLink) {
+            let _timing = shrimply_process_reporting::diagnostics::timing("UI callback total");
             if self.ivars().session.get().is_none() {
                 self.poll_project_load();
                 return;
@@ -237,9 +238,15 @@ define_class!(
             self.poll_blender_probe();
             self.poll_compute_server_probes();
             let session = self.ivars().session.get().expect("project loaded");
-            let imported = self.ivars().imports.borrow_mut().poll(session);
+            let imported = {
+                let _timing = shrimply_process_reporting::diagnostics::timing("Import polling");
+                self.ivars().imports.borrow_mut().poll(session)
+            };
             if let Err(error) = imported { self.show_error(&error); }
-            let update = session.poll();
+            let update = {
+                let _timing = shrimply_process_reporting::diagnostics::timing("Session polling and view-state queue");
+                session.poll()
+            };
             if let Some(error) = update.audio_playback_stopped { self.show_error(&error); }
             if let Some(title) = update.title { self.ivars().window.get().expect("window installed").setTitle(&NSString::from_str(&title.text)); }
             if self.ivars().loading.borrow().is_some() {
@@ -247,7 +254,11 @@ define_class!(
                 return;
             }
             let layout = self.ivars().layout.get().expect("layout installed");
-            for error in layout.inspector_controller.poll(self.mtm()) {
+            let inspector_errors = {
+                let _timing = shrimply_process_reporting::diagnostics::timing("Inspector polling and rebuild");
+                layout.inspector_controller.poll(self.mtm())
+            };
+            for error in inspector_errors {
                 self.show_error(&format!("Could not inspect Manim scenes:\n{error}"));
             }
             let player = player_state::snapshot(&session.player_state);

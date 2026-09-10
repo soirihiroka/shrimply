@@ -1,8 +1,6 @@
 use std::ptr::NonNull;
 
-use skia_safe::{
-    Font, Paint, PathBuilder, Point, RRect, canvas::PointMode, paint::Style as PaintStyle,
-};
+use skia_safe::{Font, Paint, PathBuilder, Point, RRect, paint::Style as PaintStyle};
 
 pub use shrimply_math_color::Color;
 pub use shrimply_math_geometry::{Rect, UVec2, Vec2, vec2};
@@ -242,12 +240,19 @@ impl TimelinePainterInner {
         if segments.len() < 2 || stroke.width <= 0.0 || stroke.color.is_transparent() {
             return;
         }
-        let points = segments.iter().copied().map(point).collect::<Vec<_>>();
+        // Ganesh expands draw_points(Lines) into a separate path draw per segment
+        // with coverage antialiasing or a scaled canvas (including Retina displays).
+        let mut path = PathBuilder::new();
+        for segment in segments.chunks_exact(2) {
+            path.move_to(point(segment[0]));
+            path.line_to(point(segment[1]));
+        }
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
+        paint.set_style(PaintStyle::Stroke);
         paint.set_stroke_width(stroke.width);
         paint.set_color(stroke.color);
-        self.canvas().draw_points(PointMode::Lines, &points, &paint);
+        self.canvas().draw_path(&path.snapshot(), &paint);
     }
 
     pub fn circle_filled(&self, center: Vec2, radius: f32, fill: Color) {

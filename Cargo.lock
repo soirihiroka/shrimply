@@ -7269,6 +7269,7 @@ dependencies = [
  "objc2",
  "objc2-metal",
  "objc2-quartz-core",
+ "shrimply-process-reporting",
  "skia-safe",
 ]
 

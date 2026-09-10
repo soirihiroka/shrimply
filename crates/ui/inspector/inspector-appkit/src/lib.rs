@@ -141,9 +141,15 @@ impl Inspector {
     }
 
     pub fn poll(&self, mtm: MainThreadMarker) -> Vec<String> {
+        if shrimply_inspector_document::poll(&self.state.controller) {
+            self.state.dirty.set(true);
+        }
+        let errors = shrimply_inspector_core::manim_parameters::take_scene_errors();
+        if self.view().window().is_none() || self.view().isHiddenOrHasHiddenAncestor() {
+            return errors;
+        }
         #[cfg(debug_assertions)]
         if self.state.layout_diagnostic_pending.get()
-            && self.view().window().is_some()
             && self.view().frame().size.width > 0.0
             && self.view().frame().size.height > 0.0
         {
@@ -152,10 +158,6 @@ impl Inspector {
             layout_debug::dump(self.view(), 0);
             layout_debug::expanded_cards(mtm);
         }
-        if shrimply_inspector_document::poll(&self.state.controller) {
-            self.state.dirty.set(true);
-        }
-        let errors = shrimply_inspector_core::manim_parameters::take_scene_errors();
         for poll in self.state.polls.borrow().iter() {
             poll();
         }

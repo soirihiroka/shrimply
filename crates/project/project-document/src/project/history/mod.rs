@@ -21,6 +21,7 @@ use status::{request_save as request_save_status_update, set_save as set_save_st
 const HISTORY_SAVE_DEBOUNCE: Duration = Duration::from_secs(2);
 const HISTORY_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 const HISTORY_QUEUE_CAPACITY: usize = 1;
+const SLOW_HISTORY_QUEUE_WAIT: Duration = Duration::from_millis(10);
 static NEXT_HISTORY_STEP: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
@@ -211,6 +212,7 @@ pub fn save_as(path: &Path) -> Result<(), String> {
 
 pub fn save_view_state(project: &Project) {
     let sender = history_worker(project);
+    let started = Instant::now();
     if sender
         .send(HistoryJob::ViewState {
             cursor_position: project.cursor_position,
@@ -223,6 +225,10 @@ pub fn save_view_state(project: &Project) {
         set_save_status(SaveStatus::Failed(
             "project history worker stopped unexpectedly".to_string(),
         ));
+    }
+    let elapsed = started.elapsed();
+    if elapsed >= SLOW_HISTORY_QUEUE_WAIT {
+        tracing::warn!(wait_us = elapsed.as_micros(), "View-state send blocked waiting for history worker");
     }
 }
 
@@ -423,7 +429,9 @@ fn save_project(path: &Path, project: &Project) -> Result<(), String> {
 }
 
 fn save_view_state_project(path: &Path, project: &Project) -> Result<(), String> {
+    let started = Instant::now();
     let result = storage::write_project(path, project);
+    tracing::info!(elapsed_us = started.elapsed().as_micros(), success = result.is_ok(), "View-state disk write completed");
     if let Err(error) = &result {
         tracing::warn!(path = %path.display(), "Could not save project view state: {error}");
     }
