@@ -118,6 +118,11 @@ pub fn install(editor: &Editor) {
         undo.setTarget(Some(editor));
         redo.setTarget(Some(editor));
     }
+    edit.addItem(&NSMenuItem::separatorItem(mtm));
+    item(&edit, "Cut", "x", Some(sel!(cut:)), mtm);
+    item(&edit, "Copy", "c", Some(sel!(copy:)), mtm);
+    item(&edit, "Paste", "v", Some(sel!(paste:)), mtm);
+    item(&edit, "Select All", "a", Some(sel!(selectAll:)), mtm);
 
     let view = submenu(&main, "View", mtm);
     let mut view_items = Vec::new();
