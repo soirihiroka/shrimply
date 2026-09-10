@@ -348,26 +348,22 @@ impl State {
             );
             scrolls.push(scroll);
         }
-        let scrolls = Rc::new(scrolls);
         self.visible_scroll.replace(Some(scrolls[selected].clone()));
         let target = document.target.clone();
         let list = self.list.clone();
         let visible_scroll = self.visible_scroll.clone();
-        let selected_scrolls = scrolls.clone();
-        let category_keys = Rc::new(
-            document
-                .categories
-                .iter()
-                .map(|category| category.key)
-                .collect::<Vec<_>>(),
-        );
+        let category_keys = document
+            .categories
+            .iter()
+            .map(|category| category.key)
+            .collect::<Vec<_>>();
         let tabs = Tabs::with_selection(
             tabs,
             selected,
             move |index| {
                 list.borrow_mut()
                     .set_active_category(&target, category_keys[index]);
-                visible_scroll.replace(Some(selected_scrolls[index].clone()));
+                visible_scroll.replace(Some(scrolls[index].clone()));
             },
             mtm,
         );

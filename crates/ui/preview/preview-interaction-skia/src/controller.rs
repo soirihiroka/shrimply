@@ -164,7 +164,7 @@ pub fn prepare_target(
         snap_configuration: SnapConfiguration {
             enabled: preparation.snap_enabled,
             radius_px: preparation.snap_radius_px,
-            guides: preparation.guides.map(|guides| Box::new(guides.clone())),
+            guides: preparation.guides.cloned(),
         },
         audio_analysis: preparation.audio_analysis.clone(),
     })
@@ -194,7 +194,7 @@ impl PreparedProvider {
                     audio_analysis: &self.audio_analysis,
                     expression_cache,
                     extensions,
-                    guides: self.snap_configuration.guides.as_deref(),
+                    guides: self.snap_configuration.guides.as_ref(),
                     radius_px: self.snap_configuration.radius_px,
                 },
             ));
@@ -320,14 +320,14 @@ pub struct Controller {
 struct SnapConfiguration {
     enabled: bool,
     radius_px: f32,
-    guides: Option<Box<PreviewGuides>>,
+    guides: Option<PreviewGuides>,
 }
 
 impl SnapConfiguration {
     fn matches(&self, preparation: Preparation<'_>) -> bool {
         self.enabled == preparation.snap_enabled
             && self.radius_px == preparation.snap_radius_px
-            && match (self.guides.as_deref(), preparation.guides) {
+            && match (self.guides.as_ref(), preparation.guides) {
                 (None, None) => true,
                 (Some(before), Some(after)) => {
                     before.vertical == after.vertical && before.horizontal == after.horizontal
@@ -565,21 +565,16 @@ impl Controller {
         canvas: &shrimply_preview_provider_skia::PreviewCanvas,
         expression_cache: &RefCell<TransformExpressionCache>,
     ) {
-        let current_covers_base = self.provider.as_ref().is_some_and(|prepared| {
-            prepared.provider.base_frame_exclusion() == self.presented_base_exclusion
-        });
-        if !current_covers_base
-            && let Some(prepared) = self.retiring_provider.as_mut()
-            && prepared.provider.base_frame_exclusion() == self.presented_base_exclusion
-        {
-            let context = prepared
-                .context
-                .context(expression_cache, Some(&self.extensions));
-            prepared.provider.on_draw(canvas, &context);
-        }
-        if let Some(prepared) = self.provider.as_mut()
-            && prepared.provider.base_frame_exclusion() == self.presented_base_exclusion
-        {
+        // Prefer the current overlay; retain the previous one only until its
+        // replacement's matching base frame arrives.
+        let prepared = self
+            .provider
+            .iter_mut()
+            .chain(self.retiring_provider.iter_mut())
+            .find(|prepared| {
+                prepared.provider.base_frame_exclusion() == self.presented_base_exclusion
+            });
+        if let Some(prepared) = prepared {
             let context = prepared
                 .context
                 .context(expression_cache, Some(&self.extensions));
