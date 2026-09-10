@@ -228,7 +228,10 @@ pub fn save_view_state(project: &Project) {
     }
     let elapsed = started.elapsed();
     if elapsed >= SLOW_HISTORY_QUEUE_WAIT {
-        tracing::warn!(wait_us = elapsed.as_micros(), "View-state send blocked waiting for history worker");
+        tracing::warn!(
+            wait_us = elapsed.as_micros(),
+            "View-state send blocked waiting for history worker"
+        );
     }
 }
 
@@ -431,7 +434,11 @@ fn save_project(path: &Path, project: &Project) -> Result<(), String> {
 fn save_view_state_project(path: &Path, project: &Project) -> Result<(), String> {
     let started = Instant::now();
     let result = storage::write_project(path, project);
-    tracing::info!(elapsed_us = started.elapsed().as_micros(), success = result.is_ok(), "View-state disk write completed");
+    tracing::info!(
+        elapsed_us = started.elapsed().as_micros(),
+        success = result.is_ok(),
+        "View-state disk write completed"
+    );
     if let Err(error) = &result {
         tracing::warn!(path = %path.display(), "Could not save project view state: {error}");
     }

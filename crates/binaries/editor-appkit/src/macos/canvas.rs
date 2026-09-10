@@ -924,11 +924,13 @@ impl CanvasView {
     }
 
     pub fn render(&self) -> Result<(), String> {
-        let _timing = shrimply_process_reporting::diagnostics::timing(match &*self.ivars().content.borrow() {
-            Content::Timeline(_) => "Timeline lifecycle total",
-            Content::Preview(_) => "Preview lifecycle total",
-            Content::Meter(_) => "Meter lifecycle total",
-        });
+        let _timing = shrimply_process_reporting::diagnostics::timing(
+            match &*self.ivars().content.borrow() {
+                Content::Timeline(_) => "Timeline lifecycle total",
+                Content::Preview(_) => "Preview lifecycle total",
+                Content::Meter(_) => "Meter lifecycle total",
+            },
+        );
         self.sync_tools();
         self.sync_paint_tools();
         self.poll_audio_export()?;
@@ -959,7 +961,8 @@ impl CanvasView {
         self.refresh_live_preview();
         self.poll_preview()?;
         {
-            let _timing = shrimply_process_reporting::diagnostics::timing("Preview provider preparation");
+            let _timing =
+                shrimply_process_reporting::diagnostics::timing("Preview provider preparation");
             self.prepare_preview()?;
         }
         let scale = self.window().expect("attached canvas").backingScaleFactor();
@@ -975,17 +978,12 @@ impl CanvasView {
         };
         let mut renderer = self.ivars().renderer.borrow_mut();
         let resized = renderer.layer().contentsScale() != scale
-            || renderer.layer().drawableSize() != NSSize::new(
-                (size.width * scale).ceil(),
-                (size.height * scale).ceil(),
-            );
+            || renderer.layer().drawableSize()
+                != NSSize::new((size.width * scale).ceil(), (size.height * scale).ceil());
         if renderer.layer().contentsScale() != scale {
             renderer.layer().setContentsScale(scale);
         }
-        let drawable_size = NSSize::new(
-            (size.width * scale).ceil(),
-            (size.height * scale).ceil(),
-        );
+        let drawable_size = NSSize::new((size.width * scale).ceil(), (size.height * scale).ceil());
         if renderer.layer().drawableSize() != drawable_size {
             renderer.layer().setDrawableSize(drawable_size);
         }
@@ -996,116 +994,138 @@ impl CanvasView {
             Content::Meter(_) => "Meter",
         };
         if matches!(&*self.ivars().content.borrow(), Content::Preview(_)) {
-            if redraw { shrimply_process_reporting::diagnostics::count("Preview redraw / controller request"); }
-            if resized { shrimply_process_reporting::diagnostics::count("Preview redraw / resize or scale"); }
-            if self.ivars().surface_dirty.get() { shrimply_process_reporting::diagnostics::count("Preview redraw / invalidated surface"); }
+            if redraw {
+                shrimply_process_reporting::diagnostics::count(
+                    "Preview redraw / controller request",
+                );
+            }
+            if resized {
+                shrimply_process_reporting::diagnostics::count("Preview redraw / resize or scale");
+            }
+            if self.ivars().surface_dirty.get() {
+                shrimply_process_reporting::diagnostics::count(
+                    "Preview redraw / invalidated surface",
+                );
+            }
         }
         if redraw || resized {
             self.ivars().surface_dirty.set(true);
         }
         if self.ivars().surface_dirty.get() {
-            let _timing = shrimply_process_reporting::diagnostics::timing(match &*self.ivars().content.borrow() {
-                Content::Timeline(_) => "Timeline UI surface submission",
-                Content::Preview(_) => "Preview UI surface submission",
-                Content::Meter(_) => "Meter UI surface submission",
-            });
+            let _timing = shrimply_process_reporting::diagnostics::timing(
+                match &*self.ivars().content.borrow() {
+                    Content::Timeline(_) => "Timeline UI surface submission",
+                    Content::Preview(_) => "Preview UI surface submission",
+                    Content::Meter(_) => "Meter UI surface submission",
+                },
+            );
             renderer.draw(surface_label, |canvas| {
-            self.ivars().surface_dirty.set(false);
-            canvas.clear(shrimply_cross_ui_theme::current().view_bg);
-            canvas.scale((scale as f32, scale as f32));
-            match &mut *self.ivars().content.borrow_mut() {
-                Content::Timeline(scene) => scene.draw(
-                    canvas,
-                    glam::Vec2::new(size.width as f32, size.height as f32),
-                ),
-                Content::Meter(meter) => {
-                    meter.draw(canvas, size.width as f32, size.height as f32);
-                }
-                Content::Preview(preview) => {
-                    let player = shrimply_editor_state::player_state::snapshot(
-                        &self.ivars().session.player_state,
-                    );
-                    let project = self.ivars().session.project.borrow();
-                    let frame = project.canvas_size;
-                    let prefs = shrimply_editor_state::preferences::snapshot(
-                        &self.ivars().session.preferences,
-                    );
-                    preview.sync_guides(&project.preview_guides, prefs.preview_guides_visible);
-                    let viewport = shrimply_preview_interaction_skia::guides::viewport(
-                        glam::IVec2::new(size.width as i32, size.height as i32),
-                        frame,
-                        prefs.preview_padding_px,
-                        preview.guides_visible,
-                        preview.fullscreen,
-                    );
-                    preview.viewport = Some(viewport);
-                    let content = viewport.content_rect;
-                    shrimply_preview_provider_skia::canvas::draw_background(
+                self.ivars().surface_dirty.set(false);
+                canvas.clear(shrimply_cross_ui_theme::current().view_bg);
+                canvas.scale((scale as f32, scale as f32));
+                match &mut *self.ivars().content.borrow_mut() {
+                    Content::Timeline(scene) => scene.draw(
                         canvas,
-                        shrimply_preview_provider_skia::canvas::Appearance {
-                            content_rect: content,
-                            background: shrimply_cross_ui_theme::current().view_bg,
-                            shadow_size: prefs.preview_shadow_size_px,
-                            pixel_scale: scale as f32,
-                        },
-                    );
-                    canvas.save();
-                    canvas.translate((content.min.x, content.min.y));
-                    canvas.scale((
-                        content.width() / frame.width as f32,
-                        content.height() / frame.height as f32,
-                    ));
-                    canvas.clip_rect(
-                        skia_safe::Rect::from_wh(frame.width as f32, frame.height as f32),
-                        None,
-                        false,
-                    );
-                    use shrimply_editor_state::preferences::{
-                        PreviewDownsampleMethod, PreviewUpsampleMethod,
-                    };
-                    use skia_safe::{FilterMode, MipmapMode, SamplingOptions};
-                    let downsampling = content.width() * (scale as f32) < frame.width as f32
-                        || content.height() * (scale as f32) < frame.height as f32;
-                    let sampling = if downsampling {
-                        match prefs.preview_downsample_method {
-                            PreviewDownsampleMethod::Nearest => FilterMode::Nearest.into(),
-                            PreviewDownsampleMethod::Bilinear => FilterMode::Linear.into(),
-                            PreviewDownsampleMethod::Trilinear => {
-                                SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear)
-                            }
-                        }
-                    } else {
-                        match prefs.preview_upsample_method {
-                            PreviewUpsampleMethod::Nearest => FilterMode::Nearest.into(),
-                            PreviewUpsampleMethod::Bilinear => FilterMode::Linear.into(),
-                        }
-                    };
-                    {
-                        let _timing = shrimply_process_reporting::diagnostics::timing("Preview paint / image and mipmaps");
-                        result = preview.renderer.draw(canvas, sampling);
+                        glam::Vec2::new(size.width as f32, size.height as f32),
+                    ),
+                    Content::Meter(meter) => {
+                        meter.draw(canvas, size.width as f32, size.height as f32);
                     }
-                    canvas.restore();
-                    let focused_caption =
-                        shrimply_timeline_skia::selection_state::focused_item_address(
-                            &self.ivars().session.selection_state,
+                    Content::Preview(preview) => {
+                        let player = shrimply_editor_state::player_state::snapshot(
+                            &self.ivars().session.player_state,
+                        );
+                        let project = self.ivars().session.project.borrow();
+                        let frame = project.canvas_size;
+                        let prefs = shrimply_editor_state::preferences::snapshot(
+                            &self.ivars().session.preferences,
+                        );
+                        preview.sync_guides(&project.preview_guides, prefs.preview_guides_visible);
+                        let viewport = shrimply_preview_interaction_skia::guides::viewport(
+                            glam::IVec2::new(size.width as i32, size.height as i32),
+                            frame,
+                            prefs.preview_padding_px,
+                            preview.guides_visible,
+                            preview.fullscreen,
+                        );
+                        preview.viewport = Some(viewport);
+                        let content = viewport.content_rect;
+                        shrimply_preview_provider_skia::canvas::draw_background(
+                            canvas,
+                            shrimply_preview_provider_skia::canvas::Appearance {
+                                content_rect: content,
+                                background: shrimply_cross_ui_theme::current().view_bg,
+                                shadow_size: prefs.preview_shadow_size_px,
+                                pixel_scale: scale as f32,
+                            },
+                        );
+                        canvas.save();
+                        canvas.translate((content.min.x, content.min.y));
+                        canvas.scale((
+                            content.width() / frame.width as f32,
+                            content.height() / frame.height as f32,
+                        ));
+                        canvas.clip_rect(
+                            skia_safe::Rect::from_wh(frame.width as f32, frame.height as f32),
+                            None,
+                            false,
+                        );
+                        use shrimply_editor_state::preferences::{
+                            PreviewDownsampleMethod, PreviewUpsampleMethod,
+                        };
+                        use skia_safe::{FilterMode, MipmapMode, SamplingOptions};
+                        let downsampling = content.width() * (scale as f32) < frame.width as f32
+                            || content.height() * (scale as f32) < frame.height as f32;
+                        let sampling = if downsampling {
+                            match prefs.preview_downsample_method {
+                                PreviewDownsampleMethod::Nearest => FilterMode::Nearest.into(),
+                                PreviewDownsampleMethod::Bilinear => FilterMode::Linear.into(),
+                                PreviewDownsampleMethod::Trilinear => {
+                                    SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear)
+                                }
+                            }
+                        } else {
+                            match prefs.preview_upsample_method {
+                                PreviewUpsampleMethod::Nearest => FilterMode::Nearest.into(),
+                                PreviewUpsampleMethod::Bilinear => FilterMode::Linear.into(),
+                            }
+                        };
+                        {
+                            let _timing = shrimply_process_reporting::diagnostics::timing(
+                                "Preview paint / image and mipmaps",
+                            );
+                            result = preview.renderer.draw(canvas, sampling);
+                        }
+                        canvas.restore();
+                        let focused_caption =
+                            shrimply_timeline_skia::selection_state::focused_item_address(
+                                &self.ivars().session.selection_state,
+                                &project,
+                            )
+                            .filter(|address| project.caption_item(address).is_some());
+                        let captions_timing = shrimply_process_reporting::diagnostics::timing(
+                            "Preview paint / captions and guides",
+                        );
+                        preview::captions::draw(
+                            canvas,
+                            preview,
                             &project,
-                        )
-                        .filter(|address| project.caption_item(address).is_some());
-                    let captions_timing = shrimply_process_reporting::diagnostics::timing("Preview paint / captions and guides");
-                    preview::captions::draw(
-                        canvas,
-                        preview,
-                        &project,
-                        player.position,
-                        preview::captions::appearance(size, &prefs, preview.caption_bottom_inset),
-                        focused_caption.as_ref(),
-                    );
-                    preview::draw_guides(canvas, preview, &project, size);
-                    drop(captions_timing);
-                    let _timing = shrimply_process_reporting::diagnostics::timing("Preview paint / interaction overlay");
-                    preview.controller.draw(canvas, &preview.expressions);
+                            player.position,
+                            preview::captions::appearance(
+                                size,
+                                &prefs,
+                                preview.caption_bottom_inset,
+                            ),
+                            focused_caption.as_ref(),
+                        );
+                        preview::draw_guides(canvas, preview, &project, size);
+                        drop(captions_timing);
+                        let _timing = shrimply_process_reporting::diagnostics::timing(
+                            "Preview paint / interaction overlay",
+                        );
+                        preview.controller.draw(canvas, &preview.expressions);
+                    }
                 }
-            }
             });
         } else {
             shrimply_process_reporting::diagnostics::count(match &*self.ivars().content.borrow() {

@@ -61,63 +61,69 @@ impl Renderer {
         // Drain autoreleased drawable/command references after each submission,
         // rather than retaining them until the surrounding AppKit run-loop pool drains.
         let phases = objc2::rc::autoreleasepool(|_| {
-        // An occluded or detached layer may have no drawable available.
-        let drawable = {
-            let _timing = shrimply_process_reporting::diagnostics::timing("Metal drawable acquisition");
-            self.layer.nextDrawable()
-        };
-        let acquired = Instant::now();
-        let Some(drawable) = drawable else {
-            shrimply_process_reporting::diagnostics::count("Metal / no drawable");
-            tracing::warn!(surface = label, elapsed_us = started.elapsed().as_micros(), "UI drawable unavailable");
-            return None;
-        };
-        let size = self.layer.drawableSize();
-        let texture = drawable.texture();
-        // The drawable retains its texture until Skia's work has been submitted.
-        let texture = unsafe { mtl::TextureInfo::new(Retained::as_ptr(&texture) as mtl::Handle) };
-        let target =
-            backend_render_targets::make_mtl((size.width as i32, size.height as i32), &texture);
-        let mut surface = gpu::surfaces::wrap_backend_render_target(
-            &mut self.context,
-            &target,
-            SurfaceOrigin::TopLeft,
-            ColorType::BGRA8888,
-            None,
-            None,
-        )
-        .expect("wrap Metal drawable in Skia surface");
-        let wrapped = Instant::now();
-        {
-            let _timing = shrimply_process_reporting::diagnostics::timing("Metal UI painting");
+            // An occluded or detached layer may have no drawable available.
+            let drawable = self.layer.nextDrawable();
+            let acquired = Instant::now();
+            let Some(drawable) = drawable else {
+                tracing::warn!(
+                    surface = label,
+                    elapsed_us = started.elapsed().as_micros(),
+                    "UI drawable unavailable"
+                );
+                return None;
+            };
+            let size = self.layer.drawableSize();
+            let texture = drawable.texture();
+            // The drawable retains its texture until Skia's work has been submitted.
+            let texture =
+                unsafe { mtl::TextureInfo::new(Retained::as_ptr(&texture) as mtl::Handle) };
+            let target =
+                backend_render_targets::make_mtl((size.width as i32, size.height as i32), &texture);
+            let mut surface = gpu::surfaces::wrap_backend_render_target(
+                &mut self.context,
+                &target,
+                SurfaceOrigin::TopLeft,
+                ColorType::BGRA8888,
+                None,
+                None,
+            )
+            .expect("wrap Metal drawable in Skia surface");
+            let wrapped = Instant::now();
             paint(surface.canvas());
-        }
-        let painted = Instant::now();
-        {
-            let _timing = shrimply_process_reporting::diagnostics::timing("Metal Skia flush and submit");
+            let painted = Instant::now();
             self.context.flush_and_submit();
-        }
-        let flushed = Instant::now();
-        drop(surface);
-        let released = Instant::now();
-        let _timing = shrimply_process_reporting::diagnostics::timing("Metal presentation commit");
-        let command = self
-            .queue
-            .commandBuffer()
-            .expect("create Metal presentation command");
-        let drawable: Retained<ProtocolObject<dyn MTLDrawable>> = (&drawable).into();
-        command.presentDrawable(&drawable);
-        command.commit();
-        Some((acquired, wrapped, painted, flushed, released, Instant::now()))
+            let flushed = Instant::now();
+            drop(surface);
+            let released = Instant::now();
+            let command = self
+                .queue
+                .commandBuffer()
+                .expect("create Metal presentation command");
+            let drawable: Retained<ProtocolObject<dyn MTLDrawable>> = (&drawable).into();
+            command.presentDrawable(&drawable);
+            command.commit();
+            Some((
+                acquired,
+                wrapped,
+                painted,
+                flushed,
+                released,
+                Instant::now(),
+            ))
         });
         let elapsed = started.elapsed();
         if elapsed >= SLOW_SUBMISSION
-            && self.last_slow_log.is_none_or(|last| last.elapsed() >= SLOW_LOG_INTERVAL)
+            && self
+                .last_slow_log
+                .is_none_or(|last| last.elapsed() >= SLOW_LOG_INTERVAL)
             && let Some((acquired, wrapped, painted, flushed, released, committed)) = phases
         {
             self.last_slow_log = Some(Instant::now());
             let size = self.layer.drawableSize();
-            tracing::warn!(surface = label, width = size.width, height = size.height,
+            tracing::warn!(
+                surface = label,
+                width = size.width,
+                height = size.height,
                 total_us = elapsed.as_micros(),
                 acquire_us = acquired.duration_since(started).as_micros(),
                 wrap_us = wrapped.duration_since(acquired).as_micros(),
@@ -126,7 +132,8 @@ impl Renderer {
                 surface_release_us = released.duration_since(flushed).as_micros(),
                 present_us = committed.duration_since(released).as_micros(),
                 autorelease_us = committed.elapsed().as_micros(),
-                "Slow UI submission: phases from the same draw");
+                "Slow UI submission: phases from the same draw"
+            );
         }
     }
 }

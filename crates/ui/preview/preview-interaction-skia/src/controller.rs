@@ -18,6 +18,8 @@ pub struct PreparedProvider {
     pub context: PreparedContext,
     pub provider: Box<dyn PreviewProvider>,
     pub deferred_refresh: PreviewRefresh,
+    snap_configuration: SnapConfiguration,
+    audio_analysis: FrameAudioAnalysis,
 }
 
 pub struct PreparedContext {
@@ -118,7 +120,9 @@ pub fn prepare_target(
         return None;
     }
     let viewport = preparation.viewport;
-    let mut prepared = prepare_geometry(
+    let geometry_timing =
+        shrimply_process_reporting::diagnostics::timing("Selected visual / geometry preparation");
+    let prepared = prepare_geometry(
         project,
         key,
         position,
@@ -130,27 +134,16 @@ pub fn prepare_target(
             camera_sampler: preparation.camera_sampler,
         },
     )?;
-    let snap_scene = preparation.snap_enabled.then(|| {
-        prepare_snap_scene(
-            project,
-            key,
-            position,
-            viewport,
-            &mut prepared.source_sizes,
-            SnapPreparation {
-                audio_analysis: preparation.audio_analysis,
-                expression_cache: preparation.expression_cache,
-                extensions,
-                guides: preparation.guides,
-                radius_px: preparation.snap_radius_px,
-            },
-        )
-    });
+    drop(geometry_timing);
     let context = prepared
         .context(position, preparation.expression_cache, viewport)
-        .snapping(snap_scene.as_ref())
         .extensions(Some(extensions));
-    let provider = item.preview_provider(target, &context)?;
+    let provider = {
+        let _timing = shrimply_process_reporting::diagnostics::timing(
+            "Selected visual / provider construction",
+        );
+        item.preview_provider(target, &context)?
+    };
     Some(PreparedProvider {
         item: key.clone(),
         target,
@@ -162,12 +155,18 @@ pub fn prepare_target(
             viewport,
             geometry: prepared.geometry,
             source_sizes: prepared.source_sizes,
-            snap_scene,
+            snap_scene: None,
             tracked_camera: prepared.tracked_camera,
             item_id: prepared.item_id,
         },
         provider,
         deferred_refresh: PreviewRefresh::NONE,
+        snap_configuration: SnapConfiguration {
+            enabled: preparation.snap_enabled,
+            radius_px: preparation.snap_radius_px,
+            guides: preparation.guides.map(|guides| Box::new(guides.clone())),
+        },
+        audio_analysis: preparation.audio_analysis.clone(),
     })
 }
 
@@ -179,6 +178,27 @@ impl PreparedProvider {
         expression_cache: &RefCell<TransformExpressionCache>,
         event: PointerEvent<'_>,
     ) -> PreviewResponse {
+        // Snapping is consumed at gesture start, never by painting. Do not scan
+        // and evaluate every visual peer just because playback changed frames.
+        if matches!(event, PointerEvent::Begin(_)) && self.snap_configuration.enabled {
+            let _timing = shrimply_process_reporting::diagnostics::timing(
+                "Selected visual / gesture snapping preparation",
+            );
+            self.context.snap_scene = Some(prepare_snap_scene(
+                project,
+                &self.item,
+                self.context.timeline_position,
+                self.context.viewport,
+                &mut self.context.source_sizes,
+                SnapPreparation {
+                    audio_analysis: &self.audio_analysis,
+                    expression_cache,
+                    extensions,
+                    guides: self.snap_configuration.guides.as_deref(),
+                    radius_px: self.snap_configuration.radius_px,
+                },
+            ));
+        }
         let context = self.context.context(expression_cache, None);
         let mut response = self.provider.on_pointer(
             event,
@@ -295,8 +315,6 @@ pub struct Controller {
     pub live_base_in_flight: Option<u64>,
     pub base_exclusion: Option<uuid::Uuid>,
     pub presented_base_exclusion: Option<uuid::Uuid>,
-    snap_configuration: Option<SnapConfiguration>,
-    audio_analysis: Option<FrameAudioAnalysis>,
 }
 
 struct SnapConfiguration {
@@ -353,16 +371,12 @@ impl Controller {
             return Ok(self.provider.is_some());
         }
         let stale = self.context_invalidated
-            || self
-                .snap_configuration
-                .as_ref()
-                .is_some_and(|config| !config.matches(preparation))
-            || self
-                .audio_analysis
-                .as_ref()
-                .is_some_and(|analysis| !analysis.same_frame(preparation.audio_analysis))
             || self.provider.as_ref().is_some_and(|prepared| {
-                selection != Some((&prepared.item, prepared.target))
+                !prepared.snap_configuration.matches(preparation)
+                    || !prepared
+                        .audio_analysis
+                        .same_frame(preparation.audio_analysis)
+                    || selection != Some((&prepared.item, prepared.target))
                     || prepared.project_revision != preparation.project_revision
                     || prepared.context.timeline_position != position
                     || prepared.context.viewport != preparation.viewport
@@ -374,12 +388,6 @@ impl Controller {
         if self.provider.is_none()
             && let Some((address, target)) = selection
         {
-            self.snap_configuration = Some(SnapConfiguration {
-                enabled: preparation.snap_enabled,
-                radius_px: preparation.snap_radius_px,
-                guides: preparation.guides.map(|guides| Box::new(guides.clone())),
-            });
-            self.audio_analysis = Some(preparation.audio_analysis.clone());
             let audio_analysis = preparation.audio_analysis.for_preparation();
             let provider = prepare_target(
                 project,

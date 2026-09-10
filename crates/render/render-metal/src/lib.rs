@@ -5,9 +5,10 @@ mod skia;
 use objc2::{msg_send, rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSString;
 use objc2_metal::{
-    MTLBinding, MTLBindingType, MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue,
-    MTLComputeCommandEncoder, MTLComputePipelineState, MTLDevice, MTLLibrary, MTLPipelineOption,
-    MTLResource, MTLResourceUsage, MTLSize,
+    MTLBinding, MTLBindingType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
+    MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState,
+    MTLDevice, MTLLibrary, MTLOrigin, MTLPipelineOption, MTLPixelFormat, MTLResource,
+    MTLResourceUsage, MTLSize, MTLStorageMode, MTLTexture, MTLTextureDescriptor, MTLTextureUsage,
 };
 use shrimply_render_core::Nv12LayerParams;
 use std::collections::HashMap;
@@ -101,6 +102,10 @@ impl Frame {
         (self.output, self.submission)
     }
 
+    pub fn completed(&self) -> Result<bool, String> {
+        self.submission.completed()
+    }
+
     pub fn pixels(&self) -> Result<Option<&[u8]>, String> {
         if !self.submission.completed()? {
             return Ok(None);
@@ -112,6 +117,70 @@ impl Frame {
                 self.output.metal().length(),
             )
         }))
+    }
+}
+
+impl Renderer {
+    /// Queue a GPU-only copy of a composite's straight RGBA buffer.
+    /// This renderer's queue orders the copy after the frame's compute work.
+    pub fn presentation_texture(
+        &self,
+        frame: &Frame,
+        size: (u32, u32),
+    ) -> Result<(Retained<ProtocolObject<dyn MTLTexture>>, Submission), String> {
+        let row_bytes = (size.0 as usize)
+            .checked_mul(size_of::<u32>())
+            .ok_or("Presentation row size overflow")?;
+        let length = row_bytes
+            .checked_mul(size.1 as usize)
+            .ok_or("Presentation image size overflow")?;
+        if size.0 == 0 || size.1 == 0 || length != frame.output.metal().length() {
+            return Err("Presentation dimensions do not match the composite buffer".into());
+        }
+        let descriptor = unsafe {
+            MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
+                MTLPixelFormat::RGBA8Unorm,
+                size.0 as usize,
+                size.1 as usize,
+                false,
+            )
+        };
+        descriptor.setStorageMode(MTLStorageMode::Private);
+        descriptor.setUsage(MTLTextureUsage::ShaderRead);
+        let texture = self
+            .context
+            .device
+            .newTextureWithDescriptor(&descriptor)
+            .ok_or("Could not allocate the presentation texture")?;
+        let command = self
+            .context
+            .queue
+            .commandBuffer()
+            .ok_or("Could not create the presentation command")?;
+        let blit = command
+            .blitCommandEncoder()
+            .ok_or("Could not create the presentation blit encoder")?;
+        // The command retains the texture and Submission retains the source
+        // buffer. Neither resource is modified after this copy is submitted.
+        unsafe {
+            blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
+                frame.output.metal(),
+                0,
+                row_bytes,
+                length,
+                MTLSize { width: size.0 as usize, height: size.1 as usize, depth: 1 },
+                &texture,
+                0,
+                0,
+                MTLOrigin { x: 0, y: 0, z: 0 },
+            );
+        }
+        blit.endEncoding();
+        command.commit();
+        Ok((
+            texture,
+            Submission::new(command, vec![frame.output.clone()]),
+        ))
     }
 }
 

@@ -305,22 +305,15 @@ impl Scene {
     pub fn needs_redraw(&mut self, size: Vec2) -> bool {
         if self.update_media() {
             self.media_refresh.redraw.set(true);
-            shrimply_process_reporting::diagnostics::count("Timeline redraw / media update");
         }
-        let reasons = [
-            ("Timeline redraw / dirty", self.media_refresh.redraw.get()),
-            ("Timeline redraw / resume", self.suspended),
-            ("Timeline redraw / resize", self.viewport.size() != size),
-            ("Timeline redraw / playback", player_state::snapshot(&self.player).playing),
-            ("Timeline redraw / audio recording", self.active_audio_recording.is_some()),
-            ("Timeline redraw / video recording", self.active_video_recording.is_some()),
-            ("Timeline redraw / waveform loading", self.waveform_loading),
-            ("Timeline redraw / animation", self.animating()),
-        ];
-        for (reason, active) in reasons {
-            if active { shrimply_process_reporting::diagnostics::count(reason); }
-        }
-        reasons.iter().any(|(_, active)| *active)
+        self.media_refresh.redraw.get()
+            || self.suspended
+            || self.viewport.size() != size
+            || player_state::snapshot(&self.player).playing
+            || self.active_audio_recording.is_some()
+            || self.active_video_recording.is_some()
+            || self.waveform_loading
+            || self.animating()
     }
 
     /// Detach from a native surface while retaining view state for a later realization.

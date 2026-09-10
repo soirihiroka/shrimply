@@ -2,16 +2,6 @@ use super::*;
 use glib::translate::{ToGlibPtrMut, from_glib};
 use shrimply_preview_provider_skia::PreviewViewport;
 
-impl VideoSurfaceState {
-    pub(super) fn padding_px(&self) -> u32 {
-        guides::padding_px(
-            self.preview_padding_px,
-            self.guides_visible,
-            self.fullscreen,
-        )
-    }
-}
-
 pub(super) fn surface_viewport(
     area: &gtk::GLArea,
     project: &Project,

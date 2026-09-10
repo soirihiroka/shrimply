@@ -1,7 +1,5 @@
 use std::{
-    any::Any,
     cell::{Cell, RefCell},
-    collections::HashMap,
     rc::Rc,
 };
 
@@ -17,7 +15,7 @@ use shrimply_preview_provider_skia::{
 use crate::player_state::{self, SharedPlayerState};
 use crate::preferences::store as preferences_store;
 use crate::preview_focus::{self, FocusedPreview, SharedPreviewFocus};
-use crate::project::{ItemAddress, PreviewGuides, Project, Time};
+use crate::project::{ItemAddress, Project, Time};
 use crate::selection_state::{self, SharedSelectionState};
 use crate::timeline::renderer::{Color, Rect, vec2};
 use crate::transform_eval::{FrameAudioAnalysis, TransformExpressionCache};
@@ -38,8 +36,7 @@ mod geometry;
 #[path = "preview_surface/gtk_guides.rs"]
 mod gtk_guides;
 use geometry::surface_viewport;
-use shrimply_preview_runtime_cuda::controller::PreparedProvider;
-use shrimply_preview_runtime_cuda::geometry::preview_viewport;
+use shrimply_preview_runtime_cuda::controller::Preparation;
 use shrimply_preview_runtime_cuda::guides;
 use shrimply_preview_runtime_cuda::renderer::{Appearance, VideoRenderer};
 
@@ -402,78 +399,17 @@ impl VideoSurface {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Preparation<'a> {
-    surface: IVec2,
-    project_revision: u64,
-    padding_px: u32,
-    audio_analysis: &'a FrameAudioAnalysis,
-    expression_cache: &'a RefCell<TransformExpressionCache>,
-    extensions: &'a HashMap<PreviewExtensionKey, Box<dyn Any>>,
-    snap_enabled: bool,
-    snap_radius_px: f32,
-    guides: Option<&'a PreviewGuides>,
-}
-
-fn prepare_current(
+fn provider_selection<'a>(
     project: &Project,
-    player_state: &SharedPlayerState,
-    selection_state: &SharedSelectionState,
-    preview_focus: &SharedPreviewFocus,
-    preparation: Preparation<'_>,
-) -> Option<PreparedProvider> {
-    let item = selection_state::focused_video_address(selection_state, project)?;
-    prepare(
-        project,
-        &item,
-        preview_focus::snapshot(preview_focus).as_ref(),
-        player_state::snapshot(player_state).position,
-        preparation,
-    )
-}
-
-fn prepare(
-    project: &Project,
-    key: &ItemAddress,
+    selected: Option<&'a ItemAddress>,
     focused: Option<&FocusedPreview>,
-    position: Time,
-    preparation: Preparation<'_>,
-) -> Option<PreparedProvider> {
+) -> Option<(&'a ItemAddress, PreviewTarget)> {
+    let key = selected?;
     let item = project.video_item(key)?;
     let target = focused
         .filter(|focused| &focused.item == key && item.owns_preview_target(focused.target))
         .map_or_else(|| item.default_preview_target(), |focused| focused.target);
-    prepare_target(project, key, target, position, preparation)
-}
-
-fn prepare_target(
-    project: &Project,
-    key: &ItemAddress,
-    target: PreviewTarget,
-    position: Time,
-    preparation: Preparation<'_>,
-) -> Option<PreparedProvider> {
-    shrimply_preview_runtime_cuda::controller::prepare_target(
-        project,
-        key,
-        target,
-        position,
-        shrimply_preview_runtime_cuda::controller::Preparation {
-            project_revision: preparation.project_revision,
-            viewport: preview_viewport(
-                preparation.surface,
-                project.canvas_size,
-                preparation.padding_px,
-            ),
-            audio_analysis: preparation.audio_analysis,
-            expression_cache: preparation.expression_cache,
-            snap_enabled: preparation.snap_enabled,
-            snap_radius_px: preparation.snap_radius_px,
-            guides: preparation.guides,
-            camera_sampler: shrimply_preview_runtime_cuda::provider::sample_camera,
-        },
-        preparation.extensions,
-    )
+    Some((key, target))
 }
 
 fn attach_render(
@@ -513,25 +449,8 @@ fn attach_render(
                 }
             }
         }
-        let padding_px = state.padding_px();
-        let viewport = guides::viewport(
-            surface,
-            project.canvas_size,
-            state.preview_padding_px,
-            state.guides_visible,
-            state.fullscreen,
-        );
+        let viewport = surface_viewport(area, &project, &state);
         let content_rect = viewport.content_rect;
-        let stale_provider = controller.core.context_invalidated
-            || controller.core.provider.as_ref().is_some_and(|prepared| {
-                prepared.project_revision != player.revision
-                    || prepared.context.timeline_position != position
-                    || prepared.context.viewport != viewport
-            });
-        if stale_provider && controller.core.sequence == PointerSequence::Idle {
-            controller.core.provider = None;
-            controller.core.context_invalidated = false;
-        }
         let background_color = shrimply_preview_runtime_cuda::background_color(
             geometry::theme_window_color(area),
             state.fullscreen,
@@ -540,6 +459,31 @@ fn attach_render(
         let guides = state
             .guides_visible
             .then_some(project.preview_guides.as_ref());
+        let prepared = controller.core.ensure(
+            &project,
+            provider_selection(&project, focused_video.as_ref(), focused_preview.as_ref()),
+            position,
+            Preparation {
+                project_revision: player.revision,
+                viewport,
+                audio_analysis: &state.audio_analysis,
+                expression_cache: &state.expression_cache,
+                snap_enabled: state.snap_enabled,
+                snap_radius_px: state.snap_radius_px as f32,
+                guides,
+                camera_sampler: shrimply_preview_runtime_cuda::provider::sample_camera,
+            },
+        );
+        let exclusion = controller
+            .core
+            .provider
+            .as_ref()
+            .and_then(|prepared| prepared.provider.base_frame_exclusion());
+        set_base_exclusion(&mut controller, exclusion, position);
+        if let Err(error) = prepared {
+            tracing::error!(%error, "Could not prepare preview provider");
+            return glib::Propagation::Stop;
+        }
         let caption_bottom_inset = state.caption_bottom_inset;
         let caption_font_size = state.caption_font_size;
         let caption_background_color = state.caption_background_color;
@@ -547,12 +491,9 @@ fn attach_render(
         let shadow_size_px = state.preview_shadow_size_px;
         let upsample_method = state.preview_upsample_method;
         let downsample_method = state.preview_downsample_method;
-        let snap_enabled = state.snap_enabled;
-        let snap_radius_px = state.snap_radius_px as f32;
         let VideoSurfaceState {
             renderer,
             frame,
-            audio_analysis,
             expression_cache,
             ..
         } = &mut *state;
@@ -574,7 +515,7 @@ fn attach_render(
                 |timeline_painter| {
                     let surface_rect = Rect::from_min_size(
                         vec2(0.0, 0.0),
-                        vec2(surface.x as f32, surface.y as f32),
+                        vec2(area.width().max(1) as f32, area.height().max(1) as f32),
                     );
                     draw_captions(
                         timeline_painter,
@@ -600,35 +541,9 @@ fn attach_render(
                             selection_color,
                         );
                     }
-                    if core.provider.is_none()
-                        && let Some(key) = focused_video.as_ref()
-                    {
-                        core.provider = prepare(
-                            &project,
-                            key,
-                            focused_preview.as_ref(),
-                            position,
-                            Preparation {
-                                surface,
-                                project_revision: player.revision,
-                                padding_px,
-                                audio_analysis,
-                                expression_cache,
-                                extensions: &core.extensions,
-                                snap_enabled,
-                                snap_radius_px,
-                                guides,
-                            },
-                        );
-                    }
                     core.draw(timeline_painter.canvas(), expression_cache);
                 },
             );
-        let exclusion = core
-            .provider
-            .as_ref()
-            .and_then(|prepared| prepared.provider.base_frame_exclusion());
-        set_base_exclusion(&mut controller, exclusion, position);
         if let Err(error) = result {
             tracing::error!("Could not render video preview: {error}");
         }
@@ -648,57 +563,38 @@ struct ProviderDispatch<'a> {
 
 fn ensure_provider(surface: &ProviderDispatch<'_>) -> bool {
     let player = player_state::snapshot(surface.player_state);
-    {
-        let project = surface.project.borrow();
-        let state = surface.state.borrow();
-        let viewport = geometry::surface_viewport(surface.area, &project, &state);
-        let mut controller = surface.controller.borrow_mut();
-        let stale = controller.core.context_invalidated
-            || controller.core.provider.as_ref().is_some_and(|prepared| {
-                prepared.project_revision != player.revision
-                    || prepared.context.timeline_position != player.position
-                    || prepared.context.viewport != viewport
-            });
-        if stale && controller.core.sequence == PointerSequence::Idle {
-            controller.core.provider = None;
-            controller.core.context_invalidated = false;
-        }
-        if controller.core.provider.is_some() {
-            return true;
-        }
-    }
-    let prepared = {
-        let project = surface.project.borrow();
-        let state = surface.state.borrow();
-        let controller = surface.controller.borrow();
-        prepare_current(
-            &project,
-            surface.player_state,
-            surface.selection_state,
-            surface.preview_focus,
-            Preparation {
-                surface: IVec2::new(surface.area.width().max(1), surface.area.height().max(1)),
-                project_revision: player.revision,
-                padding_px: state.padding_px(),
-                audio_analysis: &state.audio_analysis,
-                expression_cache: &state.expression_cache,
-                extensions: &controller.core.extensions,
-                snap_enabled: state.snap_enabled,
-                snap_radius_px: state.snap_radius_px as f32,
-                guides: state
-                    .guides_visible
-                    .then_some(project.preview_guides.as_ref()),
-            },
-        )
-    };
-    let exclusion = prepared
+    let project = surface.project.borrow();
+    let state = surface.state.borrow();
+    let selected = selection_state::focused_video_address(surface.selection_state, &project);
+    let focused = preview_focus::snapshot(surface.preview_focus);
+    let mut controller = surface.controller.borrow_mut();
+    let prepared = controller.core.ensure(
+        &project,
+        provider_selection(&project, selected.as_ref(), focused.as_ref()),
+        player.position,
+        Preparation {
+            project_revision: player.revision,
+            viewport: surface_viewport(surface.area, &project, &state),
+            audio_analysis: &state.audio_analysis,
+            expression_cache: &state.expression_cache,
+            snap_enabled: state.snap_enabled,
+            snap_radius_px: state.snap_radius_px as f32,
+            guides: state
+                .guides_visible
+                .then_some(project.preview_guides.as_ref()),
+            camera_sampler: shrimply_preview_runtime_cuda::provider::sample_camera,
+        },
+    );
+    let exclusion = controller
+        .core
+        .provider
         .as_ref()
         .and_then(|prepared| prepared.provider.base_frame_exclusion());
-    let mut controller = surface.controller.borrow_mut();
-    controller.core.provider = prepared;
     set_base_exclusion(&mut controller, exclusion, player.position);
-    drop(controller);
-    surface.controller.borrow().core.provider.is_some()
+    prepared.unwrap_or_else(|error| {
+        tracing::error!(%error, "Could not prepare preview provider");
+        false
+    })
 }
 
 fn dispatch_pointer(surface: ProviderDispatch<'_>, event: PointerEvent<'_>) -> PreviewResponse {

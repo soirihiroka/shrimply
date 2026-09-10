@@ -90,7 +90,8 @@ impl State {
             .render_elapsed()
             .and_then(shrimply_preview_provider_skia::playback::rendered_frame_rate_label)
         {
-            let field = self.frame_rate_label
+            let field = self
+                .frame_rate_label
                 .as_ref()
                 .expect("preview frame-rate label installed");
             let label = objc2_foundation::NSString::from_str(&label);
@@ -171,12 +172,8 @@ impl CanvasView {
             &session.player_state,
             "preview redraw",
             move || alive.strong_count() > 0,
-            move |event| {
+            move |_| {
                 if let Some(dirty) = dirty.upgrade() {
-                    shrimply_process_reporting::diagnostics::count(match event {
-                        player_state::PlayerEvent::State(_) => "Preview invalidation / player state",
-                        player_state::PlayerEvent::Project(_) => "Preview invalidation / project edit",
-                    });
                     dirty.set(true);
                 }
             },
@@ -187,7 +184,6 @@ impl CanvasView {
             "preview redraw",
             move || {
                 if let Some(dirty) = dirty.upgrade() {
-                    shrimply_process_reporting::diagnostics::count("Preview invalidation / selection");
                     dirty.set(true);
                 }
             },
@@ -195,7 +191,6 @@ impl CanvasView {
         let dirty = Rc::downgrade(&self.ivars().surface_dirty);
         preferences::connect(&session.preferences, move |_| {
             if let Some(dirty) = dirty.upgrade() {
-                shrimply_process_reporting::diagnostics::count("Preview invalidation / preferences");
                 dirty.set(true);
             }
         });
@@ -207,7 +202,6 @@ impl CanvasView {
             move || alive.strong_count() > 0,
             move || {
                 if let Some(dirty) = dirty.upgrade() {
-                    shrimply_process_reporting::diagnostics::count("Preview invalidation / inspector focus");
                     dirty.set(true);
                 }
             },
@@ -222,17 +216,19 @@ impl CanvasView {
             let Content::Preview(preview) = &mut *content else {
                 return Ok(());
             };
-            let _timing = shrimply_process_reporting::diagnostics::timing("Preview frame polling");
             let player = shrimply_editor_state::player_state::snapshot(&session.player_state);
             let prefs = shrimply_editor_state::preferences::snapshot(&session.preferences);
             let project = session.project.borrow();
-            preview.renderer.set_interaction(player.playing, player.scrubbing);
+            preview
+                .renderer
+                .set_interaction(player.playing, player.scrubbing);
             preview.renderer.set_project_revision(player.revision);
-            preview.renderer.set_decoder_limit(prefs.temporal_decoder_pool_size as usize);
+            preview
+                .renderer
+                .set_decoder_limit(prefs.temporal_decoder_pool_size as usize);
             let previous = preview.renderer.presented_frame();
             let result = preview.renderer.prepare(&project, player.position);
             if previous != preview.renderer.presented_frame() {
-                shrimply_process_reporting::diagnostics::count("Preview invalidation / completed frame");
                 self.ivars().surface_dirty.set(true);
             }
             if let Some((id, revision, exclusion)) = preview.renderer.presented_frame()
@@ -240,21 +236,25 @@ impl CanvasView {
                 && preview.controller.accept_base_frame(revision, exclusion)
             {
                 preview.presented_frame = Some(id);
-                let (time, audio) = preview.renderer.presented_audio()
+                let (time, audio) = preview
+                    .renderer
+                    .presented_audio()
                     .expect("accepted frame has audio analysis");
                 preview.audio_analysis = Some((revision, time, audio.clone()));
                 preview.controller.context_invalidated = true;
-                shrimply_process_reporting::diagnostics::count("Preview invalidation / accepted base frame");
                 self.ivars().surface_dirty.set(true);
             }
             preview.sync_loading(shrimply_project_document::project::scaled_time_delta(
-                project.frame_step(), player.playback_speed,
+                project.frame_step(),
+                player.playback_speed,
             ));
             (result, preview.renderer.take_manim_updates())
         };
         for update in updates {
             shrimply_editor_state::manim_status::apply(
-                &session.project, &session.player_state, update,
+                &session.project,
+                &session.player_state,
+                update,
             );
         }
         result

@@ -81,7 +81,7 @@ impl CanvasView {
             let Content::Preview(state) = &*content else {
                 return Ok(());
             };
-            state.renderer.image().cloned()
+            state.renderer.capture_image()?
         };
         let Some(image) = image else {
             return Ok(());

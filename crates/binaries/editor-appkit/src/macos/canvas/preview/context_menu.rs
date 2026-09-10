@@ -5,7 +5,7 @@ use objc2_foundation::{NSPoint, NSString, ns_string};
 
 impl CanvasView {
     pub(in crate::macos::canvas) fn open_preview_context_menu(&self, event: &NSEvent) {
-        let enabled = matches!(&*self.ivars().content.borrow(), Content::Preview(state) if state.renderer.image().is_some());
+        let enabled = matches!(&*self.ivars().content.borrow(), Content::Preview(state) if state.renderer.presented_frame().is_some());
         self.ivars().menu_choice.set(None);
         let menu = NSMenu::initWithTitle(NSMenu::alloc(self.mtm()), ns_string!("Preview"));
         menu.setAutoenablesItems(false);

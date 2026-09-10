@@ -110,13 +110,14 @@ pub enum StartupStatus {
 pub type PlaybackObserver = shrimply_preview_provider_skia::performance::RenderObserver;
 
 /// UI-side presentation only. The worker owns all shader compilation, source
-/// rasterization, pixel uploads, compute dispatch and completed-frame readback.
+/// rasterization, pixel uploads, compute dispatch and GPU presentation copies.
 pub struct Renderer {
     shared: Arc<Shared>,
     worker: JoinHandle<()>,
     project: Option<Arc<Project>>,
     requested: Option<Target>,
     presented: Option<compositor::Presented>,
+    presented_id: u32,
     presented_target: Option<Target>,
     project_revision: u64,
     excluded_item_id: Option<uuid::Uuid>,
@@ -128,7 +129,7 @@ pub struct Renderer {
     manim_updates: Vec<shrimply_manim_state::Update>,
     error: Option<String>,
     decoder_limit: Option<usize>,
-    texture: Option<(u32, Image)>,
+    texture: Option<Image>,
 }
 
 impl Default for Renderer {
@@ -169,6 +170,7 @@ impl Renderer {
             project: None,
             requested: None,
             presented: None,
+            presented_id: 0,
             presented_target: None,
             project_revision: 0,
             excluded_item_id: None,
@@ -219,9 +221,9 @@ impl Renderer {
         self.presented
             .as_ref()
             .zip(self.presented_target)
-            .map(|(image, target)| {
+            .map(|(_, target)| {
                 (
-                    image.image.unique_id(),
+                    self.presented_id,
                     target.project_revision,
                     target.excluded_item_id,
                 )
@@ -240,8 +242,12 @@ impl Renderer {
         self.error = None;
     }
 
-    pub fn image(&self) -> Option<&Image> {
-        self.presented.as_ref().map(|frame| &frame.image)
+    /// Read CPU pixels only when the user explicitly captures the displayed frame.
+    pub fn capture_image(&self) -> Result<Option<Image>, String> {
+        self.presented
+            .as_ref()
+            .map(|frame| capture::image(&frame.buffer, frame.size))
+            .transpose()
     }
 
     pub fn presented_audio(
@@ -262,32 +268,56 @@ impl Renderer {
         canvas: &Canvas,
         sampling: skia_safe::SamplingOptions,
     ) -> Result<(), String> {
-        if let Some(image) = &self.presented {
-            let image = &image.image;
-            use skia_safe::gpu::{Budgeted, Mipmapped, images};
-            let mut context = canvas.direct_context().ok_or("Metal preview requires a GPU canvas")?;
-            if self.texture.as_ref().is_none_or(|(id, _)| *id != image.unique_id()) {
-                let _timing = shrimply_process_reporting::diagnostics::timing("Preview texture / base upload");
-                // Upload only the base level. Asking Skia to mipmap a raster image
-                // invokes SkMipmap::Build on the calling (UI) thread.
-                let texture = images::texture_from_image(
-                    &mut context, image, Mipmapped::No, Budgeted::Yes,
-                ).ok_or("Could not upload preview texture")?;
-                self.texture = Some((image.unique_id(), texture));
+        if let Some(frame) = &self.presented {
+            use objc2::rc::Retained;
+            use skia_safe::gpu::{
+                Budgeted, Mipmapped, SurfaceOrigin, backend_textures, images, mtl,
+            };
+            let mut context = canvas
+                .direct_context()
+                .ok_or("Metal preview requires a GPU canvas")?;
+            if self.texture.is_none() {
+                // The worker publishes only after compute and the texture copy
+                // complete. Metal's Skia wrapper retains the native texture, so
+                // queued draws remain valid after the next frame replaces it.
+                let info = unsafe {
+                    mtl::TextureInfo::new(Retained::as_ptr(&frame.texture) as mtl::Handle)
+                };
+                let backend = unsafe {
+                    backend_textures::make_mtl(
+                        (frame.size.0 as i32, frame.size.1 as i32),
+                        Mipmapped::No,
+                        &info,
+                        "preview composite",
+                    )
+                };
+                let texture = images::borrow_texture_from(
+                    &mut context,
+                    &backend,
+                    SurfaceOrigin::TopLeft,
+                    skia_safe::ColorType::RGBA8888,
+                    skia_safe::AlphaType::Unpremul,
+                    None,
+                )
+                .ok_or("Could not wrap the Metal preview texture")?;
+                self.texture = Some(texture);
             }
-            let (_, texture) = self.texture.as_mut().expect("preview texture uploaded");
+            let texture = self.texture.as_mut().expect("preview texture wrapped");
             if sampling.mipmap != skia_safe::MipmapMode::None
                 && (texture.width() > 1 || texture.height() > 1)
                 && !texture.has_mipmaps()
             {
-                let _timing = shrimply_process_reporting::diagnostics::timing("Preview texture / GPU mipmap preparation");
                 // The source is now GPU-backed: Skia copies the base level on the
                 // GPU and regenerates its mip chain during submission, not on CPU.
                 *texture = images::texture_from_image(
-                    &mut context, texture, Mipmapped::Yes, Budgeted::Yes,
-                ).filter(Image::has_mipmaps).ok_or("Could not create GPU preview mipmaps")?;
+                    &mut context,
+                    texture,
+                    Mipmapped::Yes,
+                    Budgeted::Yes,
+                )
+                .filter(Image::has_mipmaps)
+                .ok_or("Could not create GPU preview mipmaps")?;
             }
-            let _timing = shrimply_process_reporting::diagnostics::timing("Preview texture / draw");
             canvas.draw_image_with_sampling_options(&*texture, (0.0, 0.0), sampling, None);
         }
         Ok(())
@@ -336,6 +366,7 @@ impl Renderer {
                         ..completed_target
                     };
                     self.render_elapsed = Some(image.render_elapsed);
+                    self.presented_id = self.presented_id.wrapping_add(1);
                     self.presented = Some(image);
                     self.texture = None;
                     self.presented_target = Some(completed_target);

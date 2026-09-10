@@ -47,6 +47,12 @@ impl FocusMap {
         });
     }
 
+    pub fn prune(&self) {
+        self.entries
+            .borrow_mut()
+            .retain(|entry| entry.view.load().is_some());
+    }
+
     pub fn toggle(
         &self,
         target: &InspectorTarget,

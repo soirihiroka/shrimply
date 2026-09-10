@@ -13,6 +13,8 @@ use skia_safe::{
 pub struct TimelineRenderer {
     context: Option<gpu::DirectContext>,
     surface: Option<skia_safe::Surface>,
+    surface_key: Option<(u32, UVec2)>,
+    canvas_save_count: usize,
     interface: Option<skia_safe::gpu::gl::Interface>,
 }
 
@@ -27,6 +29,8 @@ impl TimelineRenderer {
         Self {
             context: None,
             surface: None,
+            surface_key: None,
+            canvas_save_count: 0,
             interface: None,
         }
     }
@@ -94,66 +98,84 @@ impl TimelineRenderer {
         let framebuffer_id =
             u32::try_from(framebuffer.max(0)).map_err(|error| error.to_string())?;
 
-        let render_target = backend_render_targets::make_gl(
-            (width, height),
-            1,
-            0,
-            FramebufferInfo {
-                fboid: framebuffer_id,
-                format: GlFormat::RGBA8.into(),
-                ..FramebufferInfo::default()
-            },
-        );
+        let surface_key = (framebuffer_id, screen_size_px);
+        if self.surface_key != Some(surface_key) {
+            self.surface = None;
+            self.surface_key = None;
+            let render_target = backend_render_targets::make_gl(
+                (width, height),
+                1,
+                0,
+                FramebufferInfo {
+                    fboid: framebuffer_id,
+                    format: GlFormat::RGBA8.into(),
+                    ..FramebufferInfo::default()
+                },
+            );
 
-        let mut surface = match surfaces::wrap_backend_render_target(
-            context,
-            &render_target,
-            SurfaceOrigin::BottomLeft,
-            ColorType::RGBA8888,
-            None,
-            None,
-        ) {
-            Some(surface) => surface,
-            None if context.oomed() => {
-                context.free_gpu_resources();
-                surfaces::wrap_backend_render_target(
-                    context,
-                    &render_target,
-                    SurfaceOrigin::BottomLeft,
-                    ColorType::RGBA8888,
-                    None,
-                    None,
-                )
-                .ok_or_else(|| {
-                    String::from(
-                        "Could not create timeline Skia surface after clearing its GPU cache",
+            let mut surface = match surfaces::wrap_backend_render_target(
+                context,
+                &render_target,
+                SurfaceOrigin::BottomLeft,
+                ColorType::RGBA8888,
+                None,
+                None,
+            ) {
+                Some(surface) => surface,
+                None if context.oomed() => {
+                    context.free_gpu_resources();
+                    surfaces::wrap_backend_render_target(
+                        context,
+                        &render_target,
+                        SurfaceOrigin::BottomLeft,
+                        ColorType::RGBA8888,
+                        None,
+                        None,
                     )
-                })?
-            }
-            None => return Err(String::from("Could not create timeline Skia surface")),
-        };
-        let canvas = surface.canvas();
-        if let Some(clear_color) = clear_color {
-            canvas.clear(clear_color);
+                    .ok_or_else(|| {
+                        String::from(
+                            "Could not create timeline Skia surface after clearing its GPU cache",
+                        )
+                    })?
+                }
+                None => return Err(String::from("Could not create timeline Skia surface")),
+            };
+            self.canvas_save_count = surface.canvas().save_count();
+            self.surface = Some(surface);
+            self.surface_key = Some(surface_key);
         }
-        canvas.scale((pixels_per_point, pixels_per_point));
-        self.surface = Some(surface);
 
         let canvas = self
             .surface
             .as_mut()
             .ok_or_else(|| String::from("Could not access timeline Skia surface"))?
             .canvas();
+        // Reusing a surface also retains its canvas state, including clip and scale.
+        canvas.restore_to_count(self.canvas_save_count);
+        canvas.save();
+        if let Some(clear_color) = clear_color {
+            canvas.clear(clear_color);
+        }
+        canvas.scale((pixels_per_point, pixels_per_point));
         Ok(TimelinePainter::new(canvas))
     }
 
     pub fn end_frame(&mut self) -> Result<(), String> {
+        let surface = self
+            .surface
+            .as_mut()
+            .ok_or_else(|| String::from("Timeline Skia surface missing when ending a frame"))?;
+        surface.canvas().restore_to_count(self.canvas_save_count);
+        // Native GL may draw into this framebuffer before the next overlay pass.
+        surface.notify_content_will_change(skia_safe::surface::ContentChangeMode::Retain);
         let context = self
             .context
             .as_mut()
             .ok_or_else(|| String::from("Timeline Skia context missing when ending a frame"))?;
         context.flush_and_submit();
         if context.oomed() {
+            self.surface = None;
+            self.surface_key = None;
             context.free_gpu_resources();
             return Err(String::from(
                 "Timeline Skia ran out of GPU memory and cleared its cache",
@@ -164,6 +186,7 @@ impl TimelineRenderer {
 
     pub fn destroy(&mut self) {
         self.surface = None;
+        self.surface_key = None;
         self.context = None;
         self.interface = None;
     }

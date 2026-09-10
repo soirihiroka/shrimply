@@ -59,9 +59,13 @@ impl CanvasView {
                 state.fullscreen,
             );
             state.viewport = Some(viewport);
-            if let Some((_, _, audio_analysis)) =
+            // While time is moving, controls belong to the displayed frame, not the
+            // advancing playback clock. Waiting for an exact clock match tears
+            // down the provider (and its caches/base exclusion) between frames.
+            if let Some((_, frame_time, audio_analysis)) =
                 state.audio_analysis.as_ref().filter(|(revision, time, _)| {
-                    *revision == player.revision && *time == player.position
+                    *revision == player.revision
+                        && (player.playing || player.scrubbing || *time == player.position)
                 })
             {
                 let had_provider = state.controller.provider.is_some();
@@ -70,7 +74,7 @@ impl CanvasView {
                 state.controller.ensure(
                     &project,
                     selection,
-                    player.position,
+                    *frame_time,
                     Preparation {
                         project_revision: player.revision,
                         viewport,
@@ -95,14 +99,12 @@ impl CanvasView {
                     },
                 )?;
                 if had_provider != state.controller.provider.is_some() || invalidated {
-                    shrimply_process_reporting::diagnostics::count("Preview invalidation / provider preparation");
                     self.ivars().surface_dirty.set(true);
                 }
-            } else if state.controller.sequence == PointerSequence::Idle {
-                if state.controller.provider.take().is_some() {
-                    shrimply_process_reporting::diagnostics::count("Preview invalidation / provider removed");
-                    self.ivars().surface_dirty.set(true);
-                }
+            } else if state.controller.sequence == PointerSequence::Idle
+                && state.controller.provider.take().is_some()
+            {
+                self.ivars().surface_dirty.set(true);
             }
             let excluded = state
                 .controller
@@ -292,7 +294,6 @@ impl CanvasView {
         response: PreviewResponse,
     ) -> Result<(), String> {
         if response.redraw {
-            shrimply_process_reporting::diagnostics::count("Preview invalidation / interaction response");
             self.ivars().surface_dirty.set(true);
         }
         self.set_preview_cursor(response.cursor);

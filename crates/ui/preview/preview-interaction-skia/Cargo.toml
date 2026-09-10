@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-process-reporting.workspace = true
 glam.workspace = true
 skia-safe = { workspace = true, features = ["textlayout"] }
 uuid.workspace = true

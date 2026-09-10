@@ -1,7 +1,9 @@
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_metal::MTLTexture;
 use shrimply_math_core::Time;
 use shrimply_preview_render_core::{FramePlan, Scene, Source};
 use shrimply_project_document::project::Project;
-use skia_safe::{AlphaType, ColorType, Data, Image, ImageInfo};
+use skia_safe::{AlphaType, ColorType, Image, ImageInfo};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
@@ -44,6 +46,7 @@ struct Pending {
     loading: bool,
     audio_analysis: shrimply_preview_render_core::FrameAudioAnalysis,
     frame: shrimply_render_metal::Frame,
+    texture: Retained<ProtocolObject<dyn MTLTexture>>,
     width: u32,
     height: u32,
     revision: u64,
@@ -76,13 +79,22 @@ enum RasterMorphState {
 
 pub(super) struct Presented {
     pub request_id: u64,
-    pub image: Image,
+    pub buffer: shrimply_render_metal::Buffer,
+    pub texture: Retained<ProtocolObject<dyn MTLTexture>>,
+    pub size: (u32, u32),
     pub time: Time,
     pub render_elapsed: Duration,
     pub accuracy: shrimply_preview_render_core::CompositeAccuracy,
     pub loading: bool,
     pub audio_analysis: shrimply_preview_render_core::FrameAudioAnalysis,
 }
+
+// SAFETY: Constructed only after both the composite and presentation blit have
+// completed. These retained Metal resources are immutable from publication on;
+// no command encoder or Skia context crosses threads. Ownership moves through
+// the slots mutex to the UI, which only samples the texture or reads the buffer
+// for explicit capture. This does not make mutable Buffer/MTLTexture generally Send.
+unsafe impl Send for Presented {}
 
 #[derive(Default)]
 pub(super) struct Compositor {
@@ -152,12 +164,12 @@ impl Compositor {
                 _ => {}
             }
         }
-        Ok(self
-            .take_presented()
+        self.take_presented()
             .filter(|frame| {
                 frame.time == time && !frame.loading && frame.accuracy.content_accurate()
             })
-            .map(|frame| frame.image))
+            .map(|frame| super::capture::image(&frame.buffer, frame.size))
+            .transpose()
     }
 
     pub fn set_background_alpha(&mut self, background_alpha: u8) {
@@ -237,23 +249,14 @@ impl Compositor {
                 .try_fold(true, |ready, submission| {
                     submission.completed().map(|complete| ready && complete)
                 })?;
-            if let Some(pixels) = if effects_ready {
-                pending.frame.pixels()?
-            } else {
-                None
-            } {
+            if effects_ready && pending.frame.completed()? {
                 if pending.revision == self.revision {
                     if pending.loading {
                         self.sam2_proxy_buffer = None;
                     } else if let Some(proxy) = self.sam2_proxy_buffer.take() {
                         self.sam2_proxy_ready = Some(proxy.copy_bytes());
                     }
-                    let info = ImageInfo::new(
-                        (pending.width as i32, pending.height as i32),
-                        ColorType::RGBA8888,
-                        AlphaType::Unpremul,
-                        None,
-                    );
+                    let (buffer, _submission) = pending.frame.into_parts();
                     self.presented = Some(Presented {
                         request_id: pending.request_id,
                         time: pending.time,
@@ -261,12 +264,9 @@ impl Compositor {
                         accuracy: pending.accuracy,
                         loading: pending.loading,
                         audio_analysis: pending.audio_analysis,
-                        image: skia_safe::images::raster_from_data(
-                            &info,
-                            Data::new_copy(pixels),
-                            pending.width as usize * size_of::<u32>(),
-                        )
-                        .ok_or("Could not present the completed Metal frame")?,
+                        buffer,
+                        texture: pending.texture,
+                        size: (pending.width, pending.height),
                     });
                 }
             } else {
@@ -347,6 +347,12 @@ impl Compositor {
                 plan.height,
                 u32::from(self.background_alpha) << 24,
             )?;
+        let (texture, presentation) = self
+            .compute
+            .as_ref()
+            .expect("initialized Metal compositor")
+            .presentation_texture(&frame, (plan.width, plan.height))?;
+        effect_submissions.push(presentation);
         self.pending = Some(Pending {
             request_id,
             started,
@@ -355,6 +361,7 @@ impl Compositor {
             loading: plan.loading,
             audio_analysis: plan.audio_analysis,
             frame,
+            texture,
             width: plan.width,
             height: plan.height,
             revision: self.revision,

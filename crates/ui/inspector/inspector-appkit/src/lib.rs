@@ -11,15 +11,15 @@ mod layout_debug;
 mod tts;
 
 use objc2::ClassType;
-use objc2::rc::Retained;
-use objc2_app_kit::NSView;
+use objc2::rc::{Retained, Weak};
+use objc2_app_kit::{NSStackView, NSView};
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets};
 use shrimply_components_appkit::{
     InspectorCard, ScrollingColumn, Switch, Tab, Tabs, ViewHost, column_append_intrinsic,
     column_stack, inset,
 };
 use shrimply_editor_state::player_state;
-use shrimply_inspector_core::{InspectorController, InspectorTarget};
+use shrimply_inspector_core::{InspectorController, InspectorSection, InspectorTarget};
 use shrimply_inspector_document::{InspectorDocument, InspectorItem, InspectorListItem};
 use shrimply_project_document::project::Project;
 use shrimply_timeline_edit::selection_state;
@@ -41,14 +41,56 @@ struct State {
     server_url: Rc<RefCell<String>>,
     preferences: shrimply_editor_state::preferences::SharedPreferences,
     controller: InspectorController,
+    player: player_state::SharedPlayerState,
     host: ViewHost,
     dirty: Rc<Cell<bool>>,
     force_rebuild: Rc<Cell<bool>>,
     polls: control::Polls,
+    cards: RefCell<Vec<Rc<CardBody>>>,
     list: Rc<RefCell<shrimply_inspector_core::list::InspectorListState>>,
     focus: Rc<focus::FocusMap>,
     visible_document: RefCell<Option<InspectorDocument>>,
     visible_scroll: Rc<RefCell<Option<ScrollingColumn>>>,
+}
+
+struct CardBody {
+    controls: Weak<NSStackView>,
+    section: RefCell<InspectorSection>,
+    dirty: Cell<bool>,
+    expanded: Cell<bool>,
+    context: control::Context,
+}
+
+impl CardBody {
+    fn populate(&self, mtm: MainThreadMarker) {
+        if !self.dirty.replace(false) {
+            return;
+        }
+        let Some(controls) = self.controls.load() else {
+            return;
+        };
+        self.context.polls.borrow_mut().clear();
+        for child in controls.arrangedSubviews().iter() {
+            controls.removeArrangedSubview(&child);
+            child.removeFromSuperview();
+        }
+        self.context.focus.prune();
+        control::append_section(&controls, &self.section.borrow(), &self.context, mtm);
+    }
+
+    fn poll(&self, mtm: MainThreadMarker) {
+        if !self.expanded.get()
+            || self.controls.load().is_none_or(|controls| {
+                controls.window().is_none() || controls.isHiddenOrHasHiddenAncestor()
+            })
+        {
+            return;
+        }
+        self.populate(mtm);
+        for poll in self.context.polls.borrow().iter() {
+            poll();
+        }
+    }
 }
 
 impl Inspector {
@@ -88,7 +130,7 @@ impl Inspector {
         });
         let server_url =
             shrimply_editor_state::preferences::snapshot(&preferences).compute_server_url;
-        let controller = InspectorController::new(project, player, selection)
+        let controller = InspectorController::new(project, player.clone(), selection)
             .with_property_clipboard(clipboard)
             .with_analysis_backend(
                 shrimply_inspector_core::InspectorAnalysisBackend::default()
@@ -106,11 +148,13 @@ impl Inspector {
             server_url: Rc::new(RefCell::new(server_url)),
             preferences: preferences.clone(),
             controller: controller.clone(),
+            player,
             focus: focus::FocusMap::new(controller, preview_focus),
             host: ViewHost::new(mtm),
             dirty,
             force_rebuild: Rc::new(Cell::new(false)),
             polls: Rc::new(RefCell::new(Vec::new())),
+            cards: RefCell::new(Vec::new()),
             list: Rc::new(RefCell::new(Default::default())),
             visible_document: RefCell::new(None),
             visible_scroll: Rc::new(RefCell::new(None)),
@@ -161,15 +205,18 @@ impl Inspector {
         for poll in self.state.polls.borrow().iter() {
             poll();
         }
-        // Keep the active control alive throughout AppKit's mouse-tracking loop.
-        // Async results may mark the document dirty while preview rendering continues.
+        // Keep the inspector tree stable throughout a scrub or native tracking
+        // loop. Seeks update graph playheads in the document, which otherwise
+        // rebuilds every control/graph on each pointer move. Retain dirty so the
+        // final position is applied on the first poll after release.
         if self.state.dirty.get()
-            && unsafe {
-                objc2_foundation::NSRunLoop::currentRunLoop()
-                    .currentMode()
-                    .as_deref()
-                    == Some(objc2_app_kit::NSEventTrackingRunLoopMode)
-            }
+            && (player_state::snapshot(&self.state.player).scrubbing
+                || unsafe {
+                    objc2_foundation::NSRunLoop::currentRunLoop()
+                        .currentMode()
+                        .as_deref()
+                        == Some(objc2_app_kit::NSEventTrackingRunLoopMode)
+                })
         {
             return errors;
         }
@@ -188,10 +235,31 @@ impl State {
             &self.server_url.borrow(),
             &shrimply_editor_state::preferences::snapshot(&self.preferences).last_tts_model,
         );
-        if !self.force_rebuild.replace(false)
-            && self.visible_document.borrow().as_ref() == Some(&document)
-        {
-            return;
+        if !self.force_rebuild.replace(false) {
+            if self.visible_document.borrow().as_ref() == Some(&document) {
+                return;
+            }
+            if self
+                .visible_document
+                .borrow()
+                .as_ref()
+                .is_some_and(|previous| same_card_structure(previous, &document))
+            {
+                let sections = document.categories.iter().flat_map(|category| {
+                    category.items.iter().filter_map(|item| match item {
+                        InspectorListItem::Item(item) => Some(&item.section),
+                        InspectorListItem::Flat(_) => None,
+                    })
+                });
+                for (card, section) in self.cards.borrow().iter().zip(sections) {
+                    if *card.section.borrow() != *section {
+                        card.section.replace(section.clone());
+                        card.dirty.set(true);
+                    }
+                }
+                self.visible_document.replace(Some(document));
+                return;
+            }
         }
         if let (Some(previous), Some(scroll)) = (
             self.visible_document.borrow().as_ref(),
@@ -202,6 +270,7 @@ impl State {
                 .set_scroll_position(&previous.target, scroll.position());
         }
         self.polls.borrow_mut().clear();
+        self.cards.borrow_mut().clear();
         self.focus.clear(&document.target);
         let scroll_position = self.list.borrow().scroll_position(&document.target);
         let view = self.document_view(&document, mtm);
@@ -383,28 +452,71 @@ impl State {
         }
         let controls = column_stack(CONTROL_SPACING, mtm);
         card.append(&controls);
-        let section = item.section.clone();
-        let context = context.clone();
-        let populated = Cell::new(false);
-        let populate = move || {
-            if !populated.replace(true) {
-                control::append_section(&controls, &section, &context, mtm);
-            }
-        };
+        let body = Rc::new(CardBody {
+            controls: Weak::new(&*controls),
+            section: RefCell::new(item.section.clone()),
+            dirty: Cell::new(true),
+            expanded: Cell::new(expanded),
+            context: control::Context {
+                polls: Rc::new(RefCell::new(Vec::new())),
+                ..context.clone()
+            },
+        });
         if expanded {
-            populate();
+            body.populate(mtm);
         }
+        self.cards.borrow_mut().push(body.clone());
+        context.polls.borrow_mut().push(Box::new({
+            let body = Rc::downgrade(&body);
+            move || {
+                if let Some(body) = body.upgrade() {
+                    body.poll(mtm);
+                }
+            }
+        }));
         let target = target.clone();
         let key = item.presentation.key.clone();
         let list = self.list.clone();
         card.connect_expansion(move |expanded, completed| {
             list.borrow_mut().set_expanded(&target, &key, expanded);
+            body.expanded.set(expanded);
             if expanded && !completed {
-                populate();
+                body.populate(mtm);
             }
         });
         card.view().as_super().into()
     }
+}
+
+fn same_card_structure(previous: &InspectorDocument, current: &InspectorDocument) -> bool {
+    previous.target == current.target
+        && previous.title == current.title
+        && previous.categories.len() == current.categories.len()
+        && previous
+            .categories
+            .iter()
+            .zip(&current.categories)
+            .all(|(previous, current)| {
+                previous.key == current.key
+                    && previous.label == current.label
+                    && previous.icon == current.icon
+                    && previous.items.len() == current.items.len()
+                    && previous.items.iter().zip(&current.items).all(
+                        |(previous, current)| match (previous, current) {
+                            (InspectorListItem::Item(previous), InspectorListItem::Item(current)) => {
+                                previous.presentation == current.presentation
+                                    && previous.reset == current.reset
+                                    && previous.actions == current.actions
+                                    && previous.toggle == current.toggle
+                                    && previous.button_toggle == current.button_toggle
+                            }
+                            (InspectorListItem::Flat(previous), InspectorListItem::Flat(current)) => {
+                                previous == current
+                            }
+                            _ => false,
+                        },
+                    )
+            })
 }
 
 fn category_symbol(icon: shrimply_inspector_document::CategoryIcon) -> &'static str {

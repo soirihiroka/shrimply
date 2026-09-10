@@ -98,7 +98,7 @@ pub fn provider(
     };
     Box::new(TransformHandler {
         target: PreviewTarget::new(target.owner_id(), FACET),
-        snapshot: item.clone(),
+        snapshot: None,
         geometry,
         resize,
         position_editable: editable(&item.transform.position),
@@ -141,7 +141,7 @@ enum ResizeTarget {
 
 struct TransformHandler {
     target: PreviewTarget,
-    snapshot: VisualItem,
+    snapshot: Option<VisualItem>,
     geometry: PreviewItemGeometry,
     resize: ResizeTarget,
     position_editable: bool,
@@ -683,6 +683,13 @@ impl PreviewProvider for TransformHandler {
                 else {
                     return PreviewResponse::IGNORED;
                 };
+                self.snapshot = Some(
+                    edits
+                        .target_mut(self.target)
+                        .downcast_mut::<VisualItem>()
+                        .expect("visual preview target has the wrong type")
+                        .clone(),
+                );
                 self.drag = Some(DragState {
                     kind,
                     free_resize: input
@@ -719,6 +726,7 @@ impl PreviewProvider for TransformHandler {
             }
             shrimply_preview_provider_skia::PointerEvent::End(_) => {
                 let changed = self.drag.take().is_some_and(|drag| drag.changed);
+                self.snapshot = None;
                 self.snap_scene = None;
                 self.snap_feedback = SnapResult::default();
                 PreviewResponse::edited(if changed {
@@ -737,8 +745,12 @@ impl PreviewProvider for TransformHandler {
                     *edits
                         .target_mut(self.target)
                         .downcast_mut::<VisualItem>()
-                        .expect("visual preview target has the wrong type") = self.snapshot.clone();
+                        .expect("visual preview target has the wrong type") = self
+                        .snapshot
+                        .take()
+                        .expect("changed visual drag has a snapshot");
                 }
+                self.snapshot = None;
                 PreviewResponse::edited(if changed {
                     PreviewEditOutcome::live(PreviewRefresh::PREVIEW | PreviewRefresh::INSPECTOR)
                 } else {

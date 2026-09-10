@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-shrimply-process-reporting.workspace = true
 shrimply-manim-metal = { workspace = true }
 shrimply-manim-state = { workspace = true }
 shrimply-3dgs-core = { workspace = true }
@@ -21,6 +20,7 @@ shrimply-math-geometry = { workspace = true }
 shrimply-math-media = { workspace = true }
 skia-safe.workspace = true
 objc2.workspace = true
+objc2-metal.workspace = true
 objc2-core-video.workspace = true
 objc2-core-ml.workspace = true
 objc2-vision.workspace = true

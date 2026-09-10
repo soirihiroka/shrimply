@@ -1,5 +1,9 @@
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashMap},
+    time::{Duration, Instant},
+};
 use tracing_subscriber::EnvFilter;
-use std::{cell::RefCell, collections::{BTreeMap, HashMap}, time::{Duration, Instant}};
 
 const DEFAULT_FILTER: &str = "info,shrimply=debug";
 const TIMING_LOG_INTERVAL: Duration = Duration::from_secs(1);
@@ -12,7 +16,10 @@ thread_local! {
 
 /// Plain periodic log summaries; independent of the performance inspector.
 pub fn timing(stage: &'static str) -> Timing {
-    Timing { stage, started: Instant::now() }
+    Timing {
+        stage,
+        started: Instant::now(),
+    }
 }
 
 pub struct Timing {
@@ -48,25 +55,37 @@ pub fn flush_timings() {
         let mut since = since.borrow_mut();
         let now = Instant::now();
         let elapsed = now.duration_since(*since);
-        if elapsed < TIMING_LOG_INTERVAL { return None; }
+        if elapsed < TIMING_LOG_INTERVAL {
+            return None;
+        }
         *since = now;
         Some(elapsed)
     });
-    let Some(window) = window else { return; };
+    let Some(window) = window else {
+        return;
+    };
     let window_us = window.as_micros();
     TIMINGS.with(|timings| {
         for (stage, samples) in timings.borrow_mut().iter_mut() {
             let (calls, total, maximum) = std::mem::take(samples);
             let total_us = total.as_micros();
-            tracing::info!(stage, window_us, calls, total_us,
+            tracing::info!(
+                stage,
+                window_us,
+                calls,
+                total_us,
                 average_us = total_us.checked_div(u128::from(calls)).unwrap_or(0),
-                max_us = maximum.as_micros(), "UI lifecycle timing");
+                max_us = maximum.as_micros(),
+                "UI lifecycle timing"
+            );
         }
     });
     COUNTS.with(|counts| {
         let mut counts = counts.borrow_mut();
         tracing::info!(window_us, counts = ?*counts, "UI lifecycle counts");
-        for count in counts.values_mut() { *count = 0; }
+        for count in counts.values_mut() {
+            *count = 0;
+        }
     });
 }
 

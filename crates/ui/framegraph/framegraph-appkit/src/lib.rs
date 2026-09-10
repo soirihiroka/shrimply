@@ -319,9 +319,7 @@ impl FrameGraphView {
         {
             return;
         }
-        let timer = unsafe {
-            self.displayLinkWithTarget_selector(self, sel!(renderAnimation:))
-        };
+        let timer = unsafe { self.displayLinkWithTarget_selector(self, sel!(renderAnimation:)) };
         unsafe {
             timer.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes);
         }
@@ -342,19 +340,20 @@ impl FrameGraphView {
             .expect("frame graph attached")
             .backingScaleFactor();
         // Folded inspector graphs need no Metal context until first displayed.
-        let mut renderer = self.ivars().renderer.get_or_init(|| {
-            let renderer = Renderer::default();
-            self.setLayer(Some(renderer.layer()));
-            self.setWantsLayer(true);
-            RefCell::new(renderer)
-        }).borrow_mut();
+        let mut renderer = self
+            .ivars()
+            .renderer
+            .get_or_init(|| {
+                let renderer = Renderer::default();
+                self.setLayer(Some(renderer.layer()));
+                self.setWantsLayer(true);
+                RefCell::new(renderer)
+            })
+            .borrow_mut();
         if renderer.layer().contentsScale() != scale {
             renderer.layer().setContentsScale(scale);
         }
-        let drawable_size = NSSize::new(
-            (size.width * scale).ceil(),
-            (size.height * scale).ceil(),
-        );
+        let drawable_size = NSSize::new((size.width * scale).ceil(), (size.height * scale).ceil());
         if renderer.layer().drawableSize() != drawable_size {
             renderer.layer().setDrawableSize(drawable_size);
         }
