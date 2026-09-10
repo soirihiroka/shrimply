@@ -78,9 +78,11 @@ pub enum ToggleStyle {
 }
 
 pub fn set_toggle_selected(button: &NSButton, selected: bool, style: ToggleStyle) {
-    // Keep native content metrics identical in both states; only the decoration changes.
-    button.setBordered(false);
-    button.setWantsLayer(true);
+    let state = if selected {
+        objc2_app_kit::NSControlStateValueOn
+    } else {
+        objc2_app_kit::NSControlStateValueOff
+    };
     let accent = NSColor::controlAccentColor();
     let (background, foreground, radius) = match style {
         ToggleStyle::Solid => (
@@ -90,6 +92,19 @@ pub fn set_toggle_selected(button: &NSButton, selected: bool, style: ToggleStyle
         ),
         ToggleStyle::Grouped => (NSColor::clearColor(), accent, 0.0),
     };
+    let foreground = if selected {
+        foreground
+    } else {
+        NSColor::labelColor()
+    };
+    // Push-on/push-off buttons change their native state before the action runs;
+    // compare the applied tint too so a click still updates the decoration.
+    if button.state() == state && button.contentTintColor().as_deref() == Some(&*foreground) {
+        return;
+    }
+    // Keep native content metrics identical in both states; only the decoration changes.
+    button.setBordered(false);
+    button.setWantsLayer(true);
     let layer = button.layer().expect("layer-backed toggle button");
     layer.setCornerRadius(radius);
     let background = if selected {
@@ -98,17 +113,8 @@ pub fn set_toggle_selected(button: &NSButton, selected: bool, style: ToggleStyle
         NSColor::clearColor().CGColor()
     };
     layer.setBackgroundColor(Some(&background));
-    let foreground = if selected {
-        foreground
-    } else {
-        NSColor::labelColor()
-    };
     button.setContentTintColor(Some(&foreground));
-    button.setState(if selected {
-        objc2_app_kit::NSControlStateValueOn
-    } else {
-        objc2_app_kit::NSControlStateValueOff
-    });
+    button.setState(state);
 }
 
 fn circular_glass_button(button: &NSButton, mtm: MainThreadMarker) -> Retained<NSGlassEffectView> {

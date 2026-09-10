@@ -4,8 +4,9 @@ use objc2::rc::Retained;
 use objc2::{AnyThread, DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{NSEvent, NSEventModifierFlags, NSTrackingArea, NSTrackingAreaOptions, NSView};
 use objc2_foundation::{
-    MainThreadMarker, NSObjectProtocol, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize, NSTimer,
+    MainThreadMarker, NSObjectProtocol, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize,
 };
+use objc2_quartz_core::CADisplayLink;
 use shrimply_components_skia::canvas::TimelinePainter;
 use shrimply_framegraph_skia::{
     FrameGraphComponentAction, FrameGraphInputResult, FrameGraphKey, FrameGraphModifiers,
@@ -13,19 +14,19 @@ use shrimply_framegraph_skia::{
     SharedFrameGraphState,
 };
 use shrimply_surface_metal_skia::Renderer;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::Rc;
 
 pub type FrameGraphActionHandler = Rc<dyn Fn(FrameGraphComponentAction)>;
-const FRAME_INTERVAL_SECONDS: f64 = 1.0 / 60.0;
 
 pub struct GraphViewIvars {
-    renderer: RefCell<Renderer>,
+    renderer: OnceCell<RefCell<Renderer>>,
+    rendered_size: Cell<Option<(NSSize, f64)>>,
     state: SharedFrameGraphState,
     on_action: FrameGraphActionHandler,
     tracking_area: RefCell<Option<Retained<NSTrackingArea>>>,
     pointer: Cell<Option<(f64, f64)>>,
-    animation_timer: RefCell<Option<Retained<NSTimer>>>,
+    animation_timer: RefCell<Option<Retained<CADisplayLink>>>,
 }
 
 define_class!(
@@ -69,6 +70,37 @@ define_class!(
         #[unsafe(method(layout))]
         fn layout(&self) {
             unsafe { let _: () = msg_send![super(self), layout]; }
+            if self.window().is_some_and(|window| {
+                self.ivars().rendered_size.get() != Some((self.bounds().size, window.backingScaleFactor()))
+            }) {
+                self.render();
+            }
+        }
+
+        #[unsafe(method(viewDidUnhide))]
+        fn did_unhide(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidUnhide]; }
+            self.render();
+            self.start_animation_if_needed();
+        }
+
+        #[unsafe(method(viewDidHide))]
+        fn did_hide(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidHide]; }
+            if let Some(timer) = self.ivars().animation_timer.borrow_mut().take() {
+                timer.invalidate();
+            }
+        }
+
+        #[unsafe(method(viewDidChangeBackingProperties))]
+        fn backing_changed(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidChangeBackingProperties]; }
+            self.render();
+        }
+
+        #[unsafe(method(viewDidChangeEffectiveAppearance))]
+        fn appearance_changed(&self) {
+            unsafe { let _: () = msg_send![super(self), viewDidChangeEffectiveAppearance]; }
             self.render();
         }
 
@@ -199,8 +231,8 @@ define_class!(
         }
 
         #[unsafe(method(renderAnimation:))]
-        fn render_animation(&self, timer: &NSTimer) {
-            if self.window().is_none() || !self.ivars().state.is_animating() {
+        fn render_animation(&self, timer: &CADisplayLink) {
+            if self.window().is_none() || self.isHiddenOrHasHiddenAncestor() || !self.ivars().state.is_animating() {
                 timer.invalidate();
                 self.ivars().animation_timer.borrow_mut().take();
                 return;
@@ -280,44 +312,58 @@ impl FrameGraphView {
     }
 
     fn start_animation_if_needed(&self) {
-        if !self.ivars().state.is_animating() || self.ivars().animation_timer.borrow().is_some() {
+        if self.window().is_none()
+            || self.isHiddenOrHasHiddenAncestor()
+            || !self.ivars().state.is_animating()
+            || self.ivars().animation_timer.borrow().is_some()
+        {
             return;
         }
         let timer = unsafe {
-            NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
-                FRAME_INTERVAL_SECONDS,
-                self,
-                sel!(renderAnimation:),
-                None,
-                true,
-            )
+            self.displayLinkWithTarget_selector(self, sel!(renderAnimation:))
         };
         unsafe {
-            NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
+            timer.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes);
         }
         self.ivars().animation_timer.replace(Some(timer));
     }
 
     pub fn render(&self) {
         let size = self.bounds().size;
-        if self.window().is_none() || size.width <= 0.0 || size.height <= 0.0 {
+        if self.window().is_none()
+            || self.isHiddenOrHasHiddenAncestor()
+            || size.width <= 0.0
+            || size.height <= 0.0
+        {
             return;
         }
         let scale = self
             .window()
             .expect("frame graph attached")
             .backingScaleFactor();
-        let mut renderer = self.ivars().renderer.borrow_mut();
-        renderer.layer().setContentsScale(scale);
-        renderer.layer().setDrawableSize(NSSize::new(
+        // Folded inspector graphs need no Metal context until first displayed.
+        let mut renderer = self.ivars().renderer.get_or_init(|| {
+            let renderer = Renderer::default();
+            self.setLayer(Some(renderer.layer()));
+            self.setWantsLayer(true);
+            RefCell::new(renderer)
+        }).borrow_mut();
+        if renderer.layer().contentsScale() != scale {
+            renderer.layer().setContentsScale(scale);
+        }
+        let drawable_size = NSSize::new(
             (size.width * scale).ceil(),
             (size.height * scale).ceil(),
-        ));
+        );
+        if renderer.layer().drawableSize() != drawable_size {
+            renderer.layer().setDrawableSize(drawable_size);
+        }
         renderer.draw(|canvas| {
             canvas.clear(shrimply_cross_ui_theme::current().view_bg);
             canvas.scale((scale as f32, scale as f32));
             let painter = TimelinePainter::new(canvas);
             self.ivars().state.draw(&painter, size.width, size.height);
+            self.ivars().rendered_size.set(Some((size, scale)));
         });
     }
 }
@@ -328,7 +374,8 @@ pub fn frame_graph_view(
     mtm: MainThreadMarker,
 ) -> Retained<FrameGraphView> {
     let view = FrameGraphView::alloc(mtm).set_ivars(GraphViewIvars {
-        renderer: RefCell::new(Renderer::default()),
+        renderer: OnceCell::new(),
+        rendered_size: Cell::new(None),
         state,
         on_action,
         tracking_area: RefCell::new(None),
@@ -337,7 +384,5 @@ pub fn frame_graph_view(
     });
     let view: Retained<FrameGraphView> =
         unsafe { msg_send![super(view), initWithFrame: NSRect::ZERO] };
-    view.setLayer(Some(view.ivars().renderer.borrow().layer()));
-    view.setWantsLayer(true);
     view
 }

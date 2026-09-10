@@ -43,6 +43,7 @@ pub struct CanvasState {
     suppress_primary: Cell<bool>,
     secondary_preview_active: Cell<bool>,
     relative_pan_active: Cell<bool>,
+    pointer_active: Cell<bool>,
     audio_export: RefCell<Option<context_audio::AudioExport>>,
     video_export: RefCell<Option<context_video::VideoExport>>,
     caption_speech_probe: RefCell<Option<context_menu::CaptionSpeechProbe>>,
@@ -529,6 +530,10 @@ impl CanvasView {
 
     fn sync_paint_tools(&self) {
         use shrimply_paint_edit_skia::{PAINT_PREVIEW_STATE, PaintPreviewMode, PaintPreviewState};
+        let tools = self.ivars().paint_tools.borrow();
+        if tools.is_empty() {
+            return;
+        }
         let visible = {
             let project = self.ivars().session.project.borrow();
             shrimply_timeline_skia::selection_state::focused_video_address(
@@ -550,8 +555,10 @@ impl CanvasView {
                 .extension::<PaintPreviewState>(PAINT_PREVIEW_STATE),
             _ => None,
         };
-        for (tool, button) in self.ivars().paint_tools.borrow().iter() {
-            button.setHidden(!visible);
+        for (tool, button) in tools.iter() {
+            if button.isHidden() == visible {
+                button.setHidden(!visible);
+            }
             let selected = state.is_some_and(|state| match tool {
                 PaintTool::Pen => {
                     state.mode == PaintPreviewMode::Pen && !state.eraser && !state.adjusting
@@ -578,10 +585,14 @@ impl CanvasView {
     }
 
     fn sync_tools(&self) {
+        let tools = self.ivars().tools.borrow();
+        if tools.is_empty() {
+            return;
+        }
         let state =
             shrimply_timeline_skia::TimelineTools::new(self.ivars().session.preferences.clone())
                 .state();
-        for (tool, button) in self.ivars().tools.borrow().iter() {
+        for (tool, button) in tools.iter() {
             super::layout::set_toggle_selected(
                 button,
                 tool.selected(state),
@@ -909,19 +920,17 @@ impl CanvasView {
         self.poll_transcription_probe()?;
         self.update_screen_recording()?;
         let size = self.bounds().size;
-        if self.window().is_none_or(|window| !window.isKeyWindow())
-            || self.isHiddenOrHasHiddenAncestor()
-        {
+        let pointer_active = self.window().is_some_and(|window| window.isKeyWindow())
+            && !self.isHiddenOrHasHiddenAncestor();
+        if !pointer_active && self.ivars().pointer_active.replace(pointer_active) {
             self.teardown_preview_pointer();
+            if let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
+                self.release_relative_pan(scene);
+                scene.pointer_exited();
+                scene.pointer_cancelled();
+            }
         }
-        if (self.window().is_none_or(|window| !window.isKeyWindow())
-            || self.isHiddenOrHasHiddenAncestor())
-            && let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut()
-        {
-            self.release_relative_pan(scene);
-            scene.pointer_exited();
-            scene.pointer_cancelled();
-        }
+        self.ivars().pointer_active.set(pointer_active);
         if self.window().is_none()
             || self.isHiddenOrHasHiddenAncestor()
             || size.width <= 0.0
@@ -932,15 +941,32 @@ impl CanvasView {
         self.refresh_live_preview();
         self.prepare_preview()?;
         let scale = self.window().expect("attached canvas").backingScaleFactor();
+        let redraw = match &mut *self.ivars().content.borrow_mut() {
+            Content::Timeline(scene) => {
+                scene.needs_redraw(glam::Vec2::new(size.width as f32, size.height as f32))
+            }
+            _ => true,
+        };
         let mut renderer = self.ivars().renderer.borrow_mut();
-        renderer.layer().setContentsScale(scale);
-        renderer.layer().setDrawableSize(NSSize::new(
+        let resized = renderer.layer().contentsScale() != scale
+            || renderer.layer().drawableSize() != NSSize::new(
+                (size.width * scale).ceil(),
+                (size.height * scale).ceil(),
+            );
+        if renderer.layer().contentsScale() != scale {
+            renderer.layer().setContentsScale(scale);
+        }
+        let drawable_size = NSSize::new(
             (size.width * scale).ceil(),
             (size.height * scale).ceil(),
-        ));
+        );
+        if renderer.layer().drawableSize() != drawable_size {
+            renderer.layer().setDrawableSize(drawable_size);
+        }
         let mut result = Ok(());
         let mut manim_updates = Vec::new();
-        renderer.draw(|canvas| {
+        if redraw || resized {
+            renderer.draw(|canvas| {
             canvas.clear(shrimply_cross_ui_theme::current().view_bg);
             canvas.scale((scale as f32, scale as f32));
             match &mut *self.ivars().content.borrow_mut() {
@@ -1064,7 +1090,8 @@ impl CanvasView {
                     ));
                 }
             }
-        });
+            });
+        }
         drop(renderer);
         self.update_screen_recording()?;
         let (external_error, external_imports, caption_speech_updates, transcription_updates) = {
@@ -1185,6 +1212,7 @@ pub fn new(
         suppress_primary: Cell::new(false),
         secondary_preview_active: Cell::new(false),
         relative_pan_active: Cell::new(false),
+        pointer_active: Cell::new(true),
         audio_export: RefCell::new(None),
         video_export: RefCell::new(None),
         caption_speech_probe: RefCell::new(None),
@@ -1200,7 +1228,7 @@ pub fn new(
         session,
     });
     let view: Retained<CanvasView> = unsafe { msg_send![super(view), initWithFrame: NSRect::ZERO] };
-    // Layer-hosting views are presented explicitly by the frame timer; drawRect is not invoked for a CAMetalLayer.
+    // Layer-hosting views are presented by the display link; drawRect is not invoked for a CAMetalLayer.
     view.setLayer(Some(view.ivars().renderer.borrow().layer()));
     view.setWantsLayer(true);
     if matches!(*view.ivars().content.borrow(), Content::Timeline(_)) {

@@ -94,6 +94,7 @@ pub struct Scene {
     performance: crate::performance::State,
     beat_updates: mpsc::Receiver<(uuid::Uuid, audio::beat::BeatUpdate)>,
     waveform_updates: mpsc::Receiver<(uuid::Uuid, waveform::WaveformUpdate)>,
+    waveform_loading: bool,
     waveform_cancel: Arc<AtomicBool>,
     beat_cancel: Arc<AtomicBool>,
     media_refresh: Rc<MediaRefresh>,
@@ -115,6 +116,7 @@ pub struct Scene {
 }
 #[derive(Default)]
 struct MediaRefresh {
+    redraw: Cell<bool>,
     waveforms: Cell<Option<Instant>>,
     beats: Cell<bool>,
 }
@@ -171,6 +173,7 @@ impl Scene {
             },
         );
         let media_refresh = Rc::new(MediaRefresh {
+            redraw: Cell::new(true),
             waveforms: Cell::new(Some(Instant::now() - WAVEFORM_RELOAD_DELAY)),
             beats: Cell::new(true),
         });
@@ -184,6 +187,7 @@ impl Scene {
                 let Some(request) = refresh_request.upgrade() else {
                     return;
                 };
+                request.redraw.set(true);
                 if let player_state::PlayerEvent::Project(change) = event {
                     if change.audio_waveforms || change.frame_rate.is_some() {
                         request.waveforms.set(Some(Instant::now()));
@@ -194,6 +198,18 @@ impl Scene {
                 }
             },
         );
+        let refresh_request = Rc::downgrade(&media_refresh);
+        selection_state::connect_named(&selection, "timeline redraw", move || {
+            if let Some(request) = refresh_request.upgrade() {
+                request.redraw.set(true);
+            }
+        });
+        let refresh_request = Rc::downgrade(&media_refresh);
+        preferences::connect(&preferences, move |_| {
+            if let Some(request) = refresh_request.upgrade() {
+                request.redraw.set(true);
+            }
+        });
         let mut view = TimelineViewState::default();
         view.restore_zoom(project.borrow().timeline_zoom);
         let initial_center = view
@@ -273,6 +289,7 @@ impl Scene {
             performance,
             beat_updates,
             waveform_updates,
+            waveform_loading: false,
             waveform_cancel: Arc::new(AtomicBool::new(false)),
             beat_cancel: Arc::new(AtomicBool::new(false)),
             media_refresh,
@@ -314,6 +331,7 @@ impl Scene {
         self.waveform_cancel = Arc::clone(&cancel);
         let (sender, receiver) = mpsc::channel();
         self.waveform_updates = receiver;
+        self.waveform_loading = true;
         self.waveforms.clear();
         let snapshot = self.project.borrow().clone();
         let chunks = waveform_chunks_per_second_from_frame_step(frame_step_seconds(&snapshot));

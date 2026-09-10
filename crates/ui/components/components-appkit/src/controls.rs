@@ -1443,14 +1443,38 @@ pub fn live_performance(mtm: MainThreadMarker) -> Retained<NSGlassEffectView> {
     let performance = Rc::new(RefCell::new(
         shrimply_components_core::performance::PerformanceRows::default(),
     ));
+    let refresh_timer = RefCell::new(None::<Retained<NSTimer>>);
     card.connect_expansion({
+        let weak_root = Weak::new(card.view());
         let rows = rows.clone();
         let performance = performance.clone();
         let expanded = expanded.clone();
         move |is_expanded, completed| {
             expanded.set(is_expanded);
+            if !completed && let Some(timer) = refresh_timer.borrow_mut().take() {
+                timer.invalidate();
+            }
             if is_expanded && !completed {
                 refresh_performance(&rows, &performance, mtm);
+                let weak_root = weak_root.clone();
+                let weak_rows = Weak::new(&*rows);
+                let performance = performance.clone();
+                let callback = RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
+                    let (Some(root), Some(rows)) = (weak_root.load(), weak_rows.load()) else {
+                        unsafe { timer.as_ref() }.invalidate();
+                        return;
+                    };
+                    if root.window().is_some() && !root.isHiddenOrHasHiddenAncestor() {
+                        refresh_performance(&rows, &performance, mtm);
+                    }
+                });
+                *refresh_timer.borrow_mut() = Some(unsafe {
+                    NSTimer::scheduledTimerWithTimeInterval_repeats_block(
+                        shrimply_components_core::performance::REFRESH_INTERVAL.as_secs_f64(),
+                        true,
+                        &callback,
+                    )
+                });
             } else if !is_expanded && completed {
                 clear_stack(&rows);
                 *performance.borrow_mut() = Default::default();
@@ -1492,28 +1516,6 @@ pub fn live_performance(mtm: MainThreadMarker) -> Retained<NSGlassEffectView> {
         mtm,
     );
     card.append_after_reset(copy.view());
-    let weak_root = Weak::new(card.view());
-    let weak_rows = Weak::new(&*rows);
-    let timer = RcBlock::new(move |timer: std::ptr::NonNull<NSTimer>| {
-        let Some(root) = weak_root.load() else {
-            unsafe { timer.as_ref() }.invalidate();
-            return;
-        };
-        let Some(rows) = weak_rows.load() else {
-            unsafe { timer.as_ref() }.invalidate();
-            return;
-        };
-        if root.window().is_some() && !root.isHiddenOrHasHiddenAncestor() && expanded.get() {
-            refresh_performance(&rows, &performance, mtm);
-        }
-    });
-    unsafe {
-        NSTimer::scheduledTimerWithTimeInterval_repeats_block(
-            shrimply_components_core::performance::REFRESH_INTERVAL.as_secs_f64(),
-            true,
-            &timer,
-        );
-    }
     card.view().into()
 }
 

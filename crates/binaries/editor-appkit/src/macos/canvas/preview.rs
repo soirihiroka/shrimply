@@ -90,10 +90,13 @@ impl State {
             .render_elapsed()
             .and_then(shrimply_preview_provider_skia::playback::rendered_frame_rate_label)
         {
-            self.frame_rate_label
+            let field = self.frame_rate_label
                 .as_ref()
-                .expect("preview frame-rate label installed")
-                .setStringValue(&objc2_foundation::NSString::from_str(&label));
+                .expect("preview frame-rate label installed");
+            let label = objc2_foundation::NSString::from_str(&label);
+            if field.stringValue() != label {
+                field.setStringValue(&label);
+            }
         }
         let visible = self
             .loading_indicator

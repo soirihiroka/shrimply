@@ -65,6 +65,7 @@ impl Scene {
         position: Vec2,
         cursor: shrimply_components_skia::cursor::SoftwareCursor,
     ) {
+        self.media_refresh.redraw.set(true);
         self.software_cursor = Some(TimelineSoftwareCursor { position, cursor });
     }
 
@@ -91,11 +92,13 @@ impl Scene {
     }
 
     pub fn end_relative_pointer(&mut self) -> Option<Vec2> {
+        self.media_refresh.redraw.set(true);
         self.software_cursor.take().map(|cursor| cursor.position)
     }
 
     /// Queue toolkit input for the next update. Native hosts never implement gesture rules.
     pub fn event(&mut self, event: Event) {
+        self.media_refresh.redraw.set(true);
         self.sync_revision();
         match event {
             Event::Modifiers(modifiers) => self.modifiers = modifiers,
@@ -192,6 +195,7 @@ impl Scene {
     }
 
     pub fn draw_frame(&mut self, canvas: &skia_safe::Canvas, size: Vec2, mut frame: Frame<'_>) {
+        self.media_refresh.redraw.set(false);
         self.suspended = false;
         self.sync_revision();
         self.viewport = Rect::from_min_size(Vec2::ZERO, size);
@@ -277,15 +281,39 @@ impl Scene {
             self.reload_beats();
             changed = true;
         }
-        while let Ok((key, update)) = self.waveform_updates.try_recv() {
-            waveform::apply_update(&mut self.waveforms, key, update);
-            changed = true;
+        loop {
+            match self.waveform_updates.try_recv() {
+                Ok((key, update)) => {
+                    waveform::apply_update(&mut self.waveforms, key, update);
+                    changed = true;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.waveform_loading = false;
+                    break;
+                }
+            }
         }
         while let Ok((key, update)) = self.beat_updates.try_recv() {
             audio::beat::apply_update(&mut self.beats, key, update);
             changed = true;
         }
         changed
+    }
+
+    /// Poll jobs even while idle, but retain the last surface until UI state changes.
+    pub fn needs_redraw(&mut self, size: Vec2) -> bool {
+        if self.update_media() {
+            self.media_refresh.redraw.set(true);
+        }
+        self.media_refresh.redraw.get()
+            || self.suspended
+            || self.viewport.size() != size
+            || player_state::snapshot(&self.player).playing
+            || self.active_audio_recording.is_some()
+            || self.active_video_recording.is_some()
+            || self.waveform_loading
+            || self.animating()
     }
 
     /// Detach from a native surface while retaining view state for a later realization.
@@ -371,6 +399,7 @@ impl Scene {
     }
 
     pub fn pointer_exited(&mut self) {
+        self.media_refresh.redraw.set(true);
         self.pointer_pos = None;
         self.cut_preview = None;
         if let Some(id) = self.hovered_track_button.take() {
@@ -382,6 +411,7 @@ impl Scene {
     }
 
     pub fn pointer_cancelled(&mut self) {
+        self.media_refresh.redraw.set(true);
         self.pending_seek = None;
         if self.view.drag_mode == DragMode::Seek {
             player_state::set_scrubbing(&self.player, false);
@@ -523,6 +553,7 @@ impl Scene {
     }
 
     pub(super) fn update_input(&mut self) {
+        self.media_refresh.redraw.set(true);
         self.sync_revision();
         self.apply_preferences(&preferences::snapshot(&self.preferences));
         let project = self.project.clone();
@@ -595,6 +626,7 @@ impl Scene {
         if f64::from(point.x) < timeline_x() {
             return;
         }
+        self.media_refresh.redraw.set(true);
         self.horizontal_scrollbar.cancel_scroll();
         self.vertical_scrollbar.cancel_scroll();
         let minimum = min_seconds_per_pixel(frame_step_seconds(&self.project.borrow()));

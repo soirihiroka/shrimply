@@ -32,13 +32,12 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 
-const DISPLAY_RATE: u32 = 60;
-
 struct EditorIvars {
     session: OnceCell<Rc<EditorSession>>,
     imports: Rc<RefCell<media::Imports>>,
-    timer: OnceCell<Retained<objc2_foundation::NSTimer>>,
+    display_link: OnceCell<Retained<objc2_quartz_core::CADisplayLink>>,
     last_error: RefCell<Option<String>>,
+    playback_display: Cell<Option<player_state::Snapshot>>,
     window: OnceCell<Retained<NSWindow>>,
     layout: OnceCell<layout::Layout>,
     view_items: OnceCell<Vec<Retained<NSMenuItem>>>,
@@ -126,13 +125,12 @@ define_class!(
             window.makeKeyAndOrderFront(None);
             self.ivars().window.set(window).expect("window already installed");
             app.activate();
-            let timer = unsafe {
-                objc2_foundation::NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
-                    1.0 / f64::from(DISPLAY_RATE), self, sel!(renderFrame:), None, true,
-                )
+            let display_link = unsafe {
+                self.ivars().window.get().expect("window installed")
+                    .displayLinkWithTarget_selector(self, sel!(renderFrame:))
             };
-            unsafe { objc2_foundation::NSRunLoop::mainRunLoop().addTimer_forMode(&timer, objc2_foundation::NSRunLoopCommonModes); }
-            self.ivars().timer.set(timer).expect("frame timer already installed");
+            unsafe { display_link.addToRunLoop_forMode(&objc2_foundation::NSRunLoop::mainRunLoop(), objc2_foundation::NSRunLoopCommonModes); }
+            self.ivars().display_link.set(display_link).expect("display link already installed");
             self.begin_project_load();
 
         }
@@ -141,7 +139,7 @@ define_class!(
     unsafe impl NSWindowDelegate for Editor {
         #[unsafe(method(windowWillClose:))]
         fn will_close(&self, _notification: &NSNotification) {
-            if let Some(timer) = self.ivars().timer.get() { timer.invalidate(); }
+            if let Some(display_link) = self.ivars().display_link.get() { display_link.invalidate(); }
             if let Some(monitor) = self.ivars().event_monitor.get() {
                 unsafe { objc2_app_kit::NSEvent::removeMonitor(monitor); }
             }
@@ -231,7 +229,7 @@ define_class!(
         }
 
         #[unsafe(method(renderFrame:))]
-        fn render_frame(&self, _timer: &objc2_foundation::NSTimer) {
+        fn render_frame(&self, _display_link: &objc2_quartz_core::CADisplayLink) {
             if self.ivars().session.get().is_none() {
                 self.poll_project_load();
                 return;
@@ -254,14 +252,24 @@ define_class!(
             }
             let player = player_state::snapshot(&session.player_state);
             self.tick_fullscreen(player.playing);
-            layout.progress.setDoubleValue(shrimply_math_core::time_ratio_f64(player.position, player.duration));
-            layout.time.setStringValue(&NSString::from_str(&format!("{} / {}", shrimply_project_document::time_format::playback_time(player.position), shrimply_project_document::time_format::playback_time(player.duration))));
-            let speed = shrimply_preview_provider_skia::playback::playback_speed_label(player.playback_speed);
-            layout.speed.setStringValue(&NSString::from_str(&speed));
-            layout.speed.setToolTip(Some(&NSString::from_str(&format!("Playback speed {speed}"))));
-            layout.play.setToolTip(Some(&NSString::from_str(if player.playing { "Pause" } else { "Play" })));
-            layout.play.setImage
-(Some(&layout::symbol(if player.playing { "pause.fill" } else { "play.fill" }, if player.playing { "Pause" } else { "Play" })));
+            let previous = self.ivars().playback_display.replace(Some(player));
+            if previous.is_none_or(|old| old.position != player.position || old.duration != player.duration) {
+                layout.progress.setDoubleValue(shrimply_math_core::time_ratio_f64(player.position, player.duration));
+                let time = NSString::from_str(&format!("{} / {}", shrimply_project_document::time_format::playback_time(player.position), shrimply_project_document::time_format::playback_time(player.duration)));
+                if layout.time.stringValue() != time {
+                    layout.time.setStringValue(&time);
+                }
+            }
+            if previous.is_none_or(|old| old.playback_speed != player.playback_speed) {
+                let speed = shrimply_preview_provider_skia::playback::playback_speed_label(player.playback_speed);
+                layout.speed.setStringValue(&NSString::from_str(&speed));
+                layout.speed.setToolTip(Some(&NSString::from_str(&format!("Playback speed {speed}"))));
+            }
+            if previous.is_none_or(|old| old.playing != player.playing) {
+                let label = if player.playing { "Pause" } else { "Play" };
+                layout.play.setToolTip(Some(&NSString::from_str(label)));
+                layout.play.setImage(Some(&layout::symbol(if player.playing { "pause.fill" } else { "play.fill" }, label)));
+            }
             for canvas in &layout.canvases {
                 if let Err(error) = canvas.render() {
                     player_state::set_playing(&session.player_state, false);
@@ -838,8 +846,9 @@ pub fn run(project: Option<&Path>) -> Result<bool, ()> {
     let editor = Editor::alloc(mtm).set_ivars(EditorIvars {
         session: OnceCell::new(),
         imports: Rc::new(RefCell::new(media::Imports::default())),
-        timer: OnceCell::new(),
+        display_link: OnceCell::new(),
         last_error: RefCell::new(None),
+        playback_display: Cell::new(None),
         window: OnceCell::new(),
         layout: OnceCell::new(),
         view_items: OnceCell::new(),

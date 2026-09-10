@@ -93,6 +93,7 @@ impl Scene {
     }
 
     pub fn update_drop_preview(&mut self, path: PathBuf, point: Vec2) -> bool {
+        self.media_refresh.redraw.set(true);
         self.text_drop_preview = None;
         if !self.external_drop_target(point)
             || matches!(import::file_kind(&path), None | Some(import::FileKind::Vtt))
@@ -123,6 +124,7 @@ impl Scene {
     }
 
     pub fn clear_drop_preview(&mut self) {
+        self.media_refresh.redraw.set(true);
         self.drop_preview = None;
         self.import_preview = None;
         self.text_drop_preview = None;

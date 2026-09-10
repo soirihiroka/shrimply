@@ -263,8 +263,8 @@ impl Editor {
     }
 
     pub(super) fn fail_startup(&self, error: &str) {
-        if let Some(timer) = self.ivars().timer.get() {
-            timer.invalidate();
+        if let Some(display_link) = self.ivars().display_link.get() {
+            display_link.invalidate();
         }
         self.show_error(error);
         self.stop_loading(Err(()));
@@ -272,12 +272,12 @@ impl Editor {
 
     pub(super) fn stop_loading(&self, outcome: Result<bool, ()>) {
         self.ivars().outcome.set(outcome);
-        if let Some(timer) = self.ivars().timer.get() {
-            timer.invalidate();
+        if let Some(display_link) = self.ivars().display_link.get() {
+            display_link.invalidate();
         }
         let app = NSApplication::sharedApplication(self.mtm());
         app.stop(None);
-        // A timer callback can stop the run loop while it is waiting for its next event.
+        // A display callback can stop the run loop while it is waiting for its next event.
         let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
             NSEventType::ApplicationDefined, NSPoint::ZERO, NSEventModifierFlags::empty(),
             0.0, 0, None, 0, 0, 0,

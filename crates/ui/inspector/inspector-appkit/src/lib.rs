@@ -28,6 +28,7 @@ use std::rc::Rc;
 
 const CONTENT_SPACING: f64 = 10.0;
 const CONTENT_INSET: f64 = 12.0;
+const CONTROL_SPACING: f64 = 8.0;
 
 pub struct Inspector {
     _focus_monitor: focus::FocusMonitor,
@@ -378,19 +379,27 @@ impl State {
             button.view().setEnabled(action.sensitive);
             card.append_after_reset(button.view());
         }
-        for control in item
-            .section
-            .controls
-            .iter()
-            .filter(|control| control.visible)
-        {
-            card.append(&control::view(control, context, mtm));
+        let controls = column_stack(CONTROL_SPACING, mtm);
+        card.append(&controls);
+        let section = item.section.clone();
+        let context = context.clone();
+        let populated = Cell::new(false);
+        let populate = move || {
+            if !populated.replace(true) {
+                control::append_section(&controls, &section, &context, mtm);
+            }
+        };
+        if expanded {
+            populate();
         }
         let target = target.clone();
         let key = item.presentation.key.clone();
         let list = self.list.clone();
-        card.connect_expansion(move |expanded, _| {
+        card.connect_expansion(move |expanded, completed| {
             list.borrow_mut().set_expanded(&target, &key, expanded);
+            if expanded && !completed {
+                populate();
+            }
         });
         card.view().as_super().into()
     }
