@@ -4,10 +4,11 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $archive = Join-Path $root "dist/shrimply-windows-x86_64.zip"
 $checksum = "$archive.sha256"
 $stage = Join-Path $root "dist/shrimply-windows-x86_64"
+$dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
 $env:QT_QPA_PLATFORM = "offscreen"
 
 function Assert-PeX64([string]$path) {
-    $headers = & dumpbin.exe /headers $path 2>&1
+    $headers = & $dumpbin /headers $path 2>&1
     if ($LASTEXITCODE -ne 0 -or !($headers -match "8664 machine \(x64\)")) {
         throw "$path is not an x64 PE binary"
     }
@@ -18,9 +19,27 @@ function Inspect-Imports([string]$directory) {
         $_.Extension -in @(".exe", ".dll")
     }
     if (!$binaries) { throw "No PE binaries found in $directory" }
+    $packaged = @{}
+    foreach ($binary in $binaries) { $packaged[$binary.Name.ToLowerInvariant()] = $true }
+    $external = @{ "nvcuda.dll" = $true }
     foreach ($binary in $binaries) {
-        & dumpbin.exe /dependents $binary.FullName | Out-Null
+        $imports = & $dumpbin /dependents $binary.FullName
         if ($LASTEXITCODE -ne 0) { throw "Could not inspect imports for $($binary.FullName)" }
+        foreach ($line in $imports) {
+            $dependency = $line.Trim()
+            if ($dependency -notmatch '^[A-Za-z0-9_.-]+\.dll$') { continue }
+            $name = $dependency.ToLowerInvariant()
+            if ($packaged.ContainsKey($name) -or $external.ContainsKey($name)) { continue }
+            if (Test-Path (Join-Path "$env:SystemRoot\System32" $dependency)) { continue }
+            throw "$($binary.FullName) imports missing library $dependency"
+        }
+    }
+}
+
+function Use-PackagedRuntime {
+    $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+    foreach ($name in @("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH")) {
+        Remove-Item "Env:$name" -ErrorAction SilentlyContinue
     }
 }
 
@@ -56,6 +75,7 @@ $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actual -ne $expected) { throw "Windows archive checksum mismatch" }
 
 Inspect-Imports $stage
+Use-PackagedRuntime
 Assert-ArgumentFailures $stage
 Assert-QmlStartup $stage
 

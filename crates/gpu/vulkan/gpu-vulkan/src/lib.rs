@@ -232,10 +232,9 @@ impl ExternalImage {
             let semaphore_handle =
                 unsafe { external_semaphore.get_semaphore_win32_handle(&semaphore_info) }
                     .map_err(|error| format!("export Vulkan semaphore handle: {error:?}"))?;
-            (
-                memory,
-                unsafe { OwnedHandle::from_raw_handle(semaphore_handle as *mut _) },
-            )
+            (memory, unsafe {
+                OwnedHandle::from_raw_handle(semaphore_handle as *mut _)
+            })
         };
         Ok(ExportedFrame {
             #[cfg(target_os = "linux")]
