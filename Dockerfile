@@ -38,6 +38,7 @@ ENV CUDA_TOOLKIT_PATH=/usr/local/cuda
 # We have to do this to compile since Docker doesnt have a nvidia driver. 
 RUN ln -sf libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LD_LIBRARY_PATH}
+ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}
 
 RUN make release qt-release
 RUN make install install-qt DESTDIR=/stage PREFIX=/usr
