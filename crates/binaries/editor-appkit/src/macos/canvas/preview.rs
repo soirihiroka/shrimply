@@ -333,7 +333,7 @@ impl CanvasView {
                 return Ok(());
             };
             if state.navigation.active() {
-                return;
+                return Ok(());
             }
             let Some(viewport) = state.viewport else {
                 return Ok(());
