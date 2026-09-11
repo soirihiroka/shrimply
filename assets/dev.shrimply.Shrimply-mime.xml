@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-shrimply-project">
+    <comment>Shrimply Project</comment>
+    <glob pattern="*.shrimp"/>
+    <icon name="dev.shrimply.Shrimply-project"/>
+  </mime-type>
+</mime-info>

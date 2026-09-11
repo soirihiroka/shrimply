@@ -10,4 +10,5 @@ Terminal=false
 StartupNotify=true
 PrefersNonDefaultGPU=true
 Categories=AudioVideo;Video;GTK;
+MimeType=application/x-shrimply-project;
 Keywords=video;audio;editor;timeline;

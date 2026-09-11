@@ -148,6 +148,10 @@ rustPlatform.buildRustPackage {
     cp -a assets/icons/. "$out/share/shrimply/icons/"
     install -Dm644 assets/icons/dev.shrimply.Shrimply.svg \
       "$out/share/icons/hicolor/scalable/apps/dev.shrimply.Shrimply.svg"
+    install -Dm644 assets/icons/dev.shrimply.Shrimply-project.svg \
+      "$out/share/icons/hicolor/scalable/mimetypes/dev.shrimply.Shrimply-project.svg"
+    install -Dm644 assets/dev.shrimply.Shrimply-mime.xml \
+      "$out/share/mime/packages/dev.shrimply.Shrimply-mime.xml"
     sed -e "s|^Exec=.*|Exec=$out/bin/shrimply %f|" \
       -e "s|^TryExec=.*|TryExec=$out/bin/shrimply|" \
       assets/dev.shrimply.Shrimply.desktop \

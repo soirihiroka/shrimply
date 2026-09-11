@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <title>Shrimply Project</title>
+  <desc>An Adwaita orange document with a darker fold and a white symbolic shrimp.</desc>
+  <path d="M28 8H78L108 38V112A8 8 0 0 1 100 120H28A8 8 0 0 1 20 112V16A8 8 0 0 1 28 8Z" fill="#ff7800"/>
+  <path d="M78 8V30A8 8 0 0 0 86 38H108Z" fill="#c64600"/>
+  <path fill="#ffffff" fill-rule="evenodd" transform="translate(27 44) scale(.58)" d="M12 18H78C99 18 116 37 116 60C116 83 100 102 80 102C91 102 99 92 99 81C99 69 91 61 80 61H48C28 61 12 42 12 18Z M12 77L80 102H34C21 102 12 92 12 77Z M48 77H59C71 77 80 88 80 102Z M38 34A4.5 4.5 0 1 1 29 34A4.5 4.5 0 1 1 38 34Z"/>
+</svg>

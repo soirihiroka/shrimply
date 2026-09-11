@@ -10,4 +10,5 @@ Terminal=false
 StartupNotify=true
 PrefersNonDefaultGPU=true
 Categories=AudioVideo;Video;Qt;KDE;
+MimeType=application/x-shrimply-project;
 Keywords=video;audio;editor;timeline;

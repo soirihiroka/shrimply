@@ -79,6 +79,10 @@ BINDIR ?= $(PREFIX)/bin
 DATADIR ?= $(PREFIX)/share
 APPLICATIONSDIR ?= $(DATADIR)/applications
 ICONDIR ?= $(DATADIR)/icons/hicolor/scalable/apps
+MIMEDIR ?= $(DATADIR)/mime
+MIME_ICONDIR ?= $(DATADIR)/icons/hicolor/scalable/mimetypes
+PROJECT_MIME := assets/dev.shrimply.Shrimply-mime.xml
+PROJECT_ICON := assets/icons/dev.shrimply.Shrimply-project.svg
 DESKTOP_FILE := assets/dev.shrimply.Shrimply.desktop
 QT_DESKTOP_FILE := assets/dev.shrimply.Shrimply.Qt.desktop
 APP_ICON := assets/icons/dev.shrimply.Shrimply.svg
@@ -145,8 +149,29 @@ cuda-artifacts: cuda-target-check
 dev: SHELL := /bin/bash
 desktop-icon:
 	$(INSTALL) -Dm644 $(APP_ICON) "$(DESTDIR)$(ICONDIR)/dev.shrimply.Shrimply.svg"
+	$(INSTALL) -Dm644 $(PROJECT_ICON) "$(DESTDIR)$(MIME_ICONDIR)/dev.shrimply.Shrimply-project.svg"
 	@if test -z "$(DESTDIR)"; then \
 		command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f -t "$(DATADIR)/icons/hicolor" >/dev/null || true; \
+	fi
+
+.PHONY: project-mime uninstall-desktop-assets
+project-mime:
+	$(INSTALL) -Dm644 $(PROJECT_MIME) "$(DESTDIR)$(MIMEDIR)/packages/dev.shrimply.Shrimply-mime.xml"
+	@if test -z "$(DESTDIR)"; then \
+		update-mime-database "$(MIMEDIR)"; \
+	fi
+
+uninstall-desktop-assets:
+	@set -e; if test ! -e "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop" && \
+		test ! -e "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"; then \
+		rm -f "$(DESTDIR)$(MIMEDIR)/packages/dev.shrimply.Shrimply-mime.xml" \
+			"$(DESTDIR)$(MIME_ICONDIR)/dev.shrimply.Shrimply-project.svg" \
+			"$(DESTDIR)$(ICONDIR)/dev.shrimply.Shrimply.svg"; \
+	fi
+	@set -e; if test -z "$(DESTDIR)"; then \
+		if test -d "$(MIMEDIR)"; then update-mime-database "$(MIMEDIR)"; fi; \
+		if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$(APPLICATIONSDIR)"; fi; \
+		if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -f -t "$(DATADIR)/icons/hicolor"; fi; \
 	fi
 
 dev: native-deps cuda-artifacts
@@ -199,9 +224,11 @@ qt-build: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) -p $(MCP_PACKAGE) --bins
 
 dev-qt: SHELL := /bin/bash
-qt-desktop-file: desktop-icon
-	sed -e 's|^Exec=.*|Exec=$(CURDIR)/target/debug/$(QT_BIN_NAME) %f|' -e 's|^TryExec=.*|TryExec=$(CURDIR)/target/debug/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
-	@command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true
+qt-desktop-file: desktop-icon project-mime
+	sed -e 's|^Exec=.*|Exec="$(CURDIR)/target/debug/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(CURDIR)/target/debug/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
+	@if test -z "$(DESTDIR)"; then \
+		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
+	fi
 
 dev-qt: qt-build
 	@started="$$(date --iso-8601=seconds)"; \
@@ -354,7 +381,7 @@ deps-fedora:
 qt-release: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
 
-install: release desktop-icon
+install: release desktop-icon project-mime
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(MCP_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(MCP_BIN_NAME)"
@@ -364,7 +391,7 @@ install: release desktop-icon
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	$(INSTALL) -d "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	cp -a assets/icons/. "$(DESTDIR)$(ICONS_RESOURCE_DIR)/"
-	sed -e 's|^Exec=.*|Exec=$(BINDIR)/$(BIN_NAME) %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(BIN_NAME)|' $(DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
+	sed -e 's|^Exec=.*|Exec="$(BINDIR)/$(BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(BIN_NAME)|' $(DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
 	fi
@@ -382,14 +409,14 @@ flatpak-gtk:
 		"$(FLATPAK_GTK_IMAGE)"
 	@echo "Flatpak bundle: $(FLATPAK_BUNDLE)"
 
-install-qt: qt-release desktop-icon
+install-qt: qt-release desktop-icon project-mime
 	$(INSTALL) -Dm755 target/release/$(QT_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(QT_BIN_NAME)"
 	$(INSTALL) -Dm755 target/release/$(QT_EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(QT_EDITOR_BIN_NAME)"
 	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
-	sed -e 's|^Exec=.*|Exec=$(BINDIR)/$(QT_BIN_NAME) %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
+	sed -e 's|^Exec=.*|Exec="$(BINDIR)/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
 	fi
@@ -416,16 +443,10 @@ uninstall:
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	rm -rf "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
-	rm -f "$(DESTDIR)$(ICONDIR)/dev.shrimply.Shrimply.svg"
-	@if test -z "$(DESTDIR)"; then \
-		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
-		command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f -t "$(DATADIR)/icons/hicolor" >/dev/null || true; \
-	fi
+	$(MAKE) uninstall-desktop-assets
 
 uninstall-qt:
 	rm -f "$(DESTDIR)$(BINDIR)/$(QT_BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(QT_EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
-	@if test -z "$(DESTDIR)"; then \
-		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
-	fi
+	$(MAKE) uninstall-desktop-assets

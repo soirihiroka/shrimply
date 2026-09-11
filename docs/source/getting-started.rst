@@ -25,6 +25,12 @@ Open a project
 Select :guilabel:`Open Project` to open a ``.shrimp``, ``.json``, ``.otio``,
 or ``.kdenlive`` project.
 
+Linux installations register ``.shrimp`` files as Shrimply projects and provide
+a document icon. In your file manager, use :guilabel:`Open With` to select
+Shrimply or Shrimply Qt. Set your preferred application as the default in the
+file manager to open projects by double-clicking. Installation preserves your
+existing default application.
+
 Build a timeline
 ----------------
 
