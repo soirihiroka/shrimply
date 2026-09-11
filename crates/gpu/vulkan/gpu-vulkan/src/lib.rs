@@ -198,6 +198,7 @@ impl ExternalImage {
                 .handle_type(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD);
             let fd = unsafe { external_memory.get_memory_fd(&info) }
                 .map_err(|error| format!("export Vulkan memory fd: {error:?}"))?;
+            let memory = unsafe { OwnedFd::from_raw_fd(fd) };
             let external_semaphore = khr::external_semaphore_fd::Device::new(
                 hal.shared_instance().raw_instance(),
                 hal.raw_device(),
@@ -207,9 +208,7 @@ impl ExternalImage {
                 .handle_type(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD);
             let semaphore_fd = unsafe { external_semaphore.get_semaphore_fd(&semaphore_info) }
                 .map_err(|error| format!("export Vulkan semaphore fd: {error:?}"))?;
-            (unsafe { OwnedFd::from_raw_fd(fd) }, unsafe {
-                OwnedFd::from_raw_fd(semaphore_fd)
-            })
+            (memory, unsafe { OwnedFd::from_raw_fd(semaphore_fd) })
         };
         #[cfg(windows)]
         let (memory, semaphore) = {
@@ -222,6 +221,7 @@ impl ExternalImage {
                 .handle_type(vk::ExternalMemoryHandleTypeFlags::OPAQUE_WIN32);
             let handle = unsafe { external_memory.get_memory_win32_handle(&info) }
                 .map_err(|error| format!("export Vulkan memory handle: {error:?}"))?;
+            let memory = unsafe { OwnedHandle::from_raw_handle(handle as *mut _) };
             let external_semaphore = khr::external_semaphore_win32::Device::new(
                 hal.shared_instance().raw_instance(),
                 hal.raw_device(),
@@ -233,7 +233,7 @@ impl ExternalImage {
                 unsafe { external_semaphore.get_semaphore_win32_handle(&semaphore_info) }
                     .map_err(|error| format!("export Vulkan semaphore handle: {error:?}"))?;
             (
-                unsafe { OwnedHandle::from_raw_handle(handle as *mut _) },
+                memory,
                 unsafe { OwnedHandle::from_raw_handle(semaphore_handle as *mut _) },
             )
         };

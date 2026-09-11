@@ -98,8 +98,8 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: 12.9.2
-          method: network
-          sub-packages: '["nvcc", "crt", "cudart", "nvvm", "visual_studio_integration"]'
+          method: local
+          sub-packages: '["nvcc", "cudart"]'
           use-github-cache: true
 
       - name: Restore vcpkg caches

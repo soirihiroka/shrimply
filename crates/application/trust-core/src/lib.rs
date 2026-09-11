@@ -1,3 +1,5 @@
+#![cfg_attr(windows, feature(windows_process_extensions_raw_attribute))]
+
 mod process;
 pub use process::Child;
 

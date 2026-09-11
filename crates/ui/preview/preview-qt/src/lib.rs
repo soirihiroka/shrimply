@@ -299,6 +299,7 @@ fn write_track_add_text(index: usize, output: *mut u8, capacity: usize, icon: bo
     bytes.len()
 }
 
+#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 /// # Safety
 ///

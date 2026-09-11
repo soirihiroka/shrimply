@@ -8,14 +8,17 @@ use std::time::Duration;
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 #[cfg(windows)]
+use std::os::windows::process::{CommandExt, ProcThreadAttributeList};
+#[cfg(windows)]
 use windows::{
     Win32::{
         Foundation::HANDLE,
         System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
             SetInformationJobObject, TerminateJobObject,
         },
+        System::Threading::PROC_THREAD_ATTRIBUTE_JOB_LIST,
     },
     core::PCWSTR,
 };
@@ -49,22 +52,18 @@ impl Child {
         #[cfg(unix)]
         let child = command.spawn().map_err(|error| error.to_string())?;
         #[cfg(windows)]
-        let mut child = command.spawn().map_err(|error| error.to_string())?;
+        let job = create_kill_job()?;
         #[cfg(windows)]
-        let job = match assign_kill_job(&child) {
-            Ok(job) => job,
-            Err(error) => {
-                match child.try_wait() {
-                    Ok(Some(_)) => {}
-                    Ok(None) => {
-                        child.kill().expect("stop unassigned trusted worker");
-                        child.wait().expect("reap unassigned trusted worker");
-                    }
-                    Err(_) => std::process::abort(),
-                }
-                return Err(error);
-            }
-        };
+        let jobs = [HANDLE(job.as_raw_handle())];
+        #[cfg(windows)]
+        let attributes = ProcThreadAttributeList::build()
+            .attribute(PROC_THREAD_ATTRIBUTE_JOB_LIST as usize, &jobs)
+            .finish()
+            .map_err(|error| format!("configure trusted worker process attributes: {error}"))?;
+        #[cfg(windows)]
+        let child = command
+            .spawn_with_attributes(&attributes)
+            .map_err(|error| error.to_string())?;
         let state = Arc::new(Mutex::new(State {
             child,
             status: None,
@@ -163,7 +162,7 @@ fn kill_group(state: &mut State) {
 }
 
 #[cfg(windows)]
-fn assign_kill_job(child: &std::process::Child) -> Result<OwnedHandle, String> {
+fn create_kill_job() -> Result<OwnedHandle, String> {
     let raw = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
         .map_err(|error| format!("create trusted worker job: {error}"))?;
     let job = unsafe { OwnedHandle::from_raw_handle(raw.0) };
@@ -178,8 +177,6 @@ fn assign_kill_job(child: &std::process::Child) -> Result<OwnedHandle, String> {
         )
     }
     .map_err(|error| format!("configure trusted worker job: {error}"))?;
-    unsafe { AssignProcessToJobObject(HANDLE(job.as_raw_handle()), HANDLE(child.as_raw_handle())) }
-        .map_err(|error| format!("assign trusted worker job: {error}"))?;
     Ok(job)
 }
 

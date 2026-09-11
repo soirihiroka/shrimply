@@ -229,7 +229,7 @@ extern "C" Context* shrimply_nvof_create(
         return nullptr;
     }
 #if defined(_WIN32)
-    context->library = LoadLibraryA("nvidia_opticalflow.dll");
+    context->library = LoadLibraryA("nvofapi64.dll");
 #else
     context->library = dlopen("libnvidia-opticalflow.so.1", RTLD_NOW | RTLD_LOCAL);
 #endif

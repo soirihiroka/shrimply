@@ -387,7 +387,13 @@ static int compile(const CompileRequest& request)
     return output ? 0 : 1;
 }
 
-extern "C" int shrimply_slang_compile(const CompileRequest* request) noexcept
+#ifdef _WIN32
+#define SHRIMPLY_SLANG_EXPORT extern "C" __declspec(dllexport)
+#else
+#define SHRIMPLY_SLANG_EXPORT extern "C"
+#endif
+
+SHRIMPLY_SLANG_EXPORT int shrimply_slang_compile(const CompileRequest* request) noexcept
 {
     try
     {

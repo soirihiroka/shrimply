@@ -11,6 +11,7 @@
         "avdevice",
         "avfilter",
         "avformat",
+        "nvcodec",
         "swresample",
         "swscale"
       ]

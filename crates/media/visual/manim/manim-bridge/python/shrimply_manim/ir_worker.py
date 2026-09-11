@@ -50,10 +50,40 @@ def send(sock: socket.socket, value: Message) -> None:
     sock.sendall(struct.pack(">I", len(encoded)) + encoded)
 
 
+def connect_local(path: str) -> socket.socket:
+    if sys.platform != "win32":
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(path)
+        return sock
+
+    import ctypes
+
+    class SocketAddress(ctypes.Structure):
+        _fields_ = [("family", ctypes.c_ushort), ("path", ctypes.c_char * 108)]
+
+    encoded = os.fsencode(path)
+    if b"\0" in encoded or len(encoded) >= 108:
+        raise ValueError("WinSock AF_UNIX path must be fewer than 108 non-NUL bytes")
+    address = SocketAddress(1, encoded)
+    sock = socket.socket(1, socket.SOCK_STREAM)
+    winsock = ctypes.WinDLL("Ws2_32")
+    winsock.connect.argtypes = [
+        ctypes.c_size_t,
+        ctypes.POINTER(SocketAddress),
+        ctypes.c_int,
+    ]
+    winsock.connect.restype = ctypes.c_int
+    winsock.WSAGetLastError.restype = ctypes.c_int
+    if winsock.connect(sock.fileno(), ctypes.byref(address), ctypes.sizeof(address)) == -1:
+        error = winsock.WSAGetLastError()
+        sock.close()
+        raise OSError(error, f"WinSock AF_UNIX connect failed: {error}")
+    return sock
+
+
 def run(args: WorkerArguments) -> None:
     fps = Fraction(args.fps)
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(args.socket)
+    sock = connect_local(args.socket)
     try:
         parameters = receive_parameters(sock)
         send(
