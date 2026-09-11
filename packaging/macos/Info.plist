@@ -8,6 +8,8 @@
 	<string>Shrimply</string>
 	<key>CFBundleIconFile</key>
 	<string>Shrimply</string>
+	<key>CFBundleIconName</key>
+	<string>Shrimply</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.shrimply.Shrimply</string>
 	<key>CFBundleInfoDictionaryVersion</key>

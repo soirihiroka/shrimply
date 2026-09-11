@@ -129,8 +129,7 @@ jobs:
         shell: bash
         run: |
           contents="${MACOS_APP}/Contents"
-          iconset="${RUNNER_TEMP}/Shrimply.iconset"
-          mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources" "${iconset}"
+          mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources"
           install -m 755 target/release/shrimply-appkit "${contents}/MacOS/Shrimply"
           install -m 644 packaging/macos/Info.plist "${contents}/Info.plist"
           install -m 755 "$(command -v uv)" "${contents}/MacOS/uv"
@@ -145,16 +144,7 @@ jobs:
           uv lock --python 3.14 --project "${bundled_project}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "${contents}/Info.plist"
 
-          for size in 16 32 128 256 512; do
-            rsvg-convert --width "${size}" --height "${size}" \
-              assets/icons/dev.shrimply.Shrimply-macos.svg \
-              --output "${iconset}/icon_${size}x${size}.png"
-            doubled="$((size * 2))"
-            rsvg-convert --width "${doubled}" --height "${doubled}" \
-              assets/icons/dev.shrimply.Shrimply-macos.svg \
-              --output "${iconset}/icon_${size}x${size}@2x.png"
-          done
-          iconutil --convert icns "${iconset}" --output "${contents}/Resources/Shrimply.icns"
+          cp target/macos-icon/Assets.car target/macos-icon/Shrimply.icns "${contents}/Resources/"
 
           bundle_log="${RUNNER_TEMP}/dylibbundler.log"
           if ! dylibbundler \
@@ -185,6 +175,9 @@ jobs:
         run: |
           contents="${MACOS_APP}/Contents"
           plutil -lint "${contents}/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "${contents}/Info.plist")" = "Shrimply"
+          test -s "${contents}/Resources/Assets.car"
+          test -s "${contents}/Resources/Shrimply.icns"
           codesign --verify --deep --strict "${MACOS_APP}"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "Shrimply"
           test "$(lipo -archs "${contents}/MacOS/Shrimply")" = "arm64"

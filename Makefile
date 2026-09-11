@@ -86,9 +86,9 @@ PROJECT_ICON := assets/icons/dev.shrimply.Shrimply-project.svg
 DESKTOP_FILE := assets/dev.shrimply.Shrimply.desktop
 QT_DESKTOP_FILE := assets/dev.shrimply.Shrimply.Qt.desktop
 APP_ICON := assets/icons/dev.shrimply.Shrimply.svg
-APPKIT_ICON_SOURCE := assets/icons/dev.shrimply.Shrimply-macos.svg
-APPKIT_ICON := assets/icons/dev.shrimply.Shrimply.png
-APPKIT_ICON_SIZE := 512
+APPKIT_ICON_SOURCE := packaging/macos/Shrimply.icon
+APPKIT_ICON_DIR := $(CARGO_TARGET_DIR)/macos-icon
+APPKIT_APP := $(CARGO_TARGET_DIR)/debug/Shrimply.app
 APPKIT_DEPLOYMENT_TARGET ?= 15.0
 RSVG_CONVERT ?= rsvg-convert
 LIP_SYNC_MODEL := $(CARGO_TARGET_DIR)/release/res/lip-sync/pocketsphinx-ci.model
@@ -188,15 +188,24 @@ dev: native-deps cuda-artifacts
 
 APPKIT_BUILD_ENV = RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@18)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@18)/lib"
 
-.PHONY: appkit-build appkit-release appkit-check appkit-lint appkit-components-check appkit-components-showcase
-$(APPKIT_ICON): $(APPKIT_ICON_SOURCE)
-	$(RSVG_CONVERT) --width $(APPKIT_ICON_SIZE) --height $(APPKIT_ICON_SIZE) $< --output $@
+.PHONY: appkit-icon appkit-build appkit-release appkit-check appkit-lint appkit-components-check appkit-components-showcase
+appkit-icon:
+	mkdir -p "$(APPKIT_ICON_DIR)"
+	xcrun actool "$(APPKIT_ICON_SOURCE)" --compile "$(APPKIT_ICON_DIR)" \
+		--app-icon Shrimply --platform macosx --target-device mac \
+		--minimum-deployment-target $(APPKIT_DEPLOYMENT_TARGET) \
+		--output-partial-info-plist "$(APPKIT_ICON_DIR)/Info.plist" \
+		--output-format human-readable-text --warnings --notices
 
-appkit-build: $(APPKIT_ICON)
+appkit-build: appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
+	mkdir -p "$(APPKIT_APP)/Contents/MacOS" "$(APPKIT_APP)/Contents/Resources"
+	cp $(CARGO_TARGET_DIR)/debug/$(APPKIT_BIN_NAME) "$(APPKIT_APP)/Contents/MacOS/Shrimply"
+	cp packaging/macos/Info.plist "$(APPKIT_APP)/Contents/Info.plist"
+	cp "$(APPKIT_ICON_DIR)/Assets.car" "$(APPKIT_ICON_DIR)/Shrimply.icns" "$(APPKIT_APP)/Contents/Resources/"
 
-appkit-release: $(APPKIT_ICON)
+appkit-release: appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "AppKit release requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) RUSTFLAGS="" CARGO_TERM_COLOR=always MACOSX_DEPLOYMENT_TARGET=$(APPKIT_DEPLOYMENT_TARGET) $(CARGO) build --release -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
 
@@ -218,7 +227,7 @@ appkit-components-showcase:
 	$(APPKIT_BUILD_ENV) $(CARGO) run -p $(APPKIT_COMPONENTS_DEMO_PACKAGE)
 
 dev-mac: appkit-build
-	RUST_LOG=$(RUST_LOG) target/debug/$(APPKIT_BIN_NAME)
+	RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/Shrimply"
 
 qt-build: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) -p $(MCP_PACKAGE) --bins

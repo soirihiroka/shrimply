@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 128 128">
+  <defs>
+    <path id="shrimp" d="M12 18H78C99 18 116 37 116 60C116 83 100 102 80 102C91 102 99 92 99 81C99 69 91 61 80 61H48C28 61 12 42 12 18Z M12 77L80 102H34C21 102 12 92 12 77Z M48 77H59C71 77 80 88 80 102Z" />
+    <linearGradient id="shell" gradientUnits="userSpaceOnUse" x1="22" y1="18" x2="91" y2="102">
+      <stop stop-color="#ffb16b" />
+      <stop offset=".44" stop-color="#ff8069" />
+      <stop offset="1" stop-color="#fb4b96" />
+    </linearGradient>
+  </defs>
+  <g transform="translate(13.3 16.4) scale(.8)">
+    <use href="#shrimp" fill="url(#shell)" />
+  </g>
+</svg>

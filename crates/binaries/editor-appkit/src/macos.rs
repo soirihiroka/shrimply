@@ -859,14 +859,6 @@ pub fn run(project: Option<&Path>) -> Result<bool, ()> {
     objc2_foundation::NSProcessInfo::processInfo().setProcessName(ns_string!("Shrimply"));
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-    let icon = objc2_app_kit::NSImage::initWithData(
-        objc2_app_kit::NSImage::alloc(),
-        &objc2_foundation::NSData::with_bytes(include_bytes!(
-            "../../../../assets/icons/dev.shrimply.Shrimply.png"
-        )),
-    )
-    .expect("the embedded Shrimply icon must be valid");
-    unsafe { app.setApplicationIconImage(Some(&icon)) };
     NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
     let chosen;
     let path = if let Some(path) = project {

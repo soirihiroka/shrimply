@@ -14,7 +14,7 @@ use objc2_app_kit::{
     NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSData, NSNotification, NSObject, NSObjectProtocol, NSPoint,
+    MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint,
     NSProcessInfo, NSRect, NSSize, NSString, NSURL, ns_string,
 };
 use shrimply_cross_ui_core::launcher;
@@ -563,14 +563,6 @@ pub fn run() {
     NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-    let icon = NSImage::initWithData(
-        NSImage::alloc(),
-        &NSData::with_bytes(include_bytes!(
-            "../../../../assets/icons/dev.shrimply.Shrimply.png"
-        )),
-    )
-    .expect("the embedded Shrimply icon must be valid");
-    unsafe { app.setApplicationIconImage(Some(&icon)) };
     let delegate = Delegate::new(mtm);
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     app.run();
