@@ -237,8 +237,8 @@ pub fn show_preferences_dialog(
         .build();
     dialog.add(&appearance_page);
     dialog.add(&performance_page);
-    dialog.add(&trust_page());
     dialog.add(&server::page(preferences.clone(), &blender_group));
+    dialog.add(&security_page());
 
     let font_preferences = preferences.clone();
     caption_font_size.connect_value_notify(move |row| {
@@ -410,9 +410,9 @@ pub fn show_preferences_dialog(
     dialog.present(Some(window.upcast_ref::<gtk::Widget>()));
 }
 
-fn trust_page() -> adw::PreferencesPage {
+fn security_page() -> adw::PreferencesPage {
     let page = adw::PreferencesPage::builder()
-        .title("Trust")
+        .title(tr!("Security").as_ref())
         .icon_name("security-high-symbolic")
         .build();
     let group = adw::PreferencesGroup::builder()

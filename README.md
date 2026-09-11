@@ -25,7 +25,6 @@ Shrimply is currently pre-alpha software, which means you should expect:
 - Random performance regression
 - Irreversible project file breakage
 - Random crashes and resource leaks
-- No security (Manim etc will allow for arbitrary code execution without validation)
 
 For more information about Shrimply's features and workflows, visit the
 [documentation website](https://shrimply.pages.dev). See

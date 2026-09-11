@@ -156,6 +156,13 @@ ApplicationWindow {
                     highlighted: root.currentPage === 2
                     onClicked: root.currentPage = 2
                 }
+                ItemDelegate {
+                    Layout.fillWidth: true
+                    text: backend.translate("Security")
+                    icon.name: "security-high-symbolic"
+                    highlighted: root.currentPage === 3
+                    onClicked: root.currentPage = 3
+                }
                 Item { Layout.fillHeight: true }
             }
         }
@@ -361,24 +368,6 @@ ApplicationWindow {
                         width: servicesScroll.availableWidth
                         spacing: 16
                         GroupBox {
-                            title: backend.translate("Trusted executable sources")
-                            Layout.fillWidth: true
-                            ColumnLayout {
-                                anchors.fill: parent
-                                Label { text: backend.translate("Removing trust stops affected workers. Folder entries include subfolders."); wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                                Repeater {
-                                    model: root.trustedLocationCount
-                                    RowLayout {
-                                        required property int index
-                                        Layout.fillWidth: true
-                                        Label { text: backend.trustedLocation(index); textFormat: Text.PlainText; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
-                                        Button { text: backend.translate("Remove"); onClicked: { const count = backend.revokeTrust(index); root.trustedLocationCount = 0; root.trustedLocationCount = count } }
-                                    }
-                                }
-                                Label { visible: root.trustedLocationCount === 0; text: backend.translate("No trusted locations") }
-                            }
-                        }
-                        GroupBox {
                             title: backend.translate("Blender")
                             Layout.fillWidth: true
                             RowLayout {
@@ -487,6 +476,36 @@ ApplicationWindow {
                                 Label { id: serverWorkers; Layout.fillWidth: true; wrapMode: Text.Wrap }
                                 Label { text: backend.translate("Available") }
                                 Label { id: serverFeatures; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                            }
+                        }
+                        Item { Layout.fillHeight: true }
+                    }
+                }
+
+                ScrollView {
+                    id: securityScroll
+                    clip: true
+                    padding: 18
+                    contentWidth: availableWidth
+                    ColumnLayout {
+                        width: securityScroll.availableWidth
+                        spacing: 16
+                        GroupBox {
+                            title: backend.translate("Trusted executable sources")
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                anchors.fill: parent
+                                Label { text: backend.translate("Removing trust stops affected workers. Folder entries include subfolders."); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                Repeater {
+                                    model: root.trustedLocationCount
+                                    RowLayout {
+                                        required property int index
+                                        Layout.fillWidth: true
+                                        Label { text: backend.trustedLocation(index); textFormat: Text.PlainText; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+                                        Button { text: backend.translate("Remove"); onClicked: { const count = backend.revokeTrust(index); root.trustedLocationCount = 0; root.trustedLocationCount = count } }
+                                    }
+                                }
+                                Label { visible: root.trustedLocationCount === 0; text: backend.translate("No trusted locations") }
                             }
                         }
                         Item { Layout.fillHeight: true }
