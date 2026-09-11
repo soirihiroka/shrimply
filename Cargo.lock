@@ -5542,6 +5542,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shrimply-math-core",
+ "shrimply-trust-core",
  "tempfile",
 ]
 
@@ -5677,6 +5678,7 @@ dependencies = [
  "shrimply-project-types",
  "shrimply-resource-pipeline",
  "shrimply-surface-gl-skia",
+ "shrimply-trust-core",
  "skia-safe",
  "sourceview5",
  "strum",
@@ -5758,6 +5760,7 @@ dependencies = [
  "shrimply-property-transfer",
  "shrimply-recent-projects",
  "shrimply-timeline-edit",
+ "shrimply-trust-core",
  "tracing",
 ]
 
@@ -5850,6 +5853,7 @@ dependencies = [
  "shrimply-project-evaluation",
  "shrimply-surface-metal-skia",
  "shrimply-timeline-skia",
+ "shrimply-trust-core",
  "shrimply-tts",
  "shrimply-visual-core",
  "skia-safe",
@@ -5898,6 +5902,7 @@ dependencies = [
  "shrimply-timeline-edit",
  "shrimply-timeline-gtk",
  "shrimply-transcription",
+ "shrimply-trust-core",
  "shrimply-tts",
  "shrimply-visual-cuda",
  "shrimply-visual-modifiers",
@@ -5928,6 +5933,7 @@ dependencies = [
  "shrimply-process-reporting",
  "shrimply-project-document",
  "shrimply-recent-projects",
+ "shrimply-trust-core",
  "tracing",
 ]
 
@@ -6179,6 +6185,7 @@ dependencies = [
  "shrimply-shape-3d",
  "shrimply-text-3d",
  "shrimply-timeline-edit",
+ "shrimply-trust-core",
  "shrimply-tts",
  "shrimply-visual-core",
  "shrimply-visual-cuda",
@@ -6434,6 +6441,7 @@ dependencies = [
  "shrimply-manim-ir",
  "shrimply-math-core",
  "shrimply-project-document",
+ "shrimply-trust-core",
  "tracing",
 ]
 
@@ -6793,6 +6801,7 @@ dependencies = [
  "shrimply-components-gtk",
  "shrimply-inspector-gtk",
  "shrimply-preferences-core",
+ "shrimply-trust-core",
 ]
 
 [[package]]
@@ -7040,6 +7049,7 @@ dependencies = [
  "shrimply-property-model",
  "shrimply-scene-3d",
  "shrimply-transform-3d",
+ "shrimply-trust-core",
  "shrimply-tts",
  "shrimply-video-generation",
  "shrimply-visual-modifiers",
@@ -7410,6 +7420,7 @@ dependencies = [
  "shrimply-timeline-edit",
  "shrimply-timeline-snap",
  "shrimply-transcription",
+ "shrimply-trust-core",
  "shrimply-tts",
  "shrimply-visual-modifiers",
  "skia-safe",
@@ -7460,6 +7471,15 @@ dependencies = [
  "serde",
  "strum",
  "uuid",
+]
+
+[[package]]
+name = "shrimply-trust-core"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rusqlite",
+ "shrimply-path-core",
 ]
 
 [[package]]

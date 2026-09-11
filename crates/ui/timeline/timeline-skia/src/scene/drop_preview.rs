@@ -109,9 +109,11 @@ impl Scene {
             let project = self.project.borrow();
             let duration = preferences::snapshot(&self.preferences).default_visual_duration;
             self.drop_preview = Some(DropPreview {
-                inspection: (import::file_kind(&path) != Some(import::FileKind::Python)).then(
-                    || import::request_inspection(path.clone(), project.canvas_size, duration),
-                ),
+                inspection: (!matches!(
+                    import::file_kind(&path),
+                    Some(import::FileKind::Python | import::FileKind::Blender)
+                ))
+                .then(|| import::request_inspection(path.clone(), project.canvas_size, duration)),
                 path,
                 point,
                 info: None,

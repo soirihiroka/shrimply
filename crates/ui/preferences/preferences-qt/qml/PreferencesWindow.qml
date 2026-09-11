@@ -9,6 +9,7 @@ ApplicationWindow {
 
     required property var backend
     required property var owner
+    property int trustedLocationCount: 0
     property bool loading: false
     property int currentPage: 0
     property bool blenderBusy: false
@@ -79,6 +80,7 @@ ApplicationWindow {
         return true
     }
     function openPreferences() {
+        trustedLocationCount = backend.refreshTrustedLocations()
         loading = true
         configure(captionSize, "caption-font-size")
         captionColor.text = backend.preferenceValue("caption-background-color")
@@ -358,6 +360,24 @@ ApplicationWindow {
                     ColumnLayout {
                         width: servicesScroll.availableWidth
                         spacing: 16
+                        GroupBox {
+                            title: backend.translate("Trusted executable sources")
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                anchors.fill: parent
+                                Label { text: backend.translate("Removing trust stops affected workers. Folder entries include subfolders."); wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                                Repeater {
+                                    model: root.trustedLocationCount
+                                    RowLayout {
+                                        required property int index
+                                        Layout.fillWidth: true
+                                        Label { text: backend.trustedLocation(index); textFormat: Text.PlainText; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+                                        Button { text: backend.translate("Remove"); onClicked: { const count = backend.revokeTrust(index); root.trustedLocationCount = 0; root.trustedLocationCount = count } }
+                                    }
+                                }
+                                Label { visible: root.trustedLocationCount === 0; text: backend.translate("No trusted locations") }
+                            }
+                        }
                         GroupBox {
                             title: backend.translate("Blender")
                             Layout.fillWidth: true

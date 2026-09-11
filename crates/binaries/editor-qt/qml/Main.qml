@@ -61,6 +61,13 @@ ApplicationWindow {
     Connections {
         target: backend
 
+        function onRequestTrust(explanation, details, files, folders) {
+            trustDialog.explanation = explanation
+            trustDialog.details = details
+            trustDialog.fileCount = files
+            trustDialog.folderCount = folders
+            trustDialog.open()
+        }
         function onRequestKdenlive() { kdenliveDialog.open() }
         function onRequestOtio() { otioDialog.open() }
         function onRequestRepair() { repairDialog.open() }
@@ -95,6 +102,34 @@ ApplicationWindow {
             audioErrorDialog.open()
         }
         function onCanceled() { Qt.quit() }
+    }
+
+    Dialog {
+        id: trustDialog
+        property string explanation
+        property string details
+        property int fileCount
+        property int folderCount
+        title: qsTr("Trust %1 executable files?").arg(fileCount)
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(640, window.width - 40)
+        closePolicy: Popup.NoAutoClose
+        contentItem: ColumnLayout {
+            Label { text: trustDialog.explanation; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            CheckBox { id: trustDetails; text: qsTr("Show files and folders") }
+            ScrollView {
+                visible: trustDetails.checked
+                Layout.fillWidth: true
+                Layout.preferredHeight: 220
+                TextArea { text: trustDialog.details; readOnly: true; wrapMode: Text.Wrap; textFormat: TextEdit.PlainText }
+            }
+        }
+        footer: DialogButtonBox {
+            Button { text: qsTr("Cancel"); DialogButtonBox.buttonRole: DialogButtonBox.RejectRole; onClicked: { trustDialog.close(); backend.confirmTrust(0) } }
+            Button { text: qsTr("Trust %1 files").arg(trustDialog.fileCount); onClicked: { trustDialog.close(); backend.confirmTrust(1) } }
+            Button { text: qsTr("Trust %1 folders").arg(trustDialog.folderCount); onClicked: { trustDialog.close(); backend.confirmTrust(2) } }
+        }
     }
 
     menuBar: MenuBar {

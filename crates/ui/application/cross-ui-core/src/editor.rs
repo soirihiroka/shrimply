@@ -23,6 +23,7 @@ pub enum ImportKind {
 
 #[derive(Debug)]
 pub enum LoadEvent {
+    ConfirmTrust(shrimply_trust_core::Review),
     ConfirmKdenlive,
     ChooseOtioSettings,
     Progress(&'static str),
@@ -382,6 +383,10 @@ enum Pending {
 
 enum State {
     Idle,
+    WaitingForTrust {
+        prepared: project::PreparedProject,
+        review: shrimply_trust_core::Review,
+    },
     WaitingForKdenlive,
     WaitingForOtioSettings,
     Working(Receiver<Pending>),
@@ -431,6 +436,24 @@ impl ProjectLoader {
             self.start_native_load();
             LoadEvent::Progress(PROJECT_READING)
         }
+    }
+
+    pub fn confirm_trust(&mut self, kind: Option<shrimply_trust_core::Kind>) -> LoadEvent {
+        let State::WaitingForTrust { prepared, review } =
+            std::mem::replace(&mut self.state, State::Finished)
+        else {
+            panic!("trust response without a pending confirmation");
+        };
+        let Some(kind) = kind else {
+            return LoadEvent::Canceled;
+        };
+        if let Err(body) = review.approve(kind) {
+            return LoadEvent::Error {
+                heading: "Could not save trust",
+                body,
+            };
+        }
+        self.finish_native_load(Ok(ProjectPreparation::Ready(prepared)))
     }
 
     pub fn confirm_kdenlive(&mut self, convert: bool) -> LoadEvent {
@@ -631,6 +654,23 @@ impl ProjectLoader {
     ) -> LoadEvent {
         match result {
             Ok(ProjectPreparation::Ready(prepared)) => {
+                let review = match prepared.trust_review() {
+                    Ok(review) => review,
+                    Err(body) => {
+                        self.state = State::Finished;
+                        return LoadEvent::Error {
+                            heading: "Could not check source trust",
+                            body,
+                        };
+                    }
+                };
+                if !review.files.is_empty() {
+                    self.state = State::WaitingForTrust {
+                        prepared,
+                        review: review.clone(),
+                    };
+                    return LoadEvent::ConfirmTrust(review);
+                }
                 let path = self.path.clone();
                 let project = project::activate_project(prepared);
                 self.state = State::Finished;

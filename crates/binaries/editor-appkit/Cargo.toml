@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+shrimply-trust-core.workspace = true
 shrimply-caption-export-core.workspace = true
 block2.workspace = true
 tempfile.workspace = true

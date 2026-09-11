@@ -29,8 +29,27 @@ thread_local! {
 }
 
 pub struct PreparedProject {
-    project: Project,
+    project: Option<Project>,
     path: PathBuf,
+}
+
+impl PreparedProject {
+    pub fn trust_review(&self) -> Result<shrimply_trust_core::Review, String> {
+        shrimply_trust_core::Review::new(
+            self.project
+                .as_ref()
+                .expect("prepared project exists")
+                .executable_sources(),
+        )
+    }
+}
+
+impl Drop for PreparedProject {
+    fn drop(&mut self) {
+        if self.project.is_some() {
+            release_project_lock(&self.path);
+        }
+    }
 }
 
 pub fn prepare_project(path: &Path) -> Result<PreparedProject, ProjectLoadError> {
@@ -87,17 +106,18 @@ pub fn prepare_project_with_frame_grid_repair(
         "Prepared project"
     );
     Ok(ProjectPreparation::Ready(PreparedProject {
-        project,
+        project: Some(project),
         path: path.to_path_buf(),
     }))
 }
 
-pub fn activate_project(prepared: PreparedProject) -> Project {
+pub fn activate_project(mut prepared: PreparedProject) -> Project {
+    let project = prepared.project.take().expect("prepared project exists");
     set_active_project_path(&prepared.path);
-    memory::seed(&prepared.project, 0);
-    start_history_worker(prepared.project.clone(), prepared.path.clone());
+    memory::seed(&project, 0);
+    start_history_worker(project.clone(), prepared.path.clone());
     tracing::info!(path = %prepared.path.display(), "Activated project");
-    prepared.project
+    project
 }
 
 pub fn commit_edit(project: &Project, message: &str) -> bool {

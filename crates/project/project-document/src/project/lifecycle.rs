@@ -1,4 +1,5 @@
 use super::*;
+use std::path::PathBuf;
 
 pub enum ProjectValidationOutcome {
     Valid(Project),
@@ -600,6 +601,25 @@ impl Project {
         self.first_video_item()
             .map(|item| &item.file)
             .or_else(|| self.first_audio_item().map(|item| &item.file))
+    }
+
+    pub fn executable_sources(&self) -> Vec<PathBuf> {
+        self.video_tracks
+            .iter()
+            .chain(
+                self.folded_sequences
+                    .iter()
+                    .flat_map(|sequence| &sequence.video_tracks),
+            )
+            .flat_map(|track| &track.items)
+            .filter(|item| {
+                matches!(
+                    item.content,
+                    VideoItemContent::Manim(_) | VideoItemContent::Blender(_)
+                )
+            })
+            .map(|item| item.file.path().to_path_buf())
+            .collect()
     }
 
     pub fn assets(&self) -> Vec<&Asset> {

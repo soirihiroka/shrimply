@@ -8,6 +8,7 @@ name = "shrimply-editor-qt"
 path = "src/main.rs"
 
 [dependencies]
+shrimply-trust-core.workspace = true
 cxx.workspace = true
 cxx-qt.workspace = true
 cxx-qt-lib = { workspace = true, features = ["qt_full"] }

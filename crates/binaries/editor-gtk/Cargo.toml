@@ -9,6 +9,7 @@ name = "shrimply-editor"
 path = "src/main.rs"
 
 [dependencies]
+shrimply-trust-core.workspace = true
 glib = { workspace = true, features = ["log"] }
 adw.workspace = true
 async-channel.workspace = true

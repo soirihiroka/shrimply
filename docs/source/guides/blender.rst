@@ -17,3 +17,8 @@ After selecting Blender, import a ``.blend`` file onto a video track with
 :menuselection:`Add --> Import Media…`, or drag it onto the timeline. Select the
 item to choose its scene, view layer, camera, and preview settings in the
 inspector.
+
+Blender sources require the same :doc:`source trust approval <manim>` as Manim
+scripts, including before metadata inspection. Shrimply enables Blender's script
+auto-execution only after the source has been trusted. You can trust individual
+files or their containing folders and remove approvals in **Preferences**.

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-trust-core.workspace = true
 shrimply-surface-gl-skia = { workspace = true }
 async-channel.workspace = true
 hashbrown.workspace = true

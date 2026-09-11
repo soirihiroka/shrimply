@@ -148,6 +148,26 @@ impl Editor {
         };
         match result {
             Ok(prepared) => {
+                loop {
+                    let review = match prepared.trust_review() {
+                        Ok(review) => review,
+                        Err(error) => {
+                            self.fail_startup(&error);
+                            return;
+                        }
+                    };
+                    if review.files.is_empty() {
+                        break;
+                    }
+                    let Some(kind) = trust::confirm(&review, self.mtm()) else {
+                        self.stop_loading(Ok(false));
+                        return;
+                    };
+                    if let Err(error) = review.approve(kind) {
+                        self.fail_startup(&error);
+                        return;
+                    }
+                }
                 let session = match EditorSession::new(
                     shrimply_project_document::project::activate_project(prepared),
                 ) {

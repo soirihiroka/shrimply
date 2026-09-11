@@ -444,6 +444,9 @@ impl InspectorController {
         path: &str,
         text: &str,
     ) -> Result<(), String> {
+        if let Some(result) = self.relink_executable_source(target, path, text) {
+            return result;
+        }
         if path == "/name" && matches!(target, InspectorTarget::Project) {
             self.set_project_name(text);
             return Ok(());

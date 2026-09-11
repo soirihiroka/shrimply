@@ -1,10 +1,11 @@
 use hashbrown::HashMap;
+use shrimply_trust_core::Child;
 use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -252,8 +253,10 @@ impl WorkerHandle {
         worker_socket: &Path,
         source: &Path,
     ) -> Result<(Self, bool), String> {
+        let source = shrimply_trust_core::require(source)?;
+        let source = source.as_path();
         let (mut command, environment_ready) = python_command("ir_worker")?;
-        let child = command
+        command
             .arg("--socket")
             .arg(worker_socket)
             .arg("--source")
@@ -269,8 +272,8 @@ impl WorkerHandle {
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
-            .process_group(0)
-            .spawn()
+            .process_group(0);
+        let child = Child::spawn(&mut command, Some(source))
             .map_err(|error| format!("start one-shot Manim compiler with uv: {error}"))?;
         let id = child.id();
         tracing::info!(
@@ -309,19 +312,7 @@ impl WorkerHandle {
     fn stop(&mut self) {
         if self.active {
             let id = self.child.id();
-            let process_group = i32::try_from(id).expect("Manim compiler PID exceeds i32");
-            let killed = unsafe { libc::kill(-process_group, libc::SIGKILL) };
-            let error = std::io::Error::last_os_error();
-            if killed != 0 && error.raw_os_error() != Some(libc::ESRCH) {
-                tracing::error!(
-                    worker_id = id,
-                    source = %self.description.source.display(),
-                    scene = %self.description.scene,
-                    %error,
-                    "could not stop Manim compiler process group",
-                );
-                std::process::abort();
-            }
+            self.child.terminate();
             let result = self.child.wait();
             self.active = false;
             match result {
@@ -445,6 +436,7 @@ pub fn compile(
     cancelled: &AtomicBool,
     mut on_progress: impl FnMut(Progress),
 ) -> Result<Arc<CompiledAnimation>, String> {
+    shrimply_trust_core::require(settings.source.path())?;
     if settings.width == 0 || settings.height == 0 {
         return Err("Manim render dimensions must be positive".to_string());
     }
@@ -553,6 +545,7 @@ pub fn compile(
     }
     let final_packet_at = Instant::now();
     child.finish(cancelled)?;
+    child.child.check_trust()?;
     let worker_exit_at = Instant::now();
     let animation = builder
         .finish()

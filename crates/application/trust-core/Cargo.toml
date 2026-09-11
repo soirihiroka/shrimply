@@ -1,0 +1,10 @@
+[package]
+name = "shrimply-trust-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libc.workspace = true
+rusqlite = { workspace = true, features = ["bundled"] }
+shrimply-path-core.workspace = true
+

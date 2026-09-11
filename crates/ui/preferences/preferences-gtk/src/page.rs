@@ -237,6 +237,7 @@ pub fn show_preferences_dialog(
         .build();
     dialog.add(&appearance_page);
     dialog.add(&performance_page);
+    dialog.add(&trust_page());
     dialog.add(&server::page(preferences.clone(), &blender_group));
 
     let font_preferences = preferences.clone();
@@ -407,4 +408,59 @@ pub fn show_preferences_dialog(
     });
 
     dialog.present(Some(window.upcast_ref::<gtk::Widget>()));
+}
+
+fn trust_page() -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::builder()
+        .title("Trust")
+        .icon_name("security-high-symbolic")
+        .build();
+    let group = adw::PreferencesGroup::builder()
+        .title("Trusted executable sources")
+        .description("Removing trust stops affected workers. Folder entries include subfolders.")
+        .build();
+    page.add(&group);
+    match shrimply_trust_core::entries() {
+        Err(error) => group.add(
+            &adw::ActionRow::builder()
+                .title("Could not read trusted locations")
+                .subtitle(&error)
+                .use_markup(false)
+                .build(),
+        ),
+        Ok(entries) => {
+            for entry in entries {
+                let row = adw::ActionRow::builder()
+                    .title(entry.path.to_string_lossy())
+                    .use_markup(false)
+                    .subtitle(match entry.kind {
+                        shrimply_trust_core::Kind::File => "File",
+                        shrimply_trust_core::Kind::Folder => "Folder (including subfolders)",
+                    })
+                    .build();
+                let remove = gtk::Button::builder()
+                    .label("Remove")
+                    .valign(gtk::Align::Center)
+                    .build();
+                row.add_suffix(&remove);
+                group.add(&row);
+                let group = group.downgrade();
+                let row = row.downgrade();
+                remove.connect_clicked(move |button| match shrimply_trust_core::remove(&entry) {
+                    Ok(()) => {
+                        if let (Some(group), Some(row)) = (group.upgrade(), row.upgrade()) {
+                            group.remove(&row);
+                        }
+                    }
+                    Err(error) => {
+                        let dialog =
+                            adw::AlertDialog::new(Some("Could not remove trust"), Some(&error));
+                        dialog.add_response("close", "Close");
+                        dialog.present(Some(button));
+                    }
+                });
+            }
+        }
+    }
+    page
 }

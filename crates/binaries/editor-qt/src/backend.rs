@@ -49,6 +49,18 @@ pub mod qobject {
         #[qinvokable]
         fn poll(self: Pin<&mut EditorBackend>);
         #[qinvokable]
+        #[cxx_name = "confirmTrust"]
+        fn confirm_trust(self: Pin<&mut EditorBackend>, choice: i32);
+        #[qinvokable]
+        #[cxx_name = "refreshTrustedLocations"]
+        fn refresh_trusted_locations(self: Pin<&mut EditorBackend>) -> i32;
+        #[qinvokable]
+        #[cxx_name = "trustedLocation"]
+        fn trusted_location(self: Pin<&mut EditorBackend>, index: i32) -> QString;
+        #[qinvokable]
+        #[cxx_name = "revokeTrust"]
+        fn revoke_trust(self: Pin<&mut EditorBackend>, index: i32) -> i32;
+        #[qinvokable]
         #[cxx_name = "confirmKdenlive"]
         fn confirm_kdenlive(self: Pin<&mut EditorBackend>, convert: bool);
         #[qinvokable]
@@ -185,6 +197,15 @@ pub mod qobject {
         fn select_preference_server_device(self: Pin<&mut EditorBackend>, index: i32);
 
         #[qsignal]
+        #[cxx_name = "requestTrust"]
+        fn request_trust(
+            self: Pin<&mut EditorBackend>,
+            explanation: QString,
+            details: QString,
+            files: i32,
+            folders: i32,
+        );
+        #[qsignal]
         #[cxx_name = "requestKdenlive"]
         fn request_kdenlive(self: Pin<&mut EditorBackend>);
         #[qsignal]
@@ -236,6 +257,10 @@ pub struct EditorBackendRust {
     frame_rate_label: QString,
     playback_speed_label: QString,
     fixed_font_family: QString,
+    trust_requests: Receiver<shrimply_trust_core::Request>,
+    pending_trust: Option<shrimply_trust_core::Request>,
+    trust_open: bool,
+    trusted_locations: Vec<shrimply_trust_core::Entry>,
     loader: Option<ProjectLoader>,
     session: Option<Pin<Box<EditorSession>>>,
     pending_lock_owner: Option<project::ProjectLockOwner>,
@@ -261,6 +286,10 @@ impl Default for EditorBackendRust {
             frame_rate_label: QString::from("--"),
             playback_speed_label: QString::from("x1"),
             fixed_font_family: qobject::fixed_font_family(),
+            trust_requests: shrimply_trust_core::interactive_requests(),
+            pending_trust: None,
+            trust_open: false,
+            trusted_locations: Vec::new(),
             loader: None,
             session: None,
             pending_lock_owner: None,
@@ -288,6 +317,17 @@ impl qobject::EditorBackend {
     }
 
     pub fn poll(mut self: Pin<&mut Self>) {
+        for error in shrimply_trust_core::poll_edits() {
+            self.as_mut().emit_error("Could not change source", &error);
+        }
+        if !self.trust_open
+            && let Ok(request) = self.trust_requests.try_recv()
+        {
+            let review = request.review.clone();
+            self.as_mut().rust_mut().get_mut().pending_trust = Some(request);
+            self.as_mut().show_trust(&review);
+        }
+
         let session_update = self
             .as_ref()
             .rust()
@@ -314,6 +354,66 @@ impl qobject::EditorBackend {
         }
         self.as_mut().poll_preference_tasks();
         self.as_mut().update_player_properties();
+    }
+
+    fn show_trust(mut self: Pin<&mut Self>, review: &shrimply_trust_core::Review) {
+        self.as_mut().rust_mut().get_mut().trust_open = true;
+        self.request_trust(
+            QString::from(shrimply_trust_core::EXPLANATION),
+            QString::from(review.details()),
+            i32::try_from(review.files.len()).expect("too many executable files"),
+            i32::try_from(review.folders.len()).expect("too many executable folders"),
+        );
+    }
+
+    pub fn confirm_trust(mut self: Pin<&mut Self>, choice: i32) {
+        let kind = match choice {
+            1 => Some(shrimply_trust_core::Kind::File),
+            2 => Some(shrimply_trust_core::Kind::Folder),
+            _ => None,
+        };
+        self.as_mut().rust_mut().get_mut().trust_open = false;
+        if let Some(request) = self.as_mut().rust_mut().get_mut().pending_trust.take() {
+            let result = kind
+                .ok_or_else(|| "Trust approval was canceled".to_string())
+                .and_then(|kind| request.review.approve(kind));
+            let _ = request.response.send(result);
+        } else {
+            let event = self.as_mut().loader_mut().confirm_trust(kind);
+            self.handle_event(event);
+        }
+    }
+
+    pub fn refresh_trusted_locations(mut self: Pin<&mut Self>) -> i32 {
+        match shrimply_trust_core::entries() {
+            Ok(entries) => self.as_mut().rust_mut().get_mut().trusted_locations = entries,
+            Err(error) => {
+                self.as_mut()
+                    .emit_error("Could not read trusted locations", &error);
+                return 0;
+            }
+        }
+        i32::try_from(self.trusted_locations.len()).expect("too many trusted locations")
+    }
+
+    pub fn trusted_location(self: Pin<&mut Self>, index: i32) -> QString {
+        let entry = &self.trusted_locations[usize::try_from(index).expect("invalid trust row")];
+        QString::from(format!(
+            "{}: {}",
+            match entry.kind {
+                shrimply_trust_core::Kind::File => "File",
+                shrimply_trust_core::Kind::Folder => "Folder (including subfolders)",
+            },
+            entry.path.display()
+        ))
+    }
+
+    pub fn revoke_trust(mut self: Pin<&mut Self>, index: i32) -> i32 {
+        let entry = &self.trusted_locations[usize::try_from(index).expect("invalid trust row")];
+        if let Err(error) = shrimply_trust_core::remove(entry) {
+            self.as_mut().emit_error("Could not remove trust", &error);
+        }
+        self.refresh_trusted_locations()
     }
 
     pub fn confirm_kdenlive(mut self: Pin<&mut Self>, convert: bool) {
@@ -802,6 +902,7 @@ impl qobject::EditorBackend {
 
     fn handle_event(mut self: Pin<&mut Self>, event: LoadEvent) {
         match event {
+            LoadEvent::ConfirmTrust(review) => self.as_mut().show_trust(&review),
             LoadEvent::ConfirmKdenlive => self.as_mut().request_kdenlive(),
             LoadEvent::ChooseOtioSettings => self.as_mut().request_otio(),
             LoadEvent::Progress(text) => self.set_loading_text(QString::from(text)),

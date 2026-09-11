@@ -1,12 +1,13 @@
 use serde::{Deserialize, Serialize};
 use shrimply_math_core::Fraction;
+use shrimply_trust_core::Child;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -165,6 +166,8 @@ pub fn probe(binary: &Path) -> Result<(), String> {
 }
 
 pub fn discover(binary: &Path, blend: &Path) -> Result<Metadata, String> {
+    let blend = shrimply_trust_core::require(blend)?;
+    let blend = blend.as_path();
     let key = DiscoveryKey::new(binary, blend);
     if let Some(metadata) = METADATA_CACHE
         .lock()
@@ -217,6 +220,8 @@ impl Session {
     }
 
     fn spawn(binary: &Path, blend: Option<&Path>) -> Result<Self, String> {
+        let blend = blend.map(shrimply_trust_core::require).transpose()?;
+        let blend = blend.as_deref();
         if !binary.is_file() {
             return Err(format!(
                 "Blender binary does not exist: {}",
@@ -247,7 +252,7 @@ impl Session {
         let mut command = Command::new(binary);
         command.arg("--factory-startup").arg("--background");
         if let Some(blend) = blend {
-            command.arg(blend);
+            command.arg("--enable-autoexec").arg(blend);
         }
         command
             .arg("--python")
@@ -263,8 +268,7 @@ impl Session {
                     .map_err(|error| format!("capture Blender stderr: {error}"))?,
             )
             .process_group(0);
-        let mut child = command
-            .spawn()
+        let mut child = Child::spawn(&mut command, blend)
             .map_err(|error| format!("start Blender worker: {error}"))?;
         let started = Instant::now();
         let socket = loop {
@@ -334,6 +338,7 @@ impl Session {
     }
 
     pub fn render(&mut self, request: RenderRequest<'_>) -> Result<RenderedFrame, String> {
+        self.child.check_trust()?;
         self.send(&WireRequest::Render {
             scene: request.scene,
             view_layer: request.view_layer,
@@ -440,10 +445,7 @@ impl Drop for Session {
 }
 
 fn terminate(child: &mut Child) {
-    unsafe {
-        libc::kill(-(child.id() as i32), libc::SIGTERM);
-    }
-    let _ = child.wait();
+    child.terminate();
 }
 
 fn worker_exit_error(

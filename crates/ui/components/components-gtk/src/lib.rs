@@ -27,3 +27,5 @@ macro_rules! tr {
         $crate::i18n::text($key)
     };
 }
+
+pub mod trust;

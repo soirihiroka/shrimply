@@ -202,6 +202,7 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     panel_toggles.append(&inspector_toggle);
     panel_toggles.append(&timeline_toggle);
     header_bar.pack_start(&panel_toggles);
+    shrimply_components_gtk::trust::handle_imports(window);
     let polling_session = session.clone();
     let polling_window = window.clone();
     window.add_tick_callback(move |_, _| {
@@ -370,6 +371,14 @@ fn handle_load_event(
     event: LoadEvent,
 ) {
     match event {
+        LoadEvent::ConfirmTrust(review) => {
+            let app = app.clone();
+            let window = window.clone();
+            shrimply_components_gtk::trust::confirm(&window.clone(), &review, move |kind| {
+                let event = loader.borrow_mut().confirm_trust(kind);
+                handle_load_event(&app, &window, loader, event);
+            });
+        }
         LoadEvent::ConfirmKdenlive => confirm_kdenlive_conversion(app, window, loader),
         LoadEvent::ChooseOtioSettings => choose_otio_settings(app, window, loader),
         LoadEvent::Progress(subtitle) => {

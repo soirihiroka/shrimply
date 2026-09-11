@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-trust-core.workspace = true
 async-channel.workspace = true
 gio.workspace = true
 glib.workspace = true

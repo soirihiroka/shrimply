@@ -10,6 +10,7 @@ mod menus;
 mod save;
 mod settings;
 mod timeline;
+mod trust;
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
@@ -61,6 +62,8 @@ struct EditorIvars {
     >,
     event_monitor: OnceCell<Retained<objc2::runtime::AnyObject>>,
     project_path: std::path::PathBuf,
+    trust_requests: std::sync::mpsc::Receiver<shrimply_trust_core::Request>,
+    trust_dialog_open: Cell<bool>,
     preparation: RefCell<Option<loading::Preparation>>,
     loading: RefCell<Option<loading::View>>,
     outcome: Cell<Result<bool, ()>>,
@@ -242,6 +245,14 @@ define_class!(
                 self.poll_project_load();
                 return;
             }
+            if !self.ivars().trust_dialog_open.get() && let Ok(request) = self.ivars().trust_requests.try_recv() {
+                self.ivars().trust_dialog_open.set(true);
+                let result = trust::confirm(&request.review, self.mtm()).ok_or_else(|| "Trust approval was canceled".to_string())
+                    .and_then(|kind| request.review.approve(kind));
+                let _ = request.response.send(result);
+                self.ivars().trust_dialog_open.set(false);
+            }
+            for error in shrimply_trust_core::poll_edits() { self.show_error(&error); }
             self.poll_blender_probe();
             self.poll_compute_server_probes();
             let session = self.ivars().session.get().expect("project loaded");
@@ -396,6 +407,11 @@ define_class!(
             if let Err(error) = settings::change_numeric(store, sender) {
                 self.show_error(error);
             }
+        }
+
+        #[unsafe(method(manageTrustedSources:))]
+        fn manage_trusted_sources(&self, _sender: &NSButton) {
+            if let Err(error) = trust::manage(self.mtm()) { self.show_error(&error); }
         }
 
         #[unsafe(method(changePreviewZoomPan:))]
@@ -891,6 +907,8 @@ pub fn run(project: Option<&Path>) -> Result<bool, ()> {
         settings_server_statuses: RefCell::new(std::collections::BTreeMap::new()),
         event_monitor: OnceCell::new(),
         project_path: path.to_path_buf(),
+        trust_requests: shrimply_trust_core::interactive_requests(),
+        trust_dialog_open: Cell::new(false),
         preparation: RefCell::new(None),
         loading: RefCell::new(None),
         outcome: Cell::new(Ok(false)),

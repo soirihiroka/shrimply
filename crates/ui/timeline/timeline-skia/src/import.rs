@@ -53,6 +53,12 @@ impl Processor<InspectionKey> for MediaInspector {
         key: InspectionKey,
         _context: &JobContext<Self::Progress>,
     ) -> Result<Self::Output, String> {
+        if matches!(
+            file_kind(&key.path),
+            Some(FileKind::Python | FileKind::Blender)
+        ) {
+            shrimply_trust_core::approve_import(vec![key.path.clone()])?;
+        }
         if let Some(info) = INSPECTION_CACHE
             .get_or_init(Mutex::default)
             .lock()
@@ -369,6 +375,7 @@ pub fn inspect(
         });
     }
     if matches!(file_kind, FileKind::Python | FileKind::Blender) {
+        shrimply_trust_core::require(path)?;
         let duration = if file_kind == FileKind::Blender {
             Time {
                 seconds: shrimply_blender_core::file_duration(path)?,

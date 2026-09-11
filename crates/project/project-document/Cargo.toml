@@ -8,6 +8,7 @@ default = ["editor"]
 editor = []
 
 [dependencies]
+shrimply-trust-core.workspace = true
 hashbrown.workspace = true
 icu_locale.workspace = true
 glam = { workspace = true, features = ["serde"] }

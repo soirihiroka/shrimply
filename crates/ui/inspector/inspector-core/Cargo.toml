@@ -8,6 +8,7 @@ default = ["cuda-backend"]
 cuda-backend = ["dep:shrimply-visual-cuda"]
 
 [dependencies]
+shrimply-trust-core.workspace = true
 async-channel.workspace = true
 ffmpeg-next.workspace = true
 hashbrown.workspace = true

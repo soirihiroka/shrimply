@@ -329,6 +329,20 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
         mtm,
     );
 
+    let trust_button = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Manage Trusted Sources…"),
+            Some(editor),
+            Some(sel!(manageTrustedSources:)),
+            mtm,
+        )
+    };
+    trust_button.setFrame(NSRect::new(
+        NSPoint::new(CONTROL_X, y - CONTROL_Y_OFFSET),
+        NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT),
+    ));
+    integrations.addSubview(&trust_button);
+
     let tabs = NSTabViewController::new(mtm);
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
     tabs.setCanPropagateSelectedChildViewControllerTitle(true);

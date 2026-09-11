@@ -287,6 +287,9 @@ impl InspectorController {
         commit_name: &str,
         commit_immediately: bool,
     ) -> Result<(), String> {
+        if let Some(result) = self.relink_executable_source(target, path, text) {
+            return result;
+        }
         if let Some(result) = self.set_manim_text_field(target, path, text, commit_name) {
             return result;
         }

@@ -52,6 +52,7 @@ members = [
     "crates/media/visual/paint/perfect-freehand",
     "crates/application/preferences-core",
     "crates/application/path-core",
+    "crates/application/trust-core",
     "crates/ui/preferences/preferences-gtk",
     "crates/ui/preferences/preferences-qt",
     "crates/media/visual/pdf",
@@ -147,6 +148,7 @@ default-members = ["crates/binaries/editor-gtk", "crates/binaries/launcher-gtk"]
 exclude = ["external/vtracer"]
 
 [workspace.dependencies]
+shrimply-trust-core = { path = "crates/application/trust-core" }
 shrimply-caption-export-core = { path = "crates/render/export/caption-export-core" }
 shrimply-gpu-vulkan = { path = "crates/gpu/vulkan/gpu-vulkan" }
 shrimply-denoise-metal = { path = "crates/gpu/denoise/denoise-metal" }
