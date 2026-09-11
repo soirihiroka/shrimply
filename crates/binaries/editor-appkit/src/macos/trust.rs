@@ -33,8 +33,8 @@ pub(super) fn confirm(review: &Review, mtm: MainThreadMarker) -> Option<Kind> {
     scroll.setDocumentView(Some(&details));
     alert.setAccessoryView(Some(&scroll));
     match alert.runModal() {
-        NSAlertSecondButtonReturn => Some(Kind::File),
-        NSAlertThirdButtonReturn => Some(Kind::Folder),
+        response if response == NSAlertSecondButtonReturn => Some(Kind::File),
+        response if response == NSAlertThirdButtonReturn => Some(Kind::Folder),
         _ => None,
     }
 }
