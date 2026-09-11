@@ -15,7 +15,7 @@ Shrimply is a simple yet powerful cross platform video editor.
 Shrimply is currently pre-alpha software, which means you should expect:
 
 - Slop
-- Unable to build for whatever reason
+- ~~Unable to build~~ (we got CI now!)
 - Undocumented footguns
 - Random performance regression
 - Irreversible project file breakage
