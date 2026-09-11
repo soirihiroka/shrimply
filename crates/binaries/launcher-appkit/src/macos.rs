@@ -14,8 +14,8 @@ use objc2_app_kit::{
     NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint,
-    NSProcessInfo, NSRect, NSSize, NSString, NSURL, ns_string,
+    MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo,
+    NSRect, NSSize, NSString, NSURL, ns_string,
 };
 use shrimply_cross_ui_core::launcher;
 use shrimply_recent_projects::{self as recent_projects, RecentProject};
