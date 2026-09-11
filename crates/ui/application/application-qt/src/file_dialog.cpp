@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QQuickStyle>
 #include <QWindow>
 
 #include "cxx-qt-lib/qcoreapplication.h"
@@ -16,6 +17,9 @@ std::unique_ptr<QGuiApplication> new_widget_application()
   auto application = std::make_unique<QApplication>(argument_data->size(),
                                                      argument_data->data());
   argument_data->setParent(application.get());
+  // Widget themes such as Kvantum are not Qt Quick Controls styles.
+  const auto quick_style = qEnvironmentVariable("QT_QUICK_CONTROLS_STYLE");
+  QQuickStyle::setStyle(quick_style.isEmpty() ? QStringLiteral("Fusion") : quick_style);
   return application;
 }
 

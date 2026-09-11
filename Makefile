@@ -149,7 +149,7 @@ desktop-icon:
 		command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -f -t "$(DATADIR)/icons/hicolor" >/dev/null || true; \
 	fi
 
-dev: desktop-icon native-deps cuda-artifacts
+dev: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) CARGO_TERM_COLOR=always $(CARGO) build -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) -p $(MCP_PACKAGE) --bins
 	@started="$$(date --iso-8601=seconds)"; \
 	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(BIN_NAME) 2>&1 \
@@ -203,7 +203,7 @@ qt-desktop-file: desktop-icon
 	sed -e 's|^Exec=.*|Exec=$(CURDIR)/target/debug/$(QT_BIN_NAME) %f|' -e 's|^TryExec=.*|TryExec=$(CURDIR)/target/debug/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	@command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true
 
-dev-qt: qt-build qt-desktop-file
+dev-qt: qt-build
 	@started="$$(date --iso-8601=seconds)"; \
 	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(QT_BIN_NAME) 2>&1 \
 		| tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' > "$(QT_DEV_LOG)"); \
@@ -225,7 +225,7 @@ docs-check:
 
 run: dev
 
-run-qt: qt-build qt-desktop-file
+run-qt: qt-build
 	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(QT_BIN_NAME)
 
 build: native-deps cuda-artifacts
