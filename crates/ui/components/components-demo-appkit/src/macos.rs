@@ -396,6 +396,10 @@ fn general_page(log: Rc<dyn Fn(String)>, mtm: MainThreadMarker) -> Retained<NSVi
                 ))
             }
         },
+        {
+            let log = log.clone();
+            move || log("color committed".to_string())
+        },
         mtm,
     );
     column_append(&general, &control_row("Color", color.view(), mtm));
