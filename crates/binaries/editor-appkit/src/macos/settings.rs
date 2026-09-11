@@ -29,7 +29,7 @@ const SERVER_BUTTON_WIDTH: f64 = 90.0;
 const SERVER_BUTTON_GAP: f64 = 8.0;
 const FEATURES_HEIGHT: f64 = 44.0;
 const INTEGRATIONS_HEIGHT: f64 = 720.0;
-const APPEARANCE_HEIGHT: f64 = 620.0;
+const APPEARANCE_HEIGHT: f64 = 620.0 + ROW_HEIGHT;
 const STEPPER_WIDTH: f64 = 20.0;
 const STEPPER_GAP: f64 = 8.0;
 const STEPPER_TAG_OFFSET: isize = 100;
@@ -198,6 +198,28 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
         mtm,
     );
     section(&appearance, "Preview", &mut y, mtm);
+    let zoom_pan = unsafe {
+        NSButton::checkboxWithTitle_target_action(
+            ns_string!("Preview zoom and pan"),
+            Some(editor),
+            Some(sel!(changePreviewZoomPan:)),
+            mtm,
+        )
+    };
+    zoom_pan.setFrame(NSRect::new(
+        NSPoint::new(CONTENT_MARGIN, y - CONTROL_Y_OFFSET),
+        NSSize::new(PANE_WIDTH - CONTENT_MARGIN * 2.0, CONTROL_HEIGHT),
+    ));
+    zoom_pan.setState(if snapshot.preview_zoom_pan_enabled {
+        objc2_app_kit::NSControlStateValueOn
+    } else {
+        objc2_app_kit::NSControlStateValueOff
+    });
+    zoom_pan.setToolTip(Some(ns_string!(
+        "Scroll to zoom; middle-drag to pan; middle-click to fit."
+    )));
+    appearance.addSubview(&zoom_pan);
+    y -= ROW_HEIGHT;
     numeric_row(
         &appearance,
         editor,

@@ -31,6 +31,7 @@ const KEY_PREVIEW_PADDING_PX: &str = "preview_padding_px";
 const KEY_PREVIEW_SHADOW_SIZE_PX: &str = "preview_shadow_size_px";
 const KEY_PREVIEW_UPSAMPLE_METHOD: &str = "preview_upsample_method";
 const KEY_PREVIEW_DOWNSAMPLE_METHOD: &str = "preview_downsample_method";
+const KEY_PREVIEW_ZOOM_PAN_ENABLED: &str = "preview_zoom_pan_enabled";
 const KEY_PREVIEW_GUIDES_VISIBLE: &str = "preview_guides_visible";
 const KEY_TEMPORAL_DECODER_POOL_SIZE: &str = "temporal_decoder_pool_size";
 const KEY_GPU_HOST_MEMORY_GIB: &str = "gpu_host_memory_gib";
@@ -137,6 +138,7 @@ pub struct PreferencesSnapshot {
     pub preview_shadow_size_px: u32,
     pub preview_upsample_method: PreviewUpsampleMethod,
     pub preview_downsample_method: PreviewDownsampleMethod,
+    pub preview_zoom_pan_enabled: bool,
     pub preview_guides_visible: bool,
     pub temporal_decoder_pool_size: u32,
     pub gpu_host_memory_gib: Fraction,
@@ -169,6 +171,7 @@ pub struct PreferencesStore {
     preview_shadow_size_px: u32,
     preview_upsample_method: PreviewUpsampleMethod,
     preview_downsample_method: PreviewDownsampleMethod,
+    preview_zoom_pan_enabled: bool,
     preview_guides_visible: bool,
     temporal_decoder_pool_size: u32,
     gpu_host_memory_gib: Fraction,
@@ -350,6 +353,11 @@ impl PreferencesStore {
                     ))
                     .expect("validated preview downsample method preference")
                 });
+        let preview_zoom_pan_enabled = conn.as_ref().is_none_or(|conn| {
+            read_string_or_default(conn, KEY_PREVIEW_ZOOM_PAN_ENABLED, "true", |value| {
+                matches!(value, "true" | "false")
+            }) == "true"
+        });
         let preview_guides_visible = conn.as_ref().is_some_and(|conn| {
             read_string_or_default(
                 conn,
@@ -413,6 +421,7 @@ impl PreferencesStore {
             preview_shadow_size_px,
             preview_upsample_method,
             preview_downsample_method,
+            preview_zoom_pan_enabled,
             preview_guides_visible,
             temporal_decoder_pool_size,
             gpu_host_memory_gib,
@@ -1009,6 +1018,7 @@ fn snapshot_from_state(state: &PreferencesStore) -> PreferencesSnapshot {
         preview_shadow_size_px: state.preview_shadow_size_px,
         preview_upsample_method: state.preview_upsample_method,
         preview_downsample_method: state.preview_downsample_method,
+        preview_zoom_pan_enabled: state.preview_zoom_pan_enabled,
         preview_guides_visible: state.preview_guides_visible,
         temporal_decoder_pool_size: state.temporal_decoder_pool_size,
         gpu_host_memory_gib: state.gpu_host_memory_gib,
@@ -1172,4 +1182,25 @@ fn write_string(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<u
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP",
         params![key, value],
     )
+}
+pub fn set_preview_zoom_pan_enabled(store: &SharedPreferences, visible: bool) {
+    let mut state = store.borrow_mut();
+    if state.preview_zoom_pan_enabled == visible {
+        return;
+    }
+
+    let previous = state.preview_zoom_pan_enabled;
+    state.preview_zoom_pan_enabled = visible;
+    if let Some(conn) = &state.conn
+        && let Err(error) = write_string(
+            conn,
+            KEY_PREVIEW_ZOOM_PAN_ENABLED,
+            if visible { "true" } else { "false" },
+        )
+    {
+        tracing::warn!("Could not write preview zoom and pan preference: {error}");
+        state.preview_zoom_pan_enabled = previous;
+        return;
+    }
+    notify_listeners(state);
 }

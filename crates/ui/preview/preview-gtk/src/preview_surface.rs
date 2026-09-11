@@ -77,6 +77,8 @@ struct VideoSurfaceState {
     preview_upsample_method: preferences_store::PreviewUpsampleMethod,
     preview_downsample_method: preferences_store::PreviewDownsampleMethod,
     fullscreen: bool,
+    zoom_pan_enabled: bool,
+    navigation: shrimply_preview_runtime_cuda::navigation::Navigation,
 }
 
 struct PreviewControllerState {
@@ -144,6 +146,8 @@ impl PreviewController {
             preview_upsample_method: preference.preview_upsample_method,
             preview_downsample_method: preference.preview_downsample_method,
             fullscreen: false,
+            zoom_pan_enabled: preference.preview_zoom_pan_enabled,
+            navigation: Default::default(),
         }));
         let controller = Rc::new(RefCell::new(PreviewControllerState {
             core: Default::default(),
@@ -173,9 +177,16 @@ impl PreviewController {
         let unrealize_state = state.clone();
         area.connect_unrealize(move |area| {
             area.make_current();
-            if let Some(mut renderer) = unrealize_state.borrow_mut().renderer.take() {
+            let mut state = unrealize_state.borrow_mut();
+            state.navigation.cancel();
+            if let Some(mut renderer) = state.renderer.take() {
                 renderer.destroy();
             }
+        });
+        let unmap_state = state.clone();
+        area.connect_unmap(move |area| {
+            unmap_state.borrow_mut().navigation.cancel();
+            area.set_cursor_from_name(None);
         });
         let selection_area = area.clone();
         let selection_project = project.clone();
@@ -214,6 +225,11 @@ impl PreviewController {
         let preference_controller = controller.clone();
         preferences_store::connect(&preferences, move |preference| {
             let mut state = preference_state.borrow_mut();
+            state.zoom_pan_enabled = preference.preview_zoom_pan_enabled;
+            if !state.zoom_pan_enabled {
+                state.navigation.reset();
+                preference_area.set_cursor_from_name(None);
+            }
             state.caption_font_size = preference.caption_font_size;
             state.caption_background_color = preference.caption_background_color;
             state.preview_padding_px = preference.preview_padding_px;
@@ -451,6 +467,10 @@ fn attach_render(
         }
         let viewport = surface_viewport(area, &project, &state);
         let content_rect = viewport.content_rect;
+        let clip_rect = state.navigation.clip_rect(
+            geometry::surface_bounds(area, &state),
+            glam::vec2(area.width() as f32, area.height() as f32),
+        );
         let background_color = shrimply_preview_runtime_cuda::background_color(
             geometry::theme_window_color(area),
             state.fullscreen,
@@ -507,6 +527,7 @@ fn attach_render(
                 frame.as_ref(),
                 Appearance {
                     content_rect,
+                    clip_rect,
                     shadow_size_px,
                     background_color,
                     upsample_method,
@@ -541,7 +562,14 @@ fn attach_render(
                             selection_color,
                         );
                     }
-                    core.draw(timeline_painter.canvas(), expression_cache);
+                    let canvas = timeline_painter.canvas();
+                    canvas.save();
+                    canvas.clip_rect(skia_safe::Rect::from(clip_rect), None, false);
+                    if let Some(retiring) = core.retiring_provider.as_mut() {
+                        retiring.context.viewport = viewport;
+                    }
+                    core.draw(canvas, expression_cache);
+                    canvas.restore();
                 },
             );
         if let Err(error) = result {
@@ -598,6 +626,43 @@ fn ensure_provider(surface: &ProviderDispatch<'_>) -> bool {
 }
 
 fn dispatch_pointer(surface: ProviderDispatch<'_>, event: PointerEvent<'_>) -> PreviewResponse {
+    let navigation_response = {
+        let mut state = surface.state.borrow_mut();
+        let project = surface.project.borrow();
+        let fit = geometry::fit_viewport(surface.area, &project, &state);
+        let bounds = geometry::surface_bounds(surface.area, &state);
+        let enabled = state.zoom_pan_enabled;
+        let busy = surface.controller.borrow().core.sequence != PointerSequence::Idle;
+        state.navigation.pointer(fit, bounds, event, enabled, busy)
+    };
+    if let Some(response) = navigation_response {
+        if !response.redraw {
+            return response;
+        }
+        surface.controller.borrow_mut().core.context_invalidated = true;
+        surface
+            .area
+            .set_cursor_from_name(if surface.state.borrow().navigation.active() {
+                Some("grabbing")
+            } else {
+                None
+            });
+        surface.area.queue_render();
+        return response;
+    }
+    if let PointerEvent::Begin(input) = event {
+        let state = surface.state.borrow();
+        if !state
+            .navigation
+            .clip_rect(
+                geometry::surface_bounds(surface.area, &state),
+                glam::vec2(surface.area.width() as f32, surface.area.height() as f32),
+            )
+            .contains(input.sample.position)
+        {
+            return PreviewResponse::IGNORED;
+        }
+    }
     if !surface.controller.borrow_mut().core.accepts_pointer(event) {
         return PreviewResponse::IGNORED;
     }
@@ -629,6 +694,17 @@ fn dispatch_pointer(surface: ProviderDispatch<'_>, event: PointerEvent<'_>) -> P
 }
 
 fn dispatch_keyboard(surface: ProviderDispatch<'_>, event: KeyboardEvent) -> PreviewResponse {
+    if surface.state.borrow().navigation.active() {
+        if event.key == Key::Escape {
+            surface.state.borrow_mut().navigation.cancel();
+            surface.area.set_cursor_from_name(None);
+            surface.area.queue_render();
+        }
+        return PreviewResponse {
+            handled: true,
+            ..PreviewResponse::IGNORED
+        };
+    }
     if !ensure_provider(&surface) {
         return PreviewResponse::IGNORED;
     }
@@ -667,7 +743,8 @@ fn cancel_provider(
 ) {
     let response = {
         let mut project = project.borrow_mut();
-        let state = state.borrow();
+        let mut state = state.borrow_mut();
+        state.navigation.cancel();
         controller
             .borrow_mut()
             .core
@@ -708,6 +785,9 @@ fn attach_input(
     let motion_guides = guide_input.clone();
     motion.connect_motion(move |source, x, y| {
         let position = GlamVec2::new(x as f32, y as f32);
+        if motion_state.borrow().navigation.active() {
+            return;
+        }
         if motion_controller.borrow().core.sequence != PointerSequence::Idle {
             if motion_state
                 .borrow_mut()
@@ -830,6 +910,14 @@ fn attach_input(
     let begin_moved = sequence_moved.clone();
     let begin_guides = guide_input.clone();
     pointer.connect_down(move |source, x, y| {
+        if begin_controller.borrow().core.sequence != PointerSequence::Idle
+            && source.current_button() == 2
+        {
+            return;
+        }
+        if begin_state.borrow().navigation.active() {
+            return;
+        }
         begin_area.grab_focus();
         let button = source.current_button();
         begin_button.set(button);
@@ -863,7 +951,7 @@ fn attach_input(
         {
             return;
         }
-        dispatch_pointer(
+        let response = dispatch_pointer(
             ProviderDispatch {
                 area: &begin_area,
                 project: &begin_project,
@@ -875,6 +963,9 @@ fn attach_input(
             },
             PointerEvent::Begin(input),
         );
+        if button == 2 && response.handled {
+            source.set_state(gtk::EventSequenceState::Claimed);
+        }
     });
     let update_area = area.clone();
     let update_project = project.clone();
@@ -887,12 +978,25 @@ fn attach_input(
     let update_origin = sequence_origin.clone();
     let update_moved = sequence_moved.clone();
     let update_guides = guide_input.clone();
-    pointer.connect_motion(move |source, x, y| {
+    let update_pointer = move |source: &gtk::GestureStylus, x: f64, y: f64| {
         let input = pointer_input(
             source,
             GlamVec2::new(x as f32, y as f32),
             update_button.get(),
         );
+        let surface = ProviderDispatch {
+            area: &update_area,
+            project: &update_project,
+            player_state: &update_player,
+            selection_state: &update_selection,
+            preview_focus: &update_focus,
+            state: &update_state,
+            controller: &update_controller,
+        };
+        if update_state.borrow().navigation.active() {
+            dispatch_pointer(surface, PointerEvent::Hover(input));
+            return;
+        }
         let mut samples = pointer_backlog(source);
         if samples.last().copied() != Some(input.sample) {
             samples.push(input.sample);
@@ -919,20 +1023,21 @@ fn attach_input(
             return;
         }
         dispatch_pointer(
-            ProviderDispatch {
-                area: &update_area,
-                project: &update_project,
-                player_state: &update_player,
-                selection_state: &update_selection,
-                preview_focus: &update_focus,
-                state: &update_state,
-                controller: &update_controller,
-            },
+            surface,
             PointerEvent::Samples {
                 input,
                 samples: &samples,
             },
         );
+    };
+    pointer.connect_motion(update_pointer.clone());
+    let proximity_state = state.clone();
+    // GTK emits middle-button motion as proximity; only primary-button motion
+    // uses the stylus motion signal. Both feed the same navigation core.
+    pointer.connect_proximity(move |source, x, y| {
+        if proximity_state.borrow().navigation.active() {
+            update_pointer(source, x, y);
+        }
     });
     let end_area = area.clone();
     let end_project = project.clone();
@@ -1067,8 +1172,33 @@ fn attach_input(
                         scroll_area.height() as f32 * 0.5,
                     )
                 },
-                |(x, y)| GlamVec2::new(x as f32, y as f32),
+                |(x, y)| {
+                    let native = scroll_area
+                        .native()
+                        .expect("preview must have a native surface");
+                    let (offset_x, offset_y) = native.surface_transform();
+                    let native_widget = native
+                        .dynamic_cast::<gtk::Widget>()
+                        .expect("native surface must be a widget");
+                    native_widget
+                        .compute_point(
+                            &scroll_area,
+                            &gtk::graphene::Point::new(
+                                (x - offset_x) as f32,
+                                (y - offset_y) as f32,
+                            ),
+                        )
+                        .map(|point| GlamVec2::new(point.x(), point.y()))
+                        .expect("preview must share its native coordinate space")
+                },
             );
+        let step = if scroll_state.borrow().zoom_pan_enabled
+            && source.unit() == gdk::ScrollUnit::Surface
+        {
+            shrimply_preview_provider_skia::math::SCROLL_PIXELS_PER_STEP as f64
+        } else {
+            1.0
+        };
         let response = dispatch_pointer(
             ProviderDispatch {
                 area: &scroll_area,
@@ -1081,7 +1211,7 @@ fn attach_input(
             },
             PointerEvent::Scroll {
                 input: pointer_input(source, position, 0),
-                delta: GlamVec2::new(dx as f32, dy as f32),
+                delta: GlamVec2::new((dx / step) as f32, (dy / step) as f32),
             },
         );
         if response.handled {

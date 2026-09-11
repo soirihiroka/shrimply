@@ -38,18 +38,12 @@ impl ToolkitPreviewRenderer {
         pixels_per_point: f32,
         background_color: Color,
         preferences: &preferences_store::PreferencesSnapshot,
-        fullscreen: bool,
+        viewport: PreviewViewport,
+        clip_rect: Rect,
         draw_overlay: impl FnOnce(&skia_safe::Canvas),
     ) -> Result<(), String> {
         let scale = pixels_per_point.max(1.0);
         let logical_surface = vec2(surface.x as f32 / scale, surface.y as f32 / scale);
-        let viewport = toolkit_guide_viewport(
-            project,
-            preferences,
-            logical_surface.x,
-            logical_surface.y,
-            fullscreen,
-        );
         let content_rect = viewport.content_rect;
         self.renderer.render(
             surface,
@@ -57,6 +51,7 @@ impl ToolkitPreviewRenderer {
             frame,
             Appearance {
                 content_rect,
+                clip_rect,
                 shadow_size_px: preferences.preview_shadow_size_px,
                 background_color,
                 upsample_method: preferences.preview_upsample_method,
@@ -85,7 +80,11 @@ impl ToolkitPreviewRenderer {
                         Color::BLUE5,
                     );
                 }
-                draw_overlay(painter.canvas());
+                let canvas = painter.canvas();
+                canvas.save();
+                canvas.clip_rect(skia_safe::Rect::from(clip_rect), None, false);
+                draw_overlay(canvas);
+                canvas.restore();
             },
         )
     }

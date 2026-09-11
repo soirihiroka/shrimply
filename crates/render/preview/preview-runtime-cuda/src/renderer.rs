@@ -12,6 +12,7 @@ use shrimply_surface_gl_skia::TimelineRenderer;
 #[derive(Clone, Copy)]
 pub struct Appearance {
     pub content_rect: Rect,
+    pub clip_rect: Rect,
     pub shadow_size_px: u32,
     pub background_color: Color,
     pub upsample_method: PreviewUpsampleMethod,
@@ -84,7 +85,10 @@ impl VideoRenderer {
         shrimply_preview_provider_skia::canvas::draw_background(
             background.canvas(),
             shrimply_preview_provider_skia::canvas::Appearance {
-                content_rect: appearance.content_rect,
+                content_rect: Rect::from_min_max(
+                    appearance.content_rect.min.max(appearance.clip_rect.min),
+                    appearance.content_rect.max.min(appearance.clip_rect.max),
+                ),
                 background: appearance.background_color,
                 shadow_size: appearance.shadow_size_px,
                 pixel_scale: pixels_per_point,
@@ -129,9 +133,22 @@ impl VideoRenderer {
                 glow::ONE,
                 glow::ONE_MINUS_SRC_ALPHA,
             );
+            let clip = appearance.clip_rect;
+            self.gl.enable(glow::SCISSOR_TEST);
+            let left = (clip.min.x * pixels_per_point).ceil() as i32;
+            let top = (clip.min.y * pixels_per_point).ceil() as i32;
+            let right = (clip.max.x * pixels_per_point).floor() as i32;
+            let bottom = (clip.max.y * pixels_per_point).floor() as i32;
+            self.gl.scissor(
+                left,
+                height - bottom,
+                (right - left).max(0),
+                (bottom - top).max(0),
+            );
             if frame.is_some() {
                 self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             }
+            self.gl.disable(glow::SCISSOR_TEST);
             self.gl.disable(glow::BLEND);
             self.gl.bind_vertex_array(None);
 

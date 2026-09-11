@@ -18,6 +18,7 @@ impl Connector {
         let id =
             PreferenceId::from_key(&key.to_string()).expect("Qt requested an unknown preference");
         QString::from(match preferences::value(&self.preferences, id) {
+            PreferenceValue::Boolean(value) => value.to_string(),
             PreferenceValue::Integer(value) => value.to_string(),
             PreferenceValue::Text(value) => value,
             PreferenceValue::FontFamily(value) => value.name().to_string(),
@@ -38,6 +39,9 @@ impl Connector {
         let id = PreferenceId::from_key(&key.to_string()).ok_or("Unknown preference")?;
         let value = value.to_string();
         let value = match preferences::value(&self.preferences, id) {
+            PreferenceValue::Boolean(_) => {
+                PreferenceValue::Boolean(value.parse().map_err(|_| "Preference must be a boolean")?)
+            }
             PreferenceValue::Integer(_) => PreferenceValue::Integer(
                 value.parse().map_err(|_| "Preference must be an integer")?,
             ),

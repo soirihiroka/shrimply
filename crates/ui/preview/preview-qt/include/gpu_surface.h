@@ -102,6 +102,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseUngrabEvent() override;
+    void wheelEvent(QWheelEvent *event) override;
 
 private:
     bool fullscreen_preview_ = false;

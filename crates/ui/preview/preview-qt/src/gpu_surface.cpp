@@ -136,6 +136,9 @@ extern "C" bool shrimply_qt_preview_pointer_press(float width, float height, flo
 extern "C" void shrimply_qt_preview_pointer_release(float width, float height, float x, float y,
                                                        bool control, bool shift, bool alt);
 extern "C" void shrimply_qt_preview_pointer_cancel();
+enum PreviewNavigationPhase : std::uint8_t { PreviewPanBegin, PreviewPanEnd, PreviewZoom };
+constexpr float PreviewScrollPixelsPerStep = 120.0f;
+extern "C" bool shrimply_qt_preview_navigation(float width, float height, float x, float y, std::uint8_t phase, float steps);
 extern "C" bool shrimply_qt_preview_guides_visible();
 extern "C" void shrimply_qt_preview_set_guides_visible(bool visible);
 
@@ -761,7 +764,7 @@ void TimelineSurface::wheelEvent(QWheelEvent *event) {
 
 PreviewSurface::PreviewSurface(QQuickItem *parent) : QQuickFramebufferObject(parent) {
     setMirrorVertically(true);
-    setAcceptedMouseButtons(Qt::LeftButton);
+    setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
     setAcceptHoverEvents(true);
 }
 
@@ -815,6 +818,18 @@ void PreviewSurface::hoverLeaveEvent(QHoverEvent *event) {
 }
 
 void PreviewSurface::mousePressEvent(QMouseEvent *event) {
+    if (event->button() == Qt::MiddleButton) {
+        if (!shrimply_qt_preview_navigation(width(), height(), event->position().x(), event->position().y(), PreviewPanBegin, 0.0f)) {
+            event->ignore();
+            return;
+        }
+        forceActiveFocus(Qt::MouseFocusReason);
+        setKeepMouseGrab(true);
+        update_preview_cursor(this);
+        event->accept();
+        update();
+        return;
+    }
     const auto modifiers = event->modifiers();
     if (event->button() != Qt::LeftButton ||
         !shrimply_qt_preview_pointer_press(width(), height(), event->position().x(),
@@ -845,6 +860,14 @@ void PreviewSurface::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void PreviewSurface::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button() == Qt::MiddleButton) {
+        shrimply_qt_preview_navigation(width(), height(), event->position().x(), event->position().y(), PreviewPanEnd, 0.0f);
+        setKeepMouseGrab(false);
+        update_preview_cursor(this);
+        event->accept();
+        update();
+        return;
+    }
     if (event->button() != Qt::LeftButton) {
         event->ignore();
         return;
@@ -856,6 +879,17 @@ void PreviewSurface::mouseReleaseEvent(QMouseEvent *event) {
                                         modifiers.testFlag(Qt::ShiftModifier),
                                         modifiers.testFlag(Qt::AltModifier));
     setKeepMouseGrab(false);
+    update_preview_cursor(this);
+    event->accept();
+    update();
+}
+
+void PreviewSurface::wheelEvent(QWheelEvent *event) {
+    const float delta = event->pixelDelta().isNull() ? event->angleDelta().y() : event->pixelDelta().y();
+    if (!shrimply_qt_preview_navigation(width(), height(), event->position().x(), event->position().y(), PreviewZoom, -delta / PreviewScrollPixelsPerStep)) {
+        event->ignore();
+        return;
+    }
     update_preview_cursor(this);
     event->accept();
     update();

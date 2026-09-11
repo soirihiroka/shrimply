@@ -302,6 +302,11 @@ define_class!(
 
         #[unsafe(method(otherMouseDown:))]
         fn other_mouse_down(&self, event: &NSEvent) {
+            if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && matches!(&*self.ivars().content.borrow(), Content::Preview(_)) {
+                if !shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences).preview_zoom_pan_enabled { return; }
+                self.preview_pointer_event(PointerEvent::Begin(self.preview_input(event)));
+                return;
+            }
             if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 self.window().expect("canvas must be attached").makeFirstResponder(Some(self));
                 let point = self.point(event);
@@ -320,6 +325,12 @@ define_class!(
 
         #[unsafe(method(otherMouseDragged:))]
         fn other_mouse_dragged(&self, event: &NSEvent) {
+            if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && matches!(&*self.ivars().content.borrow(), Content::Preview(_)) {
+                if !shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences).preview_zoom_pan_enabled { return; }
+                let input = self.preview_input(event);
+                self.preview_pointer_event(PointerEvent::Samples { input, samples: &[input.sample] });
+                return;
+            }
             if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 if self.ivars().relative_pan_active.get() {
                     scene.event(shrimply_timeline_skia::scene::Event::RelativeMotion {
@@ -334,6 +345,11 @@ define_class!(
 
         #[unsafe(method(otherMouseUp:))]
         fn other_mouse_up(&self, event: &NSEvent) {
+            if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && matches!(&*self.ivars().content.borrow(), Content::Preview(_)) {
+                if !shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences).preview_zoom_pan_enabled { return; }
+                self.preview_pointer_event(PointerEvent::End(self.preview_input(event)));
+                return;
+            }
             if event.buttonNumber() == MIDDLE_MOUSE_BUTTON && let Content::Timeline(scene) = &mut *self.ivars().content.borrow_mut() {
                 let point = self.release_relative_pan(scene).unwrap_or_else(|| self.point(event));
                 scene.end_pan(point);
@@ -466,9 +482,14 @@ define_class!(
                 scene.scroll(self.point(event), glam::Vec2::new((event.scrollingDeltaX() * step) as f32, (event.scrollingDeltaY() * step) as f32), event.modifierFlags().contains(NSEventModifierFlags::Control), input);
                 return;
             }
+            let scale = if event.hasPreciseScrollingDeltas() {
+                shrimply_preview_provider_skia::math::SCROLL_PIXELS_PER_STEP
+            } else { 1.0 };
+            let enabled = shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences).preview_zoom_pan_enabled;
+            let scale = if enabled { scale } else { 1.0 };
             self.preview_pointer_event(PointerEvent::Scroll {
                 input: self.preview_input(event),
-                delta: glam::Vec2::new(-event.scrollingDeltaX() as f32, -event.scrollingDeltaY() as f32),
+                delta: glam::Vec2::new(-event.scrollingDeltaX() as f32 / scale, -event.scrollingDeltaY() as f32 / scale),
             });
         }
 
@@ -1048,18 +1069,38 @@ impl CanvasView {
                             preview.guides_visible,
                             preview.fullscreen,
                         );
+                        if !prefs.preview_zoom_pan_enabled {
+                            if preview.navigation.active() {
+                                objc2_app_kit::NSCursor::arrowCursor().set();
+                            }
+                            preview.navigation.reset();
+                        }
+                        let bounds = shrimply_preview_interaction_skia::guides::bounds(
+                            glam::vec2(size.width as f32, size.height as f32),
+                            prefs.preview_padding_px,
+                            preview.guides_visible,
+                            preview.fullscreen,
+                        );
+                        let viewport = preview.navigation.viewport(viewport, bounds);
                         preview.viewport = Some(viewport);
                         let content = viewport.content_rect;
+                        let clip_rect = preview
+                            .navigation
+                            .clip_rect(bounds, glam::vec2(size.width as f32, size.height as f32));
                         shrimply_preview_provider_skia::canvas::draw_background(
                             canvas,
                             shrimply_preview_provider_skia::canvas::Appearance {
-                                content_rect: content,
+                                content_rect: shrimply_preview_provider_skia::Rect::from_min_max(
+                                    content.min.max(clip_rect.min),
+                                    content.max.min(clip_rect.max),
+                                ),
                                 background: shrimply_cross_ui_theme::current().view_bg,
                                 shadow_size: prefs.preview_shadow_size_px,
                                 pixel_scale: scale as f32,
                             },
                         );
                         canvas.save();
+                        canvas.clip_rect(skia_safe::Rect::from(clip_rect), None, false);
                         canvas.translate((content.min.x, content.min.y));
                         canvas.scale((
                             content.width() / frame.width as f32,
@@ -1123,7 +1164,13 @@ impl CanvasView {
                         let _timing = shrimply_process_reporting::diagnostics::timing(
                             "Preview paint / interaction overlay",
                         );
+                        canvas.save();
+                        canvas.clip_rect(skia_safe::Rect::from(clip_rect), None, false);
+                        if let Some(retiring) = preview.controller.retiring_provider.as_mut() {
+                            retiring.context.viewport = viewport;
+                        }
                         preview.controller.draw(canvas, &preview.expressions);
+                        canvas.restore();
                     }
                 }
             });

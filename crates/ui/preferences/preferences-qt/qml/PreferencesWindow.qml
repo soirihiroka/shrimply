@@ -85,6 +85,7 @@ ApplicationWindow {
         fontFamily.text = backend.preferenceValue("default-text-font-family")
         configure(visualDuration, "default-visual-duration")
         configure(snapRadius, "timeline-snap-radius")
+        previewZoomPan.checked = backend.preferenceValue("preview-zoom-pan") === "true"
         configure(previewPadding, "preview-padding")
         configure(previewShadow, "preview-shadow-size")
         previewUpsample.currentIndex = numberValue("preview-upsample-method")
@@ -262,6 +263,14 @@ ApplicationWindow {
                                 columns: 2
                                 columnSpacing: 24
                                 rowSpacing: 12
+                                Label { text: backend.translate("Preview zoom and pan") }
+                                Switch {
+                                    id: previewZoomPan
+                                    ToolTip.text: backend.translate("Scroll to zoom; middle-drag to pan; middle-click to fit.")
+                                    ToolTip.visible: hovered
+                                    onToggled: if (!root.loading)
+                                        backend.setPreferenceValue("preview-zoom-pan", String(checked))
+                                }
                                 Label { text: backend.translate("Padding") }
                                 SpinBox {
                                     id: previewPadding

@@ -11,6 +11,7 @@ mod input;
 pub struct State {
     pub renderer: shrimply_preview_render_metal::Renderer,
     pub viewport: Option<PreviewViewport>,
+    pub navigation: shrimply_preview_interaction_skia::navigation::Navigation,
     pub guides_visible: bool,
     pub fullscreen: bool,
     pub caption_bottom_inset: f32,
@@ -54,6 +55,7 @@ impl State {
         let mut state = Self {
             renderer,
             viewport: None,
+            navigation: Default::default(),
             guides_visible: false,
             fullscreen: false,
             caption_bottom_inset: 0.0,
@@ -265,6 +267,9 @@ impl CanvasView {
         let Content::Preview(state) = &mut *content else {
             return;
         };
+        if state.navigation.active() {
+            return;
+        }
         let Some(viewport) = state.viewport else {
             return;
         };
@@ -301,6 +306,9 @@ impl CanvasView {
         let Content::Preview(state) = &mut *content else {
             return;
         };
+        if state.navigation.active() {
+            return;
+        }
         let Some(viewport) = state.viewport else {
             return;
         };
@@ -324,6 +332,9 @@ impl CanvasView {
             let Content::Preview(state) = &mut *content else {
                 return Ok(());
             };
+            if state.navigation.active() {
+                return;
+            }
             let Some(viewport) = state.viewport else {
                 return Ok(());
             };
@@ -361,8 +372,9 @@ impl CanvasView {
     fn finish_preview_pointer(&self, teardown: bool) {
         self.ivars().surface_dirty.set(true);
         let reset_cursor = matches!(&*self.ivars().content.borrow(), Content::Preview(state)
-            if state.controller.provider.is_some() || state.guide_input.active() || state.cursor_hidden || state.caption_split_hover.is_some());
+            if state.navigation.active() || state.controller.provider.is_some() || state.guide_input.active() || state.cursor_hidden || state.caption_split_hover.is_some());
         let response = if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() {
+            state.navigation.cancel();
             state.cancel_guides();
             state.last_sample = None;
             state.caption_split_hover = None;

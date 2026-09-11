@@ -159,6 +159,7 @@ pub struct ToolkitPreview {
     video_tx: VideoCommandSender,
     audio_player: Rc<AudioPlayer>,
     renderer: Option<renderer::ToolkitPreviewRenderer>,
+    navigation: shrimply_preview_runtime_cuda::navigation::Navigation,
     guide_input: guides::GuideInput,
     frame: Option<CompositedVideoFrame>,
     frame_rate_label: String,
@@ -224,6 +225,7 @@ impl ToolkitPreview {
             video_tx,
             audio_player,
             renderer: None,
+            navigation: Default::default(),
             guide_input: guides::GuideInput::default(),
             frame: None,
             frame_rate_label: String::from("--"),
@@ -256,6 +258,12 @@ impl ToolkitPreview {
         fullscreen: bool,
     ) -> Result<(), String> {
         self.fullscreen = fullscreen;
+        if !preferences_store::snapshot(&self.preferences).preview_zoom_pan_enabled {
+            if self.navigation.active() {
+                self.provider_cursor = Cursor::Default;
+            }
+            self.navigation.reset();
+        }
         if self.provider_invalidated.replace(false) && self.provider_active {
             self.pointer_cancel();
             self.provider_cursor = Cursor::Default;
@@ -330,6 +338,8 @@ impl ToolkitPreview {
         let preferences = preferences_store::snapshot(&self.preferences);
         let surface = glam::IVec2::new(width.max(1) as i32, height.max(1) as i32);
         let scale = pixels_per_point.max(1.0);
+        let viewport_surface =
+            glam::vec2(width.max(1) as f32 / scale, height.max(1) as f32 / scale);
         let viewport = renderer::toolkit_guide_viewport(
             &project,
             &preferences,
@@ -337,6 +347,13 @@ impl ToolkitPreview {
             height.max(1) as f32 / scale,
             fullscreen,
         );
+        let bounds = guides::bounds(
+            viewport_surface,
+            preferences.preview_padding_px,
+            preferences.preview_guides_visible,
+            self.fullscreen,
+        );
+        let viewport = self.navigation.viewport(viewport, bounds);
         self.update_overlay(
             &project,
             &preferences,
@@ -345,6 +362,7 @@ impl ToolkitPreview {
             viewport,
         );
         self.update_base_exclusion(snapshot.position);
+        let clip_rect = self.navigation.clip_rect(bounds, viewport_surface);
         let Self {
             renderer,
             overlay,
@@ -366,7 +384,8 @@ impl ToolkitPreview {
                 pixels_per_point,
                 background_color,
                 &preferences,
-                fullscreen,
+                viewport,
+                clip_rect,
                 |canvas| {
                     let current_covers_base = overlay.as_ref().is_some_and(|overlay| {
                         overlay.provider.base_frame_exclusion() == *presented_base_exclusion
@@ -375,6 +394,7 @@ impl ToolkitPreview {
                         && let Some(retiring) = retiring_overlay.as_mut()
                         && retiring.provider.base_frame_exclusion() == *presented_base_exclusion
                     {
+                        retiring.viewport = viewport;
                         retiring.draw(canvas, expression_cache, extensions);
                     }
                     if let Some(overlay) = overlay.as_mut()
@@ -657,7 +677,46 @@ impl ToolkitPreview {
         preferences_store::set_preview_guides_visible(&self.preferences, visible);
     }
 
+    pub fn navigate(&mut self, size: glam::Vec2, event: PointerEvent<'_>) -> bool {
+        let preferences = preferences_store::snapshot(&self.preferences);
+        let fit = renderer::toolkit_guide_viewport(
+            &self.project.borrow(),
+            &preferences,
+            size.x,
+            size.y,
+            self.fullscreen,
+        );
+        let bounds = guides::bounds(
+            size,
+            preferences.preview_padding_px,
+            preferences.preview_guides_visible,
+            self.fullscreen,
+        );
+        let response = self.navigation.pointer(
+            fit,
+            bounds,
+            event,
+            preferences.preview_zoom_pan_enabled,
+            self.provider_active || self.guide_active,
+        );
+        if response.is_some_and(|response| response.redraw) {
+            self.provider_cursor = if self.navigation.active() {
+                Cursor::Grabbing
+            } else {
+                Cursor::Default
+            };
+        }
+        response.is_some_and(|response| response.handled)
+    }
+
     pub fn pointer_move(&mut self, width: f32, height: f32, x: f32, y: f32, modifiers: Modifiers) {
+        if self.navigation.active() {
+            self.navigate(
+                glam::vec2(width, height),
+                PointerEvent::Hover(pointer_input(pointer_sample(x, y), modifiers)),
+            );
+            return;
+        }
         if self.provider_active {
             let sample = pointer_sample(x, y);
             self.provider_moved |= self.provider_origin != Some(sample);
@@ -669,6 +728,7 @@ impl ToolkitPreview {
         }
         let preferences = preferences_store::snapshot(&self.preferences);
         let mut project = self.project.borrow_mut();
+        let viewport_surface = glam::vec2(width, height);
         let viewport = renderer::toolkit_guide_viewport(
             &project,
             &preferences,
@@ -676,6 +736,13 @@ impl ToolkitPreview {
             height,
             self.fullscreen,
         );
+        let bounds = guides::bounds(
+            viewport_surface,
+            preferences.preview_padding_px,
+            preferences.preview_guides_visible,
+            self.fullscreen,
+        );
+        let viewport = self.navigation.viewport(viewport, bounds);
         self.guide_input.pointer_move(
             &mut project.preview_guides,
             viewport,
@@ -701,8 +768,12 @@ impl ToolkitPreview {
         y: f32,
         modifiers: Modifiers,
     ) -> bool {
+        if self.navigation.active() {
+            return false;
+        }
         let preferences = preferences_store::snapshot(&self.preferences);
         let mut project = self.project.borrow_mut();
+        let viewport_surface = glam::vec2(width, height);
         let viewport = renderer::toolkit_guide_viewport(
             &project,
             &preferences,
@@ -710,6 +781,13 @@ impl ToolkitPreview {
             height,
             self.fullscreen,
         );
+        let bounds = guides::bounds(
+            viewport_surface,
+            preferences.preview_padding_px,
+            preferences.preview_guides_visible,
+            self.fullscreen,
+        );
+        let viewport = self.navigation.viewport(viewport, bounds);
         if self.guide_input.pointer_press(
             &mut project.preview_guides,
             viewport,
@@ -720,6 +798,24 @@ impl ToolkitPreview {
             return true;
         }
         drop(project);
+        if !self
+            .navigation
+            .clip_rect(bounds, viewport_surface)
+            .contains(glam::vec2(x, y))
+        {
+            return false;
+        }
+        let player = player_state::snapshot(&self.player_state);
+        let project_handle = self.project.clone();
+        self.update_overlay(
+            &project_handle.borrow(),
+            &preferences,
+            player.position,
+            player.revision,
+            viewport,
+        );
+        self.update_base_exclusion(player.position);
+        self.provider_invalidated.set(false);
         self.live_base_pending = false;
         self.live_base_in_flight = None;
         let sample = pointer_sample(x, y);
@@ -741,6 +837,7 @@ impl ToolkitPreview {
     ) {
         let preferences = preferences_store::snapshot(&self.preferences);
         let mut project = self.project.borrow_mut();
+        let viewport_surface = glam::vec2(width, height);
         let viewport = renderer::toolkit_guide_viewport(
             &project,
             &preferences,
@@ -748,6 +845,13 @@ impl ToolkitPreview {
             height,
             self.fullscreen,
         );
+        let bounds = guides::bounds(
+            viewport_surface,
+            preferences.preview_padding_px,
+            preferences.preview_guides_visible,
+            self.fullscreen,
+        );
+        let viewport = self.navigation.viewport(viewport, bounds);
         let changed = self.guide_active.then(|| {
             self.guide_input.pointer_release(
                 &mut project.preview_guides,
@@ -781,6 +885,8 @@ impl ToolkitPreview {
     }
 
     pub fn pointer_cancel(&mut self) {
+        self.navigation.cancel();
+        self.provider_cursor = Cursor::Default;
         if self.guide_active {
             self.guide_input
                 .pointer_cancel(&mut self.project.borrow_mut().preview_guides);
@@ -803,6 +909,9 @@ impl ToolkitPreview {
     }
 
     pub fn pointer_cursor(&self) -> u8 {
+        if self.navigation.active() {
+            return provider_cursor_code(Cursor::Grabbing);
+        }
         match self.guide_input.cursor() {
             guides::GuideCursor::ResizeHorizontal => 1,
             guides::GuideCursor::ResizeVertical => 2,

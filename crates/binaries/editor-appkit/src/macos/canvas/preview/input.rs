@@ -58,6 +58,19 @@ impl CanvasView {
                 state.guides_visible,
                 state.fullscreen,
             );
+            if !prefs.preview_zoom_pan_enabled {
+                if state.navigation.active() {
+                    objc2_app_kit::NSCursor::arrowCursor().set();
+                }
+                state.navigation.reset();
+            }
+            let bounds = guides::bounds(
+                glam::vec2(size.width as f32, size.height as f32),
+                prefs.preview_padding_px,
+                state.guides_visible,
+                state.fullscreen,
+            );
+            let viewport = state.navigation.viewport(viewport, bounds);
             state.viewport = Some(viewport);
             // While time is moving, controls belong to the displayed frame, not the
             // advancing playback clock. Waiting for an exact clock match tears
@@ -119,7 +132,48 @@ impl CanvasView {
         self.apply_preview_response(response)
     }
 
+    fn preview_navigation(&self, event: PointerEvent<'_>) -> Option<PreviewResponse> {
+        let prefs = preferences::snapshot(&self.ivars().session.preferences);
+        let mut content = self.ivars().content.borrow_mut();
+        let Content::Preview(state) = &mut *content else {
+            return None;
+        };
+        let size = self.bounds().size;
+        let fit = guides::viewport(
+            glam::IVec2::new(size.width as i32, size.height as i32),
+            self.ivars().session.project.borrow().canvas_size,
+            prefs.preview_padding_px,
+            state.guides_visible,
+            state.fullscreen,
+        );
+        let bounds = guides::bounds(
+            glam::vec2(size.width as f32, size.height as f32),
+            prefs.preview_padding_px,
+            state.guides_visible,
+            state.fullscreen,
+        );
+        let response = state.navigation.pointer(
+            fit,
+            bounds,
+            event,
+            prefs.preview_zoom_pan_enabled,
+            state.controller.sequence != PointerSequence::Idle || state.guide_input.active(),
+        );
+        if response.is_some_and(|response| response.redraw) {
+            state.viewport = Some(state.navigation.viewport(fit, bounds));
+            state.controller.context_invalidated = true;
+            state.caption_split_hover = None;
+        }
+        response
+    }
+
     pub(in crate::macos::canvas) fn preview_pointer_event(&self, event: PointerEvent<'_>) -> bool {
+        if let Some(response) = self.preview_navigation(event) {
+            if let Err(error) = self.apply_preview_response(response) {
+                self.show_error(&error);
+            }
+            return true;
+        }
         let result = self.prepare_preview().and_then(|()| {
             if self.preview_caption_pointer(&event)? {
                 return Ok(true);
@@ -137,6 +191,25 @@ impl CanvasView {
                     && state.guide_input.cursor() != GuideCursor::Default
                 {
                     return Ok(true);
+                }
+                if let PointerEvent::Begin(input) = event {
+                    let prefs = preferences::snapshot(&self.ivars().session.preferences);
+                    let size = self.bounds().size;
+                    if !state
+                        .navigation
+                        .clip_rect(
+                            guides::bounds(
+                                glam::vec2(size.width as f32, size.height as f32),
+                                prefs.preview_padding_px,
+                                state.guides_visible,
+                                state.fullscreen,
+                            ),
+                            glam::vec2(size.width as f32, size.height as f32),
+                        )
+                        .contains(input.sample.position)
+                    {
+                        return Ok(false);
+                    }
                 }
                 match event {
                     PointerEvent::Begin(input) => state.last_sample = Some(input.sample),
@@ -189,7 +262,7 @@ impl CanvasView {
             Some(key) => Key::Character(key.to_ascii_lowercase()),
             None => Key::Unknown,
         };
-        let guide_active = matches!(&*self.ivars().content.borrow(), Content::Preview(preview) if preview.guide_input.active());
+        let guide_active = matches!(&*self.ivars().content.borrow(), Content::Preview(preview) if preview.guide_input.active() || preview.navigation.active());
         if key == Key::Escape && guide_active {
             self.cancel_preview_pointer();
             return true;

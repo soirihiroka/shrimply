@@ -20,6 +20,13 @@ pub fn padding_px(preview_padding_px: u32, visible: bool, fullscreen: bool) -> u
     }
 }
 
+pub fn bounds(surface: GlamVec2, preview_padding_px: u32, visible: bool, fullscreen: bool) -> Rect {
+    shrimply_preview_provider_skia::math::padded_preview_rect(
+        surface,
+        padding_px(preview_padding_px, visible, fullscreen),
+    )
+}
+
 pub fn viewport(
     surface: IVec2,
     canvas: CanvasSize,

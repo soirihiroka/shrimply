@@ -140,6 +140,7 @@ pub enum PreferenceId {
     DefaultTextFontFamily,
     DefaultVisualDuration,
     TimelineSnapRadius,
+    PreviewZoomPan,
     PreviewPadding,
     PreviewShadowSize,
     PreviewUpsampleMethod,
@@ -157,6 +158,7 @@ impl PreferenceId {
             "default-text-font-family" => Some(Self::DefaultTextFontFamily),
             "default-visual-duration" => Some(Self::DefaultVisualDuration),
             "timeline-snap-radius" => Some(Self::TimelineSnapRadius),
+            "preview-zoom-pan" => Some(Self::PreviewZoomPan),
             "preview-padding" => Some(Self::PreviewPadding),
             "preview-shadow-size" => Some(Self::PreviewShadowSize),
             "preview-upsample-method" => Some(Self::PreviewUpsampleMethod),
@@ -171,6 +173,7 @@ impl PreferenceId {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PreferenceValue {
+    Boolean(bool),
     Integer(i64),
     Text(String),
     Color(Color<u8>),
@@ -250,7 +253,8 @@ pub fn integer_range(id: PreferenceId) -> Option<IntegerRange> {
             step: 1,
             scale: GPU_MEMORY_UNITS_PER_GIB,
         },
-        PreferenceId::CaptionBackgroundColor
+        PreferenceId::PreviewZoomPan
+        | PreferenceId::CaptionBackgroundColor
         | PreferenceId::DefaultTextFontFamily
         | PreferenceId::BlenderBinary => return None,
     };
@@ -278,6 +282,7 @@ pub fn value(store: &SharedPreferences, id: PreferenceId) -> PreferenceValue {
         PreferenceId::TimelineSnapRadius => {
             PreferenceValue::Integer(i64::from(snapshot.timeline_snap_radius_px))
         }
+        PreferenceId::PreviewZoomPan => PreferenceValue::Boolean(snapshot.preview_zoom_pan_enabled),
         PreferenceId::PreviewPadding => {
             PreferenceValue::Integer(i64::from(snapshot.preview_padding_px))
         }
@@ -339,6 +344,9 @@ pub fn set_value(
         }
         (PreferenceId::TimelineSnapRadius, PreferenceValue::Integer(value)) => {
             set_timeline_snap_radius_px(store, value.max(0) as u32)
+        }
+        (PreferenceId::PreviewZoomPan, PreferenceValue::Boolean(value)) => {
+            set_preview_zoom_pan_enabled(store, value)
         }
         (PreferenceId::PreviewPadding, PreferenceValue::Integer(value)) => {
             set_preview_padding_px(store, value.max(0) as u32)

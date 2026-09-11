@@ -1124,3 +1124,42 @@ pub extern "C" fn shrimply_qt_preview_set_guides_visible(visible: bool) {
         }
     });
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_navigation(
+    width: f32,
+    height: f32,
+    x: f32,
+    y: f32,
+    phase: u8,
+    steps: f32,
+) -> bool {
+    use shrimply_preview_provider_skia::{
+        PointerButton, PointerEvent, PointerInput, PointerSample,
+    };
+    let input = PointerInput {
+        sample: PointerSample {
+            position: glam::vec2(x, y),
+            ..Default::default()
+        },
+        button: PointerButton::Middle,
+        ..Default::default()
+    };
+    const PAN_BEGIN: u8 = 0;
+    const PAN_END: u8 = 1;
+    const ZOOM: u8 = 2;
+    let event = match phase {
+        PAN_BEGIN => PointerEvent::Begin(input),
+        PAN_END => PointerEvent::End(input),
+        ZOOM => PointerEvent::Scroll {
+            input,
+            delta: glam::vec2(0.0, steps),
+        },
+        _ => panic!("unknown preview navigation event"),
+    };
+    SURFACES.with_borrow_mut(|surfaces| {
+        surfaces
+            .as_mut()
+            .is_some_and(|surfaces| surfaces.preview.navigate(glam::vec2(width, height), event))
+    })
+}

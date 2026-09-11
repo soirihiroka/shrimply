@@ -144,6 +144,16 @@ pub fn show_preferences_dialog(
 
     let preview_group = adw::PreferencesGroup::new();
     preview_group.set_title(tr!("Preview").as_ref());
+    let preview_zoom_pan = adw::SwitchRow::builder()
+        .title(tr!("Preview zoom and pan").as_ref())
+        .subtitle(tr!("Scroll to zoom; middle-drag to pan; middle-click to fit.").as_ref())
+        .active(snapshot.preview_zoom_pan_enabled)
+        .build();
+    let zoom_preferences = preferences.clone();
+    preview_zoom_pan.connect_active_notify(move |row| {
+        preferences_store::set_preview_zoom_pan_enabled(&zoom_preferences, row.is_active());
+    });
+    preview_group.add(&preview_zoom_pan);
     preview_group.add(&preview_padding);
     preview_group.add(&preview_shadow_size);
     preview_group.add(&preview_upsample_method);

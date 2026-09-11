@@ -398,6 +398,12 @@ define_class!(
             }
         }
 
+        #[unsafe(method(changePreviewZoomPan:))]
+        fn change_preview_zoom_pan(&self, sender: &NSButton) {
+            let store = &self.ivars().session.get().expect("project loaded").preferences;
+            shrimply_editor_state::preferences::set_preview_zoom_pan_enabled(store, sender.state() == objc2_app_kit::NSControlStateValueOn);
+        }
+
         #[unsafe(method(changePreviewFilter:))]
         fn change_preview_filter(&self, sender: &NSPopUpButton) {
             let store = &self.ivars().session.get().expect("project loaded").preferences;
