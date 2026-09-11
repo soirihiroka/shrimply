@@ -15,6 +15,7 @@ concurrency:
 
 env:
   CARGO_HOME: ${{ github.workspace }}/.ci/cargo
+  CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
   MACOS_APP: dist/Shrimply.app
   MACOS_ARCHIVE: dist/shrimply-macos-arm64.zip
   MACOSX_DEPLOYMENT_TARGET: "15.0"
@@ -24,6 +25,9 @@ jobs:
   build-and-release:
     if: github.ref == 'refs/heads/main'
     runs-on: macos-26
+    permissions:
+      actions: write
+      contents: write
 
     steps:
       - uses: actions/checkout@v7
@@ -49,9 +53,9 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: |
-            ${{ env.CARGO_HOME }}
+            ${{ env.CARGO_HOME }}/bin
             ${{ env.RUSTUP_HOME }}
-          key: rust-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
+          key: rust-v2-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}
 
       - name: Install Rust toolchain
         run: |
@@ -71,13 +75,18 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: |
-            ${{ env.CARGO_HOME }}
+            ${{ env.CARGO_HOME }}/bin
             ${{ env.RUSTUP_HOME }}
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
 
       - name: Resolve application cache key
         id: application-cache-key
-        run: echo "week=$(date -u +%G-W%V)" >> "${GITHUB_OUTPUT}"
+        shell: bash
+        run: |
+          native_versions="$(brew list --versions)"
+          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" \
+            | LC_ALL=C sort | shasum -a 256 | cut -d ' ' -f 1)"
+          echo "prefix=macos-application-v2-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
 
       - name: Restore macOS application cache
         id: application-cache
@@ -85,21 +94,36 @@ jobs:
         with:
           path: |
             target/release
-          key: macos-application-prebuilt-macos-26-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml') }}-${{ steps.application-cache-key.outputs.week }}
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
+          key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-${{ github.sha }}
           restore-keys: |
-            macos-application-prebuilt-macos-26-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml') }}-
-            macos-application-prebuilt-macos-26-${{ runner.arch }}-
+            ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-
+            ${{ steps.application-cache-key.outputs.prefix }}-
 
       - name: Build AppKit release
         run: make appkit-release
 
       - name: Save macOS application cache
-        if: ${{ !cancelled() && steps.application-cache.outputs.cache-hit != 'true' }}
+        id: save-application-cache
+        if: ${{ success() && steps.application-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: |
             target/release
+            ${{ env.CARGO_HOME }}/registry
+            ${{ env.CARGO_HOME }}/git
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
+
+      - name: Prune old macOS application caches
+        if: steps.save-application-cache.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
+        run: |
+          bash .github/scripts/prune-application-caches.sh "${CACHE_KEY}" \
+            "macos-application-v2-macos-26-${{ runner.arch }}-" \
+            "macos-application-prebuilt-macos-26-${{ runner.arch }}-"
 
       - name: Assemble application bundle
         shell: bash

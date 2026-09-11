@@ -36,6 +36,9 @@ jobs:
   build:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       timestamp: ${{ steps.release.outputs.timestamp }}
@@ -212,7 +215,12 @@ jobs:
 
       - name: Resolve application cache key
         id: application-cache-key
-        run: echo "week=$(date -u +%G-W%V)" >> "${GITHUB_OUTPUT}"
+        run: |
+          sdk_commit="$(flatpak info --user --show-commit "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}")"
+          native_versions="$(dpkg-query -W)"
+          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${sdk_commit}" "${native_versions}" \
+            | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1)"
+          echo "prefix=flatpak-application-v2-ubuntu-24.04-${{ runner.arch }}-cuda-${CUDA_VERSION}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
 
       - name: Restore Flatpak application cache
         id: application-cache
@@ -221,10 +229,10 @@ jobs:
           path: |
             ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-home
             ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
-          key: flatpak-application-ubuntu-24.04-${{ runner.arch }}-cuda-${{ env.CUDA_VERSION }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++') }}-${{ steps.application-cache-key.outputs.week }}
+          key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++', '.github/workflows/flatpak.yml') }}-${{ github.sha }}
           restore-keys: |
-            flatpak-application-ubuntu-24.04-${{ runner.arch }}-cuda-${{ env.CUDA_VERSION }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++') }}-
-            flatpak-application-ubuntu-24.04-${{ runner.arch }}-cuda-${{ env.CUDA_VERSION }}-
+            ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', 'dev.shrimply.Shrimply.yml', 'packaging/flatpak/nvcc-g++', '.github/workflows/flatpak.yml') }}-
+            ${{ steps.application-cache-key.outputs.prefix }}-
 
       - name: Build Flatpak
         run: |
@@ -247,13 +255,24 @@ jobs:
           df -h /
 
       - name: Save Flatpak application cache
-        if: ${{ !cancelled() && steps.application-cache.outputs.cache-hit != 'true' }}
+        id: save-application-cache
+        if: ${{ success() && steps.application-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: |
             ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-home
             ${{ env.FLATPAK_STATE_DIR }}/ccache/cargo-target
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
+
+      - name: Prune old Flatpak application caches
+        if: steps.save-application-cache.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
+        run: |
+          bash .github/scripts/prune-application-caches.sh "${CACHE_KEY}" \
+            "flatpak-application-v2-ubuntu-24.04-${{ runner.arch }}-" \
+            "flatpak-application-ubuntu-24.04-${{ runner.arch }}-"
 
       - name: Prepare signed repository and bundle
         env:
