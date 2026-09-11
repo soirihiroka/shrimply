@@ -84,15 +84,15 @@ jobs:
           "$env:CARGO_HOME\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           & "$env:CARGO_HOME\bin\rustup.exe" show
 
-      - name: Install Qt 6.10.2
+      - name: Install Qt 6.11.1
         uses: jurplel/install-qt-action@v4
         with:
-          version: 6.10.2
+          version: 6.11.1
           host: windows
           target: desktop
           arch: win64_msvc2022_64
           cache: true
-          cache-key-prefix: windows-qt-6.10.2-msvc2022
+          cache-key-prefix: windows-qt-6.11.1-msvc2022
 
       - name: Restore installed CUDA 12.9.2
         id: cuda-cache
