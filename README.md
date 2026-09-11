@@ -1,6 +1,11 @@
 <p align="center">
   <img src="assets/icons/dev.shrimply.Shrimply.svg" alt="Shrimply logo" width="128">
+  <p align="center">
+      <a href="https://trendshift.io/repositories/197189?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-197189" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/197189/daily?language=Rust" alt="soirihiroka%2Fshrimply | Trendshift" width="250" height="55"/></a>
+  </p>
+
 </p>
+
 
 # Shrimply
 
