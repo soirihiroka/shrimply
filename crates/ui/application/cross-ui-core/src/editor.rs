@@ -32,7 +32,7 @@ pub enum LoadEvent {
         suggested_name: String,
     },
     ImportWarnings(Vec<String>),
-    LockedByOtherInstance(u32),
+    LockedByOtherInstance(project::ProjectLockOwner),
     Ready {
         path: PathBuf,
         project: Box<Project>,
@@ -556,12 +556,16 @@ impl ProjectLoader {
         LoadEvent::Progress(PROJECT_READING)
     }
 
-    pub fn retry_locked_project(&mut self, stop_other: bool, pid: u32) -> LoadEvent {
+    pub fn retry_locked_project(
+        &mut self,
+        stop_other: bool,
+        owner: project::ProjectLockOwner,
+    ) -> LoadEvent {
         assert!(
             matches!(self.state, State::WaitingForLock),
             "lock response without a pending lock"
         );
-        if stop_other && !project::terminate_project_process(pid) {
+        if stop_other && !project::terminate_project_process(&owner) {
             return LoadEvent::Error {
                 heading: "Could not stop other editor",
                 body: "Shrimply could not signal the other process.".to_string(),
@@ -644,9 +648,9 @@ impl ProjectLoader {
                 };
                 LoadEvent::ConfirmFrameGridRepair
             }
-            Err(project::ProjectLoadError::LockedByOtherInstance { pid }) => {
+            Err(project::ProjectLoadError::LockedByOtherInstance { owner }) => {
                 self.state = State::WaitingForLock;
-                LoadEvent::LockedByOtherInstance(pid)
+                LoadEvent::LockedByOtherInstance(owner)
             }
             Err(project::ProjectLoadError::Other(body)) => {
                 self.state = State::Finished;

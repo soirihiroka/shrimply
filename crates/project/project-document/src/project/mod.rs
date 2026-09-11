@@ -64,8 +64,9 @@ pub use item_address::{
 };
 pub use lifecycle::*;
 pub use ownership::{
-    ProjectLoadError, ProjectLockError, acquire_project_lock, clear_project_file_locks,
-    normalized_project_path, project_lock_owner, release_project_lock, terminate_project_process,
+    ProjectLoadError, ProjectLockError, ProjectLockOwner, acquire_project_lock,
+    clear_project_file_locks, normalized_project_path, project_lock_owner, release_project_lock,
+    terminate_project_process,
 };
 pub use preview::{
     COMPOSITING_ALPHA_MASK_PREVIEW_FACET, ITEM_PREVIEW_FACET, MODIFIER_ALPHA_MASK_PREVIEW_FACET,

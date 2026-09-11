@@ -170,7 +170,8 @@ impl Editor {
                     .set(layout)
                     .unwrap_or_else(|_| panic!("layout already installed"));
             }
-            Err(ProjectLoadError::LockedByOtherInstance { pid }) => {
+            Err(ProjectLoadError::LockedByOtherInstance { owner }) => {
+                let pid = owner.pid();
                 let alert = NSAlert::new(self.mtm());
                 alert.setMessageText(ns_string!("Project is in use"));
                 alert.setInformativeText(&NSString::from_str(&format!(
@@ -186,7 +187,7 @@ impl Editor {
                 match alert.runModal() {
                     response if response == NSAlertFirstButtonReturn => self.begin_project_load(),
                     response if response == NSAlertSecondButtonReturn => {
-                        if shrimply_project_document::project::terminate_project_process(pid) {
+                        if shrimply_project_document::project::terminate_project_process(&owner) {
                             self.begin_project_load();
                         } else {
                             self.fail_startup("Could not stop other editor: Shrimply could not signal the other process.");

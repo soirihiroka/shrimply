@@ -60,7 +60,7 @@ impl Bridge {
                 "project path is not valid UTF-8".to_string(),
             ));
         }
-        let pid = shrimply_project_document::project::project_lock_owner(&project_path)
+        let owner = shrimply_project_document::project::project_lock_owner(&project_path)
             .map_err(BridgeError::Transport)?
             .ok_or_else(|| {
                 BridgeError::Transport(format!(
@@ -68,6 +68,7 @@ impl Bridge {
                     project_path.display()
                 ))
             })?;
+        let pid = owner.pid();
         let bridge = Self {
             project_path,
             socket_path: socket_path(pid).map_err(BridgeError::Transport)?,

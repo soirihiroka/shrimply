@@ -42,6 +42,5 @@ The bundle also receives updates from the prerelease repository.
 Known limitations
 -----------------
 
-The Flatpak is missing some features, including MCP support, and its project
-lockfile support is currently broken. To build Shrimply from source, see
-:doc:`development`.
+The Flatpak is missing some features, including MCP support. To build Shrimply
+from source, see :doc:`development`.

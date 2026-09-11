@@ -497,21 +497,27 @@ fn same_card_structure(previous: &InspectorDocument, current: &InspectorDocument
                     && previous.label == current.label
                     && previous.icon == current.icon
                     && previous.items.len() == current.items.len()
-                    && previous.items.iter().zip(&current.items).all(
-                        |(previous, current)| match (previous, current) {
-                            (InspectorListItem::Item(previous), InspectorListItem::Item(current)) => {
+                    && previous
+                        .items
+                        .iter()
+                        .zip(&current.items)
+                        .all(|(previous, current)| match (previous, current) {
+                            (
+                                InspectorListItem::Item(previous),
+                                InspectorListItem::Item(current),
+                            ) => {
                                 previous.presentation == current.presentation
                                     && previous.reset == current.reset
                                     && previous.actions == current.actions
                                     && previous.toggle == current.toggle
                                     && previous.button_toggle == current.button_toggle
                             }
-                            (InspectorListItem::Flat(previous), InspectorListItem::Flat(current)) => {
-                                previous == current
-                            }
+                            (
+                                InspectorListItem::Flat(previous),
+                                InspectorListItem::Flat(current),
+                            ) => previous == current,
                             _ => false,
-                        },
-                    )
+                        })
             })
 }
 

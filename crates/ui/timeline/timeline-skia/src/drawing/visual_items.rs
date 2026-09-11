@@ -45,7 +45,7 @@ pub(in crate::drawing) fn video_item_icon(content: &VideoItemContent) -> Icon {
         VideoItemContent::Obj(_) => Icon("3d-object-symbolic"),
         VideoItemContent::Gaussian(_) => Icon("3d-object-symbolic"),
         VideoItemContent::Svg => Icon("boxy-svg-symbolic"),
-        VideoItemContent::Pdf(_) => Icon("image-symbolic"),
+        VideoItemContent::Pdf(_) => Icon("rich-text-symbolic"),
         VideoItemContent::Manim(_) => Icon("manim-symbolic"),
         VideoItemContent::Blender(_) => Icon("blender-symbolic"),
         VideoItemContent::LayeredImage(_) => Icon("image-symbolic"),

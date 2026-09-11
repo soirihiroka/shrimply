@@ -1,9 +1,12 @@
 use hashbrown::HashSet;
+use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::process;
+#[cfg(target_os = "linux")]
+use std::process::Command;
+use std::process::{self, Output};
 use std::sync::{Mutex, OnceLock};
 #[cfg(unix)]
 use std::thread;
@@ -14,9 +17,24 @@ const LOCK_ACQUIRE_ATTEMPTS: usize = 8;
 const PROCESS_STOP_WAIT_ATTEMPTS: usize = 20;
 const PROCESS_STOP_WAIT_MILLIS: u64 = 25;
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ProjectLockOwner {
+    System { pid: u32 },
+    Flatpak { pid: u32, instance_id: String },
+}
+
+impl ProjectLockOwner {
+    pub fn pid(&self) -> u32 {
+        match self {
+            Self::System { pid } | Self::Flatpak { pid, .. } => *pid,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ProjectLoadError {
-    LockedByOtherInstance { pid: u32 },
+    LockedByOtherInstance { owner: ProjectLockOwner },
     Other(String),
 }
 
@@ -24,7 +42,8 @@ pub enum ProjectLoadError {
 pub enum ProjectLockError {
     RegistryUnavailable,
     AlreadyLockedByThisInstance,
-    AlreadyLockedByOtherInstance { pid: u32 },
+    AlreadyLockedByOtherInstance { owner: ProjectLockOwner },
+    CouldNotInspect(String),
     CouldNotCreate(String),
 }
 
@@ -57,25 +76,26 @@ fn project_lock_path(path: &Path) -> PathBuf {
 }
 
 /// Returns the live process owning a project's lock, if any.
-pub fn project_lock_owner(path: &Path) -> Result<Option<u32>, String> {
+pub fn project_lock_owner(path: &Path) -> Result<Option<ProjectLockOwner>, String> {
     let path = normalized_project_path(path);
     let lock_path = project_lock_path(&path);
     if !lock_path.exists() {
         return Ok(None);
     }
-    let pid = read_project_lock_pid(&lock_path).ok_or_else(|| {
+    let owner = read_project_lock_owner(&lock_path).ok_or_else(|| {
         format!(
-            "project lock {} does not contain a valid PID",
+            "project lock {} does not contain a valid JSON owner",
             lock_path.display()
         )
     })?;
-    if !process_is_running(pid) {
+    if !project_lock_owner_is_running(&owner)? {
         return Err(format!(
-            "project lock {} is stale (PID {pid} is not running)",
-            lock_path.display()
+            "project lock {} is stale (PID {} is not running)",
+            lock_path.display(),
+            owner.pid()
         ));
     }
-    Ok(Some(pid))
+    Ok(Some(owner))
 }
 
 pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
@@ -93,10 +113,14 @@ pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
         return Err(ProjectLockError::AlreadyLockedByThisInstance);
     }
 
+    let owner = current_project_lock_owner().map_err(ProjectLockError::CouldNotCreate)?;
+    let contents = serde_json::to_vec(&owner)
+        .map_err(|error| ProjectLockError::CouldNotCreate(error.to_string()))?;
+
     for _ in 0..LOCK_ACQUIRE_ATTEMPTS {
-        if let Some(pid) = read_project_lock_pid(&lock_path) {
-            if process_is_running(pid) {
-                return Err(ProjectLockError::AlreadyLockedByOtherInstance { pid });
+        if let Some(owner) = read_project_lock_owner(&lock_path) {
+            if project_lock_owner_is_running(&owner).map_err(ProjectLockError::CouldNotInspect)? {
+                return Err(ProjectLockError::AlreadyLockedByOtherInstance { owner });
             }
             let _ = fs::remove_file(&lock_path);
         } else if lock_path.exists() {
@@ -108,8 +132,10 @@ pub fn acquire_project_lock(path: &Path) -> Result<(), ProjectLockError> {
             .open(&lock_path)
         {
             Ok(mut file) => {
-                file.write_all(process::id().to_string().as_bytes())
-                    .map_err(|error| ProjectLockError::CouldNotCreate(error.to_string()))?;
+                if let Err(error) = file.write_all(&contents) {
+                    let _ = fs::remove_file(&lock_path);
+                    return Err(ProjectLockError::CouldNotCreate(error.to_string()));
+                }
                 locks.insert(canonical_path);
                 return Ok(());
             }
@@ -145,25 +171,35 @@ pub fn clear_project_file_locks() {
     }
 }
 
-pub fn terminate_project_process(pid: u32) -> bool {
-    if checked_pid(pid).is_none() {
+pub fn terminate_project_process(owner: &ProjectLockOwner) -> bool {
+    if checked_pid(owner.pid()).is_none() {
         return false;
     }
     #[cfg(unix)]
     {
-        if !process_is_running(pid) {
-            return true;
+        match project_lock_owner_is_running(owner) {
+            Ok(false) => return true,
+            Ok(true) => {}
+            Err(_) => return false,
         }
-        if !send_signal_to_process(pid, libc::SIGTERM) {
-            return false;
+        match owner {
+            ProjectLockOwner::System { pid } => {
+                if !send_signal_to_system_process(*pid, libc::SIGTERM) {
+                    return false;
+                }
+                if wait_for_process_to_stop(owner) {
+                    return true;
+                }
+                if !send_signal_to_system_process(*pid, libc::SIGKILL) {
+                    return false;
+                }
+                wait_for_process_to_stop(owner)
+            }
+            ProjectLockOwner::Flatpak { instance_id, .. } => {
+                flatpak_command(&["kill", instance_id]).is_ok_and(|output| output.status.success())
+                    && wait_for_process_to_stop(owner)
+            }
         }
-        if wait_for_process_to_stop(pid) {
-            return true;
-        }
-        if !send_signal_to_process(pid, libc::SIGKILL) {
-            return false;
-        }
-        wait_for_process_to_stop(pid)
     }
     #[cfg(not(unix))]
     {
@@ -172,7 +208,18 @@ pub fn terminate_project_process(pid: u32) -> bool {
 }
 
 #[cfg(unix)]
-fn send_signal_to_process(pid: u32, signal: libc::c_int) -> bool {
+fn send_signal_to_system_process(pid: u32, signal: libc::c_int) -> bool {
+    #[cfg(target_os = "linux")]
+    if matches!(current_flatpak_instance_id(), Ok(Some(_))) {
+        let signal = match signal {
+            libc::SIGTERM => "-TERM",
+            libc::SIGKILL => "-KILL",
+            _ => return false,
+        };
+        return host_command("kill", &[signal, &pid.to_string()])
+            .is_ok_and(|output| output.status.success());
+    }
+
     let Some(pid) = checked_pid(pid) else {
         return false;
     };
@@ -189,21 +236,113 @@ fn send_signal_to_process(pid: u32, signal: libc::c_int) -> bool {
 }
 
 #[cfg(unix)]
-fn wait_for_process_to_stop(pid: u32) -> bool {
+fn wait_for_process_to_stop(owner: &ProjectLockOwner) -> bool {
     for _ in 0..PROCESS_STOP_WAIT_ATTEMPTS {
-        if !process_is_running(pid) {
+        if matches!(project_lock_owner_is_running(owner), Ok(false)) {
             return true;
         }
         thread::sleep(Duration::from_millis(PROCESS_STOP_WAIT_MILLIS));
     }
-    !process_is_running(pid)
+    matches!(project_lock_owner_is_running(owner), Ok(false))
 }
 
-fn read_project_lock_pid(lock_path: &Path) -> Option<u32> {
-    fs::read_to_string(lock_path)
+fn read_project_lock_owner(lock_path: &Path) -> Option<ProjectLockOwner> {
+    fs::read(lock_path)
         .ok()
-        .and_then(|contents| contents.trim().parse().ok())
-        .filter(|pid| checked_pid(*pid).is_some())
+        .and_then(|contents| serde_json::from_slice(&contents).ok())
+        .filter(|owner: &ProjectLockOwner| {
+            checked_pid(owner.pid()).is_some()
+                && match owner {
+                    ProjectLockOwner::System { .. } => true,
+                    ProjectLockOwner::Flatpak { instance_id, .. } => !instance_id.is_empty(),
+                }
+        })
+}
+
+fn current_project_lock_owner() -> Result<ProjectLockOwner, String> {
+    let pid = process::id();
+    #[cfg(target_os = "linux")]
+    if let Some(instance_id) = current_flatpak_instance_id()? {
+        return Ok(ProjectLockOwner::Flatpak { pid, instance_id });
+    }
+    Ok(ProjectLockOwner::System { pid })
+}
+
+fn project_lock_owner_is_running(owner: &ProjectLockOwner) -> Result<bool, String> {
+    match owner {
+        ProjectLockOwner::System { pid } => {
+            #[cfg(target_os = "linux")]
+            if current_flatpak_instance_id()?.is_some() {
+                let output = host_command("test", &["-d", &format!("/proc/{pid}")])?;
+                return Ok(output.status.success());
+            }
+            Ok(process_is_running(*pid))
+        }
+        ProjectLockOwner::Flatpak { instance_id, .. } => {
+            let output = flatpak_command(&["ps", "--columns=instance"])?;
+            if !output.status.success() {
+                return Err(command_error("flatpak ps", &output));
+            }
+            let instances = String::from_utf8(output.stdout)
+                .map_err(|error| format!("flatpak ps returned invalid UTF-8: {error}"))?;
+            Ok(instances.lines().any(|instance| instance == instance_id))
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn current_flatpak_instance_id() -> Result<Option<String>, String> {
+    let path = Path::new("/.flatpak-info");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let contents = fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let mut instance_section = false;
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            instance_section = line == "[Instance]";
+        } else if instance_section
+            && let Some(instance_id) = line.strip_prefix("instance-id=")
+            && !instance_id.is_empty()
+        {
+            return Ok(Some(instance_id.to_string()));
+        }
+    }
+    Err("/.flatpak-info does not contain an Instance instance-id".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn host_command(program: &str, arguments: &[&str]) -> Result<Output, String> {
+    let mut command = if current_flatpak_instance_id()?.is_some() {
+        let mut command = Command::new("flatpak-spawn");
+        command.args(["--host", "--env=LC_ALL=C", program]);
+        command
+    } else {
+        let mut command = Command::new(program);
+        command.env("LC_ALL", "C");
+        command
+    };
+    command
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("could not run {program}: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn flatpak_command(arguments: &[&str]) -> Result<Output, String> {
+    host_command("flatpak", arguments)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn flatpak_command(_arguments: &[&str]) -> Result<Output, String> {
+    Err("Flatpak project owners can only be inspected on Linux".to_string())
+}
+
+fn command_error(command: &str, output: &Output) -> String {
+    let error = String::from_utf8_lossy(&output.stderr);
+    format!("{command} failed: {}", error.trim())
 }
 
 #[cfg(unix)]

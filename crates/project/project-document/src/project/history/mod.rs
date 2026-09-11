@@ -494,9 +494,10 @@ fn project_lock_error(error: ProjectLockError) -> ProjectLoadError {
         ProjectLockError::AlreadyLockedByThisInstance => {
             ProjectLoadError::Other("project is already open in this instance".to_string())
         }
-        ProjectLockError::AlreadyLockedByOtherInstance { pid } => {
-            ProjectLoadError::LockedByOtherInstance { pid }
+        ProjectLockError::AlreadyLockedByOtherInstance { owner } => {
+            ProjectLoadError::LockedByOtherInstance { owner }
         }
+        ProjectLockError::CouldNotInspect(error) => ProjectLoadError::Other(error),
         ProjectLockError::CouldNotCreate(error) => ProjectLoadError::Other(error),
         ProjectLockError::RegistryUnavailable => {
             ProjectLoadError::Other("could not acquire the project lock registry".to_string())
@@ -506,8 +507,8 @@ fn project_lock_error(error: ProjectLockError) -> ProjectLoadError {
 
 fn project_lock_message(error: ProjectLockError) -> String {
     match project_lock_error(error) {
-        ProjectLoadError::LockedByOtherInstance { pid } => {
-            format!("project is open by process {pid}")
+        ProjectLoadError::LockedByOtherInstance { owner } => {
+            format!("project is open by process {}", owner.pid())
         }
         ProjectLoadError::Other(error) => error,
     }

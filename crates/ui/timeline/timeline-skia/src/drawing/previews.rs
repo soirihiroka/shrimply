@@ -35,7 +35,7 @@ pub fn draw_import_preview(
                 import::VisualMediaKind::Image => Icon("image-symbolic"),
                 import::VisualMediaKind::Gif => Icon("container3-symbolic"),
                 import::VisualMediaKind::Svg => Icon("boxy-svg-symbolic"),
-                import::VisualMediaKind::Pdf => Icon("image-symbolic"),
+                import::VisualMediaKind::Pdf => Icon("rich-text-symbolic"),
                 import::VisualMediaKind::Manim => Icon("manim-symbolic"),
                 import::VisualMediaKind::Blender => Icon("blender-symbolic"),
                 import::VisualMediaKind::LayeredImage => Icon("image-symbolic"),

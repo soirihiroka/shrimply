@@ -390,7 +390,9 @@ fn handle_load_event(
             suggested_name,
         } => choose_project_destination(app, window, loader, title, suggested_name),
         LoadEvent::ImportWarnings(warnings) => show_import_warnings(app, window, loader, warnings),
-        LoadEvent::LockedByOtherInstance(pid) => show_project_lock_dialog(app, window, loader, pid),
+        LoadEvent::LockedByOtherInstance(owner) => {
+            show_project_lock_dialog(app, window, loader, owner)
+        }
         LoadEvent::Ready { path, project } => {
             if let Err(error) = shrimply_recent_projects::touch(&path, &project.name) {
                 tracing::warn!(%error, "could not update recent projects");
@@ -579,13 +581,19 @@ fn show_project_lock_dialog(
     app: &adw::Application,
     window: &adw::ApplicationWindow,
     loader: Rc<RefCell<ProjectLoader>>,
-    pid: u32,
+    owner: project::ProjectLockOwner,
 ) {
+    let body = match &owner {
+        project::ProjectLockOwner::System { pid } => {
+            format!("The project lock is held by another system editor process (PID {pid}).")
+        }
+        project::ProjectLockOwner::Flatpak { pid, instance_id } => format!(
+            "The project lock is held by another Flatpak editor instance ({instance_id}, sandbox PID {pid})."
+        ),
+    };
     let dialog = adw::AlertDialog::builder()
         .heading(tr!("Project is in use").as_ref())
-        .body(format!(
-            "The project lock is held by another editor process (PID {pid})."
-        ))
+        .body(body)
         .prefer_wide_layout(false)
         .build();
     dialog.add_responses_i18n(&[
@@ -603,8 +611,12 @@ fn show_project_lock_dialog(
         None::<&gio::Cancellable>,
         move |answer| {
             let event = match answer.as_str() {
-                "retry" => loader.borrow_mut().retry_locked_project(false, pid),
-                "stop" => loader.borrow_mut().retry_locked_project(true, pid),
+                "retry" => loader
+                    .borrow_mut()
+                    .retry_locked_project(false, owner.clone()),
+                "stop" => loader
+                    .borrow_mut()
+                    .retry_locked_project(true, owner.clone()),
                 _ => loader.borrow_mut().cancel(),
             };
             handle_load_event(&callback_app, &callback_window, loader, event);

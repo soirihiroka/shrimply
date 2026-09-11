@@ -15,6 +15,7 @@ finish-args:
   - --socket=pulseaudio
   - --socket=session-bus
   - --socket=system-bus
+  - --talk-name=org.freedesktop.Flatpak
   - --device=all
   - --filesystem=host
   - --filesystem=/run/media

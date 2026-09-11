@@ -238,7 +238,7 @@ pub struct EditorBackendRust {
     fixed_font_family: QString,
     loader: Option<ProjectLoader>,
     session: Option<Pin<Box<EditorSession>>>,
-    pending_lock_pid: Option<u32>,
+    pending_lock_owner: Option<project::ProjectLockOwner>,
     blender_probe: Option<Receiver<Result<PathBuf, String>>>,
     server_request: Option<Receiver<Result<shrimply_preferences_qt::ServerStatus, String>>>,
     server_status: Option<shrimply_preferences_qt::ServerStatus>,
@@ -263,7 +263,7 @@ impl Default for EditorBackendRust {
             fixed_font_family: qobject::fixed_font_family(),
             loader: None,
             session: None,
-            pending_lock_pid: None,
+            pending_lock_owner: None,
             blender_probe: None,
             server_request: None,
             server_status: None,
@@ -362,16 +362,19 @@ impl qobject::EditorBackend {
     }
 
     pub fn resolve_lock(mut self: Pin<&mut Self>, action: i32) {
-        let pid = self
+        let owner = self
             .as_mut()
             .rust_mut()
             .get_mut()
-            .pending_lock_pid
+            .pending_lock_owner
             .take()
             .expect("Qt lock response without a pending lock");
         let event = match action {
-            1 => self.as_mut().loader_mut().retry_locked_project(false, pid),
-            2 => self.as_mut().loader_mut().retry_locked_project(true, pid),
+            1 => self
+                .as_mut()
+                .loader_mut()
+                .retry_locked_project(false, owner.clone()),
+            2 => self.as_mut().loader_mut().retry_locked_project(true, owner),
             _ => self.as_mut().loader_mut().cancel(),
         };
         self.as_mut().handle_event(event);
@@ -812,8 +815,9 @@ impl qobject::EditorBackend {
             LoadEvent::ImportWarnings(warnings) => self
                 .as_mut()
                 .request_warnings(QString::from(warnings.join("\n"))),
-            LoadEvent::LockedByOtherInstance(pid) => {
-                self.as_mut().rust_mut().get_mut().pending_lock_pid = Some(pid);
+            LoadEvent::LockedByOtherInstance(owner) => {
+                let pid = owner.pid();
+                self.as_mut().rust_mut().get_mut().pending_lock_owner = Some(owner);
                 self.as_mut().request_lock(i64::from(pid));
             }
             LoadEvent::Ready { path, project } => {
