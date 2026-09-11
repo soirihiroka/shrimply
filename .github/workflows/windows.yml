@@ -94,13 +94,30 @@ jobs:
           cache: true
           cache-key-prefix: windows-qt-6.10.2-msvc2022
 
+      - name: Restore installed CUDA 12.9.2
+        id: cuda-cache
+        uses: actions/cache@v6
+        with:
+          path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
+          key: windows-cuda-12.9.2-v1
+
       - name: Install CUDA 12.9.2
+        if: steps.cuda-cache.outputs.cache-hit != 'true'
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
           cuda: 12.9.2
           method: local
           sub-packages: '["nvcc", "cudart"]'
           use-github-cache: true
+
+      - name: Export CUDA environment
+        shell: powershell
+        run: |
+          $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9"
+          if (!(Test-Path "$cuda\bin\nvcc.exe")) { throw "CUDA 12.9 nvcc.exe is missing" }
+          "CUDA_PATH=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CUDA_PATH_V12_9=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$cuda\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
       - name: Restore vcpkg caches
         uses: actions/cache@v6
