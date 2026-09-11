@@ -7,11 +7,8 @@ containing text, equations, shapes, graphs, and 3D scenes. Shrimply can place a
 scene directly on the timeline, render it at the project's canvas size and
 frame rate, and composite its transparent background with other video tracks.
 
-Blender and Manim sources require approval before execution. Choose **Trust N
-files** or **Trust N folders**; folder trust includes subfolders. Approvals are
-stored in local settings and can be removed in **Preferences**. They cover
-future edits at those paths and authorize imported code too; this is not a
-sandbox. Moving sources outside trusted locations requires approval again.
+Manim sources require approval before execution. See :doc:`/security` for
+file and folder trust settings.
 
 Create a scene
 --------------

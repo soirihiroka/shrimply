@@ -329,9 +329,6 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
         mtm,
     );
 
-    let security = pane(mtm);
-    let mut y = initial_y();
-    section(&security, "Security", &mut y, mtm);
     let trust_button = unsafe {
         NSButton::buttonWithTitle_target_action(
             ns_string!("Manage Trusted Sources…"),
@@ -344,7 +341,7 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
         NSPoint::new(CONTROL_X, y - CONTROL_Y_OFFSET),
         NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT),
     ));
-    security.addSubview(&trust_button);
+    integrations.addSubview(&trust_button);
 
     let tabs = NSTabViewController::new(mtm);
     tabs.setTabStyle(NSTabViewControllerTabStyle::Toolbar);
@@ -358,7 +355,6 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
             integrations_root,
             mtm,
         ),
-        tab("Security", "lock.shield", security, mtm),
     ] {
         tabs.addTabViewItem(&item);
     }

@@ -78,6 +78,7 @@ Compute and automation
 Project information
 -------------------
 
+* :doc:`Security <security>` explains trust for executable sources.
 * :doc:`Development <development>` contains the supported repository workflow.
 * :doc:`Licenses <licenses>` explains project and third-party licensing.
 
@@ -86,6 +87,7 @@ Project information
    :hidden:
    :caption: Project information
 
+   security
    development
    licenses
 
