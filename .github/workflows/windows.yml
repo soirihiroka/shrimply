@@ -91,8 +91,9 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
+          aqtsource: https://github.com/miurahr/aqtinstall/archive/076e1659807d0b362a3ed684d54c2e9c775eb9c7.zip
           cache: true
-          cache-key-prefix: windows-qt-6.11.1-msvc2022
+          cache-key-prefix: windows-qt-6.11.1-msvc2022-aqt-076e1659
 
       - name: Restore installed CUDA 12.9.2
         id: cuda-cache
