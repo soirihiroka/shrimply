@@ -3,31 +3,9 @@ use std::{cell::RefCell, rc::Rc};
 use adw::prelude::*;
 use gtk::gio;
 use shrimply_components_gtk::{tr, ui::I18nAlertDialogExt};
-use shrimply_timeline_skia::{
-    TrackKey,
-    items::ItemKey,
-    project::{Project, Time},
-    silence::Config,
-};
+use shrimply_timeline_skia::{project::Time, silence::Config};
 
 use crate::TimelineRuntime;
-
-pub(super) fn can_remove(
-    project: &Project,
-    _selected_items: &[ItemKey],
-    selected_tracks: &[TrackKey],
-    hit: ItemKey,
-) -> bool {
-    shrimply_timeline_skia::silence::can_remove(project, selected_tracks, hit)
-}
-
-pub(super) fn can_remove_track(
-    project: &Project,
-    selected_tracks: &[TrackKey],
-    key: TrackKey,
-) -> bool {
-    shrimply_timeline_skia::silence::can_remove_track(project, selected_tracks, key)
-}
 
 pub(super) fn show_dialog(area: &gtk::GLArea, runtime: &Rc<RefCell<TimelineRuntime>>) {
     let defaults = Config::default();

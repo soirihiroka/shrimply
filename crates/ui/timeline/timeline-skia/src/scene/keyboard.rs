@@ -3,6 +3,7 @@ use crate::project::ItemAddress;
 use crate::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 
 pub enum KeyAction {
+    Cancel,
     Copy,
     Cut,
     Paste,
@@ -21,9 +22,10 @@ pub struct TrackDeletion {
 }
 
 impl KeyAction {
-    /// GTK key bindings; the native adapter supplies its platform shortcut modifier.
+    /// Shared key bindings; native adapters supply their platform shortcut modifier.
     pub fn from_key(key: char, shortcut: bool, shift: bool) -> Option<Self> {
         Some(match (key.to_ascii_lowercase(), shortcut) {
+            ('\u{1b}', _) => Self::Cancel,
             ('c', true) => Self::Copy,
             ('x', true) => Self::Cut,
             ('v', true) if shift => Self::ReplaceProperties,
@@ -42,6 +44,9 @@ impl KeyAction {
 impl Scene {
     pub fn key_action(&mut self, action: KeyAction) -> Result<Option<ContextMenuRequest>, String> {
         self.pointer_cancelled();
+        if matches!(action, KeyAction::Cancel) {
+            return Ok(None);
+        }
         let project = self.project.borrow();
         self.context.selected = selection_state::selected_item_addresses(&self.selection, &project);
         self.context.focus = selection_state::focused_item_address(&self.selection, &project);
@@ -159,7 +164,12 @@ impl Scene {
 
     pub fn track_deletion(&self) -> TrackDeletion {
         TrackDeletion {
-            tracks: self.context.tracks.clone(),
+            tracks: self
+                .context
+                .folded_track
+                .clone()
+                .map(|track| vec![track])
+                .unwrap_or_else(|| self.context.tracks.clone()),
         }
     }
 

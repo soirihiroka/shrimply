@@ -4,24 +4,13 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::{gdk, gio, glib};
 
-use crate::player_state::SharedPlayerState;
-use crate::project::Project;
-use crate::selection_state::SharedSelectionState;
-
 use super::TimelineRuntime;
 use super::external_content::{self, Content, Origin, Placement};
-use super::interaction::paste_timeline_clipboard;
 
 const FILE_MIME_TYPES: &[&str] = &["x-special/gnome-copied-files", "text/uri-list"];
 pub(super) const TIMELINE_MARKER: &str = shrimply_timeline_skia::TIMELINE_CLIPBOARD_MARKER;
 
-pub(super) fn paste(
-    area: &gtk::GLArea,
-    project: &Rc<RefCell<Project>>,
-    player_state: &SharedPlayerState,
-    selection_state: &SharedSelectionState,
-    runtime: &Rc<RefCell<TimelineRuntime>>,
-) {
+pub(super) fn paste(area: &gtk::GLArea, runtime: &Rc<RefCell<TimelineRuntime>>) {
     let clipboard = area.display().clipboard();
     let formats = clipboard.formats();
     if formats.contains_type(gdk::FileList::static_type())
@@ -52,27 +41,22 @@ pub(super) fn paste(
         });
     } else {
         let area = area.clone();
-        let project = project.clone();
-        let player_state = player_state.clone();
-        let selection_state = selection_state.clone();
         let runtime = runtime.clone();
-        let timeline_clipboard = runtime.borrow().scene.clipboard.clone();
-        let timeline_sequence_scope = crate::selection_state::active_scope(&selection_state);
+        let paste = runtime.borrow().scene.clipboard_paste();
         clipboard.read_text_async(None::<&gio::Cancellable>, move |result| {
             let Some(text) = result.ok().flatten() else {
                 return;
             };
             if text == TIMELINE_MARKER {
-                if let Some(clipboard) = timeline_clipboard {
-                    paste_timeline_clipboard(
+                let result = runtime.borrow_mut().scene.paste_clipboard(paste);
+                if let Err(error) = result {
+                    super::interaction::show_error_dialog(
                         &area,
-                        &project,
-                        &player_state,
-                        &selection_state,
-                        &clipboard,
-                        &timeline_sequence_scope,
+                        "Could not paste timeline items",
+                        &error,
                     );
                 }
+                area.queue_render();
             } else {
                 external_content::insert(
                     &area,

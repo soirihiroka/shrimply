@@ -276,6 +276,13 @@ impl Scene {
                 if action == A::Cut {
                     self.delete_context_items()?;
                 }
+                player_state::refresh_project(
+                    &self.player,
+                    ProjectChange {
+                        inspector: true,
+                        ..Default::default()
+                    },
+                );
                 Some(R::SetTimelineClipboardMarker)
             }
             A::Paste => Some(R::PasteFromClipboard),

@@ -2,6 +2,7 @@
 
 #include <QQuickFramebufferObject>
 #include <QString>
+#include <cstdint>
 #include <QUrl>
 #include <QVariantList>
 
@@ -73,8 +74,10 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseUngrabEvent() override;
     void wheelEvent(QWheelEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private:
+    void handleActionResult(std::uint8_t result);
     bool middle_mouse_grabbed_ = false;
 };
 

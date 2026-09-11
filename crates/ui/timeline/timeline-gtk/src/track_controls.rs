@@ -8,9 +8,6 @@ const TRACK_ADD_MENU_ITEM_GAP: i32 = 12;
 #[derive(Clone)]
 struct TrackAddContext {
     area: gtk::GLArea,
-    project: Rc<RefCell<Project>>,
-    player_state: SharedPlayerState,
-    selection_state: SharedSelectionState,
     runtime: Rc<RefCell<TimelineRuntime>>,
 }
 
@@ -162,8 +159,6 @@ pub use shrimply_timeline_skia::track_controls::*;
 pub(super) fn show_track_add_menu(
     area: &gtk::GLArea,
     project: &Rc<RefCell<Project>>,
-    player_state: &SharedPlayerState,
-    selection_state: &SharedSelectionState,
     runtime: &Rc<RefCell<TimelineRuntime>>,
     request: TrackAddMenuRequest,
 ) {
@@ -176,9 +171,6 @@ pub(super) fn show_track_add_menu(
     let view = runtime.borrow().scene.view();
     let context = TrackAddContext {
         area: area.clone(),
-        project: project.clone(),
-        player_state: player_state.clone(),
-        selection_state: selection_state.clone(),
         runtime: runtime.clone(),
     };
     let popover = gtk::Popover::builder()
@@ -235,32 +227,20 @@ fn activate_track_add_action(
     if action == TrackAddAction::Import {
         interaction::open_track_import_dialog(
             &context.area,
-            &context.project,
-            &context.player_state,
-            &context.selection_state,
             &context.runtime,
             import_targets.to_vec(),
         );
         return;
     }
-    let runtime = context.runtime.borrow();
-    let default_text_font_family = runtime.scene.default_text_font_family.clone();
-    let settings = shrimply_timeline_skia::TrackAddSettings {
-        default_visual_duration: runtime.scene.default_visual_duration,
-        default_text_font_family: &default_text_font_family,
-    };
-    drop(runtime);
-    if shrimply_timeline_skia::activate_track_add(
-        &context.project,
-        &context.player_state,
-        &context.selection_state,
-        key,
-        action,
-        settings,
-    ) == shrimply_timeline_skia::TrackAddOutcome::Changed
-    {
-        context.area.queue_render();
+    let result = context
+        .runtime
+        .borrow_mut()
+        .scene
+        .activate_track_add(key, action);
+    if let Err(error) = result {
+        interaction::show_error_dialog(&context.area, "Could not add timeline item", &error);
     }
+    context.area.queue_render();
 }
 
 fn append_add_menu_item_i18n(

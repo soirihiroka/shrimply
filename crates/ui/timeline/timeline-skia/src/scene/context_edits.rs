@@ -2,6 +2,12 @@ use super::*;
 use crate::project::{ItemAddress, ItemKind, ItemMut, TrackMut};
 use crate::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 
+/// Captures the copied items and destination before an asynchronous native clipboard read.
+pub struct ClipboardPaste {
+    clipboard: Option<TimelineClipboard>,
+    scope: project::SequenceScopeId,
+}
+
 impl Scene {
     pub(super) fn commit_context_edit(
         &mut self,
@@ -56,8 +62,19 @@ impl Scene {
         self.commit_context_edit(edited, "cut-timeline-items", Some(Vec::new()))
     }
 
+    pub fn clipboard_paste(&self) -> ClipboardPaste {
+        ClipboardPaste {
+            clipboard: self.clipboard.clone(),
+            scope: self.context.scope.clone(),
+        }
+    }
+
     pub fn paste_context_clipboard(&mut self) -> Result<(), String> {
-        let clipboard = self
+        self.paste_clipboard(self.clipboard_paste())
+    }
+
+    pub fn paste_clipboard(&mut self, paste: ClipboardPaste) -> Result<(), String> {
+        let clipboard = paste
             .clipboard
             .as_ref()
             .ok_or("Timeline clipboard is empty")?;
@@ -65,7 +82,7 @@ impl Scene {
         let result = items::paste_items(
             &mut edited,
             clipboard,
-            &self.context.scope,
+            &paste.scope,
             player_state::current_time(&self.player),
         );
         if result.selection.is_empty() {
@@ -97,6 +114,7 @@ impl Scene {
         let mut edited = self.project.borrow().clone();
         let mut selection = None;
         let mut selected_track = None;
+        let mut stabilization = Vec::new();
         let message = match action {
             A::ReplaceProperties | A::PasteModifiers => {
                 let result = if action == A::PasteModifiers {
@@ -112,9 +130,22 @@ impl Scene {
                     return Err("Clipboard properties cannot be applied to this selection".into());
                 }
                 if result.stabilization {
-                    return Err("Pasting stabilization requires the stabilization backend, which is unavailable in this editor".into());
+                    self.stabilization_handler
+                        .ok_or("Pasting stabilization requires a stabilization backend")?;
+                    stabilization = self
+                        .context
+                        .selected
+                        .iter()
+                        .filter_map(|target| edited.video_item(target))
+                        .filter(|item| item.stabilize_video)
+                        .cloned()
+                        .collect();
                 }
-                "paste-item-properties"
+                if action == A::PasteModifiers {
+                    "paste-item-modifiers"
+                } else {
+                    "replace-item-properties"
+                }
             }
             A::Group | A::Ungroup | A::UnlinkFolder => {
                 let first = self
@@ -260,6 +291,10 @@ impl Scene {
             _ => return Err("Action requires a native editor handler".into()),
         };
         self.commit_context_edit(edited, message, selection)?;
+        for item in stabilization {
+            self.stabilization_handler
+                .expect("stabilization backend was validated")(&item);
+        }
         if let Some(track) = selected_track {
             selection_state::set_selected_track_addresses(
                 &self.selection,

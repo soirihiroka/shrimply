@@ -142,13 +142,6 @@ fn stage_clipboard_paths(paths: Vec<PathBuf>, origin: Origin) -> Result<Vec<Path
         .collect()
 }
 
-pub(crate) fn insert_text_at_playhead_core(
-    runtime: &Rc<RefCell<TimelineRuntime>>,
-    text: String,
-) -> bool {
-    runtime.borrow_mut().scene.insert_external_text(text, None)
-}
-
 pub(super) fn from_value(value: &glib::Value) -> Option<Content> {
     value
         .get::<gdk::FileList>()

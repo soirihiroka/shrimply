@@ -11,6 +11,7 @@
 #include <QIcon>
 #include <QImage>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include <QPointer>
 #include <QOpenGLFramebufferObject>
 #include <QOpenGLFramebufferObjectFormat>
@@ -97,6 +98,7 @@ extern "C" double shrimply_qt_timeline_context_menu_maximum(std::size_t index);
 extern "C" double shrimply_qt_timeline_context_menu_step(std::size_t index);
 extern "C" bool shrimply_qt_timeline_context_menu_mixed(std::size_t index);
 extern "C" void shrimply_qt_timeline_set_context_menu_control(std::size_t index, double value);
+extern "C" std::uint8_t shrimply_qt_timeline_key(std::uint32_t key, bool shortcut, bool shift);
 extern "C" std::uint8_t shrimply_qt_timeline_activate_context_menu_item(std::size_t index);
 extern "C" std::int32_t shrimply_qt_timeline_context_frame_width();
 extern "C" std::int32_t shrimply_qt_timeline_context_frame_height();
@@ -601,6 +603,34 @@ void TimelineSurface::activateContextMenuItem(int index) {
     }
     const std::uint8_t result =
         shrimply_qt_timeline_activate_context_menu_item(static_cast<std::size_t>(index));
+    handleActionResult(result);
+    emit contextMenuItemsChanged();
+}
+
+void TimelineSurface::keyPressEvent(QKeyEvent *event) {
+    if (event->modifiers().testFlag(Qt::AltModifier) || event->modifiers().testFlag(Qt::MetaModifier)) {
+        event->ignore();
+        return;
+    }
+    std::uint32_t key = event->key();
+    switch (event->key()) {
+    case Qt::Key_Escape: key = 0x1b; break;
+    case Qt::Key_Delete: key = 0x7f; break;
+    case Qt::Key_Backspace: key = 0x08; break;
+    default: break;
+    }
+    const auto result = shrimply_qt_timeline_key(key,
+        event->modifiers().testFlag(Qt::ControlModifier), event->modifiers().testFlag(Qt::ShiftModifier));
+    constexpr std::uint8_t unhandled_key = UINT8_MAX;
+    if (result == unhandled_key) {
+        event->ignore();
+        return;
+    }
+    handleActionResult(result);
+    event->accept();
+}
+
+void TimelineSurface::handleActionResult(std::uint8_t result) {
     if (result == 1) {
         const QImage image = context_frame_image();
         if (image.isNull()) {
@@ -673,6 +703,7 @@ void TimelineSurface::hoverLeaveEvent(QHoverEvent *event) {
 }
 
 void TimelineSurface::mousePressEvent(QMouseEvent *event) {
+    forceActiveFocus(Qt::MouseFocusReason);
     if (event->button() == Qt::RightButton) {
         if (shrimply_qt_timeline_prepare_context_menu(event->position().x(),
                                                        event->position().y()) > 0) {

@@ -205,6 +205,7 @@ pub(crate) fn add_input_controllers(
         player_state.clone(),
         selection_state.clone(),
         runtime.clone(),
+        preferences.clone(),
     );
 
     let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);

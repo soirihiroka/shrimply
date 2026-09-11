@@ -26,11 +26,11 @@ use std::rc::Rc;
 
 use shrimply_cross_ui_core::editor::EditorSession;
 use shrimply_math_color::Color;
-use shrimply_timeline_gtk::{RenderedVideoFrame, ToolkitPointerButton, ToolkitTimeline};
 use shrimply_timeline_qt::{
     ContextMenuControl, ContextMenuRequest, CursorTool, DragCollisionMode,
     TIMELINE_CLIPBOARD_MARKER,
 };
+use shrimply_timeline_qt::{RenderedVideoFrame, ToolkitPointerButton, ToolkitTimeline};
 use std::ffi::c_void;
 use std::path::PathBuf;
 
@@ -205,7 +205,7 @@ pub extern "C" fn shrimply_qt_render_timeline(
             surfaces.track_add_y = presentation.y;
             surfaces.track_add_pending = true;
         }
-        if let Some(error) = surfaces.timeline.take_track_import_error() {
+        if let Some(error) = surfaces.timeline.take_error() {
             surfaces.context_action_error = error;
             surfaces.timeline_error_pending = true;
         }
@@ -330,8 +330,14 @@ pub extern "C" fn shrimply_qt_timeline_activate_track_add_menu_item(index: usize
         let Some(action) = surfaces.track_add_menu.action(index) else {
             return false;
         };
-        surfaces.timeline.activate_track_add_action(action)
-            && action == shrimply_timeline_qt::TrackAddAction::Import
+        match surfaces.timeline.activate_track_add_action(action) {
+            Ok(changed) => changed && action == shrimply_timeline_qt::TrackAddAction::Import,
+            Err(error) => {
+                surfaces.context_action_error = error;
+                surfaces.timeline_error_pending = true;
+                false
+            }
+        }
     })
 }
 
@@ -434,8 +440,8 @@ pub fn preview_frame_rate_label() -> String {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn shrimply_qt_timeline_pointer_move(x: f32, y: f32, control: bool, shift: bool) {
-    SURFACES.with_borrow(|surfaces| {
-        if let Some(surfaces) = surfaces.as_ref() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
             surfaces.timeline.pointer_move(x, y, control, shift);
         }
     });
@@ -452,8 +458,8 @@ pub extern "C" fn shrimply_qt_timeline_pointer_cursor() -> u8 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn shrimply_qt_timeline_pointer_leave() {
-    SURFACES.with_borrow(|surfaces| {
-        if let Some(surfaces) = surfaces.as_ref() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
             surfaces.timeline.pointer_leave();
         }
     });
@@ -475,8 +481,8 @@ pub extern "C" fn shrimply_qt_timeline_pointer_press(
     control: bool,
     shift: bool,
 ) {
-    SURFACES.with_borrow(|surfaces| {
-        if let Some(surfaces) = surfaces.as_ref() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
             surfaces
                 .timeline
                 .pointer_press(pointer_button(button), x, y, control, shift);
@@ -492,8 +498,8 @@ pub extern "C" fn shrimply_qt_timeline_pointer_release(
     control: bool,
     shift: bool,
 ) {
-    SURFACES.with_borrow(|surfaces| {
-        if let Some(surfaces) = surfaces.as_ref() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
             surfaces
                 .timeline
                 .pointer_release(pointer_button(button), x, y, control, shift);
@@ -534,8 +540,8 @@ pub extern "C" fn shrimply_qt_timeline_end_pointer_lock(control: bool, shift: bo
 
 #[unsafe(no_mangle)]
 pub extern "C" fn shrimply_qt_timeline_scroll(dx: f32, dy: f32, control: bool, shift: bool) {
-    SURFACES.with_borrow(|surfaces| {
-        if let Some(surfaces) = surfaces.as_ref() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
             surfaces.timeline.scroll(dx, dy, control, shift);
         }
     });
@@ -688,8 +694,11 @@ pub extern "C" fn shrimply_qt_timeline_set_context_menu_control(index: usize, va
         let Some(surfaces) = surfaces.as_mut() else {
             return;
         };
-        if let Some(control) = surfaces.timeline_menu.control(index) {
-            surfaces.timeline.set_context_menu_control(control, value);
+        if let Some(control) = surfaces.timeline_menu.control(index)
+            && let Err(error) = surfaces.timeline.set_context_menu_control(control, value)
+        {
+            surfaces.context_action_error = error;
+            surfaces.timeline_error_pending = true;
         }
     });
 }
@@ -705,57 +714,92 @@ pub extern "C" fn shrimply_qt_timeline_activate_context_menu_item(index: usize) 
         surfaces.context_open_path.clear();
         surfaces.context_delete_clip_count = 0;
         surfaces.context_action_error.clear();
-        let request = surfaces
-            .timeline_menu
-            .action(index)
-            .and_then(|action| surfaces.timeline.activate_context_menu_action(action));
-        surfaces.timeline_menu = shrimply_timeline_qt::MenuModel::default();
-        let (selection, result_code) = match request {
-            None => return 0,
-            Some(ContextMenuRequest::CopyFrame(selection)) => (selection, 1),
-            Some(ContextMenuRequest::SaveFrame(selection)) => (selection, 2),
-            Some(ContextMenuRequest::ShowInFolder) => {
-                let Some(path) = surfaces.timeline.context_file_path() else {
-                    surfaces.context_action_error = "The selected item has no file.".to_string();
-                    return 3;
-                };
-                match shrimply_cross_ui_core::desktop_open::prepare(path, None) {
-                    Ok(
-                        shrimply_cross_ui_core::desktop_open::Action::Open(path)
-                        | shrimply_cross_ui_core::desktop_open::Action::FocusRevealed(path),
-                    ) => {
-                        surfaces.context_open_path = path.to_string_lossy().into_owned();
-                        return 4;
-                    }
-                    Err(error) => {
-                        surfaces.context_action_error = error;
-                        return 3;
-                    }
-                }
-            }
-            Some(ContextMenuRequest::DeleteFoldedTrack { clip_count }) => {
-                surfaces.context_delete_clip_count = clip_count;
-                return 5;
-            }
-            Some(ContextMenuRequest::SetTimelineClipboardMarker) => return 6,
-            Some(ContextMenuRequest::PasteFromClipboard) => return 7,
-            Some(request) => {
-                surfaces.context_action_error =
-                    format!("{request:?} is not implemented by the Qt timeline adapter");
+        let Some(action) = surfaces.timeline_menu.action(index) else {
+            return 0;
+        };
+        let request = match surfaces.timeline.activate_context_menu_action(action) {
+            Ok(request) => request,
+            Err(error) => {
+                surfaces.context_action_error = error;
                 return 3;
             }
         };
-        match surfaces.timeline.render_context_video_frame(selection) {
-            Ok(frame) => {
-                surfaces.context_frame = Some(frame);
-                result_code
-            }
+        surfaces.timeline_menu = shrimply_timeline_qt::MenuModel::default();
+        timeline_action_result(surfaces, request)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_key(key: u32, shortcut: bool, shift: bool) -> u8 {
+    const UNHANDLED_KEY: u8 = u8::MAX;
+    let Some(action) = char::from_u32(key)
+        .and_then(|key| shrimply_timeline_qt::KeyAction::from_key(key, shortcut, shift))
+    else {
+        return UNHANDLED_KEY;
+    };
+    SURFACES.with_borrow_mut(|surfaces| {
+        let Some(surfaces) = surfaces.as_mut() else {
+            return UNHANDLED_KEY;
+        };
+        match surfaces.timeline.key_action(action) {
+            Ok(request) => timeline_action_result(surfaces, request),
             Err(error) => {
                 surfaces.context_action_error = error;
                 3
             }
         }
     })
+}
+
+fn timeline_action_result(surfaces: &mut Surfaces, request: Option<ContextMenuRequest>) -> u8 {
+    let (selection, result_code) = match request {
+        None => return 0,
+        Some(ContextMenuRequest::CopyFrame(selection)) => (selection, 1),
+        Some(ContextMenuRequest::SaveFrame(selection)) => (selection, 2),
+        Some(ContextMenuRequest::ShowInFolder) => {
+            let Some(path) = surfaces.timeline.context_file_path() else {
+                surfaces.context_action_error = "The selected item has no file.".to_string();
+                return 3;
+            };
+            match shrimply_cross_ui_core::desktop_open::prepare(&path, None) {
+                Ok(
+                    shrimply_cross_ui_core::desktop_open::Action::Open(path)
+                    | shrimply_cross_ui_core::desktop_open::Action::FocusRevealed(path),
+                ) => {
+                    surfaces.context_open_path = path.to_string_lossy().into_owned();
+                    return 4;
+                }
+                Err(error) => {
+                    surfaces.context_action_error = error;
+                    return 3;
+                }
+            }
+        }
+        Some(
+            ContextMenuRequest::DeleteFoldedTrack { clip_count }
+            | ContextMenuRequest::DeleteTracks { clip_count },
+        ) => {
+            surfaces.context_delete_clip_count = clip_count;
+            return 5;
+        }
+        Some(ContextMenuRequest::SetTimelineClipboardMarker) => return 6,
+        Some(ContextMenuRequest::PasteFromClipboard) => return 7,
+        Some(request) => {
+            surfaces.context_action_error =
+                format!("{request:?} is not implemented by the Qt timeline adapter");
+            return 3;
+        }
+    };
+    match surfaces.timeline.render_context_video_frame(selection) {
+        Ok(frame) => {
+            surfaces.context_frame = Some(frame);
+            result_code
+        }
+        Err(error) => {
+            surfaces.context_action_error = error;
+            3
+        }
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -787,11 +831,14 @@ pub unsafe extern "C" fn shrimply_qt_timeline_paste_clipboard_text(text: *const 
     }
     let text = unsafe { std::slice::from_raw_parts(text, length) };
     if let Ok(text) = std::str::from_utf8(text) {
-        SURFACES.with_borrow(|surfaces| {
-            if let Some(surfaces) = surfaces.as_ref() {
-                surfaces
+        SURFACES.with_borrow_mut(|surfaces| {
+            if let Some(surfaces) = surfaces.as_mut()
+                && let Err(error) = surfaces
                     .timeline
-                    .paste_context_clipboard_text(text.to_owned());
+                    .paste_context_clipboard_text(text.to_owned())
+            {
+                surfaces.context_action_error = error;
+                surfaces.timeline_error_pending = true;
             }
         });
     }
@@ -810,7 +857,10 @@ pub extern "C" fn shrimply_qt_timeline_context_delete_clip_count() -> usize {
 pub extern "C" fn shrimply_qt_timeline_delete_context_folded_track() {
     SURFACES.with_borrow_mut(|surfaces| {
         if let Some(surfaces) = surfaces.as_mut() {
-            surfaces.timeline.delete_context_folded_track();
+            if let Err(error) = surfaces.timeline.delete_context_folded_track() {
+                surfaces.context_action_error = error;
+                surfaces.timeline_error_pending = true;
+            }
             surfaces.context_delete_clip_count = 0;
         }
     });

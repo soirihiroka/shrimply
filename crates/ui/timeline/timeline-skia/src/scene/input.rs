@@ -252,7 +252,7 @@ impl Scene {
             return false;
         }
         let playing = player_state::snapshot(&self.player).playing;
-        let mut changed = false;
+        let mut changed = self.poll_track_imports();
         if let Some(recording) = self.active_audio_recording.as_ref() {
             if playing {
                 recording.maintain_duration(&self.player);
@@ -318,6 +318,7 @@ impl Scene {
 
     /// Detach from a native surface while retaining view state for a later realization.
     pub fn suspend(&mut self) {
+        self.track_imports.clear();
         self.pointer_cancelled();
         self.finish_audio_recording();
         self.stop_video_recording();
@@ -353,6 +354,9 @@ impl Scene {
     }
 
     pub fn animating(&self) -> bool {
+        if !self.track_imports.is_empty() {
+            return true;
+        }
         !self.pending_scrolls.is_empty()
             || self.track_controls_animating
             || self.horizontal_scrollbar.animating()

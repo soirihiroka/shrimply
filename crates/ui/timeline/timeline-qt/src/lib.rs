@@ -1,3 +1,7 @@
+pub use shrimply_timeline_skia::scene::KeyAction;
+mod timeline;
+pub use timeline::{RenderedVideoFrame, ToolkitPointerButton, ToolkitTimeline};
+
 pub use shrimply_timeline_skia::{
     ContextMenu, ContextMenuAction, ContextMenuControl, ContextMenuEntry, ContextMenuItem,
     ContextMenuRequest, CursorTool, DragCollisionMode, TIMELINE_CLIPBOARD_MARKER, TrackAddAction,

@@ -8,7 +8,6 @@ pub(super) struct TimelineRuntime {
     pub(super) animation_tick_active: bool,
     pub(super) screen_recording: Option<video_recording::ScreenRecording>,
     pub(super) active_context_menu: Option<gtk::Popover>,
-    pub(super) resource_jobs: Vec<shrimply_components_gtk::resource_pipeline::UiSubscription>,
 }
 impl TimelineRuntime {
     pub(super) fn new(
@@ -19,20 +18,21 @@ impl TimelineRuntime {
         property_clipboard: shrimply_property_transfer::SharedClipboard,
         playback_performance: playback_performance::SharedCollector,
     ) -> Self {
+        let mut scene = shrimply_timeline_skia::scene::Scene::new(
+            project,
+            player,
+            selection,
+            preferences,
+            property_clipboard,
+            playback_performance,
+        );
+        scene.set_stabilization_handler(shrimply_visual_cuda::video_stabilization::request);
         Self {
-            scene: shrimply_timeline_skia::scene::Scene::new(
-                project,
-                player,
-                selection,
-                preferences,
-                property_clipboard,
-                playback_performance,
-            ),
+            scene,
             renderer: TimelineRenderer::new(),
             animation_tick_active: false,
             screen_recording: None,
             active_context_menu: None,
-            resource_jobs: Vec::new(),
         }
     }
 }

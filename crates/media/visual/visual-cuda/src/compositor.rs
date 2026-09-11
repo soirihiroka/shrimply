@@ -38,6 +38,8 @@ macro_rules! abort_render_if_superseded {
     };
 }
 
+mod frame_rgba;
+pub use frame_rgba::{RgbaVideoFrame, render_items_rgba};
 mod preload;
 mod render;
 mod sam2;

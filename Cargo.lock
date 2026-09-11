@@ -6891,7 +6891,6 @@ dependencies = [
  "shrimply-project-evaluation",
  "shrimply-surface-gl-skia",
  "shrimply-timeline-edit",
- "shrimply-timeline-gtk",
  "shrimply-timeline-qt",
  "shrimply-visual-cuda",
  "skia-safe",
@@ -7362,8 +7361,19 @@ dependencies = [
 name = "shrimply-timeline-qt"
 version = "0.1.0"
 dependencies = [
+ "glam 0.33.5",
+ "shrimply-components-skia",
+ "shrimply-cross-ui-theme",
+ "shrimply-editor-state",
+ "shrimply-math-color",
+ "shrimply-playback-performance",
+ "shrimply-pointer-lock-wayland",
+ "shrimply-project-document",
+ "shrimply-property-transfer",
+ "shrimply-surface-gl-skia",
  "shrimply-timeline-edit",
  "shrimply-timeline-skia",
+ "shrimply-visual-cuda",
 ]
 
 [[package]]

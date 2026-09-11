@@ -20,7 +20,6 @@ shrimply-preview-runtime-cuda = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-components-skia = { workspace = true }
 shrimply-editor-state = { workspace = true }
-shrimply-timeline-gtk = { workspace = true }
 shrimply-visual-cuda = { workspace = true }
 skia-safe.workspace = true
 tracing.workspace = true

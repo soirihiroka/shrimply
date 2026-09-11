@@ -14,12 +14,14 @@ use std::{
     },
 };
 mod context_edits;
+pub use context_edits::ClipboardPaste;
 mod context_menu;
 mod keyboard;
 pub use keyboard::{KeyAction, TrackDeletion};
 mod drop_preview;
 mod frame;
 mod input;
+mod track_import;
 pub use input::{Event, PointerButton, PointerState, Requests};
 pub mod pointer;
 mod scrolling;
@@ -77,7 +79,8 @@ pub struct Scene {
     resize_drag: Option<ResizeDrag>,
     transition_drag: Option<TransitionDrag>,
     clip_transition_drag: Option<ClipTransitionDrag>,
-    pub clipboard: Option<TimelineClipboard>,
+    clipboard: Option<TimelineClipboard>,
+    stabilization_handler: Option<fn(&project::VideoItem)>,
     pub property_clipboard: shrimply_property_transfer::SharedClipboard,
     import_preview: Option<TimelineImportPreview>,
     text_drop_preview: Option<crate::external_content::TextPreview>,
@@ -101,6 +104,7 @@ pub struct Scene {
     viewport: Rect,
     context: context_menu::Context,
     drop_preview: Option<drop_preview::DropPreview>,
+    track_imports: Vec<crate::import::TrackImportInspection>,
     pub(crate) external_imports: crate::import_queue::ImportQueue,
     pub(crate) external_downloads:
         std::collections::VecDeque<crate::external_content::PendingDownload>,
@@ -273,6 +277,7 @@ impl Scene {
             transition_drag: None,
             clip_transition_drag: None,
             clipboard: None,
+            stabilization_handler: None,
             property_clipboard,
             import_preview: None,
             text_drop_preview: None,
@@ -296,6 +301,7 @@ impl Scene {
             viewport: Rect::from_min_size(Vec2::ZERO, Vec2::ZERO),
             context: context_menu::Context::default(),
             drop_preview: None,
+            track_imports: Vec::new(),
             external_imports: crate::import_queue::ImportQueue::default(),
             external_downloads: std::collections::VecDeque::new(),
             external_remuxes: std::collections::VecDeque::new(),
@@ -307,6 +313,10 @@ impl Scene {
             revision,
         }
     }
+    pub fn set_stabilization_handler(&mut self, handler: fn(&project::VideoItem)) {
+        self.stabilization_handler = Some(handler);
+    }
+
     fn finish_pointer_frame(&mut self) {
         self.primary_pressed = false;
         self.primary_released = false;
