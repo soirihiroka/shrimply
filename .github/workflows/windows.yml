@@ -57,7 +57,7 @@ jobs:
 
       - name: Install host tools
         shell: powershell
-        run: choco install make pkgconfiglite uv --yes --no-progress
+        run: choco install make pkgconfiglite ripgrep uv --yes --no-progress
 
       - name: Restore Rust and application caches
         uses: actions/cache@v6
@@ -96,7 +96,7 @@ jobs:
 
       - name: Restore installed CUDA 12.9.2
         id: cuda-cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
           key: windows-cuda-12.9.2-v1
@@ -119,8 +119,16 @@ jobs:
           "CUDA_PATH_V12_9=$cuda" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "$cuda\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
+      - name: Save installed CUDA 12.9.2
+        if: steps.cuda-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
+          key: windows-cuda-12.9.2-v1
+
       - name: Restore vcpkg caches
-        uses: actions/cache@v6
+        id: vcpkg-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             .ci/vcpkg/downloads
@@ -136,9 +144,21 @@ jobs:
           & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root . --x-install-root "$env:VCPKG_INSTALLED_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Save compiled vcpkg packages
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            .ci/vcpkg/downloads
+            .ci/vcpkg/binary-cache
+          key: windows-vcpkg-v1-${{ hashFiles('vcpkg.json') }}
+
       - name: Export native build environment
         shell: powershell
         run: |
+          $linker = (Get-Command link.exe -ErrorAction Stop).Source
+          if ($linker -notlike "*Microsoft Visual Studio*") { throw "MSVC link.exe not found: $linker" }
+          "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "VCPKG_ROOT=$pwd\.ci\vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "PKG_CONFIG_PATH=$env:VCPKG_INSTALLED_DIR\x64-windows\lib\pkgconfig;$env:VCPKG_INSTALLED_DIR\x64-windows\share\pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
