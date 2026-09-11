@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 shrimply-trust-core.workspace = true
+shrimply-local-ipc.workspace = true
 cached = { workspace = true, features = ["proc_macro"] }
 hashbrown.workspace = true
 libc.workspace = true

@@ -43,3 +43,6 @@ shrimply-visual-modifiers = { workspace = true }
 shrimply-video-generation = { workspace = true }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Threading"] }

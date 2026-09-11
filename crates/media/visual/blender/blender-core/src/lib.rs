@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
+use shrimply_local_ipc::{Listener as WorkerListener, Stream as WorkerStream};
 use shrimply_math_core::Fraction;
 use shrimply_trust_core::Child;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{LazyLock, Mutex, RwLock};
@@ -144,7 +143,7 @@ enum PixelFormat {
 
 pub struct Session {
     child: Child,
-    socket: UnixStream,
+    socket: WorkerStream,
     _worker_file: tempfile::NamedTempFile,
     _stderr_file: tempfile::NamedTempFile,
     metadata: Metadata,
@@ -231,7 +230,7 @@ impl Session {
         let socket_dir = tempfile::tempdir()
             .map_err(|error| format!("create Blender socket directory: {error}"))?;
         let socket_path = socket_dir.path().join("worker.sock");
-        let listener = UnixListener::bind(&socket_path)
+        let listener = WorkerListener::bind(&socket_path)
             .map_err(|error| format!("bind Blender worker socket: {error}"))?;
         listener
             .set_nonblocking(true)
@@ -254,20 +253,13 @@ impl Session {
         if let Some(blend) = blend {
             command.arg("--enable-autoexec").arg(blend);
         }
-        command
-            .arg("--python")
-            .arg(worker_file.path())
-            .arg("--")
-            .arg("--socket")
-            .arg(&socket_path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(
-                stderr_file
-                    .reopen()
-                    .map_err(|error| format!("capture Blender stderr: {error}"))?,
-            )
-            .process_group(0);
+        command.arg("--python").arg(worker_file.path()).arg("--");
+        command.arg("--socket").arg(&socket_path);
+        command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(
+            stderr_file
+                .reopen()
+                .map_err(|error| format!("capture Blender stderr: {error}"))?,
+        );
         let mut child = Child::spawn(&mut command, blend)
             .map_err(|error| format!("start Blender worker: {error}"))?;
         let started = Instant::now();
@@ -299,6 +291,7 @@ impl Session {
                 Err(error) => return Err(format!("accept Blender worker connection: {error}")),
             }
         };
+        drop(listener);
         drop(socket_dir);
         // macOS inherits the listener's nonblocking mode on accepted sockets.
         socket

@@ -8,6 +8,7 @@ use shrimply_editor_state::{
 };
 use shrimply_math_color::Color;
 use shrimply_playback_performance as playback_performance;
+#[cfg(target_os = "linux")]
 use shrimply_pointer_lock_wayland::WaylandPointerLock;
 use shrimply_project_document::project::Project;
 use shrimply_surface_gl_skia::TimelineRenderer;
@@ -28,7 +29,9 @@ use shrimply_timeline_skia::{
     view::{TimelineCursor, TimelineScrollEvent, TimelineScrollInput},
 };
 pub use shrimply_visual_cuda::compositor::RgbaVideoFrame as RenderedVideoFrame;
-use std::{cell::RefCell, ffi::c_void, path::PathBuf, rc::Rc};
+#[cfg(target_os = "linux")]
+use std::ffi::c_void;
+use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 pub struct TrackAddMenuPresentation {
     pub kind: shrimply_timeline_edit::TrackKind,
@@ -48,6 +51,7 @@ pub struct ToolkitTimeline {
     track_add_request: Option<TrackAddMenuRequest>,
     track_add_presentation: Option<TrackAddMenuPresentation>,
     deletion: Option<TrackDeletion>,
+    #[cfg(target_os = "linux")]
     pointer_lock: Option<WaylandPointerLock>,
     pointer_lock_origin: Option<Vec2>,
 }
@@ -81,6 +85,7 @@ impl ToolkitTimeline {
             track_add_request: None,
             track_add_presentation: None,
             deletion: None,
+            #[cfg(target_os = "linux")]
             pointer_lock: None,
             pointer_lock_origin: None,
         }
@@ -163,6 +168,7 @@ impl ToolkitTimeline {
     }
 
     fn poll_pointer_lock(&mut self) {
+        #[cfg(target_os = "linux")]
         if let Some((x, y)) = self
             .pointer_lock
             .as_mut()
@@ -172,6 +178,10 @@ impl ToolkitTimeline {
                 delta: vec2(x as f32, y as f32),
             });
         }
+    }
+    pub fn relative_motion(&mut self, x: f32, y: f32) {
+        self.scene
+            .event(Event::RelativeMotion { delta: vec2(x, y) });
     }
     pub fn pointer_move(&mut self, x: f32, y: f32, ctrl: bool, shift: bool) {
         self.scene.event(Event::Motion {
@@ -216,6 +226,7 @@ impl ToolkitTimeline {
     }
     /// # Safety
     /// Pointers must belong to the live Wayland connection and remain valid until capture ends.
+    #[cfg(target_os = "linux")]
     pub unsafe fn begin_pointer_lock(
         &mut self,
         display: *mut c_void,
@@ -235,8 +246,19 @@ impl ToolkitTimeline {
         self.pointer_lock_origin = Some(position);
         true
     }
+    #[cfg(windows)]
+    pub fn begin_pointer_lock(&mut self, cursor: SoftwareCursor) -> bool {
+        if self.pointer_lock_origin.is_some() {
+            return true;
+        }
+        let position = self.scene.pointer_state().position.unwrap_or(Vec2::ZERO);
+        self.scene.begin_relative_pointer(position, cursor);
+        self.pointer_lock_origin = Some(position);
+        true
+    }
     pub fn end_pointer_lock(&mut self, ctrl: bool, shift: bool) {
         self.poll_pointer_lock();
+        #[cfg(target_os = "linux")]
         let Some(mut lock) = self.pointer_lock.take() else {
             return;
         };
@@ -248,10 +270,14 @@ impl ToolkitTimeline {
             .scene
             .end_relative_pointer()
             .expect("Pointer lock must own a software cursor");
+        #[cfg(target_os = "linux")]
         lock.restore_cursor_with_offset(
             f64::from(cursor.x - origin.x),
             f64::from(cursor.y - origin.y),
         );
+        #[cfg(windows)]
+        let _ = (origin, cursor);
+        #[cfg(target_os = "linux")]
         drop(lock);
         if let Some(point) = self.scene.pointer_state().position {
             self.scene.event(Event::Release {

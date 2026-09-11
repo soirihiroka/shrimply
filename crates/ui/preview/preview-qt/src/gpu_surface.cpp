@@ -22,7 +22,9 @@
 #include <QDesktopServices>
 #include <QVariantMap>
 #include <QWheelEvent>
+#if defined(Q_OS_LINUX)
 #include <QtGui/qguiapplication_platform.h>
+#endif
 #include <QtQml/qqml.h>
 
 #include <cstddef>
@@ -126,8 +128,13 @@ extern "C" bool shrimply_qt_timeline_new_track_mode();
 extern "C" void shrimply_qt_timeline_select_overwrite_mode();
 extern "C" void shrimply_qt_timeline_select_block_mode();
 extern "C" void shrimply_qt_timeline_select_new_track_mode();
+#if defined(Q_OS_WINDOWS)
+extern "C" bool shrimply_qt_timeline_begin_pointer_lock();
+#else
 extern "C" bool shrimply_qt_timeline_begin_pointer_lock(void *display, void *surface,
                                                           void *seat);
+#endif
+extern "C" void shrimply_qt_timeline_relative_motion(float x, float y);
 extern "C" void shrimply_qt_timeline_end_pointer_lock(bool control, bool shift);
 extern "C" void shrimply_qt_preview_pointer_move(float width, float height, float x, float y,
                                                     bool control, bool shift, bool alt);
@@ -720,10 +727,17 @@ void TimelineSurface::mousePressEvent(QMouseEvent *event) {
     shrimply_qt_timeline_pointer_press(pointer_button(event->button()), event->position().x(),
                                        event->position().y(), control, shift);
     if (event->button() == Qt::MiddleButton) {
+#if defined(Q_OS_WINDOWS)
+        if (shrimply_qt_timeline_begin_pointer_lock()) {
+            middle_cursor_origin_ = QCursor::pos();
+            middle_cursor_center_ = mapToGlobal(QPointF(width() / 2.0, height() / 2.0)).toPoint();
+            QCursor::setPos(middle_cursor_center_);
+#else
         auto *wayland = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
         void *surface = window() ? reinterpret_cast<void *>(window()->winId()) : nullptr;
         if (wayland && shrimply_qt_timeline_begin_pointer_lock(
                            wayland->display(), surface, wayland->seat())) {
+#endif
             middle_mouse_grabbed_ = true;
             setKeepMouseGrab(true);
             setCursor(QCursor(Qt::BlankCursor));
@@ -735,6 +749,13 @@ void TimelineSurface::mousePressEvent(QMouseEvent *event) {
 
 void TimelineSurface::mouseMoveEvent(QMouseEvent *event) {
     if (middle_mouse_grabbed_) {
+#if defined(Q_OS_WINDOWS)
+        const QPoint delta = event->globalPosition().toPoint() - middle_cursor_center_;
+        if (!delta.isNull()) {
+            shrimply_qt_timeline_relative_motion(delta.x(), delta.y());
+            QCursor::setPos(middle_cursor_center_);
+        }
+#endif
         event->accept();
         update();
         return;
@@ -761,6 +782,9 @@ void TimelineSurface::mouseReleaseEvent(QMouseEvent *event) {
         middle_mouse_grabbed_ = false;
         setKeepMouseGrab(false);
         unsetCursor();
+#if defined(Q_OS_WINDOWS)
+        QCursor::setPos(middle_cursor_origin_);
+#endif
     } else {
         shrimply_qt_timeline_pointer_release(pointer_button(event->button()),
                                              event->position().x(), event->position().y(),
@@ -778,6 +802,9 @@ void TimelineSurface::mouseUngrabEvent() {
     middle_mouse_grabbed_ = false;
     setKeepMouseGrab(false);
     unsetCursor();
+#if defined(Q_OS_WINDOWS)
+    QCursor::setPos(middle_cursor_origin_);
+#endif
     update();
 }
 

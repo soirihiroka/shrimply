@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QQuickFramebufferObject>
+#include <QPoint>
 #include <QString>
 #include <cstdint>
 #include <QUrl>
@@ -79,6 +80,8 @@ protected:
 private:
     void handleActionResult(std::uint8_t result);
     bool middle_mouse_grabbed_ = false;
+    QPoint middle_cursor_center_;
+    QPoint middle_cursor_origin_;
 };
 
 class PreviewSurface : public QQuickFramebufferObject {

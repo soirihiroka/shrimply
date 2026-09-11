@@ -16,7 +16,7 @@ shrimply-math-geometry = { workspace = true }
 [features]
 cuda = ["dep:shrimply-gpu-cuda"]
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", windows))'.dependencies]
 shrimply-gpu-cuda = { workspace = true, optional = true }
 
 [build-dependencies]

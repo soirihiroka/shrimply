@@ -10,3 +10,6 @@ hashbrown.workspace = true
 libc.workspace = true
 shrimply-profiling = { workspace = true }
 tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_System_SystemInformation"] }

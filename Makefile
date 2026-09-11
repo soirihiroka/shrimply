@@ -1,10 +1,10 @@
 RUSTUP ?= rustup
 RUST_TOOLCHAIN ?= nightly-2026-04-03
-HOST_OS := $(shell uname -s)
+HOST_OS := $(if $(filter Windows_NT,$(OS)),Windows_NT,$(shell uname -s))
 CARGO ?= $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 RUSTC ?= $(RUSTUP) run $(RUST_TOOLCHAIN) rustc
 CARGO_TARGET_DIR ?= target
-CUDA_HOME ?= /usr/local/cuda
+CUDA_HOME ?= $(if $(filter Windows_NT,$(HOST_OS)),$(CUDA_PATH),/usr/local/cuda)
 CUDA_TOOLKIT_PATH ?= $(CUDA_HOME)
 CUDA_TARGET ?= sm_86
 CUDA_IMAGE_FORMAT ?= cubin
@@ -15,14 +15,21 @@ SOURCE_LINE_LIMIT ?= 2000
 OPTIX_ROOT ?= $(CURDIR)/external/optix-dev
 DNF ?= sudo dnf
 INSTALL ?= install
-PKG_CONFIG ?= /usr/bin/pkg-config
+PKG_CONFIG ?= $(if $(filter Windows_NT,$(HOST_OS)),pkg-config,/usr/bin/pkg-config)
 PKG_CONFIG_PATH ?= /usr/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-QT_QMAKE ?= qmake6
-BUILD_ENV := CUDA_HOME=$(CUDA_HOME) CUDA_TOOLKIT_PATH=$(CUDA_TOOLKIT_PATH) CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PATH=$(CUDA_HOME)/bin:$(PATH) PKG_CONFIG=$(PKG_CONFIG) PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) OPTIX_ROOT=$(OPTIX_ROOT)
+QT_QMAKE ?= $(if $(filter Windows_NT,$(HOST_OS)),qmake.exe,qmake6)
+BUILD_ENV := CUDA_HOME="$(CUDA_HOME)" CUDA_TOOLKIT_PATH="$(CUDA_TOOLKIT_PATH)" CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PKG_CONFIG="$(PKG_CONFIG)" PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" OPTIX_ROOT="$(OPTIX_ROOT)"
+ifneq ($(HOST_OS),Windows_NT)
+BUILD_ENV += PATH="$(CUDA_HOME)/bin:$(PATH)"
 BUILD_ENV += LD_LIBRARY_PATH="/run/host/usr/local/libclang-deps:$${LD_LIBRARY_PATH}"
 BUILD_ENV += BINDGEN_EXTRA_CLANG_ARGS="$(if $(wildcard /run/host/usr/lib/llvm-18/lib/clang/18/include),-isystem /run/host/usr/lib/llvm-18/lib/clang/18/include)"
+endif
 RUST_LIBDIR := $(shell $(RUSTC) --print target-libdir)
+ifeq ($(HOST_OS),Windows_NT)
+DEV_RUSTFLAGS ?=
+else
 DEV_RUSTFLAGS ?= -C prefer-dynamic -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)
+endif
 DEV_BUILD_ENV := $(BUILD_ENV) RUSTFLAGS="$(DEV_RUSTFLAGS)"
 
 APP_NAME := Shrimply
@@ -124,19 +131,26 @@ FEDORA_PACKAGES := \
 	qt6-qtbase-devel \
 	qt6-qtdeclarative-devel
 
-.PHONY: native-deps qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt install-codex-mcp-dev install-agy-mcp-dev uninstall uninstall-qt flatpak-gtk
+.PHONY: native-deps windows-native-deps windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt install-codex-mcp-dev install-agy-mcp-dev uninstall uninstall-qt flatpak-gtk
 native-deps:
 	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists libpipewire-0.3 || { echo "Missing PipeWire development files (pkg-config: libpipewire-0.3)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists poppler-glib || { echo "Missing Poppler GLib development files (pkg-config: poppler-glib)" >&2; exit 1; }
 
+windows-native-deps: qt-native-deps
+	@test "$(HOST_OS)" = Windows_NT || { echo "Windows targets require native Windows" >&2; exit 1; }
+	@command -v cl.exe >/dev/null 2>&1 || { echo "Missing MSVC compiler (cl.exe)" >&2; exit 1; }
+	@command -v nvcc.exe >/dev/null 2>&1 || { echo "Missing CUDA compiler (nvcc.exe)" >&2; exit 1; }
+	@$(PKG_CONFIG) --exists libavcodec libavformat libavfilter libavdevice libswresample libswscale || { echo "Missing FFmpeg development files" >&2; exit 1; }
+	@$(PKG_CONFIG) --exists poppler-glib pango pangocairo rubberband || { echo "Missing vcpkg application libraries" >&2; exit 1; }
+
 qt-native-deps:
 	@command -v $(QT_QMAKE) >/dev/null 2>&1 || { echo "Missing Qt 6 qmake ($(QT_QMAKE))" >&2; exit 1; }
 	@version="$$($(QT_QMAKE) -query QT_VERSION)"; case "$$version" in 6.*) echo "Using Qt $$version via $(QT_QMAKE)" ;; *) echo "$(QT_QMAKE) selected unsupported Qt $$version; Qt 6 is required" >&2; exit 1 ;; esac
-	@$(PKG_CONFIG) --exists Qt6Core Qt6Gui Qt6Qml Qt6Quick Qt6QuickControls2 Qt6OpenGL || { echo "Missing Qt 6 Quick/OpenGL development files" >&2; exit 1; }
+	@if test "$(HOST_OS)" != Windows_NT; then $(PKG_CONFIG) --exists Qt6Core Qt6Gui Qt6Qml Qt6Quick Qt6QuickControls2 Qt6OpenGL || { echo "Missing Qt 6 Quick/OpenGL development files" >&2; exit 1; }; fi
 
 cuda-target-check:
-	@test "$$(uname -s)" = Linux || { echo "CUDA kernels require Linux" >&2; exit 1; }
+	@case "$(HOST_OS)" in Linux|Windows_NT) ;; (*) echo "CUDA kernels require Linux or Windows" >&2; exit 1 ;; esac
 	@case "$(CUDA_IMAGE_FORMAT)" in \
 		(cubin) case "$(CUDA_TARGET)" in sm_*) ;; (*) echo "CUDA_TARGET=$(CUDA_TARGET) must be a physical SM architecture" >&2; exit 1 ;; esac ;; \
 		(ptx) case "$(CUDA_PTX_TARGET)" in compute_*) ;; (*) echo "CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) must be a virtual compute architecture" >&2; exit 1 ;; esac ;; \
@@ -274,11 +288,23 @@ ifeq ($(HOST_OS),Linux)
 check: native-deps qt-native-deps cuda-artifacts fmt source-size-check cargo-check lint server-python-check manim-python-check docs-check
 else ifeq ($(HOST_OS),Darwin)
 check: appkit-check fmt source-size-check
+else ifeq ($(HOST_OS),Windows_NT)
+check: windows-check
 else
 check:
-	@echo "make check supports Linux and macOS; unsupported platform: $(HOST_OS)" >&2
+	@echo "make check supports Linux, macOS, and Windows; unsupported platform: $(HOST_OS)" >&2
 	@exit 1
 endif
+
+windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
+	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
+
+windows-release: windows-native-deps cuda-artifacts
+	$(BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
+
+windows-package: windows-release
+	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging/windows/package.ps1
 
 components-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(GTK_COMPONENTS_PACKAGE) -p $(QT_COMPONENTS_PACKAGE) -p $(GTK_COMPONENTS_DEMO_PACKAGE) -p $(QT_COMPONENTS_DEMO_PACKAGE) --all-targets

@@ -31,6 +31,7 @@ use shrimply_timeline_qt::{
     TIMELINE_CLIPBOARD_MARKER,
 };
 use shrimply_timeline_qt::{RenderedVideoFrame, ToolkitPointerButton, ToolkitTimeline};
+#[cfg(target_os = "linux")]
 use std::ffi::c_void;
 use std::path::PathBuf;
 
@@ -154,6 +155,7 @@ impl PlatformColor {
     }
 }
 
+#[cfg(any(target_os = "linux", windows))]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn shrimply_qt_set_platform_palette(palette: *const PlatformPalette) {
     let palette = unsafe {
@@ -527,6 +529,27 @@ pub unsafe extern "C" fn shrimply_qt_timeline_begin_pointer_lock(
                 .begin_pointer_lock(display, surface, seat, system_cursor::grabbing())
         }
     })
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_begin_pointer_lock() -> bool {
+    SURFACES.with_borrow_mut(|surfaces| {
+        surfaces.as_mut().is_some_and(|surfaces| {
+            surfaces
+                .timeline
+                .begin_pointer_lock(system_cursor::grabbing())
+        })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_relative_motion(x: f32, y: f32) {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
+            surfaces.timeline.relative_motion(x, y);
+        }
+    });
 }
 
 #[unsafe(no_mangle)]

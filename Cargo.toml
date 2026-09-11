@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/application/local-ipc",
     "crates/gpu/vulkan/gpu-vulkan",
     "crates/gpu/denoise/denoise-metal",
     "crates/gpu/metal/gpu-metal",
@@ -201,6 +202,7 @@ shrimply-inspector-qt = { path = "crates/ui/inspector/inspector-qt" }
 shrimply-kdenlive-parser = { path = "crates/project/parser/kdenlive-parser" }
 shrimply-keyframe-graph-skia = { path = "crates/ui/keyframe-graph/keyframe-graph-skia" }
 shrimply-layered-image-loader = { path = "crates/media/visual/layered-image/layered-image-loader" }
+shrimply-local-ipc = { path = "crates/application/local-ipc" }
 shrimply-lip-sync = { path = "crates/media/audio/lip-sync" }
 shrimply-loading-screen-skia = { path = "crates/render/loading-screen-skia" }
 shrimply-manim-bridge = { path = "crates/media/visual/manim/manim-bridge" }
@@ -378,6 +380,7 @@ vtracer = { path = "external/vtracer/crates/vtracer" }
 wayland-client = "0.31"
 wayland-protocols = "0.32"
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+windows = "0.62.2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [profile.dev]

@@ -3,14 +3,16 @@ use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
 use std::process::{self, Output};
 use std::sync::{Mutex, OnceLock};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::thread;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::Duration;
 
 const LOCK_ACQUIRE_ATTEMPTS: usize = 8;
@@ -201,9 +203,26 @@ pub fn terminate_project_process(owner: &ProjectLockOwner) -> bool {
             }
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        false
+        let handle = match open_process(
+            owner.pid(),
+            windows::Win32::System::Threading::PROCESS_TERMINATE,
+        ) {
+            Ok(handle) => handle,
+            Err(_) => return false,
+        };
+        if unsafe {
+            windows::Win32::System::Threading::TerminateProcess(
+                windows::Win32::Foundation::HANDLE(handle.as_raw_handle()),
+                1,
+            )
+        }
+        .is_err()
+        {
+            return false;
+        }
+        wait_for_process_to_stop(owner)
     }
 }
 
@@ -235,7 +254,7 @@ fn send_signal_to_system_process(pid: u32, signal: libc::c_int) -> bool {
     code == libc::ESRCH
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn wait_for_process_to_stop(owner: &ProjectLockOwner) -> bool {
     for _ in 0..PROCESS_STOP_WAIT_ATTEMPTS {
         if matches!(project_lock_owner_is_running(owner), Ok(false)) {
@@ -365,7 +384,34 @@ fn checked_pid(pid: u32) -> Option<i32> {
     i32::try_from(pid).ok().filter(|pid| *pid > 0)
 }
 
-#[cfg(not(unix))]
-fn process_is_running(_pid: u32) -> bool {
-    false
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> bool {
+    use windows::{Win32::Foundation::STILL_ACTIVE, Win32::System::Threading::*};
+    let handle = match open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION) {
+        Ok(handle) => handle,
+        Err(error) => {
+            return error.code()
+                != windows::core::HRESULT::from_win32(
+                    windows::Win32::Foundation::ERROR_INVALID_PARAMETER.0,
+                );
+        }
+    };
+    let mut exit_code = 0;
+    unsafe {
+        GetExitCodeProcess(
+            windows::Win32::Foundation::HANDLE(handle.as_raw_handle()),
+            &mut exit_code,
+        )
+    }
+    .is_ok()
+        && exit_code == STILL_ACTIVE.0 as u32
+}
+
+#[cfg(windows)]
+fn open_process(
+    pid: u32,
+    access: windows::Win32::System::Threading::PROCESS_ACCESS_RIGHTS,
+) -> windows::core::Result<OwnedHandle> {
+    let handle = unsafe { windows::Win32::System::Threading::OpenProcess(access, false, pid) }?;
+    Ok(unsafe { OwnedHandle::from_raw_handle(handle.0) })
 }

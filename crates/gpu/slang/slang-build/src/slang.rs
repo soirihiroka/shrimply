@@ -32,6 +32,8 @@ pub struct Artifacts {
 }
 
 pub struct Compiler {
+    #[cfg(windows)]
+    _slang: libloading::Library,
     api: libloading::Library,
     directory: PathBuf,
     output: PathBuf,
@@ -42,9 +44,15 @@ impl Compiler {
         println!("cargo:rerun-if-changed={}", directory.display());
         println!("cargo:rerun-if-changed={}", crate::LIBRARY_DIR);
         // Load the bridge built with this crate; it links the pinned Slang C++ API.
+        #[cfg(windows)]
+        let slang =
+            unsafe { libloading::Library::new(Path::new(crate::LIBRARY_DIR).join("slang.dll")) }
+                .expect("load pinned Slang runtime");
         let api = unsafe { libloading::Library::new(env!("SHRIMPLY_SLANG_API")) }
             .expect("load Slang C++ API bridge");
         Self {
+            #[cfg(windows)]
+            _slang: slang,
             api,
             directory: directory.to_owned(),
             output: output.to_owned(),

@@ -41,6 +41,12 @@ pub fn install() {
         );
     }));
 
+    #[cfg(unix)]
+    install_native_handlers();
+}
+
+#[cfg(unix)]
+fn install_native_handlers() {
     for signal in [
         libc::SIGABRT,
         libc::SIGBUS,
@@ -99,6 +105,7 @@ fn last_context() -> String {
     }
 }
 
+#[cfg(unix)]
 fn install_signal_handler(signal: i32) {
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
@@ -111,6 +118,7 @@ fn install_signal_handler(signal: i32) {
     }
 }
 
+#[cfg(unix)]
 extern "C" fn fatal_signal_handler(signal: i32) {
     unsafe {
         write_stderr(signal_message(signal));
@@ -130,6 +138,7 @@ extern "C" fn fatal_signal_handler(signal: i32) {
     }
 }
 
+#[cfg(unix)]
 fn signal_message(signal: i32) -> &'static [u8] {
     match signal {
         libc::SIGABRT => b"\nshrimply crash: received SIGABRT.\n",
@@ -142,6 +151,7 @@ fn signal_message(signal: i32) -> &'static [u8] {
     }
 }
 
+#[cfg(unix)]
 unsafe fn write_signal_context() {
     unsafe {
         let written = SIGNAL_CONTEXT_WRITTEN.load(Ordering::SeqCst);
@@ -171,6 +181,7 @@ unsafe fn write_signal_context() {
     }
 }
 
+#[cfg(unix)]
 unsafe fn write_stderr(message: &[u8]) {
     unsafe {
         let _ = libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());

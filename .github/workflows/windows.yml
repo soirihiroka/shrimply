@@ -1,0 +1,155 @@
+name: Windows
+
+on:
+  push:
+    branches: [windows]
+    paths:
+      - ".github/workflows/windows.yml"
+      - "packaging/windows/**"
+      - "crates/**"
+      - "external/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "Makefile"
+      - "rust-toolchain.toml"
+      - "vcpkg.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_HOME: ${{ github.workspace }}\.ci\cargo
+  CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
+  RUSTUP_HOME: ${{ github.workspace }}\.ci\rustup
+  TZ: UTC
+  VCPKG_DEFAULT_TRIPLET: x64-windows
+  VCPKG_INSTALLED_DIR: ${{ github.workspace }}\vcpkg_installed
+  VCPKGRS_DYNAMIC: "1"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Check out pinned vcpkg
+        uses: actions/checkout@v7
+        with:
+          repository: microsoft/vcpkg
+          ref: e93e1f6ab41a22fe711b1045dbbac5cbc9db60af
+          path: .ci/vcpkg
+          persist-credentials: false
+
+      - name: Configure MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install host tools
+        shell: powershell
+        run: choco install make pkgconfiglite uv --yes --no-progress
+
+      - name: Restore Rust and application caches
+        uses: actions/cache@v6
+        with:
+          path: |
+            .ci/cargo/bin
+            .ci/cargo/registry
+            .ci/cargo/git
+            .ci/rustup
+            target/release
+          key: windows-rust-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-${{ github.sha }}
+          restore-keys: |
+            windows-rust-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-
+            windows-rust-v1-
+
+      - name: Install pinned Rust toolchain
+        shell: powershell
+        run: |
+          if (!(Test-Path "$env:CARGO_HOME\bin\rustup.exe")) {
+            $installer = "$env:RUNNER_TEMP\rustup-init.exe"
+            Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile $installer
+            & $installer -y --default-toolchain none --profile minimal
+          }
+          "$env:CARGO_HOME\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          & "$env:CARGO_HOME\bin\rustup.exe" show
+
+      - name: Install Qt 6.10.2
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.10.2
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+          cache-key-prefix: windows-qt-6.10.2-msvc2022
+
+      - name: Install CUDA 12.9.2
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: 12.9.2
+          method: network
+          sub-packages: '["nvcc", "crt", "cudart", "nvvm", "visual_studio_integration"]'
+          use-github-cache: true
+
+      - name: Restore vcpkg caches
+        uses: actions/cache@v6
+        with:
+          path: |
+            .ci/vcpkg/downloads
+            .ci/vcpkg/binary-cache
+          key: windows-vcpkg-v1-${{ hashFiles('vcpkg.json') }}
+
+      - name: Install native libraries
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache | Out-Null
+          & .ci/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache,readwrite"
+          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root . --x-install-root "$env:VCPKG_INSTALLED_DIR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Export native build environment
+        shell: powershell
+        run: |
+          "VCPKG_ROOT=$pwd\.ci\vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "PKG_CONFIG_PATH=$env:VCPKG_INSTALLED_DIR\x64-windows\lib\pkgconfig;$env:VCPKG_INSTALLED_DIR\x64-windows\share\pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "CLANG_PATH=C:\Program Files\LLVM\bin\clang.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "QT_QMAKE=qmake.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "$env:VCPKG_INSTALLED_DIR\x64-windows\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Check Windows build
+        shell: bash
+        run: make check
+
+      - name: Build Windows release
+        shell: bash
+        run: make windows-release
+
+      - name: Package portable application
+        shell: bash
+        run: make windows-package
+
+      - name: Verify portable application
+        shell: powershell
+        run: packaging/windows/verify.ps1
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v6
+        with:
+          name: shrimply-windows-x86_64
+          path: |
+            dist/shrimply-windows-x86_64.zip
+            dist/shrimply-windows-x86_64.zip.sha256
+          if-no-files-found: error

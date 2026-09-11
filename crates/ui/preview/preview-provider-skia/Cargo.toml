@@ -17,3 +17,6 @@ skia-safe = { workspace = true, features = ["all-linux"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 skia-safe = { workspace = true, features = ["all-macos"] }
+
+[target.'cfg(windows)'.dependencies]
+skia-safe = { workspace = true, features = ["all-windows"] }

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 shrimply-trust-core.workspace = true
+shrimply-local-ipc.workspace = true
 libc.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

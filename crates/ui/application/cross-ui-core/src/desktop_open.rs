@@ -1,8 +1,12 @@
+#[cfg(unix)]
 use gio::prelude::DBusProxyExt;
+#[cfg(unix)]
 use glib::variant::ToVariant;
+#[cfg(unix)]
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 const DEFAULT_DBUS_TIMEOUT: i32 = -1;
 
 pub enum Action {
@@ -28,46 +32,62 @@ pub fn prepare(path: &Path, activation_token: Option<&str>) -> Result<Action, St
 }
 
 fn reveal_file(path: &Path, activation_token: Option<&str>) {
-    let path_display = path.display();
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) => {
-            tracing::warn!("file reveal fd open failed path={path_display}: {error}");
-            return;
+    #[cfg(windows)]
+    {
+        let _ = activation_token;
+        match std::process::Command::new("explorer.exe")
+            .arg(format!("/select,{}", path.display()))
+            .spawn()
+        {
+            Ok(_) => tracing::info!(path = %path.display(), "file reveal started"),
+            Err(error) => tracing::warn!(path = %path.display(), %error, "file reveal failed"),
         }
-    };
-    let fd_list = gio::UnixFDList::from_array([file]);
-    let options = glib::VariantDict::default();
-    if let Some(token) = activation_token {
-        options.insert("activation_token", token);
-    } else {
-        tracing::debug!("file reveal activation token unavailable path={path_display}");
     }
-    let parameters = ("", glib::variant::Handle::from(0), options).to_variant();
-    let proxy = gio::DBusProxy::for_bus_sync(
-        gio::BusType::Session,
-        gio::DBusProxyFlags::DO_NOT_LOAD_PROPERTIES | gio::DBusProxyFlags::DO_NOT_CONNECT_SIGNALS,
-        None,
-        "org.freedesktop.portal.Desktop",
-        "/org/freedesktop/portal/desktop",
-        "org.freedesktop.portal.OpenURI",
-        gio::Cancellable::NONE,
-    );
-    let result = proxy.and_then(|proxy| {
-        proxy
-            .call_with_unix_fd_list_sync(
-                "OpenDirectory",
-                Some(&parameters),
-                gio::DBusCallFlags::NONE,
-                DEFAULT_DBUS_TIMEOUT,
-                Some(&fd_list),
-                gio::Cancellable::NONE,
-            )
-            .map(|_| ())
-    });
-    match result {
-        Ok(()) => tracing::info!("file reveal portal complete path={path_display}"),
-        Err(error) => tracing::warn!("file reveal portal failed path={path_display}: {error}"),
+
+    #[cfg(unix)]
+    {
+        let path_display = path.display();
+        let file = match File::open(path) {
+            Ok(file) => file,
+            Err(error) => {
+                tracing::warn!("file reveal fd open failed path={path_display}: {error}");
+                return;
+            }
+        };
+        let fd_list = gio::UnixFDList::from_array([file]);
+        let options = glib::VariantDict::default();
+        if let Some(token) = activation_token {
+            options.insert("activation_token", token);
+        } else {
+            tracing::debug!("file reveal activation token unavailable path={path_display}");
+        }
+        let parameters = ("", glib::variant::Handle::from(0), options).to_variant();
+        let proxy = gio::DBusProxy::for_bus_sync(
+            gio::BusType::Session,
+            gio::DBusProxyFlags::DO_NOT_LOAD_PROPERTIES
+                | gio::DBusProxyFlags::DO_NOT_CONNECT_SIGNALS,
+            None,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.OpenURI",
+            gio::Cancellable::NONE,
+        );
+        let result = proxy.and_then(|proxy| {
+            proxy
+                .call_with_unix_fd_list_sync(
+                    "OpenDirectory",
+                    Some(&parameters),
+                    gio::DBusCallFlags::NONE,
+                    DEFAULT_DBUS_TIMEOUT,
+                    Some(&fd_list),
+                    gio::Cancellable::NONE,
+                )
+                .map(|_| ())
+        });
+        match result {
+            Ok(()) => tracing::info!("file reveal portal complete path={path_display}"),
+            Err(error) => tracing::warn!("file reveal portal failed path={path_display}: {error}"),
+        }
     }
 }
 

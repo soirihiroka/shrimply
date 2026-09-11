@@ -5541,6 +5541,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "shrimply-local-ipc",
  "shrimply-math-core",
  "shrimply-trust-core",
  "tempfile",
@@ -6092,6 +6093,7 @@ dependencies = [
  "shrimply-gpu-cuda",
  "shrimply-profiling",
  "tracing",
+ "windows",
 ]
 
 [[package]]
@@ -6427,6 +6429,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-local-ipc"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "shrimply-manim-bridge"
 version = "0.1.0"
 dependencies = [
@@ -6438,6 +6447,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "shrimply-asset",
+ "shrimply-local-ipc",
  "shrimply-manim-ir",
  "shrimply-math-core",
  "shrimply-project-document",
@@ -6787,6 +6797,7 @@ dependencies = [
  "shrimply-project-document",
  "shrimply-recent-projects",
  "tracing",
+ "windows",
 ]
 
 [[package]]
@@ -7056,6 +7067,7 @@ dependencies = [
  "strum",
  "tracing",
  "uuid",
+ "windows",
 ]
 
 [[package]]
@@ -7282,6 +7294,7 @@ dependencies = [
  "shrimply-components-skia",
  "shrimply-cross-ui-theme",
  "skia-safe",
+ "windows",
 ]
 
 [[package]]
@@ -7480,6 +7493,7 @@ dependencies = [
  "libc",
  "rusqlite",
  "shrimply-path-core",
+ "windows",
 ]
 
 [[package]]
@@ -7797,6 +7811,7 @@ dependencies = [
  "percent-encoding",
  "skia-bindings",
  "skia-svg-macros",
+ "windows",
 ]
 
 [[package]]
