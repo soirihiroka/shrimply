@@ -32,6 +32,7 @@ glib.workspace = true
 pango = { workspace = true, features = ["v1_57"] }
 pangocairo.workspace = true
 shrimply-project-document = { workspace = true, default-features = true }
+shrimply-path-core.workspace = true
 shrimply-compute-client = { workspace = true }
 shrimply-text-3d = { workspace = true }
 shrimply-shape-3d = { workspace = true }

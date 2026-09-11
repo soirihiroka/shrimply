@@ -8,12 +8,11 @@ use std::time::Duration;
 use cached::{Cached, stores::LruCache};
 use rusqlite::{Connection, params};
 use shrimply_asset::{Asset, AssetSnapshot};
+use shrimply_path_core::project_cache_directory;
 use shrimply_project_document::project::{
     AudioItem, AudioSource, Project, Time, audio_source_time_at,
 };
 
-const CACHE_DIR: &str = "cache";
-const CACHE_DB: &str = "cache/waveforms.sqlite";
 const CACHE_VERSION: i64 = 16;
 const SAMPLE_RATE: u32 = 48_000;
 const CHANNELS: usize = 2;
@@ -419,8 +418,10 @@ struct WaveformCache {
 
 impl WaveformCache {
     fn open() -> Result<Self, String> {
-        fs::create_dir_all(CACHE_DIR).map_err(|error| error.to_string())?;
-        let conn = Connection::open(CACHE_DB).map_err(|error| error.to_string())?;
+        let directory = project_cache_directory();
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let conn = Connection::open(directory.join("waveforms.sqlite"))
+            .map_err(|error| error.to_string())?;
         conn.busy_timeout(Duration::from_secs(5))
             .map_err(|error| error.to_string())?;
         conn.execute(

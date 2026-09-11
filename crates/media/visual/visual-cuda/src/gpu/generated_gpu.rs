@@ -1087,17 +1087,12 @@ impl Drop for VulkanDevice {
 }
 
 fn pipeline_cache_path(uuid: [u8; vk::UUID_SIZE]) -> Option<PathBuf> {
-    let root = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
+    let root = shrimply_path_core::cache_directory().ok()?;
     let mut name = String::with_capacity(uuid.len() * 2);
     for byte in uuid {
         write!(name, "{byte:02x}").expect("write Vulkan pipeline cache UUID");
     }
-    Some(
-        root.join("shrimply")
-            .join(format!("vulkan-pipelines-{name}.bin")),
-    )
+    Some(root.join(format!("vulkan-pipelines-{name}.bin")))
 }
 
 fn create_pipeline_cache(

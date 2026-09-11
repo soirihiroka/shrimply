@@ -602,19 +602,7 @@ fn cache_directory(key: &CacheKey) -> PathBuf {
 }
 
 fn cache_root() -> PathBuf {
-    let directory = shrimply_project_document::project::project_directory();
-    let root = if directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name == "shrimp")
-    {
-        directory
-            .parent()
-            .expect("shrimp project directory must have a parent")
-    } else {
-        &directory
-    };
-    root.join("media/.cache")
+    shrimply_path_core::project_cache_directory()
 }
 
 const fn even(value: u32) -> u32 {

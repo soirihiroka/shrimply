@@ -26,6 +26,7 @@ shrimply-property-model = { workspace = true }
 shrimply-lip-sync = { workspace = true }
 shrimply-math-media = { workspace = true }
 shrimply-math-core = { workspace = true }
+shrimply-path-core.workspace = true
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-resource-pipeline = { workspace = true }
 shrimply-compute-client = { workspace = true }

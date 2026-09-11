@@ -1,8 +1,8 @@
 use hashbrown::HashSet;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::path::Path;
+use std::sync::OnceLock;
 
 use glam::{UVec2, Vec2};
 use serde::{Deserialize, Serialize};
@@ -86,6 +86,7 @@ pub use shrimply_paint_model::{
     PaintTransform, ResolvedPaintFillOptions, ResolvedPaintStrokeEndOptions,
     ResolvedPaintStrokeOptions, ResolvedPaintTextureOptions,
 };
+pub use shrimply_path_core::{active_project_path, project_directory, set_active_project_path};
 pub use shrimply_project_types::{
     AudioClipTransitionCurve, COMMON_FRAME_RATES, CanvasSize, DEFAULT_CANVAS_SIZE,
     DEFAULT_PROJECT_FPS, FrameRate, MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION, PROJECT_PRESETS,

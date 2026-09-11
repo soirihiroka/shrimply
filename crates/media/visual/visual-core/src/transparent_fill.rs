@@ -1,15 +1,16 @@
 use std::{
-    collections::{HashSet, hash_map::DefaultHasher},
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
     fs,
     hash::{Hash, Hasher},
     io::Cursor,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
 use cached::{Cached, stores::LruCache};
 use rusqlite::{Connection, OptionalExtension, params};
+use shrimply_path_core::project_cache_directory;
 use shrimply_project_document::project::{
     ItemAddress, Project, Time, VideoItem, VideoItemContent, VisualTrack, video_source_time_at,
 };
@@ -21,7 +22,6 @@ use uuid::Uuid;
 pub mod analysis;
 pub use crate::modifier_input::render_input_project;
 
-const CACHE_DATABASE: &str = "cache/transparent-fill-masks.sqlite";
 pub const CACHE_VERSION: i64 = 3;
 pub const MEMORY_FRAMES: usize = 64;
 
@@ -108,11 +108,18 @@ pub struct TransparentFillMaskCache {
 
 impl TransparentFillMaskCache {
     pub fn shared() -> Self {
-        static CACHE: LazyLock<TransparentFillMaskCache> = LazyLock::new(|| {
-            TransparentFillMaskCache::open(Path::new(CACHE_DATABASE))
-                .expect("open transparent fill mask cache")
-        });
-        CACHE.clone()
+        static CACHES: LazyLock<Mutex<HashMap<PathBuf, TransparentFillMaskCache>>> =
+            LazyLock::new(|| Mutex::new(HashMap::new()));
+        let path = project_cache_directory().join("transparent-fill-masks.sqlite");
+        let mut caches = CACHES
+            .lock()
+            .expect("transparent fill cache registry lock is poisoned");
+        caches
+            .entry(path.clone())
+            .or_insert_with(|| {
+                TransparentFillMaskCache::open(&path).expect("open transparent fill mask cache")
+            })
+            .clone()
     }
 
     pub fn open(path: &Path) -> Result<Self, String> {

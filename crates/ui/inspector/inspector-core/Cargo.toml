@@ -28,6 +28,7 @@ shrimply-manim-bridge = { workspace = true }
 shrimply-math-core = { workspace = true }
 shrimply-media-info = { workspace = true }
 shrimply-pdf = { workspace = true }
+shrimply-path-core.workspace = true
 shrimply-property-transfer = { workspace = true }
 shrimply-preview-provider-skia = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }

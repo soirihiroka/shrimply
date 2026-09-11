@@ -4,13 +4,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const CONFIG_DIR: &str = "config";
-#[cfg(not(target_os = "macos"))]
-const SETTINGS_DB: &str = "config/settings.sqlite";
-#[cfg(all(target_os = "macos", debug_assertions))]
-const MACOS_APPLICATION_SUPPORT_DIR: &str = "Shrimply Debug";
-#[cfg(all(target_os = "macos", not(debug_assertions)))]
-const MACOS_APPLICATION_SUPPORT_DIR: &str = "Shrimply";
 const KEY: &str = "recent_projects";
 const LIMIT: usize = 50;
 
@@ -49,30 +42,7 @@ pub fn load() -> Result<Vec<RecentProject>, String> {
 }
 
 pub fn settings_db_path() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        use objc2_foundation::{NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};
-
-        let application_support = NSFileManager::defaultManager()
-            .URLForDirectory_inDomain_appropriateForURL_create_error(
-                NSSearchPathDirectory::ApplicationSupportDirectory,
-                NSSearchPathDomainMask::UserDomainMask,
-                None,
-                true,
-            )
-            .expect("macOS Application Support directory should be available");
-        let path = application_support
-            .path()
-            .expect("macOS Application Support URL should be a file path");
-        return PathBuf::from(path.to_string())
-            .join(MACOS_APPLICATION_SUPPORT_DIR)
-            .join("settings.sqlite");
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    std::env::current_dir()
-        .map(|directory| directory.join(SETTINGS_DB))
-        .unwrap_or_else(|_| PathBuf::from(SETTINGS_DB))
+    shrimply_path_core::config_directory().join("settings.sqlite")
 }
 
 pub fn touch(path: &Path, name: &str) -> Result<(), String> {
@@ -112,7 +82,9 @@ pub fn clear() -> Result<(), String> {
 
 fn open() -> Result<Connection, String> {
     let path = settings_db_path();
-    let directory = path.parent().unwrap_or_else(|| Path::new(CONFIG_DIR));
+    let directory = path
+        .parent()
+        .expect("settings database should have a parent directory");
     fs::create_dir_all(directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
     let conn = Connection::open(&path)

@@ -1,0 +1,10 @@
+[package]
+name = "shrimply-path-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cached.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation.workspace = true

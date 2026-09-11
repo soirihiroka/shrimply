@@ -1,13 +1,15 @@
 use std::{
-    collections::hash_map::DefaultHasher,
+    collections::{HashMap, hash_map::DefaultHasher},
     fs,
     hash::{Hash, Hasher},
+    path::PathBuf,
     sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
 use cached::{Cached, stores::LruCache};
 use rusqlite::{Connection, OptionalExtension, params};
+use shrimply_path_core::project_cache_directory;
 use shrimply_project_document::project::{ItemAddress, Project, Time, VideoItem};
 use shrimply_visual_modifiers::{ModifierEffect, RasterModifierEffect, sam2::Sam2Modifier};
 use uuid::Uuid;
@@ -18,8 +20,6 @@ pub const MASK_SIZE: u32 = 256;
 pub const MODEL_SIZE: u32 = 1024;
 pub const MASK_LOGIT_QUANTIZATION_SCALE: f32 = 16.0;
 const MASK_PIXELS: usize = MASK_SIZE as usize * MASK_SIZE as usize;
-const MASK_CACHE_DIRECTORY: &str = "cache";
-const MASK_CACHE_DATABASE: &str = "cache/sam2-masks.sqlite";
 const MASK_CACHE_VERSION: i64 = 6;
 const MASK_MEMORY_FRAMES: usize = 64;
 
@@ -122,15 +122,22 @@ pub struct Sam2MaskCache {
 
 impl Sam2MaskCache {
     pub fn shared() -> Self {
-        static CACHE: LazyLock<Sam2MaskCache> = LazyLock::new(|| {
-            fs::create_dir_all(MASK_CACHE_DIRECTORY).expect("create SAM2 cache directory");
-            let connection = Connection::open(MASK_CACHE_DATABASE).expect("open SAM2 mask cache");
-            connection
-                .busy_timeout(Duration::from_secs(5))
-                .expect("configure SAM2 mask cache timeout");
-            connection
-                .execute_batch(
-                    "PRAGMA journal_mode = WAL;
+        static CACHES: LazyLock<Mutex<HashMap<PathBuf, Sam2MaskCache>>> =
+            LazyLock::new(|| Mutex::new(HashMap::new()));
+        let directory = project_cache_directory();
+        let path = directory.join("sam2-masks.sqlite");
+        let mut caches = CACHES.lock().expect("SAM2 cache registry lock is poisoned");
+        caches
+            .entry(path.clone())
+            .or_insert_with(|| {
+                fs::create_dir_all(&directory).expect("create SAM2 cache directory");
+                let connection = Connection::open(&path).expect("open SAM2 mask cache");
+                connection
+                    .busy_timeout(Duration::from_secs(5))
+                    .expect("configure SAM2 mask cache timeout");
+                connection
+                    .execute_batch(
+                        "PRAGMA journal_mode = WAL;
                      PRAGMA synchronous = NORMAL;
                      CREATE TABLE IF NOT EXISTS masks (
                          cache_key TEXT NOT NULL,
@@ -144,19 +151,19 @@ impl Sam2MaskCache {
                          cache_key TEXT PRIMARY KEY,
                          completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                      ) WITHOUT ROWID;",
-                )
-                .expect("initialize SAM2 mask cache");
-            Sam2MaskCache {
-                store: Arc::new(Mutex::new(MaskCacheStore {
-                    memory: LruCache::builder()
-                        .max_size(MASK_MEMORY_FRAMES)
-                        .build()
-                        .expect("valid SAM2 memory cache size"),
-                    connection,
-                })),
-            }
-        });
-        CACHE.clone()
+                    )
+                    .expect("initialize SAM2 mask cache");
+                Sam2MaskCache {
+                    store: Arc::new(Mutex::new(MaskCacheStore {
+                        memory: LruCache::builder()
+                            .max_size(MASK_MEMORY_FRAMES)
+                            .build()
+                            .expect("valid SAM2 memory cache size"),
+                        connection,
+                    })),
+                }
+            })
+            .clone()
     }
 
     pub fn get(&self, key: &str, frame: i64) -> Option<Arc<[i8]>> {

@@ -51,6 +51,7 @@ members = [
     "crates/media/visual/paint/paint-topology",
     "crates/media/visual/paint/perfect-freehand",
     "crates/application/preferences-core",
+    "crates/application/path-core",
     "crates/ui/preferences/preferences-gtk",
     "crates/ui/preferences/preferences-qt",
     "crates/media/visual/pdf",
@@ -222,6 +223,7 @@ shrimply-paint-interpolation = { path = "crates/media/visual/paint/paint-interpo
 shrimply-paint-model = { path = "crates/media/visual/paint/paint-model" }
 shrimply-paint-skia = { path = "crates/media/visual/paint/paint-skia" }
 shrimply-paint-topology = { path = "crates/media/visual/paint/paint-topology" }
+shrimply-path-core = { path = "crates/application/path-core" }
 shrimply-pdf = { path = "crates/media/visual/pdf" }
 shrimply-perfect-freehand = { path = "crates/media/visual/paint/perfect-freehand" }
 shrimply-playback-performance = { path = "crates/application/playback-performance" }

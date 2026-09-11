@@ -1,6 +1,5 @@
 use std::{
     fs,
-    path::Path,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -20,12 +19,12 @@ use shrimply_math_geometry::{
     InterpolatedCameraMotion, NormalizedCameraPose, interpolate_camera_motion,
     relative_camera_poses, vertical_fov_degrees_from_focal_length,
 };
+use shrimply_path_core::project_cache_directory;
 use shrimply_project_document::project::{
     ItemAddress, Project, Time, TrackAddress, VideoItem, fraction_denominator, fraction_numerator,
 };
 use uuid::Uuid;
 
-const CACHE_DATABASE: &str = "cache/camera-reconstruction.sqlite";
 const CACHE_VERSION: i64 = 5;
 const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const MIN_VERTICAL_FOV_DEGREES: f64 = 1.0;
@@ -839,12 +838,11 @@ fn validate_sample(sample: TrackSample) -> Result<TrackSample, String> {
 }
 
 fn open_database() -> Result<Connection, String> {
-    let path = Path::new(CACHE_DATABASE);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("could not create camera cache directory: {error}"))?;
-    }
-    let connection = Connection::open(path)
+    let directory = project_cache_directory();
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("could not create camera cache directory: {error}"))?;
+    let path = directory.join("camera-reconstruction.sqlite");
+    let connection = Connection::open(&path)
         .map_err(|error| format!("could not open camera reconstruction cache: {error}"))?;
     connection
         .busy_timeout(DATABASE_BUSY_TIMEOUT)

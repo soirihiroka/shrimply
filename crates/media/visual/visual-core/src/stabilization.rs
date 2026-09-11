@@ -7,12 +7,11 @@ use std::time::Duration;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use shrimply_asset::AssetSnapshot;
+use shrimply_path_core::project_cache_directory;
 use shrimply_project_document::project::{
     MeshFlowAdaptiveWeights, Project, Time, VideoItem, VideoItemContent, VideoStabilizationMethod,
 };
 
-const CACHE_DIRECTORY: &str = "cache";
-const CACHE_DATABASE: &str = "cache/video-stabilization.sqlite";
 const CACHE_VERSION: i64 = 5;
 const CHUNK_SECONDS: u32 = 10;
 const CHUNK_OVERLAP_SECONDS: u32 = 1;
@@ -571,8 +570,10 @@ struct Cache {
 
 impl Cache {
     fn open() -> Result<Self, String> {
-        fs::create_dir_all(CACHE_DIRECTORY).map_err(|error| error.to_string())?;
-        let connection = Connection::open(CACHE_DATABASE).map_err(|error| error.to_string())?;
+        let directory = project_cache_directory();
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let connection = Connection::open(directory.join("video-stabilization.sqlite"))
+            .map_err(|error| error.to_string())?;
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(|error| error.to_string())?;

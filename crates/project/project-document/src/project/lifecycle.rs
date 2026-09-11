@@ -1478,34 +1478,3 @@ fn sequence_reference_items<'a>(
                 }),
         )
 }
-
-static ACTIVE_PROJECT_PATH: OnceLock<RwLock<PathBuf>> = OnceLock::new();
-
-pub fn set_active_project_path(path: &Path) {
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(path)
-    };
-    *ACTIVE_PROJECT_PATH
-        .get_or_init(|| RwLock::new(PathBuf::new()))
-        .write()
-        .unwrap_or_else(|_| panic!("active project path lock died")) = path;
-}
-
-pub fn active_project_path() -> PathBuf {
-    ACTIVE_PROJECT_PATH
-        .get_or_init(|| RwLock::new(PathBuf::new()))
-        .read()
-        .unwrap_or_else(|_| panic!("active project path lock died"))
-        .clone()
-}
-
-pub fn project_directory() -> PathBuf {
-    active_project_path()
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .to_path_buf()
-}

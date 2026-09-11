@@ -4,10 +4,9 @@ use std::time::Duration;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::beat::{BeatAnalysis, SAMPLE_RATE};
+use shrimply_path_core::project_cache_directory;
 use shrimply_project_document::project::AudioItem;
 
-const CACHE_DIR: &str = "cache";
-const CACHE_DB: &str = "cache/beats.sqlite";
 const CACHE_VERSION: i64 = 2;
 
 pub(super) struct BeatCache {
@@ -16,8 +15,10 @@ pub(super) struct BeatCache {
 
 impl BeatCache {
     pub(super) fn open() -> Result<Self, String> {
-        fs::create_dir_all(CACHE_DIR).map_err(|error| error.to_string())?;
-        let conn = Connection::open(CACHE_DB).map_err(|error| error.to_string())?;
+        let directory = project_cache_directory();
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let conn =
+            Connection::open(directory.join("beats.sqlite")).map_err(|error| error.to_string())?;
         conn.busy_timeout(Duration::from_secs(5))
             .map_err(|error| error.to_string())?;
         conn.execute(

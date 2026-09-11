@@ -3,6 +3,7 @@ use shrimply_audio_modifiers::{
     AudioModifierEffect, PNEUMA_MAX_PITCH_OFFSET, PNEUMA_MAX_SPEED, PNEUMA_MIN_PITCH_OFFSET,
     PNEUMA_MIN_SPEED,
 };
+use shrimply_path_core::project_cache_directory;
 use shrimply_project_document::project::AudioItem;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -10,7 +11,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
 
-const CACHE_DIRECTORY: &str = "cache/pneuma";
 const CACHE_VERSION: u32 = 1;
 const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:8787";
 
@@ -49,7 +49,7 @@ pub(crate) fn source(
         return Ok(None);
     }
 
-    fs::create_dir_all(CACHE_DIRECTORY)
+    fs::create_dir_all(project_cache_directory().join("pneuma"))
         .map_err(|error| format!("Could not create Pneuma cache: {error}"))?;
     let server_url = server_url();
     let mut input = original.path().to_path_buf();
@@ -116,7 +116,9 @@ fn cache_path(
     track_id.hash(&mut hasher);
     server_url.hash(&mut hasher);
     settings.hash(&mut hasher);
-    Ok(Path::new(CACHE_DIRECTORY).join(format!("{:016x}.opus", hasher.finish())))
+    Ok(project_cache_directory()
+        .join("pneuma")
+        .join(format!("{:016x}.opus", hasher.finish())))
 }
 
 fn temporary_cache_path(output: &Path) -> PathBuf {

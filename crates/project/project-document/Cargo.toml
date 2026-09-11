@@ -27,6 +27,7 @@ shrimply-math-geometry = { workspace = true }
 shrimply-asset = { workspace = true }
 shrimply-paint-model = { workspace = true }
 shrimply-paint-edit-skia = { workspace = true }
+shrimply-path-core.workspace = true
 shrimply-project-types = { workspace = true }
 shrimply-preview-provider-skia = { workspace = true }
 shrimply-3dgs-core = { workspace = true }

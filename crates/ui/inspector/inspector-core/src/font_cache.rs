@@ -873,11 +873,7 @@ fn connection() -> Result<Connection, String> {
 }
 
 fn cache_database_path() -> Result<PathBuf, String> {
-    std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
-        .map(|root| root.join("shrimply").join(CACHE_DATABASE_NAME))
-        .ok_or_else(|| "neither XDG_CACHE_HOME nor HOME is set".to_string())
+    Ok(shrimply_path_core::cache_directory()?.join(CACHE_DATABASE_NAME))
 }
 
 fn normalized_search(value: &str) -> String {

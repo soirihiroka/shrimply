@@ -8,6 +8,7 @@ use ffmpeg_next as ffmpeg;
 use libc::EAGAIN;
 use serde::{Deserialize, Serialize};
 use shrimply_audio_modifiers::{AudioModifierEffect, CacheFormat, CacheModifier, OpusCacheQuality};
+use shrimply_path_core::project_cache_directory;
 use shrimply_project_document::project::{
     AudioItem, AudioSource, AudioTrack, ItemAddress, Project, RepeatStrategy, Time,
     default_playback_speed,
@@ -17,7 +18,6 @@ use shrimply_resource_pipeline::{
 };
 use uuid::Uuid;
 
-const CACHE_ROOT: &str = "cache/modifiers";
 const MANIFEST_NAME: &str = "manifest.json";
 const CACHE_VERSION: u32 = 1;
 const SAMPLE_RATE: u32 = 48_000;
@@ -337,8 +337,8 @@ fn bake_inner(
     if context.is_cancelled() {
         return Err("audio cache bake cancelled".to_string());
     }
-    let root = Path::new(CACHE_ROOT);
-    fs::create_dir_all(root).map_err(|error| format!("could not create cache folder: {error}"))?;
+    let root = project_cache_directory().join("modifiers");
+    fs::create_dir_all(&root).map_err(|error| format!("could not create cache folder: {error}"))?;
     let temporary = root.join(format!(
         ".{}-{}",
         modifier_id.simple(),
@@ -417,7 +417,9 @@ fn ready_entry(modifier_id: Uuid) -> Result<ReadyEntry, String> {
 }
 
 fn cache_directory(modifier_id: Uuid) -> PathBuf {
-    Path::new(CACHE_ROOT).join(modifier_id.simple().to_string())
+    project_cache_directory()
+        .join("modifiers")
+        .join(modifier_id.simple().to_string())
 }
 
 fn media_name(format: StoredFormat) -> &'static str {
