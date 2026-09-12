@@ -64,7 +64,16 @@ jobs:
 
       - name: Install host tools
         shell: powershell
-        run: choco install make pkgconfiglite ripgrep uv --yes --no-progress
+        run: |
+          choco install make ripgrep --yes --no-progress
+          Get-Command make.exe -ErrorAction Stop
+          Get-Command rg.exe -ErrorAction Stop
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.12
+          enable-cache: true
 
       - name: Restore Rust and application caches
         uses: actions/cache@v6
@@ -209,8 +218,11 @@ jobs:
         run: |
           $linker = (Get-Command link.exe -ErrorAction Stop).Source
           if ($linker -notlike "*Microsoft Visual Studio*") { throw "MSVC link.exe not found: $linker" }
+          $pkgConfig = "$env:VCPKG_INSTALLED_DIR\x64-windows\tools\pkgconf\pkgconf.exe"
+          if (!(Test-Path $pkgConfig)) { throw "vcpkg pkgconf.exe is missing: $pkgConfig" }
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "VCPKG_ROOT=$pwd\.ci\vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "PKG_CONFIG=$($pkgConfig.Replace('\', '/'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "PKG_CONFIG_PATH=$env:VCPKG_INSTALLED_DIR\x64-windows\lib\pkgconfig;$env:VCPKG_INSTALLED_DIR\x64-windows\share\pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "CLANG_PATH=C:\Program Files\LLVM\bin\clang.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
