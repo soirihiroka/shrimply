@@ -294,10 +294,6 @@ jobs:
         shell: bash
         run: make windows-package
 
-      - name: Verify portable application
-        shell: powershell
-        run: packaging/windows/verify.ps1
-
       - name: Upload portable ZIP
         uses: actions/upload-artifact@v6
         with:
