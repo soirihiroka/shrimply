@@ -1,4 +1,10 @@
-use std::{env, fs, path::PathBuf, process::Command};
+use sha2::{Digest, Sha256};
+use std::{
+    env, fs,
+    io::{BufRead, BufReader},
+    path::PathBuf,
+    process::Command,
+};
 
 const VERSION: &str = "2026.17";
 
@@ -64,20 +70,22 @@ fn main() {
                     .status()
                     .expect("download Slang with curl");
                 assert!(status.success(), "download Slang: {status}");
-                let mut hash = if cfg!(target_os = "macos") {
-                    let mut command = Command::new("shasum");
-                    command.args(["-a", "256"]);
-                    command
-                } else {
-                    Command::new("sha256sum")
-                };
-                let hash = hash.arg(&archive).output().expect("hash Slang archive");
-                assert!(hash.status.success(), "hash Slang archive: {}", hash.status);
+                let mut reader = BufReader::new(
+                    fs::File::open(&archive).expect("open downloaded Slang archive"),
+                );
+                let mut hash = Sha256::new();
+                loop {
+                    let bytes = reader.fill_buf().expect("read downloaded Slang archive");
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    hash.update(bytes);
+                    let length = bytes.len();
+                    reader.consume(length);
+                }
                 assert_eq!(
-                    String::from_utf8_lossy(&hash.stdout)
-                        .split_whitespace()
-                        .next(),
-                    Some(checksum),
+                    format!("{:x}", hash.finalize()),
+                    checksum,
                     "Slang archive checksum mismatch"
                 );
                 let status = Command::new("tar")

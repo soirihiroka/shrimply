@@ -7283,6 +7283,7 @@ dependencies = [
  "cc",
  "libloading",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

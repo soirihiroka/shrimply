@@ -9,3 +9,4 @@ serde_json.workspace = true
 
 [build-dependencies]
 cc.workspace = true
+sha2 = "0.10.9"
