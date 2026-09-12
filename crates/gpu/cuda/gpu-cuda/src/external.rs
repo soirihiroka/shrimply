@@ -68,16 +68,17 @@ impl ImportedImage {
             flags: sys::CUDA_EXTERNAL_MEMORY_DEDICATED,
             reserved: [0; 16],
         };
-        if let Err(error) = cuda_check(
+        let import_result = cuda_check(
             unsafe { sys::cuImportExternalMemory(&mut external_memory, &memory_desc) },
             "cuImportExternalMemory for external",
-        ) {
-            #[cfg(target_os = "linux")]
-            unsafe {
-                libc::close(fd)
-            };
+        );
+        #[cfg(target_os = "linux")]
+        if let Err(error) = import_result {
+            unsafe { libc::close(fd) };
             return Err(error);
         }
+        #[cfg(windows)]
+        import_result?;
         let mut mipmapped_array = ptr::null_mut();
         let mipmapped_desc = sys::CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC {
             offset: 0,
