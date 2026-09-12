@@ -32,6 +32,7 @@ function Inspect-Imports([string]$directory) {
             if ($dependency -notmatch '^[A-Za-z0-9_.-]+\.dll$') { continue }
             $name = $dependency.ToLowerInvariant()
             if ($packaged.ContainsKey($name) -or $external.ContainsKey($name)) { continue }
+            if ($name -like "api-ms-*.dll" -or $name -like "ext-ms-*.dll") { continue }
             if (Test-Path (Join-Path "$env:SystemRoot\System32" $dependency)) { continue }
             throw "$($binary.FullName) imports missing library $dependency"
         }
