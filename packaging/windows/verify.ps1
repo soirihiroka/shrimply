@@ -7,7 +7,7 @@ $stage = Join-Path $root "dist/shrimply-windows-x86_64"
 $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root "target" }
 $release = Join-Path $target "release"
 $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
-$env:QT_QPA_PLATFORM = "offscreen"
+$env:QT_QPA_PLATFORM = "windows"
 
 function Assert-PeX64([string]$path) {
     $headers = & $dumpbin /headers $path 2>&1
