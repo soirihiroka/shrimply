@@ -1,0 +1,25 @@
+{
+  "name": "shrimply-windows-opencv",
+  "version-string": "0.1.0",
+  "builtin-baseline": "e93e1f6ab41a22fe711b1045dbbac5cbc9db60af",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avdevice",
+        "avfilter",
+        "avformat",
+        "nvcodec",
+        "swresample",
+        "swscale"
+      ]
+    },
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "features": ["calib3d", "ffmpeg"]
+    }
+  ]
+}

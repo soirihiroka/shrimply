@@ -12,7 +12,7 @@ on:
       - "Cargo.toml"
       - "Makefile"
       - "rust-toolchain.toml"
-      - "vcpkg.json"
+      - "packaging/windows/vcpkg/**"
   workflow_dispatch:
 
 permissions:
@@ -54,6 +54,13 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      - name: Identify native cache ABI
+        id: native-cache-abi
+        shell: powershell
+        run: |
+          $sdk = $env:WindowsSDKVersion.TrimEnd('\')
+          "key=msvc-$env:VCToolsVersion-sdk-$sdk-x64" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
       - name: Install host tools
         shell: powershell
@@ -127,32 +134,75 @@ jobs:
           path: C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.9
           key: windows-cuda-12.9.2-v1
 
-      - name: Restore vcpkg caches
-        id: vcpkg-cache
+      - name: Bootstrap vcpkg
+        shell: powershell
+        run: .ci/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Restore FFmpeg cache
+        id: ffmpeg-cache
         uses: actions/cache/restore@v6
         with:
-          path: |
-            .ci/vcpkg/downloads
-            .ci/vcpkg/binary-cache
-          key: windows-vcpkg-v1-${{ hashFiles('vcpkg.json') }}
+          path: .ci/vcpkg/binary-cache/ffmpeg
+          key: windows-vcpkg-ffmpeg-v2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/ffmpeg/vcpkg.json') }}
 
-      - name: Install native libraries
+      - name: Install FFmpeg
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache | Out-Null
-          & .ci/vcpkg/bootstrap-vcpkg.bat -disableMetrics
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache,readwrite"
-          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root . --x-install-root "$env:VCPKG_INSTALLED_DIR"
+          New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/ffmpeg | Out-Null
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,readwrite"
+          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/ffmpeg --x-install-root "$env:VCPKG_INSTALLED_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Save compiled vcpkg packages
-        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+      - name: Save FFmpeg cache
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
-          path: |
-            .ci/vcpkg/downloads
-            .ci/vcpkg/binary-cache
-          key: windows-vcpkg-v1-${{ hashFiles('vcpkg.json') }}
+          path: .ci/vcpkg/binary-cache/ffmpeg
+          key: windows-vcpkg-ffmpeg-v2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/ffmpeg/vcpkg.json') }}
+
+      - name: Restore OpenCV cache
+        id: opencv-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ci/vcpkg/binary-cache/opencv
+          key: windows-vcpkg-opencv-v2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/opencv/vcpkg.json') }}
+
+      - name: Install OpenCV
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/opencv | Out-Null
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\opencv,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read"
+          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/opencv --x-install-root "$env:VCPKG_INSTALLED_DIR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Save OpenCV cache
+        if: steps.opencv-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .ci/vcpkg/binary-cache/opencv
+          key: windows-vcpkg-opencv-v2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/opencv/vcpkg.json') }}
+
+      - name: Restore remaining native library cache
+        id: runtime-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ci/vcpkg/binary-cache/runtime
+          key: windows-vcpkg-runtime-v2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/runtime/vcpkg.json') }}
+
+      - name: Install remaining native libraries
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/runtime | Out-Null
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\runtime,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read;files,$pwd\.ci\vcpkg\binary-cache\opencv,read"
+          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/runtime --x-install-root "$env:VCPKG_INSTALLED_DIR"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Save remaining native library cache
+        if: steps.runtime-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: .ci/vcpkg/binary-cache/runtime
+          key: windows-vcpkg-runtime-v2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/runtime/vcpkg.json') }}
 
       - name: Export native build environment
         shell: powershell
