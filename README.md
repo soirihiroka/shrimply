@@ -15,14 +15,18 @@
 
 <img width="2206" height="1584" alt="image" src="https://github.com/user-attachments/assets/1fc005bd-9fc9-45d2-afe5-ea884bb1a99f" />
 
-Shrimply is a simple yet powerful cross platform video editor.
+Shrimply is a simple yet powerful cross-platform video editor.
+
+System requirements:
+- Nvidia or Apple Silicon GPU
+- Wayland or macOS 15+
 
 Shrimply is currently pre-alpha software, which means you should expect:
 
 - Slop
 - ~~Unable to build~~ (we got CI now!)
 - Undocumented footguns
-- Random performance regression
+- Random performance regressions
 - Irreversible project file breakage
 - Random crashes and resource leaks
 
