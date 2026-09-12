@@ -317,7 +317,7 @@ qt-components-showcase: qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) run -p $(QT_COMPONENTS_DEMO_PACKAGE)
 
 source-size-check:
-	@oversized="$$(rg --files -g '!external/**' -g '!target/**' | while IFS= read -r source_file; do \
+	@oversized="$$(rg --files -g '!external/**' -g '!target/**' -g '!vcpkg_installed/**' | while IFS= read -r source_file; do \
 		case "$$source_file" in \
 			(*.rs|*.py|*.c|*.cc|*.cpp|*.cxx|*.h|*.hh|*.hpp|*.cu|*.cuh|*.wgsl|*.glsl|*.vert|*.frag|*.comp|*.slang|*.ts|*.tsx|*.js|*.jsx) \
 				line_count=$$(wc -l < "$$source_file"); \
