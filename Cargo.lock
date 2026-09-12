@@ -6916,6 +6916,7 @@ dependencies = [
  "skia-safe",
  "tracing",
  "uuid",
+ "windows",
 ]
 
 [[package]]

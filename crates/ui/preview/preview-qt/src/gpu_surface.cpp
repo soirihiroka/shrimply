@@ -129,7 +129,7 @@ extern "C" void shrimply_qt_timeline_select_overwrite_mode();
 extern "C" void shrimply_qt_timeline_select_block_mode();
 extern "C" void shrimply_qt_timeline_select_new_track_mode();
 #if defined(Q_OS_WINDOWS)
-extern "C" bool shrimply_qt_timeline_begin_pointer_lock();
+extern "C" bool shrimply_qt_timeline_begin_pointer_lock(float scale);
 #else
 extern "C" bool shrimply_qt_timeline_begin_pointer_lock(void *display, void *surface,
                                                           void *seat);
@@ -728,7 +728,9 @@ void TimelineSurface::mousePressEvent(QMouseEvent *event) {
                                        event->position().y(), control, shift);
     if (event->button() == Qt::MiddleButton) {
 #if defined(Q_OS_WINDOWS)
-        if (shrimply_qt_timeline_begin_pointer_lock()) {
+        const float scale = window() ? static_cast<float>(window()->effectiveDevicePixelRatio())
+                                     : 1.0f;
+        if (shrimply_qt_timeline_begin_pointer_lock(scale)) {
             middle_cursor_origin_ = QCursor::pos();
             middle_cursor_center_ = mapToGlobal(QPointF(width() / 2.0, height() / 2.0)).toPoint();
             QCursor::setPos(middle_cursor_center_);

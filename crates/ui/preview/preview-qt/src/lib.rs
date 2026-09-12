@@ -534,12 +534,12 @@ pub unsafe extern "C" fn shrimply_qt_timeline_begin_pointer_lock(
 
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub extern "C" fn shrimply_qt_timeline_begin_pointer_lock() -> bool {
+pub extern "C" fn shrimply_qt_timeline_begin_pointer_lock(scale: f32) -> bool {
     SURFACES.with_borrow_mut(|surfaces| {
         surfaces.as_mut().is_some_and(|surfaces| {
             surfaces
                 .timeline
-                .begin_pointer_lock(system_cursor::grabbing())
+                .begin_pointer_lock(system_cursor::grabbing(scale))
         })
     })
 }
