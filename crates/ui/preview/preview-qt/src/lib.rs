@@ -299,7 +299,6 @@ fn write_track_add_text(index: usize, output: *mut u8, capacity: usize, icon: bo
     bytes.len()
 }
 
-#[cfg(target_os = "linux")]
 #[unsafe(no_mangle)]
 /// # Safety
 ///
@@ -510,11 +509,12 @@ pub extern "C" fn shrimply_qt_timeline_pointer_release(
     });
 }
 
-#[unsafe(no_mangle)]
 /// # Safety
 ///
 /// The pointers must be valid Wayland display, surface, and seat handles for the duration of the
 /// call.
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn shrimply_qt_timeline_begin_pointer_lock(
     display: *mut c_void,
     surface: *mut c_void,
