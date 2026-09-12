@@ -4,7 +4,8 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $dist = Join-Path $root "dist"
 $stage = Join-Path $dist "shrimply-windows-x86_64"
 $archive = Join-Path $dist "shrimply-windows-x86_64.zip"
-$release = Join-Path $root "target/release"
+$target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root "target" }
+$release = Join-Path $target "release"
 $vcpkg = if ($env:VCPKG_INSTALLED_DIR) {
     Join-Path $env:VCPKG_INSTALLED_DIR "x64-windows/bin"
 } else {

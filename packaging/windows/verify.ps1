@@ -4,6 +4,8 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $archive = Join-Path $root "dist/shrimply-windows-x86_64.zip"
 $checksum = "$archive.sha256"
 $stage = Join-Path $root "dist/shrimply-windows-x86_64"
+$target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root "target" }
+$release = Join-Path $target "release"
 $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
 $env:QT_QPA_PLATFORM = "offscreen"
 
@@ -67,7 +69,7 @@ function Assert-QmlStartup([string]$directory) {
 }
 
 foreach ($name in @("shrimply-qt.exe", "shrimply-editor-qt.exe")) {
-    Assert-PeX64 (Join-Path $root "target/release/$name")
+    Assert-PeX64 (Join-Path $release $name)
 }
 if (!(Test-Path $archive) -or !(Test-Path $checksum)) { throw "Windows archive is missing" }
 $expected = ((Get-Content $checksum -Raw) -split '\s+')[0]

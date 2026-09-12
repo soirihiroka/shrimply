@@ -23,9 +23,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CARGO_HOME: ${{ github.workspace }}\.ci\cargo
+  CARGO_HOME: C:\c
+  CARGO_TARGET_DIR: C:\t
   CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
-  RUSTUP_HOME: ${{ github.workspace }}\.ci\rustup
+  RUSTUP_HOME: C:\r
   TZ: UTC
   VCPKG_DEFAULT_TRIPLET: x64-windows
   VCPKG_INSTALLED_DIR: ${{ github.workspace }}\vcpkg_installed
@@ -37,6 +38,12 @@ jobs:
     timeout-minutes: 180
 
     steps:
+      - name: Enable Windows long paths
+        shell: powershell
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWord -Force | Out-Null
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -79,15 +86,15 @@ jobs:
         uses: actions/cache@v6
         with:
           path: |
-            .ci/cargo/bin
-            .ci/cargo/registry
-            .ci/cargo/git
-            .ci/rustup
-            target/release
-          key: windows-rust-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-${{ github.sha }}
+            C:\c\bin
+            C:\c\registry
+            C:\c\git
+            C:\r
+            C:\t\release
+          key: windows-rust-v2-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-${{ github.sha }}
           restore-keys: |
-            windows-rust-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-
-            windows-rust-v1-
+            windows-rust-v2-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-
+            windows-rust-v2-
 
       - name: Install pinned Rust toolchain
         shell: powershell
