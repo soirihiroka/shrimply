@@ -16,6 +16,21 @@ const PROJECT_PATH_LINES: i32 = 3;
 fn main() -> glib::ExitCode {
     shrimply_process_reporting::diagnostics::init();
     shrimply_components_gtk::i18n::init_system_locale();
+    if let Err(error) = shrimply_cross_ui_core::launcher::check_nvidia_gpu() {
+        tracing::error!("{error}");
+        if let Err(error) = adw::init() {
+            eprintln!("could not initialize GTK: {error}");
+            return glib::ExitCode::FAILURE;
+        }
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr!(shrimply_cross_ui_core::launcher::UNSUPPORTED_GPU_HEADING).as_ref())
+            .body(tr!(shrimply_cross_ui_core::launcher::UNSUPPORTED_GPU_MESSAGE).as_ref())
+            .build();
+        dialog.add_response("close", tr!("Close").as_ref());
+        dialog.set_close_response("close");
+        glib::MainContext::default().block_on(dialog.choose_future(None::<&gtk::Widget>));
+        return glib::ExitCode::FAILURE;
+    }
     let mut args = std::env::args_os().skip(1);
     if let Some(path) = args.next() {
         if args.next().is_some() {

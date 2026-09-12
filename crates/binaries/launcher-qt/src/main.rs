@@ -8,6 +8,20 @@ fn main() -> ExitCode {
     shrimply_process_reporting::diagnostics::init();
     shrimply_i18n_qt::init_system_locale();
 
+    if let Err(error) = shrimply_cross_ui_core::launcher::check_nvidia_gpu() {
+        tracing::error!("{error}");
+        let app = shrimply_application_qt::new_widget_application();
+        if app.is_null() {
+            eprintln!("could not create Qt application");
+            return ExitCode::FAILURE;
+        }
+        backend::qobject::show_startup_error(
+            &shrimply_i18n_qt::text(shrimply_cross_ui_core::launcher::UNSUPPORTED_GPU_HEADING),
+            &shrimply_i18n_qt::text(shrimply_cross_ui_core::launcher::UNSUPPORTED_GPU_MESSAGE),
+        );
+        return ExitCode::FAILURE;
+    }
+
     let mut args = std::env::args_os().skip(1);
     if let Some(path) = args.next() {
         if args.next().is_some() {

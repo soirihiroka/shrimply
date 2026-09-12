@@ -23,3 +23,6 @@ shrimply-editor-state = { workspace = true }
 shrimply-recent-projects = { workspace = true }
 shrimply-timeline-edit = { workspace = true }
 tracing.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
+libloading.workspace = true

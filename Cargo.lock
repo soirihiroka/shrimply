@@ -5747,6 +5747,7 @@ dependencies = [
  "async-channel",
  "gio",
  "glib",
+ "libloading",
  "shrimply-asset",
  "shrimply-audio-engine",
  "shrimply-blender-core",

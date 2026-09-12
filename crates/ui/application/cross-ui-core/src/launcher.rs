@@ -11,6 +11,48 @@ use std::time::UNIX_EPOCH;
 pub const PROJECT_FILE_PATTERNS: [&str; 5] =
     ["*.shrimp", "*.sjson", "*.json", "*.otio", "*.kdenlive"];
 
+pub const UNSUPPORTED_GPU_HEADING: &str = "GPU Not Supported";
+pub const UNSUPPORTED_GPU_MESSAGE: &str = "Your GPU is not supported or the NVIDIA driver is missing or unavailable. Shrimply requires an NVIDIA GPU with a working NVIDIA driver. Install or update the NVIDIA driver if you have an NVIDIA GPU. Shrimply will now exit.";
+
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub fn check_nvidia_gpu() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    const DRIVER_LIBRARY: &str = "libcuda.so.1";
+    #[cfg(target_os = "windows")]
+    const DRIVER_LIBRARY: &str = "nvcuda.dll";
+    const CUDA_SUCCESS: i32 = 0;
+
+    // Load the driver at runtime so a missing driver can be reported in the UI.
+    // SAFETY: These signatures match the CUDA driver API. The library stays
+    // loaded while its symbols are used, and the device count pointer is valid.
+    unsafe {
+        let driver = libloading::Library::new(DRIVER_LIBRARY)
+            .map_err(|error| format!("could not load NVIDIA driver: {error}"))?;
+        let init = driver
+            .get::<unsafe extern "system" fn(u32) -> i32>(b"cuInit\0")
+            .map_err(|error| format!("could not load cuInit: {error}"))?;
+        let get_count = driver
+            .get::<unsafe extern "system" fn(*mut i32) -> i32>(b"cuDeviceGetCount\0")
+            .map_err(|error| format!("could not load cuDeviceGetCount: {error}"))?;
+        // CUDA requires the initialization flags to be zero.
+        let status = init(0);
+        if status != CUDA_SUCCESS {
+            return Err(format!(
+                "NVIDIA driver initialization failed: CUDA error {status}"
+            ));
+        }
+        let mut count = 0;
+        let status = get_count(&mut count);
+        if status != CUDA_SUCCESS {
+            return Err(format!("NVIDIA GPU detection failed: CUDA error {status}"));
+        }
+        if count <= 0 {
+            return Err("No CUDA-capable NVIDIA GPU was found.".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 pub struct Launcher {
     query: String,
