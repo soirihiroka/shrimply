@@ -105,7 +105,7 @@ fn initialize() -> io::Result<()> {
             let result = unsafe { WSAStartup(0x0202, &mut data) };
             if result == 0 { Ok(()) } else { Err(result) }
         })
-        .map_err(|error| io::Error::from_raw_os_error(*error))
+        .map_err(io::Error::from_raw_os_error)
 }
 
 fn address(path: &Path) -> io::Result<SOCKADDR_UN> {

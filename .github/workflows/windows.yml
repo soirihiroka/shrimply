@@ -82,19 +82,29 @@ jobs:
           version: 0.12.12
           enable-cache: true
 
-      - name: Restore Rust and application caches
-        uses: actions/cache@v6
+      - name: Restore Rust tool cache
+        id: rust-tool-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             C:\c\bin
             C:\c\registry
             C:\c\git
             C:\r
-            C:\t\release
-          key: windows-rust-v2-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-${{ github.sha }}
+          key: windows-rust-tools-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
-            windows-rust-v2-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-
-            windows-rust-v2-
+            windows-rust-tools-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml') }}-
+            windows-rust-tools-v1-
+
+      - name: Restore Windows debug build cache
+        id: rust-debug-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: C:\t\debug
+          key: windows-rust-debug-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-${{ github.sha }}
+          restore-keys: |
+            windows-rust-debug-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-
+            windows-rust-debug-v1-
 
       - name: Install pinned Rust toolchain
         shell: powershell
@@ -240,9 +250,44 @@ jobs:
         shell: bash
         run: make check
 
+      - name: Save Rust tool cache
+        if: ${{ !cancelled() && steps.rust-tool-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            C:\c\bin
+            C:\c\registry
+            C:\c\git
+            C:\r
+          key: windows-rust-tools-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml') }}-${{ github.sha }}
+
+      - name: Save Windows debug build cache
+        if: ${{ !cancelled() && steps.rust-debug-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: C:\t\debug
+          key: windows-rust-debug-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-${{ github.sha }}
+
+      - name: Restore Windows release build cache
+        id: rust-release-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: C:\t\release
+          key: windows-rust-release-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-${{ github.sha }}
+          restore-keys: |
+            windows-rust-release-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-
+            windows-rust-release-v1-
+
       - name: Build Windows release
         shell: bash
         run: make windows-release
+
+      - name: Save Windows release build cache
+        if: ${{ !cancelled() && steps.rust-release-cache.outcome == 'success' && steps.rust-release-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: C:\t\release
+          key: windows-rust-release-v1-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'Makefile') }}-${{ github.sha }}
 
       - name: Package portable application
         shell: bash
