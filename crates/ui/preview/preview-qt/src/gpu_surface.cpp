@@ -85,8 +85,9 @@ extern "C" std::size_t shrimply_qt_timeline_track_add_menu_icon(std::size_t inde
                                                                   std::uint8_t *output,
                                                                   std::size_t capacity);
 extern "C" bool shrimply_qt_timeline_activate_track_add_menu_item(std::size_t index);
-extern "C" bool shrimply_qt_timeline_import_track_file(const std::uint8_t *path,
-                                                          std::size_t length);
+extern "C" std::uint8_t shrimply_qt_timeline_import_track_file(const std::uint8_t *path,
+                                                                 std::size_t length);
+extern "C" bool shrimply_qt_timeline_confirm_track_remux(bool remux);
 extern "C" std::size_t shrimply_qt_timeline_prepare_context_menu(float x, float y);
 extern "C" std::size_t shrimply_qt_timeline_context_menu_label(std::size_t index,
                                                                  std::uint8_t *output,
@@ -152,6 +153,11 @@ extern "C" bool shrimply_qt_preview_guides_visible();
 extern "C" void shrimply_qt_preview_set_guides_visible(bool visible);
 
 namespace {
+enum class TrackFileImportResult : std::uint8_t {
+    Error,
+    Started,
+    ConfirmRemux,
+};
 
 QOpenGLFramebufferObject *make_fbo(const QSize &size) {
     QOpenGLFramebufferObjectFormat format;
@@ -419,9 +425,14 @@ void force_opengl() {
 }
 
 void configure_icons() {
+#ifdef Q_OS_WIN
+    QIcon::setThemeName(QStringLiteral("shrimply-adwaita"));
+    QIcon::setFallbackThemeName(QStringLiteral("shrimply-adwaita"));
+#else
     const QString theme = dark_palette() ? QStringLiteral("breeze-dark") : QStringLiteral("breeze");
     QIcon::setThemeName(theme);
     QIcon::setFallbackThemeName(theme);
+#endif
 }
 
 QString fixed_font_family() {
@@ -587,10 +598,24 @@ void TimelineSurface::activateTrackAddMenuItem(int index) {
 
 void TimelineSurface::importTrackFile(const QUrl &url) {
     const QByteArray path = url.toLocalFile().toUtf8();
-    if (path.isEmpty() ||
-        !shrimply_qt_timeline_import_track_file(
+    if (path.isEmpty()) {
+        emit contextActionFailed(context_action_error());
+        return;
+    }
+    const auto result = static_cast<TrackFileImportResult>(
+        shrimply_qt_timeline_import_track_file(
             reinterpret_cast<const std::uint8_t *>(path.constData()),
-            static_cast<std::size_t>(path.size()))) {
+            static_cast<std::size_t>(path.size())));
+    if (result == TrackFileImportResult::Error) {
+        emit contextActionFailed(context_action_error());
+    } else if (result == TrackFileImportResult::ConfirmRemux) {
+        emit trackRemuxRequested();
+    }
+    update();
+}
+
+void TimelineSurface::confirmTrackRemux(bool remux) {
+    if (!shrimply_qt_timeline_confirm_track_remux(remux)) {
         emit contextActionFailed(context_action_error());
     }
     update();

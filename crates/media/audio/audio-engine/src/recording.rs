@@ -423,8 +423,8 @@ fn write_opus(path: &Path, samples: &[f32], input_rate: u32) -> Result<(), Strin
     ffmpeg::init().map_err(|error| error.to_string())?;
     let mut output = format::output(path)
         .map_err(|error| format!("could not create {}: {error}", path.display()))?;
-    let codec = encoder::find(codec::Id::OPUS)
-        .ok_or_else(|| "FFmpeg Opus encoder not found".to_string())?
+    let codec = encoder::find_by_name("libopus")
+        .ok_or_else(|| "FFmpeg libopus encoder not found".to_string())?
         .audio()
         .map_err(|error| error.to_string())?;
     let encoder_format = preferred_opus_format(codec)?;

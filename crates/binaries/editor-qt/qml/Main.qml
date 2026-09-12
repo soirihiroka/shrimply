@@ -711,6 +711,7 @@ ApplicationWindow {
             if (selected.toString().length > 0)
                 timelineLoader.item.importTrackFile(selected)
         }
+        function onTrackRemuxRequested() { timelineRemuxDialog.open() }
         function onSaveFrameRequested() {
             const selected = backend.showFileSaveDialog(
                 "",
@@ -734,6 +735,37 @@ ApplicationWindow {
         id: timelineContextError
         title: backend.translate("Timeline Action Failed")
         buttons: MessageDialog.Ok
+    }
+
+    Dialog {
+        id: timelineRemuxDialog
+        title: backend.translate("Remux MKV/WebM to MP4?")
+        modal: true
+        anchors.centerIn: parent
+
+        contentItem: Label {
+            text: backend.translate("MP4 is the supported timeline format. The source file will be kept.")
+            wrapMode: Text.Wrap
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: backend.translate("Cancel")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            Button {
+                text: backend.translate("Remux")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+            onRejected: {
+                timelineRemuxDialog.close()
+                timelineLoader.item.confirmTrackRemux(false)
+            }
+            onAccepted: {
+                timelineRemuxDialog.close()
+                timelineLoader.item.confirmTrackRemux(true)
+            }
+        }
     }
 
     MessageDialog {

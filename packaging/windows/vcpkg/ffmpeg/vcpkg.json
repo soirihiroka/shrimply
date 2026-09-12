@@ -12,6 +12,7 @@
         "avfilter",
         "avformat",
         "nvcodec",
+        "opus",
         "swresample",
         "swscale"
       ]

@@ -261,6 +261,8 @@ pub struct EditorBackendRust {
     pending_trust: Option<shrimply_trust_core::Request>,
     trust_open: bool,
     trusted_locations: Vec<shrimply_trust_core::Entry>,
+    #[cfg(windows)]
+    cuda_preflight: Option<(PathBuf, Receiver<Result<(), String>>)>,
     loader: Option<ProjectLoader>,
     session: Option<Pin<Box<EditorSession>>>,
     pending_lock_owner: Option<project::ProjectLockOwner>,
@@ -290,6 +292,8 @@ impl Default for EditorBackendRust {
             pending_trust: None,
             trust_open: false,
             trusted_locations: Vec::new(),
+            #[cfg(windows)]
+            cuda_preflight: None,
             loader: None,
             session: None,
             pending_lock_owner: None,
@@ -301,7 +305,7 @@ impl Default for EditorBackendRust {
 }
 
 impl qobject::EditorBackend {
-    pub fn begin(mut self: Pin<&mut Self>) {
+    pub fn begin(self: Pin<&mut Self>) {
         assert!(
             self.loader.is_none(),
             "Qt editor project loader already started"
@@ -310,6 +314,26 @@ impl qobject::EditorBackend {
             .nth(1)
             .map(PathBuf::from)
             .expect("shrimply-editor-qt requires a project path");
+        #[cfg(windows)]
+        {
+            let mut this = self;
+            assert!(
+                this.cuda_preflight.is_none(),
+                "Qt editor CUDA preflight already started"
+            );
+            this.as_mut()
+                .set_loading_text(QString::from("Compiling CUDA kernels…"));
+            let (sender, receiver) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(shrimply_visual_cuda::gpu::preflight());
+            });
+            this.as_mut().rust_mut().get_mut().cuda_preflight = Some((path, receiver));
+        }
+        #[cfg(not(windows))]
+        self.start_project_loader(path);
+    }
+
+    fn start_project_loader(mut self: Pin<&mut Self>, path: PathBuf) {
         let mut loader = ProjectLoader::new(path);
         let event = loader.begin();
         self.as_mut().rust_mut().get_mut().loader = Some(loader);
@@ -317,6 +341,8 @@ impl qobject::EditorBackend {
     }
 
     pub fn poll(mut self: Pin<&mut Self>) {
+        #[cfg(windows)]
+        self.as_mut().poll_cuda_preflight();
         for error in shrimply_trust_core::poll_edits() {
             self.as_mut().emit_error("Could not change source", &error);
         }
@@ -354,6 +380,40 @@ impl qobject::EditorBackend {
         }
         self.as_mut().poll_preference_tasks();
         self.as_mut().update_player_properties();
+    }
+
+    #[cfg(windows)]
+    fn poll_cuda_preflight(mut self: Pin<&mut Self>) {
+        let result = self
+            .as_ref()
+            .rust()
+            .cuda_preflight
+            .as_ref()
+            .map(|(_, receiver)| receiver.try_recv());
+        let result = match result {
+            Some(Ok(result)) => result,
+            Some(Err(TryRecvError::Disconnected)) => {
+                Err("CUDA kernel preflight worker stopped unexpectedly".into())
+            }
+            Some(Err(TryRecvError::Empty)) | None => return,
+        };
+        let (path, _) = self
+            .as_mut()
+            .rust_mut()
+            .get_mut()
+            .cuda_preflight
+            .take()
+            .expect("CUDA preflight exists");
+        match result {
+            Ok(()) => {
+                self.as_mut()
+                    .set_loading_text(QString::from("Loading project…"));
+                self.start_project_loader(path);
+            }
+            Err(error) => self
+                .as_mut()
+                .emit_error("Could not initialize CUDA", &error),
+        }
     }
 
     fn show_trust(mut self: Pin<&mut Self>, review: &shrimply_trust_core::Review) {

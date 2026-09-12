@@ -19,7 +19,11 @@ std::unique_ptr<QGuiApplication> new_widget_application()
   argument_data->setParent(application.get());
   // Widget themes such as Kvantum are not Qt Quick Controls styles.
   const auto quick_style = qEnvironmentVariable("QT_QUICK_CONTROLS_STYLE");
+#ifdef Q_OS_WIN
+  QQuickStyle::setStyle(quick_style.isEmpty() ? QStringLiteral("FluentWinUI3") : quick_style);
+#else
   QQuickStyle::setStyle(quick_style.isEmpty() ? QStringLiteral("Fusion") : quick_style);
+#endif
   return application;
 }
 
@@ -29,7 +33,9 @@ static void prepare_dialog(QFileDialog &dialog,
 {
   dialog.setWindowTitle(title);
   dialog.setNameFilter(filter);
+#ifndef Q_OS_WIN
   dialog.setOption(QFileDialog::DontUseNativeDialog);
+#endif
   dialog.setWindowModality(Qt::WindowModal);
 
   dialog.winId();

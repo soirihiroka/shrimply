@@ -1,6 +1,6 @@
 pub use shrimply_timeline_skia::scene::KeyAction;
 mod timeline;
-pub use timeline::{RenderedVideoFrame, ToolkitPointerButton, ToolkitTimeline};
+pub use timeline::{RenderedVideoFrame, ToolkitPointerButton, ToolkitTimeline, TrackFileImport};
 
 pub use shrimply_timeline_skia::{
     ContextMenu, ContextMenuAction, ContextMenuControl, ContextMenuEntry, ContextMenuItem,

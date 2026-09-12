@@ -5936,6 +5936,7 @@ dependencies = [
  "shrimply-project-document",
  "shrimply-recent-projects",
  "shrimply-trust-core",
+ "shrimply-visual-cuda",
  "tracing",
 ]
 

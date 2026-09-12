@@ -10,7 +10,7 @@ use shrimply_math_color::Color;
 use shrimply_playback_performance as playback_performance;
 #[cfg(target_os = "linux")]
 use shrimply_pointer_lock_wayland::WaylandPointerLock;
-use shrimply_project_document::project::Project;
+use shrimply_project_document::project::{Project, Time, TrackAddress};
 use shrimply_surface_gl_skia::TimelineRenderer;
 use shrimply_timeline_edit::selection_state::SharedSelectionState;
 pub use shrimply_timeline_skia::scene::PointerButton as ToolkitPointerButton;
@@ -33,6 +33,11 @@ pub use shrimply_visual_cuda::compositor::RgbaVideoFrame as RenderedVideoFrame;
 use std::ffi::c_void;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
+pub enum TrackFileImport {
+    Started,
+    ConfirmRemux,
+}
+
 pub struct TrackAddMenuPresentation {
     pub kind: shrimply_timeline_edit::TrackKind,
     pub x: f32,
@@ -50,6 +55,8 @@ pub struct ToolkitTimeline {
     context_menu: ContextMenu,
     track_add_request: Option<TrackAddMenuRequest>,
     track_add_presentation: Option<TrackAddMenuPresentation>,
+    track_remux_request: Option<(PathBuf, Vec<TrackAddress>, Time)>,
+    interaction_error: Option<String>,
     deletion: Option<TrackDeletion>,
     #[cfg(target_os = "linux")]
     pointer_lock: Option<WaylandPointerLock>,
@@ -84,6 +91,8 @@ impl ToolkitTimeline {
             context_menu: ContextMenu::default(),
             track_add_request: None,
             track_add_presentation: None,
+            track_remux_request: None,
+            interaction_error: None,
             deletion: None,
             #[cfg(target_os = "linux")]
             pointer_lock: None,
@@ -121,11 +130,14 @@ impl ToolkitTimeline {
         if requests.pause_playback {
             player_state::set_playing(&self.player, false);
         }
-        if let Some(key) = requests.audio_record {
-            self.scene.toggle_audio_recording(key)?;
+        if let Some(key) = requests.audio_record
+            && let Err(error) = self.scene.toggle_audio_recording(key)
+        {
+            self.interaction_error = Some(format!("Could not record audio: {error}"));
         }
         if requests.video_record.is_some() {
-            return Err("Screen recording is unavailable in the Qt timeline".into());
+            self.interaction_error =
+                Some("Screen recording is unavailable in the Qt timeline".into());
         }
         if let Some(request) = requests.track_add {
             let row = items::row_for_track(
@@ -156,15 +168,50 @@ impl ToolkitTimeline {
             .activate_track_add(request.key, action)
             .map(|outcome| outcome != TrackAddOutcome::Unchanged)
     }
-    pub fn import_track_file(&mut self, path: PathBuf) -> Result<(), String> {
+    pub fn import_track_file(&mut self, path: PathBuf) -> Result<TrackFileImport, String> {
         let request = self
             .track_add_request
             .as_ref()
             .ok_or("Track add menu is no longer active")?;
-        self.scene.import_track_file(path, &request.import_targets)
+        if matches!(
+            shrimply_timeline_skia::import::file_kind(&path),
+            Some(
+                shrimply_timeline_skia::import::FileKind::Mkv
+                    | shrimply_timeline_skia::import::FileKind::WebM
+            )
+        ) {
+            let targets = request
+                .import_targets
+                .iter()
+                .map(|target| {
+                    shrimply_timeline_edit::selection_state::track_address(
+                        &self.project.borrow(),
+                        *target,
+                    )
+                    .ok_or("Import destination track no longer exists")
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            self.track_remux_request =
+                Some((path, targets, player_state::current_time(&self.player)));
+            return Ok(TrackFileImport::ConfirmRemux);
+        }
+        self.scene
+            .import_track_file(path, &request.import_targets)
+            .map(|()| TrackFileImport::Started)
+    }
+    pub fn confirm_track_remux(&mut self, remux: bool) -> Result<(), String> {
+        let Some((path, targets, start)) = self.track_remux_request.take() else {
+            return Err("Track remux request is no longer active".into());
+        };
+        if !remux {
+            return Ok(());
+        }
+        self.scene.begin_track_remux(path, targets, start)
     }
     pub fn take_error(&mut self) -> Option<String> {
-        self.scene.take_error()
+        self.interaction_error
+            .take()
+            .or_else(|| self.scene.take_error())
     }
 
     fn poll_pointer_lock(&mut self) {
