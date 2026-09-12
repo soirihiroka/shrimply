@@ -208,6 +208,9 @@ pub fn launch_qt_editor(path: &Path) -> Result<Child, String> {
 }
 
 fn launch_sibling_editor(path: &Path, binary_name: &str) -> Result<Child, String> {
+    if !path.is_file() {
+        return Err(format!("Project does not exist: {}", path.display()));
+    }
     let editor = std::env::current_exe()
         .map(|path| path.with_file_name(binary_name))
         .unwrap_or_else(|_| PathBuf::from(binary_name));

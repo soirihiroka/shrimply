@@ -48,10 +48,22 @@ function Use-PackagedRuntime {
 
 function Assert-ArgumentFailures([string]$directory) {
     $launcher = Join-Path $directory "shrimply-qt.exe"
-    & $launcher (Join-Path $env:RUNNER_TEMP "missing.shrimp")
-    if ($LASTEXITCODE -eq 0) { throw "Launcher accepted a missing project" }
-    & $launcher first.shrimp second.shrimp
-    if ($LASTEXITCODE -eq 0) { throw "Launcher accepted excess project arguments" }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = (& $launcher (Join-Path $env:RUNNER_TEMP "missing.shrimp") 2>&1) -join "`n"
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 1 -or $output -notmatch [regex]::Escape("Project does not exist:")) {
+            throw "Launcher did not reject a missing project cleanly (code $exitCode)`n$output"
+        }
+        $output = (& $launcher first.shrimp second.shrimp 2>&1) -join "`n"
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -ne 1 -or $output -notmatch [regex]::Escape("usage: shrimply-qt")) {
+            throw "Launcher did not reject excess project arguments cleanly (code $exitCode)`n$output"
+        }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 }
 
 function Assert-QmlStartup([string]$directory) {
@@ -88,3 +100,4 @@ Expand-Archive $archive $unpacked
 Inspect-Imports $unpacked
 Assert-ArgumentFailures $unpacked
 Assert-QmlStartup $unpacked
+exit 0
