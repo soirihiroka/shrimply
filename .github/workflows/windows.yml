@@ -237,10 +237,13 @@ jobs:
           if ($linker -notlike "*Microsoft Visual Studio*") { throw "MSVC link.exe not found: $linker" }
           $pkgConfig = "$env:VCPKG_INSTALLED_DIR\x64-windows\tools\pkgconf\pkgconf.exe"
           if (!(Test-Path $pkgConfig)) { throw "vcpkg pkgconf.exe is missing: $pkgConfig" }
+          $ffmpegCmake = "$env:VCPKG_INSTALLED_DIR\x64-windows\share\ffmpeg"
+          if (!(Test-Path "$ffmpegCmake\FindFFMPEG.cmake")) { throw "vcpkg FindFFMPEG.cmake is missing: $ffmpegCmake" }
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "VCPKG_ROOT=$pwd\.ci\vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "PKG_CONFIG=$($pkgConfig.Replace('\', '/'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "PKG_CONFIG_PATH=$env:VCPKG_INSTALLED_DIR\x64-windows\lib\pkgconfig;$env:VCPKG_INSTALLED_DIR\x64-windows\share\pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "OPENCV_CMAKE_ARGS=-DCMAKE_MODULE_PATH=$($ffmpegCmake.Replace('\', '/'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "CLANG_PATH=C:\Program Files\LLVM\bin\clang.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "QT_QMAKE=qmake.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
