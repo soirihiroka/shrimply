@@ -187,16 +187,20 @@ pub extern "C" fn shrimply_qt_render_timeline(
     blue: f32,
     alpha: f32,
     dark: bool,
+    native_window: usize,
 ) -> bool {
     shrimply_cross_ui_theme::set_dark(dark);
     SURFACES.with_borrow_mut(|surfaces| {
         let Some(surfaces) = surfaces.as_mut() else {
             return missing("timeline");
         };
-        let result =
-            surfaces
-                .timeline
-                .render(width, height, scale, Color::new(red, green, blue, alpha));
+        let result = surfaces.timeline.render(
+            width,
+            height,
+            scale,
+            Color::new(red, green, blue, alpha),
+            native_window,
+        );
         if result.is_ok()
             && let Some(presentation) = surfaces.timeline.take_track_add_menu()
         {

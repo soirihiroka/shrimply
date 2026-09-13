@@ -1,0 +1,27 @@
+[package]
+name = "shrimply-video-recording-windows"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(windows)'.dependencies]
+ffmpeg-next.workspace = true
+shrimply-math-core.workspace = true
+shrimply-project-document = { workspace = true, default-features = true }
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+windows = { workspace = true, features = [
+    "Foundation",
+    "Graphics",
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_UI_Shell",
+] }
+windows-future.workspace = true

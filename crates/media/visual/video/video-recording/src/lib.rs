@@ -8,7 +8,7 @@ use std::pin::pin;
 use std::rc::Rc;
 use std::sync::{
     Arc, Mutex,
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     mpsc,
 };
 use std::task::Poll;
@@ -48,10 +48,10 @@ const NVENC_KEYFRAME_INTERVAL_SECONDS: u32 = 1;
 static PORTAL_TOKEN: AtomicU32 = AtomicU32::new(1);
 
 pub struct ScreenRecording {
-    portal: Rc<RefCell<PortalState>>,
     cancel: async_channel::Sender<()>,
     commands: Arc<Mutex<Option<pw::channel::Sender<RecordingCommand>>>>,
     events: mpsc::Receiver<ScreenRecordingEvent>,
+    stopped: AtomicBool,
 }
 
 pub enum ScreenRecordingEvent {
@@ -86,7 +86,6 @@ struct PortalState {
     connection: Option<gio::DBusConnection>,
     request_path: Option<String>,
     session_path: Option<String>,
-    stopped: bool,
 }
 
 enum RecordingCommand {
@@ -152,43 +151,37 @@ impl ScreenRecording {
         let name = Uuid::new_v4().to_string();
         let final_path = directory.join(format!("{name}.mp4"));
         let temporary_path = directory.join(format!("{name}.mp4.part"));
-        let portal = Rc::new(RefCell::new(PortalState::default()));
         let (cancel, cancelled) = async_channel::bounded(1);
         let commands = Arc::new(Mutex::new(None));
         let (event_tx, events) = mpsc::channel();
 
-        glib::MainContext::default().spawn_local(run_portal(
-            portal.clone(),
-            cancelled,
-            commands.clone(),
-            event_tx,
-            final_path,
-            temporary_path,
-            valid_fps(fps),
-        ));
+        let worker_commands = commands.clone();
+        thread::spawn(move || {
+            let context = glib::MainContext::new();
+            context.block_on(run_portal(
+                Rc::new(RefCell::new(PortalState::default())),
+                cancelled,
+                worker_commands,
+                event_tx,
+                final_path,
+                temporary_path,
+                valid_fps(fps),
+            ));
+        });
 
         Ok(Self {
-            portal,
             cancel,
             commands,
             events,
+            stopped: AtomicBool::new(false),
         })
     }
 
     pub fn stop(&self) {
-        let mut portal = self.portal.borrow_mut();
-        if portal.stopped {
+        if self.stopped.swap(true, Ordering::Relaxed) {
             return;
         }
-        portal.stopped = true;
         let _ = self.cancel.try_send(());
-        if let Some(path) = portal.request_path.take() {
-            close_portal_object(portal.connection.as_ref(), &path, REQUEST_INTERFACE);
-        }
-        if let Some(path) = portal.session_path.take() {
-            close_portal_object(portal.connection.as_ref(), &path, SESSION_INTERFACE);
-        }
-        drop(portal);
         if let Some(commands) = self.commands.lock().ok().and_then(|value| value.clone()) {
             let _ = commands.send(RecordingCommand::Stop);
         }
@@ -215,15 +208,11 @@ async fn run_portal(
     fps: Fraction,
 ) {
     let result = open_portal_stream(state.clone(), &cancelled).await;
-    if state.borrow().stopped {
-        let _ = events.send(ScreenRecordingEvent::Cancelled);
-        return;
-    }
     match result {
         Ok((fd, target)) => {
             let (command_tx, command_rx) = pw::channel::channel();
             if let Ok(mut slot) = commands.lock() {
-                *slot = Some(command_tx);
+                *slot = Some(command_tx.clone());
             }
             thread::spawn(move || {
                 record_pipewire(
@@ -236,6 +225,8 @@ async fn run_portal(
                     fps,
                 )
             });
+            let _ = cancelled.recv().await;
+            let _ = command_tx.send(RecordingCommand::Stop);
         }
         Err(error) if error.cancelled => {
             let _ = events.send(ScreenRecordingEvent::Cancelled);
@@ -243,6 +234,13 @@ async fn run_portal(
         Err(error) => {
             let _ = events.send(ScreenRecordingEvent::Finished(Err(error.message)));
         }
+    }
+    let mut state = state.borrow_mut();
+    if let Some(path) = state.request_path.take() {
+        close_portal_object(state.connection.as_ref(), &path, REQUEST_INTERFACE);
+    }
+    if let Some(path) = state.session_path.take() {
+        close_portal_object(state.connection.as_ref(), &path, SESSION_INTERFACE);
     }
 }
 
@@ -411,9 +409,6 @@ async fn portal_request(
     request_token: &str,
     parameters: glib::Variant,
 ) -> Result<glib::Variant, PortalFailure> {
-    if state.borrow().stopped {
-        return Err(portal_cancelled());
-    }
     let connection = proxy.connection();
     let sender = connection
         .unique_name()
@@ -455,10 +450,10 @@ async fn portal_request(
     }
     .await;
     drop(subscription);
+    let response = response?;
     if state.borrow().request_path.as_deref() == Some(path.as_str()) {
         state.borrow_mut().request_path = None;
     }
-    let response = response?;
     let code = response
         .child_value(0)
         .get::<u32>()

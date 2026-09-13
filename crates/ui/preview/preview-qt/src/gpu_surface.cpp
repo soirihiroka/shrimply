@@ -57,7 +57,8 @@ static_assert(sizeof(ShrimplyPlatformPalette)
 extern "C" void shrimply_qt_set_platform_palette(const ShrimplyPlatformPalette *palette);
 extern "C" bool shrimply_qt_render_timeline(std::uint32_t width, std::uint32_t height,
                                              float scale, float red, float green,
-                                             float blue, float alpha, bool dark);
+                                             float blue, float alpha, bool dark,
+                                             std::uintptr_t native_window);
 extern "C" bool shrimply_qt_render_preview(std::uint32_t width, std::uint32_t height,
                                             float scale, float red, float green,
                                             float blue, float alpha, bool dark,
@@ -241,6 +242,9 @@ public:
     void synchronize(QQuickFramebufferObject *item) override {
         surface_ = static_cast<shrimply::TimelineSurface *>(item);
         scale_ = item->window() ? item->window()->effectiveDevicePixelRatio() : 1.0f;
+#if defined(Q_OS_WINDOWS)
+        native_window_ = item->window() ? static_cast<std::uintptr_t>(item->window()->winId()) : 0;
+#endif
     }
 
     void render() override {
@@ -252,7 +256,7 @@ public:
                 static_cast<std::uint32_t>(size.height()), scale_,
                 palette.accent_bg.red, palette.accent_bg.green,
                 palette.accent_bg.blue, palette.accent_bg.alpha,
-                dark_palette())) {
+                dark_palette(), native_window_)) {
             qFatal("Shrimply could not render the timeline with OpenGL");
         }
         if (shrimply_qt_timeline_take_track_add_menu()) {
@@ -284,6 +288,7 @@ public:
 private:
     QPointer<shrimply::TimelineSurface> surface_;
     float scale_ = 1.0f;
+    std::uintptr_t native_window_ = 0;
 };
 
 class PreviewRenderer final : public QQuickFramebufferObject::Renderer {

@@ -28,6 +28,10 @@ use shrimply_timeline_skia::{
     track_controls::track_label_button_y,
     view::{TimelineCursor, TimelineScrollEvent, TimelineScrollInput},
 };
+#[cfg(target_os = "linux")]
+use shrimply_video_recording as video_recording;
+#[cfg(windows)]
+use shrimply_video_recording_windows as video_recording;
 pub use shrimply_visual_cuda::compositor::RgbaVideoFrame as RenderedVideoFrame;
 #[cfg(target_os = "linux")]
 use std::ffi::c_void;
@@ -57,6 +61,9 @@ pub struct ToolkitTimeline {
     track_add_presentation: Option<TrackAddMenuPresentation>,
     track_remux_request: Option<(PathBuf, Vec<TrackAddress>, Time)>,
     interaction_error: Option<String>,
+    screen_recording: Option<video_recording::ScreenRecording>,
+    #[cfg(windows)]
+    native_window: usize,
     deletion: Option<TrackDeletion>,
     #[cfg(target_os = "linux")]
     pointer_lock: Option<WaylandPointerLock>,
@@ -93,6 +100,9 @@ impl ToolkitTimeline {
             track_add_presentation: None,
             track_remux_request: None,
             interaction_error: None,
+            screen_recording: None,
+            #[cfg(windows)]
+            native_window: 0,
             deletion: None,
             #[cfg(target_os = "linux")]
             pointer_lock: None,
@@ -106,7 +116,15 @@ impl ToolkitTimeline {
         height: u32,
         scale: f32,
         accent_color: Color,
+        native_window: usize,
     ) -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            self.native_window = native_window;
+        }
+        #[cfg(not(windows))]
+        let _ = native_window;
+        self.poll_screen_recording();
         self.poll_pointer_lock();
         let painter = self.renderer.begin_frame(
             glam::UVec2::new(width.max(1), height.max(1)),
@@ -135,9 +153,11 @@ impl ToolkitTimeline {
         {
             self.interaction_error = Some(format!("Could not record audio: {error}"));
         }
-        if requests.video_record.is_some() {
+        if let Some(key) = requests.video_record
+            && let Err(error) = self.scene.toggle_video_recording(key)
+        {
             self.interaction_error =
-                Some("Screen recording is unavailable in the Qt timeline".into());
+                Some(format!("Could not record screen or application: {error}"));
         }
         if let Some(request) = requests.track_add {
             let row = items::row_for_track(
@@ -152,6 +172,102 @@ impl ToolkitTimeline {
                 y: track_label_button_y(row_screen_y(row, self.scene.view())) as f32,
             });
             self.track_add_request = Some(request);
+        }
+        if let Err(error) = self.apply_video_recording_commands() {
+            self.interaction_error =
+                Some(format!("Could not record screen or application: {error}"));
+        }
+        Ok(())
+    }
+
+    fn poll_screen_recording(&mut self) {
+        loop {
+            let event = match self
+                .screen_recording
+                .as_ref()
+                .map(video_recording::ScreenRecording::try_event)
+            {
+                Some(Ok(event)) => event,
+                Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => return,
+                Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                    video_recording::ScreenRecordingEvent::Finished(Err(
+                        "Screen capture stopped without a final event".into(),
+                    ))
+                }
+            };
+            let terminal = matches!(
+                event,
+                video_recording::ScreenRecordingEvent::Cancelled
+                    | video_recording::ScreenRecordingEvent::Finished(_)
+            );
+            let event = match event {
+                video_recording::ScreenRecordingEvent::Ready { width, height } => {
+                    shrimply_timeline_skia::recording::VideoRecordingEvent::Ready { width, height }
+                }
+                video_recording::ScreenRecordingEvent::Cancelled => {
+                    shrimply_timeline_skia::recording::VideoRecordingEvent::Cancelled
+                }
+                video_recording::ScreenRecordingEvent::Finished(result) => {
+                    shrimply_timeline_skia::recording::VideoRecordingEvent::Finished(result.map(
+                        |finished| {
+                            let duration = finished.duration;
+                            let width = finished.width;
+                            let height = finished.height;
+                            shrimply_timeline_skia::recording::FinishedVideoRecording::new(
+                                finished.into_path(),
+                                duration,
+                                width,
+                                height,
+                                if cfg!(target_os = "linux") {
+                                    Some(1)
+                                } else {
+                                    None
+                                },
+                            )
+                        },
+                    ))
+                }
+            };
+            let result = self.scene.handle_video_recording_event(event);
+            if terminal {
+                self.screen_recording = None;
+            }
+            if let Err(error) = result.and_then(|()| self.apply_video_recording_commands()) {
+                self.interaction_error =
+                    Some(format!("Could not record screen or application: {error}"));
+            }
+            if terminal {
+                return;
+            }
+        }
+    }
+
+    fn apply_video_recording_commands(&mut self) -> Result<(), String> {
+        while let Some(command) = self.scene.take_video_recording_command() {
+            match command {
+                shrimply_timeline_skia::recording::VideoRecordingCommand::Start { fps } => {
+                    if self.screen_recording.is_some() {
+                        return Err("A screen recording is already active".into());
+                    }
+                    #[cfg(target_os = "linux")]
+                    let result = video_recording::ScreenRecording::start(fps);
+                    #[cfg(windows)]
+                    let result = video_recording::ScreenRecording::start(fps, self.native_window);
+                    match result {
+                        Ok(recording) => self.screen_recording = Some(recording),
+                        Err(error) => self.scene.handle_video_recording_event(
+                            shrimply_timeline_skia::recording::VideoRecordingEvent::Finished(Err(
+                                error,
+                            )),
+                        )?,
+                    }
+                }
+                shrimply_timeline_skia::recording::VideoRecordingCommand::Stop => {
+                    if let Some(recording) = self.screen_recording.as_ref() {
+                        recording.stop();
+                    }
+                }
+            }
         }
         Ok(())
     }

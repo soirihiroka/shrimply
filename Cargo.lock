@@ -7401,6 +7401,8 @@ dependencies = [
  "shrimply-surface-gl-skia",
  "shrimply-timeline-edit",
  "shrimply-timeline-skia",
+ "shrimply-video-recording",
+ "shrimply-video-recording-windows",
  "shrimply-visual-cuda",
 ]
 
@@ -7599,6 +7601,19 @@ dependencies = [
  "shrimply-project-document",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "shrimply-video-recording-windows"
+version = "0.1.0"
+dependencies = [
+ "ffmpeg-next",
+ "shrimply-math-core",
+ "shrimply-project-document",
+ "tracing",
+ "uuid",
+ "windows",
+ "windows-future",
 ]
 
 [[package]]

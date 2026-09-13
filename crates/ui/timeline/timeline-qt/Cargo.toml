@@ -19,3 +19,7 @@ glam.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 shrimply-pointer-lock-wayland.workspace = true
+shrimply-video-recording.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+shrimply-video-recording-windows.workspace = true
