@@ -1,13 +1,16 @@
 mod activity;
+mod retirement;
 
 use activity::DecoderActivity;
 pub use activity::DecoderActivityGuard;
 
 use std::hash::Hash;
 use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use hashbrown::HashMap;
+use retirement::Retirement;
 use shrimply_math_core::Time;
 
 const FOREGROUND_RECONFIGURE_DELAY: Duration = Duration::from_secs(1);
@@ -61,13 +64,14 @@ where
     preparing: usize,
     maximum: usize,
     context: D::Context,
+    retirement: Retirement<D>,
 }
 
 impl<S, O, D> TemporalDecoderPool<S, O, D>
 where
     S: Clone + Eq + Send,
     O: Clone + Eq + Hash + Send,
-    D: TemporalDecoder<S> + Send,
+    D: TemporalDecoder<S> + Send + 'static,
     D::Context: Clone + Send,
 {
     pub fn new(maximum: usize, context: D::Context) -> Self {
@@ -82,6 +86,7 @@ where
                 preparing: 0,
                 maximum,
                 context,
+                retirement: Retirement::new(),
             }),
         }
     }
@@ -115,8 +120,8 @@ where
     }
 
     /// Submits work to the decoder owned by this item, transfers an explicitly supplied
-    /// predecessor, or creates a decoder when an idle slot is available. Real-time rendering
-    /// never waits for another item here.
+    /// predecessor, or creates a decoder asynchronously. Foreground work may exceed the soft
+    /// limit; speculative work must leave room for retiring and preparing decoders.
     pub fn try_request(
         &self,
         source: S,
@@ -223,14 +228,17 @@ where
         state.preparing -= 1;
         state.remove_incompatible_owner(&source, &owner);
         if state.has_owner(&source, &owner) {
+            state.retirement.retire(decoder);
             return Ok(true);
         }
         let limit = state.maximum.saturating_sub(reserved);
         if limit == 0 {
+            state.retirement.retire(decoder);
             return Ok(false);
         }
         state.trim_reconfigurable_to_limit(limit.saturating_sub(1));
         if state.len() >= limit {
+            state.retirement.retire(decoder);
             return Ok(false);
         }
         state.decoders.insert(
@@ -265,19 +273,39 @@ where
             .chain(&state.orphaned)
             .filter(|entry| !entry.activity.is_idle())
             .count();
-        state.maximum.saturating_sub(active) > reserved
+        state.maximum.saturating_sub(
+            active + state.preparing + state.retirement.pending.load(Ordering::Acquire),
+        ) > reserved
     }
 
-    pub fn reclaim_idle(&self) {
+    pub fn retire_idle(&self) {
         let mut state = self.state.lock().expect("decoder pool mutex poisoned");
         state.trim_idle_to_limit(0);
     }
 
+    /// Releases idle decoders before a blocking memory-pressure retry. Never wait while holding
+    /// the scheduling mutex: foreground requests must remain able to submit work.
+    pub fn reclaim_idle(&self) {
+        let completion = {
+            let mut state = self.state.lock().expect("decoder pool mutex poisoned");
+            state.trim_idle_to_limit(0);
+            state.retirement.barrier()
+        };
+        completion.recv().expect("decoder retirement worker stopped before reclamation completed");
+    }
+
     pub fn evict_idle_owners(&self, mut evict: impl FnMut(&O, &S) -> bool) {
         let mut state = self.state.lock().expect("decoder pool mutex poisoned");
-        state
-            .decoders
-            .retain(|owner, entry| !entry.activity.is_idle() || !evict(owner, &entry.source));
+        let PoolState {
+            decoders,
+            retirement,
+            ..
+        } = &mut *state;
+        for (_, entry) in decoders
+            .extract_if(|owner, entry| entry.activity.is_idle() && evict(owner, &entry.source))
+        {
+            retirement.retire(entry.decoder);
+        }
     }
 
     pub fn retain_owners(&self, mut retain: impl FnMut(&O, &S) -> bool) {
@@ -295,9 +323,18 @@ where
                 .expect("retained decoder owner disappeared");
             if !entry.activity.is_idle() {
                 state.orphaned.push(entry);
+            } else {
+                state.retirement.retire(entry.decoder);
             }
         }
-        state.orphaned.retain(|entry| !entry.activity.is_idle());
+        let PoolState {
+            orphaned,
+            retirement,
+            ..
+        } = &mut *state;
+        for entry in orphaned.extract_if(.., |entry| entry.activity.is_idle()) {
+            retirement.retire(entry.decoder);
+        }
     }
 }
 
@@ -308,7 +345,7 @@ where
     D: TemporalDecoder<S>,
 {
     fn len(&self) -> usize {
-        self.decoders.len() + self.orphaned.len()
+        self.decoders.len() + self.orphaned.len() + self.retirement.pending.load(Ordering::Acquire)
     }
 
     fn set_maximum(&mut self, maximum: usize) {
@@ -329,7 +366,9 @@ where
     }
 
     fn trim_to_limit(&mut self, limit: usize, foreground_age: Duration) {
-        while self.len() > limit {
+        // Retiring decoders still consume capacity, but selecting them again must not evict
+        // additional owners while their destruction runs in the background.
+        while self.decoders.len() + self.orphaned.len() > limit {
             let owned = self
                 .decoders
                 .iter()
@@ -356,16 +395,26 @@ where
             match (owned, orphaned) {
                 (Some((owner, owned_access)), Some((index, orphaned_access))) => {
                     if owned_access <= orphaned_access {
-                        self.decoders.remove(&owner);
+                        let entry = self
+                            .decoders
+                            .remove(&owner)
+                            .expect("idle decoder disappeared");
+                        self.retirement.retire(entry.decoder);
                     } else {
-                        self.orphaned.swap_remove(index);
+                        let entry = self.orphaned.swap_remove(index);
+                        self.retirement.retire(entry.decoder);
                     }
                 }
                 (Some((owner, _)), None) => {
-                    self.decoders.remove(&owner);
+                    let entry = self
+                        .decoders
+                        .remove(&owner)
+                        .expect("idle decoder disappeared");
+                    self.retirement.retire(entry.decoder);
                 }
                 (None, Some((index, _))) => {
-                    self.orphaned.swap_remove(index);
+                    let entry = self.orphaned.swap_remove(index);
+                    self.retirement.retire(entry.decoder);
                 }
                 (None, None) => break,
             }
@@ -392,6 +441,8 @@ where
             .expect("incompatible decoder owner disappeared");
         if !entry.activity.is_idle() {
             self.orphaned.push(entry);
+        } else {
+            self.retirement.retire(entry.decoder);
         }
     }
 
@@ -403,7 +454,6 @@ where
         foreground: bool,
         allow_overflow: bool,
     ) -> Result<bool, D::Error> {
-        self.trim_reconfigurable_to_limit(self.maximum);
         self.remove_incompatible_owner(source, owner);
         let now = Instant::now();
 
@@ -411,6 +461,7 @@ where
             entry.last_access = now;
             if foreground {
                 entry.last_foreground_use = Some(now);
+                self.trim_reconfigurable_to_limit(self.maximum);
             }
             return Ok(true);
         }
@@ -430,13 +481,19 @@ where
                 entry.last_foreground_use = Some(now);
             }
             self.decoders.insert(owner.clone(), entry);
+            if foreground {
+                self.trim_reconfigurable_to_limit(self.maximum);
+            }
             return Ok(true);
         }
 
         if self.len() >= self.maximum.saturating_sub(self.preparing) {
             self.trim_reconfigurable_to_limit(self.maximum.saturating_sub(1));
         }
-        if !allow_overflow && self.len() >= self.maximum.saturating_sub(self.preparing) {
+        if !allow_overflow
+            && !foreground
+            && self.len() >= self.maximum.saturating_sub(self.preparing)
+        {
             return Ok(false);
         }
 

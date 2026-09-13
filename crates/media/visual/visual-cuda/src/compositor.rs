@@ -1237,7 +1237,7 @@ fn video_compositor_worker(
                     && let Some(startup_bytes) = crate::decode::take_decoder_pressure()
                 {
                     compositor.set_render_control(Some(decode_control.clone()));
-                    sessions.decoders.reclaim_idle();
+                    sessions.decoders.retire_idle();
                     if let Err(error) = compositor.relieve_decoder_gpu_pressure(startup_bytes) {
                         tracing::warn!(
                             %error,

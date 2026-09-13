@@ -116,13 +116,8 @@ impl VideoPreload<'_> {
                 Ok(true) => {}
             }
         }
-        let reserved = usize::from(!active);
-        if !sessions.decoders.has_request_capacity(reserved) {
-            shrimply_profiling::increment(if active {
-                "Video decode / Prepare skipped at decoder capacity"
-            } else {
-                "Temporal decoder / Preload skipped for foreground capacity"
-            });
+        if !active && !sessions.decoders.has_request_capacity(0) {
+            shrimply_profiling::increment("Temporal decoder / Preload skipped at decoder capacity");
             return;
         }
         if let Err(error) = sessions.prepare_source(SourcePrepareRequest {

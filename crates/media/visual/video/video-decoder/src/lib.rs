@@ -2,12 +2,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod pool;
 mod session;
+mod startup;
 mod track;
 
-pub use pool::{
-    DecodeRequest, PendingDecode, VideoDecoderHandle, VideoDecoderPool, is_decoder_startup_pressure,
-};
+pub use pool::{DecodeRequest, PendingDecode, VideoDecoderHandle, VideoDecoderPool};
 pub use session::{DecodeControl, DecodeOutcome, DecodedVisual};
+pub use startup::is_decoder_startup_pressure;
 pub use track::{VideoDecoderOwner, VideoPlane};
 
 pub const DEFAULT_VIDEO_DECODER_POOL_SIZE: usize = 16;

@@ -11,6 +11,7 @@ use shrimply_math_core::{Fraction, fraction_ratio_i128};
 use shrimply_project_document::project::Time;
 use shrimply_visual_frame::{GPU_FRAME_ALLOCATION_EXHAUSTED, VisualFrame, ffmpeg_cuda_context};
 
+use crate::startup::DecoderStartupMeasurement;
 use crate::track::VideoSource;
 use crate::{LOCAL_FORWARD_DECODE_SECONDS, MAX_NONADVANCING_FRAMES};
 
@@ -70,7 +71,9 @@ pub(crate) struct VideoDecoderSession {
     input_eof: bool,
     eof_sent: bool,
     decoder_eof: bool,
-    decoder_configuration_logged: bool,
+    pub(crate) initialized: bool,
+    pub(crate) startup: Option<DecoderStartupMeasurement>,
+    pub(crate) startup_bytes: u64,
     opened_at: Option<Instant>,
     seek_started_at: Option<Instant>,
     seek_target: Option<Time>,
@@ -138,7 +141,9 @@ impl VideoDecoderSession {
             input_eof: false,
             eof_sent: false,
             decoder_eof: false,
-            decoder_configuration_logged: false,
+            initialized: false,
+            startup: None,
+            startup_bytes: 0,
             opened_at: Some(decoder_open_started),
             seek_started_at: None,
             seek_target: None,
@@ -611,9 +616,14 @@ impl VideoDecoderSession {
             }
             self.seek_first_frame_received = true;
         }
-        if self.decoder_configuration_logged {
+        if self.initialized {
             return;
         }
+        self.startup
+            .take()
+            .expect("first CUDA frame arrived without a startup reservation")
+            .finish(None, &mut self.startup_bytes);
+        self.initialized = true;
 
         unsafe {
             let context = self.decoder.as_ptr();
@@ -653,7 +663,6 @@ impl VideoDecoderSession {
                 "received first NVIDIA CUDA video frame",
             );
         }
-        self.decoder_configuration_logged = true;
     }
 
     fn record_seek_to_exact(&mut self, position: Time) {
