@@ -1,7 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-const TOOLKIT_ENV_VARS: &[&str] = &["CUDA_TOOLKIT_PATH", "CUDA_HOME"];
+const TOOLKIT_ENV_VARS: &[&str] = &["CUDA_TOOLKIT_PATH", "CUDA_HOME", "CUDA_PATH"];
 const TOOLKIT_TARGET_DIR_ENV: &str = "CUDA_TOOLKIT_TARGET_DIR";
 
 fn main() {
@@ -32,7 +32,12 @@ fn cuda_header() -> Option<PathBuf> {
     let toolkit = TOOLKIT_ENV_VARS
         .iter()
         .find_map(|variable| env::var(variable).ok())
-        .unwrap_or_else(|| "/usr/local/cuda".to_string());
+        .unwrap_or_else(|| {
+            if cfg!(windows) {
+                panic!("CUDA_PATH, CUDA_HOME, or CUDA_TOOLKIT_PATH must locate the CUDA toolkit");
+            }
+            "/usr/local/cuda".to_string()
+        });
     let base = Path::new(&toolkit);
     let mut include_dirs = vec![base.join("include")];
     for target in toolkit_target_dirs() {

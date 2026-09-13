@@ -7,5 +7,9 @@ edition = "2024"
 libloading.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_System_LibraryLoader"] }
+
 [build-dependencies]
 cc.workspace = true
+sha2 = "0.10.9"

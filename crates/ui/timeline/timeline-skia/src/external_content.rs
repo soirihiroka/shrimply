@@ -49,8 +49,16 @@ pub(crate) struct PendingDownload {
 
 pub(crate) struct PendingRemux {
     receiver: mpsc::Receiver<Result<RemuxedFiles, String>>,
-    placement: crate::import_queue::Placement,
+    target: RemuxTarget,
     batch: crate::import_queue::BatchId,
+}
+
+pub(crate) enum RemuxTarget {
+    Timeline(crate::import_queue::Placement),
+    Tracks {
+        tracks: Vec<project::TrackAddress>,
+        start: Time,
+    },
 }
 
 pub(crate) struct RemuxedFiles {
@@ -61,6 +69,39 @@ pub(crate) struct RemuxedFiles {
 pub(crate) struct OwnedFile {
     path: PathBuf,
     keep: bool,
+}
+
+fn remux_files(paths: Vec<PathBuf>) -> mpsc::Receiver<Result<RemuxedFiles, String>> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut generated = Vec::new();
+        let result = (|| {
+            let mut outputs = Vec::with_capacity(paths.len());
+            for path in paths {
+                match crate::import::file_kind(&path) {
+                    Some(crate::import::FileKind::Mkv | crate::import::FileKind::WebM) => {
+                        let output = crate::import::remux_mkv_to_mp4(&path)?;
+                        generated.push(OwnedFile::new(output.clone()));
+                        outputs.push(output);
+                    }
+                    Some(_) => outputs.push(path),
+                    None => {
+                        return Err(format!("{} has an unsupported file type", path.display()));
+                    }
+                }
+            }
+            Ok(outputs)
+        })();
+        match result {
+            Err(error) => {
+                let _ = sender.send(Err(error));
+            }
+            Ok(paths) => {
+                let _ = sender.send(Ok(RemuxedFiles { paths, generated }));
+            }
+        }
+    });
+    receiver
 }
 
 impl OwnedFile {
@@ -426,38 +467,27 @@ impl crate::scene::Scene {
             );
         }
         let placement = self.external_placement(point);
-        let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut generated = Vec::new();
-            let result = (|| {
-                let mut outputs = Vec::with_capacity(paths.len());
-                for path in paths {
-                    match crate::import::file_kind(&path) {
-                        Some(crate::import::FileKind::Mkv | crate::import::FileKind::WebM) => {
-                            let output = crate::import::remux_mkv_to_mp4(&path)?;
-                            generated.push(OwnedFile::new(output.clone()));
-                            outputs.push(output);
-                        }
-                        Some(_) => outputs.push(path),
-                        None => {
-                            return Err(format!("{} has an unsupported file type", path.display()));
-                        }
-                    }
-                }
-                Ok(outputs)
-            })();
-            match result {
-                Err(error) => {
-                    let _ = sender.send(Err(error));
-                }
-                Ok(paths) => {
-                    let _ = sender.send(Ok(RemuxedFiles { paths, generated }));
-                }
-            }
-        });
         self.external_remuxes.push_back(PendingRemux {
-            receiver,
-            placement,
+            receiver: remux_files(paths),
+            target: RemuxTarget::Timeline(placement),
+            batch,
+        });
+        Ok(())
+    }
+
+    pub fn begin_track_remux(
+        &mut self,
+        path: PathBuf,
+        tracks: Vec<project::TrackAddress>,
+        start: Time,
+    ) -> Result<(), String> {
+        if !external_files_need_remux(std::slice::from_ref(&path))? {
+            return Err("Track source does not require remuxing".into());
+        }
+        let batch = self.external_imports.reserve_batch();
+        self.external_remuxes.push_back(PendingRemux {
+            receiver: remux_files(vec![path]),
+            target: RemuxTarget::Tracks { tracks, start },
             batch,
         });
         Ok(())
@@ -494,13 +524,27 @@ impl crate::scene::Scene {
                     match result.and_then(|remuxed| {
                         self.external_owned_files
                             .insert(pending.batch, remuxed.generated);
-                        self.external_imports.enqueue_reserved(
-                            pending.batch,
-                            remuxed.paths,
-                            &self.project.borrow(),
-                            pending.placement,
-                            self.default_visual_duration,
-                        )
+                        match pending.target {
+                            RemuxTarget::Timeline(placement) => {
+                                self.external_imports.enqueue_reserved(
+                                    pending.batch,
+                                    remuxed.paths,
+                                    &self.project.borrow(),
+                                    placement,
+                                    self.default_visual_duration,
+                                )
+                            }
+                            RemuxTarget::Tracks { tracks, start } => {
+                                self.external_imports.enqueue_track_addresses_reserved(
+                                    pending.batch,
+                                    remuxed.paths,
+                                    &self.project.borrow(),
+                                    tracks,
+                                    start,
+                                    self.default_visual_duration,
+                                )
+                            }
+                        }
                     }) {
                         Ok(()) => changed = true,
                         Err(error) => {

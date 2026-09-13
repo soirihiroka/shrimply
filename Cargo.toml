@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/application/local-ipc",
     "crates/gpu/vulkan/gpu-vulkan",
     "crates/gpu/denoise/denoise-metal",
     "crates/gpu/metal/gpu-metal",
@@ -123,6 +124,7 @@ members = [
     "crates/media/visual/visual-core",
     "crates/media/visual/visual-modifiers",
     "crates/media/visual/video/video-recording",
+    "crates/media/visual/video/video-recording-windows",
     "crates/media/visual/video/video-generation",
     "crates/ui/video-generation/video-generation-gtk",
     "crates/media/visual/anime4k-cuda",
@@ -201,6 +203,7 @@ shrimply-inspector-qt = { path = "crates/ui/inspector/inspector-qt" }
 shrimply-kdenlive-parser = { path = "crates/project/parser/kdenlive-parser" }
 shrimply-keyframe-graph-skia = { path = "crates/ui/keyframe-graph/keyframe-graph-skia" }
 shrimply-layered-image-loader = { path = "crates/media/visual/layered-image/layered-image-loader" }
+shrimply-local-ipc = { path = "crates/application/local-ipc" }
 shrimply-lip-sync = { path = "crates/media/audio/lip-sync" }
 shrimply-loading-screen-skia = { path = "crates/render/loading-screen-skia" }
 shrimply-manim-bridge = { path = "crates/media/visual/manim/manim-bridge" }
@@ -275,6 +278,7 @@ shrimply-video-decoder = { path = "crates/media/visual/video/video-decoder" }
 shrimply-video-generation = { path = "crates/media/visual/video/video-generation" }
 shrimply-video-generation-gtk = { path = "crates/ui/video-generation/video-generation-gtk" }
 shrimply-video-recording = { path = "crates/media/visual/video/video-recording" }
+shrimply-video-recording-windows = { path = "crates/media/visual/video/video-recording-windows" }
 shrimply-visual-core = { path = "crates/media/visual/visual-core" }
 shrimply-visual-cuda = { path = "crates/media/visual/visual-cuda" }
 shrimply-visual-frame = { path = "crates/media/visual/visual-frame" }
@@ -378,6 +382,8 @@ vtracer = { path = "external/vtracer/crates/vtracer" }
 wayland-client = "0.31"
 wayland-protocols = "0.32"
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+windows = "0.62.2"
+windows-future = "0.3.2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [profile.dev]

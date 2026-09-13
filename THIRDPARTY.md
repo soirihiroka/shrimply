@@ -14,7 +14,7 @@ AUTHOR: Microsoft
 
 ---
 
-COMPONENT: Adwaita Icon Theme (applications-graphics-symbolic, eraser-symbolic, fill-tool-symbolic, function-exponential-symbolic, move-tool-symbolic)
+COMPONENT: Adwaita Icon Theme (selected SVGs under assets/icons)
 SOURCE: https://gitlab.gnome.org/GNOME/adwaita-icon-theme
 LICENSE: GNU LGPL v3 or Creative Commons Attribution-ShareAlike 3.0
 AUTHOR: GNOME Project

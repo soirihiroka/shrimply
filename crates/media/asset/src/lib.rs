@@ -11,10 +11,11 @@ use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 
 use async_channel::{Receiver, Sender, TrySendError};
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{Config, Event, PollWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 const WATCH_EVENT_COALESCE_WINDOW: Duration = Duration::from_millis(50);
+const WATCH_FALLBACK_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct Asset {
@@ -66,7 +67,7 @@ struct Entry {
 }
 
 struct Registry {
-    watcher: RecommendedWatcher,
+    watcher: Box<dyn Watcher + Send>,
     entries: HashMap<PathBuf, Weak<Entry>>,
     watched_directories: HashMap<PathBuf, usize>,
     next_id: u64,
@@ -296,11 +297,29 @@ impl Drop for Entry {
 impl Manager {
     fn start() -> Result<Self, String> {
         let (commands, receiver) = mpsc::channel();
-        let event_commands = commands.clone();
-        let watcher = notify::recommended_watcher(move |event| {
-            let _ = event_commands.send(Command::Event(event));
-        })
-        .map_err(|error| format!("could not start native asset watcher: {error}"))?;
+        let native_event_commands = commands.clone();
+        let watcher: Box<dyn Watcher + Send> = match notify::recommended_watcher(move |event| {
+            let _ = native_event_commands.send(Command::Event(event));
+        }) {
+            Ok(watcher) => Box::new(watcher),
+            Err(error) => {
+                tracing::warn!(%error, "native asset watcher unavailable; polling for changes");
+                let poll_event_commands = commands.clone();
+                Box::new(
+                    PollWatcher::new(
+                        move |event| {
+                            let _ = poll_event_commands.send(Command::Event(event));
+                        },
+                        Config::default().with_poll_interval(WATCH_FALLBACK_POLL_INTERVAL),
+                    )
+                    .map_err(|poll_error| {
+                        format!(
+                            "could not start native asset watcher ({error}) or polling fallback ({poll_error})"
+                        )
+                    })?,
+                )
+            }
+        };
         thread::Builder::new()
             .name("asset-watcher".to_string())
             .spawn(move || Registry::new(watcher).run(receiver))
@@ -321,7 +340,7 @@ impl Manager {
 }
 
 impl Registry {
-    fn new(watcher: RecommendedWatcher) -> Self {
+    fn new(watcher: Box<dyn Watcher + Send>) -> Self {
         Self {
             watcher,
             entries: HashMap::new(),

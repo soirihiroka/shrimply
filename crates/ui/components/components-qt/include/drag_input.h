@@ -3,6 +3,7 @@
 #include <QQuickItem>
 #include <QQuickTextDocument>
 #include <QPointer>
+#include <QPoint>
 #include <QSyntaxHighlighter>
 #include <QTimer>
 
@@ -41,6 +42,8 @@ private:
     qreal threshold_ = 2.0;
     qreal start_x_ = 0.0;
     qreal accumulated_x_ = 0.0;
+    QPoint cursor_center_;
+    QPoint cursor_origin_;
     bool pressed_ = false;
     bool moved_ = false;
     bool lock_attempted_ = false;

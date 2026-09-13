@@ -3,6 +3,19 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+#[cfg(windows)]
+use std::{os::windows::ffi::OsStrExt, sync::Once};
+#[cfg(windows)]
+use windows::{
+    Win32::System::LibraryLoader::{
+        AddDllDirectory, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS, RemoveDllDirectory,
+        SetDefaultDllDirectories,
+    },
+    core::PCWSTR,
+};
+
+#[cfg(windows)]
+static DLL_SEARCH_INITIALIZED: Once = Once::new();
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -32,6 +45,10 @@ pub struct Artifacts {
 }
 
 pub struct Compiler {
+    #[cfg(windows)]
+    _slang: libloading::Library,
+    #[cfg(windows)]
+    dll_directory: usize,
     api: libloading::Library,
     directory: PathBuf,
     output: PathBuf,
@@ -42,9 +59,31 @@ impl Compiler {
         println!("cargo:rerun-if-changed={}", directory.display());
         println!("cargo:rerun-if-changed={}", crate::LIBRARY_DIR);
         // Load the bridge built with this crate; it links the pinned Slang C++ API.
+        #[cfg(windows)]
+        let (slang, dll_directory) = {
+            DLL_SEARCH_INITIALIZED.call_once(|| unsafe {
+                SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS)
+                    .expect("configure Windows DLL search directories");
+            });
+            let runtime = Path::new(crate::LIBRARY_DIR);
+            let wide: Vec<_> = runtime.as_os_str().encode_wide().chain(Some(0)).collect();
+            let dll_directory = unsafe { AddDllDirectory(PCWSTR::from_raw(wide.as_ptr())) };
+            assert!(
+                !dll_directory.is_null(),
+                "register Slang DLL directory: {}",
+                runtime.display()
+            );
+            let slang = unsafe { libloading::Library::new(runtime.join("slang.dll")) }
+                .expect("load pinned Slang runtime");
+            (slang, dll_directory as usize)
+        };
         let api = unsafe { libloading::Library::new(env!("SHRIMPLY_SLANG_API")) }
             .expect("load Slang C++ API bridge");
         Self {
+            #[cfg(windows)]
+            _slang: slang,
+            #[cfg(windows)]
+            dll_directory,
             api,
             directory: directory.to_owned(),
             output: output.to_owned(),
@@ -135,6 +174,15 @@ impl Compiler {
                 .unwrap_or_else(|error| panic!("read Slang reflection for {module}: {error}")),
             abi: fs::read(&abi)
                 .unwrap_or_else(|error| panic!("read Slang ABI for {module}: {error}")),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Compiler {
+    fn drop(&mut self) {
+        unsafe {
+            RemoveDllDirectory(self.dll_directory as *const _).expect("remove Slang DLL directory");
         }
     }
 }

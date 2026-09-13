@@ -14,3 +14,6 @@ shrimply-recent-projects = { workspace = true }
 shrimply-compute-client = { workspace = true }
 shrimply-i18n = { workspace = true }
 tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_System_SystemInformation"] }

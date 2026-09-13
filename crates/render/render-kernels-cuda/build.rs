@@ -1,20 +1,20 @@
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use std::{env, fs, path::PathBuf, process::Command};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use shrimply_slang_build::{Compiler, Target};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 const DEFAULT_CUBIN_TARGET: &str = "sm_86";
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 const DEFAULT_PTX_TARGET: &str = "compute_50";
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 const MODULES: &str = include_str!("../render-core/shaders/kernels.txt");
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 fn main() {}
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 fn main() {
     for variable in [
         "CUDA_IMAGE_FORMAT",
@@ -57,8 +57,15 @@ fn main() {
     let compiler = Compiler::new(&shaders, &output);
     let toolkit = env::var_os("CUDA_TOOLKIT_PATH")
         .or_else(|| env::var_os("CUDA_HOME"))
+        .or_else(|| env::var_os("CUDA_PATH"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/usr/local/cuda"));
+        .unwrap_or_else(|| {
+            #[cfg(target_os = "linux")]
+            return PathBuf::from("/usr/local/cuda");
+            #[cfg(windows)]
+            panic!("CUDA_PATH, CUDA_HOME, or CUDA_TOOLKIT_PATH must locate the CUDA toolkit");
+        });
+    #[cfg(target_os = "linux")]
     let host = env::var("CUDA_HOST_CXX").unwrap_or_else(|_| "g++-15".to_owned());
     let mut bindings = String::new();
     for module in MODULES.lines() {
@@ -66,8 +73,9 @@ fn main() {
         let artifact = compiler.compile(&source, Target::Cuda, &[]);
         let image = output.join(format!("{module}.{extension}"));
         let mut command = Command::new(toolkit.join("bin/nvcc"));
+        #[cfg(target_os = "linux")]
+        command.arg(format!("--compiler-bindir={host}"));
         command
-            .arg(format!("--compiler-bindir={host}"))
             .args([nvcc_output, "-O2", "-w"])
             .arg(format!("--gpu-architecture={target}"));
         if env::var_os("CUDA_ALLOW_UNSUPPORTED_COMPILER").is_some_and(|value| !value.is_empty()) {

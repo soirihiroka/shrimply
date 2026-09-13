@@ -20,8 +20,10 @@ shrimply-project-types = { workspace = true }
 shrimply-application-qt = { workspace = true }
 shrimply-components-skia = { workspace = true }
 shrimply-process-reporting = { workspace = true }
-shrimply-pointer-lock-wayland = { workspace = true }
 uuid.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+shrimply-pointer-lock-wayland = { workspace = true }
 
 [build-dependencies]
 cxx-qt-build = { workspace = true, features = ["link_qt_object_files"] }

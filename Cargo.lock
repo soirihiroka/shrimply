@@ -5541,6 +5541,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "shrimply-local-ipc",
  "shrimply-math-core",
  "shrimply-trust-core",
  "tempfile",
@@ -5746,6 +5747,7 @@ dependencies = [
  "async-channel",
  "gio",
  "glib",
+ "libloading",
  "shrimply-asset",
  "shrimply-audio-engine",
  "shrimply-blender-core",
@@ -5934,6 +5936,7 @@ dependencies = [
  "shrimply-project-document",
  "shrimply-recent-projects",
  "shrimply-trust-core",
+ "shrimply-visual-cuda",
  "tracing",
 ]
 
@@ -6092,6 +6095,7 @@ dependencies = [
  "shrimply-gpu-cuda",
  "shrimply-profiling",
  "tracing",
+ "windows",
 ]
 
 [[package]]
@@ -6427,6 +6431,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-local-ipc"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "shrimply-manim-bridge"
 version = "0.1.0"
 dependencies = [
@@ -6438,6 +6449,7 @@ dependencies = [
  "rmp-serde",
  "serde",
  "shrimply-asset",
+ "shrimply-local-ipc",
  "shrimply-manim-ir",
  "shrimply-math-core",
  "shrimply-project-document",
@@ -6787,6 +6799,7 @@ dependencies = [
  "shrimply-project-document",
  "shrimply-recent-projects",
  "tracing",
+ "windows",
 ]
 
 [[package]]
@@ -6905,6 +6918,7 @@ dependencies = [
  "skia-safe",
  "tracing",
  "uuid",
+ "windows",
 ]
 
 [[package]]
@@ -7056,6 +7070,7 @@ dependencies = [
  "strum",
  "tracing",
  "uuid",
+ "windows",
 ]
 
 [[package]]
@@ -7271,6 +7286,8 @@ dependencies = [
  "cc",
  "libloading",
  "serde_json",
+ "sha2",
+ "windows",
 ]
 
 [[package]]
@@ -7282,6 +7299,7 @@ dependencies = [
  "shrimply-components-skia",
  "shrimply-cross-ui-theme",
  "skia-safe",
+ "windows",
 ]
 
 [[package]]
@@ -7383,6 +7401,8 @@ dependencies = [
  "shrimply-surface-gl-skia",
  "shrimply-timeline-edit",
  "shrimply-timeline-skia",
+ "shrimply-video-recording",
+ "shrimply-video-recording-windows",
  "shrimply-visual-cuda",
 ]
 
@@ -7480,6 +7500,7 @@ dependencies = [
  "libc",
  "rusqlite",
  "shrimply-path-core",
+ "windows",
 ]
 
 [[package]]
@@ -7580,6 +7601,19 @@ dependencies = [
  "shrimply-project-document",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "shrimply-video-recording-windows"
+version = "0.1.0"
+dependencies = [
+ "ffmpeg-next",
+ "shrimply-math-core",
+ "shrimply-project-document",
+ "tracing",
+ "uuid",
+ "windows",
+ "windows-future",
 ]
 
 [[package]]
@@ -7797,6 +7831,7 @@ dependencies = [
  "percent-encoding",
  "skia-bindings",
  "skia-svg-macros",
+ "windows",
 ]
 
 [[package]]

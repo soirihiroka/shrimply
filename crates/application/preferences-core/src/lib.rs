@@ -1125,15 +1125,29 @@ fn clamp_fraction(value: Fraction, maximum: Fraction) -> Fraction {
 }
 
 pub fn physical_system_memory_gib() -> Fraction {
-    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
-    let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    let pages =
-        u64::try_from(pages).expect("detect physical system RAM: sysconf(_SC_PHYS_PAGES) failed");
-    let page_bytes = u64::try_from(page_bytes)
-        .expect("detect physical system RAM: sysconf(_SC_PAGESIZE) failed");
-    let bytes = pages
-        .checked_mul(page_bytes)
-        .expect("detect physical system RAM: byte count overflowed");
+    #[cfg(unix)]
+    let bytes = {
+        let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+        let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let pages = u64::try_from(pages)
+            .expect("detect physical system RAM: sysconf(_SC_PHYS_PAGES) failed");
+        let page_bytes = u64::try_from(page_bytes)
+            .expect("detect physical system RAM: sysconf(_SC_PAGESIZE) failed");
+        pages
+            .checked_mul(page_bytes)
+            .expect("detect physical system RAM: byte count overflowed")
+    };
+    #[cfg(windows)]
+    let bytes = {
+        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut memory = MEMORYSTATUSEX {
+            dwLength: u32::try_from(std::mem::size_of::<MEMORYSTATUSEX>())
+                .expect("memory status structure size fits u32"),
+            ..Default::default()
+        };
+        unsafe { GlobalMemoryStatusEx(&mut memory) }.expect("detect physical system RAM");
+        memory.ullTotalPhys
+    };
     Fraction::new_raw(bytes, GIB_BYTES)
 }
 

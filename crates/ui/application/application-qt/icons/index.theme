@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=Shrimply Adwaita
+Comment=Bundled Adwaita icons for Qt on Windows
+Directories=scalable/actions
+
+[scalable/actions]
+Size=16
+MinSize=8
+MaxSize=256
+Type=Scalable
+Context=Actions

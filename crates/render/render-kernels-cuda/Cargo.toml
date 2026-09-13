@@ -3,5 +3,5 @@ name = "shrimply-render-kernels-cuda"
 version = "0.1.0"
 edition = "2024"
 
-[target.'cfg(target_os = "linux")'.build-dependencies]
+[target.'cfg(any(target_os = "linux", windows))'.build-dependencies]
 shrimply-slang-build = { workspace = true }

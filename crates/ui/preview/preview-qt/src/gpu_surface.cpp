@@ -22,7 +22,9 @@
 #include <QDesktopServices>
 #include <QVariantMap>
 #include <QWheelEvent>
+#if defined(Q_OS_LINUX)
 #include <QtGui/qguiapplication_platform.h>
+#endif
 #include <QtQml/qqml.h>
 
 #include <cstddef>
@@ -55,7 +57,8 @@ static_assert(sizeof(ShrimplyPlatformPalette)
 extern "C" void shrimply_qt_set_platform_palette(const ShrimplyPlatformPalette *palette);
 extern "C" bool shrimply_qt_render_timeline(std::uint32_t width, std::uint32_t height,
                                              float scale, float red, float green,
-                                             float blue, float alpha, bool dark);
+                                             float blue, float alpha, bool dark,
+                                             std::uintptr_t native_window);
 extern "C" bool shrimply_qt_render_preview(std::uint32_t width, std::uint32_t height,
                                             float scale, float red, float green,
                                             float blue, float alpha, bool dark,
@@ -83,8 +86,9 @@ extern "C" std::size_t shrimply_qt_timeline_track_add_menu_icon(std::size_t inde
                                                                   std::uint8_t *output,
                                                                   std::size_t capacity);
 extern "C" bool shrimply_qt_timeline_activate_track_add_menu_item(std::size_t index);
-extern "C" bool shrimply_qt_timeline_import_track_file(const std::uint8_t *path,
-                                                          std::size_t length);
+extern "C" std::uint8_t shrimply_qt_timeline_import_track_file(const std::uint8_t *path,
+                                                                 std::size_t length);
+extern "C" bool shrimply_qt_timeline_confirm_track_remux(bool remux);
 extern "C" std::size_t shrimply_qt_timeline_prepare_context_menu(float x, float y);
 extern "C" std::size_t shrimply_qt_timeline_context_menu_label(std::size_t index,
                                                                  std::uint8_t *output,
@@ -126,8 +130,13 @@ extern "C" bool shrimply_qt_timeline_new_track_mode();
 extern "C" void shrimply_qt_timeline_select_overwrite_mode();
 extern "C" void shrimply_qt_timeline_select_block_mode();
 extern "C" void shrimply_qt_timeline_select_new_track_mode();
+#if defined(Q_OS_WINDOWS)
+extern "C" bool shrimply_qt_timeline_begin_pointer_lock(float scale);
+#else
 extern "C" bool shrimply_qt_timeline_begin_pointer_lock(void *display, void *surface,
                                                           void *seat);
+#endif
+extern "C" void shrimply_qt_timeline_relative_motion(float x, float y);
 extern "C" void shrimply_qt_timeline_end_pointer_lock(bool control, bool shift);
 extern "C" void shrimply_qt_preview_pointer_move(float width, float height, float x, float y,
                                                     bool control, bool shift, bool alt);
@@ -145,6 +154,11 @@ extern "C" bool shrimply_qt_preview_guides_visible();
 extern "C" void shrimply_qt_preview_set_guides_visible(bool visible);
 
 namespace {
+enum class TrackFileImportResult : std::uint8_t {
+    Error,
+    Started,
+    ConfirmRemux,
+};
 
 QOpenGLFramebufferObject *make_fbo(const QSize &size) {
     QOpenGLFramebufferObjectFormat format;
@@ -228,6 +242,9 @@ public:
     void synchronize(QQuickFramebufferObject *item) override {
         surface_ = static_cast<shrimply::TimelineSurface *>(item);
         scale_ = item->window() ? item->window()->effectiveDevicePixelRatio() : 1.0f;
+#if defined(Q_OS_WINDOWS)
+        native_window_ = item->window() ? static_cast<std::uintptr_t>(item->window()->winId()) : 0;
+#endif
     }
 
     void render() override {
@@ -239,7 +256,7 @@ public:
                 static_cast<std::uint32_t>(size.height()), scale_,
                 palette.accent_bg.red, palette.accent_bg.green,
                 palette.accent_bg.blue, palette.accent_bg.alpha,
-                dark_palette())) {
+                dark_palette(), native_window_)) {
             qFatal("Shrimply could not render the timeline with OpenGL");
         }
         if (shrimply_qt_timeline_take_track_add_menu()) {
@@ -271,6 +288,7 @@ public:
 private:
     QPointer<shrimply::TimelineSurface> surface_;
     float scale_ = 1.0f;
+    std::uintptr_t native_window_ = 0;
 };
 
 class PreviewRenderer final : public QQuickFramebufferObject::Renderer {
@@ -412,9 +430,14 @@ void force_opengl() {
 }
 
 void configure_icons() {
+#ifdef Q_OS_WIN
+    QIcon::setThemeName(QStringLiteral("shrimply-adwaita"));
+    QIcon::setFallbackThemeName(QStringLiteral("shrimply-adwaita"));
+#else
     const QString theme = dark_palette() ? QStringLiteral("breeze-dark") : QStringLiteral("breeze");
     QIcon::setThemeName(theme);
     QIcon::setFallbackThemeName(theme);
+#endif
 }
 
 QString fixed_font_family() {
@@ -580,10 +603,24 @@ void TimelineSurface::activateTrackAddMenuItem(int index) {
 
 void TimelineSurface::importTrackFile(const QUrl &url) {
     const QByteArray path = url.toLocalFile().toUtf8();
-    if (path.isEmpty() ||
-        !shrimply_qt_timeline_import_track_file(
+    if (path.isEmpty()) {
+        emit contextActionFailed(context_action_error());
+        return;
+    }
+    const auto result = static_cast<TrackFileImportResult>(
+        shrimply_qt_timeline_import_track_file(
             reinterpret_cast<const std::uint8_t *>(path.constData()),
-            static_cast<std::size_t>(path.size()))) {
+            static_cast<std::size_t>(path.size())));
+    if (result == TrackFileImportResult::Error) {
+        emit contextActionFailed(context_action_error());
+    } else if (result == TrackFileImportResult::ConfirmRemux) {
+        emit trackRemuxRequested();
+    }
+    update();
+}
+
+void TimelineSurface::confirmTrackRemux(bool remux) {
+    if (!shrimply_qt_timeline_confirm_track_remux(remux)) {
         emit contextActionFailed(context_action_error());
     }
     update();
@@ -720,10 +757,19 @@ void TimelineSurface::mousePressEvent(QMouseEvent *event) {
     shrimply_qt_timeline_pointer_press(pointer_button(event->button()), event->position().x(),
                                        event->position().y(), control, shift);
     if (event->button() == Qt::MiddleButton) {
+#if defined(Q_OS_WINDOWS)
+        const float scale = window() ? static_cast<float>(window()->effectiveDevicePixelRatio())
+                                     : 1.0f;
+        if (shrimply_qt_timeline_begin_pointer_lock(scale)) {
+            middle_cursor_origin_ = QCursor::pos();
+            middle_cursor_center_ = mapToGlobal(QPointF(width() / 2.0, height() / 2.0)).toPoint();
+            QCursor::setPos(middle_cursor_center_);
+#else
         auto *wayland = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
         void *surface = window() ? reinterpret_cast<void *>(window()->winId()) : nullptr;
         if (wayland && shrimply_qt_timeline_begin_pointer_lock(
                            wayland->display(), surface, wayland->seat())) {
+#endif
             middle_mouse_grabbed_ = true;
             setKeepMouseGrab(true);
             setCursor(QCursor(Qt::BlankCursor));
@@ -735,6 +781,13 @@ void TimelineSurface::mousePressEvent(QMouseEvent *event) {
 
 void TimelineSurface::mouseMoveEvent(QMouseEvent *event) {
     if (middle_mouse_grabbed_) {
+#if defined(Q_OS_WINDOWS)
+        const QPoint delta = event->globalPosition().toPoint() - middle_cursor_center_;
+        if (!delta.isNull()) {
+            shrimply_qt_timeline_relative_motion(delta.x(), delta.y());
+            QCursor::setPos(middle_cursor_center_);
+        }
+#endif
         event->accept();
         update();
         return;
@@ -761,6 +814,9 @@ void TimelineSurface::mouseReleaseEvent(QMouseEvent *event) {
         middle_mouse_grabbed_ = false;
         setKeepMouseGrab(false);
         unsetCursor();
+#if defined(Q_OS_WINDOWS)
+        QCursor::setPos(middle_cursor_origin_);
+#endif
     } else {
         shrimply_qt_timeline_pointer_release(pointer_button(event->button()),
                                              event->position().x(), event->position().y(),
@@ -778,6 +834,9 @@ void TimelineSurface::mouseUngrabEvent() {
     middle_mouse_grabbed_ = false;
     setKeepMouseGrab(false);
     unsetCursor();
+#if defined(Q_OS_WINDOWS)
+    QCursor::setPos(middle_cursor_origin_);
+#endif
     update();
 }
 

@@ -1,9 +1,8 @@
 use hashbrown::HashMap;
+use shrimply_local_ipc::{Listener as WorkerListener, Stream as WorkerStream};
 use shrimply_trust_core::Child;
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -64,7 +63,7 @@ fn check_compile_state(cancelled: &AtomicBool, started: Instant) -> Result<(), S
 }
 
 fn read_exact_cancelled(
-    socket: &mut UnixStream,
+    socket: &mut WorkerStream,
     bytes: &mut [u8],
     cancelled: &AtomicBool,
     started: Instant,
@@ -90,7 +89,7 @@ fn read_exact_cancelled(
 }
 
 fn write_all_cancelled(
-    socket: &mut UnixStream,
+    socket: &mut WorkerStream,
     bytes: &[u8],
     cancelled: &AtomicBool,
     started: Instant,
@@ -113,11 +112,11 @@ fn write_all_cancelled(
 }
 
 fn accept_worker(
-    listener: &UnixListener,
+    listener: &WorkerListener,
     child: &mut WorkerHandle,
     cancelled: &AtomicBool,
     started: Instant,
-) -> Result<UnixStream, String> {
+) -> Result<WorkerStream, String> {
     let socket = loop {
         check_compile_state(cancelled, started)?;
         match listener.accept() {
@@ -143,7 +142,7 @@ fn accept_worker(
 }
 
 fn read_packet(
-    socket: &mut UnixStream,
+    socket: &mut WorkerStream,
     cancelled: &AtomicBool,
     started: Instant,
 ) -> Result<shrimply_manim_ir::Packet, String> {
@@ -172,7 +171,7 @@ fn read_packet(
 }
 
 fn send_parameters(
-    socket: &mut UnixStream,
+    socket: &mut WorkerStream,
     parameters: &HashMap<String, ManimParameterValue>,
     cancelled: &AtomicBool,
     started: Instant,
@@ -199,6 +198,17 @@ fn uv_executable() -> Result<PathBuf, String> {
             return Ok(macos.join("uv"));
         }
     }
+    #[cfg(windows)]
+    {
+        let executable =
+            std::env::current_exe().map_err(|error| format!("locate bundled uv: {error}"))?;
+        if let Some(directory) = executable.parent() {
+            let bundled = directory.join("uv.exe");
+            if bundled.is_file() {
+                return Ok(bundled);
+            }
+        }
+    }
 
     Ok(std::env::var_os("UV").unwrap_or_else(|| "uv".into()).into())
 }
@@ -212,6 +222,12 @@ fn python_command(module: &str) -> Result<(Command, bool), String> {
         .and_then(Path::parent)
         .map(|contents| contents.join("Resources/manim-worker"))
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("python"));
+    #[cfg(windows)]
+    let project = executable
+        .parent()
+        .map(|directory| directory.join("resources/manim-worker"))
+        .filter(|project| project.is_dir())
+        .unwrap_or(project);
     let mut command = Command::new(&executable);
     command
         .args(["run", "--python", "3.14", "--project"])
@@ -271,8 +287,7 @@ impl WorkerHandle {
             .arg(settings.fps.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .process_group(0);
+            .stderr(Stdio::inherit());
         let child = Child::spawn(&mut command, Some(source))
             .map_err(|error| format!("start one-shot Manim compiler with uv: {error}"))?;
         let id = child.id();
@@ -470,7 +485,7 @@ pub fn compile(
         NEXT_SOCKET.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = fs::remove_file(&socket_path);
-    let listener = UnixListener::bind(&socket_path)
+    let listener = WorkerListener::bind(&socket_path)
         .map_err(|error| format!("create Manim IR worker socket: {error}"))?;
     let _socket_path = SocketPath(socket_path.clone());
     listener
@@ -494,6 +509,7 @@ pub fn compile(
         });
     }
     let mut socket = accept_worker(&listener, &mut child, cancelled, started)?;
+    drop(listener);
     send_parameters(&mut socket, &settings.parameters, cancelled, started)?;
     let mut builder = shrimply_manim_ir::CompiledAnimationBuilder::new();
     let mut progress_stage = None;

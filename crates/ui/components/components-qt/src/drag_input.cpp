@@ -8,17 +8,21 @@
 #include <QSet>
 #include <QTextCharFormat>
 #include <QTextDocument>
+#if defined(Q_OS_LINUX)
 #include <QtGui/qguiapplication_platform.h>
+#endif
 #include <QtQml/qqml.h>
 
 #include <algorithm>
 #include <cmath>
 
+#if defined(Q_OS_LINUX)
 extern "C" bool shrimply_qt_number_begin_pointer_lock(void *display, void *surface,
                                                         void *seat);
 extern "C" bool shrimply_qt_number_poll_pointer_lock(double *delta_x,
                                                        double *delta_y);
 extern "C" void shrimply_qt_number_end_pointer_lock();
+#endif
 
 namespace shrimply {
 
@@ -252,6 +256,16 @@ DragInput::DragInput(QQuickItem *parent) : QQuickItem(parent) {
     setCursor(QCursor(Qt::SizeHorCursor));
     poll_timer_.setInterval(8);
     connect(&poll_timer_, &QTimer::timeout, this, [this]() {
+#if defined(Q_OS_WINDOWS)
+        if (locked_) {
+            const QPoint delta = QCursor::pos() - cursor_center_;
+            if (!delta.isNull()) {
+                accumulated_x_ += delta.x();
+                emit dragged(accumulated_x_);
+                QCursor::setPos(cursor_center_);
+            }
+        }
+#else
         double delta_x = 0.0;
         double delta_y = 0.0;
         if (locked_ && shrimply_qt_number_poll_pointer_lock(&delta_x, &delta_y)) {
@@ -259,6 +273,7 @@ DragInput::DragInput(QQuickItem *parent) : QQuickItem(parent) {
             accumulated_x_ += delta_x;
             emit dragged(accumulated_x_);
         }
+#endif
     });
 }
 
@@ -320,7 +335,11 @@ void DragInput::finish() {
     pressed_ = false;
     poll_timer_.stop();
     if (locked_) {
+#if defined(Q_OS_WINDOWS)
+        QCursor::setPos(cursor_origin_);
+#else
         shrimply_qt_number_end_pointer_lock();
+#endif
         locked_ = false;
         setKeepMouseGrab(false);
         setCursor(QCursor(Qt::SizeHorCursor));
@@ -333,10 +352,20 @@ void DragInput::finish() {
 }
 
 bool DragInput::beginPointerLock() {
+#if defined(Q_OS_WINDOWS)
+    if (!window()) {
+        return false;
+    }
+    cursor_origin_ = QCursor::pos();
+    cursor_center_ = mapToGlobal(QPointF(width() / 2.0, height() / 2.0)).toPoint();
+    QCursor::setPos(cursor_center_);
+    return true;
+#else
     auto *wayland = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
     void *surface = window() ? reinterpret_cast<void *>(window()->winId()) : nullptr;
     return wayland && shrimply_qt_number_begin_pointer_lock(
                           wayland->display(), surface, wayland->seat());
+#endif
 }
 
 TypoHighlighter::TypoHighlighter(QObject *parent) : QObject(parent) {}

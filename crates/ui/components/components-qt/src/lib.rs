@@ -1,5 +1,6 @@
 mod backend;
 mod frame_graph;
+#[cfg(target_os = "linux")]
 mod pointer_lock;
 
 pub mod file_picker;

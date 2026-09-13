@@ -5,6 +5,24 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+#[cfg(windows)]
+use std::os::windows::process::{CommandExt, ProcThreadAttributeList};
+#[cfg(windows)]
+use windows::{
+    Win32::{
+        Foundation::HANDLE,
+        System::JobObjects::{
+            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, TerminateJobObject,
+        },
+        System::Threading::PROC_THREAD_ATTRIBUTE_JOB_LIST,
+    },
+    core::PCWSTR,
+};
+
 const TRUST_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const EXIT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
@@ -12,6 +30,8 @@ struct State {
     child: std::process::Child,
     status: Option<ExitStatus>,
     failure: Option<String>,
+    #[cfg(windows)]
+    job: OwnedHandle,
 }
 
 /// Owns a worker process group and stops it when its source loses trust.
@@ -24,16 +44,32 @@ pub struct Child {
 
 impl Child {
     pub fn spawn(command: &mut Command, source: Option<&Path>) -> Result<Self, String> {
+        #[cfg(unix)]
         use std::os::unix::process::CommandExt;
         let source = source.map(super::require).transpose()?;
+        #[cfg(unix)]
+        command.process_group(0);
+        #[cfg(unix)]
+        let child = command.spawn().map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        let job = create_kill_job()?;
+        #[cfg(windows)]
+        let jobs = [HANDLE(job.as_raw_handle())];
+        #[cfg(windows)]
+        let attributes = ProcThreadAttributeList::build()
+            .attribute(PROC_THREAD_ATTRIBUTE_JOB_LIST as usize, &jobs)
+            .finish()
+            .map_err(|error| format!("configure trusted worker process attributes: {error}"))?;
+        #[cfg(windows)]
         let child = command
-            .process_group(0)
-            .spawn()
+            .spawn_with_attributes(&attributes)
             .map_err(|error| error.to_string())?;
         let state = Arc::new(Mutex::new(State {
             child,
             status: None,
             failure: None,
+            #[cfg(windows)]
+            job,
         }));
         let (stop, receiver) = mpsc::channel();
         let mut result = Self {
@@ -109,13 +145,39 @@ fn kill_group(state: &mut State) {
     if state.status.is_some() {
         return;
     }
-    let pid = i32::try_from(state.child.id()).expect("worker PID exceeds i32");
-    if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0
-        && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    #[cfg(unix)]
     {
+        let pid = i32::try_from(state.child.id()).expect("worker PID exceeds i32");
+        if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0
+            && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        {
+            std::process::abort();
+        }
+    }
+    #[cfg(windows)]
+    if unsafe { TerminateJobObject(HANDLE(state.job.as_raw_handle()), 1) }.is_err() {
         std::process::abort();
     }
     state.status = Some(state.child.wait().expect("could not reap trusted worker"));
+}
+
+#[cfg(windows)]
+fn create_kill_job() -> Result<OwnedHandle, String> {
+    let raw = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
+        .map_err(|error| format!("create trusted worker job: {error}"))?;
+    let job = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    unsafe {
+        SetInformationJobObject(
+            HANDLE(job.as_raw_handle()),
+            JobObjectExtendedLimitInformation,
+            (&raw const limits).cast(),
+            u32::try_from(std::mem::size_of_val(&limits)).expect("job limits fit in u32"),
+        )
+    }
+    .map_err(|error| format!("configure trusted worker job: {error}"))?;
+    Ok(job)
 }
 
 impl Drop for Child {

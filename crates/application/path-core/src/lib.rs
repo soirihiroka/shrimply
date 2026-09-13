@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-compile_error!("shrimply-path-core supports only Linux and macOS");
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+compile_error!("shrimply-path-core supports only Linux, macOS, and Windows");
 
 #[cfg(target_os = "linux")]
 const APPLICATION_DIRECTORY: &str = "shrimply";
@@ -24,6 +24,11 @@ pub fn config_directory() -> PathBuf {
     {
         macos_directory(objc2_foundation::NSSearchPathDirectory::ApplicationSupportDirectory)
     }
+
+    #[cfg(windows)]
+    {
+        windows_directory("APPDATA")
+    }
 }
 
 #[cached::proc_macro::cached]
@@ -40,6 +45,11 @@ pub fn cache_directory() -> Result<PathBuf, String> {
         Ok(macos_directory(
             objc2_foundation::NSSearchPathDirectory::CachesDirectory,
         ))
+    }
+
+    #[cfg(windows)]
+    {
+        Ok(windows_directory("LOCALAPPDATA"))
     }
 }
 
@@ -114,4 +124,13 @@ fn macos_directory(directory: objc2_foundation::NSSearchPathDirectory) -> PathBu
         .path()
         .expect("macOS application directory URL should be a file path");
     PathBuf::from(path.to_string()).join(MACOS_APPLICATION_DIRECTORY)
+}
+
+#[cfg(windows)]
+fn windows_directory(variable: &str) -> PathBuf {
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| panic!("{variable} must provide an absolute application directory"))
+        .join("Shrimply")
 }

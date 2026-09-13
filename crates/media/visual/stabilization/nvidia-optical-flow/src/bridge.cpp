@@ -1,5 +1,9 @@
 #include <cuda.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #include <nvOpticalFlowCuda.h>
 
 #include <cstddef>
@@ -138,7 +142,11 @@ void destroy(Context* context) {
         context->api.nvOFDestroy(context->handle);
     }
     if (context->library != nullptr) {
+#if defined(_WIN32)
+        FreeLibrary(static_cast<HMODULE>(context->library));
+#else
         dlclose(context->library);
+#endif
     }
     delete context;
 }
@@ -220,19 +228,40 @@ extern "C" Context* shrimply_nvof_create(
         destroy(context);
         return nullptr;
     }
+#if defined(_WIN32)
+    context->library = LoadLibraryA("nvofapi64.dll");
+#else
     context->library = dlopen("libnvidia-opticalflow.so.1", RTLD_NOW | RTLD_LOCAL);
+#endif
     if (context->library == nullptr) {
+#if defined(_WIN32)
+        char detail[64];
+        std::snprintf(detail, sizeof detail, "Windows error %lu", GetLastError());
+        set_error(error, error_size, "load NVIDIA optical flow driver", detail);
+#else
         set_error(error, error_size, "load NVIDIA optical flow driver", dlerror());
+#endif
         destroy(context);
         return nullptr;
     }
     using CreateInstance = NV_OF_STATUS (*)(uint32_t, NV_OF_CUDA_API_FUNCTION_LIST*);
     CreateInstance create_instance = nullptr;
+#if defined(_WIN32)
+    auto symbol = GetProcAddress(static_cast<HMODULE>(context->library),
+                                 "NvOFAPICreateInstanceCuda");
+#else
     void* symbol = dlsym(context->library, "NvOFAPICreateInstanceCuda");
+#endif
     static_assert(sizeof(create_instance) == sizeof(symbol));
     std::memcpy(&create_instance, &symbol, sizeof(create_instance));
     if (create_instance == nullptr) {
+#if defined(_WIN32)
+        char detail[64];
+        std::snprintf(detail, sizeof detail, "Windows error %lu", GetLastError());
+        set_error(error, error_size, "load NVIDIA optical flow entry point", detail);
+#else
         set_error(error, error_size, "load NVIDIA optical flow entry point", dlerror());
+#endif
         destroy(context);
         return nullptr;
     }

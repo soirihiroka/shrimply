@@ -1,0 +1,7 @@
+[package]
+name = "shrimply-local-ipc"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Networking_WinSock"] }

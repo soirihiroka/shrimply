@@ -4,6 +4,11 @@ use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    if std::env::var_os("CUDA_MODULE_LOADING").is_none() {
+        // This is the first operation in main, before Qt or any worker threads exist.
+        unsafe { std::env::set_var("CUDA_MODULE_LOADING", "EAGER") };
+    }
     shrimply_process_reporting::crash::install();
     shrimply_process_reporting::diagnostics::init();
     shrimply_i18n_qt::init_system_locale();

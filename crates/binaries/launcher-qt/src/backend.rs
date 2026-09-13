@@ -12,6 +12,10 @@ pub mod qobject {
         #[namespace = "shrimply"]
         fn set_breeze_icon_fallback();
 
+        include!("shrimply-launcher-qt/include/startup_error.h");
+        #[namespace = "shrimply"]
+        fn show_startup_error(heading: &QString, body: &QString);
+
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
         include!("cxx-qt-lib/qurl.h");

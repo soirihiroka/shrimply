@@ -1,3 +1,5 @@
+#![cfg_attr(windows, feature(windows_process_extensions_raw_attribute))]
+
 mod process;
 pub use process::Child;
 
@@ -43,7 +45,6 @@ static STORE: LazyLock<Result<Mutex<Connection>, String>> = LazyLock::new(|| {
 });
 
 pub fn entries() -> Result<Vec<Entry>, String> {
-    use std::os::unix::ffi::OsStringExt;
     let conn = STORE
         .as_ref()
         .map_err(Clone::clone)?
@@ -56,7 +57,7 @@ pub fn entries() -> Result<Vec<Entry>, String> {
         .query_map([], |row| {
             let path: Vec<u8> = row.get(0)?;
             Ok(Entry {
-                path: std::ffi::OsString::from_vec(path).into(),
+                path: bytes_to_path(path)?,
                 kind: if row.get::<_, bool>(1)? {
                     Kind::Folder
                 } else {
@@ -156,7 +157,6 @@ impl Review {
     }
 
     pub fn approve(&self, kind: Kind) -> Result<(), String> {
-        use std::os::unix::ffi::OsStrExt;
         // Approve exactly the paths shown, never a changed symlink target.
         for file in &self.files {
             if file.canonicalize().ok().as_ref() != Some(file) || !file.is_file() {
@@ -180,7 +180,7 @@ impl Review {
             transaction
                 .execute(
                     "INSERT OR IGNORE INTO trusted_sources (path, folder) VALUES (?1, ?2)",
-                    params![path.as_os_str().as_bytes(), kind == Kind::Folder],
+                    params![path_to_bytes(path), kind == Kind::Folder],
                 )
                 .map_err(|error| format!("Could not save trust: {error}"))?;
         }
@@ -191,7 +191,6 @@ impl Review {
 }
 
 pub fn remove(entry: &Entry) -> Result<(), String> {
-    use std::os::unix::ffi::OsStrExt;
     let conn = STORE
         .as_ref()
         .map_err(Clone::clone)?
@@ -199,13 +198,44 @@ pub fn remove(entry: &Entry) -> Result<(), String> {
         .expect("trust database poisoned");
     conn.execute(
         "DELETE FROM trusted_sources WHERE path = ?1 AND folder = ?2",
-        params![
-            entry.path.as_os_str().as_bytes(),
-            entry.kind == Kind::Folder
-        ],
+        params![path_to_bytes(&entry.path), entry.kind == Kind::Folder],
     )
     .map_err(|error| format!("Could not remove trust: {error}"))?;
     Ok(())
+}
+
+#[cfg(unix)]
+fn path_to_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(unix)]
+fn bytes_to_path(bytes: Vec<u8>) -> rusqlite::Result<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    Ok(std::ffi::OsString::from_vec(bytes).into())
+}
+
+#[cfg(windows)]
+fn path_to_bytes(path: &Path) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+#[cfg(windows)]
+fn bytes_to_path(bytes: Vec<u8>) -> rusqlite::Result<PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    if !bytes.len().is_multiple_of(2) {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let wide = bytes
+        .chunks_exact(2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+        .collect::<Vec<_>>();
+    Ok(std::ffi::OsString::from_wide(&wide).into())
 }
 
 pub struct Request {

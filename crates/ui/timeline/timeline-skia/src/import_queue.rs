@@ -146,19 +146,46 @@ impl ImportQueue {
         start: Time,
         default_duration: Time,
     ) -> Result<BatchId, String> {
-        let kind = keys.first().ok_or("no import tracks were selected")?.kind;
         let mut tracks = Vec::new();
         for key in keys {
-            if key.kind != kind {
-                return Err("import tracks must have the same kind".into());
-            }
             let address = selection_state::track_address(project, *key)
                 .ok_or("import destination track no longer exists")?;
             if !tracks.contains(&address) {
                 tracks.push(address);
             }
         }
-        let paths: Vec<_> = paths.into_iter().collect();
+        let batch = self.reserve_batch();
+        self.enqueue_track_addresses_reserved(
+            batch,
+            paths.into_iter().collect(),
+            project,
+            tracks,
+            start,
+            default_duration,
+        )?;
+        Ok(batch)
+    }
+
+    pub(crate) fn enqueue_track_addresses_reserved(
+        &mut self,
+        batch: BatchId,
+        paths: Vec<PathBuf>,
+        project: &Project,
+        tracks: Vec<project::TrackAddress>,
+        start: Time,
+        default_duration: Time,
+    ) -> Result<(), String> {
+        let keys = tracks
+            .iter()
+            .map(|address| {
+                selection_state::track_key(project, address)
+                    .ok_or("import destination track no longer exists")
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let kind = keys.first().ok_or("no import tracks were selected")?.kind;
+        if keys.iter().any(|key| key.kind != kind) {
+            return Err("import tracks must have the same kind".into());
+        }
         if paths.is_empty() {
             return Err("no import files were selected".into());
         }
@@ -174,7 +201,6 @@ impl ImportQueue {
                 return Err("MKV and WebM need to be remuxed before track import".into());
             }
         }
-        let batch = self.reserve_batch();
         self.pending.extend(paths.into_iter().map(|path| Pending {
             batch,
             target: Target::Tracks(tracks.clone()),
@@ -191,7 +217,7 @@ impl ImportQueue {
                 collision: DragCollisionMode::NewTrack,
             },
         }));
-        Ok(batch)
+        Ok(())
     }
 
     pub fn poll(&mut self, project: &mut Project) -> Option<Completion> {

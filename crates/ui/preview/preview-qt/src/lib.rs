@@ -31,6 +31,7 @@ use shrimply_timeline_qt::{
     TIMELINE_CLIPBOARD_MARKER,
 };
 use shrimply_timeline_qt::{RenderedVideoFrame, ToolkitPointerButton, ToolkitTimeline};
+#[cfg(target_os = "linux")]
 use std::ffi::c_void;
 use std::path::PathBuf;
 
@@ -154,6 +155,7 @@ impl PlatformColor {
     }
 }
 
+#[cfg(any(target_os = "linux", windows))]
 #[unsafe(no_mangle)]
 unsafe extern "C" fn shrimply_qt_set_platform_palette(palette: *const PlatformPalette) {
     let palette = unsafe {
@@ -185,16 +187,20 @@ pub extern "C" fn shrimply_qt_render_timeline(
     blue: f32,
     alpha: f32,
     dark: bool,
+    native_window: usize,
 ) -> bool {
     shrimply_cross_ui_theme::set_dark(dark);
     SURFACES.with_borrow_mut(|surfaces| {
         let Some(surfaces) = surfaces.as_mut() else {
             return missing("timeline");
         };
-        let result =
-            surfaces
-                .timeline
-                .render(width, height, scale, Color::new(red, green, blue, alpha));
+        let result = surfaces.timeline.render(
+            width,
+            height,
+            scale,
+            Color::new(red, green, blue, alpha),
+            native_window,
+        );
         if result.is_ok()
             && let Some(presentation) = surfaces.timeline.take_track_add_menu()
         {
@@ -348,17 +354,37 @@ pub extern "C" fn shrimply_qt_timeline_activate_track_add_menu_item(index: usize
 pub unsafe extern "C" fn shrimply_qt_timeline_import_track_file(
     path: *const u8,
     length: usize,
-) -> bool {
+) -> u8 {
+    const ERROR: u8 = 0;
+    const STARTED: u8 = 1;
+    const CONFIRM_REMUX: u8 = 2;
     let path = unsafe { std::slice::from_raw_parts(path, length) };
     let path = String::from_utf8_lossy(path);
     SURFACES.with_borrow_mut(|surfaces| {
         let Some(surfaces) = surfaces.as_mut() else {
-            return false;
+            return ERROR;
         };
         match surfaces
             .timeline
             .import_track_file(PathBuf::from(path.as_ref()))
         {
+            Ok(shrimply_timeline_qt::TrackFileImport::Started) => STARTED,
+            Ok(shrimply_timeline_qt::TrackFileImport::ConfirmRemux) => CONFIRM_REMUX,
+            Err(error) => {
+                surfaces.context_action_error = error;
+                ERROR
+            }
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_confirm_track_remux(remux: bool) -> bool {
+    SURFACES.with_borrow_mut(|surfaces| {
+        let Some(surfaces) = surfaces.as_mut() else {
+            return false;
+        };
+        match surfaces.timeline.confirm_track_remux(remux) {
             Ok(()) => true,
             Err(error) => {
                 surfaces.context_action_error = error;
@@ -507,11 +533,12 @@ pub extern "C" fn shrimply_qt_timeline_pointer_release(
     });
 }
 
-#[unsafe(no_mangle)]
 /// # Safety
 ///
 /// The pointers must be valid Wayland display, surface, and seat handles for the duration of the
 /// call.
+#[cfg(target_os = "linux")]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn shrimply_qt_timeline_begin_pointer_lock(
     display: *mut c_void,
     surface: *mut c_void,
@@ -527,6 +554,27 @@ pub unsafe extern "C" fn shrimply_qt_timeline_begin_pointer_lock(
                 .begin_pointer_lock(display, surface, seat, system_cursor::grabbing())
         }
     })
+}
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_begin_pointer_lock(scale: f32) -> bool {
+    SURFACES.with_borrow_mut(|surfaces| {
+        surfaces.as_mut().is_some_and(|surfaces| {
+            surfaces
+                .timeline
+                .begin_pointer_lock(system_cursor::grabbing(scale))
+        })
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_relative_motion(x: f32, y: f32) {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
+            surfaces.timeline.relative_motion(x, y);
+        }
+    });
 }
 
 #[unsafe(no_mangle)]

@@ -10,6 +10,7 @@ fn main() {
         )
         .files(["src/backend.rs"])
         .qrc("qml/assets.qrc")
+        .qrc("../../ui/application/application-qt/icons.qrc")
         .cpp_files([
             "../../ui/preview/preview-qt/include/gpu_surface.h",
             "../../ui/preview/preview-qt/src/gpu_surface.cpp",

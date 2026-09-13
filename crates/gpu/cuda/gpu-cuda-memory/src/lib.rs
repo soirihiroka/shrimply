@@ -992,15 +992,29 @@ pub fn configure(host_budget_bytes: u64) {
 }
 
 pub fn physical_system_memory_bytes() -> u64 {
-    let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
-    let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    let pages =
-        u64::try_from(pages).expect("detect physical system RAM: sysconf(_SC_PHYS_PAGES) failed");
-    let page_bytes = u64::try_from(page_bytes)
-        .expect("detect physical system RAM: sysconf(_SC_PAGESIZE) failed");
-    pages
-        .checked_mul(page_bytes)
-        .expect("detect physical system RAM: byte count overflowed")
+    #[cfg(unix)]
+    {
+        let pages = unsafe { libc::sysconf(libc::_SC_PHYS_PAGES) };
+        let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let pages = u64::try_from(pages)
+            .expect("detect physical system RAM: sysconf(_SC_PHYS_PAGES) failed");
+        let page_bytes = u64::try_from(page_bytes)
+            .expect("detect physical system RAM: sysconf(_SC_PAGESIZE) failed");
+        pages
+            .checked_mul(page_bytes)
+            .expect("detect physical system RAM: byte count overflowed")
+    }
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+        let mut memory = MEMORYSTATUSEX {
+            dwLength: u32::try_from(std::mem::size_of::<MEMORYSTATUSEX>())
+                .expect("memory status structure size fits u32"),
+            ..Default::default()
+        };
+        unsafe { GlobalMemoryStatusEx(&mut memory) }.expect("detect physical system RAM");
+        memory.ullTotalPhys
+    }
 }
 
 pub fn default_host_budget_bytes() -> u64 {

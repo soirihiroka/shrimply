@@ -10,10 +10,16 @@ shrimply-components-skia.workspace = true
 shrimply-editor-state.workspace = true
 shrimply-math-color.workspace = true
 shrimply-playback-performance.workspace = true
-shrimply-pointer-lock-wayland.workspace = true
 shrimply-project-document.workspace = true
 shrimply-property-transfer.workspace = true
 shrimply-surface-gl-skia.workspace = true
 shrimply-cross-ui-theme.workspace = true
 shrimply-visual-cuda.workspace = true
 glam.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+shrimply-pointer-lock-wayland.workspace = true
+shrimply-video-recording.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+shrimply-video-recording-windows.workspace = true
