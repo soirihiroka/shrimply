@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 libc.workspace = true
-rusqlite = { workspace = true, features = ["bundled"] }
+rusqlite.workspace = true
 shrimply-path-core.workspace = true
 
 [target.'cfg(windows)'.dependencies]

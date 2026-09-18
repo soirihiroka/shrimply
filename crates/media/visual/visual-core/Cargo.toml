@@ -47,7 +47,7 @@ shrimply-resource-pipeline = { workspace = true }
 vtracer.workspace = true
 hashbrown.workspace = true
 num-traits.workspace = true
-rusqlite = { workspace = true, features = ["bundled"] }
+rusqlite.workspace = true
 png.workspace = true
 tempfile.workspace = true
 

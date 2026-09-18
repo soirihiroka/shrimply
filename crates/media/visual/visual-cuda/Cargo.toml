@@ -21,7 +21,7 @@ pango = { workspace = true, features = ["v1_57"] }
 pangocairo.workspace = true
 png.workspace = true
 rayon.workspace = true
-rusqlite = { workspace = true, features = ["bundled"] }
+rusqlite.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 shrimply-property-model = { workspace = true }
