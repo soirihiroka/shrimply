@@ -6772,7 +6772,6 @@ name = "shrimply-pocketsphinx"
 version = "0.1.0"
 dependencies = [
  "realfft",
- "reqwest",
  "sha2",
 ]
 

@@ -3,6 +3,7 @@ use std::{
     env, fs,
     io::Write,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 const REVISION: &str = "9b9573cd21b253c9ba58739bbd1aa0b50b991bff";
@@ -119,14 +120,15 @@ fn fetch(source: &Source, destination: &Path) {
         "cargo:warning=downloading pinned PocketSphinx resource {}",
         source.name
     );
-    let response = reqwest::blocking::get(&url)
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .unwrap_or_else(|error| panic!("download {url}: {error}"));
-    let bytes = response
-        .bytes()
-        .unwrap_or_else(|error| panic!("read {url}: {error}"));
     let temporary = destination.with_extension(format!("part-{}", std::process::id()));
-    fs::write(&temporary, &bytes).expect("write downloaded model resource");
+    let status = Command::new("curl")
+        .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3"])
+        .arg(&url)
+        .arg("--output")
+        .arg(&temporary)
+        .status()
+        .expect("download PocketSphinx resource with curl");
+    assert!(status.success(), "download PocketSphinx resource {url}: {status}");
     if !verified(&temporary, source) {
         let _ = fs::remove_file(&temporary);
         panic!("downloaded resource failed size or SHA-256 verification: {url}");

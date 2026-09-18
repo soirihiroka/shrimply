@@ -5,7 +5,7 @@ Run Shrimply
 ------------
 
 Shrimply is currently pre-alpha software. On Linux, see :doc:`flatpak` for
-installation, updates, and known limitations.
+installation, updates, and known limitations, or :doc:`arch` for the Arch Linux AUR package.
 
 To build Shrimply from source, see :doc:`development`.
 
