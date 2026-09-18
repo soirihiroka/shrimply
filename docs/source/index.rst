@@ -28,7 +28,8 @@ Getting started
 Installation
 ------------
 
-* :doc:`Flatpak <flatpak>` covers installing and updating the Linux package.
+* :doc:`Flatpak <flatpak>` covers installing and updating the Linux Flatpak package.
+* :doc:`Arch Linux (AUR) <arch>` covers installing from the Arch User Repository.
 
 .. toctree::
    :maxdepth: 2
@@ -36,6 +37,7 @@ Installation
    :caption: Installation
 
    Flatpak <flatpak>
+   Arch Linux <arch>
 
 Editing
 -------

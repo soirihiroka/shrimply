@@ -4,11 +4,16 @@ HOST_OS := $(if $(filter Windows_NT,$(OS)),Windows_NT,$(shell uname -s))
 CARGO ?= $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 RUSTC ?= $(RUSTUP) run $(RUST_TOOLCHAIN) rustc
 CARGO_TARGET_DIR ?= target
-CUDA_HOME ?= $(if $(filter Windows_NT,$(HOST_OS)),$(CUDA_PATH),/usr/local/cuda)
+CUDA_HOME ?= $(if $(filter Windows_NT,$(HOST_OS)),$(CUDA_PATH),$(if $(wildcard /opt/cuda),/opt/cuda,/usr/local/cuda))
 CUDA_TOOLKIT_PATH ?= $(CUDA_HOME)
 CUDA_TARGET ?= sm_86
 CUDA_IMAGE_FORMAT ?= cubin
+NVCC_VERSION := $(shell $(CUDA_HOME)/bin/nvcc --version 2>/dev/null | grep -o 'release [0-9]*' | cut -d' ' -f2)
+ifeq ($(shell test "$$(echo $(NVCC_VERSION))" -ge 13 2>/dev/null && echo 1),1)
+CUDA_PTX_TARGET ?= compute_75
+else
 CUDA_PTX_TARGET ?= compute_50
+endif
 CUDA_HOST_CXX ?= g++-15
 CUDA_ALLOW_UNSUPPORTED_COMPILER ?=
 SOURCE_LINE_LIMIT ?= 2000
@@ -157,8 +162,10 @@ cuda-target-check:
 		(*) echo "CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) is unsupported; expected cubin or ptx" >&2; exit 1 ;; \
 	esac
 
+CARGO_BUILD_FLAGS ?=
+
 cuda-artifacts: cuda-target-check
-	$(BUILD_ENV) $(CARGO) build -p shrimply-render-kernels-cuda
+	$(BUILD_ENV) $(CARGO) build $(CARGO_BUILD_FLAGS) -p shrimply-render-kernels-cuda
 
 dev: SHELL := /bin/bash
 desktop-icon:
@@ -281,6 +288,7 @@ run-qt: qt-build
 build: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) build -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) -p $(MCP_PACKAGE) --bins
 
+release: CARGO_BUILD_FLAGS := --release
 release: native-deps cuda-artifacts
 	$(BUILD_ENV) $(CARGO) build --release -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) -p $(MCP_PACKAGE) --bins
 
@@ -300,6 +308,7 @@ windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
 
+windows-release: CARGO_BUILD_FLAGS := --release
 windows-release: override CUDA_IMAGE_FORMAT = ptx
 windows-release: windows-native-deps cuda-artifacts
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
@@ -416,6 +425,7 @@ clean:
 deps-fedora:
 	$(DNF) install $(FEDORA_PACKAGES)
 
+qt-release: CARGO_BUILD_FLAGS := --release
 qt-release: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
 

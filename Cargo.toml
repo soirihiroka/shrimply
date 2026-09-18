@@ -342,7 +342,7 @@ objc2-core-media = "0.3.2"
 objc2-screen-capture-kit = { version = "0.3.2", default-features = false }
 objc2-vision = "0.3.2"
 oklab = "1"
-opencv = { version = "0.100", default-features = false, features = ["calib3d", "clang-runtime", "imgproc", "video", "videoio"] }
+opencv = { version = "0.100", default-features = false, features = ["calib", "calib3d", "clang-runtime", "features", "geometry", "imgproc", "video", "videoio"] }
 pango = "0.22"
 pangocairo = "0.22"
 pest = "2.9"
@@ -354,7 +354,7 @@ psd = "0.3"
 quick-xml = "0.42"
 rangemap = "1"
 rayon = "1"
-reqwest = "0.13"
+reqwest = { version = "0.13", default-features = false, features = ["charset", "blocking", "json", "multipart", "native-tls", "system-proxy"] }
 libloading = "0.8.9"
 rmcp = { version = "3.1", default-features = false, features = ["macros", "server", "transport-io"] }
 rhai = "1"

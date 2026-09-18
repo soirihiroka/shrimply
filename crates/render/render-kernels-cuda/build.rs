@@ -7,7 +7,7 @@ use shrimply_slang_build::{Compiler, Target};
 #[cfg(any(target_os = "linux", windows))]
 const DEFAULT_CUBIN_TARGET: &str = "sm_86";
 #[cfg(any(target_os = "linux", windows))]
-const DEFAULT_PTX_TARGET: &str = "compute_50";
+const DEFAULT_PTX_TARGET: &str = "compute_75";
 #[cfg(any(target_os = "linux", windows))]
 const MODULES: &str = include_str!("../render-core/shaders/kernels.txt");
 
