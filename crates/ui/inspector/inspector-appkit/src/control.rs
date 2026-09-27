@@ -526,9 +526,10 @@ fn color(control: &InspectorControl, context: &Context, mtm: MainThreadMarker) -
     let picker = ColorPicker::new(
         Color::new(components[0], components[1], components[2], components[3]),
         move |color| {
-            if editing_context.set_components(&editing, &color.to_array().map(f64::from)) {
-                committing.commit(&committed_control);
-            }
+            editing_context.set_components(&editing, &color.to_array().map(f64::from));
+        },
+        move || {
+            committing.commit(&committed_control);
         },
         mtm,
     );

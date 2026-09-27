@@ -17,7 +17,7 @@ use objc2_foundation::{
     NSString, NSTimer,
 };
 use shrimply_math_color::Color;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 use std::rc::Rc;
 
@@ -917,18 +917,93 @@ impl ActionButton {
     }
 }
 
+thread_local! {
+    static ACTIVE_COLOR_WELLS: Cell<usize> = const { Cell::new(0) };
+}
+
+pub fn has_active_color_well() -> bool {
+    ACTIVE_COLOR_WELLS.with(|cell| cell.get() > 0)
+}
+
+struct ColorWellIvars {
+    active: Cell<bool>,
+    has_changed: Cell<bool>,
+    on_commit: RefCell<Option<Box<dyn FnMut()>>>,
+}
+
+define_class!(
+    #[unsafe(super(NSColorWell))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = ColorWellIvars]
+    struct ColorWell;
+
+    unsafe impl NSObjectProtocol for ColorWell {}
+
+    impl ColorWell {
+        #[unsafe(method(activate:))]
+        fn activate(&self, exclusive: bool) {
+            unsafe {
+                let _: () = msg_send![super(self), activate: exclusive];
+            }
+            if !self.ivars().active.replace(true) {
+                ACTIVE_COLOR_WELLS.with(|cell| cell.set(cell.get() + 1));
+            }
+        }
+
+        #[unsafe(method(deactivate))]
+        fn deactivate(&self) {
+            unsafe {
+                let _: () = msg_send![super(self), deactivate];
+            }
+            if self.ivars().active.replace(false) {
+                ACTIVE_COLOR_WELLS.with(|cell| cell.set(cell.get().saturating_sub(1)));
+            }
+            if self.ivars().has_changed.replace(false)
+                && let Some(callback) = self.ivars().on_commit.borrow_mut().as_mut()
+            {
+                callback();
+            }
+        }
+
+        #[unsafe(method(viewWillMoveToWindow:))]
+        fn view_will_move_to_window(&self, window: Option<&objc2_app_kit::NSWindow>) {
+            if window.is_none() {
+                if self.ivars().active.replace(false) {
+                    ACTIVE_COLOR_WELLS.with(|cell| cell.set(cell.get().saturating_sub(1)));
+                }
+                if self.ivars().has_changed.replace(false)
+                    && let Some(callback) = self.ivars().on_commit.borrow_mut().as_mut()
+                {
+                    callback();
+                }
+            }
+            unsafe {
+                let _: () = msg_send![super(self), viewWillMoveToWindow: window];
+            }
+        }
+    }
+);
+
 pub struct ColorPicker {
-    view: Retained<NSColorWell>,
+    view: Retained<ColorWell>,
 }
 
 impl ColorPicker {
     pub fn new(
         color: Color<u8>,
         on_change: impl Fn(Color<u8>) + 'static,
+        on_commit: impl FnMut() + 'static,
         mtm: MainThreadMarker,
     ) -> Self {
-        let well = NSColorWell::initWithFrame(NSColorWell::alloc(mtm), NSRect::ZERO);
+        let well = ColorWell::alloc(mtm).set_ivars(ColorWellIvars {
+            active: Cell::new(false),
+            has_changed: Cell::new(false),
+            on_commit: RefCell::new(Some(Box::new(on_commit))),
+        });
+        let well: Retained<ColorWell> =
+            unsafe { msg_send![super(well), initWithFrame: NSRect::ZERO] };
         well.setColor(&native_color(color));
+        let weak_well = Weak::new(&*well);
         action::attach(
             &well,
             move |control| {
@@ -944,6 +1019,13 @@ impl ColorPicker {
                     channel(color.blueComponent()),
                     channel(color.alphaComponent()),
                 ));
+                if let Some(well) = weak_well.load() {
+                    if well.isActive() {
+                        well.ivars().has_changed.set(true);
+                    } else if let Some(callback) = well.ivars().on_commit.borrow_mut().as_mut() {
+                        callback();
+                    }
+                }
             },
             mtm,
         );
@@ -951,7 +1033,7 @@ impl ColorPicker {
     }
 
     pub fn view(&self) -> &NSColorWell {
-        &self.view
+        self.view.as_super()
     }
 }
 
