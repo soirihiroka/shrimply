@@ -121,8 +121,8 @@ impl Frame {
 }
 
 impl Renderer {
-    /// Queue a GPU-only copy of a composite's straight RGBA buffer.
-    /// This renderer's queue orders the copy after the frame's compute work.
+    /// Queue a GPU-only copy and mipmap generation for a composite's straight RGBA buffer.
+    /// This renderer's queue orders both operations after the frame's compute work.
     pub fn presentation_texture(
         &self,
         frame: &Frame,
@@ -142,7 +142,7 @@ impl Renderer {
                 MTLPixelFormat::RGBA8Unorm,
                 size.0 as usize,
                 size.1 as usize,
-                false,
+                true,
             )
         };
         descriptor.setStorageMode(MTLStorageMode::Private);
@@ -161,7 +161,7 @@ impl Renderer {
             .blitCommandEncoder()
             .ok_or("Could not create the presentation blit encoder")?;
         // The command retains the texture and Submission retains the source
-        // buffer. Neither resource is modified after this copy is submitted.
+        // buffer. The texture is immutable once this submission completes.
         unsafe {
             blit.copyFromBuffer_sourceOffset_sourceBytesPerRow_sourceBytesPerImage_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
                 frame.output.metal(),
@@ -174,6 +174,9 @@ impl Renderer {
                 0,
                 MTLOrigin { x: 0, y: 0, z: 0 },
             );
+        }
+        if texture.mipmapLevelCount() > 1 {
+            blit.generateMipmapsForTexture(&texture);
         }
         blit.endEncoding();
         command.commit();

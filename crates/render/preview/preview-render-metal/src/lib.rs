@@ -270,15 +270,14 @@ impl Renderer {
     ) -> Result<(), String> {
         if let Some(frame) = &self.presented {
             use objc2::rc::Retained;
-            use skia_safe::gpu::{
-                Budgeted, Mipmapped, SurfaceOrigin, backend_textures, images, mtl,
-            };
+            use objc2_metal::MTLTexture;
+            use skia_safe::gpu::{Mipmapped, SurfaceOrigin, backend_textures, images, mtl};
             let mut context = canvas
                 .direct_context()
                 .ok_or("Metal preview requires a GPU canvas")?;
             if self.texture.is_none() {
-                // The worker publishes only after compute and the texture copy
-                // complete. Metal's Skia wrapper retains the native texture, so
+                // The worker publishes only after compute, the texture copy and
+                // mipmap generation complete. Skia retains the native texture, so
                 // queued draws remain valid after the next frame replaces it.
                 let info = unsafe {
                     mtl::TextureInfo::new(Retained::as_ptr(&frame.texture) as mtl::Handle)
@@ -286,7 +285,11 @@ impl Renderer {
                 let backend = unsafe {
                     backend_textures::make_mtl(
                         (frame.size.0 as i32, frame.size.1 as i32),
-                        Mipmapped::No,
+                        if frame.texture.mipmapLevelCount() > 1 {
+                            Mipmapped::Yes
+                        } else {
+                            Mipmapped::No
+                        },
                         &info,
                         "preview composite",
                     )
@@ -302,23 +305,8 @@ impl Renderer {
                 .ok_or("Could not wrap the Metal preview texture")?;
                 self.texture = Some(texture);
             }
-            let texture = self.texture.as_mut().expect("preview texture wrapped");
-            if sampling.mipmap != skia_safe::MipmapMode::None
-                && (texture.width() > 1 || texture.height() > 1)
-                && !texture.has_mipmaps()
-            {
-                // The source is now GPU-backed: Skia copies the base level on the
-                // GPU and regenerates its mip chain during submission, not on CPU.
-                *texture = images::texture_from_image(
-                    &mut context,
-                    texture,
-                    Mipmapped::Yes,
-                    Budgeted::Yes,
-                )
-                .filter(Image::has_mipmaps)
-                .ok_or("Could not create GPU preview mipmaps")?;
-            }
-            canvas.draw_image_with_sampling_options(&*texture, (0.0, 0.0), sampling, None);
+            let texture = self.texture.as_ref().expect("preview texture wrapped");
+            canvas.draw_image_with_sampling_options(texture, (0.0, 0.0), sampling, None);
         }
         Ok(())
     }

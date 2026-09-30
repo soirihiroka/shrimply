@@ -89,8 +89,8 @@ pub(super) struct Presented {
     pub audio_analysis: shrimply_preview_render_core::FrameAudioAnalysis,
 }
 
-// SAFETY: Constructed only after both the composite and presentation blit have
-// completed. These retained Metal resources are immutable from publication on;
+// SAFETY: Constructed only after the composite and presentation blit (including
+// mipmap generation) have completed. These resources are immutable from publication on;
 // no command encoder or Skia context crosses threads. Ownership moves through
 // the slots mutex to the UI, which only samples the texture or reads the buffer
 // for explicit capture. This does not make mutable Buffer/MTLTexture generally Send.
