@@ -18,6 +18,11 @@ Frame {
     padding: 0
     implicitHeight: content.implicitHeight
 
+    Binding on topPadding { when: Qt.platform.os === "windows"; value: 0 }
+    Binding on bottomPadding { when: Qt.platform.os === "windows"; value: 0 }
+    Binding on leftPadding { when: Qt.platform.os === "windows"; value: 0 }
+    Binding on rightPadding { when: Qt.platform.os === "windows"; value: 0 }
+
     function ownsFocus(item) {
         while (item) {
             if (item === root)
@@ -65,14 +70,11 @@ Frame {
         }
     }
 
-    Rectangle {
-        anchors.fill: parent
+    background: Rectangle {
         color: "transparent"
         border.color: root.palette.highlight
         border.width: root.accented ? 2 : 0
         radius: 3
-        enabled: false
-        z: 1
     }
 
     contentItem: ColumnLayout {

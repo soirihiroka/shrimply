@@ -56,7 +56,9 @@ pub fn update_resize_drag(
 ) {
     let minimum_duration = crate::geometry::frame_step(project);
     let target = Time::from_seconds_f64(x_to_time(x, view.scroll_seconds, view.seconds_per_pixel));
-    let target = snap_repository.snap(target).unwrap_or(target);
+    let target = snap_repository
+        .snap(target)
+        .unwrap_or_else(|| target.snapped(minimum_duration));
 
     match drag.edge {
         ItemEdge::Start => {

@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cxx-qt.workspace = true
 cxx-qt-lib = { workspace = true, features = ["qt_full"] }
 shrimply-math-color = { workspace = true }
 shrimply-preferences-core = { workspace = true }
+
+[build-dependencies]
+cxx-qt-build = { workspace = true, features = ["link_qt_object_files"] }

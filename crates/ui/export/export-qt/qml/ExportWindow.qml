@@ -30,7 +30,7 @@ Item {
 
     function exportJson() {
         if (exportBackend.startJson())
-            progressWindow.show()
+            progressWindow.open()
     }
 
     ExportBackend {
@@ -39,13 +39,13 @@ Item {
         onSucceeded: function(title) {
             progressWindow.close()
             successWindow.message = title
-            successWindow.show()
+            successWindow.open()
         }
         onFailed: function(heading, body) {
             progressWindow.close()
             errorWindow.heading = heading
             errorWindow.message = body
-            errorWindow.show()
+            errorWindow.open()
         }
         onCanceled: progressWindow.close()
         onOpenPath: function(url) { Qt.openUrlExternally(url) }
@@ -356,7 +356,7 @@ Item {
                     onClicked: {
                         if (exportBackend.startVideo()) {
                             videoWindow.close()
-                            progressWindow.show()
+                            progressWindow.open()
                         }
                     }
                 }
@@ -398,7 +398,7 @@ Item {
                     onClicked: {
                         if (exportBackend.startCaptions(!mergeCaptions.checked)) {
                             captionsWindow.close()
-                            progressWindow.show()
+                            progressWindow.open()
                         }
                     }
                 }
@@ -406,23 +406,20 @@ Item {
         }
     }
 
-    ApplicationWindow {
+    Dialog {
         id: progressWindow
         title: exportBackend.translate("Exporting")
-        transientParent: root.owner
-        modality: Qt.WindowModal
-        flags: Qt.Dialog
-        palette: root.owner.palette
-        width: 520
-        height: 190
-        onClosing: function(close) {
+        parent: Overlay.overlay
+        modal: true
+        width: Math.min(520, root.owner.width - 48)
+        anchors.centerIn: parent
+        closePolicy: Popup.NoAutoClose
+        onClosed: {
             if (exportBackend.busy)
                 exportBackend.cancel()
         }
 
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 24
+        contentItem: ColumnLayout {
             spacing: 16
 
             Label {
@@ -444,67 +441,69 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
             }
+        }
+
+        footer: DialogButtonBox {
             Button {
-                Layout.alignment: Qt.AlignRight
                 text: exportBackend.translate("Cancel")
                 enabled: exportBackend.busy
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
                 onClicked: exportBackend.cancel()
             }
         }
     }
 
-    ApplicationWindow {
+    Dialog {
         id: successWindow
         property string message
         title: exportBackend.translate("Export Complete")
-        transientParent: root.owner
-        modality: Qt.WindowModal
-        flags: Qt.Dialog
-        palette: root.owner.palette
-        width: 480
-        height: 180
+        parent: Overlay.overlay
+        modal: true
+        width: Math.min(480, root.owner.width - 48)
+        anchors.centerIn: parent
 
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 18
+        contentItem: ColumnLayout {
+            spacing: 16
             Label { Layout.fillWidth: true; text: successWindow.message; wrapMode: Text.Wrap }
-            Item { Layout.fillHeight: true }
-            RowLayout {
-                Layout.fillWidth: true
-                Item { Layout.fillWidth: true }
-                Button { text: exportBackend.translate("Close"); onClicked: successWindow.close() }
-                Button {
-                    text: exportBackend.translate("Show in Files")
-                    highlighted: true
-                    onClicked: {
-                        successWindow.close()
-                        exportBackend.revealLastOutput()
-                    }
+        }
+
+        footer: DialogButtonBox {
+            Button {
+                text: exportBackend.translate("Close")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+                onClicked: successWindow.close()
+            }
+            Button {
+                text: exportBackend.translate("Show in Files")
+                highlighted: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+                onClicked: {
+                    successWindow.close()
+                    exportBackend.revealLastOutput()
                 }
             }
         }
     }
 
-    ApplicationWindow {
+    Dialog {
         id: errorWindow
         property string heading
         property string message
         title: heading
-        transientParent: root.owner
-        modality: Qt.WindowModal
-        flags: Qt.Dialog
-        palette: root.owner.palette
-        width: 520
-        height: 220
+        parent: Overlay.overlay
+        modal: true
+        width: Math.min(520, root.owner.width - 48)
+        anchors.centerIn: parent
 
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: 18
+        contentItem: ColumnLayout {
+            spacing: 16
             Label { Layout.fillWidth: true; text: errorWindow.message; wrapMode: Text.Wrap }
-            Item { Layout.fillHeight: true }
+        }
+
+        footer: DialogButtonBox {
             Button {
-                Layout.alignment: Qt.AlignRight
                 text: exportBackend.translate("Close")
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
                 onClicked: errorWindow.close()
             }
         }

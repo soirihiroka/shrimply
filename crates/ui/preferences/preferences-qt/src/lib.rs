@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 pub use shrimply_preferences_core::IntegerRange;
 pub use shrimply_preferences_core::ServerStatus;
 
+pub fn init() {
+    cxx_qt::init_qml_module!("dev.shrimply.preferences");
+}
+
 pub struct Connector {
     preferences: preferences::SharedPreferences,
 }

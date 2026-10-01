@@ -132,7 +132,6 @@ FocusScope {
             Layout.fillHeight: true
             implicitHeight: preferredHeight
             mirrorVertically: true
-            activeFocusOnTab: true
             onTogglePlayback: root.togglePlayback()
             onEditFinished: root.editFinished()
             onPlayheadChanged: function(component, numerator, denominator) {

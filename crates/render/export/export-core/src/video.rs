@@ -921,7 +921,10 @@ fn sample_i16(sample: f32) -> i16 {
 
 fn audio_encoder_name(encoder: ExportAudioEncoder) -> &'static str {
     match encoder {
+        #[cfg(not(windows))]
         ExportAudioEncoder::FdkAac => "libfdk_aac",
+        #[cfg(windows)]
+        ExportAudioEncoder::FdkAac => "aac",
         ExportAudioEncoder::Aac => "aac",
         #[cfg(target_os = "macos")]
         ExportAudioEncoder::AudioToolboxAac => "aac_at",
@@ -931,8 +934,13 @@ fn audio_encoder_name(encoder: ExportAudioEncoder) -> &'static str {
 
 fn audio_sample_format(encoder: ExportAudioEncoder) -> ffmpeg::format::Sample {
     match encoder {
+        #[cfg(not(windows))]
         ExportAudioEncoder::FdkAac => {
             ffmpeg::format::Sample::I16(ffmpeg::format::sample::Type::Packed)
+        }
+        #[cfg(windows)]
+        ExportAudioEncoder::FdkAac => {
+            ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar)
         }
         ExportAudioEncoder::Aac => {
             ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar)

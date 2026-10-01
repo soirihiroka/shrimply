@@ -141,8 +141,9 @@ ApplicationWindow {
                         width: recentList.width
                         height: 64
                         rightPadding: optionsButton.width + 12
-                        text: backend.recentName(index) + "\n"
-                            + backend.recentLastEdited(index)
+                        text: index >= 0 && index < backend.recentCount
+                            ? backend.recentName(index) + "\n" + backend.recentLastEdited(index)
+                            : ""
                         onClicked: backend.openRecent(index)
 
                         ToolButton {
@@ -228,7 +229,9 @@ ApplicationWindow {
         anchors.centerIn: parent
         width: Math.min(500, window.width - 48)
         modal: true
-        title: recentIndex >= 0 ? backend.recentName(recentIndex) : ""
+        title: infoDialog.recentIndex >= 0
+            && infoDialog.recentIndex < backend.recentCount
+            ? backend.recentName(infoDialog.recentIndex) : ""
         standardButtons: Dialog.Close
 
         ColumnLayout {
@@ -243,6 +246,7 @@ ApplicationWindow {
             Label {
                 Layout.fillWidth: true
                 text: infoDialog.recentIndex >= 0
+                    && infoDialog.recentIndex < backend.recentCount
                     ? backend.recentLastEdited(infoDialog.recentIndex)
                     : backend.text("Unavailable")
             }
@@ -258,6 +262,7 @@ ApplicationWindow {
                 Label {
                     Layout.fillWidth: true
                     text: infoDialog.recentIndex >= 0
+                        && infoDialog.recentIndex < backend.recentCount
                         ? backend.recentPath(infoDialog.recentIndex) : ""
                     wrapMode: Text.WrapAnywhere
                 }

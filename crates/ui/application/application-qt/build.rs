@@ -1,6 +1,9 @@
 use cxx_qt_build::CxxQtBuilder;
 
 fn main() {
+    if cfg!(windows) {
+        println!("cargo:rustc-link-lib=dwmapi");
+    }
     unsafe {
         CxxQtBuilder::new()
             .file("src/lib.rs")

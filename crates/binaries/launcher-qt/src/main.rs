@@ -72,6 +72,7 @@ fn main() -> ExitCode {
     engine.as_mut().load(&QUrl::from(
         "qrc:/qt/qml/dev/shrimply/launcher/qml/Main.qml",
     ));
+    shrimply_application_qt::apply_windows_system_backdrop();
     let status = app.exec();
     drop(failed);
     ExitCode::from(status.clamp(0, 255) as u8)

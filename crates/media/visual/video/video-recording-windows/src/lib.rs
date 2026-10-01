@@ -301,7 +301,6 @@ fn record(
     let (frame_tx, frame_rx) = mpsc::sync_channel(WGC_FRAME_POOL_SIZE as usize);
     let frame_controls = controls.clone();
     let frame_readback = readback.clone();
-    let frame_device = capture_device.clone();
     let frame_pool_size = Arc::new(Mutex::new(size));
     let callback_pool_size = frame_pool_size.clone();
     let frame_token = pool
@@ -311,7 +310,6 @@ fn record(
                     let result = sender.ok().and_then(|pool| match pool.TryGetNextFrame() {
                         Ok(frame) => read_frame_and_resize(
                             pool,
-                            &frame_device,
                             &callback_pool_size,
                             &frame_readback,
                             &frame,
@@ -434,11 +432,13 @@ fn create_device() -> Result<(ID3D11Device, ID3D11DeviceContext, IDirect3DDevice
     .map_err(windows_error)?;
     let device = device.ok_or("D3D11 did not return a device")?;
     let context = context.ok_or("D3D11 did not return an immediate context")?;
-    let dxgi: IDXGIDevice = device.cast().map_err(windows_error)?;
-    let capture_device: IDirect3DDevice = unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi) }
-        .and_then(|value| value.cast())
-        .map_err(windows_error)?;
+    let capture_device = create_capture_device(&device).map_err(windows_error)?;
     Ok((device, context, capture_device))
+}
+
+fn create_capture_device(device: &ID3D11Device) -> WindowsResult<IDirect3DDevice> {
+    let dxgi: IDXGIDevice = device.cast()?;
+    unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi) }.and_then(|value| value.cast())
 }
 
 fn read_frame(
@@ -452,7 +452,6 @@ fn read_frame(
 
 fn read_frame_and_resize(
     pool: &Direct3D11CaptureFramePool,
-    device: &IDirect3DDevice,
     pool_size: &Mutex<SizeInt32>,
     readback: &Mutex<Readback>,
     frame: &windows::Graphics::Capture::Direct3D11CaptureFrame,
@@ -473,8 +472,12 @@ fn read_frame_and_resize(
         Ok(None)
     };
     if content.Width > 0 && content.Height > 0 {
+        let device = {
+            let readback = readback.lock().map_err(|_| E_ABORT)?;
+            create_capture_device(&readback.device)?
+        };
         pool.Recreate(
-            device,
+            &device,
             DirectXPixelFormat::B8G8R8A8UIntNormalized,
             WGC_FRAME_POOL_SIZE,
             content,

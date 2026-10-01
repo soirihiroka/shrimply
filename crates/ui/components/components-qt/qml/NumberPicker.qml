@@ -27,6 +27,7 @@ Item {
     signal fractionCommitted(var numerator, var denominator)
 
     implicitWidth: widthCharacters * 12
+    Layout.minimumWidth: implicitWidth
     implicitHeight: Math.max(displayButton.implicitHeight, editor.implicitHeight)
 
     function configureBackend() {

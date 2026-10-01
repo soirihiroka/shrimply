@@ -102,7 +102,6 @@ Item {
                     text: root.refreshed(backend.categoryLabel(index))
                     icon.name: categoryIconSource.length === 0 ? categoryIconName : ""
                     icon.source: categoryIconSource
-                    icon.color: palette.buttonText
                     display: AbstractButton.TextBesideIcon
                     onClicked: backend.activateCategory(index)
                 }

@@ -1275,6 +1275,78 @@ pub extern "C" fn shrimply_qt_preview_set_guides_visible(visible: bool) {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_pen_tool_active() -> bool {
+    SURFACES.with_borrow(|surfaces| {
+        surfaces
+            .as_ref()
+            .is_some_and(|surfaces| surfaces.preview.pen_tool_active())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_fill_tool_active() -> bool {
+    SURFACES.with_borrow(|surfaces| {
+        surfaces
+            .as_ref()
+            .is_some_and(|surfaces| surfaces.preview.fill_tool_active())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_transform_tool_active() -> bool {
+    SURFACES.with_borrow(|surfaces| {
+        surfaces
+            .as_ref()
+            .is_some_and(|surfaces| surfaces.preview.transform_tool_active())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_eraser_tool_active() -> bool {
+    SURFACES.with_borrow(|surfaces| {
+        surfaces
+            .as_ref()
+            .is_some_and(|surfaces| surfaces.preview.eraser_tool_active())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_select_pen_tool() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
+            surfaces.preview.select_pen_tool();
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_select_fill_tool() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
+            surfaces.preview.select_fill_tool();
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_select_transform_tool() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
+            surfaces.preview.select_transform_tool();
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_preview_set_eraser_tool_active(active: bool) {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
+            surfaces.preview.set_eraser_tool_active(active);
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn shrimply_qt_preview_navigation(
     width: f32,
     height: f32,

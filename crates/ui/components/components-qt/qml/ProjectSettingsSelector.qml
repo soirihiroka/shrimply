@@ -14,6 +14,7 @@ ColumnLayout {
     property string stagedFpsNumerator: initialFpsNumerator
     property string stagedFpsDenominator: initialFpsDenominator
     property bool initialized: false
+    property string pendingResetSourceKey: ""
     readonly property string sourceKey: initialWidth + ":" + initialHeight + ":"
         + initialFpsNumerator + ":" + initialFpsDenominator
     readonly property bool changed: stagedWidth !== initialWidth
@@ -39,15 +40,20 @@ ColumnLayout {
     onSourceKeyChanged: {
         if (!initialized)
             return
-        const expected = sourceKey
-        Qt.callLater(function() {
-            if (root.sourceKey === expected)
-                root.resetDraft()
-        })
+        pendingResetSourceKey = sourceKey
+        resetDraftTimer.restart()
     }
     Component.onCompleted: {
         initialized = true
         resetDraft()
+    }
+
+    Timer {
+        id: resetDraftTimer
+        interval: 0
+        repeat: false
+        onTriggered: if (root.sourceKey === root.pendingResetSourceKey)
+            root.resetDraft()
     }
 
     ControlRow {
@@ -109,7 +115,10 @@ ColumnLayout {
     Dialog {
         id: confirmation
         modal: true
-        anchors.centerIn: Overlay.overlay
+        readonly property Item windowsDialogAnchor: Overlay.overlay
+            || (root.Window.window ? root.Window.window.contentItem : root)
+        anchors.centerIn: Qt.platform.os === "windows"
+            ? windowsDialogAnchor : Overlay.overlay
         title: ComponentTranslations.text("Change Project Settings?")
         standardButtons: Dialog.NoButton
 
@@ -118,7 +127,23 @@ ColumnLayout {
                 "Changing the frame rate or resolution can affect timing, visual layout, and rendered output. Existing media and effects may no longer match the project."
             )
             wrapMode: Text.Wrap
-            width: Math.min(460, Overlay.overlay.width - 48)
+            width: Qt.platform.os === "windows"
+                ? Math.max(0, Math.min(460, confirmation.windowsDialogAnchor.width - 48))
+                : Math.min(460, Overlay.overlay.width - 48)
+        }
+
+        Binding on implicitHeight {
+            when: Qt.platform.os === "windows"
+            value: Math.max(
+                confirmation.implicitBackgroundHeight
+                    + confirmation.topInset + confirmation.bottomInset,
+                confirmation.topPadding
+                    + confirmation.bottomPadding
+                    + confirmation.contentItem.implicitHeight
+                    + (confirmation.implicitHeaderHeight > 0
+                        ? confirmation.implicitHeaderHeight + confirmation.spacing : 0)
+                    + (confirmation.implicitFooterHeight > 0
+                        ? confirmation.implicitFooterHeight + confirmation.spacing : 0))
         }
 
         footer: DialogButtonBox {

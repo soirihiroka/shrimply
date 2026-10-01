@@ -28,19 +28,21 @@
     <file alias="scalable/actions/go-up-symbolic.svg">../../../../assets/icons/go-up-symbolic.svg</file>
     <file alias="scalable/actions/insert-text-symbolic.svg">../../../../assets/icons/insert-text-symbolic.svg</file>
     <file alias="scalable/actions/info-outline-symbolic.svg">../../../../assets/icons/dialog-information-symbolic.svg</file>
-    <file alias="scalable/actions/internet-services-symbolic.svg">../../../../assets/icons/network-server-symbolic.svg</file>
+    <file alias="scalable/actions/internet-services-symbolic.svg">../../../../assets/icons/external-link-symbolic.svg</file>
     <file alias="scalable/actions/list-add-symbolic.svg">../../../../assets/icons/list-add-symbolic.svg</file>
     <file alias="scalable/actions/list-remove-symbolic.svg">../../../../assets/icons/list-remove-symbolic.svg</file>
     <file alias="scalable/actions/media-playback-pause.svg">../../../../assets/icons/media-playback-pause-symbolic.svg</file>
     <file alias="scalable/actions/media-playback-start.svg">../../../../assets/icons/media-playback-start-symbolic.svg</file>
     <file alias="scalable/actions/media-seek-backward.svg">../../../../assets/icons/media-seek-backward-symbolic.svg</file>
     <file alias="scalable/actions/media-seek-forward.svg">../../../../assets/icons/media-seek-forward-symbolic.svg</file>
+    <file alias="scalable/actions/metronome-symbolic.svg">../../../../assets/icons/metronome-symbolic.svg</file>
     <file alias="scalable/actions/object-select-symbolic.svg">../../components/components-qt/qml/icons/object-select.svg</file>
     <file alias="scalable/actions/overflow-menu.svg">../../../../assets/icons/view-more-symbolic.svg</file>
     <file alias="scalable/actions/pan-down-symbolic.svg">../../../../assets/icons/down-symbolic.svg</file>
     <file alias="scalable/actions/playback-speed-symbolic.svg">../../../../assets/icons/media-playback-start-symbolic.svg</file>
+    <file alias="scalable/actions/pointer-primary-click-symbolic.svg">icons/pointer-primary-click-qt-symbolic.svg</file>
     <file alias="scalable/actions/preferences-desktop-wallpaper-symbolic.svg">../../../../assets/icons/preferences-desktop-wallpaper-symbolic.svg</file>
-    <file alias="scalable/actions/preferences-desktop-theme.svg">../../../../assets/icons/appearance-symbolic.svg</file>
+    <file alias="scalable/actions/preferences-desktop-theme.svg">icons/appearance-qt-symbolic.svg</file>
     <file alias="scalable/actions/select-symbolic.svg">../../../../assets/icons/select-symbolic.svg</file>
     <file alias="scalable/actions/shapes-large-symbolic.svg">../../../../assets/icons/applications-graphics-symbolic.svg</file>
     <file alias="scalable/actions/selection-move-to-layer-above.svg">../../../../assets/icons/track-move-above-symbolic.svg</file>
@@ -68,5 +70,8 @@
     <file alias="scalable/actions/view-refresh-symbolic.svg">../../../../assets/icons/view-refresh-symbolic.svg</file>
     <file alias="scalable/actions/view-restore.svg">../../../../assets/icons/view-restore-symbolic.svg</file>
     <file alias="scalable/actions/window-close-symbolic.svg">../../../../assets/icons/window-close-symbolic.svg</file>
+  </qresource>
+  <qresource prefix="/qt/qml/dev/shrimply/application">
+    <file alias="shrimply-symbolic.svg">../../../../docs/source/_static/shrimply-symbolic.svg</file>
   </qresource>
 </RCC>

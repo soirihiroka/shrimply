@@ -73,7 +73,9 @@ private:
 namespace shrimply {
 
 FrameGraphItemBase::FrameGraphItemBase(QObject *parent)
-    : QQuickFramebufferObject(qobject_cast<QQuickItem *>(parent)) {}
+    : QQuickFramebufferObject(qobject_cast<QQuickItem *>(parent)) {
+    setActiveFocusOnTab(true);
+}
 
 QQuickFramebufferObject::Renderer *FrameGraphItemBase::createRenderer() const {
     const std::uintptr_t graph = frameGraphHandle();

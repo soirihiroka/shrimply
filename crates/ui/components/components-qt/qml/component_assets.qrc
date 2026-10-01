@@ -38,6 +38,7 @@
     <file alias="copy.svg">icons/copy.svg</file>
     <file alias="clear.svg">icons/clear.svg</file>
     <file alias="rotation.svg">../../../../../assets/icons/arrow3-up-symbolic.svg</file>
+    <file alias="arrow3-up-symbolic.svg">../../../../../assets/icons/arrow3-up-symbolic.svg</file>
     <file alias="blend-tool-symbolic.svg">../../../../../assets/icons/blend-tool-symbolic.svg</file>
     <file alias="info-outline-symbolic.svg">../../../../../assets/icons/info-outline-symbolic.svg</file>
     <file alias="playback-speed-symbolic.svg">../../../../../assets/icons/playback-speed-symbolic.svg</file>

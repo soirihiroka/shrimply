@@ -15,6 +15,7 @@ fn main() -> ExitCode {
     shrimply_components_qt::init();
     shrimply_export_qt::init();
     shrimply_inspector_qt::init();
+    shrimply_preferences_qt::init();
     let mut paths = std::env::args_os().skip(1);
     if paths.next().is_none() || paths.next().is_some() {
         eprintln!(
@@ -48,6 +49,7 @@ fn main() -> ExitCode {
     engine
         .as_mut()
         .load(&QUrl::from("qrc:/qt/qml/dev/shrimply/editor/qml/Main.qml"));
+    shrimply_application_qt::apply_windows_system_backdrop();
     let status = app.exec();
     drop(failed);
 

@@ -43,7 +43,16 @@ RowLayout {
     Item {
         id: holder
         Layout.fillWidth: true
-        Layout.minimumWidth: 0
+        Layout.minimumWidth: Qt.platform.os === "windows" ? visibleChildMinimumWidth : 0
+        readonly property real visibleChildMinimumWidth: {
+            let minimum = 0
+            for (let index = 0; index < children.length; ++index) {
+                const child = children[index]
+                if (child.visible)
+                    minimum = Math.max(minimum, child.Layout.minimumWidth || 0)
+            }
+            return minimum
+        }
         implicitHeight: childrenRect.height
         clip: true
         onChildrenChanged: {
