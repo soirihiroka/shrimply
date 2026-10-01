@@ -198,9 +198,7 @@ fn editor_view(
         ControlKind::InfoHeading | ControlKind::InfoArtwork | ControlKind::InfoLoading => {
             super::info::view(control, mtm)
         }
-        ControlKind::Performance => shrimply_components_appkit::live_performance(mtm)
-            .as_super()
-            .into(),
+        ControlKind::Performance => shrimply_components_appkit::live_performance(mtm),
         ControlKind::FontFamilies => super::fonts::view(control, context, mtm),
         ControlKind::ProjectSettings => project_settings(control, context, mtm),
         ControlKind::BeatDetection => beat_detection(control, context, mtm),

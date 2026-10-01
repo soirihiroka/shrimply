@@ -2,13 +2,14 @@ use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadOnly, sel};
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSColor, NSFont, NSFontAttributeName,
-    NSForegroundColorAttributeName, NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSMenu,
-    NSMenuItem, NSPopUpArrowPosition, NSPopUpButton, NSPopUpButtonCell, NSScrollElasticity,
-    NSScrollView, NSTextAlignment, NSTextField, NSView,
+    NSForegroundColorAttributeName, NSImage, NSMenu, NSMenuItem, NSPopUpArrowPosition,
+    NSPopUpButton, NSPopUpButtonCell, NSScrollElasticity, NSScrollView, NSTextAlignment,
+    NSTextField, NSView,
 };
 use objc2_foundation::{
     MainThreadMarker, NSMutableAttributedString, NSPoint, NSRect, NSSize, NSString, ns_string,
 };
+use shrimply_components_appkit::{EffectRole, EffectView};
 use shrimply_cross_ui_core::launcher;
 use shrimply_recent_projects::RecentProject;
 
@@ -95,15 +96,16 @@ impl List {
 
         for (index, project) in projects.iter().enumerate() {
             let row_y = height - ROW_HEIGHT - index as f64 * (ROW_HEIGHT + ROW_SPACING);
-            let card = NSGlassEffectView::initWithFrame(
-                NSGlassEffectView::alloc(mtm),
+            let effect = EffectView::new(
                 NSRect::new(
                     NSPoint::new(0.0, row_y),
                     NSSize::new(viewport.width, ROW_HEIGHT),
                 ),
+                EffectRole::RecentProject,
+                mtm,
             );
-            card.setStyle(NSGlassEffectViewStyle::Clear);
-            card.setCornerRadius(12.0);
+            effect.set_corner_radius(12.0);
+            let card = effect.view();
             card.setAutoresizingMask(
                 NSAutoresizingMaskOptions::ViewWidthSizable
                     | NSAutoresizingMaskOptions::ViewMinYMargin,
@@ -211,8 +213,8 @@ impl List {
                 .expect("project-options control must use an NSPopUpButtonCell")
                 .setArrowPosition(NSPopUpArrowPosition::NoArrow);
             row.addSubview(&options);
-            card.setContentView(Some(&row));
-            self.document.addSubview(&card);
+            effect.set_content_view(Some(&row));
+            self.document.addSubview(card);
         }
         Ok(projects)
     }

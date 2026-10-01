@@ -5,8 +5,8 @@ use objc2::rc::{Retained, Weak};
 use objc2::{ClassType, DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBezelStyle, NSButton, NSCellImagePosition, NSColor, NSColorWell,
-    NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSFont, NSGlassEffectView, NSImage,
-    NSImageView, NSLayoutAttribute, NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow,
+    NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSFont, NSImage, NSImageView,
+    NSLayoutAttribute, NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow,
     NSLayoutPriorityRequired, NSPasteboard, NSPasteboardTypeString, NSPopover, NSPopoverBehavior,
     NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField, NSSegmentedControl,
     NSStackView, NSStackViewDistribution, NSSwitch, NSTextAlignment, NSTextField,
@@ -1431,7 +1431,7 @@ pub fn choice_menu(
     StringSelector { view: row }
 }
 
-pub fn live_performance(mtm: MainThreadMarker) -> Retained<NSGlassEffectView> {
+pub fn live_performance(mtm: MainThreadMarker) -> Retained<NSView> {
     let card = crate::InspectorCard::without_reset("Live Performance", false, mtm);
     let rows = column_stack(4.0, mtm);
     rows.setHuggingPriority_forOrientation(

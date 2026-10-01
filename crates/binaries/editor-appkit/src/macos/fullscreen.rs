@@ -115,8 +115,10 @@ impl Editor {
                 .setTranslatesAutoresizingMaskIntoConstraints(false);
             layout
                 .controls_overlay
-                .setContentView(Some(&layout.playbar));
-            layout.preview_host.addSubview(&layout.controls_overlay);
+                .set_content_view(Some(&layout.playbar));
+            layout
+                .preview_host
+                .addSubview(layout.controls_overlay.view());
             for constraint in &layout.overlay_constraints {
                 constraint.setActive(true);
             }
@@ -146,8 +148,8 @@ impl Editor {
             for constraint in &layout.fullscreen_constraints {
                 constraint.setActive(false);
             }
-            layout.controls_overlay.setContentView(None);
-            layout.controls_overlay.removeFromSuperview();
+            layout.controls_overlay.set_content_view(None);
+            layout.controls_overlay.view().removeFromSuperview();
             layout.preview_host.removeFromSuperview();
             layout
                 .preview_layout
@@ -185,6 +187,7 @@ impl Editor {
             .get()
             .expect("layout installed")
             .controls_overlay
+            .view()
             .setHidden(false);
         self.update_fullscreen_caption_inset();
     }
@@ -197,7 +200,7 @@ impl Editor {
             state.pointer_in_controls = false;
         }
         let layout = self.ivars().layout.get().expect("layout installed");
-        layout.controls_overlay.setHidden(true);
+        layout.controls_overlay.view().setHidden(true);
         for canvas in &layout.canvases {
             canvas.set_caption_bottom_inset(0.0);
         }
@@ -205,10 +208,10 @@ impl Editor {
 
     fn update_fullscreen_caption_inset(&self) {
         let layout = self.ivars().layout.get().expect("layout installed");
-        let inset = if layout.controls_overlay.isHidden() {
+        let inset = if layout.controls_overlay.view().isHidden() {
             0.0
         } else {
-            layout.controls_overlay.frame().size.height as f32
+            layout.controls_overlay.view().frame().size.height as f32
         };
         for canvas in &layout.canvases {
             canvas.set_caption_bottom_inset(inset);
@@ -271,7 +274,7 @@ impl Editor {
         let controls_point = layout
             .playbar
             .convertPoint_fromView(event.locationInWindow(), None);
-        let in_controls = !layout.controls_overlay.isHidden()
+        let in_controls = !layout.controls_overlay.view().isHidden()
             && NSMouseInRect(
                 controls_point,
                 layout.playbar.bounds(),
@@ -305,7 +308,7 @@ impl Editor {
         if reveal {
             self.show_fullscreen_controls();
         } else if enter {
-            layout.controls_overlay.setHidden(false);
+            layout.controls_overlay.view().setHidden(false);
             self.update_fullscreen_caption_inset();
         }
         false

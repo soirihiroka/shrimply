@@ -3,14 +3,14 @@ use objc2::DefinedClass;
 use objc2::rc::Retained;
 use objc2::{MainThreadOnly, sel};
 use objc2_app_kit::{
-    NSBezelStyle, NSButton, NSColor, NSFont, NSGlassEffectView, NSGlassEffectViewStyle, NSImage,
-    NSLayoutAttribute, NSLayoutConstraint, NSLayoutConstraintOrientation,
-    NSLayoutPriorityDefaultLow, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider,
-    NSSplitViewController, NSSplitViewDividerStyle, NSSplitViewItem, NSStackView,
-    NSStackViewDistribution, NSTextField, NSUserInterfaceLayoutOrientation, NSView,
-    NSViewController,
+    NSBezelStyle, NSButton, NSColor, NSFont, NSImage, NSLayoutAttribute, NSLayoutConstraint,
+    NSLayoutConstraintOrientation, NSLayoutPriorityDefaultLow, NSProgressIndicator,
+    NSProgressIndicatorStyle, NSSlider, NSSplitViewController, NSSplitViewDividerStyle,
+    NSSplitViewItem, NSStackView, NSStackViewDistribution, NSTextField,
+    NSUserInterfaceLayoutOrientation, NSView, NSViewController,
 };
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString};
+use shrimply_components_appkit::{EffectRole, EffectView};
 
 const PREVIEW_LOADING_INDICATOR_SIZE: f64 = 16.0;
 const PLAYBACK_SLIDER_PADDING: f64 = 6.0;
@@ -42,7 +42,7 @@ pub struct Layout {
     pub preview_tools: Retained<NSStackView>,
     pub playbar: Retained<NSStackView>,
     pub fullscreen_button: Retained<NSButton>,
-    pub controls_overlay: Retained<NSGlassEffectView>,
+    pub controls_overlay: EffectView,
     pub overlay_constraints: Vec<Retained<NSLayoutConstraint>>,
     pub fullscreen_constraints: Vec<Retained<NSLayoutConstraint>>,
 }
@@ -117,12 +117,29 @@ pub fn set_toggle_selected(button: &NSButton, selected: bool, style: ToggleStyle
     button.setState(state);
 }
 
-fn circular_glass_button(button: &NSButton, mtm: MainThreadMarker) -> Retained<NSGlassEffectView> {
+fn circular_glass_button(button: &NSButton, mtm: MainThreadMarker) -> Retained<NSView> {
     button.setBordered(false);
-    let glass = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), NSRect::ZERO);
-    glass.setStyle(NSGlassEffectViewStyle::Regular);
-    glass.setCornerRadius(BUTTON_SIZE / 2.0);
-    glass.setContentView(Some(button));
+    let effect = EffectView::new(NSRect::ZERO, EffectRole::Controls, mtm);
+    effect.set_corner_radius(BUTTON_SIZE / 2.0);
+    let glass = effect.view();
+    button.setTranslatesAutoresizingMaskIntoConstraints(false);
+    effect.set_content_view(Some(button));
+    for constraint in [
+        button
+            .leadingAnchor()
+            .constraintEqualToAnchor(&glass.leadingAnchor()),
+        button
+            .trailingAnchor()
+            .constraintEqualToAnchor(&glass.trailingAnchor()),
+        button
+            .topAnchor()
+            .constraintEqualToAnchor(&glass.topAnchor()),
+        button
+            .bottomAnchor()
+            .constraintEqualToAnchor(&glass.bottomAnchor()),
+    ] {
+        constraint.setActive(true);
+    }
     glass
         .widthAnchor()
         .constraintEqualToConstant(BUTTON_SIZE)
@@ -131,7 +148,7 @@ fn circular_glass_button(button: &NSButton, mtm: MainThreadMarker) -> Retained<N
         .heightAnchor()
         .constraintEqualToConstant(BUTTON_SIZE)
         .setActive(true);
-    glass
+    glass.into()
 }
 
 pub fn stack(vertical: bool, mtm: MainThreadMarker) -> Retained<NSStackView> {
@@ -434,38 +451,37 @@ pub fn build(editor: &Editor) -> Layout {
     ] {
         constraint.setActive(true);
     }
-    let controls_overlay =
-        NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), NSRect::ZERO);
-    controls_overlay.setStyle(NSGlassEffectViewStyle::Regular);
-    controls_overlay.setCornerRadius(PLAYBAR_HEIGHT / 2.0);
-    controls_overlay.setContentHuggingPriority_forOrientation(
+    let controls_overlay = EffectView::new(NSRect::ZERO, EffectRole::Controls, mtm);
+    controls_overlay.set_corner_radius(PLAYBAR_HEIGHT / 2.0);
+    let overlay_view = controls_overlay.view();
+    overlay_view.setContentHuggingPriority_forOrientation(
         NSLayoutPriorityDefaultLow,
         NSLayoutConstraintOrientation::Horizontal,
     );
-    controls_overlay.setTranslatesAutoresizingMaskIntoConstraints(false);
+    overlay_view.setTranslatesAutoresizingMaskIntoConstraints(false);
     let overlay_constraints = vec![
         playbar
             .leadingAnchor()
-            .constraintEqualToAnchor(&controls_overlay.leadingAnchor()),
+            .constraintEqualToAnchor(&overlay_view.leadingAnchor()),
         playbar
             .trailingAnchor()
-            .constraintEqualToAnchor(&controls_overlay.trailingAnchor()),
+            .constraintEqualToAnchor(&overlay_view.trailingAnchor()),
         playbar
             .topAnchor()
-            .constraintEqualToAnchor(&controls_overlay.topAnchor()),
+            .constraintEqualToAnchor(&overlay_view.topAnchor()),
         playbar
             .bottomAnchor()
-            .constraintEqualToAnchor(&controls_overlay.bottomAnchor()),
-        controls_overlay
+            .constraintEqualToAnchor(&overlay_view.bottomAnchor()),
+        overlay_view
             .leadingAnchor()
             .constraintEqualToAnchor(&preview_host.leadingAnchor()),
-        controls_overlay
+        overlay_view
             .trailingAnchor()
             .constraintEqualToAnchor(&preview_host.trailingAnchor()),
-        controls_overlay
+        overlay_view
             .bottomAnchor()
             .constraintEqualToAnchor(&preview_host.bottomAnchor()),
-        controls_overlay
+        overlay_view
             .heightAnchor()
             .constraintEqualToConstant(PLAYBAR_HEIGHT),
     ];

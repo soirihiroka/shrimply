@@ -2,6 +2,7 @@
 
 mod action;
 mod controls;
+mod effect;
 pub mod export_dialog;
 mod font_picker;
 mod frame_graph;
@@ -19,6 +20,7 @@ pub use controls::{
     live_performance, modifier_menu, playback_shortcuts, row_stack, show_searchable_popover_at,
     split_button, switch_row,
 };
+pub use effect::{EffectRole, EffectView};
 pub use font_picker::{FontPicker, FontPickerBuilder, FontPickerItem};
 pub use frame_graph::{FrameGraph, SharedFrameGraphState};
 pub use host::ViewHost;

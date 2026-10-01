@@ -5,20 +5,20 @@ use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSAutoresizingMaskOptions,
-    NSBackingStoreType, NSColor, NSFont, NSGlassEffectView, NSGlassEffectViewStyle, NSScrollView,
-    NSStackView, NSTextField, NSTextView, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
-    NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
+    NSBackingStoreType, NSColor, NSFont, NSScrollView, NSStackView, NSTextField, NSTextView,
+    NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow, NSWindowStyleMask,
+    NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize,
     NSString, NSURL,
 };
 use shrimply_components_appkit::{
-    ColorPicker, ExpressionEditor, FrameGraph, InspectorCard, InspectorGraphProperty,
-    MultilineTextInput, Number2Picker, NumberPicker, ProgressButton, ProgressButtonState,
-    ReadOnlyField, SingleLineTextInput, StringChoice, StringSelector, Tabs, column_append,
-    column_stack, control_row, live_performance, modifier_menu, playback_shortcuts, row_stack,
-    split_button, switch_row,
+    ColorPicker, EffectRole, EffectView, ExpressionEditor, FrameGraph, InspectorCard,
+    InspectorGraphProperty, MultilineTextInput, Number2Picker, NumberPicker, ProgressButton,
+    ProgressButtonState, ReadOnlyField, SingleLineTextInput, StringChoice, StringSelector, Tabs,
+    column_append, column_stack, control_row, live_performance, modifier_menu, playback_shortcuts,
+    row_stack, split_button, switch_row,
 };
 use shrimply_components_core::layered::{
     LayeredEdit, LayeredPropertyController, component_changes,
@@ -100,13 +100,13 @@ pub fn run() {
     app.run();
 }
 
-fn window_shell(content: &NSView, mtm: MainThreadMarker) -> Retained<NSGlassEffectView> {
-    let glass = NSGlassEffectView::initWithFrame(
-        NSGlassEffectView::alloc(mtm),
+fn window_shell(content: &NSView, mtm: MainThreadMarker) -> Retained<NSView> {
+    let effect = EffectView::new(
         NSRect::new(NSPoint::ZERO, WINDOW_SIZE),
+        EffectRole::Window,
+        mtm,
     );
-    glass.setStyle(NSGlassEffectViewStyle::Regular);
-    glass.setTintColor(Some(&NSColor::windowBackgroundColor()));
+    let glass = effect.view();
     glass.setAutoresizingMask(
         NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
     );
@@ -145,8 +145,8 @@ fn window_shell(content: &NSView, mtm: MainThreadMarker) -> Retained<NSGlassEffe
     ] {
         constraint.setActive(true);
     }
-    glass.setContentView(Some(&root));
-    glass
+    effect.set_content_view(Some(&root));
+    glass.into()
 }
 
 fn build_showcase(mtm: MainThreadMarker) -> Tabs {

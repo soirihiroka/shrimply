@@ -390,7 +390,7 @@ impl State {
             InspectorCard::without_reset(&item.presentation.title, expanded, mtm)
         };
         self.focus.register(
-            card.view().as_super(),
+            card.view(),
             target,
             shrimply_inspector_core::item::ControlPreviewFocus::new(
                 &item.presentation.key,
@@ -480,7 +480,7 @@ impl State {
                 body.populate(mtm);
             }
         });
-        card.view().as_super().into()
+        card.view().into()
     }
 }
 

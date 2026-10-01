@@ -1,14 +1,13 @@
 use crate::{
-    FrameGraph, MultilineTextInput, action, column_append, column_stack, control_row_with_suffix,
-    inset, row_stack,
+    EffectRole, EffectView, FrameGraph, MultilineTextInput, action, column_append, column_stack,
+    control_row_with_suffix, inset, row_stack,
 };
 use block2::RcBlock;
+use objc2::MainThreadOnly;
 use objc2::rc::{Retained, Weak};
-use objc2::{ClassType, MainThreadOnly};
 use objc2_app_kit::{
-    NSAnimationContext, NSButton, NSButtonType, NSColor, NSControlStateValueOn, NSGlassEffectView,
-    NSGlassEffectViewStyle, NSImage, NSLayoutConstraint, NSStackView, NSTextAlignment, NSTextField,
-    NSView,
+    NSAnimationContext, NSButton, NSButtonType, NSColor, NSControlStateValueOn, NSImage,
+    NSLayoutConstraint, NSStackView, NSTextAlignment, NSTextField, NSView,
 };
 use objc2_foundation::{MainThreadMarker, NSEdgeInsets, NSRect, NSString};
 use shrimply_components_core::layered::LayeredPropertyController;
@@ -28,7 +27,7 @@ struct CardHeight {
 }
 
 pub struct InspectorCard {
-    root: Retained<NSGlassEffectView>,
+    root: Retained<NSView>,
     controls: Retained<NSStackView>,
     header_before_reset: Retained<NSStackView>,
     header_after_reset: Retained<NSStackView>,
@@ -55,9 +54,9 @@ impl InspectorCard {
         on_reset: Option<Box<dyn Fn()>>,
         mtm: MainThreadMarker,
     ) -> Self {
-        let root = NSGlassEffectView::initWithFrame(NSGlassEffectView::alloc(mtm), NSRect::ZERO);
-        root.setStyle(NSGlassEffectViewStyle::Regular);
-        root.setCornerRadius(8.0);
+        let effect = EffectView::new(NSRect::ZERO, EffectRole::Card, mtm);
+        effect.set_corner_radius(8.0);
+        let root = Retained::from(effect.view());
         let vertical = column_stack(0.0, mtm);
         let header = row_stack(4.0, mtm);
         let disclosure = unsafe {
@@ -227,7 +226,7 @@ impl InspectorCard {
             objc2_app_kit::NSLayoutPriorityRequired,
             objc2_app_kit::NSLayoutConstraintOrientation::Vertical,
         );
-        root.setContentView(Some(&vertical));
+        effect.set_content_view(Some(&vertical));
         for constraint in [
             vertical
                 .leadingAnchor()
@@ -264,7 +263,7 @@ impl InspectorCard {
     pub fn append_after_reset(&self, child: &NSView) {
         self.header_after_reset.addArrangedSubview(child);
     }
-    pub fn view(&self) -> &NSGlassEffectView {
+    pub fn view(&self) -> &NSView {
         &self.root
     }
 
@@ -274,7 +273,7 @@ impl InspectorCard {
 }
 
 fn animate_card_content(
-    root: Retained<NSGlassEffectView>,
+    root: Retained<NSView>,
     container: Retained<NSView>,
     heights: CardHeight,
     expanding: bool,
@@ -282,7 +281,7 @@ fn animate_card_content(
     animation_generation: Rc<Cell<u64>>,
     handlers: ExpansionHandlers,
 ) {
-    let layout = highest_ancestor(root.as_super());
+    let layout = highest_ancestor(&root);
     let current_height = if container.isHidden() {
         0.0
     } else {

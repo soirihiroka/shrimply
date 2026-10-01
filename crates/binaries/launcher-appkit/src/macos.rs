@@ -8,15 +8,16 @@ use objc2::{DefinedClass, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSAlert, NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate,
     NSAutoresizingMaskOptions, NSBackingStoreType, NSBezelStyle, NSButton, NSColor, NSControlSize,
-    NSFont, NSGlassEffectView, NSGlassEffectViewStyle, NSImage, NSMenu, NSMenuItem,
-    NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate, NSSavePanel, NSSearchField,
-    NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow, NSWindowDelegate,
-    NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle, NSWorkspace,
+    NSFont, NSImage, NSMenu, NSMenuItem, NSModalResponseOK, NSOpenPanel, NSOpenSavePanelDelegate,
+    NSSavePanel, NSSearchField, NSTextField, NSTitlebarSeparatorStyle, NSToolbar, NSView, NSWindow,
+    NSWindowDelegate, NSWindowStyleMask, NSWindowTitleVisibility, NSWindowToolbarStyle,
+    NSWorkspace,
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSProcessInfo,
     NSRect, NSSize, NSString, NSURL, ns_string,
 };
+use shrimply_components_appkit::{EffectRole, EffectView};
 use shrimply_cross_ui_core::launcher;
 use shrimply_recent_projects::{self as recent_projects, RecentProject};
 use std::cell::{OnceCell, RefCell};
@@ -105,12 +106,12 @@ define_class!(
             window.center();
             window.setDelegate(Some(ProtocolObject::from_ref(self)));
 
-            let root_glass = NSGlassEffectView::initWithFrame(
-                NSGlassEffectView::alloc(mtm),
+            let root_effect = EffectView::new(
                 NSRect::new(NSPoint::new(0.0, 0.0), WINDOW_SIZE),
+                EffectRole::Window,
+                mtm,
             );
-            root_glass.setStyle(NSGlassEffectViewStyle::Regular);
-            root_glass.setTintColor(Some(&NSColor::windowBackgroundColor()));
+            let root_glass = root_effect.view();
             root_glass.setAutoresizingMask(
                 NSAutoresizingMaskOptions::ViewWidthSizable
                     | NSAutoresizingMaskOptions::ViewHeightSizable,
@@ -124,16 +125,17 @@ define_class!(
                 NSAutoresizingMaskOptions::ViewWidthSizable
                     | NSAutoresizingMaskOptions::ViewHeightSizable,
             );
-            root_glass.setContentView(Some(&content));
+            root_effect.set_content_view(Some(&content));
 
-            let sidebar = NSGlassEffectView::initWithFrame(
-                NSGlassEffectView::alloc(mtm),
+            let sidebar_effect = EffectView::new(
                 NSRect::new(
                     NSPoint::new(0.0, 0.0),
                     NSSize::new(SIDEBAR_WIDTH, WINDOW_SIZE.height),
                 ),
+                EffectRole::Sidebar,
+                mtm,
             );
-            sidebar.setStyle(NSGlassEffectViewStyle::Regular);
+            let sidebar = sidebar_effect.view();
             sidebar.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
             let sidebar_content = NSView::initWithFrame(
                 NSView::alloc(mtm),
@@ -143,7 +145,7 @@ define_class!(
                 ),
             );
             sidebar_content.setAutoresizingMask(NSAutoresizingMaskOptions::ViewHeightSizable);
-            sidebar.setContentView(Some(&sidebar_content));
+            sidebar_effect.set_content_view(Some(&sidebar_content));
 
             let create = unsafe {
                 NSButton::buttonWithTitle_target_action(
@@ -188,7 +190,7 @@ define_class!(
             open.setControlSize(NSControlSize::Regular);
             open.setBezelStyle(NSBezelStyle::Push);
             sidebar_content.addSubview(&open);
-            content.addSubview(&sidebar);
+            content.addSubview(sidebar);
 
             let right_origin = SIDEBAR_WIDTH + CONTENT_MARGIN;
             let right_width = WINDOW_SIZE.width - right_origin - CONTENT_MARGIN;
@@ -276,7 +278,7 @@ define_class!(
                 .set(recent_list)
                 .unwrap_or_else(|_| panic!("recent list must only be created once"));
 
-            window.setContentView(Some(&root_glass));
+            window.setContentView(Some(root_glass));
             window.makeKeyAndOrderFront(None);
             window.makeFirstResponder(None);
             self.ivars()
