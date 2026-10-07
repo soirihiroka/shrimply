@@ -517,6 +517,10 @@ body[data-theme="dark"] .sphinx-tabs-tab[aria-selected="true"] {
   background-color: rgb(50, 50, 50);
 }
 
+.home-logo {
+  padding-top: 1.5rem;
+}
+
 /* Inline action icons in user instructions. */
 
 .action-icon {

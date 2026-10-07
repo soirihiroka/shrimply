@@ -4,6 +4,7 @@
    :alt: Shrimply logo
    :width: 128px
    :align: center
+   :class: home-logo
 
 Shrimply is a simple yet powerful cross-platform video editor.
 
