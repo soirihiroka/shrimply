@@ -1,5 +1,10 @@
 .. title:: Shrimply Documentation
 
+.. image:: _static/shrimply.svg
+   :alt: Shrimply logo
+   :width: 128px
+   :align: center
+
 Shrimply is a simple yet powerful cross-platform video editor.
 
 .. image:: img/editor-overview.png
