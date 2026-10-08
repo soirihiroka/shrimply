@@ -4,52 +4,42 @@ Export
 Export types
 ------------
 
-The export window can produce rendered video, captions, or JSON project data.
+The export window can write a rendered video, captions, or JSON project data.
 
 Captions and plain text
 -----------------------
 
-AppKit and GTK offer **Export Captions** with YouTube YTT, Advanced SubStation
-Alpha (ASS), SubRip (SRT), WebVTT (VTT), and plain text (TXT). Choose a format,
-then merge enabled caption tracks into one file or export each track separately.
-YTT and merging are the defaults. Qt retains its existing YTT export interface.
+macOS and the GTK app export YouTube YTT, Advanced SubStation Alpha (ASS),
+SubRip (SRT), WebVTT (VTT), and plain text (TXT). YTT is the default. Merge
+the enabled caption tracks into one file, or write each track on its own.
+Separate files are named ``name-track-N.extension``. The Qt app exports YTT.
 
-Captions are ordered by start time across the full timeline; disabled tracks and
-blank captions are excluded. Separate files use ``name-track-N.extension``.
-Existing output files require replacement confirmation. An empty export reports
-an error instead of creating empty files.
+Captions are ordered by start time. Disabled tracks and blank captions are
+skipped. Shrimply asks before replacing an existing file. If there is nothing
+to export, it stops and writes no file.
 
-TXT contains only caption text, with a blank line between captions. It has no
-timestamps, cue numbers, or formatting markup. Existing line breaks are preserved;
-ruby annotations are omitted while their base text is retained.
+TXT is the caption text, with a blank line between captions. Line breaks stay.
+Ruby is dropped and the base text stays.
 
-YTT preserves the existing YouTube styling, placement, ruby, and timed spans.
-ASS preserves emphasis, fonts, size, colors, opacity, placement, rotation, and
-timed text reveal using successive events. Edge effects are approximated with
-outlines and shadows; a background box takes precedence over an outline. ASS uses the project canvas
-dimensions and a 32-pixel base font scaled by each caption's font scale.
+YTT keeps YouTube styling, placement, ruby, and timed spans.
 
-VTT preserves emphasis, ruby, in-cue timestamps, supported CSS styling, and
-horizontal or vertical placement. SRT preserves emphasis and readable text;
-player support for emphasis varies. SRT omits layout and timed-span effects.
-In ASS and SRT, ruby is written as ``base (annotation)``. Unsupported vertical
-typography in ASS and rotated typography in VTT use horizontal text. Font
-availability and subtitle player capabilities affect final appearance.
+ASS keeps emphasis, fonts, size, colors, opacity, placement, rotation, and
+timed text reveals. Outlines and shadows stand in for edge effects. A
+background box wins over an outline. The file uses the project canvas size
+and a 32-pixel base font scaled by each caption's font scale.
 
-SRT and VTT use millisecond timestamps, while ASS uses centiseconds. Conversion
-uses rational arithmetic and truncates to the format's precision; positive cues
-remain at least one tick long. Overlapping captions remain separate cues.
+VTT keeps emphasis, ruby, in-cue timestamps, supported CSS styling, and
+horizontal or vertical placement.
+
+SRT keeps emphasis and the text. Ruby is written as ``base (annotation)``.
+Layout and timed spans are dropped.
+
+Vertical text in ASS, and rotated text in VTT, is written horizontally.
+Overlapping captions stay as separate cues.
 
 Video and GIF
 -------------
 
-Current video choices are H.264, H.265, and GIF. H.264 and H.265 require NVENC;
-no software encoder fallback is available. Available containers are MP4,
-Matroska, and GIF.
-
-Audio encoder choices include AAC, FDK AAC, and Opus. The compatible choices
-depend on the selected container.
-
-Before exporting, confirm the project canvas, frame rate, range, container,
-video codec, and audio codec. The native Shrimply compositor renders exports
-without recording the preview surface.
+Video export is H.264 or H.265 through NVENC, or GIF. There is no software
+encoder. Containers are MP4, Matroska, and GIF. Audio is AAC, FDK AAC, or
+Opus, depending on the container.

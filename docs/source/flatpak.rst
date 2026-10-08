@@ -14,8 +14,6 @@ Install Shrimply from the prerelease repository:
    $ flatpak install --user https://soirihiroka.github.io/shrimply/shrimply-prerelease.flatpakref
    $ flatpak run dev.shrimply.Shrimply
 
-Continue with :doc:`getting-started` to create a project and start editing.
-
 Update
 ------
 

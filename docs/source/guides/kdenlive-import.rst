@@ -1,15 +1,13 @@
 Kdenlive
 ========
 
-Shrimply reads Kdenlive's saved MLT XML and converts the active timeline to a
-new Shrimply project. This is a one-way conversion, not a Kdenlive playback
-engine. Only the features listed as **Supported** or **Approximate** below have
-dedicated conversion logic. Other Kdenlive features are not converted, even if
-Shrimply has a similar feature.
+Opening a ``.kdenlive`` file converts the active timeline into a new Shrimply
+project. This is a one-way conversion. Media stays at its original path, and
+proxy files are ignored. The source files have to remain where the project
+points.
 
-The importer prefers original media paths over proxy paths. It does not copy
-media into the Shrimply project, so the source files must remain available at
-their resolved paths.
+Only the **Supported** and **Approximate** rows below are converted. Anything
+else is left out, even when Shrimply has a similar feature.
 
 Status meanings
 ---------------
@@ -21,15 +19,13 @@ Status meanings
    * - Status
      - Meaning
    * - Supported
-     - Converted to the corresponding Shrimply data without a known loss in
-       the handled fields.
+     - The handled fields come across.
    * - Approximate
-     - Converted, but some Kdenlive behavior or data is simplified or lost.
+     - Comes across, with some detail simplified or dropped.
    * - Not imported
-     - No dedicated conversion exists. The content is omitted or left as a
-       generic media reference that Shrimply may not be able to play.
+     - Left out, or kept only as a media path Shrimply may not play.
    * - Import stops
-     - The whole import fails instead of producing an incomplete project.
+     - Import fails and writes nothing.
 
 Project and timeline
 --------------------
@@ -40,58 +36,53 @@ Project and timeline
 
    * - Kdenlive feature
      - Status
-     - Imported result or limitation
+     - What you get
    * - Frame rate and canvas size
      - Supported
-     - Read from the MLT profile.
-   * - Pixel/display aspect, scan mode, color metadata, profile name, and
-       audio settings
+     - Taken from the project profile.
+   * - Pixel aspect, scan mode, color metadata, profile name, and audio settings
      - Not imported
-     - Shrimply uses its defaults beyond frame rate and canvas size.
+     - Shrimply keeps its own defaults.
    * - Project name
      - Approximate
-     - Taken from the ``.kdenlive`` filename, not Kdenlive project metadata.
+     - The ``.kdenlive`` filename. Kdenlive's project title is ignored.
    * - Video and audio track order
      - Supported
-     - Black and timeline-preview tracks are discarded.
+     - Black tracks and timeline-preview tracks are dropped.
    * - Track enabled state
      - Supported
-     - Kdenlive's audio/video/both hide state becomes the Shrimply track state.
-   * - Track names, locks, height, collapse, targeting, and track-level effects
+     - Kdenlive's hide setting (audio, video, or both) becomes the track's on/off state.
+   * - Track names, locks, height, collapse, targeting, and track effects
      - Not imported
-     - Shrimply track defaults are used.
+     - Dropped.
    * - Gaps, clip positions, in/out trims, and source durations
      - Supported
-     - MLT ``blank`` and ``entry`` timing is converted at the project frame
-       rate.
-   * - Both internal lanes of one Kdenlive track
+     - Positions, gaps, and trims follow the project frame rate.
+   * - Both lanes of one Kdenlive track
      - Approximate
-     - Non-empty lanes become adjacent Shrimply tracks. Their mix/overlap
-       relationship is not recreated.
+     - Each non-empty lane becomes its own track. Mixes between lanes are dropped.
    * - Nested sequences
      - Approximate
-     - Reachable sequence tractors become folded sequences with video and
-       audio tracks. Unused bin sequences and nested-sequence captions are not
-       imported.
-   * - Mixes, crossfades, wipes, tractor transitions, and track compositions
+     - Sequences used on the timeline become folded sequences. Unused bin
+       sequences, and captions inside nested sequences, are left out.
+   * - Mixes, crossfades, wipes, and compositions
      - Not imported
-     - The importer does not read MLT ``transition`` elements.
-   * - Timeline markers (guides) and clip markers
+     - Dropped.
+   * - Timeline markers and clip markers
      - Approximate
-     - Become comment-track items with their text. Range durations are preserved;
-       points become one-frame ranges with draggable edges. Clip markers are
-       positioned using each timeline instance's trims and constant speed,
-       including reverse playback. Referenced nested-sequence markers are
-       projected into the active timeline. Overlapping comments use separate
-       tracks, and duplicate audio/video instances are combined. Category colors
-       map to Shrimply's named palette. Imported comments are independent notes;
-       they no longer follow subsequent edits to their source clips.
+     - Become comments with their text. Range length is kept. Point markers
+       become one-frame comments. Clip markers follow that copy's trims and
+       speed, including reverse. Markers inside a nested sequence show on the
+       active timeline. Overlapping comments go on separate tracks. A clip that
+       is both audio and video produces one comment. Category colors use
+       Shrimply's palette. The comments do not move if you later edit the
+       source clip.
    * - Clip groups, zones, notes, bin folders, thumbnails, and unused bin clips
      - Not imported
-     - These properties are not read.
+     - Dropped.
    * - Preview guides and editor UI state
      - Not imported
-     - Shrimply defaults are used.
+     - Dropped.
 
 Media and generators
 --------------------
@@ -102,77 +93,68 @@ Media and generators
 
    * - Kdenlive source
      - Status
-     - Imported result or limitation
-   * - File-backed video and audio
+     - What you get
+   * - Video and audio files
      - Supported
-     - Imported as a media reference with the selected video/audio stream.
-       Whether it can be decoded still depends on Shrimply's media support.
+     - Imported with the selected video or audio stream. Playback still depends
+       on Shrimply's media support.
    * - JPEG, PNG, WebP, BMP, TIFF, GIF, SVG, and PDF
      - Supported
-     - Classified as the corresponding Shrimply visual source. PDF size comes
-       from its first page.
+     - Imported as images. A PDF uses its first page.
    * - Krita and PSD layered images
      - Supported
-     - Layer paths are imported and nearest-neighbor sampling is selected.
-   * - Constant speed changes, reverse playback, and pitch preservation
+     - Layers are imported. Scaling uses nearest-neighbor.
+   * - Constant speed, reverse playback, and pitch preservation
      - Supported
-     - Kdenlive ``warp_speed`` and ``warp_pitch`` are converted, including
-       negative speed and reverse clip trims.
-   * - Variable-speed time remapping
+     - Speed, reverse, and pitch lock come across, including reversed trims.
+   * - Variable speed (time remap)
      - Not imported
-     - Kdenlive ``timeremap`` links are not converted.
-   * - Source dimensions, stream selection, and media autorotation
+     - Speed ramps are left out.
+   * - Source dimensions, stream selection, and media rotation
      - Supported
-     - Imported when the corresponding producer metadata is present.
+     - Imported when the file records them.
    * - Proxies
      - Approximate
-     - The importer prefers ``kdenlive:originalurl`` and does not retain the
-       proxy relationship.
-   * - Solid color clips (``color`` or ``colour``)
+     - The original file is used. The proxy is ignored.
+   * - Solid color
      - Supported
-     - ``0xRRGGBBAA`` is converted to a Shrimply solid-color background,
-       including alpha.
-   * - Color Bars generator (``frei0r.test_pat_B``)
+     - Imported as a solid background, including transparency.
+   * - Color bars
      - Approximate
-     - A linked generator ``.mlt`` file is inspected and converted to
-       Shrimply's static Test Pattern. Kdenlive's eight bar types do not have
-       exact Shrimply equivalents, so the selected type is not preserved.
-   * - White Noise generator (``noise``)
+     - Imported as Shrimply's static Test Pattern. Kdenlive's bar styles do
+       not match, so the chosen style is dropped.
+   * - White noise
      - Approximate
-     - A linked generator ``.mlt`` file is converted to Shrimply white-noise
-       video and audio generators. The random algorithm, video range/cadence,
-       stereo correlation, and trimmed-generator start are not sample-exact.
-   * - Counter generator (``count``), including its optional beep
+     - Imported as Shrimply white-noise video and audio. The noise pattern and
+       stereo image are not reproduced, and a trimmed start can be off.
+   * - Counter, including its beep
      - Approximate
-     - Direction, all five text styles, drop-frame counting, trims, and the
-       gray background become animated Shrimply text. ``2pop`` and ``frame0``
-       tones become separate one-frame 1 kHz sine-generator items. Typeface
-       rendering can differ, and the film-leader rings, crosshair, and sweep
-       used by the ``clock`` background are omitted.
-   * - Other MLT generators and playlists
+     - Direction, text style, drop-frame counting, trims, and the gray
+       background become animated text. Beep tones become separate one-frame
+       1 kHz sine clips. The typeface can differ. The clock background's rings,
+       crosshair, and sweep are left out.
+   * - Other generators and playlists
      - Not imported
-     - They remain generic media references without native conversion.
-   * - Kdenlive title clips and title templates
+     - Left as media paths Shrimply may not play.
+   * - Title clips and title templates
      - Not imported
-     - ``kdenlivetitle`` content is not parsed into Shrimply text or shapes.
+     - Left out.
    * - Image sequences and slideshows
      - Not imported
-     - Their producer-specific sequence behavior is not converted.
+     - Slideshow timing is left out.
    * - Missing-media placeholders
      - Not imported
-     - ``_placeholder`` and ``_missingsource`` are not replaced with invented
-       visuals; the importer still follows the saved media path.
+     - Stay missing. Shrimply keeps the saved path.
 
-Color Bars, White Noise, and Counter clips created through Kdenlive's generator
-dialog are normally stored in separate ``.mlt`` files. Those files must be
-readable while the project is imported. After a recognized generator is
-converted, the Shrimply item no longer depends on that generator file.
+Color bars, white noise, and counter clips are usually stored in separate
+``.mlt`` files next to the project. Those files have to be readable during
+import. After conversion, the Shrimply item no longer needs the generator file.
 
 Video effects
 -------------
 
-Only enabled filters stored on a timeline clip entry are considered. Producer,
-bin, track, and sequence effects are not imported.
+Only enabled effects on a timeline clip are imported. Effects on the bin clip,
+the track, or the sequence are skipped.
 
 .. list-table::
    :widths: 30 16 54
@@ -180,60 +162,58 @@ bin, track, and sequence effects are not imported.
 
    * - Kdenlive effect
      - Status
-     - Imported result or limitation
-   * - Transform (``qtblend``)
+     - What you get
+   * - Transform
      - Approximate
-     - Position, scale, non-uniform distortion, rotation, anchor, opacity, and
-       their handled keyframes are converted. Stacked transforms are matrix
-       composed; resulting shear and intermediate clipping can be approximate.
-   * - Normal and Screen clip blend modes
+     - Position, scale, rotation, anchor, opacity, and their keyframes come
+       across, including non-uniform scale. Stacked transforms are combined.
+       Shear, and clipping in the middle of a stack, can be off.
+   * - Normal and Screen blend modes
      - Supported
-     - Other Kdenlive blend modes become Normal.
-   * - Crop (``qtcrop``)
+     - Other blend modes become Normal.
+   * - Crop
      - Approximate
-     - Animated rectangular crop is converted. Rounded, circular, or colored
-       padding is reduced to a rectangle; crop after rotation/shear can become
-       source-aligned.
-   * - Gaussian Blur (``avfilter.gblur``)
+     - An animated rectangular crop comes across. Rounded, circular, or colored
+       padding becomes a plain rectangle. A crop after rotation can follow the
+       unrotated source.
+   * - Gaussian blur
      - Approximate
-     - RGB-only and alpha-only selections are preserved. Other partial plane
-       selections are applied to all RGBA channels.
-   * - Chroma Key (``chroma``)
+     - Blurring only color, or only alpha, is kept. Any other channel choice
+       blurs the whole image.
+   * - Chroma key
      - Approximate
-     - Key color and animated variance/similarity are converted. Other
-       Shrimply settings use defaults, and an animated key color is not kept as
-       a color animation.
-   * - Saturation (``frei0r.saturat0r``)
+     - Key color, variance, and similarity come across, including animation on
+       variance and similarity. An animated key color becomes one color. Other
+       key settings use Shrimply's defaults.
+   * - Saturation
      - Supported
-     - Converted to animated Shrimply color correction.
-   * - Hue Shift (``frei0r.hueshift0r``)
+     - Imported as color correction, including animation.
+   * - Hue shift
      - Supported
-     - Converted to animated Shrimply color correction.
-   * - Lift/Gamma/Gain (``lift_gamma_gain``)
+     - Imported as color correction, including animation.
+   * - Lift / gamma / gain
      - Approximate
-     - Red-channel values become Shrimply brightness, gamma, and value.
-       Per-channel differences are lost.
-   * - Fade from/to black
+     - The red channel becomes brightness, gamma, and value. Differences
+       between channels are dropped.
+   * - Fade from or to black
      - Supported
-     - Converted to Shrimply clip intro/outro transitions.
-   * - Selective Color Correction (``avfilter.colorcorrect``)
+     - Imported as a clip fade in or fade out.
+   * - Selective color correction
      - Not imported
-     - Explicitly skipped.
+     - Dropped.
    * - Every other video effect
      - Not imported
-     - The importer uses the allowlist above and skips other identified entry
-       filters.
+     - Dropped.
 
 Effect masks
 ------------
 
-Kdenlive Alpha Shapes masks are **Approximate**. Rectangle and ellipse shapes
-with the handled alpha operations can mask Crop, Gaussian Blur, Chroma Key,
-Saturation, Hue Shift, and Lift/Gamma/Gain. A group containing several effects
-is represented by applying the same Shrimply mask to each modifier.
+Rectangle and ellipse Alpha Shapes masks are **Approximate**. They can cover
+Crop, Gaussian Blur, Chroma Key, Saturation, Hue Shift, and Lift / Gamma /
+Gain. A group of those effects shares one Shrimply mask.
 
-Other mask types, unsupported shapes or alpha operations, nested or malformed
-mask groups, and groups containing any other effect are not imported.
+Other mask shapes, other mask modes, nested groups, and groups that contain
+any other effect are left out.
 
 Audio effects
 -------------
@@ -244,22 +224,22 @@ Audio effects
 
    * - Kdenlive audio feature
      - Status
-     - Imported result or limitation
-   * - Clip fade in/out
+     - What you get
+   * - Clip fade in and fade out
      - Supported
-     - Converted to Shrimply audio intro/outro transitions.
-   * - Constant Gain (``gain``)
+     - Imported as audio fades.
+   * - Constant gain
      - Supported
-     - Linear gain is converted to decibels.
-   * - Animated Volume (``volume``)
+     - Imported as a decibel Gain modifier.
+   * - Animated volume
      - Supported
-     - Kdenlive level keyframes are converted to a Shrimply Gain modifier.
+     - Level keyframes become a Gain modifier.
    * - Every other audio effect
      - Not imported
-     - Other identified entry filters are skipped.
-   * - Track-level audio filters and mixing
+     - Dropped.
+   * - Track audio effects and mixing
      - Not imported
-     - Only filters attached directly to clip entries are considered.
+     - Left out. Only effects on the clip are imported.
 
 Captions
 --------
@@ -270,42 +250,28 @@ Captions
 
    * - Kdenlive caption feature
      - Status
-     - Imported result or limitation
-   * - Active-sequence ASS subtitle files
+     - What you get
+   * - Subtitles on the active sequence (ASS)
      - Approximate
-     - Dialogue timing, text, explicit line breaks, and hard spaces are
-       imported into caption tracks.
-   * - Subtitle enabled/hidden state
+     - Timing, text, line breaks, and hard spaces come across.
+   * - Hidden subtitles
      - Supported
-     - A global hidden or disabled ASS/subtitles filter disables imported
-       caption tracks.
-   * - ASS fonts, outlines, positioning, and other styling
+     - A hidden subtitle track stays disabled.
+   * - Fonts, outlines, position, and other styling
      - Approximate
-     - Replaced with one centered-bottom Shrimply caption style.
-   * - Nested-sequence captions and other subtitle representations
+     - Replaced with one centered caption at the bottom.
+   * - Captions in nested sequences, and other subtitle formats
      - Not imported
-     - Only the active sequence's subtitle-file list is read.
+     - Left out.
 
 When import stops
 -----------------
 
-The importer deliberately fails instead of saving a partly parsed project when
-required structure or handled data is invalid. This includes malformed XML;
-missing or invalid profile values, active-sequence UUIDs, tracks, producers, or
-timing; malformed values in a supported effect; and unreadable or malformed
-PDF, layered-image, subtitle, or recognized external generator files.
+Import writes nothing if the project structure is invalid, or if a supported
+effect or an attached file it needs is malformed. That includes a broken
+project file, a missing frame rate or timeline, bad values in a supported
+effect, and an unreadable PDF, layered image, subtitle file, or generator
+file.
 
-An ordinary missing media file is not opened during conversion, so it may be
-reported only when Shrimply later tries to use that media.
-
-Marker format references
-------------------------
-
-The marker conversion follows Kdenlive's
-`MarkerListModel serialization <https://github.com/KDE/kdenlive/blob/master/src/bin/model/markerlistmodel.cpp>`_:
-``pos`` and ``duration`` are frame counts, ``comment`` is the content, and
-``type`` identifies a category. Clip markers are saved in ``kdenlive:markers``;
-timeline markers use ``kdenlive:sequenceproperties.guides``. Category colors
-come from ``kdenlive:docproperties.guidesCategories``. The
-`Kdenlive marker manual <https://docs.kdenlive.org/en/cutting_and_assembling/guides.html>`_
-explains point and range markers.
+A missing media file is not an error during import. It shows up when Shrimply
+tries to play that clip.

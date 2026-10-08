@@ -1,27 +1,21 @@
 Voice Conversion
 ================
 
-The :guilabel:`Voice Change` audio modifier changes recorded speech with an
-installed Pneuma voice model.
+The :guilabel:`Voice Change` modifier replaces recorded speech with an
+installed Pneuma voice.
 
 Install voice models
 --------------------
 
-For a local server, place ``.safetensors`` or legacy ``.pth`` models in
-``server/models``. You can choose a different directory with
-``SHRIMPLY_PNEUMA_MODEL_DIR``.
+For a local server, put ``.safetensors`` or ``.pth`` models in
+``server/models``. ``SHRIMPLY_PNEUMA_MODEL_DIR`` picks another directory.
 
-When using Compose, place models in ``server/.docker/pneuma/models``. Only
-installed models appear in Shrimply; training a voice model is not part of the
-server.
+With Docker Compose, put models in ``server/.docker/pneuma/models``.
 
 Change a voice
 --------------
 
-#. Select an audio clip containing speech.
-#. Add the :guilabel:`Voice Change` audio modifier.
-#. Choose one of the models reported by the compute server.
-#. Preview the clip and adjust pitch, speed, or the F0 method if needed.
-
-Keep :guilabel:`Maintain pitch while changing speed` enabled when changing
-speed should not also shift the voice's pitch.
+#. Select an audio clip that contains speech.
+#. Add the :guilabel:`Voice Change` modifier.
+#. Choose a model from the server.
+#. Preview the clip and adjust pitch, speed, or the F0 method if you need to.

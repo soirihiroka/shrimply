@@ -14,10 +14,8 @@ Create a project
 
 Start Shrimply without a project path to open the launcher. Select
 :guilabel:`Create Project`, then choose a name, canvas width, canvas height,
-and frame rate. New projects begin with a caption track, a video track, and an
-audio track. They use the ``.shrimp`` extension.
-
-The launcher also shows recent projects and can filter them by name or path.
+and frame rate. A new project is a ``.shrimp`` file and starts with a caption
+track, a video track, and an audio track.
 
 Open a project
 --------------
@@ -25,11 +23,9 @@ Open a project
 Select :guilabel:`Open Project` to open a ``.shrimp``, ``.json``, ``.otio``,
 or ``.kdenlive`` project.
 
-Linux installations register ``.shrimp`` files as Shrimply projects and provide
-a document icon. In your file manager, use :guilabel:`Open With` to select
-Shrimply or Shrimply Qt. Set your preferred application as the default in the
-file manager to open projects by double-clicking. Installation preserves your
-existing default application.
+On Linux, double-click a ``.shrimp`` file to open it. If a file manager already
+has a different default, use :guilabel:`Open With` and pick Shrimply or
+Shrimply Qt.
 
 Build a timeline
 ----------------
@@ -38,7 +34,7 @@ Open the application menu and choose :menuselection:`New Track` to add a
 caption, video, or audio track. Drop or paste media onto a compatible track,
 then select a clip to edit it in the inspector.
 
-Useful timeline shortcuts include:
+Timeline shortcuts:
 
 * :kbd:`Space`: play or pause
 * :kbd:`S`: split every clip at the playhead

@@ -51,8 +51,8 @@ Import media
 Move the playhead to the desired start time, then select the destination track.
 Click |add| **Add** in that track's controls and choose |import| **Import
 Media…** or **Import Captions…**. The file is inserted at the playhead on the
-track whose menu you opened. If that track is part of a multi-track selection,
-the import targets all selected tracks of the same type.
+track whose menu you opened. If several tracks of that type are selected, the
+file goes on all of them.
 
 Video and audio files can only be imported to video or audio tracks. WebVTT
 files can only be imported to caption tracks. MKV and WebM imports ask for
@@ -143,9 +143,6 @@ On an audio track, the menu provides:
    * - |audio-generator|
      - **Audio Generator** creates a procedural audio item configured in the
        inspector.
-
-Text to Speech and Video Generation are backed by AI models and require the
-:doc:`Shrimply server <../server/index>`.
 
 Record content
 --------------

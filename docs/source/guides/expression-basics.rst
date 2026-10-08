@@ -1,14 +1,12 @@
 Expression basics
 =================
 
-Expressions calculate a property value with a small `Rhai script
-<https://rhai.rs/book/language/>`__. Use them for motion, repetition,
-audio-reactive effects, and other values that should change automatically.
+An expression is a small `Rhai <https://rhai.rs/book/language/>`__ script on a
+property.
 
-Enable an expression with the code button beside a supported property. The
-normal or keyframed value is calculated first, then made available to the
-expression as ``value``. The last value in the script becomes the property's
-result.
+Enable one with the code button beside the property. The current value,
+keyframed or not, is available as ``value``. The last value in the script is
+the result.
 
 For example, this makes a number pulse over time:
 
@@ -76,12 +74,7 @@ Project values
    available. ``source_width`` and ``source_height`` are aliases.
 
 ``seed``
-   A deterministic integer seed for the current item and time.
-
-Time, frame rate, and dimensions use exact ``Fraction`` values. Create one
-with ``Fraction(value)`` or ``Fraction(numerator, denominator)``. Fractions
-support normal arithmetic and comparisons; ``abs(value)`` returns an absolute
-value and ``int(value)`` converts one to an integer.
+   A stable integer seed for this item at this time.
 
 Functions
 ---------
@@ -93,7 +86,8 @@ Math
 use a different input: ``sin(value)``, ``cos(value)``, or ``tan(value)``.
 
 The other math helpers are ``sqrt(value)``, ``pow(value, power)``,
-``clamp(value, low, high)``, and ``lerp(a, b, progress)``.
+``clamp(value, low, high)``, ``lerp(a, b, progress)``, ``abs(value)``, and
+``int(value)``.
 
 ``random()`` returns a deterministic random value. ``shake()`` returns smooth
 noise based on time; use ``shake(phase)`` to control its speed and

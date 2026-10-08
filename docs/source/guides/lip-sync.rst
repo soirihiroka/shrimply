@@ -1,22 +1,16 @@
 Lip sync
 ========
 
-Shrimply includes a Rust port of the parts of `Rhubarb Lip Sync
-<https://github.com/DanielSWolf/rhubarb-lip-sync#mouth-shapes>`__ needed to
-automatically match a character's mouth shape to speech in your project audio.
+``mouth()`` matches a character's mouth to speech, using the shapes from
+`Rhubarb Lip Sync <https://github.com/DanielSWolf/rhubarb-lip-sync#mouth-shapes>`__.
 
 Using mouth shapes in expressions
 ---------------------------------
 
-``mouth()`` returns the mouth shape for the master audio mix at the
-current project time. ``mouth(1)`` returns the shape for audio track 1,
-and multiple zero-based track indices can be selected with calls such as
-``mouth(0, 2)``.
+``mouth()`` uses the master mix at the current time. ``mouth(1)`` uses audio
+track 1. ``mouth(0, 2)`` uses those tracks.
 
-See :doc:`expression-basics` for the rest of the expression API, including
-property values, time, math, color, and audio-level functions.
-
-The result is one of the mouth shapes below:
+The result is one of these shapes:
 
 .. list-table::
    :widths: 10 30 60
@@ -91,12 +85,8 @@ Expressions can branch on the result:
        "X" => 8,
    }
 
-When analysis runs
-------------------
-
-Preview analysis happens in the background, so ``mouth()`` can briefly report
-that analysis is still loading. Export waits for analysis to finish. ``X``
-represents the rest shape. Loading and errors are reported separately.
+While a preview is still analyzing, ``mouth()`` reports that it is loading.
+Export waits until analysis finishes.
 
 The mouth-shape images are from the Rhubarb Lip Sync README and are used under
 its MIT License.

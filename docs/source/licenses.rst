@@ -40,13 +40,11 @@ the `server third-party notices
 MiniMax H3
 ----------
 
-The MiniMax H3 model weights and related upstream materials are provided under
-the **MiniMax H3 Community License Agreement**, separately from Shrimply and
-the compute server. The agreement limits use to its defined Applicable
-Territory, which excludes the European Union, the United Kingdom, South Korea,
-and the United States, and includes additional use, distribution, and
-commercial terms. Review the full agreement before downloading or using the
-model; Shrimply's GPL and AGPL licenses do not replace its terms.
+The MiniMax H3 model weights are under the **MiniMax H3 Community License
+Agreement**. Use is limited to its Applicable Territory, which excludes the
+European Union, the United Kingdom, South Korea, and the United States. The
+agreement has further limits on use, distribution, and commercial use. Read it
+before downloading the model.
 
 See the `upstream MiniMax H3 license
 <https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE>`__.
@@ -56,11 +54,9 @@ See the `upstream MiniMax H3 license
 IndexTTS
 --------
 
-IndexTTS 2 and 2.5 are provided under the **bilibili Model Use License
-Agreement**, separately from Shrimply and the compute server. Review the full
-agreement before downloading or using the models. Shrimply keeps a copy with
-its IndexTTS runtime and records the models in the server's third-party
-notices.
+IndexTTS 2 and 2.5 are under the **bilibili Model Use License Agreement**.
+Read it before downloading the models. Shrimply keeps a copy with its IndexTTS
+runtime and lists the models in the server's third-party notices.
 
 See the `upstream IndexTTS license
 <https://github.com/index-tts/index-tts/blob/main/LICENSE>`__, Shrimply's

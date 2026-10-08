@@ -1,8 +1,7 @@
 3D Camera Tracking
 ==================
 
-Camera tracking analyzes a visual track and creates a camera path for a 3D
-scene. Use it when 3D content should follow the movement of recorded footage.
+Camera tracking reads a visual track and builds a camera path for a 3D scene.
 
 Track a camera
 --------------
@@ -19,12 +18,10 @@ Available methods
 -----------------
 
 ``COLMAP``
-   Offers quality and camera-model controls in addition to the analysis frame
-   rate.
+   Extra controls for quality and the camera model.
 
 ``VGGT-SLAM``
-   Appears only when it is available on the selected compute device.
+   A second tracker.
 
-Using a lower analysis frame rate reduces the number of frames processed but
-can miss fast camera movement. If the source or settings change, select
-:guilabel:`Analyze Again` to replace the cached path.
+A lower analysis frame rate is faster and can miss quick camera moves. If the
+footage or the settings change, select :guilabel:`Analyze Again`.

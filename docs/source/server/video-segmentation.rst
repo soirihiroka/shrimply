@@ -2,8 +2,7 @@ Video Segmentation
 ==================
 
 The :guilabel:`Segment Anything 2` modifier follows a subject through a video
-and turns it into a mask. This is useful when an effect or composite should
-apply to a moving subject without drawing the mask on every frame.
+and makes a mask.
 
 Create a mask
 -------------
@@ -20,14 +19,10 @@ Create a mask
 Adjust the result
 -----------------
 
-Use :guilabel:`Threshold` to change the mask boundary and
-:guilabel:`Edge softness` to feather it. :guilabel:`Invert` swaps the selected
-and unselected regions.
+:guilabel:`Threshold` moves the mask edge. :guilabel:`Edge softness` feathers
+it. :guilabel:`Invert` swaps inside and outside.
 
-Changing a prompt makes the existing analysis out of date. Select
-:guilabel:`Reanalyze` after moving points, changing the box, or selecting a
-different SAM 2 model.
+After you move a point, change the box, or pick another model, select
+:guilabel:`Reanalyze`.
 
-Shrimply offers SAM 2.1 tiny, small, base-plus, and large variants when they
-are available from the server. Larger variants generally trade more resource
-use for model capacity.
+The server can offer SAM 2.1 tiny, small, base-plus, and large.

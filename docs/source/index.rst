@@ -19,19 +19,18 @@ Shrimply is a simple yet powerful cross-platform video editor.
 Installation
 ------------
 
-* :doc:`Flatpak <flatpak>` covers installing and updating the Linux package.
+* :doc:`Flatpak <flatpak>`
 
 Get started
 -----------
 
-* :doc:`Getting started <getting-started>` explains how to launch Shrimply,
-  create a project, edit the timeline, and export it.
-* :doc:`Editor <guides/editor>` describes the main workspaces and shortcuts.
+* :doc:`Getting started <getting-started>`
+* :doc:`Editor <guides/editor>`
 
 License
 -------
 
-* :doc:`Licenses <licenses>` explains project and third-party licensing.
+* :doc:`Licenses <licenses>`
 
 .. toctree::
    :maxdepth: 2
@@ -54,9 +53,7 @@ License
    :caption: Editing
 
    guides/media
-   guides/effects
    guides/expressions
-   guides/audio-captions
    guides/export
 
 .. toctree::

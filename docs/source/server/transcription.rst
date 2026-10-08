@@ -1,30 +1,27 @@
 Transcription
 =============
 
-Transcription turns selected audio into timed captions on a new caption track.
+Selected audio becomes timed captions on a new caption track.
 
 Create captions
 ---------------
 
 #. Select one or more audio clips, or select an audio track.
 #. Open the timeline context menu and choose :guilabel:`Transcribe`.
-#. Choose one of the speech-to-text models offered by the compute server.
-#. Select :guilabel:`Transcribe` and wait for the operation to finish.
+#. Choose a speech-to-text model. The server can offer Parakeet, Qwen3 ASR,
+   Whisper, and Distil-Whisper.
+#. Select :guilabel:`Transcribe` and wait for it to finish.
 
-The current server can offer Parakeet, Qwen3 ASR, Whisper, and Distil-Whisper.
-If none appear, check the selected server in
+If no models appear, check the server in
 :menuselection:`Preferences --> External`.
 
 Follow edit points
 ------------------
 
-Keep :guilabel:`Follow cuts` enabled when caption boundaries should follow
-nearby audio or video edits. :guilabel:`Snap source` chooses which cuts to
-follow, while :guilabel:`Snap tolerance` controls how close a generated
-boundary must be before it moves to a cut.
+:guilabel:`Follow cuts` snaps a caption boundary to a nearby edit.
+:guilabel:`Snap source` chooses which edits count.
+:guilabel:`Snap tolerance` is how close the boundary has to be.
 
-The defaults are suitable for most projects. Disable :guilabel:`Follow cuts`
-when you want the transcription model's continuous timing without edit-based
-chunking.
+Turn :guilabel:`Follow cuts` off to keep the model's own timing.
 
-If no speech is detected, Shrimply leaves the project unchanged.
+If no speech is found, the project stays unchanged.
