@@ -19,17 +19,6 @@ $revision = $configuration.'builtin-baseline'
 if (!$revision -or $revision -notmatch '^[0-9a-f]{40}$') {
     throw "The FFmpeg vcpkg manifest does not contain a pinned baseline"
 }
-$ffmpegDependencies = @($configuration.dependencies | Where-Object { $_.name -eq "ffmpeg" })
-if ($ffmpegDependencies.Count -ne 1) {
-    throw "The FFmpeg vcpkg manifest must contain exactly one FFmpeg dependency"
-}
-$ffmpegDependency = $ffmpegDependencies[0]
-if ($ffmpegDependency.'default-features' -ne $false) {
-    throw "The FFmpeg vcpkg dependency must disable default features"
-}
-$ffmpegFeatures = @("core") + @($ffmpegDependency.features)
-$ffmpegPackage = "ffmpeg[$($ffmpegFeatures -join ',')]:x64-windows"
-
 if (!$VcpkgRoot) {
     $VcpkgRoot = Join-Path $root "target/windows-deps/vcpkg"
 }
@@ -72,17 +61,11 @@ $env:VCPKG_ROOT = $VcpkgRoot
 $env:VCPKGRS_DYNAMIC = "1"
 $env:VCPKG_BINARY_SOURCES = $BinarySources
 
-Push-Location $VcpkgRoot
-try {
-    & $vcpkg install `
-        $ffmpegPackage `
-        --triplet x64-windows `
-        --x-install-root $InstalledDir
-    $vcpkgExitCode = $LASTEXITCODE
-} finally {
-    Pop-Location
-}
-if ($vcpkgExitCode -ne 0) { exit $vcpkgExitCode }
+& $vcpkg install `
+    --triplet x64-windows `
+    --x-manifest-root $manifest `
+    --x-install-root $InstalledDir
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $ffmpegRoot = Join-Path $InstalledDir "x64-windows"
 foreach ($path in @(
