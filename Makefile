@@ -353,7 +353,7 @@ windows-build windows-dev:
 endif
 
 windows-check: override CUDA_IMAGE_FORMAT = ptx
-windows-check: override CUDA_PTX_TARGET = compute_75
+windows-check: override CUDA_PTX_TARGET = compute_50
 windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
@@ -366,7 +366,8 @@ windows-package: .SHELLFLAGS := /d /c
 endif
 
 windows-release: override CUDA_IMAGE_FORMAT = ptx
-windows-release: override CUDA_PTX_TARGET = compute_75
+# Maxwell baseline; PTX is JIT-compiled for newer GPUs, including Blackwell.
+windows-release: override CUDA_PTX_TARGET = compute_50
 windows-release:
 	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "packaging/windows/windows-release.ps1" -VcpkgRoot "$(VCPKG_ROOT)" -InstalledDir "$(VCPKG_INSTALLED_DIR)" -Qmake "$(QT_QMAKE)" -RustToolchain "$(RUST_TOOLCHAIN)" -CargoTargetDir "$(CARGO_TARGET_DIR)" -CudaHome "$(CUDA_HOME)" -CudaImageFormat "$(CUDA_IMAGE_FORMAT)" -CudaTarget "$(CUDA_TARGET)" -CudaPtxTarget "$(CUDA_PTX_TARGET)" -CudaHostCxx "$(CUDA_HOST_CXX)" -CudaAllowUnsupportedCompiler "$(CUDA_ALLOW_UNSUPPORTED_COMPILER)" -OptixRoot "$(OPTIX_ROOT)" -QtEditorPackage "$(QT_EDITOR_PACKAGE)" -QtLauncherPackage "$(QT_LAUNCHER_PACKAGE)"
 

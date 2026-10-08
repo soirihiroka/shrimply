@@ -279,7 +279,11 @@ impl Default for EditorBackendRust {
     fn default() -> Self {
         Self {
             ready: false,
-            loading_text: QString::from("Loading project…"),
+            loading_text: QString::from(if cfg!(windows) {
+                "Compiling CUDA kernels…"
+            } else {
+                "Loading project…"
+            }),
             project_title: QString::from("Shrimply"),
             playing: false,
             position_frame: 0,

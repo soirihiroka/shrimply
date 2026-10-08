@@ -51,7 +51,13 @@ ApplicationWindow {
         id: backend
     }
 
-    Component.onCompleted: Qt.callLater(backend.begin)
+    property bool startupPending: true
+    onFrameSwapped: {
+        if (startupPending) {
+            startupPending = false
+            Qt.callLater(backend.begin)
+        }
+    }
 
     Timer {
         interval: 16
@@ -288,7 +294,7 @@ ApplicationWindow {
             }
             Label {
                 Layout.alignment: Qt.AlignHCenter
-                text: backend.loadingText
+                text: backend.translate(backend.loadingText)
                 opacity: 0.7
             }
         }

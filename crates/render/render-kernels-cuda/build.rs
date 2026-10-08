@@ -91,6 +91,17 @@ fn main() {
             status.success(),
             "compile CUDA kernel module {module}: {status}"
         );
+        if format == "ptx" {
+            let ptx = fs::read_to_string(&image).expect("read generated PTX");
+            let expected_target =
+                format!(".target sm_{}", target.strip_prefix("compute_").unwrap());
+            assert!(
+                ptx.lines().any(|line| line.trim() == expected_target)
+                    && ptx.lines().any(|line| line.starts_with(".version "))
+                    && ptx.contains(".entry "),
+                "CUDA module {module} must contain JIT-compatible PTX for {target}"
+            );
+        }
         bindings.push_str(&format!(
             "pub const {}: &[u8] = include_bytes!({:?});\n",
             module.to_uppercase(),
