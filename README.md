@@ -45,14 +45,6 @@ Contributions are welcome.
 
 Read the [contribution terms](CONTRIBUTING.md) before submitting.
 
-## Developer Information
-
-Rust, GTK 4, libadwaita, Skia, wgpu, Slang, CUDA, FFmpeg, and PipeWire.
-The compute server is Python.
-
-Comment on an [issue](https://github.com/soirihiroka/shrimply/issues) before
-starting a large change.
-
 ## License
 
 Shrimply is licensed under the GNU General Public License, version 3 or later.
