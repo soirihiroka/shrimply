@@ -30,9 +30,7 @@ Shrimply is currently pre-alpha software, which means you should expect:
 - Irreversible project file breakage
 - Random crashes and resource leaks
 
-[Documentation](https://shrimply.pages.dev), including
-[getting started](https://shrimply.pages.dev/getting-started.html) and
-[building from source](https://shrimply.pages.dev/development.html).
+See the [documentation](https://shrimply.pages.dev) for more.
 
 ## Contributing
 
