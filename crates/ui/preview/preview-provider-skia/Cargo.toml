@@ -19,4 +19,4 @@ skia-safe = { workspace = true, features = ["all-linux"] }
 skia-safe = { workspace = true, features = ["all-macos"] }
 
 [target.'cfg(windows)'.dependencies]
-skia-safe = { workspace = true, features = ["all-windows"] }
+skia-safe = { workspace = true, features = ["gl", "vulkan", "textlayout", "svg", "webp-decode"] }

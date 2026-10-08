@@ -11,7 +11,11 @@
         "avdevice",
         "avfilter",
         "avformat",
+        "fdk-aac",
+        "ffmpeg",
+        "nonfree",
         "nvcodec",
+        "opus",
         "swresample",
         "swscale"
       ]

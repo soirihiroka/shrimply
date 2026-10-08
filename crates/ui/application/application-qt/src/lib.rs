@@ -13,6 +13,8 @@ mod ffi {
         #[namespace = "shrimply"]
         fn new_widget_application() -> UniquePtr<QGuiApplication>;
         #[namespace = "shrimply"]
+        fn apply_windows_system_backdrop();
+        #[namespace = "shrimply"]
         fn open_file_dialog(initial_url: &QUrl, title: &QString, filter: &QString) -> QUrl;
         #[namespace = "shrimply"]
         fn save_file_dialog(
@@ -24,4 +26,6 @@ mod ffi {
     }
 }
 
-pub use ffi::{new_widget_application, open_file_dialog, save_file_dialog};
+pub use ffi::{
+    apply_windows_system_backdrop, new_widget_application, open_file_dialog, save_file_dialog,
+};

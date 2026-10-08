@@ -11,6 +11,11 @@ Frame {
     padding: 0
     implicitHeight: content.implicitHeight
 
+    Binding on topPadding { when: Qt.platform.os === "windows"; value: 0 }
+    Binding on bottomPadding { when: Qt.platform.os === "windows"; value: 0 }
+    Binding on leftPadding { when: Qt.platform.os === "windows"; value: 0 }
+    Binding on rightPadding { when: Qt.platform.os === "windows"; value: 0 }
+
     LivePerformanceBackend { id: backend }
     Timer {
         interval: backend.refreshInterval()

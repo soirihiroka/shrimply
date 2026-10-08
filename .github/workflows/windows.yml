@@ -145,22 +145,32 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .ci/vcpkg/binary-cache/ffmpeg
-          key: windows-vcpkg-ffmpeg-v2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/ffmpeg/vcpkg.json') }}
+          key: windows-vcpkg-ffmpeg-v3-cuda-12.9.2-x64-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/ffmpeg/vcpkg.json', 'packaging/windows/build-ffmpeg.ps1') }}
 
       - name: Install FFmpeg
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/ffmpeg | Out-Null
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,readwrite"
-          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/ffmpeg --x-install-root "$env:VCPKG_INSTALLED_DIR"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cache = "$pwd\.ci\vcpkg\binary-cache\ffmpeg"
+          New-Item -ItemType Directory -Force $cache | Out-Null
+          $sources = "clear;files,$cache,readwrite"
+          & packaging/windows/build-ffmpeg.ps1 `
+            -VcpkgRoot "$pwd\.ci\vcpkg" `
+            -InstalledDir "$env:VCPKG_INSTALLED_DIR" `
+            -BinarySources $sources
 
       - name: Save FFmpeg cache
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         with:
           path: .ci/vcpkg/binary-cache/ffmpeg
-          key: windows-vcpkg-ffmpeg-v2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/ffmpeg/vcpkg.json') }}
+          key: windows-vcpkg-ffmpeg-v3-cuda-12.9.2-x64-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/ffmpeg/vcpkg.json', 'packaging/windows/build-ffmpeg.ps1') }}
+
+      - name: Validate FFmpeg installation
+        shell: powershell
+        run: |
+          & packaging/windows/verify-ffmpeg.ps1 `
+            -FfmpegRoot "$env:VCPKG_INSTALLED_DIR\x64-windows" `
+            -OutputDir "$pwd\.ci\ffmpeg-validation"
 
       - name: Restore OpenCV cache
         id: opencv-cache
@@ -210,32 +220,28 @@ jobs:
         shell: powershell
         run: |
           $linker = (Get-Command link.exe -ErrorAction Stop).Source
-          if ($linker -notlike "*Microsoft Visual Studio*") { throw "MSVC link.exe not found: $linker" }
+          $linkerInfo = (Get-Item -LiteralPath $linker).VersionInfo
+          if ($linkerInfo.CompanyName -notlike "Microsoft*") { throw "MSVC link.exe not found: $linker" }
           $pkgConfig = "$env:VCPKG_INSTALLED_DIR\x64-windows\tools\pkgconf\pkgconf.exe"
           if (!(Test-Path $pkgConfig)) { throw "vcpkg pkgconf.exe is missing: $pkgConfig" }
+          $vcpkgRoot = "$pwd\.ci\vcpkg".Replace('\', '/')
+          $installed = $env:VCPKG_INSTALLED_DIR.Replace('\', '/')
+          $ffmpeg = "$installed/x64-windows"
           "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$linker" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          "VCPKG_ROOT=$pwd\.ci\vcpkg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "VCPKG_INSTALLED_DIR=$installed" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "FFMPEG_DIR=$ffmpeg" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "PKG_CONFIG=$($pkgConfig.Replace('\', '/'))" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          "PKG_CONFIG_PATH=$env:VCPKG_INSTALLED_DIR\x64-windows\lib\pkgconfig;$env:VCPKG_INSTALLED_DIR\x64-windows\share\pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          "OPENCV_DISABLE_PROBES=pkg_config,cmake,vcpkg_cmake" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "PKG_CONFIG_PATH=$ffmpeg/lib/pkgconfig;$ffmpeg/share/pkgconfig" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "CLANG_PATH=C:\Program Files\LLVM\bin\clang.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "QT_QMAKE=qmake.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           "$env:VCPKG_INSTALLED_DIR\x64-windows\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
       - name: Build Windows release
-        shell: bash
+        shell: powershell
         run: make windows-release
 
       - name: Package portable application
-        shell: bash
+        shell: powershell
         run: make windows-package
-
-      - name: Upload portable ZIP
-        uses: actions/upload-artifact@v6
-        with:
-          name: shrimply-windows-x86_64
-          path: |
-            dist/shrimply-windows-x86_64.zip
-            dist/shrimply-windows-x86_64.zip.sha256
-          if-no-files-found: error

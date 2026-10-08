@@ -8,6 +8,24 @@ $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path 
 $release = Join-Path $target "release"
 $dumpbin = (Get-Command dumpbin.exe -ErrorAction Stop).Source
 $env:QT_QPA_PLATFORM = "windows"
+$ffmpegDlls = @(
+    "avcodec-63.dll",
+    "avdevice-63.dll",
+    "avfilter-12.dll",
+    "avformat-63.dll",
+    "avutil-61.dll",
+    "swresample-7.dll",
+    "swscale-10.dll",
+    "fdk-aac.dll",
+    "opus.dll"
+)
+$ffmpegNotices = @(
+    "ffmpeg.txt",
+    "fdk-aac.txt",
+    "nv-codec-headers.txt",
+    "opus.txt",
+    "ffmpeg-build-configuration.txt"
+)
 
 function Assert-PeX64([string]$path) {
     $headers = & $dumpbin /headers $path 2>&1
@@ -35,6 +53,40 @@ function Inspect-Imports([string]$directory) {
             if ($name -like "api-ms-*.dll" -or $name -like "ext-ms-*.dll") { continue }
             if (Test-Path (Join-Path "$env:SystemRoot\System32" $dependency)) { continue }
             throw "$($binary.FullName) imports missing library $dependency"
+        }
+    }
+}
+
+function Assert-FfmpegPackage([string]$directory) {
+    foreach ($name in $ffmpegDlls) {
+        if (!(Test-Path (Join-Path $directory $name))) {
+            throw "Packaged FFmpeg runtime is missing $name"
+        }
+    }
+    $licenses = Join-Path $directory "licenses"
+    foreach ($name in $ffmpegNotices) {
+        if (!(Test-Path (Join-Path $licenses $name))) {
+            throw "Packaged FFmpeg notice is missing $name"
+        }
+    }
+    $configuration = Get-Content (Join-Path $licenses "ffmpeg-build-configuration.txt") -Raw
+    foreach ($value in @(
+        "ffmpeg version 9.0.1",
+        "--enable-nonfree",
+        "--enable-libfdk-aac",
+        "--enable-libopus",
+        "--enable-cuda",
+        "--enable-ffnvcodec",
+        "--enable-nvenc",
+        "--enable-shared"
+    )) {
+        if (!$configuration.Contains($value)) {
+            throw "Packaged FFmpeg configuration is missing $value"
+        }
+    }
+    foreach ($value in @("--enable-libx264", "--enable-libx265", "--enable-libopenh264")) {
+        if ($configuration.Contains($value)) {
+            throw "Packaged FFmpeg unexpectedly contains $value"
         }
     }
 }
@@ -90,6 +142,7 @@ $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actual -ne $expected) { throw "Windows archive checksum mismatch" }
 
 Inspect-Imports $stage
+Assert-FfmpegPackage $stage
 Use-PackagedRuntime
 Assert-ArgumentFailures $stage
 Assert-QmlStartup $stage
@@ -98,6 +151,7 @@ $unpacked = Join-Path $env:RUNNER_TEMP "shrimply-windows-unpacked"
 if (Test-Path $unpacked) { Remove-Item -Recurse -Force $unpacked }
 Expand-Archive $archive $unpacked
 Inspect-Imports $unpacked
+Assert-FfmpegPackage $unpacked
 Assert-ArgumentFailures $unpacked
 Assert-QmlStartup $unpacked
 exit 0

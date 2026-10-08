@@ -11,6 +11,25 @@ CUDA_IMAGE_FORMAT ?= cubin
 CUDA_PTX_TARGET ?= compute_50
 CUDA_HOST_CXX ?= g++-15
 CUDA_ALLOW_UNSUPPORTED_COMPILER ?=
+ifeq ($(HOST_OS),Windows_NT)
+WINDOWS_DEPS_ROOT ?= $(CURDIR)/target/windows-deps
+VCPKG_ROOT ?= $(WINDOWS_DEPS_ROOT)/vcpkg
+VCPKG_INSTALLED_DIR ?= $(WINDOWS_DEPS_ROOT)/installed
+FFMPEG_DIR := $(VCPKG_INSTALLED_DIR)/x64-windows
+endif
+ifeq ($(HOST_OS),Linux)
+CUDA_DEV_TARGETS := dev dev-qt run run-qt build qt-build
+else ifeq ($(HOST_OS),Windows_NT)
+CUDA_DEV_TARGETS := windows-build windows-dev
+endif
+ifneq ($(filter $(CUDA_DEV_TARGETS),$(MAKECMDGOALS)),)
+CUDA_NATIVE_TARGET := $(shell uv run --no-project python packaging/cuda-target.py)
+ifeq ($(strip $(CUDA_NATIVE_TARGET)),)
+$(error Could not detect the local CUDA architecture for the development build)
+endif
+$(CUDA_DEV_TARGETS): override CUDA_IMAGE_FORMAT = cubin
+$(CUDA_DEV_TARGETS): override CUDA_TARGET := $(CUDA_NATIVE_TARGET)
+endif
 SOURCE_LINE_LIMIT ?= 2000
 OPTIX_ROOT ?= $(CURDIR)/external/optix-dev
 DNF ?= sudo dnf
@@ -30,7 +49,7 @@ DEV_RUSTFLAGS ?=
 else
 DEV_RUSTFLAGS ?= -C prefer-dynamic -C link-arg=-fuse-ld=lld -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)
 endif
-DEV_BUILD_ENV := $(BUILD_ENV) RUSTFLAGS="$(DEV_RUSTFLAGS)"
+DEV_BUILD_ENV = $(BUILD_ENV) RUSTFLAGS="$(DEV_RUSTFLAGS)"
 
 APP_NAME := Shrimply
 BIN_NAME := shrimply
@@ -131,17 +150,35 @@ FEDORA_PACKAGES := \
 	qt6-qtbase-devel \
 	qt6-qtdeclarative-devel
 
-.PHONY: native-deps windows-native-deps windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt install-codex-mcp-dev install-agy-mcp-dev uninstall uninstall-qt flatpak-gtk
+.PHONY: native-deps windows-ffmpeg windows-ffmpeg-verify windows-native-deps windows-build windows-dev windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt install-codex-mcp-dev install-agy-mcp-dev uninstall uninstall-qt flatpak-gtk
 native-deps:
 	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists libpipewire-0.3 || { echo "Missing PipeWire development files (pkg-config: libpipewire-0.3)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists poppler-glib || { echo "Missing Poppler GLib development files (pkg-config: poppler-glib)" >&2; exit 1; }
 
+ifeq ($(HOST_OS),Windows_NT)
+windows-ffmpeg:
+	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging/windows/build-ffmpeg.ps1 -VcpkgRoot "$(VCPKG_ROOT)" -InstalledDir "$(VCPKG_INSTALLED_DIR)"
+
+windows-ffmpeg-verify: windows-ffmpeg
+	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging/windows/verify-ffmpeg.ps1 -FfmpegRoot "$(FFMPEG_DIR)"
+else
+windows-ffmpeg windows-ffmpeg-verify:
+	@echo "$@ requires Windows; current host: $(HOST_OS)" >&2
+	@exit 1
+endif
+
 windows-native-deps: qt-native-deps
 	@test "$(HOST_OS)" = Windows_NT || { echo "Windows targets require native Windows" >&2; exit 1; }
 	@command -v cl.exe >/dev/null 2>&1 || { echo "Missing MSVC compiler (cl.exe)" >&2; exit 1; }
 	@command -v nvcc.exe >/dev/null 2>&1 || { echo "Missing CUDA compiler (nvcc.exe)" >&2; exit 1; }
-	@$(PKG_CONFIG) --exists libavcodec libavformat libavfilter libavdevice libswresample libswscale || { echo "Missing FFmpeg development files" >&2; exit 1; }
+	@$(PKG_CONFIG) --exists libavcodec libavformat libavfilter libavdevice libswresample libswscale || { \
+		test -n "$(FFMPEG_DIR)" && \
+		test -f "$(FFMPEG_DIR)/include/libavutil/avutil.h" && \
+		test -f "$(FFMPEG_DIR)/lib/avutil.lib" && \
+		test -f "$(FFMPEG_DIR)/lib/avcodec.lib" && \
+		test -f "$(FFMPEG_DIR)/lib/avformat.lib" || \
+		{ echo "Missing FFmpeg development files (pkg-config metadata or FFMPEG_DIR with include/ and lib/)" >&2; exit 1; }; }
 	@$(PKG_CONFIG) --exists poppler-glib pango pangocairo rubberband || { echo "Missing vcpkg application libraries" >&2; exit 1; }
 
 qt-native-deps:
@@ -303,13 +340,35 @@ check:
 	@exit 1
 endif
 
+ifeq ($(HOST_OS),Windows_NT)
+windows-build: windows-native-deps cuda-artifacts
+	$(BUILD_ENV) QMAKE="$(QT_QMAKE)" CARGO_TERM_COLOR=always $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+
+windows-dev: windows-build
+	$(BUILD_ENV) RUST_LOG="$(RUST_LOG)" target/debug/$(QT_BIN_NAME).exe
+else
+windows-build windows-dev:
+	@echo "$@ requires Windows; current host: $(HOST_OS)" >&2
+	@exit 1
+endif
+
+windows-check: override CUDA_IMAGE_FORMAT = ptx
+windows-check: override CUDA_PTX_TARGET = compute_75
 windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
 
+ifeq ($(HOST_OS),Windows_NT)
+windows-release: SHELL := cmd.exe
+windows-release: .SHELLFLAGS := /d /c
+windows-package: SHELL := cmd.exe
+windows-package: .SHELLFLAGS := /d /c
+endif
+
 windows-release: override CUDA_IMAGE_FORMAT = ptx
-windows-release: windows-native-deps cuda-artifacts
-	$(BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
+windows-release: override CUDA_PTX_TARGET = compute_75
+windows-release: windows-ffmpeg
+	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "packaging/windows/windows-release.ps1" -VcpkgRoot "$(VCPKG_ROOT)" -InstalledDir "$(VCPKG_INSTALLED_DIR)" -Qmake "$(QT_QMAKE)" -RustToolchain "$(RUST_TOOLCHAIN)" -CargoTargetDir "$(CARGO_TARGET_DIR)" -CudaHome "$(CUDA_HOME)" -CudaImageFormat "$(CUDA_IMAGE_FORMAT)" -CudaTarget "$(CUDA_TARGET)" -CudaPtxTarget "$(CUDA_PTX_TARGET)" -CudaHostCxx "$(CUDA_HOST_CXX)" -CudaAllowUnsupportedCompiler "$(CUDA_ALLOW_UNSUPPORTED_COMPILER)" -OptixRoot "$(OPTIX_ROOT)" -QtEditorPackage "$(QT_EDITOR_PACKAGE)" -QtLauncherPackage "$(QT_LAUNCHER_PACKAGE)"
 
 windows-package: windows-release
 	powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging/windows/package.ps1

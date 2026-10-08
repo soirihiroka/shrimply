@@ -6823,6 +6823,8 @@ dependencies = [
 name = "shrimply-preferences-qt"
 version = "0.1.0"
 dependencies = [
+ "cxx-qt",
+ "cxx-qt-build",
  "cxx-qt-lib",
  "shrimply-math-color",
  "shrimply-preferences-core",
@@ -7833,7 +7835,6 @@ dependencies = [
  "percent-encoding",
  "skia-bindings",
  "skia-svg-macros",
- "windows",
 ]
 
 [[package]]

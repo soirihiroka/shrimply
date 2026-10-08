@@ -14,10 +14,33 @@ ControlRow {
     signal expressionToggled(bool enabled)
 
     RowLayout {
+        Layout.minimumWidth: Qt.platform.os === "windows" ? visibleChildMinimumWidth : 0
+        readonly property real visibleChildMinimumWidth: {
+            let minimum = 0
+            let visibleChildren = 0
+            for (let index = 0; index < children.length; ++index) {
+                const child = children[index]
+                if (!child.visible)
+                    continue
+                minimum += Math.max(child.Layout.minimumWidth || 0,
+                    child.implicitWidth || 0)
+                visibleChildren += 1
+            }
+            return minimum + Math.max(0, visibleChildren - 1) * spacing
+        }
         Item {
             id: holder
             Layout.fillWidth: true
-            Layout.minimumWidth: 0
+            Layout.minimumWidth: Qt.platform.os === "windows" ? visibleChildMinimumWidth : 0
+            readonly property real visibleChildMinimumWidth: {
+                let minimum = 0
+                for (let index = 0; index < children.length; ++index) {
+                    const child = children[index]
+                    if (child.visible)
+                        minimum = Math.max(minimum, child.Layout.minimumWidth || 0)
+                }
+                return minimum
+            }
             implicitHeight: childrenRect.height
             clip: true
             onChildrenChanged: {
@@ -31,7 +54,9 @@ ControlRow {
             checked: root.keyframes
             flat: true
             icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/keyframe.svg"
-            icon.color: palette.buttonText
+            icon.color: checked || highlighted
+                ? palette.highlightedText
+                : palette.buttonText
             display: AbstractButton.IconOnly
             ToolTip.visible: hovered
             ToolTip.text: qsTr("Keyframes")
@@ -43,7 +68,9 @@ ControlRow {
             checked: root.expression
             flat: true
             icon.source: "qrc:/qt/qml/dev/shrimply/components/icons/code.svg"
-            icon.color: palette.buttonText
+            icon.color: checked || highlighted
+                ? palette.highlightedText
+                : palette.buttonText
             display: AbstractButton.IconOnly
             ToolTip.visible: hovered
             ToolTip.text: qsTr("Expression")

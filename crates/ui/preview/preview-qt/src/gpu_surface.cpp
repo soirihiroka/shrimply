@@ -156,6 +156,14 @@ constexpr float PreviewScrollPixelsPerStep = 120.0f;
 extern "C" bool shrimply_qt_preview_navigation(float width, float height, float x, float y, std::uint8_t phase, float steps);
 extern "C" bool shrimply_qt_preview_guides_visible();
 extern "C" void shrimply_qt_preview_set_guides_visible(bool visible);
+extern "C" bool shrimply_qt_preview_pen_tool_active();
+extern "C" bool shrimply_qt_preview_fill_tool_active();
+extern "C" bool shrimply_qt_preview_transform_tool_active();
+extern "C" bool shrimply_qt_preview_eraser_tool_active();
+extern "C" void shrimply_qt_preview_select_pen_tool();
+extern "C" void shrimply_qt_preview_select_fill_tool();
+extern "C" void shrimply_qt_preview_select_transform_tool();
+extern "C" void shrimply_qt_preview_set_eraser_tool_active(bool active);
 
 namespace {
 enum class TrackFileImportResult : std::uint8_t {
@@ -912,6 +920,49 @@ void PreviewSurface::setFullscreenPreview(bool fullscreen) {
     }
     fullscreen_preview_ = fullscreen;
     emit fullscreenPreviewChanged();
+    update();
+}
+
+bool PreviewSurface::penToolActive() const {
+    return shrimply_qt_preview_pen_tool_active();
+}
+
+bool PreviewSurface::fillToolActive() const {
+    return shrimply_qt_preview_fill_tool_active();
+}
+
+bool PreviewSurface::transformToolActive() const {
+    return shrimply_qt_preview_transform_tool_active();
+}
+
+bool PreviewSurface::eraserToolActive() const {
+    return shrimply_qt_preview_eraser_tool_active();
+}
+
+void PreviewSurface::setEraserToolActive(bool active) {
+    if (eraserToolActive() == active) {
+        return;
+    }
+    shrimply_qt_preview_set_eraser_tool_active(active);
+    emit paintToolChanged();
+    update();
+}
+
+void PreviewSurface::selectPenTool() {
+    shrimply_qt_preview_select_pen_tool();
+    emit paintToolChanged();
+    update();
+}
+
+void PreviewSurface::selectFillTool() {
+    shrimply_qt_preview_select_fill_tool();
+    emit paintToolChanged();
+    update();
+}
+
+void PreviewSurface::selectTransformTool() {
+    shrimply_qt_preview_select_transform_tool();
+    emit paintToolChanged();
     update();
 }
 

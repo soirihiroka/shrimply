@@ -3,8 +3,15 @@
 #include <QApplication>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QIcon>
+#include <QPalette>
 #include <QQuickStyle>
 #include <QWindow>
+
+#ifdef Q_OS_WIN
+#include <dwmapi.h>
+#include <windows.h>
+#endif
 
 #include "cxx-qt-lib/qcoreapplication.h"
 
@@ -24,7 +31,59 @@ std::unique_ptr<QGuiApplication> new_widget_application()
 #else
   QQuickStyle::setStyle(quick_style.isEmpty() ? QStringLiteral("Fusion") : quick_style);
 #endif
+  QApplication::setWindowIcon(QIcon(QStringLiteral(
+    ":/qt/qml/dev/shrimply/application/shrimply-symbolic.svg")));
   return application;
+}
+
+void apply_windows_system_backdrop()
+{
+#ifdef Q_OS_WIN
+  const auto apply_backdrop = [](QWindow *window) {
+    if (!window) {
+      return;
+    }
+    const auto hwnd = reinterpret_cast<HWND>(window->winId());
+    if (!hwnd) {
+      return;
+    }
+
+    const BOOL dark_mode =
+      QGuiApplication::palette().color(QPalette::Window).lightnessF() < 0.5;
+    DwmSetWindowAttribute(hwnd,
+                          DWMWA_USE_IMMERSIVE_DARK_MODE,
+                          &dark_mode,
+                          sizeof(dark_mode));
+
+    const auto palette = QGuiApplication::palette();
+    const auto window_color = palette.color(QPalette::Window);
+    const COLORREF caption_color =
+      RGB(window_color.red(), window_color.green(), window_color.blue());
+    DwmSetWindowAttribute(hwnd,
+                          DWMWA_CAPTION_COLOR,
+                          &caption_color,
+                          sizeof(caption_color));
+
+    const auto text_color = palette.color(QPalette::WindowText);
+    const COLORREF caption_text_color =
+      RGB(text_color.red(), text_color.green(), text_color.blue());
+    DwmSetWindowAttribute(hwnd,
+                          DWMWA_TEXT_COLOR,
+                          &caption_text_color,
+                          sizeof(caption_text_color));
+
+    const DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_MAINWINDOW;
+    DwmSetWindowAttribute(hwnd,
+                          DWMWA_SYSTEMBACKDROP_TYPE,
+                          &backdrop,
+                          sizeof(backdrop));
+  };
+
+  const auto windows = QGuiApplication::topLevelWindows();
+  for (auto *window : windows) {
+    apply_backdrop(window);
+  }
+#endif
 }
 
 static void prepare_dialog(QFileDialog &dialog,

@@ -20,6 +20,7 @@ RowLayout {
     signal committed(int axis, real value)
     signal valuesEdited(real first, real second, real third, int component)
     spacing: 6
+    Layout.minimumWidth: Qt.platform.os === "windows" ? implicitWidth : 0
 
     NumberGroupBackend {
         id: group
@@ -47,7 +48,6 @@ RowLayout {
         icon.source: checked
             ? "qrc:/qt/qml/dev/shrimply/components/icons/padlock.svg"
             : "qrc:/qt/qml/dev/shrimply/components/icons/padlock-open.svg"
-        icon.color: palette.buttonText
         display: AbstractButton.IconOnly
         ToolTip.visible: hovered
         ToolTip.text: ComponentTranslations.text("Lock ratio")
