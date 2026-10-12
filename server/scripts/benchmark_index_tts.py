@@ -84,7 +84,7 @@ def _dtype(torch, model: ModelVersion, precision: Precision):
 
 
 def _request(config: dict[str, object], voice: bytes):
-    from api.tts.protocol import Audio
+    from api.media import EncodedAudio
     from api.tts.requests import (
         IndexLanguage,
         IndexSampling,
@@ -99,7 +99,7 @@ def _request(config: dict[str, object], voice: bytes):
         model="IndexTeam/IndexTTS-2" if model == "2" else "IndexTeam/IndexTTS-2.5",
         text=cast(str, config["text"]),
         language=None if model == "2" else cast(IndexLanguage, config["language"]),
-        voice=Audio(wav=voice),
+        voice=EncodedAudio(data=voice),
         emotion=SpeakerEmotion(),
         timing=SpeedTiming(factor=Fraction(1)),
         sampling=IndexSampling(

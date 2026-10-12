@@ -14,7 +14,6 @@ pub use managed::{CancellationToken, ManagedJobGuard, queued_status};
 
 pub const MAXIMUM_COMPUTE_EVENT_BYTES: usize = 256 * 1024 * 1024;
 
-const FLOAT_AUDIO: &str = "application/octet-stream";
 const MESSAGE_PACK: &str = "application/msgpack";
 const MESSAGE_PACK_STREAM: &str = "application/x-msgpack-stream";
 const PROTOCOL_MAJOR: u32 = 4;
@@ -98,6 +97,27 @@ pub struct TranscriptionSegment {
     pub start_frame: u64,
     pub end_frame: u64,
     pub text: String,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AudioUpload {
+    Pcm {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+        sample_rate: u32,
+        channels: u8,
+    },
+    Encoded {
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
+}
+
+#[derive(Serialize)]
+struct TranscriptionRequest<'a> {
+    model: &'a str,
+    audio: &'a AudioUpload,
 }
 
 #[derive(Deserialize)]
@@ -582,7 +602,7 @@ pub fn transcribe(
     server_url: &str,
     cancellation: &CancellationToken,
     model: &str,
-    samples: &[f32],
+    audio: &AudioUpload,
     on_progress: impl FnMut(&str),
 ) -> Result<Transcription, String> {
     tokio::runtime::Builder::new_current_thread()
@@ -593,7 +613,7 @@ pub fn transcribe(
             server_url,
             cancellation,
             model,
-            samples,
+            audio,
             on_progress,
         ))
 }
@@ -602,32 +622,26 @@ async fn transcribe_async(
     server_url: &str,
     cancellation: &CancellationToken,
     model: &str,
-    samples: &[f32],
+    audio: &AudioUpload,
     mut on_progress: impl FnMut(&str),
 ) -> Result<Transcription, String> {
     let server_url = server_url.trim();
     if server_url.is_empty() {
         return Err("Server URL is empty".to_string());
     }
-    if samples.is_empty() {
-        return Err("Audio is empty".to_string());
-    }
     let endpoint = format!("{}/transcriptions", server_url.trim_end_matches('/'));
-    let audio = samples
-        .iter()
-        .flat_map(|sample| sample.to_le_bytes())
-        .collect::<Vec<_>>();
-    tracing::info!(%endpoint, %model, body_bytes = audio.len(), "Sending transcription request");
+    let payload = rmp_serde::to_vec_named(&TranscriptionRequest { model, audio })
+        .map_err(|error| format!("Could not encode transcription request: {error}"))?;
+    tracing::info!(%endpoint, %model, body_bytes = payload.len(), "Sending transcription request");
     let request = reqwest::Client::builder()
         .connect_timeout(REQUEST_TIMEOUT)
         .read_timeout(COMPUTE_STREAM_READ_TIMEOUT)
         .build()
         .map_err(|error| error.to_string())?
         .post(&endpoint)
-        .query(&[("model", model)])
         .header(ACCEPT, MESSAGE_PACK_STREAM)
-        .header(CONTENT_TYPE, FLOAT_AUDIO)
-        .body(audio);
+        .header(CONTENT_TYPE, MESSAGE_PACK)
+        .body(payload);
     let (request, _job) = cancellation.manage_async(request)?;
     let mut response = request
         .send()

@@ -16,6 +16,7 @@ from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
 from api.model_progress import StreamedModelProgress, stream_model_progress
+from api.media import PcmAudio
 from api.tts.errors import log_failure, public_error_message
 from api.tts.index_tts_2_0.audio_features import decode_audio
 from api.tts.index_tts_2_0.inference import synthesize as synthesize_index
@@ -59,7 +60,7 @@ logging.basicConfig(
 logger = logging.getLogger("shrimply.tts_worker")
 response_connection: Connection | None = None
 VOICE_CLONE_PROMPT_CACHE_ENTRIES = 8
-type VoiceClonePromptCacheKey = tuple[bytes, str | None, bool]
+type VoiceClonePromptCacheKey = tuple[bytes, int | None, int | None, str | None, bool]
 type VoiceClonePromptCache = OrderedDict[
     VoiceClonePromptCacheKey, list[VoiceClonePromptItem]
 ]
@@ -95,13 +96,17 @@ def synthesize_qwen(
                 )
             case QwenVoiceCloneRequest():
                 cache_key = (
-                    sha256(request.reference_audio.wav).digest(),
+                    sha256(request.reference_audio.data).digest(),
+                    request.reference_audio.sample_rate
+                    if isinstance(request.reference_audio, PcmAudio) else None,
+                    request.reference_audio.channels
+                    if isinstance(request.reference_audio, PcmAudio) else None,
                     request.reference_text,
                     request.audio_only,
                 )
                 voice_clone_prompt = voice_clone_prompts.pop(cache_key, None)
                 if voice_clone_prompt is None:
-                    reference = decode_audio(request.reference_audio.wav)
+                    reference = decode_audio(request.reference_audio)
                     voice_clone_prompt = model.create_voice_clone_prompt(
                         ref_audio=(
                             reference.samples.squeeze(0).numpy(),

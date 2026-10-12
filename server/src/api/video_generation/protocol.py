@@ -3,6 +3,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
+from api.media import AudioUpload
+
 type ModelId = Literal[
     "MiniMaxAI/MiniMax-H3",
     "Inner-Reflections/MiniMax-H3-Looping-Sketch-Anime",
@@ -140,7 +142,16 @@ class NumberValue(ProtocolModel):
 class Media(ProtocolModel):
     kind: MediaKind
     filename: str = Field(min_length=1, max_length=255)
-    data: bytes = Field(min_length=1, max_length=MAXIMUM_MEDIA_BYTES)
+    data: bytes | AudioUpload
+
+    @model_validator(mode="after")
+    def validate_data(self) -> Self:
+        if not isinstance(self.data, bytes) and self.kind != "audio":
+            raise ValueError("Typed audio buffers require audio media kind")
+        data = self.data if isinstance(self.data, bytes) else self.data.data
+        if not 0 < len(data) <= MAXIMUM_MEDIA_BYTES:
+            raise ValueError("Media must be between 1 byte and 256 MiB")
+        return self
 
 
 class MediaValue(ProtocolModel):

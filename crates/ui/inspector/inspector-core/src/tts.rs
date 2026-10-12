@@ -354,11 +354,7 @@ fn generate_in(
     settings: &TtsSettings,
     progress: impl Fn(&str) -> bool,
 ) -> Result<TtsGeneration, String> {
-    let request = shrimply_tts::speech_request(
-        model,
-        settings,
-        shrimply_audio_engine::recording::transcode_to_wav,
-    )?;
+    let request = shrimply_tts::speech_request(model, settings)?;
     let speech = shrimply_tts::synthesize(server_url, cancellation, &request, progress)?;
     save_speech_in(speech, directory)
 }

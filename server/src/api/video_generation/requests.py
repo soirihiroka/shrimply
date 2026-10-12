@@ -1,11 +1,15 @@
 import hashlib
 import os
+from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 import msgspec
+import soundfile
 
 import env
+
+from api.media import PcmAudio, decode_audio
 
 from api.video_generation.catalog import MODELS
 from api.video_generation.minimax_h3.config import ReferenceSpec
@@ -98,7 +102,7 @@ def validate_inputs(request: GenerationRequest) -> None:
     for key, value in request.inputs.items():
         validate_value(definitions[key], value)
     total_media = sum(
-        len(item.data)
+        len(item.data if isinstance(item.data, bytes) else item.data.data)
         for value in request.inputs.values()
         if isinstance(value, MediaValue)
         for item in value.items
@@ -148,11 +152,16 @@ def request_digest(request: GenerationRequest) -> str:
         if value["kind"] != "media":
             continue
         for item in value["items"]:
-            data = item["data"]
-            item["data"] = {
+            media_data = item["data"]
+            data = media_data if isinstance(media_data, bytes) else media_data["data"]
+            digest = {
                 "sha256": hashlib.sha256(data).hexdigest(),
                 "bytes": len(data),
             }
+            if isinstance(media_data, bytes) or media_data["kind"] == "encoded":
+                item["data"] = digest
+            else:
+                media_data["data"] = digest
     payload = msgspec.msgpack.encode(payload)
     return hashlib.sha256(payload).hexdigest()
 
@@ -171,12 +180,22 @@ def stage_media(request: GenerationRequest, directory: Path) -> dict[str, list[P
             continue
         paths = []
         for index, item in enumerate(value.items):
-            digest = hashlib.sha256(item.data).hexdigest()
-            path = directory / f"{key}-{index}-{digest}{media_suffix(item.filename, item.kind)}"
-            if not path.is_file() or path.stat().st_size != len(item.data):
+            data = item.data if isinstance(item.data, bytes) else item.data.data
+            digest = hashlib.sha256(data).hexdigest()
+            suffix = media_suffix(item.filename, item.kind)
+            if isinstance(item.data, PcmAudio):
+                rate, samples = decode_audio(
+                    item.data, layout="mono" if item.data.channels == 1 else "stereo"
+                )
+                wav = BytesIO()
+                soundfile.write(wav, samples.T, rate, format="WAV", subtype="FLOAT")
+                data = wav.getvalue()
+                suffix = ".wav"
+            path = directory / f"{key}-{index}-{digest}{suffix}"
+            if not path.is_file() or path.stat().st_size != len(data):
                 temporary = path.with_name(f".{path.name}.{uuid4()}.tmp")
                 try:
-                    temporary.write_bytes(item.data)
+                    temporary.write_bytes(data)
                     os.replace(temporary, path)
                 finally:
                     temporary.unlink(missing_ok=True)

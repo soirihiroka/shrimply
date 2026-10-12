@@ -1,13 +1,13 @@
 from dataclasses import dataclass
 from functools import cache
-from io import BytesIO
 
 import librosa
-import soundfile
 import torch
 import torchaudio
 from torch import Tensor
 from torch.nn import functional as F
+
+from api.media import AudioUpload, decode_audio as decode_media_audio
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,26 +17,14 @@ class Waveform:
 
 
 def decode_audio(
-    encoded: bytes,
+    encoded: bytes | AudioUpload,
     sample_rate: int = 24_000,
     maximum_seconds: int = 15,
 ) -> Waveform:
-    with soundfile.SoundFile(BytesIO(encoded)) as audio:
-        if audio.format != "WAV":
-            raise ValueError("Reference audio must be WAV")
-        source_rate = audio.samplerate
-        decoded = audio.read(
-            frames=source_rate * maximum_seconds,
-            dtype="float32",
-            always_2d=True,
-        )
-    samples = torch.from_numpy(decoded).mean(dim=1, keepdim=False).unsqueeze(0)
-    if samples.numel() == 0:
-        raise ValueError("Reference audio is empty")
-    if not torch.isfinite(samples).all():
-        raise ValueError("Reference audio contains non-finite samples")
-    waveform = Waveform(samples, source_rate)
-    return Waveform(resample(waveform, sample_rate), sample_rate)
+    rate, decoded = decode_media_audio(
+        encoded, sample_rate=sample_rate, maximum_seconds=maximum_seconds
+    )
+    return Waveform(torch.from_numpy(decoded), rate)
 
 
 def resample(waveform: Waveform, sample_rate: int) -> Tensor:

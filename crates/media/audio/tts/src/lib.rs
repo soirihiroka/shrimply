@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::time::Duration;
 
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use shrimply_asset::Asset;
+use shrimply_compute_client::AudioUpload;
 pub use shrimply_math_core::Fraction;
 use shrimply_math_core::{deserialize_fraction, fraction_is_finite, serialize_fraction};
 
@@ -181,7 +181,7 @@ enum InputValue {
         value: String,
     },
     Audio {
-        value: EncodedAudio,
+        value: AudioUpload,
     },
     Toggle {
         value: bool,
@@ -193,12 +193,6 @@ enum InputValue {
     Table {
         rows: Vec<BTreeMap<String, String>>,
     },
-}
-
-#[derive(Serialize)]
-struct EncodedAudio {
-    #[serde(with = "serde_bytes")]
-    wav: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -407,11 +401,7 @@ fn set_timing_mode(settings: &mut TtsSettings, model: &TtsModel, purpose: InputP
     }
 }
 
-pub fn speech_request(
-    model: &TtsModel,
-    settings: &TtsSettings,
-    convert_audio: impl Fn(&Path) -> Result<Vec<u8>, String>,
-) -> Result<SpeechRequest, String> {
+pub fn speech_request(model: &TtsModel, settings: &TtsSettings) -> Result<SpeechRequest, String> {
     tracing::info!(model = %model.id, "Preparing text-to-speech request");
     if settings.model.as_deref() != Some(model.id.as_str()) {
         return Err("Text-to-speech settings do not match the selected model".to_string());
@@ -428,7 +418,7 @@ pub fn speech_request(
             .ok_or_else(|| format!("{} is required", definition.label()))?;
         inputs.insert(
             definition.key().to_string(),
-            encode_value(definition, value, &convert_audio)?,
+            encode_value(definition, value)?,
         );
     }
     tracing::info!(model = %model.id, inputs = inputs.len(), "Prepared text-to-speech request");
@@ -438,11 +428,7 @@ pub fn speech_request(
     })
 }
 
-fn encode_value(
-    definition: &InputDefinition,
-    value: &TtsValue,
-    convert_audio: &impl Fn(&Path) -> Result<Vec<u8>, String>,
-) -> Result<InputValue, String> {
+fn encode_value(definition: &InputDefinition, value: &TtsValue) -> Result<InputValue, String> {
     match (definition, value) {
         (
             InputDefinition::Text {
@@ -472,11 +458,10 @@ fn encode_value(
         }
         (InputDefinition::Audio { .. }, TtsValue::Audio { value }) => {
             let path = value.path();
-            tracing::info!(input = definition.key(), path = %path.display(), "Transcoding text-to-speech reference audio");
-            let wav = convert_audio(path)?;
-            tracing::info!(input = definition.key(), path = %path.display(), wav_bytes = wav.len(), "Transcoded text-to-speech reference audio");
+            let data = value.read()?;
+            tracing::info!(input = definition.key(), path = %path.display(), audio_bytes = data.len(), "Read text-to-speech reference audio");
             Ok(InputValue::Audio {
-                value: EncodedAudio { wav },
+                value: AudioUpload::Encoded { data },
             })
         }
         (InputDefinition::Toggle { .. }, TtsValue::Toggle { value }) => {

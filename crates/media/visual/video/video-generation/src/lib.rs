@@ -7,6 +7,7 @@ use std::time::Duration;
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use shrimply_asset::Asset;
+use shrimply_compute_client::AudioUpload;
 pub use shrimply_math_core::Fraction;
 use shrimply_math_core::{deserialize_fraction, serialize_fraction};
 
@@ -258,8 +259,14 @@ enum InputValue {
 struct EncodedMedia {
     kind: MediaKind,
     filename: String,
-    #[serde(with = "serde_bytes")]
-    data: Vec<u8>,
+    data: MediaData,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum MediaData {
+    Bytes(#[serde(with = "serde_bytes")] Vec<u8>),
+    Audio(AudioUpload),
 }
 
 pub fn generation_request(
@@ -351,7 +358,11 @@ pub fn generation_request(
                                 .and_then(|value| value.to_str())
                                 .unwrap_or("media")
                                 .to_string(),
-                            data,
+                            data: if item.kind == MediaKind::Audio {
+                                MediaData::Audio(AudioUpload::Encoded { data })
+                            } else {
+                                MediaData::Bytes(data)
+                            },
                         })
                     })
                     .collect::<Result<_, String>>()?;

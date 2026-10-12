@@ -1,17 +1,20 @@
 import gc
 import logging
 import os
+from io import BytesIO
 
 import msgspec
+import numpy as np
 import torch
 from pydantic import ValidationError
-from torchvision.io import ImageReadMode, decode_jpeg
 from transformers import Sam2VideoModel, Sam2VideoProcessor
+
+from api.media import load_image
 
 from api.sam2.protocol import (
     ANALYSIS_REQUEST_VALIDATOR,
     ARCHIVE_MAGIC,
-    MAXIMUM_JPEG_BYTES,
+    MAXIMUM_FRAME_BYTES,
     ErrorEvent,
     MaskEvent,
     ProgressEvent,
@@ -48,8 +51,8 @@ def read_archive(path: str):
         offsets: list[tuple[int, int]] = []
         for _ in range(request.frame_count):
             length = int.from_bytes(_read_exact(file, 8), "little")
-            if length <= 0 or length > MAXIMUM_JPEG_BYTES:
-                raise ValueError("Invalid SAM2 proxy JPEG length")
+            if length <= 0 or length > MAXIMUM_FRAME_BYTES:
+                raise ValueError("Invalid SAM2 proxy frame length")
             offsets.append((file.tell(), length))
             file.seek(length, 1)
         if file.read(1):
@@ -59,14 +62,10 @@ def read_archive(path: str):
 
 def load_frame(file, offset: tuple[int, int]) -> torch.Tensor:
     file.seek(offset[0])
-    image = decode_jpeg(
-        torch.frombuffer(bytearray(_read_exact(file, offset[1])), dtype=torch.uint8),
-        mode=ImageReadMode.RGB,
-    )
-    if not isinstance(image, torch.Tensor):
-        raise TypeError("SAM2 JPEG decoder returned multiple images")
-    if tuple(image.shape) != (3, MODEL_SIZE, MODEL_SIZE):
-        raise ValueError(f"SAM2 proxy frame has invalid shape {tuple(image.shape)}")
+    decoded = load_image(BytesIO(_read_exact(file, offset[1])))
+    if decoded.size != (MODEL_SIZE, MODEL_SIZE):
+        raise ValueError(f"SAM2 proxy frame has invalid size {decoded.size}")
+    image = torch.from_numpy(np.array(decoded)).permute(2, 0, 1).contiguous()
     return image
 
 

@@ -17,7 +17,7 @@ from api.sam2.protocol import (
     MAXIMUM_ARCHIVE_BYTES,
     AnalysisRequest,
     ErrorEvent,
-    MAXIMUM_JPEG_BYTES,
+    MAXIMUM_FRAME_BYTES,
 )
 
 logger = logging.getLogger("shrimply.server")
@@ -42,8 +42,8 @@ def read_header(path: str, job: resource.ManagedJob) -> AnalysisRequest:
             if len(length_bytes) != 8:
                 raise ValueError("Truncated SAM2 proxy archive")
             length = int.from_bytes(length_bytes, "little")
-            if length <= 0 or length > MAXIMUM_JPEG_BYTES:
-                raise ValueError("Invalid SAM2 proxy JPEG length")
+            if length <= 0 or length > MAXIMUM_FRAME_BYTES:
+                raise ValueError("Invalid SAM2 proxy frame length")
             if length > size - file.tell():
                 raise ValueError("Truncated SAM2 proxy archive")
             file.seek(length, 1)

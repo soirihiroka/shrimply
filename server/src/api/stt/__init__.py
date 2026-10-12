@@ -6,7 +6,10 @@ from multiprocessing.connection import Connection
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 
+import msgspec
+
 from api import gpu, resource
+from api.media import decode_audio
 from api.stt import resources as stt_resources
 from api.stt.protocol import (
     ErrorEvent,
@@ -15,6 +18,8 @@ from api.stt.protocol import (
     ResultEvent,
     WorkerEvent,
     decode_event,
+    TRANSCRIPTION_REQUEST_VALIDATOR,
+    SAMPLE_RATE,
 )
 
 logger = logging.getLogger("shrimply.stt")
@@ -87,9 +92,11 @@ def transcribe(
     audio_bytes: int,
     job: resource.ManagedJob,
     send_event: Callable[[WorkerEvent | resource.QueuedEvent], None],
+    *,
+    message_pack: bool = False,
 ) -> None:
     key = resource.WorkerKey("stt", model_id)
-    profile = stt_resources.request(model_id)
+    profile = stt_resources.request(model_id, message_pack=message_pack)
     lease = resource.scheduler.acquire(
         job,
         key,
@@ -99,13 +106,33 @@ def transcribe(
     )
     retried_after_oom = False
     try:
-        payload = bytearray()
+        buffer = bytearray()
         with Path(path).open("rb") as audio:
             while chunk := audio.read(resource.TRANSFER_CHUNK_BYTES):
                 job.check_cancelled()
-                payload.extend(chunk)
-        if len(payload) != audio_bytes:
+                buffer.extend(chunk)
+        if len(buffer) != audio_bytes:
             raise RuntimeError("Speech-to-text upload changed before processing")
+        payload: bytes | bytearray = buffer
+        del buffer
+        if message_pack:
+            uploaded = TRANSCRIPTION_REQUEST_VALIDATOR.validate_python(
+                msgspec.msgpack.decode(payload)
+            )
+            if uploaded.model != model_id:
+                raise RuntimeError("Speech-to-text upload model changed before processing")
+            send_event(ProgressEvent(
+                message="Decoding and resampling audio...",
+                model=model_id,
+                state="transcribing",
+            ))
+            _, samples = decode_audio(
+                uploaded.audio, sample_rate=SAMPLE_RATE, check_cancelled=job.check_cancelled
+            )
+            del uploaded, payload
+            job.check_cancelled()
+            payload = samples.astype("<f4", copy=False).tobytes()
+            del samples
         while True:
             worker = lease.worker
             if not isinstance(worker, SttWorker):

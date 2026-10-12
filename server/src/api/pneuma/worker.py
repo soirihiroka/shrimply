@@ -11,6 +11,7 @@ import torch
 
 import env
 
+from api.media import decode_audio
 from api.pneuma.catalog import MODEL_DIRECTORY
 from api.pneuma.protocol import (
     CONVERSION_REQUEST_VALIDATOR,
@@ -48,7 +49,6 @@ def run(connection: Connection, device_name: str) -> None:
 
     from api.pneuma.inference.configs.config import get_config
     from api.pneuma.inference.conversion import convert_voice_iter
-    from api.pneuma.inference.utils.audio import load_audio_with_sr
 
     logger.info("Worker pid=%d initializing device=%s", os.getpid(), device_name)
     send_event(
@@ -72,9 +72,8 @@ def run(connection: Connection, device_name: str) -> None:
                     state="converting",
                 ),
             )
-            input_audio = load_audio_with_sr(
-                BytesIO(request.audio), source_name=request.file_name
-            )
+            rate, samples = decode_audio(request.audio)
+            input_audio = (rate, samples.reshape(-1))
             completed = False
             conversion = convert_voice_iter(
                 request.model,

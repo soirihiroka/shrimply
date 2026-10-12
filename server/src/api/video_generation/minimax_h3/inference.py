@@ -280,6 +280,7 @@ def _configure_attention(pipe: H3Pipeline, attention: str) -> str:
 
 
 def _build_references(specs: tuple[ReferenceSpec, ...]) -> list[H3Reference]:
+    from api.media import decode_audio, load_image
     from diffusers.modular_pipelines.minimax_h3 import (
         MiniMaxH3AudioReference,
         MiniMaxH3ImageReference,
@@ -290,11 +291,14 @@ def _build_references(specs: tuple[ReferenceSpec, ...]) -> list[H3Reference]:
     for spec in specs:
         match spec.kind:
             case "image":
-                references.append(MiniMaxH3ImageReference.from_file(spec.source))
+                references.append(MiniMaxH3ImageReference(image=load_image(spec.source)))
             case "video":
                 references.append(MiniMaxH3VideoReference.from_file(spec.source))
             case "audio":
-                references.append(MiniMaxH3AudioReference.from_file(spec.source))
+                rate, samples = decode_audio(Path(spec.source), layout="stereo")
+                references.append(MiniMaxH3AudioReference(
+                    audio=torch.from_numpy(samples), sample_rate=rate
+                ))
             case _:
                 raise ValueError(f"Unsupported MiniMax H3 reference: {spec.kind}")
     return references
@@ -1262,7 +1266,7 @@ def generate(
     decode_output: bool = True,
 ) -> GenerationOutput:
     import torch
-    from diffusers.utils import load_image
+    from api.media import load_image
 
     request.validate()
     request.output.parent.mkdir(parents=True, exist_ok=True)

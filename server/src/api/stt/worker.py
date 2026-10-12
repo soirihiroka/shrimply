@@ -26,6 +26,7 @@ from api.stt.protocol import (
     Transcription,
     WorkerEvent,
     encode_event,
+    SAMPLE_RATE,
 )
 
 logging.basicConfig(
@@ -34,7 +35,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("shrimply.stt_worker")
 
-SAMPLE_RATE = 16_000
 QWEN_MODEL_ID: ModelId = "Qwen/Qwen3-ASR-0.6B-hf"
 QWEN_ALIGNER_ID = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
 PARAKEET_MODEL_ID: ModelId = "nvidia/parakeet-tdt-0.6b-v3"

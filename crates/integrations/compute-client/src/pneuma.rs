@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::{CancellationToken, queued_status};
+use crate::{AudioUpload, CancellationToken, queued_status};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MESSAGE_PACK: &str = "application/msgpack";
@@ -44,8 +44,7 @@ struct ModelsResponse {
 #[derive(Serialize)]
 struct WireConvertRequest<'a> {
     model: &'a str,
-    #[serde(with = "serde_bytes")]
-    audio: &'a [u8],
+    audio: &'a AudioUpload,
     file_name: &'a str,
     pitch_offset: i32,
     f0_method: &'a str,
@@ -106,6 +105,8 @@ pub fn convert(
 ) -> Result<Vec<u8>, String> {
     let audio = fs::read(request.input)
         .map_err(|error| format!("Could not read audio for Pneuma: {error}"))?;
+    let audio_bytes = audio.len();
+    let audio = AudioUpload::Encoded { data: audio };
     let file_name = request
         .input
         .file_name()
@@ -122,7 +123,7 @@ pub fn convert(
     })
     .map_err(|error| format!("Could not encode Pneuma request: {error}"))?;
     let endpoint = format!("{}/pneuma/conversions", validate_url(server_url)?);
-    tracing::info!(%endpoint, body_bytes = payload.len(), audio_bytes = audio.len(), "Sending Pneuma conversion request");
+    tracing::info!(%endpoint, body_bytes = payload.len(), audio_bytes, "Sending Pneuma conversion request");
     let request = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .build()

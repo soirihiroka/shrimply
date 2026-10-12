@@ -12,11 +12,12 @@ MODELS = {
 }
 
 
-def request(model_id: ModelId) -> ResourceProfile:
+def request(model_id: ModelId, *, message_pack: bool = False) -> ResourceProfile:
     parameters, bytes_per_parameter, workspace = MODELS[model_id]
     return ResourceProfile(
         resident_vram=parameters * bytes_per_parameter,
-        # The parent and worker each hold a full request during pipe transfer.
-        active_ram=MAXIMUM_AUDIO_BYTES * 2,
+        # MessagePack retains both the envelope and its audio while decoding;
+        # concatenation briefly retains the chunks and the final sample buffer.
+        active_ram=MAXIMUM_AUDIO_BYTES * (4 if message_pack else 2),
         active_vram=workspace,
     )

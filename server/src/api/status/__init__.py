@@ -77,7 +77,7 @@ def server_status(version: str, git_hash: str) -> ServerStatus:
             )
     video_generation_available = gpu.device.startswith("cuda:")
     return ServerStatus(
-        protocol=ProtocolStatus(major=4, minor=0),
+        protocol=ProtocolStatus(major=4, minor=1),
         server=ServerVersion(
             version=version,
             git_hash=git_hash,

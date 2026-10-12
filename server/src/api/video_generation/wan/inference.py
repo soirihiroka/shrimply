@@ -146,7 +146,7 @@ def generate(
 
     generator = torch.Generator(device="cpu").manual_seed(request.seed)
     if request.workflow == "i2v":
-        from PIL import Image
+        from api.media import load_image
 
         if request.image is None:
             raise RuntimeError("Wan image-to-video requires a first frame")
@@ -160,10 +160,10 @@ def generate(
         pipe.vae.enable_tiling()
         pipe.enable_model_cpu_offload(device=device)
         pipe.set_progress_bar_config(disable=True)
-        with Image.open(request.image) as image:
+        with load_image(request.image) as image:
             with torch.inference_mode():
                 output = pipe(
-                    image=image.convert("RGB"),
+                    image=image,
                     prompt=request.prompt,
                     negative_prompt=request.negative_prompt,
                     height=request.height,

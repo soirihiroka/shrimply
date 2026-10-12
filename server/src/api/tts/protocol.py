@@ -1,7 +1,9 @@
 from fractions import Fraction
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, model_validator
+
+from api.media import AudioUpload
 
 type ModelId = Literal[
     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
@@ -35,14 +37,27 @@ class Rational(ProtocolModel):
     denominator: int = Field(gt=0)
 
 
-class Audio(ProtocolModel):
-    wav: bytes = Field(min_length=44, max_length=64 * 1024 * 1024)
+def validate_reference_audio(value):
+    if isinstance(value, dict):
+        if set(value) == {"wav"}:
+            wav = value["wav"]
+            if (
+                not isinstance(wav, bytes)
+                or len(wav) < 44
+                or wav[:4] != b"RIFF"
+                or wav[8:12] != b"WAVE"
+            ):
+                raise ValueError("Audio must contain WAV data")
+            value = {"kind": "encoded", "data": wav}
+        data = value.get("data")
+    else:
+        data = getattr(value, "data", None)
+    if isinstance(data, bytes) and len(data) > 64 * 1024 * 1024:
+        raise ValueError("Reference audio exceeds the 64 MiB limit")
+    return value
 
-    @model_validator(mode="after")
-    def validate_wav(self) -> Self:
-        if self.wav[:4] != b"RIFF" or self.wav[8:12] != b"WAVE":
-            raise ValueError("Audio must contain WAV data")
-        return self
+
+type Audio = Annotated[AudioUpload, BeforeValidator(validate_reference_audio)]
 
 
 class VisibleWhen(ProtocolModel):

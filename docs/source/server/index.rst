@@ -81,3 +81,4 @@ model downloads.
    voice-conversion
    camera-tracking
    video-generation
+   media-formats

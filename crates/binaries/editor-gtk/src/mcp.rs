@@ -1299,7 +1299,15 @@ fn run_transcription(
             &server_url,
             &cancellation,
             &model,
-            &chunk.samples,
+            &shrimply_compute_client::AudioUpload::Pcm {
+                data: chunk
+                    .samples
+                    .iter()
+                    .flat_map(|sample| sample.to_le_bytes())
+                    .collect(),
+                sample_rate: shrimply_transcription::SAMPLE_RATE,
+                channels: 1,
+            },
             |message| tracing::info!(chunk = index + 1, %message, "MCP transcription progress"),
         );
         active_job
@@ -1816,11 +1824,7 @@ fn prepare_generated_tts(
         settings.inputs.insert(key, value);
     }
     shrimply_tts::set_text(&mut settings, &model, request.text);
-    let speech_request = shrimply_tts::speech_request(
-        &model,
-        &settings,
-        shrimply_audio_engine::recording::transcode_to_wav,
-    )?;
+    let speech_request = shrimply_tts::speech_request(&model, &settings)?;
     let speech = shrimply_tts::synthesize(&server_url, &cancellation, &speech_request, |_| {
         !cancellation.is_cancelled()
     })?;

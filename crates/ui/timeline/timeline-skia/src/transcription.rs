@@ -350,7 +350,15 @@ fn run(
                 &server_url,
                 &cancellation,
                 &model,
-                &chunk.samples,
+                &shrimply_compute_client::AudioUpload::Pcm {
+                    data: chunk
+                        .samples
+                        .iter()
+                        .flat_map(|sample| sample.to_le_bytes())
+                        .collect(),
+                    sample_rate: SAMPLE_RATE,
+                    channels: 1,
+                },
                 |message| {
                     let _ = progress.send(Message::Progress(format!(
                         "{}/{} · {message}",

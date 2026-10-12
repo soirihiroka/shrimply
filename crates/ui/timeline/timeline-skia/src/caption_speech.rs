@@ -491,11 +491,7 @@ fn run_generation(
             message: "Sending request…".into(),
             preview: preview.clone(),
         });
-        let request = shrimply_tts::speech_request(
-            &options.model,
-            &settings,
-            shrimply_audio_engine::recording::transcode_to_wav,
-        );
+        let request = shrimply_tts::speech_request(&options.model, &settings);
         let result = request
             .and_then(|request| {
                 shrimply_tts::synthesize(&options.server_url, &cancellation, &request, |message| {

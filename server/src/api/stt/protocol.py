@@ -1,7 +1,9 @@
 from typing import Annotated, Literal, get_args
 
 import msgspec
-from pydantic import BaseModel, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+
+from api.media import AudioUpload
 
 type ModelId = Literal[
     "nvidia/parakeet-tdt-0.6b-v3",
@@ -14,6 +16,17 @@ type WorkerState = Literal["stopped", "loading", "transcribing", "ready"]
 
 MODEL_IDS = get_args(ModelId.__value__)
 MODEL_ID_VALIDATOR = TypeAdapter(ModelId)
+SAMPLE_RATE = 16_000
+
+
+class TranscriptionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    model: ModelId
+    audio: AudioUpload
+
+
+TRANSCRIPTION_REQUEST_VALIDATOR = TypeAdapter(TranscriptionRequest)
 
 
 class Segment(BaseModel):

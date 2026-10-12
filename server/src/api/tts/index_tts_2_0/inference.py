@@ -9,6 +9,7 @@ import torchaudio
 from torch import Tensor
 from torch.nn import functional as F
 
+from api.media import AudioUpload
 from api.tts.requests import (
     AudioEmotion,
     DurationTiming,
@@ -75,7 +76,7 @@ def synthesize(
     if progress is not None:
         progress(0.05, "Preparing reference voice")
     with measure_stage(timings, "reference", models.device):
-        reference = _reference_features(models, request.voice.wav)
+        reference = _reference_features(models, request.voice)
     emotion = _emotion_condition(models, request, reference)
     glossary = [
         GlossaryTerm(entry.term, entry.chinese, entry.english)
@@ -173,7 +174,7 @@ def synthesize(
 
 
 @lru_cache(maxsize=4)
-def _reference_features(models: IndexModels, audio: bytes) -> ReferenceFeatures:
+def _reference_features(models: IndexModels, audio: AudioUpload) -> ReferenceFeatures:
     waveform = decode_audio(audio)
     conditioning = _semantic_conditioning(models, waveform.samples)
     mel = mel_spectrogram(waveform, models.device).to(models.dtype)
@@ -187,7 +188,7 @@ def _reference_features(models: IndexModels, audio: bytes) -> ReferenceFeatures:
 
 
 @lru_cache(maxsize=4)
-def _emotion_audio_conditioning(models: IndexModels, audio: bytes) -> Tensor:
+def _emotion_audio_conditioning(models: IndexModels, audio: AudioUpload) -> Tensor:
     waveform = decode_audio(audio)
     return _semantic_conditioning(models, waveform.samples)
 
@@ -227,7 +228,7 @@ def _emotion_condition(
         case SpeakerEmotion():
             return EmotionCondition(reference.conditioning, base)
         case AudioEmotion(audio=audio, strength=strength):
-            conditioning = _emotion_audio_conditioning(models, audio.wav)
+            conditioning = _emotion_audio_conditioning(models, audio)
             lengths = torch.tensor([conditioning.shape[1]], device=models.device)
             vector = models.gpt.merge_emotion_vectors(
                 reference.conditioning,

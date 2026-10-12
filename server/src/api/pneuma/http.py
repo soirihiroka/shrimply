@@ -85,7 +85,7 @@ async def handle_request(request: Request) -> Response:
         "Accepted Pneuma request from %s model=%s audio_bytes=%d",
         client,
         conversion_request.model,
-        len(conversion_request.audio),
+        len(conversion_request.audio if isinstance(conversion_request.audio, bytes) else conversion_request.audio.data),
     )
 
     def failure(exception: Exception) -> ErrorEvent:
