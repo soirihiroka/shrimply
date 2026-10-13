@@ -66,6 +66,7 @@ pub(crate) struct VideoDecoderSession {
     decoder_name: String,
     frame_index: usize,
     pub(crate) last_decoded_position: Option<Time>,
+    previous_decoded_position: Option<Time>,
     lookahead: Option<DecodedVisual>,
     pending_packet: Option<ffmpeg::Packet>,
     input_eof: bool,
@@ -136,6 +137,7 @@ impl VideoDecoderSession {
             decoder_name: opened.decoder_name,
             frame_index: 0,
             last_decoded_position: None,
+            previous_decoded_position: None,
             lookahead: None,
             pending_packet: None,
             input_eof: false,
@@ -286,7 +288,16 @@ impl VideoDecoderSession {
         // Cancellation can discard the candidate preceding a retained lookahead frame. Without
         // that candidate, decoding forward from beyond the target would return lookahead forever.
         let backward_tolerance =
-            if cached_frame(candidate.as_ref(), position, self.frame_duration).is_some() {
+            if cached_frame(candidate.as_ref(), position, self.frame_duration).is_some()
+                || (cfg!(target_os = "windows")
+                    && candidate_precedes_retained_lookahead(
+                        candidate.as_ref().map(|frame| frame.0),
+                        self.previous_decoded_position,
+                        position,
+                        self.lookahead.as_ref().map(|frame| frame.0),
+                        self.last_decoded_position,
+                    ))
+            {
                 self.frame_duration
             } else {
                 Time::ZERO
@@ -358,6 +369,7 @@ impl VideoDecoderSession {
         shrimply_profiling::increment("Video decode / Decoder flush");
         self.frame_index = 0;
         self.last_decoded_position = None;
+        self.previous_decoded_position = None;
         self.lookahead = None;
         self.pending_packet = None;
         self.input_eof = false;
@@ -530,6 +542,7 @@ impl VideoDecoderSession {
                 } else {
                     self.nonadvancing_frames = 0;
                 }
+                self.previous_decoded_position = self.last_decoded_position;
                 self.last_decoded_position = Some(position);
                 self.frame_index += 1;
                 let frame = {
@@ -545,6 +558,7 @@ impl VideoDecoderSession {
                     Err(error) => {
                         if error.starts_with(GPU_FRAME_ALLOCATION_EXHAUSTED) {
                             self.last_decoded_position = None;
+                            self.previous_decoded_position = None;
                             shrimply_profiling::increment(
                                 "Video decode / Recoverable GPU allocation errors",
                             );
@@ -826,6 +840,22 @@ fn cached_frame(
         .cloned()
 }
 
+fn candidate_precedes_retained_lookahead(
+    candidate: Option<Time>,
+    previous_decoded: Option<Time>,
+    requested: Time,
+    lookahead: Option<Time>,
+    last_decoded: Option<Time>,
+) -> bool {
+    candidate.is_some_and(|candidate| {
+        previous_decoded == Some(candidate)
+            && candidate <= requested
+            && lookahead.is_some_and(|lookahead| {
+                requested < lookahead && last_decoded == Some(lookahead)
+            })
+    })
+}
+
 fn frame_time(
     frame: &ffmpeg::frame::Video,
     time_base: ffmpeg::Rational,
@@ -966,5 +996,79 @@ pub(crate) fn cuda_memory_info() -> Result<(usize, usize), String> {
             return Err("could not query or restore CUDA memory context".to_string());
         }
         Ok((free, total))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quantized_candidate_precedes_retained_lookahead() {
+        let candidate = Time::from_fraction(33, 1_000);
+        let requested = Time::from_fraction(1, 15);
+        let lookahead = Time::from_fraction(67, 1_000);
+        let frame_duration = Time::from_fraction(33, 1_000);
+
+        assert!(requested.saturating_sub(candidate) >= frame_duration);
+        assert!(candidate_precedes_retained_lookahead(
+            Some(candidate),
+            Some(candidate),
+            requested,
+            Some(lookahead),
+            Some(lookahead),
+        ));
+    }
+
+    #[test]
+    fn stale_candidate_does_not_precede_retained_lookahead() {
+        let candidate = Time::ZERO;
+        let previous_decoded = Time::from_fraction(33, 1_000);
+        let requested = Time::from_fraction(1, 15);
+        let lookahead = Time::from_fraction(67, 1_000);
+
+        assert!(!candidate_precedes_retained_lookahead(
+            Some(candidate),
+            Some(previous_decoded),
+            requested,
+            Some(lookahead),
+            Some(lookahead),
+        ));
+    }
+
+    #[test]
+    fn incomplete_or_mismatched_predecessor_state_is_rejected() {
+        let candidate = Time::from_fraction(33, 1_000);
+        let requested = Time::from_fraction(1, 15);
+        let lookahead = Time::from_fraction(67, 1_000);
+
+        assert!(!candidate_precedes_retained_lookahead(
+            None,
+            Some(candidate),
+            requested,
+            Some(lookahead),
+            Some(lookahead),
+        ));
+        assert!(!candidate_precedes_retained_lookahead(
+            Some(candidate),
+            Some(Time::ZERO),
+            requested,
+            Some(lookahead),
+            Some(lookahead),
+        ));
+        assert!(!candidate_precedes_retained_lookahead(
+            Some(candidate),
+            Some(candidate),
+            requested,
+            None,
+            Some(lookahead),
+        ));
+        assert!(!candidate_precedes_retained_lookahead(
+            Some(candidate),
+            Some(candidate),
+            requested,
+            Some(lookahead),
+            Some(Time::from_fraction(68, 1_000)),
+        ));
     }
 }
