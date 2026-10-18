@@ -6,6 +6,13 @@ CUresult shrimply_cuda_init(unsigned flags) { return cuInit(flags); }
 CUresult shrimply_cuda_device_get(CUdevice *device, int ordinal) {
   return cuDeviceGet(device, ordinal);
 }
+#if defined(_WIN32)
+CUresult shrimply_cuda_device_concurrent_managed_access(int *value,
+                                                        CUdevice device) {
+  return cuDeviceGetAttribute(
+      value, CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS, device);
+}
+#endif
 CUresult shrimply_cuda_device_uuid(unsigned char *uuid, CUdevice device) {
   CUuuid value;
   CUresult result = cuDeviceGetUuid(&value, device);

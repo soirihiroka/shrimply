@@ -18,6 +18,11 @@ pub const DEVICE_UUID_BYTES: usize = 16;
 unsafe extern "C" {
     fn shrimply_cuda_init(flags: u32) -> CUresult;
     fn shrimply_cuda_device_get(device: *mut CUdevice, ordinal: i32) -> CUresult;
+    #[cfg(windows)]
+    fn shrimply_cuda_device_concurrent_managed_access(
+        value: *mut i32,
+        device: CUdevice,
+    ) -> CUresult;
     fn shrimply_cuda_device_uuid(uuid: *mut u8, device: CUdevice) -> CUresult;
     fn shrimply_cuda_primary_retain(context: *mut CUcontext, device: CUdevice) -> CUresult;
     fn shrimply_cuda_primary_release(device: CUdevice) -> CUresult;
@@ -134,6 +139,8 @@ pub struct CudaContext {
     device: CUdevice,
     context: CUcontext,
     ordinal: usize,
+    #[cfg(windows)]
+    concurrent_managed_access: Option<bool>,
     stream_count: AtomicUsize,
 }
 unsafe impl Send for CudaContext {}
@@ -143,12 +150,21 @@ impl CudaContext {
         check(unsafe { shrimply_cuda_init(0) })?;
         let mut device = 0;
         check(unsafe { shrimply_cuda_device_get(&mut device, ordinal as i32) })?;
+        #[cfg(windows)]
+        let concurrent_managed_access = {
+            let mut value = 0;
+            let result =
+                unsafe { shrimply_cuda_device_concurrent_managed_access(&mut value, device) };
+            (result == sys::CUDA_SUCCESS).then_some(value != 0)
+        };
         let mut context = std::ptr::null_mut();
         check(unsafe { shrimply_cuda_primary_retain(&mut context, device) })?;
         let result = Arc::new(Self {
             device,
             context,
             ordinal,
+            #[cfg(windows)]
+            concurrent_managed_access,
             stream_count: AtomicUsize::new(0),
         });
         result.bind_to_thread()?;
@@ -159,6 +175,10 @@ impl CudaContext {
     }
     pub fn cu_device(&self) -> CUdevice {
         self.device
+    }
+    #[cfg(windows)]
+    pub fn concurrent_managed_access(&self) -> Option<bool> {
+        self.concurrent_managed_access
     }
     pub fn device_uuid(&self) -> Result<[u8; DEVICE_UUID_BYTES], DriverError> {
         let mut uuid = [0; DEVICE_UUID_BYTES];

@@ -450,7 +450,16 @@ impl GpuMemoryManager {
             );
         }
 
-        if matches!(class, AllocationClass::Persistent | AllocationClass::Cached) && host_enabled {
+        #[cfg(target_os = "windows")]
+        let gpu_preferred_managed_unsupported =
+            stream.context().concurrent_managed_access() == Some(false);
+        #[cfg(not(target_os = "windows"))]
+        let gpu_preferred_managed_unsupported = false;
+
+        if matches!(class, AllocationClass::Persistent | AllocationClass::Cached)
+            && host_enabled
+            && (pressured || !gpu_preferred_managed_unsupported)
+        {
             match self.allocate_managed(stream, length, class, &description, bytes, pressured) {
                 Ok(buffer) => return Ok(buffer),
                 Err(managed_error) => {
