@@ -32,6 +32,8 @@ Shrimply is currently pre-alpha software, which means you should expect:
 - Irreversible project file breakage
 - Random crashes and resource leaks
 
+If you noticed any performance/correctness issue, feel free to open [issues](https://github.com/soirihiroka/shrimply/issues).
+
 See the [documentation](https://shrimply.pages.dev) for more.
 
 ## Contributing
