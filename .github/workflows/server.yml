@@ -5,7 +5,11 @@ on:
     branches:
       - main
     paths:
-      - server/**
+      - ".github/workflows/server.yml"
+      - "server/**"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!**/docs/**"
   workflow_dispatch:
 
 permissions:

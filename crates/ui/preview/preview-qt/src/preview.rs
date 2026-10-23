@@ -201,10 +201,7 @@ impl ToolkitPreview {
         );
         let video_tx = media.sender();
         let mut extensions = HashMap::<_, Box<dyn Any>>::new();
-        extensions.insert(
-            PAINT_PREVIEW_STATE,
-            Box::new(PaintPreviewState::default()),
-        );
+        extensions.insert(PAINT_PREVIEW_STATE, Box::new(PaintPreviewState::default()));
         let provider_invalidated = Rc::new(Cell::new(false));
         let selection_invalidated = provider_invalidated.clone();
         selection_state::connect_named(

@@ -4,6 +4,23 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/macos.yml"
+      - ".github/scripts/**"
+      - "packaging/macos/**"
+      - ".cargo/**"
+      - ".gitmodules"
+      - "assets/**"
+      - "crates/**"
+      - "external/**"
+      - "vendor/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "Makefile"
+      - "rust-toolchain.toml"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!**/docs/**"
   workflow_dispatch:
 
 permissions:
@@ -225,36 +242,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          short_sha="${GITHUB_SHA:0:12}"
-          timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-          tag="macos-${timestamp}"
-          release_notes="${RUNNER_TEMP}/macos-release.md"
-          {
-            echo "Automated Apple Silicon macOS build of commit [\`${short_sha}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
-            echo
-            echo "Unzip the archive and move \`Shrimply.app\` to Applications. This prerelease is ad-hoc signed, but not Apple-notarized; on first launch, approve it in System Settings > Privacy & Security if macOS blocks it."
-          } > "${release_notes}"
-
-          if gh release view "${tag}" >/dev/null 2>&1; then
-            assets="$(gh release view "${tag}" --json assets --jq '.assets[].name')"
-            grep -qx 'shrimply-macos-arm64.zip' <<< "${assets}"
-            grep -qx 'shrimply-macos-arm64.zip.sha256' <<< "${assets}"
-            echo "Release ${tag} already exists with both assets"
-          else
-            gh release create "${tag}" \
-              "${MACOS_ARCHIVE}#Shrimply for Apple Silicon" \
-              "${MACOS_ARCHIVE}.sha256#SHA-256 checksum" \
-              --target "${GITHUB_SHA}" \
-              --title "Shrimply macOS ${timestamp}" \
-              --notes-file "${release_notes}" \
-              --prerelease \
-              --latest=false
-          fi
-
-          gh release list --limit 100 --json tagName,isPrerelease \
-            --jq '.[] | select(.isPrerelease and (.tagName | startswith("macos-"))) | .tagName' \
-            | while IFS= read -r old_tag; do
-                if [[ "${old_tag}" != "${tag}" ]]; then
-                  gh release delete "${old_tag}" --cleanup-tag --yes
-                fi
-              done
+          bash .github/scripts/publish-prerelease.sh \
+            "${MACOS_ARCHIVE}#Shrimply for Apple Silicon" \
+            "${MACOS_ARCHIVE}.sha256#SHA-256 checksum"

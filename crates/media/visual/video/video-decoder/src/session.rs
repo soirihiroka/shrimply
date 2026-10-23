@@ -287,21 +287,20 @@ impl VideoDecoderSession {
             (!continuous).then_some(Time::from_seconds(LOCAL_FORWARD_DECODE_SECONDS));
         // Cancellation can discard the candidate preceding a retained lookahead frame. Without
         // that candidate, decoding forward from beyond the target would return lookahead forever.
-        let backward_tolerance =
-            if cached_frame(candidate.as_ref(), position, self.frame_duration).is_some()
-                || (cfg!(target_os = "windows")
-                    && candidate_precedes_retained_lookahead(
-                        candidate.as_ref().map(|frame| frame.0),
-                        self.previous_decoded_position,
-                        position,
-                        self.lookahead.as_ref().map(|frame| frame.0),
-                        self.last_decoded_position,
-                    ))
-            {
-                self.frame_duration
-            } else {
-                Time::ZERO
-            };
+        let backward_tolerance = if cached_frame(candidate.as_ref(), position, self.frame_duration)
+            .is_some()
+            || (cfg!(target_os = "windows")
+                && candidate_precedes_retained_lookahead(
+                    candidate.as_ref().map(|frame| frame.0),
+                    self.previous_decoded_position,
+                    position,
+                    self.lookahead.as_ref().map(|frame| frame.0),
+                    self.last_decoded_position,
+                )) {
+            self.frame_duration
+        } else {
+            Time::ZERO
+        };
         if !continuing_active_seek
             && !self.can_decode_forward(position, backward_tolerance, maximum_forward_gap)
         {
@@ -850,9 +849,8 @@ fn candidate_precedes_retained_lookahead(
     candidate.is_some_and(|candidate| {
         previous_decoded == Some(candidate)
             && candidate <= requested
-            && lookahead.is_some_and(|lookahead| {
-                requested < lookahead && last_decoded == Some(lookahead)
-            })
+            && lookahead
+                .is_some_and(|lookahead| requested < lookahead && last_decoded == Some(lookahead))
     })
 }
 

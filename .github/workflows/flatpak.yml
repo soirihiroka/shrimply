@@ -4,6 +4,24 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/flatpak.yml"
+      - ".github/scripts/**"
+      - "packaging/flatpak/**"
+      - "dev.shrimply.Shrimply.yml"
+      - ".cargo/**"
+      - ".gitmodules"
+      - "assets/**"
+      - "crates/**"
+      - "external/**"
+      - "vendor/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "Makefile"
+      - "rust-toolchain.toml"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!**/docs/**"
   workflow_dispatch:
 
 permissions:
@@ -41,7 +59,6 @@ jobs:
       contents: read
     outputs:
       tag: ${{ steps.release.outputs.tag }}
-      timestamp: ${{ steps.release.outputs.timestamp }}
       commit: ${{ steps.release.outputs.commit }}
 
     steps:
@@ -285,7 +302,6 @@ jobs:
           commit="$(ostree --repo="${FLATPAK_REPO_DIR}" rev-parse app/dev.shrimply.Shrimply/x86_64/master)"
           {
             echo "tag=flatpak-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            echo "timestamp=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "commit=${commit}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -326,11 +342,13 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RELEASE_TAG: ${{ needs.build.outputs.tag }}
-      RELEASE_TIMESTAMP: ${{ needs.build.outputs.timestamp }}
       EXPECTED_COMMIT: ${{ needs.build.outputs.commit }}
 
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Download release assets
         uses: actions/download-artifact@v4
         with:
@@ -366,43 +384,6 @@ jobs:
       - name: Publish prerelease
         run: |
           (cd dist && sha256sum --check shrimply-gtk.flatpak.sha256)
-          short_sha="${GITHUB_SHA:0:12}"
-          release_notes="${RUNNER_TEMP}/flatpak-release.md"
-          {
-            echo "Pre-alpha GTK Flatpak build of commit [\`${short_sha}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
-            echo
-            echo "Built ${RELEASE_TIMESTAMP}. Updates track main."
-            echo
-            echo '```console'
-            echo "flatpak install --user ${FLATPAK_PAGES_URL}/shrimply-prerelease.flatpakref"
-            echo 'flatpak update --user dev.shrimply.Shrimply'
-            echo '```'
-            echo
-            echo "Alternatively, install the attached bundle with \`flatpak install --user ./shrimply-gtk.flatpak\`; it also receives updates from the prerelease remote."
-          } > "${release_notes}"
-
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            existing_assets="${RUNNER_TEMP}/existing-release"
-            mkdir -p "${existing_assets}"
-            gh release download "${RELEASE_TAG}" --dir "${existing_assets}" \
-              --pattern shrimply-gtk.flatpak --pattern shrimply-gtk.flatpak.sha256
-            cmp "${FLATPAK_BUNDLE}.sha256" "${existing_assets}/shrimply-gtk.flatpak.sha256"
-            (cd "${existing_assets}" && sha256sum --check shrimply-gtk.flatpak.sha256)
-          else
-            gh release create "${RELEASE_TAG}" \
-              "${FLATPAK_BUNDLE}#Shrimply GTK Flatpak" \
-              "${FLATPAK_BUNDLE}.sha256#SHA-256 checksum" \
-              --target "${GITHUB_SHA}" \
-              --title "Shrimply Prerelease ${RELEASE_TIMESTAMP}" \
-              --notes-file "${release_notes}" \
-              --prerelease \
-              --latest=false
-          fi
-
-          gh release list --limit 100 --json tagName,isPrerelease \
-            --jq '.[] | select(.isPrerelease and (.tagName | startswith("flatpak-"))) | .tagName' \
-            | while IFS= read -r old_tag; do
-                if [[ "${old_tag}" != "${RELEASE_TAG}" ]]; then
-                  gh release delete "${old_tag}" --cleanup-tag --yes
-                fi
-              done
+          bash .github/scripts/publish-prerelease.sh \
+            "${FLATPAK_BUNDLE}#Shrimply GTK Flatpak" \
+            "${FLATPAK_BUNDLE}.sha256#SHA-256 checksum"

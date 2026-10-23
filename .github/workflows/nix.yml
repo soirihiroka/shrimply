@@ -16,6 +16,9 @@ on:
       - "Cargo.toml"
       - "Makefile"
       - "rust-toolchain.toml"
+      - "!**/*.md"
+      - "!**/*.rst"
+      - "!**/docs/**"
   workflow_dispatch:
     inputs:
       cachix_cache:
