@@ -19,7 +19,8 @@ Shrimply is a simple yet powerful cross-platform video editor.
 Installation
 ------------
 
-* :doc:`Flatpak <flatpak>`
+* :doc:`Flatpak (Linux) <flatpak>`
+* :doc:`Homebrew (macOS) <homebrew>`
 
 Get started
 -----------
@@ -45,7 +46,8 @@ License
    :hidden:
    :caption: Installation
 
-   Flatpak <flatpak>
+   Flatpak (Linux) <flatpak>
+   Homebrew (macOS) <homebrew>
 
 .. toctree::
    :maxdepth: 2

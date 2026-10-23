@@ -5,7 +5,8 @@ Run Shrimply
 ------------
 
 Shrimply is currently pre-alpha software. On Linux, see :doc:`flatpak` for
-installation, updates, and known limitations.
+installation, updates, and known limitations. On macOS, see :doc:`homebrew`
+for installation and updates.
 
 To build Shrimply from source, see :doc:`development`.
 
