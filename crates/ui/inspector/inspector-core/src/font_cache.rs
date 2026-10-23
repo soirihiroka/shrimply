@@ -404,7 +404,7 @@ pub fn download_google_family(family: &GoogleFamily) -> Result<FontFamily, Strin
         }
         let data = limited_bytes(response)?;
         let typeface = manager
-            .new_from_data(&data, None)
+            .new_from_bytes(&data, None)
             .ok_or_else(|| format!("{} is not a supported font", face.filename))?;
         let mut downloaded =
             downloaded_face(face.filename.clone(), url.to_string(), data, &typeface);
@@ -436,7 +436,7 @@ pub fn preview_google_family(family: &GoogleFamily) -> Result<Typeface, String> 
             continue;
         }
         let data = limited_bytes(response)?;
-        if let Some(typeface) = manager.new_from_data(&data, None) {
+        if let Some(typeface) = manager.new_from_bytes(&data, None) {
             return Ok(typeface);
         }
     }
@@ -497,7 +497,7 @@ pub fn preview_typeface(name: &str) -> Result<Typeface, String> {
     let manager = FontMgr::new();
     files
         .iter()
-        .filter_map(|data| manager.new_from_data(data, None))
+        .filter_map(|data| manager.new_from_bytes(data, None))
         .find(|typeface| typeface.unichar_to_glyph('A' as i32) != 0)
         .ok_or_else(|| format!("cached font {name} has no usable Latin preview face"))
 }

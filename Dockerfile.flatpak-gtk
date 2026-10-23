@@ -25,7 +25,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 RUN flatpak remote-add --user --if-not-exists flathub \
         https://dl.flathub.org/repo/flathub.flatpakrepo \
-    && flatpak install --user -y flathub org.gnome.Sdk//50 org.gnome.Platform//50
+    && flatpak install --user -y flathub org.gnome.Sdk//50 org.gnome.Platform//50 \
+        org.freedesktop.Sdk.Extension.llvm21//25.08
 
 RUN apt-get update && apt-get install -y --no-install-recommends librsvg2-common \
     && apt-get clean \

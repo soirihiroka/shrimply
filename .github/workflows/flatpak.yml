@@ -159,7 +159,8 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --assumeyes --noninteractive flathub \
-            "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}"
+            "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}" \
+            org.freedesktop.Sdk.Extension.llvm21//25.08
 
       # Both builds must use the same manifest path: --state-dir keys the cache by it.
       - name: Create Flatpak source archive

@@ -2,6 +2,8 @@ app-id: dev.shrimply.Shrimply
 runtime: org.gnome.Platform
 runtime-version: "50"
 sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.llvm21
 command: shrimply
 
 build-options:
@@ -144,7 +146,7 @@ modules:
         CARGO_HOME: /run/ccache/cargo-home
         CARGO_TARGET_DIR: /run/ccache/cargo-target
         CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
-        PATH: /run/host/usr/local/cargo/bin:/run/host/usr/local/cuda-12.9/bin:/app/bin:/usr/bin
+        PATH: /run/host/usr/local/cargo/bin:/run/host/usr/local/cuda-12.9/bin:/usr/lib/sdk/llvm21/bin:/app/bin:/usr/bin
         CUDA_HOME: /run/host/usr/local/cuda-12.9
         CUDA_TOOLKIT_PATH: /run/host/usr/local/cuda-12.9
         CUDA_IMAGE_FORMAT: ptx
