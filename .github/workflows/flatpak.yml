@@ -47,7 +47,7 @@ env:
   FLATPAK_STATE_DIR: target/flatpak-gtk/state
   FLATPAK_PAGES_DIR: target/flatpak-pages
   FLATPAK_PAGES_URL: https://soirihiroka.github.io/shrimply
-  GNOME_RUNTIME_VERSION: "50"
+  GNOME_RUNTIME_VERSION: "51"
   RUSTUP_HOME: /usr/local/rustup
 
 jobs:
@@ -160,7 +160,7 @@ jobs:
             https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --assumeyes --noninteractive flathub \
             "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}" \
-            org.freedesktop.Sdk.Extension.llvm21//25.08
+            org.freedesktop.Sdk.Extension.llvm22//26.08
 
       # Both builds must use the same manifest path: --state-dir keys the cache by it.
       - name: Create Flatpak source archive
