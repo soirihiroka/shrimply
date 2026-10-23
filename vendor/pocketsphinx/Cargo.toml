@@ -6,9 +6,9 @@ license = "BSD-2-Clause"
 build = "build.rs"
 
 [dependencies]
-realfft = "3"
-sha2 = "0.10"
+realfft.workspace = true
+sha2.workspace = true
 
 [build-dependencies]
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
-sha2 = "0.10"
+reqwest = { workspace = true, features = ["blocking", "rustls"] }
+sha2.workspace = true

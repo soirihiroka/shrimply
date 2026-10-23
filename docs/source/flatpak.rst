@@ -27,13 +27,13 @@ available updates with:
 Install a downloaded bundle
 ---------------------------
 
-Alternatively, download ``shrimply-gtk.flatpak`` from the `GitHub releases page
+Alternatively, download ``shrimply-gtk-x86_64.flatpak`` from the `GitHub releases page
 <https://github.com/soirihiroka/shrimply/releases>`__ and run this command from
 the download directory:
 
 .. code-block:: console
 
-   $ flatpak install --user ./shrimply-gtk.flatpak
+   $ flatpak install --user ./shrimply-gtk-x86_64.flatpak
 
 The bundle also receives updates from the prerelease repository.
 

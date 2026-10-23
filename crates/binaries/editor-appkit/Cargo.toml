@@ -8,7 +8,7 @@ shrimply-trust-core.workspace = true
 shrimply-caption-export-core.workspace = true
 block2.workspace = true
 tempfile.workspace = true
-objc2-uniform-type-identifiers = "0.3.2"
+objc2-uniform-type-identifiers = "0.3"
 shrimply-export-core = { workspace = true, default-features = false }
 shrimply-export-appkit = { workspace = true }
 shrimply-export-metal = { workspace = true }

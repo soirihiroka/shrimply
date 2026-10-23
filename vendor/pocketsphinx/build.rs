@@ -141,7 +141,11 @@ fn verified(path: &Path, source: &Source) -> bool {
     if bytes.len() as u64 != source.size {
         return false;
     }
-    format!("{:x}", Sha256::digest(bytes)) == source.sha256
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+        == source.sha256
 }
 
 fn valid_compact_model(path: &Path) -> bool {

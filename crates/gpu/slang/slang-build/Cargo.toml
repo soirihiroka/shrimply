@@ -12,4 +12,4 @@ windows = { workspace = true, features = ["Win32_System_LibraryLoader"] }
 
 [build-dependencies]
 cc.workspace = true
-sha2 = "0.10.9"
+sha2.workspace = true

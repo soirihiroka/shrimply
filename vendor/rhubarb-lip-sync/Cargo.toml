@@ -5,5 +5,5 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-earshot = "1"
-shrimply-pocketsphinx = { path = "../pocketsphinx" }
+earshot.workspace = true
+shrimply-pocketsphinx.workspace = true

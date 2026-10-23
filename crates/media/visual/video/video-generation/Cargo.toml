@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-reqwest = { workspace = true, features = ["blocking"] }
+reqwest = { workspace = true, features = ["default", "blocking"] }
 rmp-serde.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_bytes.workspace = true

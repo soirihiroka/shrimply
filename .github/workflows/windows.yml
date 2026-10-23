@@ -307,5 +307,4 @@ jobs:
       - name: Publish prerelease
         run: |
           bash .github/scripts/publish-prerelease.sh \
-            "dist/shrimply-windows-x86_64.zip#Shrimply for Windows x86-64" \
-            "dist/shrimply-windows-x86_64.zip.sha256#SHA-256 checksum"
+            "dist/shrimply-windows-x86_64.zip"

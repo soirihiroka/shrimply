@@ -98,7 +98,7 @@ CRASH_SINCE ?= -1 day
 DOCKER ?= docker
 FLATPAK_GTK_IMAGE ?= shrimply-flatpak-gtk-builder
 FLATPAK_GTK_CACHE ?= $(CURDIR)/target/flatpak-gtk
-FLATPAK_BUNDLE := dist/shrimply-gtk.flatpak
+FLATPAK_BUNDLE := dist/shrimply-gtk-x86_64.flatpak
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin

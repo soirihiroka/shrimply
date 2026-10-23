@@ -42,7 +42,7 @@ env:
   CUDA_SERIES: 12-9
   CUDA_VERSION: "12.9"
   FLATPAK_BUILD_DIR: target/flatpak-gtk/build
-  FLATPAK_BUNDLE: dist/shrimply-gtk.flatpak
+  FLATPAK_BUNDLE: dist/shrimply-gtk-x86_64.flatpak
   FLATPAK_REPO_DIR: target/flatpak-gtk/repo
   FLATPAK_STATE_DIR: target/flatpak-gtk/state
   FLATPAK_PAGES_DIR: target/flatpak-pages
@@ -383,7 +383,6 @@ jobs:
 
       - name: Publish prerelease
         run: |
-          (cd dist && sha256sum --check shrimply-gtk.flatpak.sha256)
+          (cd dist && sha256sum --check shrimply-gtk-x86_64.flatpak.sha256)
           bash .github/scripts/publish-prerelease.sh \
-            "${FLATPAK_BUNDLE}#Shrimply GTK Flatpak" \
-            "${FLATPAK_BUNDLE}.sha256#SHA-256 checksum"
+            "${FLATPAK_BUNDLE}"

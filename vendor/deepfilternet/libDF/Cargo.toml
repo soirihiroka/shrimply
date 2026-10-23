@@ -14,16 +14,16 @@ name = "df"
 path = "src/lib.rs"
 
 [dependencies]
-anyhow = "1"
-flate2 = "1"
-itertools = "0.15"
-log = "0.4"
-ndarray = "0.17"
-num-complex = { version = "0.4", features = ["serde"] }
-realfft = "3"
-rust-ini = "0.21"
-rustfft = "6"
-tar = "0.4"
-tract-core = "0.23"
-tract-onnx = "0.23"
-tract-pulse = "0.23"
+anyhow.workspace = true
+flate2.workspace = true
+itertools.workspace = true
+log.workspace = true
+ndarray.workspace = true
+num-complex = { workspace = true, features = ["serde"] }
+realfft.workspace = true
+rust-ini.workspace = true
+rustfft.workspace = true
+tar.workspace = true
+tract-core.workspace = true
+tract-onnx.workspace = true
+tract-pulse.workspace = true

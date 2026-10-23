@@ -13,7 +13,7 @@ async-channel.workspace = true
 ffmpeg-next.workspace = true
 hashbrown.workspace = true
 glam.workspace = true
-reqwest = { workspace = true, features = ["blocking"] }
+reqwest = { workspace = true, features = ["default", "blocking"] }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 glam = { workspace = true, features = ["serde"] }
-reqwest = { workspace = true, features = ["blocking", "query"] }
+reqwest = { workspace = true, features = ["default", "blocking", "query"] }
 rmp-serde.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_bytes.workspace = true

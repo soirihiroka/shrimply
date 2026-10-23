@@ -84,7 +84,10 @@ fn main() {
                     reader.consume(length);
                 }
                 assert_eq!(
-                    format!("{:x}", hash.finalize()),
+                    hash.finalize()
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<String>(),
                     checksum,
                     "Slang archive checksum mismatch"
                 );

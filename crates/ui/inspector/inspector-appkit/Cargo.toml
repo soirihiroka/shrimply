@@ -7,7 +7,7 @@ edition = "2024"
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["objc2-uniform-type-identifiers"] }
 objc2-foundation.workspace = true
-objc2-uniform-type-identifiers = "0.3.2"
+objc2-uniform-type-identifiers = "0.3"
 block2.workspace = true
 shrimply-components-appkit = { workspace = true }
 shrimply-preview-render-metal = { workspace = true }

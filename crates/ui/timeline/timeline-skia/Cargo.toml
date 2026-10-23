@@ -12,7 +12,7 @@ ffmpeg-next.workspace = true
 glam.workspace = true
 hashbrown.workspace = true
 imagesize.workspace = true
-reqwest = { workspace = true, features = ["blocking"] }
+reqwest = { workspace = true, features = ["default", "blocking"] }
 shrimply-3dgs-core = { workspace = true }
 shrimply-blender-core = { workspace = true }
 shrimply-property-model = { workspace = true }

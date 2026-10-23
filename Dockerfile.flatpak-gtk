@@ -57,5 +57,5 @@ CMD mkdir -p /usr/local/libclang-deps \
         /flatpak/build dev.shrimply.Shrimply.yml \
     && flatpak build-bundle \
         --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
-        /flatpak/repo /output/shrimply-gtk.flatpak dev.shrimply.Shrimply \
-    && chown "${OUTPUT_UID}:${OUTPUT_GID}" /output/shrimply-gtk.flatpak
+        /flatpak/repo /output/shrimply-gtk-x86_64.flatpak dev.shrimply.Shrimply \
+    && chown "${OUTPUT_UID}:${OUTPUT_GID}" /output/shrimply-gtk-x86_64.flatpak

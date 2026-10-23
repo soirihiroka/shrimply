@@ -243,5 +243,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           bash .github/scripts/publish-prerelease.sh \
-            "${MACOS_ARCHIVE}#Shrimply for Apple Silicon" \
-            "${MACOS_ARCHIVE}.sha256#SHA-256 checksum"
+            "${MACOS_ARCHIVE}"

@@ -11,11 +11,11 @@ release_notes="${RUNNER_TEMP}/prerelease.md"
 cat > "${release_notes}" <<EOF
 Automated build of commit [\`${short_sha}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}), committed ${release_date}.
 
-Platform assets are added as their builds finish. Each download includes a SHA-256 checksum.
+Platform assets are added as their builds finish. GitHub displays the SHA-256 checksum beside each download.
 
 - **Windows x86-64:** Extract \`shrimply-windows-x86_64.zip\` and run \`shrimply-qt.exe\`.
 - **macOS Apple Silicon:** Unzip \`shrimply-macos-arm64.zip\` and move \`Shrimply.app\` to Applications. The app is ad-hoc signed; approve its first launch in System Settings > Privacy & Security if macOS blocks it.
-- **Linux Flatpak:** Install the attached \`shrimply-gtk.flatpak\` with \`flatpak install --user ./shrimply-gtk.flatpak\`, or use the updating remote:
+- **Linux Flatpak:** Install the attached \`shrimply-gtk-x86_64.flatpak\` with \`flatpak install --user ./shrimply-gtk-x86_64.flatpak\`, or use the updating remote:
 
 \`\`\`console
 flatpak install --user https://soirihiroka.github.io/shrimply/shrimply-prerelease.flatpakref
@@ -39,11 +39,10 @@ assets="$(gh release view "${tag}" --json assets --jq '.assets[].name')"
 existing_assets="$(mktemp -d "${RUNNER_TEMP}/existing-prerelease.XXXXXX")"
 trap 'rm -rf "${existing_assets}"' EXIT
 for asset in "$@"; do
-  path="${asset%%#*}"
-  name="$(basename "${path}")"
+  name="$(basename "${asset}")"
   if grep -Fxq -- "${name}" <<< "${assets}"; then
     gh release download "${tag}" --dir "${existing_assets}" --pattern "${name}"
-    cmp "${path}" "${existing_assets}/${name}"
+    cmp "${asset}" "${existing_assets}/${name}"
   else
     gh release upload "${tag}" "${asset}"
   fi
