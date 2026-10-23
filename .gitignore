@@ -1,5 +1,6 @@
 target/
 /dist/
+/.ci/
 /assets/icons/dev.shrimply.Shrimply.png
 .qmlls.ini
 /.slang-artifacts

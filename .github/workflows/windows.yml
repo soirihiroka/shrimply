@@ -1,4 +1,4 @@
-name: Windows
+name: Windows prerelease
 
 on:
   push:
@@ -11,6 +11,7 @@ on:
       - "assets/**"
       - "crates/**"
       - "external/**"
+      - "vendor/**"
       - "Cargo.lock"
       - "Cargo.toml"
       - "Makefile"
@@ -21,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-prerelease
   cancel-in-progress: true
 
 env:
@@ -36,6 +37,7 @@ env:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-2022
     timeout-minutes: 180
 
@@ -269,3 +271,67 @@ jobs:
             .ci/ffmpeg-validation/*.log
             .ci/vcpkg/buildtrees/**/*.log
           if-no-files-found: ignore
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: windows-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v6
+        with:
+          name: shrimply-windows-x86_64
+          path: dist
+
+      - name: Verify portable archive
+        run: |
+          (cd dist && sha256sum --check --strict shrimply-windows-x86_64.zip.sha256)
+          unzip -tq dist/shrimply-windows-x86_64.zip
+
+      - name: Publish prerelease
+        run: |
+          short_sha="${GITHUB_SHA:0:12}"
+          timestamp="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          release_notes="${RUNNER_TEMP}/windows-release.md"
+          {
+            echo "Automated Windows x86-64 build of commit [\`${short_sha}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+            echo
+            echo "Built ${timestamp}. Updates track main."
+            echo
+            echo 'Extract the ZIP into a folder and run `shrimply-qt.exe` to launch Shrimply.'
+          } > "${release_notes}"
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            existing_assets="${RUNNER_TEMP}/existing-windows-release"
+            mkdir -p "${existing_assets}"
+            gh release download "${RELEASE_TAG}" --dir "${existing_assets}" \
+              --pattern shrimply-windows-x86_64.zip --pattern shrimply-windows-x86_64.zip.sha256
+            cmp dist/shrimply-windows-x86_64.zip.sha256 "${existing_assets}/shrimply-windows-x86_64.zip.sha256"
+            (cd "${existing_assets}" && sha256sum --check --strict shrimply-windows-x86_64.zip.sha256)
+          else
+            gh release create "${RELEASE_TAG}" \
+              "dist/shrimply-windows-x86_64.zip#Shrimply for Windows x86-64" \
+              "dist/shrimply-windows-x86_64.zip.sha256#SHA-256 checksum" \
+              --target "${GITHUB_SHA}" \
+              --title "Shrimply Windows ${timestamp}" \
+              --notes-file "${release_notes}" \
+              --prerelease \
+              --latest=false
+          fi
+
+          gh api --paginate "repos/${GH_REPO}/releases" \
+            --jq '.[] | select(.prerelease and (.tag_name | startswith("windows-"))) | .tag_name' \
+            | while IFS= read -r old_tag; do
+                if [[ "${old_tag}" != "${RELEASE_TAG}" ]]; then
+                  gh release delete "${old_tag}" --cleanup-tag --yes
+                fi
+              done
