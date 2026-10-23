@@ -211,6 +211,7 @@ impl Inspector {
         // final position is applied on the first poll after release.
         if self.state.dirty.get()
             && (player_state::snapshot(&self.state.player).scrubbing
+                || shrimply_components_appkit::has_active_color_well()
                 || unsafe {
                     objc2_foundation::NSRunLoop::currentRunLoop()
                         .currentMode()
