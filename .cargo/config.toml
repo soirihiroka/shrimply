@@ -1,2 +1,6 @@
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.x86_64-pc-windows-msvc]
+# Reserve 8 MiB for bindgen's FFmpeg/Windows SDK traversal; MSVC defaults to 1 MiB.
+rustflags = ["-C", "link-arg=/STACK:8388608"]

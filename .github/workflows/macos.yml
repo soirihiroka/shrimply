@@ -58,7 +58,7 @@ jobs:
             dylibbundler \
             ffmpeg \
             librsvg \
-            llvm@18 \
+            llvm@22 \
             opencv \
             pkgconf \
             poppler \

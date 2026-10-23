@@ -4,17 +4,26 @@
   clang,
   cmake,
   cudaPackages,
-  fetchurl,
+  expat,
+  fetchFromGitHub,
   ffmpeg,
+  fontconfig,
   freetype,
   gcc,
+  gn,
   gnumake,
   gobject-introspection,
   gtk4,
   gtksourceview5,
+  harfbuzzFull,
+  icu,
   lib,
   libadwaita,
   libglvnd,
+  libjpeg,
+  libpng,
+  libwebp,
+  libx11,
   lld,
   llvmPackages,
   manimSrc,
@@ -29,21 +38,56 @@
   python3,
   rhubarbSrc,
   rubberband,
+  runCommand,
   rustPlatform,
   shrimply-slang,
   uv,
+  vulkan-headers,
+  vulkan-memory-allocator,
   vte-gtk4,
   vtracerSrc,
   wrapGAppsHook4,
+  zlib,
 }:
 let
   cudaStubs = lib.getOutput "stubs" cudaPackages.cuda_cudart;
   cudaToolkit = cudaPackages.cudatoolkit;
-  skiaBinaries = fetchurl {
-    url = "https://github.com/rust-skia/skia-binaries/releases/download/0.99.0/skia-binaries-a25a0fdb7d90429aa2d1-x86_64-unknown-linux-gnu-egl-gl-jpegd-jpege-pdf-skottie-svg-textlayout-vulkan-wayland-webpd-webpe-x11.tar.gz";
-    hash = "sha256-u+Oec2kkFbGy5dVZGcaUisun0WryJ3xmTK6cHHe2OzA=";
+  skiaVersion = (
+    lib.findFirst (package: package.name == "skia-bindings")
+      (throw "Cargo.lock does not contain skia-bindings")
+      (builtins.fromTOML (builtins.readFile ../Cargo.lock)).package
+  ).version;
+  skiaSrc = fetchFromGitHub {
+    owner = "rust-skia";
+    repo = "skia";
+    tag = "m153-0.101.2";
+    hash = "sha256-xKCkvQoTAMlLvKdVzzSxTST6kER4kRUIDjvTRZ9z72o=";
   };
+  spirvCrossSrc = fetchFromGitHub {
+    owner = "KhronosGroup";
+    repo = "SPIRV-Cross";
+    rev = "b8fcf307f1f347089e3c46eb4451d27f32ebc8d3";
+    hash = "sha256-H43M9DXfEuyKuvo6rjb5k0KEbYOSFodbPJh8ZKY4PQg=";
+  };
+  wuffsSrc = fetchFromGitHub {
+    owner = "google";
+    repo = "wuffs-mirror-release-c";
+    rev = "e3f919ccfe3ef542cfc983a82146070258fb57f8";
+    hash = "sha256-373d2F/STcgCHEq+PO+SCHrKVOo6uO1rqqwRN5eeBCw=";
+  };
+  skiaSource = runCommand "shrimply-skia-${skiaVersion}-source" { } ''
+    cp -r ${skiaSrc} "$out"
+    chmod -R u+w "$out"
+    mkdir -p "$out/third_party/externals"
+    ln -s ${spirvCrossSrc} "$out/third_party/externals/spirv-cross"
+    ln -s ${vulkan-memory-allocator.src} "$out/third_party/externals/vulkanmemoryallocator"
+    ln -s ${wuffsSrc} "$out/third_party/externals/wuffs"
+    substituteInPlace "$out/third_party/harfbuzz/BUILD.gn" \
+      --replace-fail /usr/include/harfbuzz ${lib.getDev harfbuzzFull}/include/harfbuzz
+  '';
 in
+assert lib.assertMsg (skiaVersion == "0.153.3")
+  "Update the pinned Nix Skia sources to match skia-bindings ${skiaVersion}";
 rustPlatform.buildRustPackage {
   pname = "shrimply";
   version = "0.1.0";
@@ -85,19 +129,29 @@ rustPlatform.buildRustPackage {
     cudaToolkit
     alsa-lib
     boost
+    expat
     ffmpeg
+    fontconfig
     freetype
     gtk4
     gtksourceview5
+    harfbuzzFull
+    icu
     libadwaita
     libglvnd
+    libjpeg
+    libpng
+    libwebp
+    libx11
     opencv
     openssl
     pipewire
     poppler_gi
     rubberband
     shrimply-slang
+    vulkan-headers
     vte-gtk4
+    zlib
   ];
 
   CARGO = "cargo";
@@ -105,10 +159,15 @@ rustPlatform.buildRustPackage {
   CUDA_HOME = cudaToolkit;
   CUDA_HOST_CXX = "g++";
   CUDA_TOOLKIT_PATH = cudaToolkit;
+  CLANGCC = "${clang}/bin/clang";
+  CLANGCXX = "${clang}/bin/clang++";
   LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
-  NIX_LDFLAGS = "-L${cudaStubs}/lib/stubs -L${shrimply-slang}/lib";
+  NIX_LDFLAGS = "-L${cudaStubs}/lib/stubs -L${shrimply-slang}/lib -lharfbuzz-subset -lwebpdemux -lwebpmux";
   PKG_CONFIG = "pkg-config";
-  SKIA_BINARIES_URL = "file://${skiaBinaries}";
+  SKIA_SOURCE_DIR = skiaSource;
+  SKIA_USE_SYSTEM_LIBRARIES = "1";
+  SKIA_GN_COMMAND = "${gn}/bin/gn";
+  SKIA_GN_ARGS = ''skia_system_freetype2_include_path="${lib.getDev freetype}/include/freetype2"'';
   SLANG_INCLUDE_DIR = "${shrimply-slang}/include";
   SLANG_LIBRARY_DIR = "${shrimply-slang}/lib";
 
