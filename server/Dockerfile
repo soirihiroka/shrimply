@@ -28,8 +28,9 @@ RUN cmake -S /colmap -B /colmap/build -GNinja \
 ENV CMAKE_PREFIX_PATH=/opt/colmap LD_LIBRARY_PATH=/opt/colmap/lib:/usr/local/cuda/lib64 \
     CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 RUN --mount=type=cache,target=/root/.cache/uv \
-    cd /colmap && uv build --wheel --out-dir /tmp/wheels \
-    && uvx --from auditwheel==6.8.2 auditwheel repair --plat manylinux_2_39_x86_64 \
+    cd /colmap && uv build --wheel --out-dir /tmp/wheels
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv tool run --from auditwheel==6.8.2 auditwheel repair --plat manylinux_2_39_x86_64 \
        --exclude libcuda.so.1 --wheel-dir /wheels /tmp/wheels/*.whl
 
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2 AS base
