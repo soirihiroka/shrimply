@@ -29,9 +29,14 @@ ENV CMAKE_PREFIX_PATH=/opt/colmap LD_LIBRARY_PATH=/opt/colmap/lib:/usr/local/cud
     CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS}
 RUN --mount=type=cache,target=/root/.cache/uv \
     cd /colmap && uv build --wheel --out-dir /tmp/wheels
+# Ubuntu's patchelf corrupts OpenBLAS segment mappings during wheel repair.
+ADD --checksum=sha256:2abdc34fbe949c995a1baa4ec310896a085588a45a99cd0d726851bdfac2a4bb \
+    https://github.com/NixOS/patchelf/releases/download/0.19.2/patchelf-0.19.2-x86_64.tar.gz /tmp/patchelf.tar.gz
+RUN tar -xzf /tmp/patchelf.tar.gz -C /usr/local ./bin/patchelf
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv tool run --from auditwheel==6.8.2 auditwheel repair --plat manylinux_2_39_x86_64 \
-       --exclude libcuda.so.1 --wheel-dir /wheels /tmp/wheels/*.whl
+       --exclude libcuda.so.1 --exclude libGLX.so.0 --exclude libOpenGL.so.0 \
+       --exclude libGLdispatch.so.0 --wheel-dir /wheels /tmp/wheels/*.whl
 
 FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2 AS base
 COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /usr/local/bin/uv
@@ -47,6 +52,8 @@ FROM base AS cuda-12.6
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev
 
 FROM base AS cuda-13.0
+RUN microdnf install -y --setopt=install_weak_deps=0 libglvnd-glx libglvnd-opengl libXrender \
+    && microdnf clean all
 COPY --from=pycolmap-cuda13 /wheels /opt/wheels
 COPY docker/cuda13.py /opt/cuda13.py
 RUN uv run --no-project python /opt/cuda13.py

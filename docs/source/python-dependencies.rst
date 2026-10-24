@@ -604,3 +604,10 @@ Build tooling reviewed for the new native wheel stage includes
 (wheel performance and interpreter discovery fixes), and upstream's pinned
 `pybind11 3.0.4 <https://github.com/pybind/pybind11/releases/tag/v3.0.4>`__
 (Python 3.13+ traversal and C++ ownership fixes).
+
+The wheel repair stage pins `patchelf 0.19.2
+<https://github.com/NixOS/patchelf/blob/0.19.2/ChangeLog.md>`__ and verifies its
+release archive checksum. Its segment-alignment and binary-corruption fixes
+prevent the invalid OpenBLAS mappings produced by Ubuntu's patchelf 0.18.0.
+OpenGL dispatch, GLX, and OpenGL libraries remain supplied together by the runtime
+image, alongside XRender, to avoid mixing bundled and system graphics libraries.
