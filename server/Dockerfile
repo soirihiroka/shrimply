@@ -17,9 +17,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN git clone https://github.com/colmap/colmap.git /colmap \
     && git -C /colmap checkout bd1fcf654d2dd8fefa1466999c190a246f83f4b9
 ARG BUILD_JOBS=2
+# Ubuntu 24.04's CMake predates CUDA 13 and all-major still includes removed GPUs.
 RUN cmake -S /colmap -B /colmap/build -GNinja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/colmap \
-    -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES=all-major \
+    -DCUDA_ENABLED=ON -DCMAKE_CUDA_ARCHITECTURES="75-real;80-real;90-real;100-real;110-real;120" \
     -DGUI_ENABLED=OFF -DONNX_ENABLED=OFF -DCGAL_ENABLED=OFF \
     -DLSD_ENABLED=OFF -DTESTS_ENABLED=OFF -DCOLMAP_HASH_MAP_BACKEND=STD \
     -DBLA_VENDOR=OpenBLAS \
