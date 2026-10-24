@@ -5646,6 +5646,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-cli"
+version = "0.1.0"
+dependencies = [
+ "shrimply-audio-engine",
+ "shrimply-blender-core",
+ "shrimply-export-core",
+ "shrimply-export-cuda",
+ "shrimply-export-metal",
+ "shrimply-math-core",
+ "shrimply-preferences-core",
+ "shrimply-process-reporting",
+ "shrimply-project-document",
+ "shrimply-trust-core",
+]
+
+[[package]]
 name = "shrimply-components-appkit"
 version = "0.1.0"
 dependencies = [
@@ -6452,6 +6468,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "shrimply-cli",
  "shrimply-components-appkit",
  "shrimply-components-core",
  "shrimply-cross-ui-core",
@@ -6469,6 +6486,7 @@ version = "0.1.0"
 dependencies = [
  "gtk4",
  "libadwaita",
+ "shrimply-cli",
  "shrimply-components-gtk",
  "shrimply-cross-ui-core",
  "shrimply-process-reporting",
@@ -6485,6 +6503,7 @@ dependencies = [
  "cxx-qt-build",
  "cxx-qt-lib",
  "shrimply-application-qt",
+ "shrimply-cli",
  "shrimply-cross-ui-core",
  "shrimply-i18n-qt",
  "shrimply-process-reporting",

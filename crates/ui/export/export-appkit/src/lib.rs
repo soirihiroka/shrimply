@@ -287,6 +287,7 @@ pub fn choose_settings(
     Some(ExportSettings {
         maximum_temporal_decoders,
         path: PathBuf::new(),
+        overwrite: true,
         video_codec,
         container,
         fps: *fps_values.get(fps.indexOfSelectedItem() as usize)?,

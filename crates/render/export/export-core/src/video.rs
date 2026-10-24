@@ -43,6 +43,7 @@ pub enum ExportAudioEncoder {
 #[derive(Clone, Debug)]
 pub struct ExportSettings {
     pub path: PathBuf,
+    pub overwrite: bool,
     pub video_codec: ExportVideoCodec,
     pub container: ExportContainer,
     pub fps: Fraction,
@@ -376,9 +377,12 @@ where
         .map_err(|error| format!("Could not write export trailer: {error}"))?;
     drop(output);
     check_cancelled(cancelled)?;
-    temporary
-        .persist(&settings.path)
-        .map_err(|error| format!("Could not save video export: {error}"))?;
+    if settings.overwrite {
+        temporary.persist(&settings.path)
+    } else {
+        temporary.persist_noclobber(&settings.path)
+    }
+    .map_err(|error| format!("Could not save video export: {error}"))?;
     let finalize_ns = finalize_started.elapsed().as_nanos();
 
     let benchmark = ExportBenchmark {

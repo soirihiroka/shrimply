@@ -3,6 +3,9 @@ mod macos;
 
 #[cfg(target_os = "macos")]
 fn main() -> std::process::ExitCode {
+    if let Some(status) = shrimply_cli::run_if_requested() {
+        return std::process::ExitCode::from(status);
+    }
     shrimply_process_reporting::crash::install();
     let mut args = std::env::args_os().skip(1);
     if let Some(path) = args.next() {

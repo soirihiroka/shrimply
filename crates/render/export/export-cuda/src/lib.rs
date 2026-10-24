@@ -68,6 +68,7 @@ pub enum ExportProfile {
 #[derive(Clone, Debug)]
 pub struct ExportSettings {
     pub path: PathBuf,
+    pub overwrite: bool,
     pub video_codec: ExportVideoCodec,
     pub container: ExportContainer,
     pub fps: Fraction,
@@ -104,6 +105,7 @@ where
 {
     let core_settings = core::ExportSettings {
         path: settings.path.clone(),
+        overwrite: settings.overwrite,
         video_codec: settings.video_codec,
         container: settings.container,
         fps: settings.fps,

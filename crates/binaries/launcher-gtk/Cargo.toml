@@ -8,6 +8,7 @@ name = "shrimply"
 path = "src/main.rs"
 
 [dependencies]
+shrimply-cli.workspace = true
 adw.workspace = true
 gtk.workspace = true
 shrimply-cross-ui-core = { workspace = true }

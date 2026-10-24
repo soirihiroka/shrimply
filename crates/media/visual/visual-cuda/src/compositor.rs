@@ -856,6 +856,13 @@ impl VideoExportRenderer {
     pub fn shutdown(&mut self) {
         self.render_cache = RenderCache::default();
         self.sessions.clear();
+        // Decoder retirement runs on another thread. Finish it before a CLI process exits
+        // and CUDA starts tearing down its contexts and driver state.
+        self.sessions
+            .decoders
+            .reclaim_idle()
+            .recv()
+            .expect("export decoder retirement worker stopped during shutdown");
     }
 }
 

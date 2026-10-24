@@ -451,6 +451,7 @@ impl qobject::ExportBackend {
             .expect("Qt selected an unavailable frame rate");
         video::ExportSettings {
             path,
+            overwrite: true,
             video_codec: video_codec(self.video_codec),
             container: container_for(self.video_codec, self.container),
             fps,

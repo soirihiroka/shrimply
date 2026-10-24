@@ -66,6 +66,35 @@ pub enum ProjectPreparation {
     FrameGridRepair(Project),
 }
 
+/// Read the saved project without acquiring an editor lock or starting autosave.
+pub fn load_project_snapshot(path: &Path) -> Result<Project, String> {
+    match read_project_with_frame_grid_repair(path)? {
+        ProjectValidationOutcome::Valid(project) => Ok(project),
+        ProjectValidationOutcome::FrameGridRepair(_) => {
+            Err("Project needs frame-grid repair. Open and save it in the editor first.".into())
+        }
+    }
+}
+
+fn read_project_with_frame_grid_repair(path: &Path) -> Result<ProjectValidationOutcome, String> {
+    if !is_project_path(path) {
+        return Err(format!(
+            "{} is not a supported project file",
+            path.display()
+        ));
+    }
+    if has_extension(path, "sjson") || has_extension(path, "json") {
+        from_json_file_with_frame_grid_repair(path)
+    } else {
+        let project = storage::read_project(path)?;
+        let outcome = validate_with_frame_grid_repair(project)?;
+        Ok(prepare_validation_outcome(
+            outcome,
+            path.parent().unwrap_or_else(|| Path::new(".")),
+        ))
+    }
+}
+
 pub fn prepare_project_with_frame_grid_repair(
     path: &Path,
 ) -> Result<ProjectPreparation, ProjectLoadError> {
@@ -78,18 +107,7 @@ pub fn prepare_project_with_frame_grid_repair(
     acquire_project_lock(path).map_err(project_lock_error)?;
     let started = Instant::now();
     tracing::info!(path = %path.display(), "Loading project");
-    let outcome = if has_extension(path, "sjson") || has_extension(path, "json") {
-        from_json_file_with_frame_grid_repair(path)
-    } else {
-        storage::read_project(path).and_then(|project| {
-            let outcome = validate_with_frame_grid_repair(project)?;
-            Ok(prepare_validation_outcome(
-                outcome,
-                path.parent().unwrap_or_else(|| Path::new(".")),
-            ))
-        })
-    }
-    .map_err(|error| {
+    let outcome = read_project_with_frame_grid_repair(path).map_err(|error| {
         release_project_lock(path);
         ProjectLoadError::Other(error)
     })?;

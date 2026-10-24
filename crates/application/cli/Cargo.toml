@@ -1,0 +1,20 @@
+[package]
+name = "shrimply-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shrimply-audio-engine.workspace = true
+shrimply-blender-core.workspace = true
+shrimply-export-core.workspace = true
+shrimply-math-core.workspace = true
+shrimply-preferences-core.workspace = true
+shrimply-process-reporting.workspace = true
+shrimply-project-document = { workspace = true, default-features = true }
+shrimply-trust-core.workspace = true
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+shrimply-export-cuda.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+shrimply-export-metal.workspace = true

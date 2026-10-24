@@ -541,6 +541,7 @@ fn collect_export_video_settings(
 ) -> video::ExportSettings {
     video::ExportSettings {
         path: std::path::PathBuf::new(),
+        overwrite: true,
         video_codec: format_row.selected(),
         container: match format_row.selected() {
             video::ExportVideoCodec::Gif => video::ExportContainer::Gif,

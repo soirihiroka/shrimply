@@ -57,9 +57,9 @@ pub use generated::{
 pub use history::{
     CommitStatus, PreparedProject, ProjectPreparation, activate_project, can_redo, can_undo,
     commit_coalesced_edit, commit_edit, commit_edit_checked, connect_commit_status,
-    create_new_project_file, create_project_file, finish_coalesced_edit, poll_commit_status,
-    prepare_project, prepare_project_with_frame_grid_repair, redo, save, save_as, save_view_state,
-    serialize_project_json, shutdown_history, undo,
+    create_new_project_file, create_project_file, finish_coalesced_edit, load_project_snapshot,
+    poll_commit_status, prepare_project, prepare_project_with_frame_grid_repair, redo, save,
+    save_as, save_view_state, serialize_project_json, shutdown_history, undo,
 };
 pub use item_address::{
     ItemAddress, ItemKind, ItemMut, ItemRef, ProjectItem, SequenceScopeId, TrackAddress, TrackMut,

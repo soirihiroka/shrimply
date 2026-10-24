@@ -5,6 +5,9 @@ use std::path::Path;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    if let Some(status) = shrimply_cli::run_if_requested() {
+        return ExitCode::from(status);
+    }
     shrimply_process_reporting::diagnostics::init();
     shrimply_i18n_qt::init_system_locale();
 

@@ -8,6 +8,7 @@ name = "shrimply-qt"
 path = "src/main.rs"
 
 [dependencies]
+shrimply-cli.workspace = true
 cxx.workspace = true
 cxx-qt.workspace = true
 cxx-qt-lib = { workspace = true, features = ["qt_full"] }
