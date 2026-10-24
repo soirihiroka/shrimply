@@ -369,7 +369,7 @@ def load_transcriber(model_id: ModelId, device: torch.device) -> Transcriber:
         send_worker_event(
             ProgressEvent(message="Moving to device...", model=model_id, state="loading")
         )
-        model.to(device)
+        type(model).to(model, device)
         model.eval()
         return lambda payload: transcribe_parakeet(processor, model, payload)
     if model_id in WHISPER_MODEL_IDS:
@@ -383,7 +383,7 @@ def load_transcriber(model_id: ModelId, device: torch.device) -> Transcriber:
         send_worker_event(
             ProgressEvent(message="Moving to device...", model=model_id, state="loading")
         )
-        whisper_model.to(device)
+        type(whisper_model).to(whisper_model, device)
         whisper_model.eval()
         return lambda payload: transcribe_whisper(
             whisper_processor, whisper_model, payload
@@ -419,9 +419,9 @@ def load_transcriber(model_id: ModelId, device: torch.device) -> Transcriber:
         send_worker_event(
             ProgressEvent(message="Moving to device...", model=model_id, state="loading")
         )
-        qwen_model.to(device)
+        type(qwen_model).to(qwen_model, device)
         qwen_model.eval()
-        aligner.to(device)
+        type(aligner).to(aligner, device)
         aligner.eval()
         return lambda payload: transcribe_qwen(
             qwen_processor,

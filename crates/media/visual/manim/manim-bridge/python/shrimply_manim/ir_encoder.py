@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from fractions import Fraction
-from PIL import Image
 
-from shrimply_manim.render_pool import PreparedDraw, PreparedFrame, PreparedPipelineState
+from shrimply_manim.render_pool import (
+    PreparedDraw,
+    PreparedFrame,
+    PreparedPipelineState,
+    PreparedTexture,
+)
 from shrimply_manim.worker_types import Message, MessageValue
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 type PipelineKey = tuple[
     str,
     PreparedPipelineState,
-    tuple[str, ...],
+    tuple[tuple[str, str], ...],
 ]
 
 
@@ -49,7 +53,7 @@ class Encoder:
     pending_uniforms: list[MessageValue] = field(default_factory=list)
     pending_textures: list[MessageValue] = field(default_factory=list)
     pipeline_ids: dict[PipelineKey, int] = field(default_factory=dict)
-    texture_ids: dict[str, int] = field(default_factory=dict)
+    texture_ids: dict[tuple[str, str, int, int, int, bytes], int] = field(default_factory=dict)
 
     def _id(self) -> int:
         resource_id = self.next_resource_id
@@ -79,7 +83,7 @@ class Encoder:
 
             bindings: list[MessageValue] = []
             for texture in draw.textures:
-                texture_id = self._texture(texture.path)
+                texture_id = self._texture(texture)
                 bindings.append(
                     {
                         "binding": texture.binding,
@@ -137,31 +141,35 @@ class Encoder:
         self.pending_uniforms = []
         return result
 
-    def _texture(self, path: str) -> int:
-        if path in self.texture_ids:
-            return self.texture_ids[path]
+    def _texture(self, texture: PreparedTexture) -> int:
+        key = (
+            texture.kind, texture.filter, texture.width, texture.height,
+            texture.layers, texture.pixels,
+        )
+        if key in self.texture_ids:
+            return self.texture_ids[key]
         texture_id = self._id()
-        with Image.open(path) as source:
-            image = source.convert("RGBA")
-            self.pending_textures.append(
-                {
-                    "id": texture_id,
-                    "width": image.width,
-                    "height": image.height,
-                    "format": "rgba8",
-                    "filter": "linear",
-                    "address": "clamp",
-                    "bytes": image.tobytes(),
-                }
-            )
-        self.texture_ids[path] = texture_id
+        self.pending_textures.append(
+            {
+                "id": texture_id,
+                "width": texture.width,
+                "height": texture.height,
+                "layers": texture.layers,
+                "kind": texture.kind,
+                "format": "rgba8",
+                "filter": texture.filter,
+                "address": "clamp",
+                "bytes": texture.pixels,
+            }
+        )
+        self.texture_ids[key] = texture_id
         return texture_id
 
     def _pipeline(self, draw: PreparedDraw) -> int:
         key: PipelineKey = (
             draw.source,
             draw.state,
-            tuple(texture.name for texture in draw.textures),
+            tuple((texture.name, texture.kind) for texture in draw.textures),
         )
         if key in self.pipeline_ids:
             return self.pipeline_ids[key]
@@ -180,6 +188,7 @@ class Encoder:
                     "stencil_back": list(draw.state.stencil_back),
                 },
                 "texture_names": [texture.name for texture in draw.textures],
+                "texture_kinds": [texture.kind for texture in draw.textures],
             }
         )
         return pipeline_id

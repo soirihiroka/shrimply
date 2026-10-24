@@ -153,12 +153,17 @@ class GPT2InferenceModel(GPT2PreTrainedModel, GenerationMixin):
                 )
             embeddings = torch.cat((prefix, audio_embeddings), dim=1)
         else:
-            if attention_mask is None:
-                raise ValueError("Cached GPT generation requires an attention mask")
+            if past_key_values is None:
+                raise ValueError("Cached GPT generation requires a populated cache")
+            # Transformers can omit an all-ones mask during generation. The
+            # cache counts the prefix and previous audio tokens, not this token.
+            audio_position = past_key_values.get_seq_length() - prefix_length
+            if audio_position < 0:
+                raise ValueError("Cached GPT generation is missing its prefix")
             embeddings = self.embeddings(input_ids)
             embeddings += self.text_pos_embedding.get_fixed_embedding(
-                attention_mask.shape[1] - prefix_length,
-                attention_mask.device,
+                audio_position,
+                input_ids.device,
             )
 
         transformer_output = self.transformer(

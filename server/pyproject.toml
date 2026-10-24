@@ -5,12 +5,12 @@ description = "Shrimply's local AI compute server"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.14,<3.15"
 dependencies = [
-    "av>=18,<19",
-    "diffusers",
+    "av>=19.0.2",
+    "diffusers==0.42.0",
     "fugashi[unidic-lite]>=1.2,<2",
     "gradio>=6.20,<7",
     "gtsam-develop",
-    "huggingface-hub>=1.5,<2",
+    "huggingface-hub>=2.3",
     "librosa>=1,<2",
     "msgspec>=0.21.1,<1",
     "nemo-text-processing>=1.2,<2",
@@ -20,7 +20,7 @@ dependencies = [
     "pydantic>=2.12,<3",
     "peft>=0.20,<1",
     "pillow>=12,<13",
-    "pycolmap-cuda12>=4,<5",
+    "pycolmap-cuda12>=4.2.1,<5",
     "pytorch-lightning>=2.6,<3",
     "pytorch-metric-learning>=2.9,<3",
     "qwen-tts",
@@ -29,35 +29,34 @@ dependencies = [
     "scipy>=1.17,<2",
     "salad",
     "soundfile>=0.14,<1",
-    "torch>=2.13,<2.14",
+    "torch>=2.14.1",
     "torchao>=0.18,<1",
     "torchcrepe>=0.0.24,<1",
     "torchfcpe>=0.0.4,<1",
-    "torchaudio",
-    "torchvision",
+    "torchaudio>=2.11",
+    "torchvision>=0.29.1",
     "termcolor>=3.2,<4",
     "tiktoken>=0.13,<1",
     "tqdm>=4.67,<5",
-    "transformers==5.15.1",
+    "transformers==5.20.2",
     "vggt",
     "vggt-slam",
     "WeTextProcessing",
 ]
 
 [dependency-groups]
-dev = ["pyrefly==1.2.0", "types-tqdm>=4.70"]
+dev = ["pyrefly==1.4.0", "types-tqdm>=4.70"]
 
 [tool.uv]
 exclude-dependencies = ["onnxruntime", "opencv-python", "sox"]
 override-dependencies = [
     "numpy>=2.5,<2.6",
     "pynini==2.1.7",
-    "transformers==5.15.1",
+    "transformers==5.20.2",
 ]
 environments = ["sys_platform == 'linux'"]
 
 [tool.uv.sources]
-diffusers = { git = "https://github.com/huggingface/diffusers.git", rev = "d354c13b4844acd8377dcedf31e42ba8b5f5ac64" }
 qwen-tts = { git = "https://github.com/QwenLM/Qwen3-TTS.git", rev = "022e286b98fbec7e1e916cb940cdf532cd9f488e" }
 salad = { git = "https://github.com/Dominic101/salad.git" }
 vggt = { git = "https://github.com/MIT-SPARK/VGGT_SPARK.git" }

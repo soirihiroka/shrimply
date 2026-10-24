@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use shrimply_math_color::{Color, deserialize_array, serialize_array};
 use shrimply_math_core::{Fraction, deserialize_fraction, fraction_is_finite, serialize_fraction};
 
-pub const SCHEMA_VERSION: u16 = 10;
+pub const SCHEMA_VERSION: u16 = 11;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SceneHeader {
@@ -73,6 +73,7 @@ pub struct PipelineResource {
     pub source: String,
     pub state: PipelineState,
     pub texture_names: Vec<String>,
+    pub texture_kinds: Vec<TextureKind>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -86,6 +87,14 @@ pub struct GeometryResource {
 #[serde(rename_all = "snake_case")]
 pub enum TextureFormat {
     Rgba8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+pub enum TextureKind {
+    #[serde(rename = "2d")]
+    D2,
+    #[serde(rename = "2d-array")]
+    D2Array,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
@@ -108,6 +117,8 @@ pub struct TextureResource {
     pub id: u32,
     pub width: u32,
     pub height: u32,
+    pub layers: u32,
+    pub kind: TextureKind,
     pub format: TextureFormat,
     pub filter: TextureFilter,
     pub address: TextureAddress,
@@ -326,14 +337,19 @@ impl CompiledAnimationBuilder {
             PacketBody::Resources(resources) => {
                 for pipeline in resources.pipelines {
                     let incoming = pipeline.id;
-                    let hash =
-                        content_hash(&(&pipeline.source, pipeline.state, &pipeline.texture_names));
+                    let hash = content_hash(&(
+                        &pipeline.source,
+                        pipeline.state,
+                        &pipeline.texture_names,
+                        &pipeline.texture_kinds,
+                    ));
                     let canonical = self.pipeline_candidates.get(&hash).and_then(|ids| {
                         ids.iter().copied().find(|id| {
                             let existing = &self.pipelines[id];
                             existing.source == pipeline.source
                                 && existing.state == pipeline.state
                                 && existing.texture_names == pipeline.texture_names
+                                && existing.texture_kinds == pipeline.texture_kinds
                         })
                     });
                     let canonical = canonical.unwrap_or_else(|| {
@@ -378,6 +394,8 @@ impl CompiledAnimationBuilder {
                     let hash = content_hash(&(
                         texture.width,
                         texture.height,
+                        texture.layers,
+                        texture.kind,
                         texture.format,
                         texture.filter,
                         texture.address,
@@ -388,6 +406,8 @@ impl CompiledAnimationBuilder {
                             let existing = &self.textures[id];
                             existing.width == texture.width
                                 && existing.height == texture.height
+                                && existing.layers == texture.layers
+                                && existing.kind == texture.kind
                                 && existing.format == texture.format
                                 && existing.filter == texture.filter
                                 && existing.address == texture.address

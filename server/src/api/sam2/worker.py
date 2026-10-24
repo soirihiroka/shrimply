@@ -187,7 +187,8 @@ def run(connection, model_id: str, device_name: str) -> None:
             )
         )
         processor = Sam2VideoProcessor.from_pretrained(model_id)
-        model = Sam2VideoModel.from_pretrained(model_id, dtype=dtype).to(device)
+        model = Sam2VideoModel.from_pretrained(model_id, dtype=dtype)
+        type(model).to(model, device)
         model.eval()
         logger.info(
             "SAM2 model ready model=%s device=%s dtype=%s", model_id, device, dtype

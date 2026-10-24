@@ -54,6 +54,25 @@ Docker Compose enables the GPU and keeps downloaded models between runs.
    $ cd server
    $ docker compose up
 
+The default image uses CUDA 12.6. To use CUDA 13.0:
+
+.. code-block:: console
+
+   $ SHRIMPLY_SERVER_TAG=prerelease-cuda13.0 docker compose up
+
+Build either image from the repository root:
+
+.. code-block:: console
+
+   $ docker build -t shrimply-server:cuda12.6 server
+   $ docker build --build-arg CUDA_VERSION=13.0 -t shrimply-server:cuda13.0 server
+
+Python dependencies are installed during the image build. Model downloads remain
+persistent in the Compose volumes. The CUDA 13.0 build also compiles PyCOLMAP;
+CI caches that wheel stage separately from application source changes. Its build
+uses two compiler jobs by default; ``--build-arg BUILD_JOBS=8`` can speed up a
+local build with sufficient memory.
+
 Features
 --------
 

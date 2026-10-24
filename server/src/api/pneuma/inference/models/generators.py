@@ -48,7 +48,9 @@ class Generator(torch.nn.Module):
             )
 
         self.resblocks = nn.ModuleList()
-        ch: int | None = None
+        if not self.ups:
+            raise ValueError("Generator requires at least one upsample.")
+        ch = upsample_initial_channel
         for i in range(len(self.ups)):
             ch = upsample_initial_channel // (2 ** (i + 1))
             for j, (k, d) in enumerate(
@@ -56,8 +58,6 @@ class Generator(torch.nn.Module):
             ):
                 self.resblocks.append(resblock_cls(ch, k, d))
 
-        if ch is None:
-            raise ValueError("ch is None")
         self.conv_post = Conv1d(ch, 1, 7, 1, padding=3, bias=False)
         self.ups.apply(init_weights)
 
@@ -300,15 +300,15 @@ class GeneratorNSF(torch.nn.Module):
                 self.noise_convs.append(Conv1d(1, c_cur, kernel_size=1))
 
         self.resblocks = nn.ModuleList()
-        ch: int | None = None
+        if not self.ups:
+            raise ValueError("Generator requires at least one upsample.")
+        ch = upsample_initial_channel
         for i in range(len(self.ups)):
             ch = upsample_initial_channel // (2 ** (i + 1))
             for j, (k, d) in enumerate(
                 zip(resblock_kernel_sizes, resblock_dilation_sizes)
             ):
                 self.resblocks.append(resblock_cls(ch, k, d))
-        if ch is None:
-            raise ValueError("ch is None")
         self.conv_post = Conv1d(ch, 1, 7, 1, padding=3, bias=False)
         self.ups.apply(init_weights)
 

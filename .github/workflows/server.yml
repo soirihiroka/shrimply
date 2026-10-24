@@ -29,19 +29,32 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: ["12.6", "13.0"]
     env:
-      CUDA_VERSION: "12.6"
+      CUDA_VERSION: ${{ matrix.cuda }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Timestamp prerelease
-        run: echo "IMAGE_TAG=prerelease-$(date -u +%Y%m%dT%H%M%SZ)-cuda12.6" >> "${GITHUB_ENV}"
+        run: echo "IMAGE_TAG=prerelease-$(date -u +%Y%m%dT%H%M%SZ)-cuda${CUDA_VERSION}" >> "${GITHUB_ENV}"
+
+      - name: Make room for CUDA libraries and native build stages
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Build CUDA 12.6 image
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build CUDA ${{ matrix.cuda }} image
         uses: docker/build-push-action@v7
         with:
           context: server
@@ -49,12 +62,13 @@ jobs:
           load: true
           tags: ${{ env.SERVER_IMAGE }}:${{ env.IMAGE_TAG }}
           build-args: |
+            CUDA_VERSION=${{ matrix.cuda }}
             SHRIMPLY_SERVER_GIT_HASH=${{ github.sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/soirihiroka/shrimply
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=server-cuda12.6
-          cache-to: type=gha,mode=max,scope=server-cuda12.6
+          cache-from: type=registry,ref=${{ env.SERVER_IMAGE }}:buildcache-cuda${{ matrix.cuda }}
+          cache-to: type=registry,ref=${{ env.SERVER_IMAGE }}:buildcache-cuda${{ matrix.cuda }},mode=max
 
       - name: Verify runtime installation and server startup
         run: |
@@ -66,9 +80,14 @@ jobs:
               sleep 2
             done
           SH
-          docker exec -e EXPECTED_SHA="${GITHUB_SHA}" -e CUDA_VERSION server-smoke \
+          docker exec -e EXPECTED_SHA="${GITHUB_SHA}" -e CUDA_VERSION -e PYTHONPATH=/app/src server-smoke \
             /app/.venv/bin/python -c '
           import os, urllib.request, msgspec, torch, torchvision, torchaudio, pycolmap
+          from api.tts import qwen
+          from api.stt import worker as stt_worker
+          from api.sam2 import worker as sam2_worker
+          from diffusers import MiniMaxH3Transformer3DModel, WanPipeline
+          assert pycolmap.has_cuda, "PyCOLMAP was built without CUDA"
           assert torch.version.cuda == os.environ["CUDA_VERSION"], torch.version.cuda
           with urllib.request.urlopen("http://127.0.0.1:8787/", timeout=3) as response:
               status = msgspec.msgpack.decode(response.read())
@@ -78,16 +97,10 @@ jobs:
           '
           git diff --exit-code -- server/pyproject.toml server/uv.lock
 
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Publish prerelease
         run: |
           timestamped="${SERVER_IMAGE}:${IMAGE_TAG}"
-          rolling="${SERVER_IMAGE}:prerelease-cuda12.6"
+          rolling="${SERVER_IMAGE}:prerelease-cuda${CUDA_VERSION}"
           docker push "${timestamped}"
           docker tag "${timestamped}" "${rolling}"
           docker push "${rolling}"

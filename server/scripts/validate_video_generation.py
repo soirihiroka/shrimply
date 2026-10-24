@@ -235,9 +235,9 @@ def verify(
     if (video[0].width, video[0].height) != (width, height):
         raise RuntimeError("output dimensions do not match the request")
     average_rate = video[0].average_rate
-    if average_rate is None:
+    if not average_rate:
         raise RuntimeError("output video has no frame rate")
-    rate = Fraction(average_rate)
+    rate = Fraction(average_rate.numerator, average_rate.denominator)
     frames = sum(1 for _ in container.decode(video=0))
     container.close()
     container = av.open(path)

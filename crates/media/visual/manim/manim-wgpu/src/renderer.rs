@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak, mpsc};
 use hashbrown::HashMap;
 use shrimply_manim_ir::{
     CompareFunction, CompiledAnimation, PipelineResource, StencilFaceState, StencilOperation,
-    TextureAddress, TextureFilter, TextureResource,
+    TextureAddress, TextureFilter, TextureKind, TextureResource,
 };
 
 const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -31,6 +31,14 @@ impl PreparedAnimation {
                 if pipeline.source.is_empty() {
                     return Err(format!("Manim pipeline {} has no WGSL source", pipeline.id));
                 }
+                if pipeline.texture_names.len() != pipeline.texture_kinds.len()
+                    || draw.textures.len() != pipeline.texture_names.len()
+                {
+                    return Err(format!(
+                        "Manim pipeline {} has an invalid texture layout",
+                        pipeline.id
+                    ));
+                }
                 if geometry.bytes.is_empty() || uniforms.bytes.is_empty() {
                     return Err(format!(
                         "Manim draw in frame {} has an empty buffer",
@@ -43,10 +51,18 @@ impl PreparedAnimation {
                         frame.index
                     ));
                 }
-                for binding in &draw.textures {
-                    animation
+                for (index, binding) in draw.textures.iter().enumerate() {
+                    let texture = animation
                         .texture(binding.texture)
                         .ok_or_else(|| format!("missing Manim texture {}", binding.texture))?;
+                    if texture.kind != pipeline.texture_kinds[index]
+                        || binding.name != pipeline.texture_names[index]
+                    {
+                        return Err(format!(
+                            "Manim texture {} does not match its pipeline",
+                            binding.texture
+                        ));
+                    }
                 }
             }
         }
@@ -726,13 +742,16 @@ fn make_pipeline(
             ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
             count: None,
         });
-        resource_layout_entries.extend(resource.texture_names.iter().enumerate().map(
-            |(index, _)| wgpu::BindGroupLayoutEntry {
+        resource_layout_entries.extend(resource.texture_kinds.iter().enumerate().map(
+            |(index, kind)| wgpu::BindGroupLayoutEntry {
                 binding: u32::try_from(index + 2).expect("Manim texture binding overflow"),
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
+                    view_dimension: match kind {
+                        TextureKind::D2 => wgpu::TextureViewDimension::D2,
+                        TextureKind::D2Array => wgpu::TextureViewDimension::D2Array,
+                    },
                     multisampled: false,
                 },
                 count: None,
@@ -846,8 +865,23 @@ fn make_texture(
     queue: &wgpu::Queue,
     resource: &TextureResource,
 ) -> Result<GpuTexture, String> {
+    let limits = device.limits();
+    if resource.width == 0
+        || resource.height == 0
+        || resource.layers == 0
+        || resource.width > limits.max_texture_dimension_2d
+        || resource.height > limits.max_texture_dimension_2d
+        || resource.layers > limits.max_texture_array_layers
+        || (resource.kind == TextureKind::D2 && resource.layers != 1)
+    {
+        return Err(format!(
+            "Manim texture {} dimensions are invalid or exceed device limits",
+            resource.id
+        ));
+    }
     let expected = u64::from(resource.width)
         .checked_mul(u64::from(resource.height))
+        .and_then(|pixels| pixels.checked_mul(u64::from(resource.layers)))
         .and_then(|pixels| pixels.checked_mul(u64::from(PIXEL_BYTES)))
         .and_then(|bytes| usize::try_from(bytes).ok())
         .ok_or_else(|| format!("Manim texture {} dimensions overflow", resource.id))?;
@@ -862,7 +896,7 @@ fn make_texture(
         size: wgpu::Extent3d {
             width: resource.width,
             height: resource.height,
-            depth_or_array_layers: 1,
+            depth_or_array_layers: resource.layers,
         },
         mip_level_count: 1,
         sample_count: 1,
@@ -887,7 +921,7 @@ fn make_texture(
         wgpu::Extent3d {
             width: resource.width,
             height: resource.height,
-            depth_or_array_layers: 1,
+            depth_or_array_layers: resource.layers,
         },
     );
     let address_mode = match resource.address {
@@ -907,7 +941,13 @@ fn make_texture(
         min_filter: filter,
         ..Default::default()
     });
-    let view = texture.create_view(&Default::default());
+    let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(match resource.kind {
+            TextureKind::D2 => wgpu::TextureViewDimension::D2,
+            TextureKind::D2Array => wgpu::TextureViewDimension::D2Array,
+        }),
+        ..Default::default()
+    });
     Ok(GpuTexture {
         _texture: texture,
         view,

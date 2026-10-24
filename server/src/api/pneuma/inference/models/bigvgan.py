@@ -52,7 +52,9 @@ class _BigVGANNSFBase(nn.Module):
                 "use_cuda_kernel": False,
             }
         )
-        ch: int | None = None
+        if not upsample_rates or not upsample_kernel_sizes:
+            raise ValueError("V3 BigVGAN-NSF generator requires at least one upsample.")
+        ch = upsample_initial_channel
         for i, (u, k) in enumerate(zip(upsample_rates, upsample_kernel_sizes)):
             ch = upsample_initial_channel // (2 ** (i + 1))
             self.ups.append(
@@ -106,8 +108,6 @@ class _BigVGANNSFBase(nn.Module):
                         )
                     )
 
-        if ch is None:
-            raise ValueError("V3 BigVGAN-NSF generator requires at least one upsample.")
         self.activation_post = self._make_activation(ch)
         self.conv_post = weight_norm(Conv1d(ch, 1, 7, 1, padding=3, bias=False))
         self.ups.apply(init_weights)

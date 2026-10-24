@@ -6,6 +6,7 @@ from functools import cache
 from typing import cast
 
 import numpy as np
+from PIL import Image
 from manimlib.mobject.mobject import Mobject
 from manimlib.mobject.types.surface import Surface
 from manimlib.camera.camera import Camera
@@ -21,6 +22,7 @@ from manimlib.renderer.drawing import (
 from manimlib.renderer.pipeline import PipelineState
 from manimlib.renderer.gpu import FRAME_DTYPE
 from manimlib.renderer.shader_source import FIRST_TEXTURE_BINDING, get_shader_code
+from manimlib.renderer.texture import ImageFile, LayeredPixels
 from manimlib.renderer.uniform_block import Uniforms
 from manimlib.scene.scene import Scene
 
@@ -45,7 +47,12 @@ class PreparedPipelineState:
 class PreparedTexture:
     binding: int
     name: str
-    path: str
+    kind: str
+    filter: str
+    width: int
+    height: int
+    layers: int
+    pixels: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,9 +121,12 @@ def _module(
     data_dtype: np.dtype[np.void],
     uniform_dtype: np.dtype[np.void],
     texture_names: tuple[str, ...],
+    texture_kinds: tuple[str, ...],
     replacements: tuple[tuple[str, str], ...],
 ) -> str:
-    source = get_shader_code(filename, data_dtype, uniform_dtype, texture_names)
+    source = get_shader_code(
+        filename, data_dtype, uniform_dtype, texture_names, texture_kinds
+    )
     if source is None:
         raise RuntimeError(f"Manim shader {filename!r} was not found")
     for old, new in replacements:
@@ -126,24 +136,58 @@ def _module(
 
 def _modules(mobject: Mobject, drawing_class: type[Drawing]) -> dict[str, str]:
     specs = cast(list[ModuleSpec], drawing_class.module_specs(mobject))
-    texture_names = tuple(mobject.texture_paths)
+    texture_names = tuple(mobject.textures)
+    texture_kinds = tuple(source.kind() for source in mobject.textures.values())
     return {
         name: _module(
             filename,
             mobject.data.dtype,
             mobject.uniforms.dtype,
             texture_names,
+            texture_kinds,
             tuple(replacements.items()),
         )
         for name, filename, replacements in specs
     }
 
 
+@cache
+def _pixels(source: str | LayeredPixels, version: int) -> tuple[int, int, int, bytes]:
+    # Freeze mutable video pixels before another frame advances the scene.
+    del version
+    if isinstance(source, str):
+        with Image.open(source) as image:
+            return image.width, image.height, 1, image.convert("RGBA").tobytes()
+    pixels = source.layers
+    if pixels.dtype != np.uint8 or pixels.ndim != 4 or pixels.shape[-1] != 4:
+        raise ValueError("Manim texture layers must be uint8 RGBA images")
+    layers, height, width, _ = pixels.shape
+    return width, height, layers, pixels.tobytes()
+
+
 def _textures(mobject: Mobject) -> tuple[PreparedTexture, ...]:
-    return tuple(
-        PreparedTexture(FIRST_TEXTURE_BINDING + index, name, path)
-        for index, (name, path) in enumerate(mobject.texture_paths.items())
-    )
+    textures: list[PreparedTexture] = []
+    for index, (name, source) in enumerate(mobject.textures.items()):
+        if isinstance(source, ImageFile):
+            pixels = _pixels(source.path, 0)
+        elif isinstance(source, LayeredPixels):
+            pixels = _pixels(source, source.version)
+        else:
+            raise TypeError(f"Unsupported Manim texture source: {type(source).__name__}")
+        width, height, layers, data = pixels
+        textures.append(
+            PreparedTexture(
+                binding=FIRST_TEXTURE_BINDING + index,
+                name=name,
+                kind=source.kind(),
+                filter=mobject.texture_filter,
+                width=width,
+                height=height,
+                layers=layers,
+                pixels=data,
+            )
+        )
+    return tuple(textures)
 
 
 def _draw(

@@ -33,6 +33,7 @@ __pycache__/
 !/flake.lock
 !/server/uv.lock
 !/docs/uv.lock
+!/crates/media/visual/manim/manim-bridge/python/uv.lock
 /docs/build
 *.options
 *.target

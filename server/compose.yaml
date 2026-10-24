@@ -4,11 +4,8 @@ services:
     gpus: all
     network_mode: host
     volumes:
-      - ./.docker/venv:/app/.venv
-      - ./.docker/cache:/root/.cache/uv
       - ./.docker/huggingface:/root/.cache/huggingface
       - ./.docker/pneuma/models:/app/models
-      - ./.docker/python:/root/.local/share/uv/python
     healthcheck:
       test: curl -fso /dev/null http://localhost:8787/
       interval: 10s

@@ -73,4 +73,5 @@ License
 
    security
    development
+   python-dependencies
    licenses
