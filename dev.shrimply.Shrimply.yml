@@ -146,6 +146,8 @@ modules:
         CARGO_HOME: /run/ccache/cargo-home
         CARGO_TARGET_DIR: /run/ccache/cargo-target
         CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
+        # Link the bundled FFmpeg before the SDK's incompatible version.
+        RUSTFLAGS: "-L native=/app/lib -C link-arg=-fuse-ld=lld"
         PATH: /run/host/usr/local/cargo/bin:/run/host/usr/local/cuda-12.9/bin:/usr/lib/sdk/llvm22/bin:/app/bin:/usr/bin
         CUDA_HOME: /run/host/usr/local/cuda-12.9
         CUDA_TOOLKIT_PATH: /run/host/usr/local/cuda-12.9
