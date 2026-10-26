@@ -599,7 +599,10 @@ fn control_commit(control: &InspectorControl) -> InspectorCommit<'_> {
         InspectorCommit::Immediate(&control.commit_name)
     } else if matches!(
         control.kind,
-        ControlKind::LayeredNumber | ControlKind::LayeredVector2 | ControlKind::LayeredVector3
+        ControlKind::LayeredNumber
+            | ControlKind::LayeredVector2
+            | ControlKind::LayeredVector3
+            | ControlKind::LayeredColor
     ) {
         // Match GTK: changes only update the live preview; the picker commits once.
         InspectorCommit::Deferred
