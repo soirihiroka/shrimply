@@ -28,7 +28,7 @@ pub(super) fn timeline_sidebar(
     let beat_grid = timeline_tool_button("metronome-symbolic");
     beat_grid.set_tooltip_i18n("Beat Grid");
 
-    let pointer = timeline_tool_button("pointer-primary-click-symbolic");
+    let pointer = timeline_tool_button("pointer-left-symbolic");
     pointer.set_tooltip_i18n("Pointer");
 
     let cut = timeline_tool_button("cut-symbolic");
