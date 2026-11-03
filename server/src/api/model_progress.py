@@ -70,9 +70,6 @@ def stream_model_progress(
     snapshot_download = importlib.import_module("huggingface_hub._snapshot_download")
     previous_snapshot_tqdm = getattr(snapshot_download, "hf_tqdm")
     setattr(snapshot_download, "hf_tqdm", StreamedModelProgress)
-    file_download = importlib.import_module("huggingface_hub.file_download")
-    previous_file_tqdm = getattr(file_download, "tqdm")
-    setattr(file_download, "tqdm", StreamedModelProgress)
     diffusers_logging = None
     previous_diffusers_tqdm = None
     if include_diffusers:
@@ -84,7 +81,6 @@ def stream_model_progress(
     finally:
         if diffusers_logging is not None:
             diffusers_logging.tqdm_lib.tqdm = previous_diffusers_tqdm
-        setattr(file_download, "tqdm", previous_file_tqdm)
         setattr(snapshot_download, "hf_tqdm", previous_snapshot_tqdm)
         transformers_logging.set_tqdm_hook(previous_transformers_hook)
         report_progress, last_progress = previous_report, previous_progress

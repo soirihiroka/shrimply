@@ -7,6 +7,7 @@ from huggingface_hub import hf_hub_download, snapshot_download
 from torch import Tensor
 from transformers import SeamlessM4TFeatureExtractor, Wav2Vec2BertModel
 
+from api.model_progress import StreamedModelProgress
 from api.tts.index_tts_2_0.acoustic_model import AcousticModel
 from api.tts.index_tts_2_0.gpt import ConditioningConfig
 from api.tts.index_tts_2_0.model_loader import (
@@ -90,6 +91,7 @@ def download_model_paths(cache_directory: Path) -> ModelPaths:
             "funasr/campplus",
             "campplus_cn_common.bin",
             cache_dir=cache,
+            tqdm_class=StreamedModelProgress,
         )
     )
     vocoder = Path(

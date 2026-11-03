@@ -10,6 +10,8 @@ from safetensors.torch import load_file
 from torch import Tensor
 from transformers import SeamlessM4TFeatureExtractor, Wav2Vec2BertModel
 
+from api.model_progress import StreamedModelProgress
+
 from .acoustic_model import AcousticModel
 from .gpt import ConditioningConfig, UnifiedVoice
 from .semantic_codec import RepCodec
@@ -115,6 +117,7 @@ def download_model_paths(cache_directory: Path) -> ModelPaths:
             "amphion/MaskGCT",
             "semantic_codec/model.safetensors",
             cache_dir=cache,
+            tqdm_class=StreamedModelProgress,
         )
     )
     speaker_encoder = Path(
@@ -122,6 +125,7 @@ def download_model_paths(cache_directory: Path) -> ModelPaths:
             "funasr/campplus",
             "campplus_cn_common.bin",
             cache_dir=cache,
+            tqdm_class=StreamedModelProgress,
         )
     )
     vocoder = Path(
