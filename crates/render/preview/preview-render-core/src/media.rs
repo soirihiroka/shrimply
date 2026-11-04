@@ -271,9 +271,11 @@ impl Media {
         });
         let ready = requests.iter().all(|request| {
             self.frames.get(&request.id).is_some_and(|(completed, _)| {
-                // Interactive playback can show the last completed frame. An
-                // accurate capture/export must wait for this exact request.
-                !request.accuracy.content_accurate() || completed == request
+                // Playback can show the last completed frame. A precise seek,
+                // capture, or export must wait for this exact request.
+                !request.accuracy.time_accurate()
+                    || request.accuracy.continuous_playback()
+                    || completed == request
             })
         });
         if changed {

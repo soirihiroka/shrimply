@@ -93,6 +93,7 @@ pipeline on the target machine:
    $ make intel-check
    $ make intel-benchmark VIDEO=/path/to/video.mp4 FRAMES=120
    $ make intel-gl-probe
+   $ SHRIMPLY_GPU=intel make gpu-playback-benchmark PROJECT=/path/to/project.shrimp FRAMES=120
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark VIDEO=/path/to/video.mp4 OUTPUT=/tmp/intel.mp4 FORMAT=hevc10
 
 Use ``PROFILE=release`` with either benchmark to measure optimized performance.
