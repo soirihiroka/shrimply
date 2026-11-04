@@ -276,6 +276,11 @@ impl Renderer {
                 )
             }?);
         }
+        if std::env::var_os("SHRIMPLY_OBJ_PROBE").is_some() {
+            submissions.last().expect("object submission").wait()?;
+            let pixels = self.readback(&output)?;
+            eprintln!("OBJ raw {:?}; nonzero {}", &pixels[..16], pixels.iter().filter(|&&v| v != 0).count());
+        }
         Ok(output)
     }
 
