@@ -419,13 +419,13 @@ intel-check: native-deps cuda-artifacts
 
 .PHONY: intel-benchmark intel-gl-probe gpu-export-benchmark
 intel-benchmark: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-render-vulkan --example intel_gpu -- "$(VIDEO)" "$(or $(FRAMES),120)"
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-render-vulkan --example intel_gpu -- "$(VIDEO)" "$(or $(FRAMES),120)"
 
 intel-gl-probe: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-preview-runtime-cuda --example intel_gl_probe
 
 gpu-export-benchmark: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-export-cuda --example gpu_export -- "$(VIDEO)" "$(OUTPUT)" "$(or $(FORMAT),h264)" "$(or $(FRAMES),120)"
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example gpu_export -- "$(VIDEO)" "$(OUTPUT)" "$(or $(FORMAT),h264)" "$(or $(FRAMES),120)"
 
 frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost

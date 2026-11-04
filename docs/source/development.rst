@@ -92,6 +92,9 @@ pipeline on the target machine:
    $ make intel-gl-probe
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark VIDEO=/path/to/video.mp4 OUTPUT=/tmp/intel.mp4 FORMAT=hevc10
 
+Use ``PROFILE=release`` with either benchmark to measure optimized performance.
+The default development profile leaves Rust code unoptimized.
+
 Build and check
 ---------------
 
