@@ -414,8 +414,8 @@ cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-inspector-document --lib
 
 intel-check: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets
-	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets -- -D warnings
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets -- -D warnings
 
 .PHONY: intel-benchmark intel-gl-probe gpu-export-benchmark gpu-playback-benchmark
 intel-benchmark: native-deps
@@ -589,3 +589,7 @@ text-3d-geometry-test:
 .PHONY: gtk-gpu-preferences-validation
 gtk-gpu-preferences-validation: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) run -p $(EDITOR_PACKAGE) --example gpu_preferences
+
+.PHONY: cuda-peer-copy-validation
+cuda-peer-copy-validation:
+	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-gpu-cuda --example peer_copy -- "$(or $(SOURCE_GPU),0)" "$(or $(DESTINATION_GPU),0)"

@@ -4,11 +4,17 @@ use std::sync::Arc;
 
 use libc::size_t;
 use shrimply_gpu_cuda::{CudaContext, sys};
-use shrimply_gpu_cuda_memory::MemoryKind;
+use shrimply_gpu_cuda_memory::{GpuBuffer, MemoryKind};
 
 const CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD: u32 = 0x02;
 
 unsafe extern "C" {
+    fn shrimply_cuda_gl_device(device: *mut sys::CUdevice) -> sys::CUresult;
+    fn shrimply_cuda_memcpy_2d_peer(
+        descriptor: *const sys::CUDA_MEMCPY2D,
+        source_context: sys::CUcontext,
+        destination_context: sys::CUcontext,
+    ) -> sys::CUresult;
     #[link_name = "shrimply_cuda_graphics_gl_register_image"]
     fn cuGraphicsGLRegisterImage(
         p_cuda_resource: *mut sys::CUgraphicsResource,
@@ -27,8 +33,28 @@ impl CudaTexture {
     pub fn register(
         texture_id: u32,
         target: u32,
-        context: Arc<CudaContext>,
+        mut context: Arc<CudaContext>,
     ) -> Result<Self, String> {
+        let mut display_device = 0;
+        cuda_check(
+            unsafe { shrimply_cuda_gl_device(&mut display_device) },
+            "GTK preview requires one CUDA-visible NVIDIA OpenGL device",
+        )?;
+        if display_device != context.cu_device() {
+            let ordinal = shrimply_gpu_cuda::devices()
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|device| {
+                    let mut candidate = 0;
+                    unsafe {
+                        sys::cuDeviceGet(&mut candidate, device.ordinal as i32) == sys::CUDA_SUCCESS
+                            && candidate == display_device
+                    }
+                })
+                .ok_or("GTK OpenGL device is unavailable to CUDA")?
+                .ordinal;
+            context = CudaContext::new(ordinal).map_err(|error| error.to_string())?;
+        }
         bind_context(&context, "bind CUDA context for GL registration")?;
         let mut resource = ptr::null_mut();
         cuda_check(
@@ -48,14 +74,16 @@ impl CudaTexture {
 
     pub fn copy_from_device(
         &self,
-        source: sys::CUdeviceptr,
-        source_memory: MemoryKind,
-        source_pitch_bytes: usize,
-        width_bytes: usize,
-        height: usize,
+        source: &GpuBuffer<u32>,
+        width: u32,
+        height: u32,
     ) -> Result<(), String> {
-        if source == 0 || width_bytes == 0 || height == 0 {
+        if width == 0 || height == 0 {
             return Ok(());
+        }
+        let width_bytes = width as usize * size_of::<u32>();
+        if source.len() < width as usize * height as usize {
+            return Err("CUDA preview frame is smaller than its dimensions".into());
         }
 
         bind_context(&self.context, "bind CUDA context for GL texture copy")?;
@@ -78,14 +106,14 @@ impl CudaTexture {
         let copy = sys::CUDA_MEMCPY2D {
             srcXInBytes: 0,
             srcY: 0,
-            srcMemoryType: match source_memory {
+            srcMemoryType: match source.memory_kind() {
                 MemoryKind::Device => sys::CUmemorytype_enum_CU_MEMORYTYPE_DEVICE,
                 MemoryKind::Managed => sys::CUmemorytype_enum_CU_MEMORYTYPE_UNIFIED,
             },
             srcHost: ptr::null(),
-            srcDevice: source,
+            srcDevice: source.cu_deviceptr(),
             srcArray: ptr::null_mut(),
-            srcPitch: source_pitch_bytes as size_t,
+            srcPitch: width_bytes as size_t,
             dstXInBytes: 0,
             dstY: 0,
             dstMemoryType: sys::CUmemorytype_enum_CU_MEMORYTYPE_ARRAY,
@@ -96,7 +124,31 @@ impl CudaTexture {
             WidthInBytes: width_bytes as size_t,
             Height: height as size_t,
         };
-        cuda_check(unsafe { sys::cuMemcpy2D_v2(&copy) }, "cuMemcpy2D")?;
+        let cross_context = source.context().cu_ctx() != self.context.cu_ctx();
+        let copied = if cross_context && source.memory_kind() == MemoryKind::Device {
+            cuda_check(
+                unsafe {
+                    shrimply_cuda_memcpy_2d_peer(
+                        &copy,
+                        source.context().cu_ctx(),
+                        self.context.cu_ctx(),
+                    )
+                },
+                "copy preview between NVIDIA devices",
+            )
+        } else {
+            // Managed allocations use their unified address in the destination
+            // context; CUDA migrates them as needed, including across GPUs.
+            cuda_check(unsafe { sys::cuMemcpy2D_v2(&copy) }, "cuMemcpy2D")
+        };
+        if cross_context {
+            // Keep the source allocation/context alive through completion.
+            cuda_check(
+                unsafe { sys::cuCtxSynchronize() },
+                "finish cross-device preview copy",
+            )?;
+        }
+        copied?;
         Ok(())
     }
 

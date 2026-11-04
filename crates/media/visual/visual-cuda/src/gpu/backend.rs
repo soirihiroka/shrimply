@@ -137,7 +137,14 @@ pub fn configure_gtk_presentation() -> Result<(), String> {
         .split([':', ';', ',', ' ', '\t'])
         .any(|feature| feature == "gles-api" || feature == "all")
     {
-        command.env("GDK_DISABLE", format!("{disabled},gles-api"));
+        command.env(
+            "GDK_DISABLE",
+            if disabled.is_empty() {
+                "gles-api".into()
+            } else {
+                format!("{disabled},gles-api")
+            },
+        );
         restart = true;
     }
     if restart {

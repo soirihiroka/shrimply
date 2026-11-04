@@ -87,6 +87,16 @@ static const char shrimply_cuda_name_cuDeviceGet[] =
 #undef cuDeviceGet
 #define cuDeviceGet(...) SHRIMPLY_CUDA_CALL(cuDeviceGet, __VA_ARGS__)
 
+typedef __typeof__(&cuGLGetDevices) shrimply_cuda_type_cuGLGetDevices;
+static const char shrimply_cuda_name_cuGLGetDevices[] = SHRIMPLY_CUDA_STRING(cuGLGetDevices);
+#undef cuGLGetDevices
+#define cuGLGetDevices(...) SHRIMPLY_CUDA_CALL(cuGLGetDevices, __VA_ARGS__)
+
+typedef __typeof__(&cuMemcpy3DPeer) shrimply_cuda_type_cuMemcpy3DPeer;
+static const char shrimply_cuda_name_cuMemcpy3DPeer[] = SHRIMPLY_CUDA_STRING(cuMemcpy3DPeer);
+#undef cuMemcpy3DPeer
+#define cuMemcpy3DPeer(...) SHRIMPLY_CUDA_CALL(cuMemcpy3DPeer, __VA_ARGS__)
+
 typedef __typeof__(&cuDeviceGetAttribute)
     shrimply_cuda_type_cuDeviceGetAttribute;
 static const char shrimply_cuda_name_cuDeviceGetAttribute[] =

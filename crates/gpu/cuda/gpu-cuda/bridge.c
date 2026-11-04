@@ -12,6 +12,46 @@ CUresult shrimply_cuda_device_get(CUdevice *device, int ordinal) {
   return cuDeviceGet(device, ordinal);
 }
 CUresult shrimply_cuda_device_count(int *count) { return cuDeviceGetCount(count); }
+CUresult shrimply_cuda_gl_device(CUdevice *device) {
+  // Detect and reject SLI contexts instead of caching a changing frame device.
+  enum { QUERY_CAPACITY = 2 };
+  CUdevice devices[QUERY_CAPACITY];
+  unsigned count = 0;
+  CUresult result = cuGLGetDevices(&count, devices, QUERY_CAPACITY,
+                                  CU_GL_DEVICE_LIST_ALL);
+  if (result != CUDA_SUCCESS) return result;
+  if (count != 1) return CUDA_ERROR_NOT_SUPPORTED;
+  *device = devices[0];
+  return CUDA_SUCCESS;
+}
+CUresult shrimply_cuda_memcpy_2d_peer(const void *descriptor,
+                                    void *source_context,
+                                    void *destination_context) {
+  const CUDA_MEMCPY2D *copy = descriptor;
+  CUDA_MEMCPY3D_PEER peer = {0};
+  peer.srcXInBytes = copy->srcXInBytes;
+  peer.srcY = copy->srcY;
+  peer.srcMemoryType = copy->srcMemoryType;
+  peer.srcHost = copy->srcHost;
+  peer.srcDevice = copy->srcDevice;
+  peer.srcArray = copy->srcArray;
+  peer.srcContext = source_context;
+  peer.srcPitch = copy->srcPitch;
+  peer.srcHeight = copy->srcY + copy->Height;
+  peer.dstXInBytes = copy->dstXInBytes;
+  peer.dstY = copy->dstY;
+  peer.dstMemoryType = copy->dstMemoryType;
+  peer.dstHost = copy->dstHost;
+  peer.dstDevice = copy->dstDevice;
+  peer.dstArray = copy->dstArray;
+  peer.dstContext = destination_context;
+  peer.dstPitch = copy->dstPitch;
+  peer.dstHeight = copy->dstY + copy->Height;
+  peer.WidthInBytes = copy->WidthInBytes;
+  peer.Height = copy->Height;
+  peer.Depth = 1;
+  return cuMemcpy3DPeer(&peer);
+}
 CUresult shrimply_cuda_device_name(char *name, int length, CUdevice device) {
   return cuDeviceGetName(name, length, device);
 }

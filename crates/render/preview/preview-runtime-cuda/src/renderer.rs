@@ -197,13 +197,7 @@ impl VideoRenderer {
         self.rgba_cuda
             .as_ref()
             .ok_or_else(|| "CUDA RGBA texture is not registered".to_string())?
-            .copy_from_device(
-                frame.buffer.cuda()?.cu_deviceptr(),
-                frame.buffer.cuda()?.memory_kind(),
-                frame.width as usize * std::mem::size_of::<u32>(),
-                frame.width as usize * std::mem::size_of::<u32>(),
-                frame.height as usize,
-            )
+            .copy_from_device(frame.buffer.cuda()?, frame.width, frame.height)
             .map_err(|error| {
                 format!(
                     "upload preview frame {} to CUDA-GL texture: {error}",
