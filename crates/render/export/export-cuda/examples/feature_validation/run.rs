@@ -41,8 +41,12 @@ pub fn run() -> Result<(), String> {
         .unwrap_or_else(|| PathBuf::from("/root/.nix-profile/bin/blender"));
     shrimply_blender_core::set_binary(Some(blender.canonicalize().map_err(|e| e.to_string())?));
     // Only approve executable fixtures created above, inside this new output directory.
-    shrimply_trust_core::Review::new([output.join("manim.py"), output.join("source.blend")])?
-        .approve(shrimply_trust_core::Kind::File)?;
+    shrimply_trust_core::Review::new([
+        output.join("manim.py"),
+        output.join("source.blend"),
+        output.join("parity.py"),
+    ])?
+    .approve(shrimply_trust_core::Kind::File)?;
     let cases = cases(&output)?;
     let mut failed = Vec::new();
     let mut completed = 0;
@@ -195,6 +199,21 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     }));
     manim.file = Asset::new(output.join("manim.py"));
     result.push(("source-manim".into(), project(manim)));
+    for scene in [
+        "VisualParity",
+        "ThreeDParity",
+        "VectorMorphParity",
+        "GenericPipelineParity",
+        "LatexParity",
+    ] {
+        let mut item = image.clone();
+        item.content = VideoItemContent::Manim(Box::new(ManimItem {
+            scene: scene.into(),
+            ..Default::default()
+        }));
+        item.file = Asset::new(output.join("parity.py"));
+        result.push((format!("manim-{scene}"), project(item)));
+    }
     let mut gaussian = image.clone();
     gaussian.content = VideoItemContent::Gaussian(Box::default());
     gaussian.file = Asset::new(output.join("source.ply"));
@@ -308,6 +327,18 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         ),
     )));
     result.push(("analysis-transparent-fill".into(), project(fill)));
+    let mut sam2_item = image.clone();
+    sam2_item.modifiers.push(modifier(ModifierEffect::raster(
+        RasterModifierEffect::Sam2(shrimply_visual_modifiers::sam2::Sam2Modifier {
+            analysis_generation: 1,
+            points: vec![shrimply_visual_modifiers::sam2::Sam2Point::new(
+                serde_json::from_value(serde_json::json!([0.4, 0.5])).map_err(|e| e.to_string())?,
+                shrimply_visual_modifiers::sam2::Sam2PointLabel::Foreground,
+            )],
+            ..Default::default()
+        }),
+    )));
+    result.push(("analysis-sam2".into(), project(sam2_item)));
     for method in [
         VideoStabilizationMethod::L1,
         VideoStabilizationMethod::MeshFlow,
@@ -541,6 +572,17 @@ fn create_assets(output: &Path) -> Result<(), String> {
     ] {
         std::fs::write(output.join(name), text).map_err(|e| e.to_string())?;
     }
+    let fixture = std::fs::read_to_string(
+        "crates/media/visual/manim/manim-wgpu/tests/fixtures/visual_parity.py",
+    )
+    .map_err(|e| e.to_string())?;
+    let checker = serde_json::to_string(&output.join("source.png").to_string_lossy())
+        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        output.join("parity.py"),
+        format!("import os\nos.environ['SHRIMPLY_MANIM_CHECKER'] = {checker}\n{fixture}"),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -556,6 +598,54 @@ fn prepare_analysis(name: &str, project: &Project) -> Result<(), String> {
     };
     let deadline = Instant::now() + std::time::Duration::from_secs(120);
     match name {
+        "analysis-sam2" => {
+            use shrimply_visual_core::sam2::analysis::{self, Status};
+            let modifier = item.modifiers.last().expect("SAM2 modifier");
+            let ModifierEffect::Raster(effect) = &modifier.effect else {
+                unreachable!()
+            };
+            let RasterModifierEffect::Sam2(settings) = &**effect else {
+                unreachable!()
+            };
+            let target = analysis::AnalysisTarget {
+                address: address.clone(),
+                modifier_id: modifier.id,
+            };
+            let signature = settings.prompt_signature();
+            let server_url = std::env::var("SHRIMPLY_VALIDATION_SERVER")
+                .map_err(|_| "Set SHRIMPLY_VALIDATION_SERVER to validate real SAM2 inference")?;
+            analysis::start(
+                target.clone(),
+                settings.analysis_generation,
+                Status::Running {
+                    message: "Intel validation".into(),
+                    completed_frames: 0,
+                    total_frames: FRAMES as u64,
+                    prompt_signature: signature,
+                    server_url,
+                },
+            );
+            let mut scheduler = analysis::Scheduler::new(|| {});
+            if !scheduler.schedule_next_with(
+                project,
+                shrimply_preview_render_vulkan::Sam2ProxyFrameSource::new,
+                |error| eprintln!("SAM2 analysis: {error}"),
+            )? {
+                return Err("SAM2 analysis was not scheduled".into());
+            }
+            let deadline = Instant::now() + std::time::Duration::from_secs(600);
+            loop {
+                match analysis::get_for_prompt(&target, settings.analysis_generation, signature) {
+                    Some(Status::Complete { .. }) => break,
+                    Some(Status::Failed(error)) => return Err(error),
+                    Some(Status::Cancelled) => return Err("SAM2 was cancelled".into()),
+                    _ if Instant::now() >= deadline => {
+                        return Err("SAM2 inference timed out".into());
+                    }
+                    _ => std::thread::sleep(std::time::Duration::from_millis(10)),
+                }
+            }
+        }
         "analysis-cache" => {
             let id = item.modifiers.last().expect("cache modifier").id;
             shrimply_visual_cuda::modifier_cache::bake(project.clone(), address.clone(), id)?;

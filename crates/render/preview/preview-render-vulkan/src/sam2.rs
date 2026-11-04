@@ -23,6 +23,7 @@ impl ProxyFrameSource for Sam2ProxyFrameSource {
             self.compositor.sam2_target = Some(request.target.clone());
         }
         self.compositor.sam2_proxy = None;
+        self.compositor.scene.request_frame();
         let Some(plan) = self.compositor.prepare(
             request.project,
             request.timeline_position,
