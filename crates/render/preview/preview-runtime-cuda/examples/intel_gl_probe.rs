@@ -105,13 +105,17 @@ fn main() -> Result<(), String> {
         if surface.is_null() {
             return Err("Create EGL pbuffer".into());
         }
+        let started = std::time::Instant::now();
         let mut renderer = shrimply_render_vulkan::Renderer::new()?;
+        println!("Intel VA-API/Vulkan initialized in {:?}", started.elapsed());
         let frame = renderer.composite_buffers(&[], SIZE, SIZE, 0xff00_00ff)?;
+        println!("Slang composite submitted after {:?}", started.elapsed());
         let (vector, vector_ready) = renderer.draw_vector((SIZE, SIZE), |canvas| {
             canvas.clear(skia_safe::Color::RED);
             Ok(())
         })?;
         vector_ready.wait()?;
+        println!("Skia Vulkan render completed after {:?}", started.elapsed());
         for (source, buffer) in [("Slang", &frame.output), ("Skia", &vector)] {
             let (texture, ready) = renderer.presentation_texture(buffer, SIZE, SIZE)?;
             ready.wait()?;
