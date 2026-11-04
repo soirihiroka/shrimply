@@ -233,7 +233,12 @@ static int compile(const CompileRequest& request)
         entry.value.intValue0 = value;
         options.push_back(entry);
     };
-    option(slang::CompilerOptionName::Optimization, SLANG_OPTIMIZATION_LEVEL_HIGH);
+    // Preserve the call graph for the Vulkan driver's native optimizer. Slang's
+    // exhaustive SPIR-V inlining of the shared pointer-based compositor can
+    // expand beyond tens of gigabytes before producing any shader bytecode.
+    option(slang::CompilerOptionName::Optimization,
+        request.target == Target::Vulkan
+            ? SLANG_OPTIMIZATION_LEVEL_NONE : SLANG_OPTIMIZATION_LEVEL_HIGH);
     if (request.target == Target::Vulkan)
         option(slang::CompilerOptionName::GLSLForceScalarLayout, 1);
     if (cuda)

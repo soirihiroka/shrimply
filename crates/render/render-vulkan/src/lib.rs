@@ -12,7 +12,7 @@ pub use video::{VideoFrame, decoder};
 use ash::vk;
 use device::Device;
 use shrimply_render_core::Nv12LayerParams;
-use std::{collections::HashMap, ffi::CString, sync::Arc};
+use std::{collections::HashMap, ffi::CString, rc::Rc, sync::Arc};
 
 struct Field {
     name: &'static str,
@@ -97,9 +97,10 @@ impl Drop for Pool {
 }
 
 pub struct Submission {
-    pool: Arc<Pool>,
+    pool: Rc<Pool>,
     command: vk::CommandBuffer,
     fence: vk::Fence,
+    submitted: bool,
     descriptor: Option<vk::DescriptorPool>,
     _resources: Vec<Buffer>,
     _video: Option<ffmpeg_next::frame::Video>,
@@ -124,7 +125,7 @@ impl Submission {
 }
 impl Drop for Submission {
     fn drop(&mut self) {
-        if self.wait().is_err() {
+        if self.submitted && self.wait().is_err() {
             std::process::abort();
         }
         unsafe {
@@ -158,7 +159,7 @@ struct Kernel {
 pub struct Renderer {
     skia: Option<skia_safe::gpu::DirectContext>,
     device: Arc<Device>,
-    pool: Arc<Pool>,
+    pool: Rc<Pool>,
     descriptor_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
     kernels: HashMap<&'static str, Kernel>,
@@ -175,6 +176,10 @@ impl Renderer {
             )
         }
         .map_err(|e| format!("create Vulkan command pool: {e:?}"))?;
+        let pool = Rc::new(Pool {
+            device: device.clone(),
+            raw: pool,
+        });
         let bindings = [vk::DescriptorSetLayoutBinding::default()
             .binding(0)
             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
@@ -194,13 +199,17 @@ impl Renderer {
                 None,
             )
         }
-        .map_err(|e| format!("create Vulkan pipeline layout: {e:?}"))?;
+        .map_err(|e| {
+            unsafe {
+                device
+                    .raw
+                    .destroy_descriptor_set_layout(descriptor_layout, None);
+            }
+            format!("create Vulkan pipeline layout: {e:?}")
+        })?;
         Ok(Self {
             skia: None,
-            pool: Arc::new(Pool {
-                device: device.clone(),
-                raw: pool,
-            }),
+            pool,
             device,
             descriptor_layout,
             pipeline_layout,
@@ -293,7 +302,14 @@ impl Renderer {
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )
         }
-        .map_err(|e| format!("begin Vulkan command: {e:?}"))?;
+        .map_err(|e| {
+            unsafe {
+                self.device
+                    .raw
+                    .free_command_buffers(self.pool.raw, &[command]);
+            }
+            format!("begin Vulkan command: {e:?}")
+        })?;
         Ok(command)
     }
     fn submit(
@@ -302,6 +318,18 @@ impl Renderer {
         resources: Vec<Buffer>,
         descriptor: Option<vk::DescriptorPool>,
     ) -> Result<Submission, String> {
+        let mut submission = Submission {
+            pool: self.pool.clone(),
+            command,
+            fence: vk::Fence::null(),
+            submitted: false,
+            descriptor,
+            _resources: resources,
+            _video: None,
+            _prior: Vec::new(),
+            _images: Vec::new(),
+            _textures: Vec::new(),
+        };
         unsafe { self.device.raw.end_command_buffer(command) }
             .map_err(|e| format!("finish Vulkan command: {e:?}"))?;
         let fence = unsafe {
@@ -310,18 +338,10 @@ impl Renderer {
                 .create_fence(&vk::FenceCreateInfo::default(), None)
         }
         .map_err(|e| format!("create Vulkan fence: {e:?}"))?;
+        submission.fence = fence;
         self.device.submit(&[command], fence, &[])?;
-        Ok(Submission {
-            pool: self.pool.clone(),
-            command,
-            fence,
-            descriptor,
-            _resources: resources,
-            _video: None,
-            _prior: Vec::new(),
-            _images: Vec::new(),
-            _textures: Vec::new(),
-        })
+        submission.submitted = true;
+        Ok(submission)
     }
     /// # Safety
     /// Every GPU address in arguments must reference a retained resource of sufficient size.
@@ -369,7 +389,12 @@ impl Renderer {
                     .set_layouts(&layouts),
             )
         }
-        .map_err(|e| format!("allocate dispatch descriptors: {e:?}"))?[0];
+        .map_err(|e| {
+            unsafe {
+                self.device.raw.destroy_descriptor_pool(pool, None);
+            }
+            format!("allocate dispatch descriptors: {e:?}")
+        })?[0];
         let info = [vk::DescriptorBufferInfo::default()
             .buffer(uniforms.raw())
             .range(uniforms.len() as u64)];
@@ -383,7 +408,12 @@ impl Renderer {
                 &[],
             );
         }
-        let command = self.command()?;
+        let command = self.command().map_err(|error| {
+            unsafe {
+                self.device.raw.destroy_descriptor_pool(pool, None);
+            }
+            error
+        })?;
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
                 command,

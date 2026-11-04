@@ -169,6 +169,18 @@ impl Renderer {
                 .ok_or("Video frame size overflow")?,
         )?;
         let command = self.command()?;
+        let mut submission = Submission {
+            pool: self.pool.clone(),
+            command,
+            fence: vk::Fence::null(),
+            submitted: false,
+            descriptor: None,
+            _resources: vec![planes.clone()],
+            _video: None,
+            _prior: Vec::new(),
+            _images: Vec::new(),
+            _textures: Vec::new(),
+        };
         let native = unsafe { &mut *(*mapped.as_mut_ptr()).data[0].cast::<sys::AVVkFrame>() };
         let frames = unsafe { (*mapped.as_ptr()).hw_frames_ctx };
         let frames = unsafe { (*frames).data.cast::<sys::AVHWFramesContext>() };
@@ -283,6 +295,7 @@ impl Renderer {
                 .create_fence(&vk::FenceCreateInfo::default(), None)
         }
         .map_err(|e| format!("Create video import fence: {e:?}"))?;
+        submission.fence = fence;
         let stages = vec![vk::PipelineStageFlags::TRANSFER; semaphores.len()];
         let mut timeline = vk::TimelineSemaphoreSubmitInfo::default()
             .wait_semaphore_values(&wait_values)
@@ -303,6 +316,7 @@ impl Renderer {
             }
         };
         if result.is_ok() {
+            submission.submitted = true;
             for index in 0..image_count {
                 native.layout[index] = vk::ImageLayout::TRANSFER_SRC_OPTIMAL.as_raw() as _;
                 native.access[index] = vk::AccessFlags2::TRANSFER_READ.as_raw() as _;
@@ -318,17 +332,7 @@ impl Renderer {
         }
         drop(lock);
         result.map_err(|e| format!("Submit Intel video import: {e:?}"))?;
-        let submission = Submission {
-            pool: self.pool.clone(),
-            command,
-            fence,
-            descriptor: None,
-            _resources: vec![planes.clone()],
-            _video: Some(mapped),
-            _prior: Vec::new(),
-            _images: Vec::new(),
-            _textures: Vec::new(),
-        };
+        submission._video = Some(mapped);
 
         let (planes, pitch, uv_pitch, y_size, prior) = if bytes_per_component == 2 {
             let output = self.allocate((y_bytes + uv_size) / bytes_per_component)?;
