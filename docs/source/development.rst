@@ -60,6 +60,8 @@ Intel GPU preview on Linux GTK
 Install Mesa's Intel Vulkan and OpenGL drivers and Intel's VA-API media driver.
 FFmpeg must include Vulkan, VA-API, and DRM support. GTK's OpenGL context must
 use the same Intel GPU as the Vulkan renderer.
+Use FFmpeg 8 or newer for its Vulkan scalar-layout support. The Flatpak build
+backports that feature enablement to its bundled FFmpeg 7.
 
 The GTK binary automatically keeps CUDA on machines with an available NVIDIA
 device and selects Intel otherwise. Override this with ``SHRIMPLY_GPU=intel``

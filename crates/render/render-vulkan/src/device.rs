@@ -115,6 +115,21 @@ impl Device {
         let result = (|| {
             let context = unsafe { &*((*vulkan).data.cast::<sys::AVHWDeviceContext>()) };
             let native = unsafe { &*context.hwctx.cast::<sys::AVVulkanDeviceContext>() };
+            let mut next = native.device_features.pNext.cast::<vk::BaseInStructure>();
+            let mut shader_features = false;
+            while let Some(header) = unsafe { next.as_ref() } {
+                if header.s_type == vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_2_FEATURES {
+                    let features = unsafe { &*next.cast::<vk::PhysicalDeviceVulkan12Features>() };
+                    shader_features = features.scalar_block_layout != 0
+                        && features.buffer_device_address != 0
+                        && features.storage_buffer8_bit_access != 0
+                        && features.shader_int8 != 0;
+                }
+                next = header.p_next.cast_mut();
+            }
+            if !shader_features {
+                return Err("FFmpeg's Vulkan device lacks required shader features; use FFmpeg 8+ or Shrimply's bundled FFmpeg with Vulkan scalar layout enabled".into());
+            }
             let entry = unsafe { ash::Entry::load() }.map_err(|e| format!("load Vulkan: {e}"))?;
             let instance = unsafe {
                 ash::Instance::load(
