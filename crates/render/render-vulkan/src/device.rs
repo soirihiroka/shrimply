@@ -20,7 +20,7 @@ pub struct Device {
     pub(crate) _entry: ash::Entry,
 }
 
-// Native handles are shared immutably; our queue is separate from FFmpeg's queue.
+// Native handles are shared immutably; queue submissions are serialized.
 unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
@@ -32,8 +32,33 @@ impl Device {
 
     fn new() -> Result<Self, String> {
         ffmpeg_next::init().map_err(|e| e.to_string())?;
-        let path = std::env::var("SHRIMPLY_INTEL_DEVICE")
-            .unwrap_or_else(|_| "/dev/dri/by-path/pci-0000:00:02.0-render".into());
+        let path = match std::env::var("SHRIMPLY_INTEL_DEVICE") {
+            Ok(path) => path,
+            Err(std::env::VarError::NotPresent) => {
+                let mut devices = std::fs::read_dir("/dev/dri")
+                    .map_err(|e| format!("Find Intel DRM render device: {e}"))?
+                    .filter_map(Result::ok)
+                    .filter(|entry| {
+                        let name = entry.file_name();
+                        let name = name.to_string_lossy();
+                        name.starts_with("renderD")
+                            && std::fs::read_to_string(format!(
+                                "/sys/class/drm/{name}/device/vendor"
+                            ))
+                            .is_ok_and(|vendor| vendor.trim() == "0x8086")
+                    })
+                    .map(|entry| entry.path())
+                    .collect::<Vec<_>>();
+                devices.sort();
+                devices
+                    .first()
+                    .ok_or("No Intel DRM render device found; set SHRIMPLY_INTEL_DEVICE")?
+                    .to_str()
+                    .ok_or("Intel DRM path is not UTF-8")?
+                    .to_owned()
+            }
+            Err(error) => return Err(format!("Invalid SHRIMPLY_INTEL_DEVICE: {error}")),
+        };
         let path = CString::new(path).map_err(|e| e.to_string())?;
         let mut va = ptr::null_mut();
         let result = unsafe {

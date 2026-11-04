@@ -267,6 +267,14 @@ static int compile(const CompileRequest& request)
     description.searchPaths = search_paths;
     description.targetCount = 1;
     description.targets = &target;
+    // Slang's SPIR-V emitter cannot lower UIntPtr. Vulkan device addresses
+    // use a 64-bit ABI, matching the host pitches on supported Linux targets.
+    const slang::PreprocessorMacroDesc vulkan_macros[] = {{"SHRIMPLY_VULKAN", "1"}};
+    if (request.target == Target::Vulkan)
+    {
+        description.preprocessorMacros = vulkan_macros;
+        description.preprocessorMacroCount = std::size(vulkan_macros);
+    }
     Slang::ComPtr<slang::ISession> session;
     if (SLANG_FAILED(global_session->createSession(description, session.writeRef())))
         return 1;

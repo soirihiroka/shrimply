@@ -1,5 +1,11 @@
 static const uint COMPUTE_GROUP_SIZE = 256u;
 
+#if defined(SHRIMPLY_VULKAN)
+typedef uint64_t BufferPitch;
+#else
+typedef size_t BufferPitch;
+#endif
+
 [__AttributeUsage(_AttributeTargets.Struct)]
 [__AttributeUsage(_AttributeTargets.Param)]
 struct RustTypeAttribute { string name; };
@@ -86,8 +92,8 @@ struct CornerPinParams {
 struct LayerCompositeParams {
   uint *source;
   uint *clipping_base;
-  size_t source_pitch;
-  size_t clipping_base_pitch;
+  BufferPitch source_pitch;
+  BufferPitch clipping_base_pitch;
   uint width;
   float opacity;
   float clipping_base_opacity;
@@ -280,9 +286,9 @@ struct Nv12LayerParams {
   uint8_t *y_plane;
   uint8_t *uv_plane;
   uint *rgba;
-  size_t y_pitch;
-  size_t uv_pitch;
-  size_t rgba_pitch;
+  BufferPitch y_pitch;
+  BufferPitch uv_pitch;
+  BufferPitch rgba_pitch;
   uint source_width;
   uint source_height;
   uint canvas_width;
@@ -372,7 +378,7 @@ struct ConvolutionParams {
 struct AlphaParams {
   float4 *source;
   uint8_t *alpha_source;
-  size_t alpha_pitch;
+  BufferPitch alpha_pitch;
   uint alpha_width;
   uint alpha_height;
   uint width;
