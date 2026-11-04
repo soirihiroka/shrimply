@@ -38,24 +38,6 @@ struct ComputeMaterial
     ComputePbr pbr;
 };
 
-PbrSettings material_pbr(ComputeMaterial material)
-{
-    if (material.flags.w == 0)
-        return scene.pbr;
-    PbrSettings result;
-    result.path_tracing = PathTracingMode(material.pbr.modes.x);
-    result.light_sampling_quality = LightSamplingQuality(material.pbr.modes.y);
-    result.render_quality = RenderQuality(material.pbr.modes.z);
-    result.denoising = material.pbr.modes.w;
-    result.subsurface = material.pbr.surface.x;
-    result.clearcoat = material.pbr.surface.y;
-    result.sheen = material.pbr.surface.z;
-    result.transmission = material.pbr.surface.w;
-    result.ior = material.pbr.ior;
-    result._padding = material.pbr.padding;
-    return result;
-}
-
 #ifdef SHRIMPLY_SOFTWARE_RAYS
 #include "modules/obj-software-resources.slang"
 #else
@@ -91,6 +73,25 @@ Texture2D<float4> denoised_background_texture;
 Texture2D<float4> denoised_alpha_texture;
 
 #endif
+
+PbrSettings material_pbr(ComputeMaterial material)
+{
+    if (material.flags.w == 0)
+        return scene.pbr;
+    PbrSettings result;
+    result.path_tracing = PathTracingMode(material.pbr.modes.x);
+    result.light_sampling_quality = LightSamplingQuality(material.pbr.modes.y);
+    result.render_quality = RenderQuality(material.pbr.modes.z);
+    result.denoising = material.pbr.modes.w;
+    result.subsurface = material.pbr.surface.x;
+    result.clearcoat = material.pbr.surface.y;
+    result.sheen = material.pbr.surface.z;
+    result.transmission = material.pbr.surface.w;
+    result.ior = material.pbr.ior;
+    result._padding = material.pbr.padding;
+    return result;
+}
+
 
 float2 vertex_uv(uint vertex, uint set)
 {

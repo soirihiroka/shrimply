@@ -93,6 +93,7 @@ struct SoftwareAddress { SoftwareResources* data; };
 #define denoised_texture (software_address.data->denoised_texture_data)
 #define denoised_background_texture (software_address.data->denoised_background_texture_data)
 #define denoised_alpha_texture (software_address.data->denoised_alpha_texture_data)
+#define composite_pixels output_pixels
 #define composite_texture_output denoiser_background
 #define OUTPUT_TEXEL(pixel) ((pixel).y * output_size.width + (pixel).x)
 static const uint material_sampler = 0;

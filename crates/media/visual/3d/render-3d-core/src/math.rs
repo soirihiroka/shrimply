@@ -1,3 +1,5 @@
+mod bvh;
+pub use bvh::{SoftwareBvhNode, software_bvh};
 use glam::{Mat4, Vec3, camera::rh::proj::directx};
 
 use crate::{
