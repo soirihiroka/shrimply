@@ -16,7 +16,9 @@ fn main() -> Result<(), String> {
         arguments
             .next()
             .ok_or("Pass a native project path and frame count")?,
-    );
+    )
+    .canonicalize()
+    .map_err(|error| error.to_string())?;
     let count = arguments
         .next()
         .map(|value| value.parse::<u64>().map_err(|e| e.to_string()))
