@@ -44,6 +44,7 @@ struct ComputeMaterial
 #define OUTPUT_TEXEL(pixel) pixel
 #define OBJECT_SHADING_MODEL scene.toon.shading_model
 #define OBJECT_TRANSPORT true
+#define OBJECT_GROUNDS true
 ConstantBuffer<SceneUniforms> scene;
 ConstantBuffer<OutputSize> output_size;
 ConstantBuffer<OutputSize> composite_size;
@@ -1256,6 +1257,7 @@ float4 render_sample(
                 background)
             : shade_surface(surface, camera.world_direction, pixel, 0u, seed);
     }
+    if (!OBJECT_GROUNDS) return color;
     int ground_index = -1;
     float ground_distance = visible_distance + RAY_MINIMUM;
     float3 ground_position = float3(0.0);

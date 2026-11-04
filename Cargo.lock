@@ -6102,14 +6102,23 @@ name = "shrimply-export-cuda"
 version = "0.1.0"
 dependencies = [
  "ffmpeg-next",
+ "serde_json",
+ "shrimply-blender-core",
  "shrimply-export-core",
  "shrimply-math-core",
  "shrimply-preview-render-core",
  "shrimply-preview-render-vulkan",
  "shrimply-project-document",
+ "shrimply-property-model",
  "shrimply-render-core",
  "shrimply-render-vulkan",
+ "shrimply-scene-3d",
+ "shrimply-trust-core",
+ "shrimply-visual-core",
  "shrimply-visual-cuda",
+ "shrimply-visual-modifiers",
+ "skia-safe",
+ "uuid",
 ]
 
 [[package]]
@@ -7372,8 +7381,10 @@ dependencies = [
  "serde_json",
  "shrimply-3dgs-core",
  "shrimply-3dgs-vulkan",
+ "shrimply-asset",
  "shrimply-gpu-vulkan",
  "shrimply-math-geometry",
+ "shrimply-render-3d-core",
  "shrimply-render-core",
  "shrimply-slang-build",
  "skia-safe",

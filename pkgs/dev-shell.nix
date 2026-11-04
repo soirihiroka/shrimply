@@ -34,6 +34,7 @@
   vte-gtk4,
   vulkan-headers,
   vulkan-loader,
+  zlib,
 }:
 let
   cudaStubs = lib.getOutput "stubs" cudaPackages.cuda_cudart;
@@ -100,6 +101,7 @@ mkShell {
     export LD_LIBRARY_PATH="${
       lib.makeLibraryPath [
         gcc.cc.lib
+        zlib
         opencv
         shrimply-slang
         qtEnv

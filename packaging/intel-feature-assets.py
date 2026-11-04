@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 import sys
 import zipfile
 
@@ -26,12 +27,35 @@ for offset in offsets[1:]:
     pdf.extend(f"{offset:010d} 00000 n \n".encode())
 pdf.extend(f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
 (output / "source.pdf").write_bytes(pdf)
-with zipfile.ZipFile(output / "source.ora", "w") as archive:
-    archive.writestr("mimetype", "image/openraster")
-    archive.writestr("stack.xml", '<image w="160" h="96"><stack><layer name="Top" src="data/top.png" opacity="0.5" visibility="visible" composite-op="svg:src-over" x="0" y="0"/><layer name="Bottom" src="data/bottom.png" opacity="1" visibility="visible" composite-op="svg:src-over" x="0" y="0"/></stack></image>')
-    archive.write(output / "source.png", "data/bottom.png")
-    archive.write(output / "target.png", "data/top.png")
-    archive.write(output / "target.png", "mergedimage.png")
+def rgba(path):
+    return subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "rgba", "-"], check=True, stdout=subprocess.PIPE).stdout
+
+source = rgba(output / "source.png")
+target = rgba(output / "target.png")
+records = bytearray()
+channels = bytearray()
+width, height = 160, 96
+for name, opacity, pixels in [(b"Top", 128, target), (b"Bottom", 255, source)]:
+    records.extend(struct.pack(">4iH", 0, 0, height, width, 4))
+    for channel in [0, 1, 2, -1]:
+        records.extend(struct.pack(">hI", channel, width * height + 2))
+        channels.extend(b"\0\0" + pixels[(channel if channel >= 0 else 3)::4])
+    records.extend(b"8BIMnorm" + bytes([opacity, 0, 0, 0]))
+    pascal = bytes([len(name)]) + name
+    pascal += b"\0" * (-len(pascal) % 4)
+    extra = b"\0" * 8 + pascal
+    records.extend(struct.pack(">I", len(extra)) + extra)
+layer_info = struct.pack(">h", 2) + records + channels
+layer_info += b"\0" * (len(layer_info) % 2)
+layer_section = struct.pack(">I", len(layer_info)) + layer_info + b"\0" * 4
+header = b"8BPS" + struct.pack(">H6sHIIHH", 1, b"\0" * 6, 4, height, width, 8, 3)
+composite = b"\0\0" + b"".join(source[channel::4] for channel in range(4))
+(output / "source.psd").write_bytes(header + b"\0" * 8 + struct.pack(">I", len(layer_section)) + layer_section + composite)
+with zipfile.ZipFile(output / "source.kra", "w") as archive:
+    archive.writestr("mimetype", "application/x-krita")
+    archive.writestr("maindoc.xml", '<DOC><IMAGE name="Validation" width="160" height="96" colorspacename="RGBA"><layers><layer name="Top" nodetype="shapelayer" filename="layer1" opacity="128" visible="1" compositeop="normal"/><layer name="Bottom" nodetype="shapelayer" filename="layer0" opacity="255" visible="1" compositeop="normal"/></layers></IMAGE></DOC>')
+    archive.write(output / "source.svg", "Validation/layers/layer0.shapelayer/content.svg")
+    archive.writestr("Validation/layers/layer1.shapelayer/content.svg", '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="96"><circle cx="80" cy="48" r="32" fill="#168edd"/></svg>')
 subprocess.run([
     "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
     "testsrc2=size=160x96:rate=30", "-frames:v", "6", "-c:v", "libx264",

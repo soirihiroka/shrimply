@@ -239,6 +239,7 @@ impl Renderer {
             kernels.extend(["obj_software_denoise", "obj_denoise_composite_compute"]);
         }
         const TRANSPORT: u32 = 1 << 2;
+        const GROUNDS: u32 = 1 << 3;
         let transport = plan.params.path_tracing != shader::PathTracingMode::Off
             || plan.params.transmission > 0.0
             || plan
@@ -246,8 +247,23 @@ impl Renderer {
                 .materials()
                 .iter()
                 .any(|material| material.flags[3] != 0 && material.pbr.transmission > 0.0);
-        let specialization =
-            plan.params.shading_model as u32 | if transport { TRANSPORT } else { 0 };
+        let specialization = plan.params.shading_model as u32
+            | if transport { TRANSPORT } else { 0 }
+            | if plan.params.grounds.is_empty() {
+                0
+            } else {
+                GROUNDS
+            };
+        if std::env::var_os("SHRIMPLY_OBJ_PROBE").is_some() {
+            eprintln!(
+                "OBJ camera {:?}; model inverse {:?}; vertices {}; nodes {:?}",
+                plan.uniforms.camera_position,
+                plan.uniforms.model_inverse,
+                plan.session.positions().len(),
+                shrimply_render_3d_core::software_bvh(&plan.session)?.nodes
+            );
+            kernels = vec!["obj_software_probe"];
+        }
         for name in kernels {
             let mut args = self.arguments(name)?;
             args.specialization = specialization;

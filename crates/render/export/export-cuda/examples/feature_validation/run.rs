@@ -139,7 +139,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         (
             "source-layered-image",
             VideoItemContent::LayeredImage(Box::default()),
-            "source.ora",
+            "source.psd",
         ),
         (
             "source-blender",
@@ -153,6 +153,10 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         item.source_duration = duration;
         result.push((name.into(), project(item)));
     }
+    let mut krita = image.clone();
+    krita.content = VideoItemContent::LayeredImage(Box::default());
+    krita.file = Asset::new(output.join("source.kra"));
+    result.push(("source-krita".into(), project(krita)));
     let mut paint = VideoItem::paint_item(size, Time::ZERO, duration);
     if let VideoItemContent::Paint(content) = &mut paint.content {
         content.drawing = TimelineValue::new_const(serde_json::from_value(serde_json::json!({
@@ -169,10 +173,16 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     let mut group = project(group_item);
     group.folded_sequences.push(FoldedSequence {
         id: sequence_id,
-        video_tracks: vec![VideoTrack {
-            items: vec![image.clone(), text.clone()],
-            ..Default::default()
-        }],
+        video_tracks: vec![
+            VideoTrack {
+                items: vec![image.clone()],
+                ..Default::default()
+            },
+            VideoTrack {
+                items: vec![text.clone()],
+                ..Default::default()
+            },
+        ],
         audio_tracks: vec![],
     });
     result.push(("source-sequence".into(), group));
@@ -506,12 +516,102 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
         return Err("Export did not use H.264".into());
     }
     let index = video.index();
-    let packets = input
-        .packets()
-        .filter(|(stream, _)| stream.index() == index)
-        .count();
-    if packets != FRAMES as usize {
-        return Err(format!("Export has {packets} packets, expected {FRAMES}"));
+    let mut decoder = ffmpeg_next::codec::Context::from_parameters(video.parameters())
+        .map_err(|e| e.to_string())?
+        .decoder()
+        .video()
+        .map_err(|e| e.to_string())?;
+    let mut scaler = ffmpeg_next::software::scaling::Context::get(
+        decoder.format(),
+        WIDTH,
+        HEIGHT,
+        ffmpeg_next::format::Pixel::RGBA,
+        WIDTH,
+        HEIGHT,
+        ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
+    )
+    .map_err(|e| e.to_string())?;
+    // Intel export declares limited-range BT.709; use it explicitly for this independent CPU decode.
+    unsafe {
+        let coefficients = ffmpeg_next::sys::sws_getCoefficients(ffmpeg_next::sys::SWS_CS_ITU709);
+        let result = ffmpeg_next::sys::sws_setColorspaceDetails(
+            scaler.as_mut_ptr(),
+            coefficients,
+            0,
+            coefficients,
+            1,
+            0,
+            1 << 16,
+            1 << 16,
+        );
+        if result < 0 {
+            return Err("Configure export verification color conversion".into());
+        }
+    }
+    let mut decoded = 0;
+    let mut receive = |decoder: &mut ffmpeg_next::decoder::Video| -> Result<(), String> {
+        loop {
+            let mut frame = ffmpeg_next::frame::Video::empty();
+            match decoder.receive_frame(&mut frame) {
+                Ok(()) => {}
+                Err(ffmpeg_next::Error::Eof) => break,
+                Err(ffmpeg_next::Error::Other { errno }) if errno == ffmpeg_next::error::EAGAIN => {
+                    break;
+                }
+                Err(error) => return Err(format!("Decode exported video: {error}")),
+            }
+            if frame.width() != WIDTH || frame.height() != HEIGHT {
+                return Err("Exported frame dimensions changed".into());
+            }
+            if let Some(capture) = [0, FRAMES / 2, FRAMES - 1]
+                .iter()
+                .position(|&index| index == decoded)
+            {
+                let mut rgba = ffmpeg_next::frame::Video::empty();
+                scaler.run(&frame, &mut rgba).map_err(|e| e.to_string())?;
+                let mut difference = 0_u64;
+                for (row, expected) in rgba
+                    .data(0)
+                    .chunks_exact(rgba.stride(0))
+                    .zip(captures[capture].chunks_exact(WIDTH as usize * 4))
+                {
+                    for (actual, expected) in row[..WIDTH as usize * 4]
+                        .chunks_exact(4)
+                        .zip(expected.chunks_exact(4))
+                    {
+                        for channel in 0..3 {
+                            let expected = (u16::from(expected[channel]) * u16::from(expected[3])
+                                / u16::from(u8::MAX))
+                                as u8;
+                            difference += u64::from(actual[channel].abs_diff(expected));
+                        }
+                    }
+                }
+                const MAX_AVERAGE_COLOR_ERROR: u64 = 12;
+                let samples = u64::from(WIDTH) * u64::from(HEIGHT) * 3;
+                if difference > samples * MAX_AVERAGE_COLOR_ERROR {
+                    return Err(format!(
+                        "Export differs from preview at frame {decoded}: {} milli-levels mean color error",
+                        difference * 1000 / samples
+                    ));
+                }
+            }
+            decoded += 1;
+        }
+        Ok(())
+    };
+    for (stream, packet) in input.packets() {
+        if stream.index() == index {
+            decoder.send_packet(&packet).map_err(|e| e.to_string())?;
+            receive(&mut decoder)?;
+        }
+    }
+    decoder.send_eof().map_err(|e| e.to_string())?;
+    receive(&mut decoder)?;
+    if decoded != FRAMES {
+        return Err(format!(
+            "Decoded {decoded} exported frames, expected {FRAMES}"
+        ));
     }
     Ok(())
 }

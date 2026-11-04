@@ -1,6 +1,7 @@
 [[vk::constant_id(0)]] const uint OBJECT_OPTIONS = 0;
 #define OBJECT_SHADING_MODEL ShadingModel(OBJECT_OPTIONS & 3u)
 #define OBJECT_TRANSPORT ((OBJECT_OPTIONS & 4u) != 0)
+#define OBJECT_GROUNDS ((OBJECT_OPTIONS & 8u) != 0)
 
 // Software BVH traversal shares all material, lighting, projection, and outline code
 // with the hardware ray-query backend. Only resource access and intersections differ.
