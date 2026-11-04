@@ -111,6 +111,17 @@ impl Texture {
     pub fn levels(&self) -> u32 {
         self.0.levels
     }
+    pub fn import_uuids(&self) -> ([u8; vk::UUID_SIZE], [u8; vk::UUID_SIZE]) {
+        let mut identity = vk::PhysicalDeviceIDProperties::default();
+        let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut identity);
+        unsafe {
+            self.0
+                .device
+                .instance
+                .get_physical_device_properties2(self.0.device.physical, &mut properties);
+        }
+        (identity.device_uuid, identity.driver_uuid)
+    }
     pub(crate) fn image(&self) -> vk::Image {
         self.0.image
     }

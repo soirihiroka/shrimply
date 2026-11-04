@@ -48,7 +48,9 @@ fn main() -> glib::ExitCode {
     crash::install();
     shrimply_process_reporting::diagnostics::init();
     #[cfg(target_os = "linux")]
-    if let Err(error) = shrimply_visual_cuda::gpu::configure_gtk_backend() {
+    if let Err(error) = shrimply_visual_cuda::gpu::configure_gtk_backend()
+        .and_then(|()| shrimply_visual_cuda::gpu::configure_gtk_presentation())
+    {
         tracing::error!(%error, "Could not select GTK GPU backend");
         return glib::ExitCode::FAILURE;
     }

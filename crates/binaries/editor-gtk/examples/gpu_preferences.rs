@@ -3,10 +3,12 @@
 use adw::prelude::*;
 use shrimply_preferences_core as preferences;
 use shrimply_visual_cuda::gpu;
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(expected) = std::env::args().nth(1) {
         gpu::configure_gtk_backend()?;
+        gpu::configure_gtk_presentation()?;
         let selected =
             preferences::snapshot(&preferences::open_with_defaults()).acceleration_device;
         if selected != expected
@@ -18,9 +20,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         gpu::preflight()?;
+        let frame = preview_frame()?;
         gtk::init()?;
         let area = gtk::GLArea::builder()
             .allowed_apis(gtk::gdk::GLAPI::GL)
+            .width_request(64)
+            .height_request(64)
             .build();
         area.set_required_version(3, 3);
         let window = gtk::Window::builder().child(&area).build();
@@ -47,6 +52,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("GTK renderer: {}", unsafe {
             std::ffi::CStr::from_ptr(renderer).to_string_lossy()
         });
+        let result = Rc::new(RefCell::new(None));
+        let rendered = result.clone();
+        area.connect_render(move |area, _| {
+            *rendered.borrow_mut() = Some(present_frame(area, &frame));
+            gtk::glib::Propagation::Stop
+        });
+        area.queue_render();
+        while result.borrow().is_none() {
+            context.iteration(true);
+        }
+        result.borrow_mut().take().expect("GTK render result")?;
         window.close();
         println!("Restarted backend initialized: {selected:?}");
         return Ok(());
@@ -115,6 +131,110 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "Hybrid GTK acceleration ComboRow persistence and restarted GPU initialization passed"
     );
+    Ok(())
+}
+
+fn preview_frame() -> Result<gpu::CompositedVideoFrame, String> {
+    use shrimply_project_document::project::*;
+    use shrimply_visual_cuda::compositor::{
+        CompositeAccuracy, VideoCommand, VideoEvent, spawn_worker,
+    };
+    let size = CanvasSize {
+        width: 64,
+        height: 64,
+    };
+    let mut item = VideoItem::background_item(size, Time::ZERO, Time::from_seconds(1));
+    let VideoItemContent::Background(background) = &mut item.content else {
+        unreachable!();
+    };
+    let BackgroundGenerator::SolidColor(solid) = &mut background.generator else {
+        unreachable!();
+    };
+    solid.color = shrimply_preview_gtk::timeline_value::TimelineValue::new_const(Color::from_rgba(
+        255, 0, 0, 255,
+    ));
+    let (commands, events) = spawn_worker(Project {
+        canvas_size: size,
+        video_tracks: vec![VideoTrack {
+            items: vec![item],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    commands
+        .send(VideoCommand::Render {
+            position: Time::ZERO,
+            accuracy: CompositeAccuracy::FULLY_ACCURATE,
+        })
+        .map_err(|error| error.to_string())?;
+    let frame = loop {
+        match events
+            .recv_timeout(Duration::from_secs(180))
+            .map_err(|error| error.to_string())?
+        {
+            VideoEvent::Frame { frame, .. } => break frame,
+            VideoEvent::Error(error) => return Err(error),
+            _ => {}
+        }
+    };
+    commands
+        .send(VideoCommand::Stop)
+        .map_err(|error| error.to_string())?;
+    loop {
+        match events.recv_timeout(Duration::from_secs(180)) {
+            Ok(VideoEvent::Error(error)) => return Err(error),
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(frame)
+}
+
+fn present_frame(area: &gtk::GLArea, frame: &gpu::CompositedVideoFrame) -> Result<(), String> {
+    use glow::HasContext;
+    use shrimply_preview_runtime_cuda::{
+        Color,
+        renderer::{Appearance, VideoRenderer},
+        timeline::renderer::{Rect, vec2},
+    };
+    let width = area.width();
+    let height = area.height();
+    let rect = Rect::from_min_max(vec2(0.0, 0.0), vec2(width as f32, height as f32));
+    let mut renderer = VideoRenderer::new()?;
+    let result = renderer.render(
+        glam::IVec2::new(width, height),
+        1.0,
+        Some(frame),
+        Appearance {
+            content_rect: rect,
+            clip_rect: rect,
+            shadow_size_px: 0,
+            background_color: Color::BLACK,
+            upsample_method: preferences::PreviewUpsampleMethod::Nearest,
+            downsample_method: preferences::PreviewDownsampleMethod::Nearest,
+        },
+        |_| {},
+    );
+    let gl = shrimply_components_gtk::gl_loader::context();
+    let mut pixel = [0; 4];
+    unsafe {
+        gl.read_pixels(
+            width / 2,
+            height / 2,
+            1,
+            1,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut pixel)),
+        );
+    }
+    renderer.destroy();
+    result?;
+    if pixel != [255, 0, 0, 255] {
+        return Err(format!("GTK GPU preview pixel mismatch: {pixel:?}"));
+    }
+    println!("GTK displayed the GPU-rendered red frame through native texture sharing");
     Ok(())
 }
 

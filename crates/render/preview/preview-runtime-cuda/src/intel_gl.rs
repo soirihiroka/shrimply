@@ -8,6 +8,9 @@ const DEDICATED_MEMORY_OBJECT_EXT: u32 = 0x9581;
 const TEXTURE_TILING_EXT: u32 = 0x9580;
 const OPTIMAL_TILING_EXT: i32 = 0x9584;
 const LAYOUT_GENERAL_EXT: u32 = 0x958d;
+const NUM_DEVICE_UUIDS_EXT: u32 = 0x9596;
+const DEVICE_UUID_EXT: u32 = 0x9597;
+const DRIVER_UUID_EXT: u32 = 0x9598;
 
 pub(super) struct ImportedTexture {
     _source: Texture,
@@ -35,6 +38,33 @@ impl ImportedTexture {
                 }
                 unsafe { std::mem::transmute::<*const std::ffi::c_void, $type>(address) }
             }};
+        }
+        let get_uuid = function!(
+            "glGetUnsignedBytevEXT",
+            unsafe extern "system" fn(u32, *mut u8)
+        );
+        let get_device_uuid = function!(
+            "glGetUnsignedBytei_vEXT",
+            unsafe extern "system" fn(u32, u32, *mut u8)
+        );
+        let (device_uuid, driver_uuid) = source.import_uuids();
+        let mut gl_driver_uuid = [0; 16];
+        unsafe { get_uuid(DRIVER_UUID_EXT, gl_driver_uuid.as_mut_ptr()) };
+        let count = unsafe { gl.get_parameter_i32(NUM_DEVICE_UUIDS_EXT) };
+        let same_device = (0..count.max(0) as u32).any(|index| {
+            let mut uuid = [0; 16];
+            unsafe { get_device_uuid(DEVICE_UUID_EXT, index, uuid.as_mut_ptr()) };
+            uuid == device_uuid
+        });
+        if !same_device || gl_driver_uuid != driver_uuid {
+            return Err(
+                "GTK OpenGL and Intel Vulkan must use the same GPU and driver for preview texture sharing"
+                    .into(),
+            );
+        }
+        let error = unsafe { gl.get_error() };
+        if error != glow::NO_ERROR {
+            return Err(format!("Query GTK OpenGL device identity: 0x{error:x}"));
         }
         let create_memory = function!(
             "glCreateMemoryObjectsEXT",

@@ -66,8 +66,7 @@ impl Device {
         DEVICE.get_or_init(|| Self::new().map(Arc::new)).clone()
     }
 
-    fn new() -> Result<Self, String> {
-        ffmpeg_next::init().map_err(|e| e.to_string())?;
+    pub fn render_device_path() -> Result<std::path::PathBuf, String> {
         let path = match std::env::var("SHRIMPLY_INTEL_DEVICE") {
             Ok(path) => path,
             Err(std::env::VarError::NotPresent) => {
@@ -101,7 +100,13 @@ impl Device {
             }
             Err(error) => return Err(format!("Invalid SHRIMPLY_INTEL_DEVICE: {error}")),
         };
-        let drm_path = std::path::PathBuf::from(&path);
+        Ok(std::path::PathBuf::from(path))
+    }
+
+    fn new() -> Result<Self, String> {
+        ffmpeg_next::init().map_err(|e| e.to_string())?;
+        let drm_path = Self::render_device_path()?;
+        let path = drm_path.to_str().ok_or("Intel DRM path is not UTF-8")?;
         let path = CString::new(path).map_err(|e| e.to_string())?;
         let mut va = ptr::null_mut();
         let result = unsafe {

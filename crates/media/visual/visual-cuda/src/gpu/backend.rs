@@ -1,4 +1,5 @@
 use shrimply_gpu_cuda::sys;
+use std::os::unix::process::CommandExt;
 use std::sync::OnceLock;
 
 static INTEL: OnceLock<bool> = OnceLock::new();
@@ -66,4 +67,67 @@ pub fn configure_gtk_backend() -> Result<(), String> {
 
 pub fn intel_backend_selected() -> bool {
     INTEL.get().copied().unwrap_or(false)
+}
+
+/// Apply native PRIME selection before GTK loads its OpenGL driver. Re-exec
+/// instead of changing the process environment after GPU driver threads exist.
+pub fn configure_gtk_presentation() -> Result<(), String> {
+    if INTEL.get().is_none() {
+        return Err("Select the GTK GPU backend before configuring presentation".into());
+    }
+    let intel = intel_backend_selected();
+    let prime = if intel {
+        let path = shrimply_render_vulkan::device::Device::render_device_path()?;
+        let node = path.file_name().ok_or("Intel DRM device has no name")?;
+        let pci = std::path::Path::new("/sys/class/drm")
+            .join(node)
+            .join("device")
+            .canonicalize()
+            .map_err(|error| format!("Find Intel presentation device: {error}"))?;
+        let address = pci
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("Intel PCI address is not UTF-8")?;
+        Some(format!("pci-{}", address.replace([':', '.'], "_")))
+    } else {
+        None
+    };
+    let mut command =
+        std::process::Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
+    command.args(std::env::args_os().skip(1));
+    let mut restart = false;
+    for (key, value) in [
+        ("DRI_PRIME", prime.as_deref()),
+        (
+            "__NV_PRIME_RENDER_OFFLOAD",
+            Some(if intel { "0" } else { "1" }),
+        ),
+        (
+            "__GLX_VENDOR_LIBRARY_NAME",
+            Some(if intel { "mesa" } else { "nvidia" }),
+        ),
+    ] {
+        if std::env::var_os(key).as_deref() == value.map(std::ffi::OsStr::new) {
+            continue;
+        }
+        restart = true;
+        if let Some(value) = value {
+            command.env(key, value);
+        } else {
+            command.env_remove(key);
+        }
+    }
+    // GTK's UI and GLArea can share one OpenGL device and context family.
+    // Retain an explicitly requested GSK renderer.
+    if std::env::var_os("GSK_RENDERER").is_none() {
+        command.env("GSK_RENDERER", "gl");
+        restart = true;
+    }
+    if restart {
+        return Err(format!(
+            "Restart with selected GTK presentation device: {}",
+            command.exec()
+        ));
+    }
+    Ok(())
 }

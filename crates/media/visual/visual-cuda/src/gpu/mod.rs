@@ -32,7 +32,7 @@ pub use frame::{CompositedFrameStorageKey, CompositedVideoFrame, FrameBuffer};
 #[cfg(target_os = "linux")]
 mod backend;
 #[cfg(target_os = "linux")]
-pub use backend::{configure_gtk_backend, intel_backend_selected};
+pub use backend::{configure_gtk_backend, configure_gtk_presentation, intel_backend_selected};
 #[cfg(target_os = "linux")]
 mod devices;
 #[cfg(target_os = "linux")]
