@@ -693,42 +693,46 @@ Color sample_rgba_plain(Nv12LayerParams p, float source_x, float source_y) {
     return sample_rgba_weighted_p(p, x, y, p.sample_method);
   return sample_rgba_bilinear_p(p, x, y);
 }
-Color sample_rgba_layer(Nv12LayerParams p, float x, float y) {
-  Color sample;
+// Keep one sampler call in the loop. Repeating the complete sampling call graph
+// for every border tap causes excessive inlining in Vulkan drivers.
+uint layer_sample_points(Nv12LayerParams p, float x, float y,
+                         out float3 points[5]) {
+  points[0] = float3(x, y, 1.0f);
   float distance_value = outside_distance(p, x, y);
-  if (p.address_mode == TextureAddressMode::BlurredMirror &&
-      distance_value > 0.0f) {
+  if (distance_value <= 0.0f)
+    return 1u;
+  if (p.address_mode == TextureAddressMode::BlurredMirror) {
     float offset = min(distance_value * 0.2f, 12.0f) * 0.70710677f;
-    Color center = sample_rgba_plain(p, x, y),
-          a = sample_rgba_plain(p, x - offset, y - offset),
-          b = sample_rgba_plain(p, x + offset, y - offset),
-          c = sample_rgba_plain(p, x - offset, y + offset),
-          d = sample_rgba_plain(p, x + offset, y + offset);
-    sample = color(center.r * 0.4f + (a.r + b.r + c.r + d.r) * 0.15f,
-                   center.g * 0.4f + (a.g + b.g + c.g + d.g) * 0.15f,
-                   center.b * 0.4f + (a.b + b.b + c.b + d.b) * 0.15f,
-                   center.a * 0.4f + (a.a + b.a + c.a + d.a) * 0.15f);
-  } else if (p.address_mode == TextureAddressMode::Stochastic &&
-             distance_value > 0.0f) {
-    Color base = sample_rgba_plain(p, x, y);
-    float3 points[3];
-    stochastic_samples(p, x, y, points);
-    Color a = sample_rgba_plain(p, points[0].x, points[0].y),
-          b = sample_rgba_plain(p, points[1].x, points[1].y),
-          c = sample_rgba_plain(p, points[2].x, points[2].y);
-    Color synthesized =
-        color(a.r * points[0].z + b.r * points[1].z + c.r * points[2].z,
-              a.g * points[0].z + b.g * points[1].z + c.g * points[2].z,
-              a.b * points[0].z + b.b * points[1].z + c.b * points[2].z,
-              a.a * points[0].z + b.a * points[1].z + c.a * points[2].z);
-    sample =
-        color_lerp(base, synthesized, stochastic_amount(p, distance_value));
-  } else
-    sample = sample_rgba_plain(p, x, y);
-  float alpha = clamp(sample.a, 0.0f, 1.0f);
-  return color_unpremultiply(color(clamp(sample.r, 0.0f, alpha),
-                                   clamp(sample.g, 0.0f, alpha),
-                                   clamp(sample.b, 0.0f, alpha), alpha));
+    points[0].z = 0.4f;
+    points[1] = float3(x - offset, y - offset, 0.15f);
+    points[2] = float3(x + offset, y - offset, 0.15f);
+    points[3] = float3(x - offset, y + offset, 0.15f);
+    points[4] = float3(x + offset, y + offset, 0.15f);
+    return 5u;
+  }
+  if (p.address_mode == TextureAddressMode::Stochastic) {
+    float3 stochastic[3];
+    stochastic_samples(p, x, y, stochastic);
+    float amount = stochastic_amount(p, distance_value);
+    points[0].z = 1.0f - amount;
+    for (uint i = 0u; i < 3u; ++i)
+      points[i + 1u] = float3(stochastic[i].xy, stochastic[i].z * amount);
+    return 4u;
+  }
+  return 1u;
+}
+Color sample_rgba_layer(Nv12LayerParams p, float x, float y) {
+  float3 points[5];
+  uint count = layer_sample_points(p, x, y, points);
+  float4 sum = float4(0.0f);
+  for (uint i = 0u; i < count; ++i) {
+    Color sample = sample_rgba_plain(p, points[i].x, points[i].y);
+    sum += float4(sample.r, sample.g, sample.b, sample.a) * points[i].z;
+  }
+  float alpha = clamp(sum.w, 0.0f, 1.0f);
+  return color_unpremultiply(color(clamp(sum.x, 0.0f, alpha),
+                                   clamp(sum.y, 0.0f, alpha),
+                                   clamp(sum.z, 0.0f, alpha), alpha));
 }
 float4 sample_nv12_plain_values(Nv12LayerParams p, float source_x,
                                 float source_y) {
@@ -763,30 +767,12 @@ float4 sample_nv12_plain_values(Nv12LayerParams p, float source_x,
   return finish_nv12(p, float4(luma, cb, cr, alpha));
 }
 Color sample_nv12_layer(Nv12LayerParams p, float x, float y) {
-  float distance_value = outside_distance(p, x, y);
-  float4 sample;
-  if (p.address_mode == TextureAddressMode::BlurredMirror &&
-      distance_value > 0.0f) {
-    float offset = min(distance_value * 0.2f, 12.0f) * 0.70710677f;
-    float4 center = sample_nv12_plain_values(p, x, y),
-           a = sample_nv12_plain_values(p, x - offset, y - offset),
-           b = sample_nv12_plain_values(p, x + offset, y - offset),
-           c = sample_nv12_plain_values(p, x - offset, y + offset),
-           d = sample_nv12_plain_values(p, x + offset, y + offset);
-    sample = center * 0.4f + (a + b + c + d) * 0.15f;
-  } else if (p.address_mode == TextureAddressMode::Stochastic &&
-             distance_value > 0.0f) {
-    float4 base = sample_nv12_plain_values(p, x, y);
-    float3 points[3];
-    stochastic_samples(p, x, y, points);
-    float4 a = sample_nv12_plain_values(p, points[0].x, points[0].y),
-           b = sample_nv12_plain_values(p, points[1].x, points[1].y),
-           c = sample_nv12_plain_values(p, points[2].x, points[2].y);
-    sample = lerp(base, a * points[0].z + b * points[1].z + c * points[2].z,
-                  stochastic_amount(p, distance_value));
-  } else
-    sample = sample_nv12_plain_values(p, x, y);
-  return from_bt709_ycbcr(sample.x, sample.y, sample.z, sample.w);
+  float3 points[5];
+  uint count = layer_sample_points(p, x, y, points);
+  float4 sum = float4(0.0f);
+  for (uint i = 0u; i < count; ++i)
+    sum += sample_nv12_plain_values(p, points[i].x, points[i].y) * points[i].z;
+  return from_bt709_ycbcr(sum.x, sum.y, sum.z, sum.w);
 }
 
 uint blend_noise(uint seed, uint index) {
@@ -807,9 +793,11 @@ uint blend_pixel(uint source_value, uint destination_value, LayerBlendMode mode,
         float(blend_noise(seed, index)) <= alpha * 4294967295.0f ? 1.0f : 0.0f;
   return color_to_rgba(blend_over(source, destination, mode, alpha, false));
 }
-[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void composite_layered_image_layer(
-    uint3 id : SV_DispatchThreadID, uniform LayerCompositeParams params,
-    uniform uint *output, uniform uint64_t output_count) {
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
+composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
+                              uniform LayerCompositeParams params,
+                              uniform uint *output,
+                              uniform uint64_t output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
@@ -851,24 +839,34 @@ uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
   uint pixel = background;
   for (uint64_t index = 0; index < layer_count; ++index) {
     Nv12LayerParams p = layers[index];
-    if (p.motion_sample_count == 0u) {
-      Color sample;
-      if (sample_layer(p, p.inverse, canvas_x, canvas_y, sample))
-        pixel =
-            color_to_rgba(blend_over(sample, color_from_rgba(pixel),
-                                     p.blend_mode, sample.a * p.opacity, true));
-      continue;
-    }
-    float4 sum = float4(0.0f);
+    bool motion = p.motion_sample_count != 0u;
     uint start = p.motion_transform_offset,
          end = min(start + p.motion_transform_count, uint(transform_count));
-    if (end - start != p.motion_transform_count)
+    if (motion && end - start != p.motion_transform_count)
       continue;
-    for (uint t = start; t < end; ++t) {
+    uint count = motion ? p.motion_transform_count : 1u;
+    Color single = color(0.0f, 0.0f, 0.0f, 0.0f);
+    bool sampled = false;
+    float4 sum = float4(0.0f);
+    for (uint i = 0u; i < count; ++i) {
       Color sample;
-      if (sample_layer(p, transforms[t], canvas_x, canvas_y, sample))
-        sum += float4(sample.r * sample.a, sample.g * sample.a,
-                      sample.b * sample.a, sample.a);
+      Mat3 inverse = p.inverse;
+      if (motion)
+        inverse = transforms[start + i];
+      if (sample_layer(p, inverse, canvas_x, canvas_y, sample)) {
+        sampled = true;
+        single = sample;
+        if (motion)
+          sum += float4(sample.r * sample.a, sample.g * sample.a,
+                        sample.b * sample.a, sample.a);
+      }
+    }
+    if (!motion) {
+      if (sampled)
+        pixel =
+            color_to_rgba(blend_over(single, color_from_rgba(pixel),
+                                     p.blend_mode, single.a * p.opacity, true));
+      continue;
     }
     if (sum.w <= 0.0f)
       continue;
@@ -894,11 +892,11 @@ composite_nv12_layers(uint3 id : SV_DispatchThreadID,
   uint x = i % layers[0].canvas_width, y = i / layers[0].canvas_width;
   output[i] = composite_pixel(layers, layer_count, transforms, transform_count,
                               x, y, background);
-}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void tone_map_hdr(uint3 id : SV_DispatchThreadID,
-                                uniform Color *input, uniform Color *background,
-                                uniform uint *output,
-                                uniform uint64_t output_count,
-                                uniform float levels) {
+}[shader("compute")]
+ [numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void tone_map_hdr(
+     uint3 id : SV_DispatchThreadID, uniform Color *input,
+     uniform Color *background, uniform uint *output,
+     uniform uint64_t output_count, uniform float levels) {
   uint i = id.x;
   if (i >= output_count)
     return;
