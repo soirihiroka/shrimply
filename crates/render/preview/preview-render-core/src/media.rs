@@ -125,7 +125,7 @@ struct Batch {
 struct Completed {
     epoch: u64,
     generation: u64,
-    frames: Result<HashMap<Key, (Source, Frame)>, String>,
+    frames: Result<HashMap<Key, (Request, Frame)>, String>,
 }
 #[derive(Default)]
 struct Slots {
@@ -148,7 +148,7 @@ struct Shared {
 pub struct Media {
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
-    frames: HashMap<Key, (Source, Frame)>,
+    frames: HashMap<Key, (Request, Frame)>,
     requested: Vec<Request>,
     revision: u64,
     error: Option<String>,
@@ -264,11 +264,18 @@ impl Media {
             self.requested.clone_from(&requests);
         }
         let generation = self.shared.generation.load(Ordering::Relaxed);
-        self.frames
-            .retain(|id, (source, _)| requests.iter().any(|r| r.id == *id && r.source == *source));
-        let ready = requests
-            .iter()
-            .all(|request| self.frames.contains_key(&request.id));
+        self.frames.retain(|id, (completed, _)| {
+            requests
+                .iter()
+                .any(|r| r.id == *id && r.source == completed.source)
+        });
+        let ready = requests.iter().all(|request| {
+            self.frames.get(&request.id).is_some_and(|(completed, _)| {
+                // Interactive playback can show the last completed frame. An
+                // accurate capture/export must wait for this exact request.
+                !request.accuracy.content_accurate() || completed == request
+            })
+        });
         if changed {
             slots.pending = Some(Batch {
                 epoch,
@@ -364,7 +371,7 @@ fn worker(shared: Arc<Shared>) {
                         request.source.file.path().display()
                     )
                 })?;
-            frames.insert(request.id.clone(), (request.source.clone(), frame));
+            frames.insert(request.id.clone(), (request.clone(), frame));
             Ok(())
         });
         let mut slots = shared.slots.lock().expect("preview media slots poisoned");
