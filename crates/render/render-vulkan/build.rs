@@ -81,6 +81,75 @@ fn main() {
             generated.push_str("] },\n");
         }
     }
+    let object_shaders = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../media/visual/3d/render-3d-core/shaders");
+    let object_compiler = shrimply_slang_build::Compiler::new(&object_shaders, &output);
+    let objects = object_compiler.compile(
+        &object_shaders.join("obj_software.slang"),
+        shrimply_slang_build::Target::Vulkan,
+        &[
+            "obj_compute",
+            "obj_denoise_composite_compute",
+            "obj_outline_distance_compute",
+            "obj_outline_compute",
+            "reflect_software",
+        ],
+    );
+    let reflection: serde_json::Value =
+        serde_json::from_slice(&objects.reflection).expect("Software OBJ reflection");
+    writeln!(
+        generated,
+        "Module {{ code: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{}\")), kernels: &[",
+        objects.filename
+    )
+    .unwrap();
+    for entry in reflection["entryPoints"]
+        .as_array()
+        .expect("Software OBJ entries")
+    {
+        let name = entry["name"].as_str().expect("Software OBJ entry name");
+        if name == "reflect_software" {
+            continue;
+        }
+        let group = entry["threadGroupSize"]
+            .as_array()
+            .expect("Software OBJ group size");
+        writeln!(generated, "KernelLayout {{ name: {name:?}, entry: {name:?}, buffered: false, group: [{}, {}, {}], fields: &[Field {{ name: \"data\", offset: 0, size: 8, boolean: false }}] }},", group[0], group[1], group[2]).unwrap();
+    }
+    generated.push_str("] },\n");
+    let reflected = reflection["entryPoints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "reflect_software")
+        .expect("Software ABI entry");
+    let mut assertions = String::from("const _: () = {\n");
+    for parameter in reflected["parameters"]
+        .as_array()
+        .expect("Software ABI parameters")
+    {
+        let name = parameter["type"]["name"]
+            .as_str()
+            .expect("Software ABI struct name");
+        let rust_type = match name {
+            "SceneUniforms" => "shrimply_render_3d_core::obj::SceneUniforms",
+            "MeshInstance" => "shrimply_render_3d_core::obj::MeshInstance",
+            _ => name,
+        };
+        for field in parameter["type"]["fields"]
+            .as_array()
+            .expect("Software ABI fields")
+        {
+            let field_name = field["name"].as_str().unwrap();
+            let offset = field["binding"]["offset"].as_u64().unwrap();
+            writeln!(assertions, "assert!(std::mem::offset_of!({rust_type}, {field_name}) == {offset}, \"Software OBJ ABI: {name}.{field_name}\");").unwrap();
+        }
+        let size = parameter["binding"]["size"].as_u64().unwrap();
+        writeln!(assertions, "assert!(std::mem::size_of::<{rust_type}>() == {size}, \"Software OBJ ABI size: {name}\");").unwrap();
+    }
+    assertions.push_str("};\n");
+    std::fs::write(output.join("software_abi.rs"), assertions)
+        .expect("write Software OBJ ABI checks");
     generated.push_str("];\n");
     let abi = compiler.compile(
         &directory.join("reflection.slang"),

@@ -27,7 +27,7 @@ fn main() {
             .file_stem()
             .and_then(|name| name.to_str())
             .expect("Slang module filename must be UTF-8");
-        if module == "obj_compute" {
+        if matches!(module, "obj_compute" | "obj_software") {
             continue;
         }
         let artifacts = compiler.compile(&source, shrimply_slang_build::Target::Spirv, &[]);

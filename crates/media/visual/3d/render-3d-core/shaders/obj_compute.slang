@@ -56,6 +56,10 @@ PbrSettings material_pbr(ComputeMaterial material)
     return result;
 }
 
+#ifdef SHRIMPLY_SOFTWARE_RAYS
+#include "modules/obj-software-resources.slang"
+#else
+#define OUTPUT_TEXEL(pixel) pixel
 ConstantBuffer<SceneUniforms> scene;
 ConstantBuffer<OutputSize> output_size;
 ConstantBuffer<OutputSize> composite_size;
@@ -85,6 +89,8 @@ RWTexture2D<float4> denoiser_depth_normal;
 Texture2D<float4> denoised_texture;
 Texture2D<float4> denoised_background_texture;
 Texture2D<float4> denoised_alpha_texture;
+
+#endif
 
 float2 vertex_uv(uint vertex, uint set)
 {
@@ -380,7 +386,7 @@ void obj_composite_upload_compute(uint3 thread_id : SV_DispatchThreadID)
     uint2 dimensions = uint2(composite_size.width, composite_size.height);
     if (pixel.x >= dimensions.x || pixel.y >= dimensions.y)
         return;
-    composite_texture_output[pixel] = unpack_color(
+    composite_texture_output[OUTPUT_TEXEL(pixel)] = unpack_color(
         composite_pixels[pixel.y * dimensions.x + pixel.x]);
 }
 
@@ -1490,14 +1496,14 @@ void obj_compute(uint3 thread_id : SV_DispatchThreadID)
     uint pixel_index = pixel.y * dimensions.x + pixel.x;
     if (output_size.denoising != 0)
     {
-        denoiser_beauty[pixel] = color;
-        denoiser_background[pixel] = background;
-        denoiser_alpha[pixel] = color.aaaa;
+        denoiser_beauty[OUTPUT_TEXEL(pixel)] = color;
+        denoiser_background[OUTPUT_TEXEL(pixel)] = background;
+        denoiser_alpha[OUTPUT_TEXEL(pixel)] = color.aaaa;
         OutlineSurface guide = trace_outline_surface(
             float2(pixel) + 0.5,
             dimensions,
             0u);
-        denoiser_depth_normal[pixel] = guide.hit != 0
+        denoiser_depth_normal[OUTPUT_TEXEL(pixel)] = guide.hit != 0
             ? float4(guide.depth, guide.normal)
             : float4(RAY_MAXIMUM, 0.0, 0.0, 0.0);
     }
@@ -1524,8 +1530,8 @@ void obj_denoise_composite_compute(uint3 thread_id : SV_DispatchThreadID)
     uint2 dimensions = uint2(output_size.width, output_size.height);
     if (pixel.x >= dimensions.x || pixel.y >= dimensions.y)
         return;
-    float4 beauty = denoised_texture[pixel];
-    float4 background = denoised_background_texture[pixel];
+    float4 beauty = denoised_texture[OUTPUT_TEXEL(pixel)];
+    float4 background = denoised_background_texture[OUTPUT_TEXEL(pixel)];
     float3 color = float3(
         aces_tone_map(beauty.r),
         aces_tone_map(beauty.g),
@@ -1536,7 +1542,7 @@ void obj_denoise_composite_compute(uint3 thread_id : SV_DispatchThreadID)
         linear_to_srgb(color.g),
         linear_to_srgb(color.b));
     output_pixels[pixel.y * dimensions.x + pixel.x]
-        = pack_color(float4(color, denoised_alpha_texture[pixel].r));
+        = pack_color(float4(color, denoised_alpha_texture[OUTPUT_TEXEL(pixel)].r));
 }
 
 [shader("compute")]
@@ -1585,7 +1591,7 @@ void obj_outline_compute(uint3 thread_id : SV_DispatchThreadID)
     uint pixel_index = pixel.y * dimensions.x + pixel.x;
     float4 color = composite_outline(
         output_size.denoising != 0
-            ? denoiser_beauty[pixel]
+            ? denoiser_beauty[OUTPUT_TEXEL(pixel)]
             : unpack_color(output_pixels[pixel_index]),
         coverage,
         scene.toon);
@@ -1593,8 +1599,8 @@ void obj_outline_compute(uint3 thread_id : SV_DispatchThreadID)
         color.rgb = toon_palette_quantize(color.rgb, scene.toon.color_levels);
     if (output_size.denoising != 0)
     {
-        denoiser_beauty[pixel] = color;
-        denoiser_alpha[pixel] = color.aaaa;
+        denoiser_beauty[OUTPUT_TEXEL(pixel)] = color;
+        denoiser_alpha[OUTPUT_TEXEL(pixel)] = color.aaaa;
     }
     else
         output_pixels[pixel_index] = pack_color(color);
