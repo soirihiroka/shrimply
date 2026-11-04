@@ -254,7 +254,7 @@ pub fn render_card(material: &PbrMaterial, runtime: InspectorRuntime) -> VideoCa
                 DENOISING_PATH,
                 "Denoiser",
                 material.denoising,
-                &[(false, "Off"), (true, "On")],
+                &denoising_methods(material.denoising),
                 "edit-scene-3d-denoising",
             ));
         }
@@ -269,6 +269,24 @@ pub fn render_card(material: &PbrMaterial, runtime: InspectorRuntime) -> VideoCa
         &PbrMaterial::default(),
         "reset-scene-3d-render",
     )
+}
+
+fn denoising_methods(
+    selected: shrimply_scene_3d::DenoisingMethod,
+) -> Vec<(shrimply_scene_3d::DenoisingMethod, &'static str)> {
+    #[cfg(feature = "cuda-backend")]
+    let mut methods = shrimply_visual_cuda::gpu::denoising_methods();
+    #[cfg(not(feature = "cuda-backend"))]
+    let mut methods = vec![
+        (shrimply_scene_3d::DenoisingMethod::Auto, "Auto"),
+        (shrimply_scene_3d::DenoisingMethod::Off, "Off"),
+    ];
+    #[cfg(all(not(feature = "cuda-backend"), target_os = "macos"))]
+    methods.push((shrimply_scene_3d::DenoisingMethod::MetalSvgf, "Metal SVGF"));
+    if !methods.iter().any(|(method, _)| *method == selected) {
+        methods.push((selected, "Unavailable on this device"));
+    }
+    methods
 }
 
 fn add_toon(section: &mut InspectorSection, material: &PbrMaterial, runtime: InspectorRuntime) {

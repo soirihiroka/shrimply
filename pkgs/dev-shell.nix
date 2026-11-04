@@ -30,6 +30,7 @@
   rubberband,
   rustToolchain,
   shrimply-slang,
+  shrimply-oidn,
   uv,
   vte-gtk4,
   vulkan-headers,
@@ -104,6 +105,7 @@ mkShell {
         zlib
         opencv
         shrimply-slang
+        shrimply-oidn
         qtEnv
         libglvnd
         vulkan-loader

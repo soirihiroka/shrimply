@@ -49,6 +49,7 @@ shrimply-manim-state = { workspace = true }
 shrimply-manim-cuda = { workspace = true }
 shrimply-nvidia-optical-flow = { workspace = true }
 shrimply-denoise-optix = { workspace = true }
+shrimply-denoise-oidn.workspace = true
 shrimply-paint-skia = { workspace = true }
 shrimply-path-core.workspace = true
 shrimply-pdf = { workspace = true }

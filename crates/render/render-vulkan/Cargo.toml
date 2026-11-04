@@ -12,6 +12,8 @@ ffmpeg-next.workspace = true
 libc.workspace = true
 shrimply-render-core.workspace = true
 shrimply-render-3d-core.workspace = true
+shrimply-scene-3d.workspace = true
+shrimply-denoise-oidn.workspace = true
 shrimply-asset.workspace = true
 shrimply-math-geometry.workspace = true
 skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }

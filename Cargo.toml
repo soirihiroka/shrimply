@@ -141,6 +141,7 @@ members = [
     "crates/media/visual/3d/3dgs/3dgs-core",
     "crates/media/visual/3d/3dgs/3dgs-metal",
     "crates/gpu/denoise/denoise-optix",
+    "crates/gpu/denoise/denoise-oidn",
     "crates/media/visual/3d/render-3d-core",
     "crates/media/visual/3d/render-3d-metal",
     "crates/media/visual/3d/scene-3d",
@@ -184,6 +185,7 @@ shrimply-cross-ui-core = { path = "crates/ui/application/cross-ui-core" }
 shrimply-cross-ui-theme = { path = "crates/ui/theme/cross-ui-theme" }
 shrimply-decoder-pool = { path = "crates/media/visual/video/decoder-pool" }
 shrimply-denoise-optix = { path = "crates/gpu/denoise/denoise-optix" }
+shrimply-denoise-oidn = { path = "crates/gpu/denoise/denoise-oidn" }
 shrimply-discrete-keyframe-graph-skia = { path = "crates/ui/keyframe-graph/discrete-keyframe-graph-skia" }
 shrimply-drawing-skia = { path = "crates/render/drawing-skia" }
 shrimply-editor-state = { path = "crates/application/editor-state" }

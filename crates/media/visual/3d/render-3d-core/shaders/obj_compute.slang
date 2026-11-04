@@ -15,7 +15,7 @@ struct OutputSize
     uint width;
     uint height;
     uint denoising;
-    uint padding;
+    uint guides;
 };
 
 struct ComputePbr
@@ -1505,13 +1505,24 @@ void obj_compute(uint3 thread_id : SV_DispatchThreadID)
         denoiser_beauty[OUTPUT_TEXEL(pixel)] = color;
         denoiser_background[OUTPUT_TEXEL(pixel)] = background;
         denoiser_alpha[OUTPUT_TEXEL(pixel)] = color.aaaa;
-        OutlineSurface guide = trace_outline_surface(
-            float2(pixel) + 0.5,
-            dimensions,
-            0u);
+#ifdef SHRIMPLY_SOFTWARE_RAYS
+        CameraRay camera = camera_ray(scene, float2(pixel) + 0.5, dimensions, false, 0u);
+        ComputeSurface guide;
+        float distance;
+        bool hit = camera.valid && trace_surface_hit(camera.object_ray, guide, distance);
+        if (hit && dot(guide.normal, -camera.world_direction) < 0.0)
+            guide.normal = -guide.normal;
+        denoiser_depth_normal[OUTPUT_TEXEL(pixel)] = hit
+            ? float4(length(scene.camera_position.xyz - guide.world_position), guide.normal)
+            : float4(RAY_MAXIMUM, 0.0, 0.0, 0.0);
+        if (output_size.guides != 0)
+            denoiser_albedo[OUTPUT_TEXEL(pixel)] = hit ? float4(guide.base_color, 1.0) : float4(0.0);
+#else
+        OutlineSurface guide = trace_outline_surface(float2(pixel) + 0.5, dimensions, 0u);
         denoiser_depth_normal[OUTPUT_TEXEL(pixel)] = guide.hit != 0
             ? float4(guide.depth, guide.normal)
             : float4(RAY_MAXIMUM, 0.0, 0.0, 0.0);
+#endif
     }
     else
         output_pixels[pixel_index] = pack_color(color);

@@ -41,6 +41,7 @@
   runCommand,
   rustPlatform,
   shrimply-slang,
+  shrimply-oidn,
   uv,
   vulkan-headers,
   vulkan-loader,
@@ -238,7 +239,7 @@ rustPlatform.buildRustPackage {
           uv
         ]
       }
-      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ gcc.cc.lib zlib libglvnd vulkan-loader ]}:/run/opengl-driver/lib
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ gcc.cc.lib zlib libglvnd vulkan-loader shrimply-oidn ]}:/run/opengl-driver/lib
       --run 'export UV_PROJECT_ENVIRONMENT="''${UV_PROJECT_ENVIRONMENT:-''${XDG_CACHE_HOME:-$HOME/.cache}/shrimply/manim}"'
     )
   '';

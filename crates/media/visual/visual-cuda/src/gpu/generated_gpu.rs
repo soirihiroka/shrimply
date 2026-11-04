@@ -56,10 +56,17 @@ pub struct GeneratedGpuRenderer {
     scene_3d: Option<scene_3d::Scene3dRenderer>,
     mesh_flow: Option<mesh_flow::Renderer>,
     optix_denoiser: Option<shrimply_denoise_optix::OptixDenoiser>,
+    oidn_denoiser: Option<OidnDenoiser>,
     // Drop after every renderer that owns command buffers allocated from it.
     command_pool: VulkanCommandPool,
     // Drop last so Skia and all renderer-owned Vulkan handles are gone before the device.
     vulkan: Arc<VulkanDevice>,
+}
+
+struct OidnDenoiser {
+    filters: [shrimply_denoise_oidn::Filter; 2],
+    // Filters and their OIDN device must be dropped before their CUDA stream.
+    stream: Arc<shrimply_gpu_cuda::CudaStream>,
 }
 
 impl GeneratedGpuRenderer {
@@ -197,6 +204,7 @@ impl GeneratedGpuRenderer {
             scene_3d: None,
             mesh_flow: None,
             optix_denoiser: None,
+            oidn_denoiser: None,
         })
     }
 
@@ -618,6 +626,7 @@ impl GeneratedGpuRenderer {
         released |= self.scene_3d.take().is_some();
         released |= self.mesh_flow.take().is_some();
         released |= self.optix_denoiser.take().is_some();
+        released |= self.oidn_denoiser.take().is_some();
         let skia_before = self.skia.resource_cache_usage().resource_bytes;
         self.skia.free_gpu_resources();
         let skia_retained = self.skia.resource_cache_usage().resource_bytes;

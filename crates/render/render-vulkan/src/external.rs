@@ -125,14 +125,7 @@ impl Drop for ExternalImage {
 
 impl Renderer {
     pub fn device_uuid(&self) -> [u8; vk::UUID_SIZE] {
-        let mut identity = vk::PhysicalDeviceIDProperties::default();
-        let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut identity);
-        unsafe {
-            self.device
-                .instance
-                .get_physical_device_properties2(self.device.physical, &mut properties);
-        }
-        identity.device_uuid
+        self.device.device_uuid()
     }
 
     /// Copies GPU storage only. Completing the transfer lets WGPU reuse its target.

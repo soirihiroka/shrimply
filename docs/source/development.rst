@@ -104,12 +104,27 @@ pipeline on the target machine:
 Ray-tracing denoising
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-The Intel Vulkan backend uses a basic spatial edge-avoiding a-trous denoiser.
+The material inspector lists GPU denoisers supported by the selected backend:
+OptiX and Open Image Denoise on CUDA, Open Image Denoise and the basic a-trous
+fallback on Intel Vulkan, and Metal SVGF on macOS. Auto selects OptiX on CUDA,
+Metal SVGF on Metal, and Open Image Denoise on supported Intel GPUs, falling
+back to a-trous otherwise. Off disables filtering. Saved boolean settings
+remain compatible: true selects Auto and false selects Off.
+
+Open Image Denoise uses the existing CUDA stream or imports Vulkan allocations
+by file descriptor on the same physical GPU. It never selects a CPU device.
+The runtime is bundled with Linux packages; Intel's Level Zero GPU driver
+must also be installed for the SYCL backend. Interactive rendering uses FAST
+quality and final rendering uses HIGH. Use ``make oidn-gpu-validation`` to
+check native CUDA interop and measure filtering on the selected NVIDIA GPU.
+
+The Intel Vulkan fallback uses a basic spatial edge-avoiding a-trous denoiser.
 Three compute passes filter HDR ray-traced color at increasing tap spacing,
 using depth, normal, color, and alpha to limit edge bleeding. Background and
 coverage stay exact, and tone mapping follows filtering. All image buffers
 stay on the GPU. This filter has no temporal history or neural inference;
-NVIDIA keeps its existing GPU OptiX denoiser. There is no CPU denoising fallback.
+NVIDIA keeps its existing GPU OptiX denoiser as the default. There is no CPU
+denoising fallback.
 
 The implementation follows the algorithm in
 `Dammertz et al., HPG 2010 <https://doi.org/10.2312/EGGH/HPG10/067-075>`_.

@@ -17,7 +17,7 @@ struct OutputSize {
     width: u32,
     height: u32,
     denoising: u32,
-    padding: u32,
+    guides: u32,
 }
 #[repr(C)]
 struct ComputePbr {
@@ -61,6 +61,7 @@ struct SoftwareResources {
     denoiser_background_data: u64,
     denoiser_alpha_data: u64,
     denoiser_depth_normal_data: u64,
+    denoiser_albedo_data: u64,
     denoised_texture_data: u64,
     denoised_background_texture_data: u64,
     denoised_alpha_texture_data: u64,
@@ -141,8 +142,14 @@ impl Renderer {
         } else {
             (empty_texture, fallback.clone())
         };
-        let denoising =
-            plan.params.denoising && plan.params.shading_model == shader::ShadingModel::Pbr;
+        let denoising = plan.params.denoising != shrimply_scene_3d::DenoisingMethod::Off
+            && plan.params.shading_model == shader::ShadingModel::Pbr;
+        let oidn = denoising && match plan.params.denoising {
+            shrimply_scene_3d::DenoisingMethod::Auto => shrimply_denoise_oidn::vulkan_supported(self.device_uuid()),
+            shrimply_scene_3d::DenoisingMethod::OpenImageDenoise => true,
+            shrimply_scene_3d::DenoisingMethod::Atrous | shrimply_scene_3d::DenoisingMethod::Off => false,
+            _ => return Err("Selected denoiser is unavailable on Intel Vulkan; select Auto, Open Image Denoise or À-trous".into()),
+        };
         let region_outline = plan.params.toon_outline_mode != shader::OutlineMode::Off
             && plan.params.toon_outline_method == shader::OutlineMethod::RegionBoundary;
         let guide = if region_outline {
@@ -162,7 +169,7 @@ impl Renderer {
         let mut uniforms = plan.uniforms;
         let denoise_buffer = || {
             if denoising {
-                self.allocate(float_bytes)
+                self.buffer(float_bytes, false, oidn)
             } else {
                 Ok(fallback.clone())
             }
@@ -172,6 +179,11 @@ impl Renderer {
         let alpha = denoise_buffer()?;
         let depth_normal = denoise_buffer()?;
         let filtered = denoise_buffer()?;
+        let albedo = if oidn {
+            denoise_buffer()?
+        } else {
+            fallback.clone()
+        };
         uniforms.pbr.denoising = u32::from(denoising);
         uniforms.transmission_background[1] = u32::from(background.is_some()) as f32;
         let scene = self.upload(&pack_scene_uniforms(&uniforms))?;
@@ -182,7 +194,7 @@ impl Renderer {
                 width: plan.width,
                 height: plan.height,
                 denoising: u32::from(denoising),
-                padding: 0,
+                guides: u32::from(oidn),
             },
             positions_data: uploaded.positions.address(),
             normals_data: uploaded.normals.address(),
@@ -204,6 +216,7 @@ impl Renderer {
             denoiser_background_data: denoise_background.address(),
             denoiser_alpha_data: alpha.address(),
             denoiser_depth_normal_data: depth_normal.address(),
+            denoiser_albedo_data: albedo.address(),
             denoised_texture_data: filtered.address(),
             denoised_background_texture_data: denoise_background.address(),
             denoised_alpha_texture_data: alpha.address(),
@@ -239,6 +252,7 @@ impl Renderer {
             alpha,
             depth_normal.clone(),
             filtered.clone(),
+            albedo.clone(),
         ]);
         let mut kernels = vec!["obj_compute"];
         if region_outline {
@@ -273,13 +287,32 @@ impl Renderer {
             }?);
         }
         if denoising {
-            self.denoise_atrous(
-                &beauty,
-                &filtered,
-                &depth_normal,
-                (plan.width, plan.height),
-                submissions,
-            )?;
+            if oidn {
+                self.denoise_oidn(
+                    crate::oidn::Guides {
+                        color: &beauty,
+                        output: &filtered,
+                        albedo: &albedo,
+                        depth_normal: &depth_normal,
+                        size: (plan.width, plan.height),
+                        quality: match plan.params.render_quality {
+                            shader::RenderQuality::Interactive => {
+                                shrimply_denoise_oidn::Quality::Interactive
+                            }
+                            shader::RenderQuality::Final => shrimply_denoise_oidn::Quality::Final,
+                        },
+                    },
+                    submissions,
+                )?;
+            } else {
+                self.denoise_atrous(
+                    &beauty,
+                    &filtered,
+                    &depth_normal,
+                    (plan.width, plan.height),
+                    submissions,
+                )?;
+            }
             let mut args = self.arguments("obj_denoise_composite_compute")?;
             args.set("data", &state.address().to_ne_bytes())?;
             submissions.push(unsafe {

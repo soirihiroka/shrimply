@@ -62,6 +62,7 @@
         in
         {
           shrimply-slang = prev.callPackage ./pkgs/slang.nix { };
+          shrimply-oidn = prev.callPackage ./pkgs/oidn.nix { };
           shrimply =
             (final.callPackage ./pkgs/shrimply.nix {
               inherit rustPlatform;

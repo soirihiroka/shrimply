@@ -17,7 +17,9 @@ use shrimply_visual_frame::{
     Device, GPU_FRAME_ALLOCATION_EXHAUSTED, gpu_allocation_stats, gpu_oom_generation,
 };
 
+mod denoising;
 mod device_buffer;
+pub use denoising::denoising_methods;
 mod frame;
 pub(crate) mod generated_gpu;
 mod kernels;

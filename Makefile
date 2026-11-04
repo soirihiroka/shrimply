@@ -577,3 +577,7 @@ uninstall-qt:
 intel-feature-validation: native-deps cuda-artifacts
 	@test -n "$(OUTPUT)" || { echo "usage: make intel-feature-validation OUTPUT=/new/output/directory [CASE=filter]" >&2; exit 1; }
 	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example feature_validation -- "$(OUTPUT)" "$(CASE)"
+
+.PHONY: oidn-gpu-validation
+oidn-gpu-validation:
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-denoise-oidn --example cuda

@@ -457,8 +457,12 @@ pub struct PbrMaterial {
     pub path_tracing: PathTracingMode,
     #[serde(default)]
     pub light_sampling_quality: LightSamplingQuality,
-    #[serde(default = "default_denoising", alias = "optix_denoising")]
-    pub denoising: bool,
+    #[serde(
+        default,
+        alias = "optix_denoising",
+        deserialize_with = "deserialize_denoising"
+    )]
+    pub denoising: DenoisingMethod,
     pub normal_mode: NormalMode,
     #[serde(default)]
     pub shading_model: ShadingModel,
@@ -599,7 +603,7 @@ impl Default for PbrMaterial {
             ior: default_ior(),
             path_tracing: PathTracingMode::Off,
             light_sampling_quality: LightSamplingQuality::High,
-            denoising: true,
+            denoising: DenoisingMethod::Auto,
             normal_mode: NormalMode::Smooth,
             shading_model: ShadingModel::Pbr,
             toon: ToonMaterial::default(),
@@ -741,7 +745,7 @@ pub struct ResolvedPbrMaterial {
     pub ior: f32,
     pub path_tracing: PathTracingMode,
     pub light_sampling_quality: LightSamplingQuality,
-    pub denoising: bool,
+    pub denoising: DenoisingMethod,
     pub normal_mode: NormalMode,
     pub shading_model: ShadingModel,
     pub toon: ResolvedToonMaterial,
@@ -751,8 +755,33 @@ fn default_subsurface() -> TimelineValue<f32> {
     TimelineValue::<f32>::new_const(DEFAULT_SUBSURFACE)
 }
 
-const fn default_denoising() -> bool {
-    true
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u32)]
+#[serde(rename_all = "snake_case")]
+pub enum DenoisingMethod {
+    Off = 0,
+    #[default]
+    Auto = 1,
+    Optix = 2,
+    OpenImageDenoise = 3,
+    Atrous = 4,
+    MetalSvgf = 5,
+}
+
+fn deserialize_denoising<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<DenoisingMethod, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Saved {
+        Legacy(bool),
+        Method(DenoisingMethod),
+    }
+    Ok(match Saved::deserialize(deserializer)? {
+        Saved::Legacy(true) => DenoisingMethod::Auto,
+        Saved::Legacy(false) => DenoisingMethod::Off,
+        Saved::Method(method) => method,
+    })
 }
 
 fn default_clearcoat() -> TimelineValue<f32> {

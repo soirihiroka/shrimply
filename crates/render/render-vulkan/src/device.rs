@@ -46,6 +46,15 @@ unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
 impl Device {
+    pub fn device_uuid(&self) -> [u8; vk::UUID_SIZE] {
+        let mut identity = vk::PhysicalDeviceIDProperties::default();
+        let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut identity);
+        unsafe {
+            self.instance
+                .get_physical_device_properties2(self.physical, &mut properties);
+        }
+        identity.device_uuid
+    }
     pub fn select_render_device(path: std::path::PathBuf) -> Result<(), String> {
         if SELECTED_DEVICE.set(path.clone()).is_err() && SELECTED_DEVICE.get() != Some(&path) {
             return Err("Intel GPU device cannot change after startup".into());

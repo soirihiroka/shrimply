@@ -11,6 +11,7 @@ pub use external::ExternalImage;
 mod denoise;
 mod gaussian;
 mod obj;
+mod oidn;
 mod optical_flow;
 pub use buffer::Buffer;
 pub use optical_flow::OpticalFlow;
@@ -181,6 +182,7 @@ pub struct Renderer {
     gaussian: Option<shrimply_3dgs_vulkan::Renderer>,
     object: Option<obj::Uploaded>,
     object_environment: Option<obj::Environment>,
+    oidn: Option<oidn::State>,
     device: Arc<Device>,
     pool: Rc<Pool>,
     pipeline_layout: vk::PipelineLayout,
@@ -221,6 +223,7 @@ impl Renderer {
             gaussian: None,
             object: None,
             object_environment: None,
+            oidn: None,
             pool,
             device,
             pipeline_layout,
@@ -316,19 +319,21 @@ impl Renderer {
         })
     }
     pub fn upload(&self, bytes: &[u8]) -> Result<Buffer, String> {
-        let buffer = self.buffer(bytes.len(), true)?;
+        let buffer = self.buffer(bytes.len(), true, false)?;
         buffer.write(bytes)?;
         Ok(buffer)
     }
     pub fn allocate(&self, length: usize) -> Result<Buffer, String> {
-        self.buffer(length, false)
+        self.buffer(length, false, false)
     }
-    fn buffer(&self, length: usize, upload: bool) -> Result<Buffer, String> {
+    fn buffer(&self, length: usize, upload: bool, exportable: bool) -> Result<Buffer, String> {
         let mut buffers = self.buffers.borrow_mut();
-        if let Some((_, buffer)) = buffers
-            .iter()
-            .find(|(host, buffer)| *host == upload && buffer.len() == length && buffer.unused())
-        {
+        if let Some((_, buffer)) = buffers.iter().find(|(host, buffer)| {
+            *host == upload
+                && buffer.exportable() == exportable
+                && buffer.len() == length
+                && buffer.unused()
+        }) {
             return Ok(buffer.clone());
         }
         let mut retained = buffers
@@ -343,7 +348,7 @@ impl Renderer {
             };
             retained -= buffers.swap_remove(index).1.len();
         }
-        let buffer = Buffer::new(self.device.clone(), length, upload)?;
+        let buffer = Buffer::new(self.device.clone(), length, upload, exportable)?;
         if buffers.len() < MAX_CACHED_BUFFERS
             && length <= MAX_CACHED_BUFFER_BYTES
             && retained <= MAX_CACHED_BUFFER_BYTES - length
@@ -805,7 +810,7 @@ impl Renderer {
     }
 
     pub fn readback(&self, source: &Buffer) -> Result<Vec<u8>, String> {
-        let output = Buffer::new(self.device.clone(), source.len(), true)?;
+        let output = Buffer::new(self.device.clone(), source.len(), true, false)?;
         let command = self.command()?;
         unsafe {
             self.device.raw.cmd_pipeline_barrier(

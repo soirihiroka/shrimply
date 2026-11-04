@@ -67,6 +67,7 @@ struct SoftwareResources
     float4* denoiser_background_data;
     float4* denoiser_alpha_data;
     float4* denoiser_depth_normal_data;
+    float4* denoiser_albedo_data;
     float4* denoised_texture_data;
     float4* denoised_background_texture_data;
     float4* denoised_alpha_texture_data;
@@ -95,6 +96,7 @@ struct SoftwareAddress { SoftwareResources* data; };
 #define denoiser_background (software_address.data->denoiser_background_data)
 #define denoiser_alpha (software_address.data->denoiser_alpha_data)
 #define denoiser_depth_normal (software_address.data->denoiser_depth_normal_data)
+#define denoiser_albedo (software_address.data->denoiser_albedo_data)
 #define denoised_texture (software_address.data->denoised_texture_data)
 #define denoised_background_texture (software_address.data->denoised_background_texture_data)
 #define denoised_alpha_texture (software_address.data->denoised_alpha_texture_data)

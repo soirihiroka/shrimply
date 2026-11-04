@@ -33,6 +33,29 @@ cleanup:
   - "*.la"
 
 modules:
+  - name: level-zero
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DBUILD_TESTS=OFF
+    sources:
+      - type: git
+        url: https://github.com/oneapi-src/level-zero.git
+        tag: v1.35.0
+        commit: 9e1a8b2c07ed6ce1f00b0a195fa5efa0db8e3650
+
+  - name: open-image-denoise
+    buildsystem: simple
+    build-commands:
+      - install -d /app/lib /app/share/licenses/oidn
+      - cp -a lib/*.so* /app/lib/
+      - rm -f /app/lib/*device_cpu* /app/lib/*device_hip* /app/lib/libtbb*
+      - cp -a doc/LICENSE* doc/third-party-programs*.txt /app/share/licenses/oidn/
+    sources:
+      - type: archive
+        url: https://github.com/RenderKit/oidn/releases/download/v2.5.1/oidn-2.5.1.x86_64.linux.tar.gz
+        sha256: 743c3e2aff8c220d5d70fe6cb970fb3d36f2702d2693c61d1d148e404cf37cd6
+
   - name: rubberband
     buildsystem: meson
     config-opts:

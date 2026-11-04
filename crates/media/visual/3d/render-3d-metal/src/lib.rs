@@ -68,7 +68,7 @@ struct OutputSize {
     width: u32,
     height: u32,
     denoising: u32,
-    padding: u32,
+    guides: u32,
 }
 
 #[repr(C, align(16))]
@@ -158,7 +158,17 @@ impl Renderer {
     ) -> Result<Rendered, String> {
         let width = plan.width.max(1);
         let height = plan.height.max(1);
-        let denoising = plan.params.denoising
+        if !matches!(
+            plan.params.denoising,
+            shrimply_scene_3d::DenoisingMethod::Off
+                | shrimply_scene_3d::DenoisingMethod::Auto
+                | shrimply_scene_3d::DenoisingMethod::MetalSvgf
+        ) {
+            return Err(
+                "Selected denoiser is unavailable on Metal; select Auto or Metal SVGF".into(),
+            );
+        }
+        let denoising = plan.params.denoising != shrimply_scene_3d::DenoisingMethod::Off
             && plan.params.shading_model == shrimply_render_3d_core::obj::ShadingModel::Pbr;
         if denoising && plan.uniforms.camera_lens[1] > 0.0 {
             return Err(
@@ -199,7 +209,7 @@ impl Renderer {
             width,
             height,
             denoising: u32::from(denoising),
-            padding: 0,
+            guides: 0,
         }))?;
         let (composite_width, composite_height) =
             composite_background.map_or((1, 1), |background| (background.width, background.height));
@@ -222,7 +232,7 @@ impl Renderer {
                     width: background.width,
                     height: background.height,
                     denoising: 0,
-                    padding: 0,
+                    guides: 0,
                 }))
             })
             .transpose()?;

@@ -116,7 +116,7 @@ pub struct SceneRenderParams {
     pub ior: f32,
     pub path_tracing: obj::PathTracingMode,
     pub light_sampling_quality: obj::LightSamplingQuality,
-    pub denoising: bool,
+    pub denoising: shrimply_scene_3d::DenoisingMethod,
     pub render_quality: obj::RenderQuality,
     pub normal_mode: obj::NormalMode,
     pub shading_model: obj::ShadingModel,
