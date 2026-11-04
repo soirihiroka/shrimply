@@ -25,6 +25,8 @@ pub struct VideoRenderer {
     vao: glow::NativeVertexArray,
     rgba_texture: glow::NativeTexture,
     rgba_cuda: Option<CudaTexture>,
+    #[cfg(target_os = "linux")]
+    intel_import: Option<crate::intel_gl::ImportedBuffer>,
     cuda_context: Option<shrimply_gpu_cuda::sys::CUcontext>,
     texture_width: u32,
     texture_height: u32,
@@ -54,6 +56,8 @@ impl VideoRenderer {
                 vao,
                 rgba_texture,
                 rgba_cuda: None,
+                #[cfg(target_os = "linux")]
+                intel_import: None,
                 cuda_context: None,
                 texture_width: 0,
                 texture_height: 0,
@@ -163,6 +167,40 @@ impl VideoRenderer {
     }
 
     fn upload_frame(&mut self, frame: &CompositedVideoFrame) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
+        if let crate::video::gpu::FrameBuffer::Intel { display, .. } = &frame.buffer {
+            if self.last_frame_key == Some(frame.storage_key) {
+                return Ok(());
+            }
+            if self.texture_width != frame.width
+                || self.texture_height != frame.height
+                || self.cuda_context.is_some()
+            {
+                self.allocate_texture(frame.width, frame.height);
+            }
+            if let Some(imported) = self.intel_import.take() {
+                imported.destroy(&self.gl);
+            }
+            let imported = crate::intel_gl::ImportedBuffer::new(&self.gl, display)?;
+            unsafe {
+                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+                self.gl.tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    frame.width as i32,
+                    frame.height as i32,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::BufferOffset(0),
+                );
+                self.gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
+            }
+            self.intel_import = Some(imported);
+            self.last_frame_key = Some(frame.storage_key);
+            return Ok(());
+        }
         self.ensure_texture(frame)?;
         if self.last_frame_key == Some(frame.storage_key) {
             return Ok(());
@@ -171,8 +209,8 @@ impl VideoRenderer {
             .as_ref()
             .ok_or_else(|| "CUDA RGBA texture is not registered".to_string())?
             .copy_from_device(
-                frame.buffer.cu_deviceptr(),
-                frame.buffer.memory_kind(),
+                frame.buffer.cuda()?.cu_deviceptr(),
+                frame.buffer.cuda()?.memory_kind(),
                 frame.width as usize * std::mem::size_of::<u32>(),
                 frame.width as usize * std::mem::size_of::<u32>(),
                 frame.height as usize,
@@ -221,20 +259,35 @@ impl VideoRenderer {
     }
 
     fn ensure_texture(&mut self, frame: &CompositedVideoFrame) -> Result<(), String> {
-        let cuda_context = frame.buffer.context().cu_ctx();
+        let cuda_context = frame.buffer.cuda()?.context().cu_ctx();
         if self.texture_width == frame.width
             && self.texture_height == frame.height
             && self.cuda_context == Some(cuda_context)
         {
             return Ok(());
         }
+        self.allocate_texture(frame.width, frame.height);
+        self.rgba_cuda = Some(CudaTexture::register(
+            self.rgba_texture.0.get(),
+            glow::TEXTURE_2D,
+            frame.buffer.cuda()?.context().clone(),
+        )?);
+        self.cuda_context = Some(cuda_context);
+        self.texture_width = frame.width;
+        self.texture_height = frame.height;
+        self.last_frame_key = None;
+        self.mipmapped_frame_key = None;
+        Ok(())
+    }
+
+    fn allocate_texture(&mut self, width: u32, height: u32) {
         self.rgba_cuda.take();
         self.cuda_context = None;
         unsafe {
             self.gl
                 .bind_texture(glow::TEXTURE_2D, Some(self.rgba_texture));
             // CUDA requires the OpenGL texture storage to remain stable after registration.
-            let mipmap_levels = frame.width.max(frame.height).ilog2() + 1;
+            let mipmap_levels = width.max(height).ilog2() + 1;
             self.gl.tex_parameter_i32(
                 glow::TEXTURE_2D,
                 glow::TEXTURE_MAX_LEVEL,
@@ -245,8 +298,8 @@ impl VideoRenderer {
                     glow::TEXTURE_2D,
                     level as i32,
                     glow::RGBA8 as i32,
-                    (frame.width >> level).max(1) as i32,
-                    (frame.height >> level).max(1) as i32,
+                    (width >> level).max(1) as i32,
+                    (height >> level).max(1) as i32,
                     0,
                     glow::RGBA,
                     glow::UNSIGNED_BYTE,
@@ -254,22 +307,23 @@ impl VideoRenderer {
                 );
             }
         }
-        self.rgba_cuda = Some(CudaTexture::register(
-            self.rgba_texture.0.get(),
-            glow::TEXTURE_2D,
-            frame.buffer.context().clone(),
-        )?);
-        self.cuda_context = Some(cuda_context);
-        self.texture_width = frame.width;
-        self.texture_height = frame.height;
+        #[cfg(target_os = "linux")]
+        if let Some(imported) = self.intel_import.take() {
+            imported.destroy(&self.gl);
+        }
+        self.texture_width = width;
+        self.texture_height = height;
         self.last_frame_key = None;
         self.mipmapped_frame_key = None;
-        Ok(())
     }
 
     pub fn destroy(&mut self) {
         self.overlay_renderer.destroy();
         self.rgba_cuda.take();
+        #[cfg(target_os = "linux")]
+        if let Some(imported) = self.intel_import.take() {
+            imported.destroy(&self.gl);
+        }
         self.cuda_context = None;
         unsafe {
             self.gl.delete_texture(self.rgba_texture);

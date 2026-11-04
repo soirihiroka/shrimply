@@ -39,6 +39,7 @@ fn main() {
         .warnings(true)
         .extra_warnings(true)
         .compile("shrimply_optix_denoiser_bridge");
+    #[cfg(windows)]
     println!("cargo:rustc-link-lib=dylib=cuda");
     #[cfg(windows)]
     println!(

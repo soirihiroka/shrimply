@@ -47,6 +47,11 @@ enum PanelSide {
 fn main() -> glib::ExitCode {
     crash::install();
     shrimply_process_reporting::diagnostics::init();
+    #[cfg(target_os = "linux")]
+    if let Err(error) = shrimply_visual_cuda::gpu::configure_gtk_backend() {
+        tracing::error!(%error, "Could not select GTK GPU backend");
+        return glib::ExitCode::FAILURE;
+    }
     shrimply_components_gtk::i18n::init_system_locale();
     glib::log_set_writer_func(glib::rust_log_writer);
     glib::set_print_handler(|message| {
@@ -319,7 +324,7 @@ fn begin_project_load(app: &adw::Application, path: PathBuf) {
         .default_height(LOADING_WINDOW_HEIGHT)
         .build();
     let loading_view = if flatpak {
-        project_loading_view_with_subtitle(tr!("Compiling CUDA kernels…").as_ref())
+        project_loading_view_with_subtitle(tr!("Preparing GPU renderer…").as_ref())
     } else {
         project_loading_view(&path)
     };

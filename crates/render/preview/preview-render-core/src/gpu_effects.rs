@@ -1,5 +1,5 @@
+use crate::gpu::{Buffer, Renderer, Submission};
 use shrimply_render_core::effects::{BufferSlot, PixelEffect, SpatialState};
-use shrimply_render_metal::{Buffer, Renderer, Submission};
 
 pub(super) fn apply_stabilization(
     renderer: &mut Renderer,

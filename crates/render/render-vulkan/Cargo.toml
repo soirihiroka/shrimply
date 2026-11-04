@@ -1,0 +1,16 @@
+[package]
+name = "shrimply-render-vulkan"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ash.workspace = true
+ffmpeg-next.workspace = true
+libc.workspace = true
+shrimply-render-core.workspace = true
+skia-safe = { workspace = true, features = ["vulkan"] }
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+serde_json.workspace = true
+shrimply-slang-build.workspace = true

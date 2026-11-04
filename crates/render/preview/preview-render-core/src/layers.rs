@@ -529,7 +529,7 @@ impl Scene {
                     let width = image.image.width() as u32;
                     let height = image.image.height() as u32;
                     decoded_presentation_time = image.presentation_time;
-                    (Source::Image(image.image.clone()), width, height)
+                    (image.image.source(), width, height)
                 }
             };
             raster_transform *= glam::Mat3::from_scale(source_scale);

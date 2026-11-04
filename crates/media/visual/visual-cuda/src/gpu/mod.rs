@@ -25,7 +25,12 @@ pub(crate) mod layered_image;
 mod layers;
 pub(crate) mod modifiers;
 
-pub use frame::{CompositedFrameStorageKey, CompositedVideoFrame};
+pub use frame::{CompositedFrameStorageKey, CompositedVideoFrame, FrameBuffer};
+
+#[cfg(target_os = "linux")]
+mod backend;
+#[cfg(target_os = "linux")]
+pub use backend::{configure_gtk_backend, intel_backend_selected};
 
 const DISPLAY_GPU_MEMORY_RESERVE_DIVISOR: u64 = 16;
 const MIGRATE_ALL_REQUIRED_BYTES: u64 = u64::MAX;
@@ -53,6 +58,10 @@ const KERNEL_MODULES: &[(&str, &[u8])] = &[
 ];
 
 pub fn preflight() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if intel_backend_selected() {
+        return shrimply_render_vulkan::Renderer::new()?.warmup();
+    }
     configure_primary_context_flags()?;
     let context = CudaContext::new(0).map_err(|error| format!("CUDA context: {error:?}"))?;
     let mut modules = Vec::with_capacity(KERNEL_MODULES.len());
@@ -1282,7 +1291,7 @@ impl CudaVideoCompositor {
             ));
         }
 
-        let source_ptr = source.buffer.cu_deviceptr() as usize as *const u32;
+        let source_ptr = source.buffer.cuda()?.cu_deviceptr() as usize as *const u32;
         let y = unsafe { (*raw).data[0] };
         let uv = unsafe { (*raw).data[1] };
         if y.is_null() || uv.is_null() {
@@ -1425,7 +1434,7 @@ impl CudaVideoCompositor {
         pixel_format: ExportPixelFormat,
     ) -> Result<ExportGpuTiming, String> {
         let timing = self.copy_to_ffmpeg_hw_frame(&source, destination, pixel_format)?;
-        self.export_output = Some(source.buffer);
+        self.export_output = Some(source.buffer.into_cuda()?);
         Ok(timing)
     }
 
@@ -1444,6 +1453,7 @@ impl CudaVideoCompositor {
         let started = std::time::Instant::now();
         let pixels = source
             .buffer
+            .cuda()?
             .to_host_vec(&self.stream)
             .map_err(|error| format!("copy GIF frame from CUDA: {error:?}"))?;
         let width = source.width as usize;
@@ -1470,7 +1480,7 @@ impl CudaVideoCompositor {
                 .elapsed_ms(&render_events.1)
                 .map_err(|error| format!("time CUDA compositor kernel: {error:?}"))?,
         );
-        self.export_output = Some(source.buffer);
+        self.export_output = Some(source.buffer.into_cuda()?);
         Ok(ExportGpuTiming {
             compositor_ns,
             conversion_ns,

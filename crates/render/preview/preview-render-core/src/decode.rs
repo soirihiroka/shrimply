@@ -11,6 +11,37 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
+#[derive(Clone)]
+pub enum DecodedImage {
+    Raster(Image),
+    #[cfg(target_os = "linux")]
+    Video(Arc<shrimply_render_vulkan::VideoFrame>),
+}
+
+impl DecodedImage {
+    pub fn width(&self) -> i32 {
+        match self {
+            Self::Raster(image) => image.width(),
+            #[cfg(target_os = "linux")]
+            Self::Video(video) => video.frame.width() as i32,
+        }
+    }
+    pub fn height(&self) -> i32 {
+        match self {
+            Self::Raster(image) => image.height(),
+            #[cfg(target_os = "linux")]
+            Self::Video(video) => video.frame.height() as i32,
+        }
+    }
+    pub fn source(&self) -> crate::Source {
+        match self {
+            Self::Raster(image) => crate::Source::Image(image.clone()),
+            #[cfg(target_os = "linux")]
+            Self::Video(video) => crate::Source::Video(video.clone()),
+        }
+    }
+}
+
 const RGBA_CHANNELS: usize = 4;
 pub const SEQUENTIAL_DECODE_LIMIT_SECONDS: i64 = 1;
 const SCRUB_CACHE_BYTES_PER_DECODER: usize = 32 * 1024 * 1024;
@@ -18,7 +49,7 @@ const SCRUB_CACHE_BYTES_PER_DECODER: usize = 32 * 1024 * 1024;
 struct CachedFrame {
     start: Time,
     end: Time,
-    image: Image,
+    image: DecodedImage,
 }
 
 pub struct Decoder {
@@ -30,8 +61,8 @@ pub struct Decoder {
     stream: usize,
     time_base: ffmpeg::Rational,
     origin: i64,
-    current: Option<(Time, Image)>,
-    next: Option<(Time, Image)>,
+    current: Option<(Time, DecodedImage)>,
+    next: Option<(Time, DecodedImage)>,
     eof: bool,
     cancellation: Arc<AtomicU64>,
     epoch: u64,
@@ -96,7 +127,7 @@ impl Decoder {
         accuracy: CompositeAccuracy,
         latest: &AtomicU64,
         generation: u64,
-    ) -> Result<Option<(Time, Image)>, String> {
+    ) -> Result<Option<(Time, DecodedImage)>, String> {
         if let Some(cached) = self
             .history
             .iter()
@@ -194,7 +225,7 @@ impl Decoder {
         &mut self,
         latest: &AtomicU64,
         generation: u64,
-    ) -> Result<Option<(Time, Image)>, String> {
+    ) -> Result<Option<(Time, DecodedImage)>, String> {
         let mut decoded = frame::Video::empty();
         loop {
             if latest.load(Ordering::Relaxed) != generation {
@@ -237,6 +268,15 @@ impl Decoder {
                 - self.origin,
             self.time_base,
         );
+        #[cfg(target_os = "linux")]
+        if decoded.format() == Pixel::VAAPI {
+            return Ok(Some((
+                time,
+                DecodedImage::Video(Arc::new(shrimply_render_vulkan::VideoFrame {
+                    frame: decoded,
+                })),
+            )));
+        }
         #[cfg(target_os = "macos")]
         {
             if self.output_format != Some(decoded.format()) {
@@ -322,7 +362,7 @@ impl Decoder {
         );
         let image = skia_safe::images::raster_from_data(&info, Data::new_copy(&pixels), row_bytes)
             .ok_or("create decoded Skia image")?;
-        Ok(Some((time, image)))
+        Ok(Some((time, DecodedImage::Raster(image))))
     }
 }
 
@@ -330,6 +370,18 @@ fn open_decoder(
     parameters: codec::Parameters,
     time_base: ffmpeg::Rational,
 ) -> Result<codec::decoder::Video, String> {
+    #[cfg(target_os = "linux")]
+    if matches!(
+        parameters.id(),
+        codec::Id::H264
+            | codec::Id::HEVC
+            | codec::Id::VP8
+            | codec::Id::VP9
+            | codec::Id::MPEG2VIDEO
+            | codec::Id::MJPEG
+    ) {
+        return shrimply_render_vulkan::decoder(&parameters, time_base);
+    }
     #[cfg(target_os = "macos")]
     match videotoolbox::open(&parameters, time_base) {
         Ok(decoder) => return Ok(decoder),

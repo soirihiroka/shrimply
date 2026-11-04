@@ -28,6 +28,7 @@ fn main() {
         "cargo:rustc-link-search=native={}",
         cuda.join("lib/x64").display()
     );
+    #[cfg(windows)]
     println!("cargo:rustc-link-lib=dylib=cuda");
 }
 

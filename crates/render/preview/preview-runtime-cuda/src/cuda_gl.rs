@@ -9,6 +9,7 @@ use shrimply_gpu_cuda_memory::MemoryKind;
 const CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD: u32 = 0x02;
 
 unsafe extern "C" {
+    #[link_name = "shrimply_cuda_graphics_gl_register_image"]
     fn cuGraphicsGLRegisterImage(
         p_cuda_resource: *mut sys::CUgraphicsResource,
         image: u32,

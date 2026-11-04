@@ -20,6 +20,8 @@ use video::compositor::{
 
 pub use shrimply_preview_interaction_skia::captions;
 mod cuda_gl;
+#[cfg(target_os = "linux")]
+mod intel_gl;
 pub use shrimply_preview_interaction_skia::{geometry, guides, navigation};
 mod media;
 pub mod provider;

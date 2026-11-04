@@ -1,4 +1,5 @@
 mod decode;
+pub use decode::DecodedImage;
 mod generated;
 mod items;
 mod layers;
@@ -36,7 +37,7 @@ pub struct Layer {
 }
 
 pub struct VideoMask {
-    pub image: Image,
+    pub image: DecodedImage,
     pub size: (u32, u32),
     pub sampling: shrimply_render_core::VideoSampleMethod,
 }
@@ -45,6 +46,8 @@ pub enum Source {
     Generated(Box<shrimply_visual_core::generated::GeneratedFrame>),
     Group(Vec<Layer>),
     Image(Image),
+    #[cfg(target_os = "linux")]
+    Video(std::sync::Arc<shrimply_render_vulkan::VideoFrame>),
     Background(Box<shrimply_render_core::background_spirv::BackgroundUniforms>),
     Manim(ManimFrame),
     RasterMorph(Box<RasterMorph>),

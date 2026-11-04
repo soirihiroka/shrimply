@@ -107,7 +107,7 @@ pub struct LayeredImageFrame {
 
 #[derive(Clone)]
 pub struct ImageFrame {
-    pub image: Image,
+    pub image: decode::DecodedImage,
     pub presentation_time: Option<Time>,
 }
 
@@ -456,7 +456,10 @@ fn load(
                     )?;
                 let (presentation_time, image) = match image {
                     Some((presentation_time, image)) => (Some(presentation_time), image),
-                    None if request.id.plane == Plane::Alpha => (None, transparent_mask_image()?),
+                    None if request.id.plane == Plane::Alpha => (
+                        None,
+                        decode::DecodedImage::Raster(transparent_mask_image()?),
+                    ),
                     None => return Err("video contains no decodable frame".into()),
                 };
                 Frame::Image(ImageFrame {
@@ -494,7 +497,7 @@ fn load(
                     })
                 } else {
                     Frame::Image(ImageFrame {
-                        image,
+                        image: decode::DecodedImage::Raster(image),
                         presentation_time: None,
                     })
                 }
@@ -515,12 +518,14 @@ fn load(
                     None,
                 );
                 Frame::Image(ImageFrame {
-                    image: skia_safe::images::raster_from_data(
-                        &info,
-                        Data::new_copy(&rendered.rgba),
-                        rendered.size.width as usize * size_of::<u32>(),
-                    )
-                    .ok_or("Could not create PDF page image")?,
+                    image: decode::DecodedImage::Raster(
+                        skia_safe::images::raster_from_data(
+                            &info,
+                            Data::new_copy(&rendered.rgba),
+                            rendered.size.width as usize * size_of::<u32>(),
+                        )
+                        .ok_or("Could not create PDF page image")?,
+                    ),
                     presentation_time: None,
                 })
             }

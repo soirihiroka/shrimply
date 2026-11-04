@@ -40,6 +40,8 @@ macro_rules! abort_render_if_superseded {
 
 mod frame_rgba;
 pub use frame_rgba::{RgbaVideoFrame, render_items_rgba};
+#[cfg(target_os = "linux")]
+mod intel;
 mod preload;
 mod render;
 mod sam2;
@@ -954,6 +956,11 @@ fn video_compositor_worker(
     resource_config: RenderResourceConfig,
     channels: VideoWorkerChannels,
 ) {
+    #[cfg(target_os = "linux")]
+    if crate::gpu::intel_backend_selected() {
+        intel::worker(project, resource_config, channels);
+        return;
+    }
     let VideoWorkerChannels {
         command_rx,
         mut sam2_scheduler,

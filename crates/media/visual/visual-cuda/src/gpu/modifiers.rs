@@ -75,7 +75,12 @@ impl CanvasRgbaFrame {
 impl From<CompositedVideoFrame> for CanvasRgbaFrame {
     fn from(frame: CompositedVideoFrame) -> Self {
         Self {
-            storage: CanvasRgbaStorage::Owned(frame.buffer),
+            storage: CanvasRgbaStorage::Owned(
+                frame
+                    .buffer
+                    .into_cuda()
+                    .expect("CUDA modifier received an Intel frame"),
+            ),
             width: frame.width,
             height: frame.height,
         }

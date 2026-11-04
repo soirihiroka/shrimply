@@ -1,9 +1,12 @@
 #![cfg(target_os = "macos")]
 
+use shrimply_render_metal as gpu;
+#[path = "../../preview-render-core/src/gpu_alpha_mask.rs"]
 mod alpha_mask;
 pub mod camera_reconstruction;
 mod capture;
 mod compositor;
+#[path = "../../preview-render-core/src/gpu_effects.rs"]
 mod effects;
 pub mod modifier_cache;
 mod optical_flow;

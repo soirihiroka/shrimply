@@ -7057,6 +7057,7 @@ dependencies = [
  "shrimply-project-document",
  "shrimply-project-evaluation",
  "shrimply-render-core",
+ "shrimply-render-vulkan",
  "shrimply-scene-3d",
  "shrimply-visual-core",
  "shrimply-visual-modifiers",
@@ -7097,6 +7098,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-preview-render-vulkan"
+version = "0.1.0"
+dependencies = [
+ "shrimply-manim-state",
+ "shrimply-math-core",
+ "shrimply-math-geometry",
+ "shrimply-math-media",
+ "shrimply-preview-render-core",
+ "shrimply-project-document",
+ "shrimply-render-core",
+ "shrimply-render-vulkan",
+ "shrimply-visual-core",
+ "skia-safe",
+ "uuid",
+]
+
+[[package]]
 name = "shrimply-preview-runtime-cuda"
 version = "0.1.0"
 dependencies = [
@@ -7118,6 +7136,7 @@ dependencies = [
  "shrimply-project-document",
  "shrimply-project-evaluation",
  "shrimply-property-model",
+ "shrimply-render-vulkan",
  "shrimply-surface-gl-skia",
  "shrimply-visual-core",
  "shrimply-visual-cuda",
@@ -7328,6 +7347,20 @@ dependencies = [
  "objc2-metal",
  "serde_json",
  "shrimply-gpu-metal",
+ "shrimply-render-core",
+ "shrimply-slang-build",
+ "skia-safe",
+ "tracing",
+]
+
+[[package]]
+name = "shrimply-render-vulkan"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "ffmpeg-next",
+ "libc",
+ "serde_json",
  "shrimply-render-core",
  "shrimply-slang-build",
  "skia-safe",
@@ -7828,6 +7861,7 @@ dependencies = [
  "shrimply-path-core",
  "shrimply-pdf",
  "shrimply-preview-provider-skia",
+ "shrimply-preview-render-vulkan",
  "shrimply-profiling",
  "shrimply-project-document",
  "shrimply-project-evaluation",
@@ -7835,6 +7869,7 @@ dependencies = [
  "shrimply-render-3d-core",
  "shrimply-render-core",
  "shrimply-render-kernels-cuda",
+ "shrimply-render-vulkan",
  "shrimply-resource-pipeline",
  "shrimply-scene-3d",
  "shrimply-shape-3d",

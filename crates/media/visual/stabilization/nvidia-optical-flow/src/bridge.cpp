@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <new>
+#include "../../../../../gpu/cuda/gpu-cuda/driver.h"
 
 namespace {
 

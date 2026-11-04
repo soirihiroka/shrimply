@@ -592,7 +592,10 @@ impl Compositor {
             let mask_buffer = layer
                 .video_mask
                 .as_ref()
-                .map(|mask| self.image_buffer(&mask.image, used_sources))
+                .map(|mask| {
+                    let shrimply_preview_render_core::DecodedImage::Raster(image) = &mask.image;
+                    self.image_buffer(image, used_sources)
+                })
                 .transpose()?;
             let renderer = self.compute.as_mut().expect("initialized Metal compositor");
             let buffer = if let Some((mask, mask_buffer)) =

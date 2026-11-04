@@ -1,6 +1,8 @@
 #include <cuda.h>
+#include <cudaGL.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "driver.h"
 
 CUresult shrimply_cuda_init(unsigned flags) { return cuInit(flags); }
 CUresult shrimply_cuda_device_get(CUdevice *device, int ordinal) {
@@ -243,4 +245,8 @@ CUresult shrimply_cuda_error_name(CUresult result, const char **name) {
 }
 CUresult shrimply_cuda_error_string(CUresult result, const char **description) {
   return cuGetErrorString(result, description);
+}
+
+CUresult shrimply_cuda_graphics_gl_register_image(void **resource, unsigned image, unsigned target, unsigned flags) {
+  return cuGraphicsGLRegisterImage((CUgraphicsResource *)resource, image, target, flags);
 }

@@ -22,6 +22,7 @@ fn main() {
         .warnings(true)
         .compile("shrimply_nvidia_optical_flow_bridge");
 
+    #[cfg(windows)]
     println!("cargo:rustc-link-lib=dylib=cuda");
     #[cfg(windows)]
     if let Some(cuda) = env::var_os("CUDA_HOME")

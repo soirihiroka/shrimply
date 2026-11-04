@@ -371,23 +371,10 @@ impl VideoSurface {
         let Some(frame) = &state.frame else {
             return Ok(None);
         };
-        frame
-            .buffer
-            .context()
-            .synchronize()
-            .map_err(|error| format!("could not synchronize preview frame: {error}"))?;
-        let stream = frame.buffer.context().default_stream();
-        let pixels = frame
-            .buffer
-            .to_host_vec(&stream)
-            .map_err(|error| format!("could not copy preview frame: {error}"))?;
         let width = i32::try_from(frame.width).map_err(|_| "preview width is too large")?;
         let height = i32::try_from(frame.height).map_err(|_| "preview height is too large")?;
         let stride = frame.width as usize * std::mem::size_of::<u32>();
-        let mut bytes = Vec::with_capacity(pixels.len() * std::mem::size_of::<u32>());
-        for pixel in pixels {
-            bytes.extend_from_slice(&pixel.to_le_bytes());
-        }
+        let bytes = frame.rgba_bytes()?;
         Ok(Some(
             gdk::MemoryTexture::new(
                 width,

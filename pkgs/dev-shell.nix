@@ -30,6 +30,8 @@
   shrimply-slang,
   uv,
   vte-gtk4,
+  vulkan-headers,
+  vulkan-loader,
 }:
 let
   cudaStubs = lib.getOutput "stubs" cudaPackages.cuda_cudart;
@@ -70,6 +72,8 @@ mkShell {
     shrimply-slang
     uv
     vte-gtk4
+    vulkan-headers
+    vulkan-loader
   ];
 
   CARGO = "cargo";
