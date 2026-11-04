@@ -338,6 +338,17 @@ impl Renderer {
         let kernel = self.kernel(arguments.layout.name)?;
         let pipeline = kernel.pipeline;
         let group = kernel.layout.group;
+        let mut groups = [0_u32; 3];
+        for axis in 0..groups.len() {
+            groups[axis] = u32::try_from(extent[axis].div_ceil(group[axis]))
+                .map_err(|_| "Vulkan dispatch group count overflow")?;
+            if groups[axis] > self.device.limits.max_compute_work_group_count[axis] {
+                return Err(format!(
+                    "Intel dispatch exceeds the GPU workgroup limit on axis {axis}: {} > {}",
+                    groups[axis], self.device.limits.max_compute_work_group_count[axis]
+                ));
+            }
+        }
         let sizes = [vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::UNIFORM_BUFFER)
             .descriptor_count(1)];
@@ -400,12 +411,9 @@ impl Renderer {
                 &[set],
                 &[],
             );
-            self.device.raw.cmd_dispatch(
-                command,
-                extent[0].div_ceil(group[0]) as u32,
-                extent[1].div_ceil(group[1]) as u32,
-                extent[2].div_ceil(group[2]) as u32,
-            );
+            self.device
+                .raw
+                .cmd_dispatch(command, groups[0], groups[1], groups[2]);
         }
         resources.push(uniforms);
         self.submit(command, resources, Some(pool))

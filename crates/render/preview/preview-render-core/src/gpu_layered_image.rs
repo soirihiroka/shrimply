@@ -40,9 +40,9 @@ pub fn composite(
         }
         let key = (plan.source_key.clone(), index);
         used_sources.insert(key.clone());
-        if !sources.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(entry) = sources.entry(key) {
             let source = renderer.upload(&layer.rgba)?;
-            sources.insert(key, source);
+            entry.insert(source);
         }
     }
 

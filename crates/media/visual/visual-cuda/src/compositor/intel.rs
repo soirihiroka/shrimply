@@ -15,6 +15,7 @@ struct Pending {
     frame: Presented,
     request: Request,
     revision: u64,
+    project_generation: u64,
     exclusion: Option<Uuid>,
     started: Instant,
 }
@@ -37,6 +38,7 @@ pub(super) fn worker(
     };
     compositor.set_decoder_limit(config.maximum_temporal_decoders);
     let mut revision = 0;
+    let mut project_generation = 0;
     let mut exclusion = None;
     let mut request = None;
     let mut pending: Option<Pending> = None;
@@ -58,12 +60,13 @@ pub(super) fn worker(
             match command {
                 WorkerCommand::Stop => return,
                 WorkerCommand::SetProject => {
-                    if let Some((next, next_revision, _)) = take_pending_project(
+                    if let Some((next, next_revision, next_generation)) = take_pending_project(
                         &channels.pending_project,
                         &channels.project_notification_pending,
                     ) {
                         project = (*next).clone();
                         revision = next_revision;
+                        project_generation = next_generation;
                         compositor.invalidate();
                         request = None;
                     }
@@ -75,7 +78,11 @@ pub(super) fn worker(
                 WorkerCommand::ConfigureResources(config) => {
                     compositor.set_decoder_limit(config.maximum_temporal_decoders)
                 }
-                WorkerCommand::ScheduleSam2Analysis => {}
+                WorkerCommand::ScheduleSam2Analysis => {
+                    let _ = channels.event_tx.try_send(VideoEvent::Error(
+                        "SAM2 GPU analysis is unavailable on the Intel preview backend".into(),
+                    ));
+                }
                 WorkerCommand::Render {
                     position,
                     accuracy,
@@ -104,6 +111,8 @@ pub(super) fn worker(
             let pending_frame = pending.take().expect("polled Intel frame disappeared");
             let current = pending_frame.request;
             if channels.cancel_generation.load(Ordering::Acquire) == current.generation
+                && channels.latest_project_generation.load(Ordering::Acquire)
+                    == pending_frame.project_generation
                 && pending_frame.revision == revision
                 && pending_frame.exclusion == exclusion
             {
@@ -178,11 +187,16 @@ pub(super) fn worker(
                     frame,
                     request: current,
                     revision,
+                    project_generation,
                     exclusion,
                     started,
                 })
             }
-            Ok(None) => {}
+            Ok(None) => {
+                if !compositor.needs_update() {
+                    request = None;
+                }
+            }
             Err(error) => {
                 let _ = channels.event_tx.try_send(VideoEvent::Error(error));
                 request = None;

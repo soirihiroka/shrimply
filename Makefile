@@ -417,9 +417,12 @@ intel-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-render-vulkan -p shrimply-preview-render-vulkan --all-targets
 	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-render-vulkan -p shrimply-preview-render-vulkan --all-targets -- -D warnings
 
-.PHONY: intel-benchmark
+.PHONY: intel-benchmark intel-gl-probe
 intel-benchmark: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-render-vulkan --example intel_gpu -- "$(VIDEO)" "$(or $(FRAMES),120)"
+
+intel-gl-probe: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-preview-runtime-cuda --example intel_gl_probe
 
 frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost

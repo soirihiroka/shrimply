@@ -31,3 +31,6 @@ uuid = { workspace = true, features = ["v4"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 shrimply-render-vulkan.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+libloading.workspace = true

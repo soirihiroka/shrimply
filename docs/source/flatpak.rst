@@ -1,8 +1,9 @@
 Flatpak Installation
 ====================
 
-The Flatpak provides pre-alpha GTK builds for x86_64 Linux. Flatpak and a
-compatible NVIDIA driver must be installed on your system.
+The Flatpak provides pre-alpha GTK builds for x86_64 Linux. Install Flatpak
+and either a compatible NVIDIA driver or Intel's Mesa and VA-API drivers.
+See :ref:`development-intel-preview` for the Intel preview backend's scope.
 
 Install and launch
 ------------------

@@ -7121,6 +7121,7 @@ dependencies = [
  "glam 0.34.1",
  "glow",
  "libc",
+ "libloading 0.9.0",
  "shrimply-3dgs-core",
  "shrimply-audio-engine",
  "shrimply-components-skia",

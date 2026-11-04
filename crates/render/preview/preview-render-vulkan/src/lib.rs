@@ -94,6 +94,9 @@ impl Compositor {
     pub fn take_manim_updates(&mut self) -> Vec<shrimply_manim_state::Update> {
         self.scene.take_manim_updates()
     }
+    pub fn needs_update(&self) -> bool {
+        self.scene.needs_update()
+    }
     pub fn prepare(
         &mut self,
         project: &Project,

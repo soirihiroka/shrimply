@@ -88,6 +88,9 @@ impl Renderer {
         {
             return Err("Intel video source is not a VA-API surface".into());
         }
+        if raw.width <= 0 || raw.height <= 0 {
+            return Err("Intel video surface dimensions must be positive".into());
+        }
         let context = unsafe { &*(*raw.hw_frames_ctx).data.cast::<sys::AVHWFramesContext>() };
         let bytes_per_component = match context.sw_format {
             sys::AVPixelFormat::AV_PIX_FMT_NV12 => 1,
@@ -199,7 +202,7 @@ impl Renderer {
                 vk::ImageMemoryBarrier2::default()
                     .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
                     .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                    .src_access_mask(vk::AccessFlags2::from_raw(native.access[index].into()))
+                    .src_access_mask(vk::AccessFlags2::from_raw(native.access[index] as _))
                     .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
                     .old_layout(vk::ImageLayout::from_raw(native.layout[index] as i32))
                     .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
