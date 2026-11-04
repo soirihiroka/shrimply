@@ -32,38 +32,49 @@ fn main() -> Result<(), String> {
     }
     let project = project::load_project_snapshot(&path)?;
     let fps = project.fps;
+    let last = time_from_frame(count - 1, fps).ok_or("Invalid playback frame position")?;
+    if last >= project.duration() {
+        return Err("Benchmark frame count exceeds the project duration".into());
+    }
     let (commands, events) = spawn_worker(project);
-    let started = Instant::now();
-    let mut first_frame = Duration::ZERO;
-    for index in 0..count {
-        let position = time_from_frame(index, fps).ok_or("Invalid playback frame position")?;
-        commands
-            .send(VideoCommand::Render {
-                position,
-                accuracy: if index == 0 {
-                    CompositeAccuracy::FULLY_ACCURATE
-                } else {
-                    CompositeAccuracy::CONTINUOUS_TIME_ACCURATE
-                },
-            })
-            .map_err(|e| e.to_string())?;
-        loop {
-            match events
-                .recv_timeout(WORKER_TIMEOUT)
-                .map_err(|e| e.to_string())?
-            {
-                VideoEvent::Error(error) => return Err(error),
-                VideoEvent::Frame {
-                    position: rendered, ..
-                } if rendered == position => break,
-                _ => {}
+    for pass in ["Cold", "Warm"] {
+        let started = Instant::now();
+        let mut first_frame = Duration::ZERO;
+        for index in 0..count {
+            let position = time_from_frame(index, fps).ok_or("Invalid playback frame position")?;
+            commands
+                .send(VideoCommand::Render {
+                    position,
+                    accuracy: if index == 0 {
+                        CompositeAccuracy::FULLY_ACCURATE
+                    } else {
+                        CompositeAccuracy::CONTINUOUS_TIME_ACCURATE
+                    },
+                })
+                .map_err(|e| e.to_string())?;
+            loop {
+                match events
+                    .recv_timeout(WORKER_TIMEOUT)
+                    .map_err(|e| e.to_string())?
+                {
+                    VideoEvent::Error(error) => return Err(error),
+                    VideoEvent::Frame {
+                        position: rendered, ..
+                    } if rendered == position => break,
+                    _ => {}
+                }
+            }
+            if index == 0 {
+                first_frame = started.elapsed();
             }
         }
-        if index == 0 {
-            first_frame = started.elapsed();
-        }
+        let elapsed = started.elapsed();
+        println!(
+            "{pass}: {count} preview frames in {elapsed:?}; {} fps; first frame {first_frame:?}; no pixel readbacks",
+            u128::from(count) * 1_000_000_000 / elapsed.as_nanos().max(1)
+        );
     }
-    let rendered = started.elapsed();
+    let shutdown = Instant::now();
     commands
         .send(VideoCommand::Stop)
         .map_err(|e| e.to_string())?;
@@ -76,16 +87,6 @@ fn main() -> Result<(), String> {
             Err(error) => return Err(error.to_string()),
         }
     }
-    let elapsed = started.elapsed();
-    println!(
-        "{count} preview frames in {elapsed:?}; {} fps; no pixel readbacks",
-        u128::from(count) * 1_000_000_000 / elapsed.as_nanos().max(1)
-    );
-    if count > 1 {
-        println!(
-            "First frame: {first_frame:?}; subsequent frames: {} fps",
-            u128::from(count - 1) * 1_000_000_000 / (rendered - first_frame).as_nanos().max(1)
-        );
-    }
+    println!("GPU worker shutdown: {:?}", shutdown.elapsed());
     Ok(())
 }
