@@ -135,7 +135,7 @@ fn scene_control(
     if control.path == shared::DENOISING_PATH && shrimply_visual_cuda::gpu::intel_backend_selected()
     {
         let mut control = control.clone();
-        control.value = serde_json::Value::Bool(false);
+        control.value = false.to_string();
         let widget = dropdown(&control, context);
         widget.set_sensitive(false);
         widget.set_tooltip_text(Some(
