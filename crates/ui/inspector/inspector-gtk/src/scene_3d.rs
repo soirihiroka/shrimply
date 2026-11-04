@@ -132,6 +132,17 @@ fn scene_control(
     control: &InspectorControl,
     context: &InspectorContext,
 ) -> gtk::Widget {
+    if control.path == shared::DENOISING_PATH && shrimply_visual_cuda::gpu::intel_backend_selected()
+    {
+        let mut control = control.clone();
+        control.value = serde_json::Value::Bool(false);
+        let widget = dropdown(&control, context);
+        widget.set_sensitive(false);
+        widget.set_tooltip_text(Some(
+            "GPU denoising is unavailable on the Intel Vulkan backend",
+        ));
+        return widget;
+    }
     match control.kind {
         ControlKind::Selector => dropdown(control, context),
         ControlKind::LayeredNumber => {

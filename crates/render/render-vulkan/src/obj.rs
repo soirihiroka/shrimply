@@ -141,8 +141,6 @@ impl Renderer {
         } else {
             (empty_texture, fallback.clone())
         };
-        let denoising =
-            plan.params.denoising && plan.params.shading_model == shader::ShadingModel::Pbr;
         let region_outline = plan.params.toon_outline_mode != shader::OutlineMode::Off
             && plan.params.toon_outline_method == shader::OutlineMethod::RegionBoundary;
         let guide = if region_outline {
@@ -159,15 +157,10 @@ impl Renderer {
         } else {
             fallback.clone()
         };
-        let mut denoiser = Vec::new();
-        for _ in 0..7 {
-            denoiser.push(if denoising {
-                self.allocate(float_bytes)?
-            } else {
-                fallback.clone()
-            });
-        }
         let mut uniforms = plan.uniforms;
+        // This backend has no supported GPU ray-tracing denoiser yet. In particular,
+        // OIDN's Intel GPU backend requires Xe; never fall back to CPU denoising.
+        uniforms.pbr.denoising = 0;
         uniforms.transmission_background[1] = u32::from(background.is_some()) as f32;
         let scene = self.upload(&pack_scene_uniforms(&uniforms))?;
         let uploaded = self.object.as_ref().expect("uploaded 3D geometry");
@@ -176,7 +169,7 @@ impl Renderer {
             output_size_data: OutputSize {
                 width: plan.width,
                 height: plan.height,
-                denoising: u32::from(denoising),
+                denoising: 0,
                 padding: 0,
             },
             positions_data: uploaded.positions.address(),
@@ -195,13 +188,13 @@ impl Renderer {
             output_pixels_data: output.address(),
             outline_guide_data: guide.address(),
             outline_distance_data: distance.address(),
-            denoiser_beauty_data: denoiser[0].address(),
-            denoiser_background_data: denoiser[1].address(),
-            denoiser_alpha_data: denoiser[2].address(),
-            denoiser_depth_normal_data: denoiser[3].address(),
-            denoised_texture_data: denoiser[4].address(),
-            denoised_background_texture_data: denoiser[5].address(),
-            denoised_alpha_texture_data: denoiser[6].address(),
+            denoiser_beauty_data: fallback.address(),
+            denoiser_background_data: fallback.address(),
+            denoiser_alpha_data: fallback.address(),
+            denoiser_depth_normal_data: fallback.address(),
+            denoised_texture_data: fallback.address(),
+            denoised_background_texture_data: fallback.address(),
+            denoised_alpha_texture_data: fallback.address(),
         };
         let state = self.upload(bytes(std::slice::from_ref(&state)))?;
         let mut retained = [
@@ -230,13 +223,9 @@ impl Renderer {
             environment_buffer,
             state.clone(),
         ]);
-        retained.extend(denoiser);
         let mut kernels = vec!["obj_compute"];
         if region_outline {
             kernels.extend(["obj_outline_distance_compute", "obj_outline_compute"]);
-        }
-        if denoising {
-            kernels.extend(["obj_software_denoise", "obj_denoise_composite_compute"]);
         }
         const TRANSPORT: u32 = 1 << 2;
         const GROUNDS: u32 = 1 << 3;
@@ -279,7 +268,11 @@ impl Renderer {
         if std::env::var_os("SHRIMPLY_OBJ_PROBE").is_some() {
             submissions.last().expect("object submission").wait()?;
             let pixels = self.readback(&output)?;
-            eprintln!("OBJ raw {:?}; nonzero {}", &pixels[..16], pixels.iter().filter(|&&v| v != 0).count());
+            eprintln!(
+                "OBJ raw {:?}; nonzero {}",
+                &pixels[..16],
+                pixels.iter().filter(|&&v| v != 0).count()
+            );
         }
         Ok(output)
     }
@@ -310,7 +303,7 @@ impl Renderer {
                         material.pbr.path_tracing as u32,
                         material.pbr.light_sampling_quality as u32,
                         material.pbr.render_quality as u32,
-                        material.pbr.denoising,
+                        0,
                     ],
                     surface: [
                         material.pbr.subsurface,

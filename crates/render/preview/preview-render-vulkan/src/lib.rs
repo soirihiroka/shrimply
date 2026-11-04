@@ -407,6 +407,14 @@ impl Compositor {
                 modifier_crop: [0.0; 4],
                 modifier_crop_pixels: [0.0; 4],
             };
+            if matches!(layer.source, Source::Obj(_))
+                && std::env::var_os("SHRIMPLY_OBJ_PROBE").is_some()
+            {
+                eprintln!(
+                    "OBJ layer {:?} transform {:?} output {:?}",
+                    layer.parameters, layer.transform, layer.output_transform
+                );
+            }
             if let Some(stabilization) = &layer.stabilization {
                 (state, buffer) = effects::apply_stabilization(
                     &mut self.renderer,

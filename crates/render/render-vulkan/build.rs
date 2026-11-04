@@ -89,10 +89,8 @@ fn main() {
         shrimply_slang_build::Target::Vulkan,
         &[
             "obj_compute",
-            "obj_denoise_composite_compute",
             "obj_outline_distance_compute",
             "obj_outline_compute",
-            "obj_software_denoise",
             "obj_software_probe",
             "reflect_software",
         ],
