@@ -139,6 +139,7 @@ impl VideoBackend for IntelBackend {
         settings: &core::ExportSettings,
         _cancelled: &AtomicBool,
     ) -> Result<(), String> {
+        let _measurement = shrimply_profiling::measure("Intel export / Initialize");
         let mut compositor = Compositor::new()?;
         compositor.set_decoder_limit(self.settings.maximum_temporal_decoders);
         self.compositor = Some(compositor);
@@ -164,6 +165,7 @@ impl VideoBackend for IntelBackend {
         settings: &core::ExportSettings,
         global_header: bool,
     ) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
+        let _measurement = shrimply_profiling::measure("Intel export / Open encoder");
         let hardware = self
             .hardware_frames
             .as_ref()
@@ -233,7 +235,10 @@ impl VideoBackend for IntelBackend {
             .compositor
             .as_mut()
             .ok_or("Intel renderer was not prepared")?;
-        let plan = compositor.prepare_accurate(project, position, cancelled)?;
+        let plan = {
+            let _measurement = shrimply_profiling::measure("Intel export / Prepare frame");
+            compositor.prepare_accurate(project, position, cancelled)?
+        };
         let hardware = self
             .hardware_frames
             .as_ref()
@@ -241,6 +246,7 @@ impl VideoBackend for IntelBackend {
         // Like FFmpeg's passthrough filters, preserve the native decoded surface
         // when no rendering or color/format conversion is necessary.
         if let Some(mut frame) = unmodified_video(&plan, hardware.pixel_format().sw_format())? {
+            shrimply_profiling::increment("Intel export / Native video surface bypasses");
             // Let the encoder choose picture types for the requested GOP/B-frame settings.
             unsafe {
                 (*frame.as_mut_ptr()).pict_type = sys::AVPictureType::AV_PICTURE_TYPE_NONE;
@@ -251,6 +257,7 @@ impl VideoBackend for IntelBackend {
                 timing: FrameTiming::default(),
             });
         }
+        let _measurement = shrimply_profiling::measure("Intel export / Render frame");
         let rendered = compositor.render_gpu(
             plan,
             u32::from_le_bytes([0, 0, 0, self.settings.background_alpha]),

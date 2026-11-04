@@ -7,6 +7,7 @@ edition = "2024"
 ffmpeg-next.workspace = true
 shrimply-export-core = { workspace = true, default-features = true }
 shrimply-math-core = { workspace = true }
+shrimply-profiling.workspace = true
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-visual-cuda = { workspace = true }
 

@@ -118,6 +118,7 @@ fn main() -> Result<(), String> {
         maximum_temporal_decoders: 4,
         gpu_host_memory_gib: fraction_new(2, 1),
     };
+    shrimply_profiling::clear();
     let started = Instant::now();
     let mut exported_frames = 0;
     export_project(
@@ -145,6 +146,7 @@ fn main() -> Result<(), String> {
         "Exported {exported_frames} frames in {:?}",
         started.elapsed()
     );
+    println!("Export profile: {}", shrimply_profiling::report_json());
     Ok(())
 }
 
