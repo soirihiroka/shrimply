@@ -403,7 +403,7 @@ struct ComputeSurface
     float3 base_color;
     float metallic;
     float roughness;
-    ComputeMaterial material;
+    uint material_index;
 };
 
 ComputeSurface load_surface(
@@ -488,7 +488,7 @@ ComputeSurface load_surface(
         material.metallic_roughness_normal_alpha.y,
         metallic_roughness,
         scene.material.y);
-    result.material = material;
+    result.material_index = material_index;
     return result;
 }
 
@@ -676,7 +676,7 @@ float4 shade_surface(
     uint path_bounce,
     inout uint seed)
 {
-    ComputeMaterial material = surface.material;
+    ComputeMaterial material = materials[surface.material_index];
     float3 world_position = surface.world_position;
     float3 normal = surface.normal;
     float4 mesh_base_color = surface.mesh_base_color;
@@ -909,7 +909,7 @@ TransportResult shade_transport_path(
     bool transmitted = false;
     uint path_bounce = first_path_bounce;
     uint seed = random_seed;
-    float alpha = surface.material.flags.x != 0
+    float alpha = materials[surface.material_index].flags.x != 0
         ? surface.mesh_base_color.a
         : scene.base_color.a;
     uint bounce_limit = pbr_transport_bounce_limit(scene.pbr);
@@ -923,7 +923,7 @@ TransportResult shade_transport_path(
         bool path_complete = false;
         float4 local = shade_surface(surface, direction, pixel, 1u, seed);
         radiance += throughput * local.rgb;
-        PbrSettings settings = material_pbr(surface.material);
+        PbrSettings settings = material_pbr(materials[surface.material_index]);
         if ((!path_tracing && settings.transmission <= 0.0)
             || path_bounce >= bounce_limit)
         {
@@ -1074,7 +1074,7 @@ TransportResult shade_transport_path(
                             transmitted = false;
                             path_bounce = reflection.path_bounce;
                             seed = reflection.random_seed;
-                            alpha = surface.material.flags.x != 0
+                            alpha = materials[surface.material_index].flags.x != 0
                                 ? surface.mesh_base_color.a
                                 : scene.base_color.a;
                             continue;
@@ -1258,7 +1258,7 @@ float4 render_sample(
         color = OBJECT_SHADING_MODEL == ShadingModel::Pbr
                 && OBJECT_TRANSPORT
                 && (scene.pbr.path_tracing != PathTracingMode::Off
-                    || material_pbr(surface.material).transmission > 0.0)
+                    || material_pbr(materials[surface.material_index]).transmission > 0.0)
             ? shade_stochastic_path(
                 surface,
                 camera.world_direction,
