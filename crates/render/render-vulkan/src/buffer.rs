@@ -108,6 +108,11 @@ impl Buffer {
     pub fn address(&self) -> u64 {
         self.0.address
     }
+    pub(crate) fn unused(&self) -> bool {
+        // Submissions retain their resources until their GPU fence completes.
+        // The pool's sole reference therefore proves there are no pending users.
+        Arc::strong_count(&self.0) == 1
+    }
     pub fn len(&self) -> usize {
         self.0.size as usize
     }

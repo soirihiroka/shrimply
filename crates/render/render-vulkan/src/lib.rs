@@ -13,6 +13,7 @@ use ash::vk;
 use device::Device;
 use shrimply_render_core::Nv12LayerParams;
 use std::{
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     ffi::CString,
     rc::Rc,
@@ -25,6 +26,9 @@ const PUSH_CONSTANT_BYTES: u32 = 128;
 const ADVANCED_BLEND: u32 = 1 << 31;
 const MOTION_SAMPLES: u32 = 1 << 30;
 const EXTENDED_BORDER: u32 = 1 << 29;
+// Bound retained allocations across changing canvas sizes and effect graphs.
+const MAX_CACHED_BUFFER_BYTES: usize = 256 * 1024 * 1024;
+const MAX_CACHED_BUFFERS: usize = 64;
 
 struct Field {
     name: &'static str,
@@ -172,6 +176,7 @@ pub struct Renderer {
     kernels: HashMap<(&'static str, u32), vk::Pipeline>,
     video_contexts: VecDeque<((usize, i32), Rc<vaapi::FramesContext>)>,
     video_context_limit: usize,
+    buffers: RefCell<Vec<(bool, Buffer)>>,
 }
 impl Renderer {
     pub fn new() -> Result<Self, String> {
@@ -209,6 +214,7 @@ impl Renderer {
             video_contexts: VecDeque::new(),
             // A source decoder and an encoder; the compositor applies its decoder limit.
             video_context_limit: 2,
+            buffers: RefCell::new(Vec::new()),
         })
     }
     pub fn set_video_context_limit(&mut self, maximum: usize) {
@@ -296,12 +302,41 @@ impl Renderer {
         })
     }
     pub fn upload(&self, bytes: &[u8]) -> Result<Buffer, String> {
-        let buffer = Buffer::new(self.device.clone(), bytes.len(), true)?;
+        let buffer = self.buffer(bytes.len(), true)?;
         buffer.write(bytes)?;
         Ok(buffer)
     }
     pub fn allocate(&self, length: usize) -> Result<Buffer, String> {
-        Buffer::new(self.device.clone(), length, false)
+        self.buffer(length, false)
+    }
+    fn buffer(&self, length: usize, upload: bool) -> Result<Buffer, String> {
+        let mut buffers = self.buffers.borrow_mut();
+        if let Some((_, buffer)) = buffers
+            .iter()
+            .find(|(host, buffer)| *host == upload && buffer.len() == length && buffer.unused())
+        {
+            return Ok(buffer.clone());
+        }
+        let mut retained = buffers
+            .iter()
+            .map(|(_, buffer)| buffer.len())
+            .sum::<usize>();
+        while buffers.len() >= MAX_CACHED_BUFFERS
+            || retained > MAX_CACHED_BUFFER_BYTES.saturating_sub(length)
+        {
+            let Some(index) = buffers.iter().position(|(_, buffer)| buffer.unused()) else {
+                break;
+            };
+            retained -= buffers.swap_remove(index).1.len();
+        }
+        let buffer = Buffer::new(self.device.clone(), length, upload)?;
+        if buffers.len() < MAX_CACHED_BUFFERS
+            && length <= MAX_CACHED_BUFFER_BYTES
+            && retained <= MAX_CACHED_BUFFER_BYTES - length
+        {
+            buffers.push((upload, buffer.clone()));
+        }
+        Ok(buffer)
     }
     fn command(&self) -> Result<vk::CommandBuffer, String> {
         let command = unsafe {
