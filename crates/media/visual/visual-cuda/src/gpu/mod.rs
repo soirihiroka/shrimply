@@ -129,8 +129,8 @@ pub struct CudaVideoCompositor {
     next_serial: u64,
     render_control: Option<DecodeControl>,
     observed_gpu_oom_generation: u64,
-    layer_params: Option<DeviceBuffer<kernels::Nv12LayerParams>>,
-    motion_transforms: Option<DeviceBuffer<glam::Mat3>>,
+    layer_params: Vec<DeviceBuffer<kernels::Nv12LayerParams>>,
+    motion_transforms: Vec<DeviceBuffer<glam::Mat3>>,
     export_output: Option<DeviceBuffer<u32>>,
     preview_outputs: Vec<Arc<DeviceBuffer<u32>>>,
     last_display_memory_check: Option<Instant>,
@@ -165,8 +165,8 @@ impl CudaVideoCompositor {
             next_serial: 1,
             render_control: None,
             observed_gpu_oom_generation: gpu_oom_generation(),
-            layer_params: None,
-            motion_transforms: None,
+            layer_params: Vec::new(),
+            motion_transforms: Vec::new(),
             export_output: None,
             preview_outputs: Vec::new(),
             last_display_memory_check: None,
@@ -527,7 +527,7 @@ impl CudaVideoCompositor {
                     &self.context,
                     &self.stream,
                     &prepared.params,
-                    self.layer_params.take(),
+                    &mut self.layer_params,
                 )?)
             }
         };
@@ -535,7 +535,7 @@ impl CudaVideoCompositor {
             &self.context,
             &self.stream,
             &prepared.motion_transforms,
-            self.motion_transforms.take(),
+            &mut self.motion_transforms,
         )?;
         if export && self.export_render_events.is_none() {
             let flags = Some(sys::CUevent_flags_enum_CU_EVENT_DEFAULT);
@@ -613,8 +613,8 @@ impl CudaVideoCompositor {
                 .map_err(|error| format!("record CUDA compositor end event: {error:?}"))?;
         }
 
-        self.layer_params = params;
-        self.motion_transforms = Some(motion_transforms);
+        self.layer_params.extend(params);
+        self.motion_transforms.push(motion_transforms);
 
         if !export {
             let _measurement = shrimply_profiling::measure("CUDA compositor / Synchronize");
@@ -892,8 +892,9 @@ impl CudaVideoCompositor {
             );
             return Ok(());
         }
-        let mut released = self.layer_params.take().is_some();
-        released |= self.motion_transforms.take().is_some();
+        let mut released = !self.layer_params.is_empty() || !self.motion_transforms.is_empty();
+        self.layer_params.clear();
+        self.motion_transforms.clear();
         released |= self.export_output.take().is_some();
         released |= !self.preview_outputs.is_empty();
         self.preview_outputs.clear();

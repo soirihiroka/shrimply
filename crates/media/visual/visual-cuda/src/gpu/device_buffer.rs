@@ -3,19 +3,26 @@ use std::mem;
 use shrimply_gpu_cuda::{CudaContext, CudaStream, memory};
 use shrimply_gpu_cuda_memory::GpuBuffer as DeviceBuffer;
 
+const MAX_CACHED_PARAMETER_BUFFERS: usize = 4;
+
 pub(super) fn copy<T>(
     context: &CudaContext,
     stream: &CudaStream,
     data: &[T],
-    spare: Option<DeviceBuffer<T>>,
+    cache: &mut Vec<DeviceBuffer<T>>,
 ) -> Result<DeviceBuffer<T>, String> {
     let byte_len = mem::size_of_val(data);
     context
         .bind_to_thread()
         .map_err(|error| format!("bind CUDA context for params upload: {error:?}"))?;
-    let buffer = if let Some(buffer) = spare.filter(|buffer| buffer.len() == data.len()) {
-        buffer
+    let buffer = if let Some(index) = cache.iter().position(|buffer| buffer.len() == data.len()) {
+        cache.swap_remove(index)
     } else {
+        // Keep common layer/motion counts resident when clips start or end,
+        // without exposing stale trailing elements to the kernel's slice ABI.
+        if cache.len() == MAX_CACHED_PARAMETER_BUFFERS {
+            cache.remove(0);
+        }
         shrimply_gpu_cuda_memory::global()
             .allocate_buffer::<u8>(
                 stream,
