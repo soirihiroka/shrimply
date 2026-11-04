@@ -1,6 +1,6 @@
 use glam::{UVec2, Vec2};
 
-pub const FLOW_GRID_SPACING: u32 = 4;
+pub use shrimply_math_geometry::{FLOW_GRID_SPACING, optical_flow_grid_size as regular_grid_size};
 
 /// Backend-neutral dense motion represented as source-pixel displacements on a
 /// regular grid. Hardware backends own estimation and resource execution.
@@ -58,14 +58,4 @@ impl OpticalFlowField {
 pub fn scaled_source_offsets(flow: &[Vec2], amount: f32) -> Vec<Vec2> {
     let scale = -amount.clamp(0.0, 1.0);
     flow.iter().map(|value| *value * scale).collect()
-}
-
-pub fn regular_grid_size(width: u32, height: u32) -> Result<UVec2, String> {
-    if width < 2 || height < 2 {
-        return Err("Morph endpoints must be at least two pixels wide and high".into());
-    }
-    Ok(UVec2::new(
-        (width - 1).div_ceil(FLOW_GRID_SPACING) + 1,
-        (height - 1).div_ceil(FLOW_GRID_SPACING) + 1,
-    ))
 }

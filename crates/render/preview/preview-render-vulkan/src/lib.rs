@@ -8,6 +8,9 @@ mod effects;
 #[path = "../../preview-render-core/src/gpu_layered_image.rs"]
 mod layered_image;
 mod manim;
+mod morph;
+mod sam2;
+pub use sam2::Sam2ProxyFrameSource;
 
 use gpu::{Buffer, Renderer, Submission, VideoFrame};
 use shrimply_math_core::Time;
@@ -64,6 +67,8 @@ impl Presented {
 
 pub struct Compositor {
     scene: Scene,
+    morphs: HashMap<shrimply_preview_render_core::MorphCacheKey, morph::Cached>,
+    used_morphs: HashSet<shrimply_preview_render_core::MorphCacheKey>,
     pub renderer: Renderer,
     images: HashMap<u32, Buffer>,
     layered_sources: HashMap<(String, usize), Buffer>,
@@ -72,6 +77,7 @@ pub struct Compositor {
     used_images: HashSet<u32>,
     used_videos: HashSet<usize>,
     sam2_proxy: Option<Buffer>,
+    sam2_target: Option<shrimply_visual_core::sam2::analysis::AnalysisTarget>,
     manim: Option<shrimply_manim_wgpu::vulkan::Renderer>,
     manim_slots: HashMap<uuid::Uuid, manim::Slot>,
     used_manim: HashSet<uuid::Uuid>,
@@ -84,6 +90,8 @@ impl Compositor {
         let renderer = Renderer::new()?;
         Ok(Self {
             scene: Scene::default(),
+            morphs: HashMap::new(),
+            used_morphs: HashSet::new(),
             renderer,
             images: HashMap::new(),
             layered_sources: HashMap::new(),
@@ -92,6 +100,7 @@ impl Compositor {
             used_images: HashSet::new(),
             used_videos: HashSet::new(),
             sam2_proxy: None,
+            sam2_target: None,
             manim: None,
             manim_slots: HashMap::new(),
             used_manim: HashSet::new(),
@@ -118,6 +127,7 @@ impl Compositor {
     }
     pub fn invalidate(&mut self) {
         self.scene.invalidate();
+        self.morphs.clear();
         self.renderer.clear_video_contexts();
         self.images.clear();
         self.layered_sources.clear();
@@ -198,6 +208,7 @@ impl Compositor {
     pub fn render_gpu(&mut self, plan: FramePlan, background: u32) -> Result<Rendered, String> {
         let mut submissions = Vec::new();
         self.used_images.clear();
+        self.used_morphs.clear();
         self.used_layered_sources.clear();
         self.used_videos.clear();
         self.used_manim.clear();
@@ -218,6 +229,7 @@ impl Compositor {
             .composite_buffers(&layers, size.0, size.1, background)?
             .into_parts();
         submissions.push(composite);
+        self.morphs.retain(|key, _| self.used_morphs.contains(key));
         self.images.retain(|key, _| self.used_images.contains(key));
         self.layered_sources
             .retain(|key, _| self.used_layered_sources.contains(key));
@@ -303,6 +315,10 @@ impl Compositor {
     ) -> Result<Vec<(Nv12LayerParams, Buffer)>, String> {
         let mut result = Vec::with_capacity(layers.len());
         for layer in layers {
+            if let Source::RasterMorph(morph) = &layer.source {
+                result.extend(self.raster_morph(morph, size, external_masks, submissions)?);
+                continue;
+            }
             let mut buffer = match &layer.source {
                 Source::Image(image) => self.image(image)?,
                 Source::Video(video) => self.video(video, submissions)?,
@@ -344,11 +360,7 @@ impl Compositor {
                     return Err("OBJ rendering requires a ray-tracing-capable backend".into());
                 }
                 Source::Manim(frame) => self.manim_frame(frame)?,
-                Source::RasterMorph(_) => {
-                    return Err(
-                        "Raster morph estimation is unavailable on this Intel backend".into(),
-                    );
-                }
+                Source::RasterMorph(_) => unreachable!("handled before source rendering"),
             };
             let mut state = SpatialState {
                 parameters: layer.parameters,
@@ -408,7 +420,7 @@ impl Compositor {
                         size,
                         output_transform: layer.output_transform,
                     },
-                    sam2_target: None,
+                    sam2_target: self.sam2_target.as_ref(),
                     sam2_proxy: &mut self.sam2_proxy,
                 },
                 submissions,

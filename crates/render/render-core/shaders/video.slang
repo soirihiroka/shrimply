@@ -57,7 +57,7 @@ void mesh_flow_warp(uint3 id : SV_DispatchThreadID,
                     uniform uint *input, uniform float2 *offsets,
                     uniform uint *output, uniform uint width,
                     uniform uint height, uniform uint grid_width,
-                    uniform uint grid_height) {
+                    uniform uint grid_height, uniform float offset_scale) {
   uint index = id.x;
   if (index >= width * height)
     return;
@@ -71,8 +71,71 @@ void mesh_flow_warp(uint3 id : SV_DispatchThreadID,
                     offsets[low.y * grid_width + high.x], amount.x);
   float2 bottom = lerp(offsets[high.y * grid_width + low.x],
                        offsets[high.y * grid_width + high.x], amount.x);
-  float2 source = position + lerp(top, bottom, amount.y);
+  float2 source = position + lerp(top, bottom, amount.y) * offset_scale;
   output[index] = source.x < 0 || source.y < 0 ||
                   source.x > width - 1 || source.y > height - 1
                       ? 0 : sample_bilinear_rgba(input, width, height, source.x, source.y);
+}
+
+// Pyramidal patch matching keeps both endpoint images and displacement fields on the GPU.
+static const int FLOW_PATCH_RADIUS = 2;
+static const int FLOW_SEARCH_RADIUS = 3;
+
+float4 flow_pixel(uint *pixels, uint width, uint height, int2 position) {
+  int2 p = clamp(position, int2(0), int2(width - 1, height - 1));
+  Color value = color_premultiply(color_from_rgba(pixels[p.y * width + p.x]));
+  return float4(value.r, value.g, value.b, value.a);
+}
+
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
+void flow_downsample(uint3 id : SV_DispatchThreadID,
+                     uniform uint *input, uniform uint *output,
+                     uniform uint width, uniform uint height,
+                     uniform uint output_width, uniform uint output_height) {
+  if (id.x >= output_width * output_height) return;
+  int2 p = int2(id.x % output_width, id.x / output_width) * 2;
+  float4 value = (flow_pixel(input, width, height, p) + flow_pixel(input, width, height, p + int2(1, 0)) +
+                 flow_pixel(input, width, height, p + int2(0, 1)) + flow_pixel(input, width, height, p + 1)) * 0.25;
+  output[id.x] = color_to_rgba(color_unpremultiply(color(value.x, value.y, value.z, value.w)));
+}
+
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
+void estimate_flow(uint3 id : SV_DispatchThreadID,
+                    uniform uint *source, uniform uint *target,
+                    uniform float2 *previous, uniform float2 *output,
+                    uniform uint width, uniform uint height,
+                    uniform uint grid_width, uniform uint grid_height,
+                    uniform uint previous_width, uniform uint previous_height,
+                    uniform bool has_previous) {
+  uint i = id.x;
+  if (i >= grid_width * grid_height) return;
+  float2 uv = float2(i % grid_width, i / grid_width) / float2(grid_width - 1, grid_height - 1);
+  int2 position = int2(round(uv * float2(width - 1, height - 1)));
+  float2 estimate = 0;
+  if (has_previous) {
+    float2 grid = uv * float2(previous_width - 1, previous_height - 1);
+    uint2 low = uint2(floor(grid));
+    uint2 high = min(low + 1, uint2(previous_width - 1, previous_height - 1));
+    float2 amount = frac(grid);
+    estimate = 2.0 * lerp(lerp(previous[low.y * previous_width + low.x], previous[low.y * previous_width + high.x], amount.x),
+                          lerp(previous[high.y * previous_width + low.x], previous[high.y * previous_width + high.x], amount.x), amount.y);
+  }
+  int2 center = int2(round(estimate));
+  float best_cost = 1e30;
+  int2 best = center;
+  for (int dy = -FLOW_SEARCH_RADIUS; dy <= FLOW_SEARCH_RADIUS; ++dy) {
+    for (int dx = -FLOW_SEARCH_RADIUS; dx <= FLOW_SEARCH_RADIUS; ++dx) {
+      int2 offset = center + int2(dx, dy);
+      float cost = 0.000001 * dot(float2(offset), float2(offset));
+      for (int y = -FLOW_PATCH_RADIUS; y <= FLOW_PATCH_RADIUS; ++y) {
+        for (int x = -FLOW_PATCH_RADIUS; x <= FLOW_PATCH_RADIUS; ++x) {
+          int2 p = position + int2(x, y);
+          float4 difference = flow_pixel(source, width, height, p) - flow_pixel(target, width, height, p + offset);
+          cost += dot(difference, difference);
+        }
+      }
+      if (cost < best_cost) { best_cost = cost; best = offset; }
+    }
+  }
+  output[i] = float2(best);
 }

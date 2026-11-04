@@ -23,7 +23,7 @@ struct Pending {
 pub(super) fn worker(
     mut project: Project,
     config: RenderResourceConfig,
-    channels: VideoWorkerChannels,
+    mut channels: VideoWorkerChannels,
 ) {
     let _reset = PendingProjectReset {
         project: channels.pending_project.clone(),
@@ -56,7 +56,11 @@ pub(super) fn worker(
                 Err(_) => return,
             }
         };
-        for command in next.into_iter().chain(channels.command_rx.try_iter()) {
+        let commands = next
+            .into_iter()
+            .chain(channels.command_rx.try_iter())
+            .collect::<Vec<_>>();
+        for command in commands {
             match command {
                 WorkerCommand::Stop => return,
                 WorkerCommand::SetProject => {
@@ -69,6 +73,7 @@ pub(super) fn worker(
                         project_generation = next_generation;
                         compositor.invalidate();
                         request = None;
+                        schedule_analysis(&project, &mut channels);
                     }
                 }
                 WorkerCommand::SetPreviewExclusion(item) => {
@@ -79,9 +84,8 @@ pub(super) fn worker(
                     compositor.set_decoder_limit(config.maximum_temporal_decoders)
                 }
                 WorkerCommand::ScheduleSam2Analysis => {
-                    let _ = channels.event_tx.try_send(VideoEvent::Error(
-                        "SAM2 GPU analysis is unavailable on the Intel preview backend".into(),
-                    ));
+                    channels.sam2_scheduler.consume_notification();
+                    schedule_analysis(&project, &mut channels);
                 }
                 WorkerCommand::Render {
                     position,
@@ -89,6 +93,7 @@ pub(super) fn worker(
                     request_id,
                     cancel_generation,
                 } => {
+                    schedule_analysis(&project, &mut channels);
                     request = Some(Request {
                         position,
                         accuracy,
@@ -202,5 +207,18 @@ pub(super) fn worker(
                 request = None;
             }
         }
+    }
+}
+
+fn schedule_analysis(project: &Project, channels: &mut VideoWorkerChannels) {
+    let event_tx = channels.event_tx.clone();
+    if let Err(error) = channels.sam2_scheduler.schedule_next_with(
+        project,
+        shrimply_preview_render_vulkan::Sam2ProxyFrameSource::new,
+        move |error| {
+            let _ = event_tx.try_send(VideoEvent::Error(error));
+        },
+    ) {
+        let _ = channels.event_tx.try_send(VideoEvent::Error(error));
     }
 }

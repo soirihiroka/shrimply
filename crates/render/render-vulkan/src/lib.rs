@@ -9,7 +9,9 @@ mod vaapi;
 mod vector;
 pub use external::ExternalImage;
 mod gaussian;
+mod optical_flow;
 pub use buffer::Buffer;
+pub use optical_flow::OpticalFlow;
 pub use vaapi::{VideoFrame, decoder, video_color_space};
 
 use ash::vk;

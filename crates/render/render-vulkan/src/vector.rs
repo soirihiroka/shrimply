@@ -32,6 +32,41 @@ impl Renderer {
             .flat_map(|offset| offset.iter().flat_map(|value| value.to_ne_bytes()))
             .collect::<Vec<_>>();
         let offsets = self.upload(&bytes)?;
+        self.mesh_flow_buffer(
+            input,
+            (width, height),
+            (grid_width, grid_height),
+            offsets,
+            1.0,
+        )
+    }
+
+    pub fn mesh_flow_buffer(
+        &mut self,
+        input: Buffer,
+        size: (u32, u32),
+        grid: (u32, u32),
+        offsets: Buffer,
+        scale: f32,
+    ) -> Result<(Buffer, Submission), String> {
+        let (width, height) = size;
+        let (grid_width, grid_height) = grid;
+        let count = (width as usize)
+            .checked_mul(height as usize)
+            .ok_or("MeshFlow size overflow")?;
+        if width < 2
+            || height < 2
+            || grid_width < 2
+            || grid_height < 2
+            || !scale.is_finite()
+            || count.checked_mul(4) != Some(input.len())
+            || (grid_width as usize)
+                .checked_mul(grid_height as usize)
+                .and_then(|n| n.checked_mul(size_of::<[f32; 2]>()))
+                != Some(offsets.len())
+        {
+            return Err("Invalid GPU MeshFlow storage".into());
+        }
         let output = self.allocate(input.len())?;
         let mut arguments = self.arguments("mesh_flow_warp")?;
         arguments
@@ -41,7 +76,8 @@ impl Renderer {
             .set("width", &width.to_ne_bytes())?
             .set("height", &height.to_ne_bytes())?
             .set("grid_width", &grid_width.to_ne_bytes())?
-            .set("grid_height", &grid_height.to_ne_bytes())?;
+            .set("grid_height", &grid_height.to_ne_bytes())?
+            .set("offset_scale", &scale.to_ne_bytes())?;
         let submission = unsafe {
             self.dispatch(
                 arguments,

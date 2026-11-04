@@ -11,6 +11,7 @@ shrimply-3dgs-core.workspace = true
 ffmpeg-next.workspace = true
 libc.workspace = true
 shrimply-render-core.workspace = true
+shrimply-math-geometry.workspace = true
 skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }
 tracing.workspace = true
 
