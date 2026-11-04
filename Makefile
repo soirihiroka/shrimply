@@ -585,3 +585,7 @@ oidn-gpu-validation:
 .PHONY: text-3d-geometry-test
 text-3d-geometry-test:
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-text-3d --lib math::tests
+
+.PHONY: gtk-gpu-preferences-validation
+gtk-gpu-preferences-validation: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) run -p $(EDITOR_PACKAGE) --example gpu_preferences
