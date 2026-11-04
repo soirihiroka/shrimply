@@ -1469,11 +1469,20 @@ impl Drop for ExportedBuffer {
 }
 
 fn pick_physical_device(instance: &Instance) -> Result<(vk::PhysicalDevice, u32), String> {
+    let ordinal = shrimply_gpu_cuda::selected_device();
+    let uuid = shrimply_gpu_cuda::devices()
+        .map_err(|error| format!("Identify selected CUDA device: {error}"))?
+        .into_iter()
+        .find(|device| device.ordinal == ordinal)
+        .ok_or_else(|| format!("Selected CUDA device {ordinal} is unavailable"))?
+        .uuid;
     let devices = unsafe { instance.enumerate_physical_devices() }
         .map_err(|error| format!("enumerate Vulkan physical devices: {error:?}"))?;
     for physical_device in devices {
-        let properties = unsafe { instance.get_physical_device_properties(physical_device) };
-        if properties.vendor_id != 0x10de {
+        let mut identity = vk::PhysicalDeviceIDProperties::default();
+        let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut identity);
+        unsafe { instance.get_physical_device_properties2(physical_device, &mut properties) };
+        if identity.device_uuid != uuid {
             continue;
         }
         let queues =
@@ -1484,7 +1493,9 @@ fn pick_physical_device(instance: &Instance) -> Result<(vk::PhysicalDevice, u32)
             }
         }
     }
-    Err("no NVIDIA Vulkan graphics device found for CUDA generated rendering".to_string())
+    Err(format!(
+        "No Vulkan graphics device matches selected CUDA device {ordinal}"
+    ))
 }
 
 fn make_skia_context(
