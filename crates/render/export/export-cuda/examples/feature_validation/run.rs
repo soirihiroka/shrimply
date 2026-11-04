@@ -18,6 +18,7 @@ const FPS: i64 = 30;
 const FRAMES: i64 = 6;
 
 pub fn run() -> Result<(), String> {
+    shrimply_visual_cuda::gpu::configure_gtk_backend()?;
     let output = PathBuf::from(
         std::env::args()
             .nth(1)

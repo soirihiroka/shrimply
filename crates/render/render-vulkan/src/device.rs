@@ -17,6 +17,7 @@ pub struct Device {
     pub limits: vk::PhysicalDeviceLimits,
     submission: Mutex<()>,
     pub va: *mut sys::AVBufferRef,
+    pub drm_path: std::path::PathBuf,
     pub vulkan: *mut sys::AVBufferRef,
     pub(crate) _entry: ash::Entry,
 }
@@ -77,6 +78,7 @@ impl Device {
             }
             Err(error) => return Err(format!("Invalid SHRIMPLY_INTEL_DEVICE: {error}")),
         };
+        let drm_path = std::path::PathBuf::from(&path);
         let path = CString::new(path).map_err(|e| e.to_string())?;
         let mut va = ptr::null_mut();
         let result = unsafe {
@@ -185,6 +187,7 @@ impl Device {
                 limits: properties.limits,
                 submission: Mutex::new(()),
                 va,
+                drm_path,
                 vulkan,
                 _entry: entry,
             })

@@ -1,11 +1,9 @@
-use ffmpeg_next as ffmpeg;
-use ffmpeg_next::format::Pixel;
 use shrimply_project_document::project::{ItemAddress, Project};
 use shrimply_resource_pipeline::JobContext;
-use shrimply_visual_core::modifier_cache::encoder::{HevcBackend, RgbaAlpha};
+use shrimply_visual_core::modifier_cache::encoder::HevcBackend;
 use uuid::Uuid;
 
-use crate::compositor::{EXPORT_ASSETS_LOADING, VideoExportRenderer};
+use crate::analysis_renderer::{Renderer, Target};
 
 pub use shrimply_visual_core::modifier_cache::{Status, effective_item, invalidate, status};
 
@@ -17,23 +15,33 @@ fn bake_inner(
     request: shrimply_visual_core::modifier_cache::BakeRequest,
     context: &JobContext<shrimply_visual_core::modifier_cache::Progress>,
 ) -> Result<(), String> {
-    let mut renderer = VideoExportRenderer::new(48_000)?;
-    let (width, height) = (request.width, request.height);
+    let mut renderer = Renderer::new(48_000)?;
+    let alpha_mode = renderer.alpha_mode();
+    let backend = HevcBackend::Nvenc;
+    #[cfg(target_os = "linux")]
+    let backend = if crate::gpu::intel_backend_selected() {
+        HevcBackend::Vaapi {
+            device: shrimply_render_vulkan::device::Device::get()?
+                .drm_path
+                .clone(),
+        }
+    } else {
+        backend
+    };
     shrimply_visual_core::modifier_cache::render_and_encode(
         request,
         context,
-        HevcBackend::Nvenc,
-        RgbaAlpha::Premultiplied,
-        move |project, position, address| match renderer
-            .render_cache_item(project, position, address)
-        {
-            Ok(composited) => {
-                let mut rgba = ffmpeg::frame::Video::new(Pixel::RGBA, width, height);
-                renderer.copy_to_rgba_frame(composited, &mut rgba)?;
-                Ok(Some(rgba))
-            }
-            Err(error) if error == EXPORT_ASSETS_LOADING => Ok(None),
-            Err(error) => Err(error),
+        backend,
+        alpha_mode,
+        move |project, position, address| {
+            renderer.frame(
+                project,
+                position,
+                Target::ModifierInput {
+                    address,
+                    snap_content: false,
+                },
+            )
         },
     )
 }

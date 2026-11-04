@@ -170,6 +170,30 @@ impl Compositor {
         })
     }
 
+    pub fn capture_rgba(
+        &mut self,
+        project: &Project,
+        position: Time,
+        target: shrimply_preview_render_core::CaptureTarget,
+    ) -> Result<Option<Vec<u8>>, String> {
+        self.scene.set_capture_target(Some(target));
+        self.scene.request_frame();
+        let Some(plan) = self.prepare(
+            project,
+            position,
+            shrimply_preview_render_core::CompositeAccuracy::FULLY_ACCURATE,
+        )?
+        else {
+            return Ok(None);
+        };
+        if plan.loading || !plan.accuracy.content_accurate() {
+            return Ok(None);
+        }
+        let rendered = self.render_gpu(plan, 0)?;
+        rendered.wait()?;
+        self.renderer.readback(&rendered.buffer).map(Some)
+    }
+
     pub fn render_accurate(
         &mut self,
         project: &Project,
