@@ -95,6 +95,12 @@ impl Compositor {
     pub fn set_exclusion(&mut self, item: Option<uuid::Uuid>) {
         self.scene.set_exclusion(item);
     }
+    pub fn set_capture_target(
+        &mut self,
+        target: Option<shrimply_preview_render_core::CaptureTarget>,
+    ) {
+        self.scene.set_capture_target(target);
+    }
     pub fn invalidate(&mut self) {
         self.scene.invalidate();
         self.images.clear();

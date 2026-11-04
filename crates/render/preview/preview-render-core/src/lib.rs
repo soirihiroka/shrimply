@@ -119,6 +119,7 @@ pub struct MorphCacheKey {
 /// Selects capture output while retaining the full project for external dependencies.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CaptureTarget {
+    Items(Vec<uuid::Uuid>),
     Item(ItemAddress),
     Track(TrackAddress),
     ModifierInput {
@@ -294,6 +295,7 @@ impl Scene {
                 ..Default::default()
             },
             capture_target.as_ref().map(|target| match target {
+                CaptureTarget::Items(ids) => items::Target::Items(ids),
                 CaptureTarget::Item(address) => items::Target::Item {
                     address,
                     scope_positions: None,

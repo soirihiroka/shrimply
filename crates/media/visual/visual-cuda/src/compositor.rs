@@ -39,7 +39,7 @@ macro_rules! abort_render_if_superseded {
 }
 
 mod frame_rgba;
-pub use frame_rgba::{RgbaVideoFrame, render_items_rgba};
+pub use frame_rgba::{RgbaVideoFrame, render_items_rgba, render_project_rgba};
 #[cfg(target_os = "linux")]
 mod intel;
 mod preload;

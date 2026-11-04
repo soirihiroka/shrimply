@@ -22,6 +22,7 @@ pub(super) struct PreparedItem<'a> {
 
 #[derive(Clone, Copy)]
 pub(super) enum Target<'a> {
+    Items(&'a [uuid::Uuid]),
     Item {
         address: &'a ItemAddress,
         scope_positions: Option<&'a [Time]>,
@@ -60,8 +61,12 @@ impl Scene {
         };
         let mut scope_positions = scope.positions.clone();
         scope_positions.push(position);
+        let selected = match target {
+            Some(Target::Items(ids)) if scope.path.is_empty() => Some(ids),
+            _ => None,
+        };
         let mut active_items =
-            shrimply_visual_core::sequence::active_tracks(tracks, position, None);
+            shrimply_visual_core::sequence::active_tracks(tracks, position, selected);
         if target.is_none() {
             active_items.retain(|active| Some(active.item.id) != self.excluded_item_id);
         }

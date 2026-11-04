@@ -28,7 +28,6 @@ use shrimply_mcp::protocol::{
     ReloadManimSourceRequest, ReloadManimSourceResponse, ScopeRef, SetManimClipRequest,
     TranscribeAudioRequest, TtsInputValue, ViewFrameResponse,
 };
-use shrimply_preview_gtk::video::compositor::{EXPORT_ASSETS_LOADING, VideoExportRenderer};
 use shrimply_project_document::project::{
     AudioSource, ItemAddress, ManimParameter, ManimParameterControl, ManimParameterValue, Project,
     SequenceScopeId, TrackRef, VideoItemContent, caption_languages, fraction_denominator,
@@ -46,7 +45,6 @@ const SOCKET_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const EDIT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(29 * 60);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const WORK_QUEUE_CAPACITY: usize = 32;
-const FRAME_RENDER_AUDIO_SAMPLE_RATE: u32 = 48_000;
 const MANIM_ANTI_ALIASING_SAMPLES: [i64; 5] = [0, 2, 4, 8, 16];
 
 struct Work {
@@ -903,35 +901,12 @@ async fn view_frame(
     thread::Builder::new()
         .name("shrimply-mcp-frame".to_string())
         .spawn(move || {
-            let result = (|| {
-                let mut renderer = VideoExportRenderer::new(FRAME_RENDER_AUDIO_SAMPLE_RATE)?;
-                let rendered = loop {
-                    if render_canceled.load(Ordering::Acquire) {
-                        return Err("MCP client canceled the frame render".to_string());
-                    }
-                    match renderer.render(&project, position, 0) {
-                        Ok(frame) => break frame,
-                        Err(error) if error == EXPORT_ASSETS_LOADING => thread::yield_now(),
-                        Err(error) => return Err(error),
-                    }
-                };
-                let mut rgba = ffmpeg_next::frame::Video::new(
-                    ffmpeg_next::format::Pixel::RGBA,
-                    canvas.width,
-                    canvas.height,
-                );
-                renderer.copy_to_rgba_frame(rendered, &mut rgba)?;
-                let row_bytes = canvas.width as usize * std::mem::size_of::<u32>();
-                let mut pixels = Vec::with_capacity(row_bytes * canvas.height as usize);
-                for row in rgba
-                    .data(0)
-                    .chunks_exact(rgba.stride(0))
-                    .take(canvas.height as usize)
-                {
-                    pixels.extend_from_slice(&row[..row_bytes]);
-                }
-                Ok::<_, String>(pixels)
-            })();
+            let result = shrimply_visual_cuda::compositor::render_project_rgba(
+                &project,
+                position,
+                &render_canceled,
+            )
+            .map(|frame| frame.pixels);
             let _ = sender.send_blocking(result);
         })
         .map_err(|error| format!("could not start MCP frame renderer: {error}"))?;
