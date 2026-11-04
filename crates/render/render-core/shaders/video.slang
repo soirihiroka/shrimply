@@ -1,8 +1,9 @@
+import abi;
 import color;
 
 // The current compositor produces eight-bit RGBA. Reduce P010 only on the GPU,
 // retaining its original limited/full range coding for the shared YUV sampler.
-[shader("compute")][numthreads(256, 1, 1)]
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void p010_to_nv12(uint3 id : SV_DispatchThreadID,
                   uniform uint16_t *input, uniform uint8_t *output,
                   uniform uint64_t count, uniform uint64_t y_count,
@@ -11,7 +12,7 @@ void p010_to_nv12(uint3 id : SV_DispatchThreadID,
     output[id.x] = uint8_t(input[id.x < y_count ? id.x : uv_offset + id.x - y_count] >> 8u);
 }
 
-[shader("compute")][numthreads(256, 1, 1)]
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void unpremultiply_rgba(uint3 id : SV_DispatchThreadID,
                         uniform uint *input, uniform uint *output,
                         uniform uint64_t count) {
@@ -19,7 +20,7 @@ void unpremultiply_rgba(uint3 id : SV_DispatchThreadID,
     output[id.x] = color_to_rgba(color_unpremultiply(color_from_rgba(input[id.x])));
 }
 
-[shader("compute")][numthreads(256, 1, 1)]
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void mesh_flow_warp(uint3 id : SV_DispatchThreadID,
                     uniform uint *input, uniform float2 *offsets,
                     uniform uint *output, uniform uint width,
