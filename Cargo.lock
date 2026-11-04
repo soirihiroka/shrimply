@@ -7864,6 +7864,7 @@ dependencies = [
  "shrimply-path-core",
  "shrimply-pdf",
  "shrimply-preview-provider-skia",
+ "shrimply-preview-render-core",
  "shrimply-preview-render-vulkan",
  "shrimply-profiling",
  "shrimply-project-document",

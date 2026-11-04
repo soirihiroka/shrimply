@@ -353,7 +353,7 @@ fn begin_project_load(app: &adw::Application, path: PathBuf) {
             glib::ControlFlow::Break
         }
         Ok(Err(error)) => {
-            show_project_load_error(&app, &poll_window, "Could not initialize CUDA", &error);
+            show_project_load_error(&app, &poll_window, "Could not initialize GPU", &error);
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
@@ -361,8 +361,8 @@ fn begin_project_load(app: &adw::Application, path: PathBuf) {
             show_project_load_error(
                 &app,
                 &poll_window,
-                "Could not initialize CUDA",
-                "CUDA kernel preflight worker stopped unexpectedly",
+                "Could not initialize GPU",
+                "GPU startup worker stopped unexpectedly",
             );
             glib::ControlFlow::Break
         }
