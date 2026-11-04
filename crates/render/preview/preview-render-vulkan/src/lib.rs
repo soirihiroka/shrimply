@@ -234,6 +234,7 @@ impl Compositor {
     }
 
     pub fn render_gpu(&mut self, plan: FramePlan, background: u32) -> Result<Rendered, String> {
+        let direct_video = shrimply_preview_render_core::math::unmodified_video(&plan).is_some();
         let mut submissions = Vec::new();
         self.used_images.clear();
         self.used_morphs.clear();
@@ -252,13 +253,18 @@ impl Compositor {
             external_masks.push((external.dependency.clone(), buffer));
         }
         let layers = self.layers(&plan.layers, size, &external_masks, &mut submissions)?;
-        let (buffer, composite) = {
+        let buffer = if direct_video {
+            shrimply_profiling::increment("Intel rendering / Video composition bypasses");
+            layers[0].1.clone()
+        } else {
             let _measurement = shrimply_profiling::measure("Intel rendering / Final composition");
-            self.renderer
+            let (buffer, composite) = self
+                .renderer
                 .composite_buffers(&layers, size.0, size.1, background)?
-                .into_parts()
+                .into_parts();
+            submissions.push(composite);
+            buffer
         };
-        submissions.push(composite);
         self.morphs.retain(|key, _| self.used_morphs.contains(key));
         self.images.retain(|key, _| self.used_images.contains(key));
         self.layered_sources

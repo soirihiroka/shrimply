@@ -7,42 +7,10 @@ fn unmodified_video(
     plan: &shrimply_preview_render_core::FramePlan,
     format: sys::AVPixelFormat,
 ) -> Result<Option<ffmpeg::frame::Video>, String> {
-    use shrimply_preview_render_core::Source;
-    use shrimply_render_core::{LayerBlendMode, VideoSampleMethod, math::Mat3};
-    let [layer] = plan.layers.as_slice() else {
+    let Some(video) = shrimply_preview_render_core::math::unmodified_video(plan) else {
         return Ok(None);
     };
-    let Source::Video(video) = &layer.source else {
-        return Ok(None);
-    };
-    let parameters = layer.parameters;
-    if !plan.external_layers.is_empty()
-        || !layer.effects.is_empty()
-        || !layer.transitions.is_empty()
-        || layer.motion_blur.is_some()
-        || layer.alpha_mask.is_some()
-        || layer.video_mask.is_some()
-        || layer.stabilization.is_some()
-        || layer.morph_scene.is_some()
-        || layer.render_size != (plan.width, plan.height)
-        || layer.transform != Mat3::IDENTITY
-        || layer.output_transform != Mat3::IDENTITY
-        || parameters.opacity != 1.0
-        || parameters.crop != [0.0; 4]
-        || parameters.padding != [0.0; 4]
-        || parameters.motion_sample_count != 0
-        || parameters.motion_transform_count != 0
-        || (parameters.source_width, parameters.source_height) != (plan.width, plan.height)
-        || !matches!(
-            parameters.blend_mode,
-            LayerBlendMode::Normal | LayerBlendMode::PassThrough
-        )
-        || !matches!(
-            parameters.sample_method,
-            VideoSampleMethod::Nearest | VideoSampleMethod::Bilinear | VideoSampleMethod::Bicubic
-        )
-        || (video.frame.width(), video.frame.height()) != (plan.width, plan.height)
-        || video.frame.color_range() == ffmpeg::color::Range::JPEG
+    if video.frame.color_range() == ffmpeg::color::Range::JPEG
         || shrimply_render_vulkan::video_color_space(&video.frame)? != ffmpeg::color::Space::BT709
     {
         return Ok(None);
