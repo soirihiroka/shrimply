@@ -242,6 +242,13 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         )),
     ];
     result.push(("source-obj".into(), project(obj.clone())));
+    for (method, _) in shrimply_visual_cuda::gpu::denoising_methods() {
+        let mut item = obj.clone();
+        if let VideoItemContent::Obj(scene) = &mut item.content {
+            scene.material.denoising = method;
+        }
+        result.push((format!("denoiser-{method:?}"), project(item)));
+    }
     result.push(("gpu-optical-flow".into(), project(image.clone())));
     result.push(("gpu-denoise".into(), project(image.clone())));
     for factory in scene_3d::Scene3dModifierEffect::CATALOG {
@@ -452,13 +459,32 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
     }
     prepare_analysis(name, &project)?;
     let cancelled = Arc::new(AtomicBool::new(false));
-    let mut compositor = Compositor::new()?;
+    let intel = shrimply_visual_cuda::gpu::intel_backend_selected();
+    let mut compositor = intel.then(Compositor::new).transpose()?;
+    let mut cuda = (!intel)
+        .then(|| shrimply_visual_cuda::compositor::VideoExportRenderer::new(48_000))
+        .transpose()?;
     let mut captures = Vec::new();
     for frame in [0, FRAMES / 2, FRAMES - 1] {
-        let rendered =
-            compositor.render_accurate(&project, Time::from_fraction(frame, FPS), 0, &cancelled)?;
-        rendered.wait()?;
-        let pixels = compositor.renderer.readback(&rendered.buffer)?;
+        let time = Time::from_fraction(frame, FPS);
+        let pixels = if let Some(compositor) = &mut compositor {
+            let rendered = compositor.render_accurate(&project, time, 0, &cancelled)?;
+            rendered.wait()?;
+            compositor.renderer.readback(&rendered.buffer)?
+        } else {
+            let renderer = cuda.as_mut().expect("CUDA validation renderer");
+            loop {
+                match renderer.render(&project, time, 0) {
+                    Ok(frame) => break frame.rgba_bytes()?,
+                    Err(error)
+                        if error == shrimply_visual_cuda::compositor::EXPORT_ASSETS_LOADING =>
+                    {
+                        std::thread::yield_now()
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        };
         if pixels.len() != WIDTH as usize * HEIGHT as usize * 4 {
             return Err("Preview returned wrong pixel dimensions".into());
         }
@@ -480,6 +506,7 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
         return Err("Source preview is fully transparent".into());
     }
     drop(compositor);
+    drop(cuda);
     let settings = ExportSettings {
         path: output.join(format!("{name}.mp4")),
         overwrite: false,
