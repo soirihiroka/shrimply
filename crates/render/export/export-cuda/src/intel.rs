@@ -7,6 +7,7 @@ pub(super) struct IntelBackend {
     settings: ExportSettings,
     compositor: Option<Compositor>,
     hardware_frames: Option<HwFrameContext>,
+    profile: bool,
 }
 
 impl IntelBackend {
@@ -15,6 +16,7 @@ impl IntelBackend {
             settings,
             compositor: None,
             hardware_frames: None,
+            profile: std::env::var_os("SHRIMPLY_INTEL_PROFILE").is_some(),
         }
     }
 
@@ -184,12 +186,18 @@ impl VideoBackend for IntelBackend {
         position: Time,
         cancelled: &AtomicBool,
     ) -> Result<RenderedFrame, String> {
+        let started = std::time::Instant::now();
         let rendered = self.render(project, position, cancelled)?;
+        if self.profile {
+            rendered.wait()?;
+        }
+        let composited = started.elapsed();
         let mut frame = self
             .hardware_frames
             .as_ref()
             .ok_or("Intel encoder frames were not prepared")?
             .frame()?;
+        let allocated = started.elapsed();
         let submission = self
             .compositor
             .as_mut()
@@ -199,6 +207,13 @@ impl VideoBackend for IntelBackend {
         // VA-API's encoder consumes this surface after the Vulkan release. This
         // fence waits for GPU work only; no pixels are downloaded or reuploaded.
         submission.wait()?;
+        if self.profile {
+            eprintln!(
+                "Intel export wall times: scene/GPU={composited:?}, surface={:?}, conversion/transfer={:?}",
+                allocated - composited,
+                started.elapsed() - allocated,
+            );
+        }
         set_bt709_frame_metadata(&mut frame);
         Ok(RenderedFrame {
             frame,

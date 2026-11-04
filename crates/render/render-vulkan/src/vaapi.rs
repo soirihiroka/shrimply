@@ -491,6 +491,8 @@ impl Renderer {
     /// Import the VA-API surface through DRM PRIME; pixels stay on the GPU.
     pub fn video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
         use ffmpeg::color::{Range, Space};
+        let profiling = std::env::var_os("SHRIMPLY_INTEL_PROFILE").is_some();
+        let started = std::time::Instant::now();
         let colorspace = match source.frame.color_space() {
             Space::Unspecified if source.frame.height() >= HD_MINIMUM_HEIGHT => Space::BT709,
             Space::Unspecified => Space::SMPTE170M,
@@ -544,6 +546,10 @@ impl Renderer {
         } = layout;
         let planes = self.allocate(layout.length)?;
         let submission = self.transfer_video(&source.frame, planes.clone(), layout, false)?;
+        if profiling {
+            submission.wait()?;
+        }
+        let imported = started.elapsed();
         let (planes, pitch, uv_pitch, y_size, prior) = if bytes_per_component == 2 {
             let output = self.allocate((y_bytes + uv_size) / bytes_per_component)?;
             let mut arguments = self.arguments("p010_to_nv12")?;
@@ -597,6 +603,13 @@ impl Renderer {
         let mut converted =
             unsafe { self.dispatch(arguments, vec![planes, output.clone()], [count, 1, 1]) }?;
         converted._prior.push(prior);
+        if profiling {
+            converted.wait()?;
+            eprintln!(
+                "Intel decode wall times: import/transfer={imported:?}, RGBA conversion={:?}",
+                started.elapsed() - imported,
+            );
+        }
         Ok((output, converted))
     }
 
