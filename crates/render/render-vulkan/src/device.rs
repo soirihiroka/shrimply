@@ -17,6 +17,7 @@ pub struct Device {
     pub family: u32,
     pub memory: vk::PhysicalDeviceMemoryProperties,
     pub limits: vk::PhysicalDeviceLimits,
+    pub(crate) compute_subgroup: Option<(u32, u32)>,
     submission: Mutex<()>,
     pub va: *mut sys::AVBufferRef,
     pub drm_path: std::path::PathBuf,
@@ -147,6 +148,7 @@ impl Device {
             let native = unsafe { &*context.hwctx.cast::<sys::AVVulkanDeviceContext>() };
             let mut next = native.device_features.pNext.cast::<vk::BaseInStructure>();
             let mut shader_features = false;
+            let mut subgroup_size_control = false;
             while let Some(header) = unsafe { next.as_ref() } {
                 if header.s_type == vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_2_FEATURES {
                     let features = unsafe { &*next.cast::<vk::PhysicalDeviceVulkan12Features>() };
@@ -154,6 +156,9 @@ impl Device {
                         && features.buffer_device_address != 0
                         && features.storage_buffer8_bit_access != 0
                         && features.shader_int8 != 0;
+                } else if header.s_type == vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_3_FEATURES {
+                    let features = unsafe { &*next.cast::<vk::PhysicalDeviceVulkan13Features>() };
+                    subgroup_size_control = features.subgroup_size_control != 0;
                 }
                 next = header.p_next.cast_mut();
             }
@@ -200,7 +205,13 @@ impl Device {
                 return Err("FFmpeg's Intel Vulkan queue is unavailable".into());
             }
             let memory = unsafe { instance.get_physical_device_memory_properties(physical) };
-            let properties = unsafe { instance.get_physical_device_properties(physical) };
+            let mut subgroups = vk::PhysicalDeviceSubgroupSizeControlProperties::default();
+            let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut subgroups);
+            unsafe { instance.get_physical_device_properties2(physical, &mut properties) };
+            let properties = properties.properties;
+            let compute_subgroup = (subgroup_size_control
+                && subgroups.required_subgroup_size_stages.contains(vk::ShaderStageFlags::COMPUTE))
+                .then_some((subgroups.min_subgroup_size, subgroups.max_compute_workgroup_subgroups));
             if properties.vendor_id != 0x8086 {
                 return Err("VA-API render device is not an Intel GPU".into());
             }
@@ -213,6 +224,7 @@ impl Device {
                 family,
                 memory,
                 limits: properties.limits,
+                compute_subgroup,
                 submission: Mutex::new(()),
                 va,
                 drm_path,

@@ -270,11 +270,20 @@ impl Renderer {
             let specialization = vk::SpecializationInfo::default()
                 .map_entries(&entries)
                 .data(&data);
-            let stage = vk::PipelineShaderStageCreateInfo::default()
+            let mut stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader)
                 .name(&entry)
                 .specialization_info(&specialization);
+            let mut subgroup = vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default();
+            if layout.name == "obj_compute"
+                && let Some((size, maximum_groups)) = self.device.compute_subgroup
+                && layout.group.iter().product::<usize>() <= size as usize * maximum_groups as usize
+            {
+                // Narrow ray-tracing waves reduce register pressure on Intel GPUs.
+                subgroup.required_subgroup_size = size;
+                stage = stage.push_next(&mut subgroup);
+            }
             let pipelines = unsafe {
                 self.device.raw.create_compute_pipelines(
                     vk::PipelineCache::null(),
