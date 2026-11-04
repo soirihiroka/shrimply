@@ -38,6 +38,7 @@ fn main() -> Result<(), String> {
     }
     let (commands, events) = spawn_worker(project);
     for pass in ["Cold", "Warm"] {
+        shrimply_profiling::clear();
         let started = Instant::now();
         let mut first_frame = Duration::ZERO;
         for index in 0..count {
@@ -59,8 +60,14 @@ fn main() -> Result<(), String> {
                 {
                     VideoEvent::Error(error) => return Err(error),
                     VideoEvent::Frame {
-                        position: rendered, ..
-                    } if rendered == position => break,
+                        position: rendered,
+                        frame,
+                        ..
+                    } if rendered == position => {
+                        let _measurement = shrimply_profiling::measure("Playback / Release frame");
+                        drop(frame);
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -73,6 +80,7 @@ fn main() -> Result<(), String> {
             "{pass}: {count} preview frames in {elapsed:?}; {} fps; first frame {first_frame:?}; no pixel readbacks",
             u128::from(count) * 1_000_000_000 / elapsed.as_nanos().max(1)
         );
+        println!("{pass} profile: {}", shrimply_profiling::report_json());
     }
     let shutdown = Instant::now();
     commands
