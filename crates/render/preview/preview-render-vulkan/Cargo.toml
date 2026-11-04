@@ -6,6 +6,7 @@ edition = "2024"
 [target.'cfg(target_os = "linux")'.dependencies]
 shrimply-render-vulkan.workspace = true
 shrimply-render-core.workspace = true
+shrimply-profiling.workspace = true
 shrimply-preview-render-core.workspace = true
 shrimply-visual-core.workspace = true
 shrimply-math-core.workspace = true

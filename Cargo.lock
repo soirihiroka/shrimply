@@ -7133,6 +7133,7 @@ dependencies = [
  "shrimply-math-geometry",
  "shrimply-math-media",
  "shrimply-preview-render-core",
+ "shrimply-profiling",
  "shrimply-project-document",
  "shrimply-render-core",
  "shrimply-render-vulkan",

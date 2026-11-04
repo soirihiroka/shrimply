@@ -157,7 +157,11 @@ impl Compositor {
         self.scene.prepare(project, time)
     }
     pub fn render(&mut self, plan: FramePlan) -> Result<Presented, String> {
-        let rendered = self.render_gpu(plan, 0)?;
+        let rendered = {
+            let _measurement = shrimply_profiling::measure("Intel rendering / Compose layers");
+            self.render_gpu(plan, 0)?
+        };
+        let _measurement = shrimply_profiling::measure("Intel rendering / Prepare presentation");
         let (display, presentation) = self.renderer.presentation_texture(
             &rendered.buffer,
             rendered.width,
@@ -248,10 +252,12 @@ impl Compositor {
             external_masks.push((external.dependency.clone(), buffer));
         }
         let layers = self.layers(&plan.layers, size, &external_masks, &mut submissions)?;
-        let (buffer, composite) = self
-            .renderer
-            .composite_buffers(&layers, size.0, size.1, background)?
-            .into_parts();
+        let (buffer, composite) = {
+            let _measurement = shrimply_profiling::measure("Intel rendering / Final composition");
+            self.renderer
+                .composite_buffers(&layers, size.0, size.1, background)?
+                .into_parts()
+        };
         submissions.push(composite);
         self.morphs.retain(|key, _| self.used_morphs.contains(key));
         self.images.retain(|key, _| self.used_images.contains(key));
@@ -315,6 +321,7 @@ impl Compositor {
         if let Some((_, buffer)) = self.videos.get(&key) {
             return Ok(buffer.clone());
         }
+        let _measurement = shrimply_profiling::measure("Intel rendering / Import video");
         let (buffer, submission) = self.renderer.video(video)?;
         submissions.push(submission);
         self.videos.insert(key, (video.clone(), buffer.clone()));
@@ -337,6 +344,7 @@ impl Compositor {
         external_masks: &ExternalMasks,
         submissions: &mut Vec<Submission>,
     ) -> Result<Vec<(Nv12LayerParams, Buffer)>, String> {
+        let _measurement = shrimply_profiling::measure("Intel rendering / Prepare layers");
         let mut result = Vec::with_capacity(layers.len());
         for layer in layers {
             if let Source::RasterMorph(morph) = &layer.source {
