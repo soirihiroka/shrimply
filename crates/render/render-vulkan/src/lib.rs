@@ -408,11 +408,8 @@ impl Renderer {
                 &[],
             );
         }
-        let command = self.command().map_err(|error| {
-            unsafe {
-                self.device.raw.destroy_descriptor_pool(pool, None);
-            }
-            error
+        let command = self.command().inspect_err(|_| unsafe {
+            self.device.raw.destroy_descriptor_pool(pool, None);
         })?;
         unsafe {
             self.device.raw.cmd_pipeline_barrier(

@@ -212,7 +212,7 @@ impl Renderer {
                     .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                     .src_access_mask(vk::AccessFlags2::from_raw(native.access[index] as _))
                     .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
-                    .old_layout(vk::ImageLayout::from_raw(native.layout[index] as i32))
+                    .old_layout(vk::ImageLayout::from_raw(native.layout[index]))
                     .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                     .src_queue_family_index(native.queue_family[index])
                     .dst_queue_family_index(
