@@ -117,11 +117,11 @@ pub(super) fn worker(
                 && pending_frame.exclusion == exclusion
             {
                 let elapsed = pending_frame.started.elapsed();
-                let width = pending_frame.frame.width;
-                let height = pending_frame.frame.height;
-                let loading = pending_frame.frame.loading;
-                let audio_analysis = pending_frame.frame.audio_analysis.clone();
-                let settled = pending_frame.frame.accuracy.content_accurate() && !loading;
+                let width = pending_frame.frame.rendered.width;
+                let height = pending_frame.frame.rendered.height;
+                let loading = pending_frame.frame.rendered.loading;
+                let audio_analysis = pending_frame.frame.rendered.audio_analysis.clone();
+                let settled = pending_frame.frame.rendered.accuracy.content_accurate() && !loading;
                 let (display, rendered) = pending_frame.frame.into_buffers();
                 serial = serial
                     .checked_add(1)

@@ -4,10 +4,10 @@ mod buffer;
 mod texture;
 pub use texture::Texture;
 pub mod device;
+mod vaapi;
 mod vector;
-mod video;
 pub use buffer::Buffer;
-pub use video::{VideoFrame, decoder};
+pub use vaapi::{VideoFrame, decoder};
 
 use ash::vk;
 use device::Device;
@@ -141,7 +141,7 @@ impl Drop for Submission {
 
 pub struct Frame {
     submission: Submission,
-    output: Buffer,
+    pub output: Buffer,
 }
 impl Frame {
     pub fn into_parts(self) -> (Buffer, Submission) {
@@ -542,14 +542,14 @@ impl Renderer {
 
     pub fn presentation_texture(
         &self,
-        frame: &Frame,
+        source: &Buffer,
         width: u32,
         height: u32,
     ) -> Result<(Texture, Submission), String> {
         if (width as usize)
             .checked_mul(height as usize)
             .and_then(|count| count.checked_mul(size_of::<u32>()))
-            != Some(frame.output.len())
+            != Some(source.len())
         {
             return Err("Presentation dimensions do not match the composited buffer".into());
         }
@@ -581,7 +581,7 @@ impl Renderer {
             );
             self.device.raw.cmd_copy_buffer_to_image(
                 command,
-                frame.output.raw(),
+                source.raw(),
                 texture.image(),
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[vk::BufferImageCopy::default()
@@ -690,7 +690,7 @@ impl Renderer {
                 &releases,
             );
         }
-        let mut submission = self.submit(command, vec![frame.output.clone()], None)?;
+        let mut submission = self.submit(command, vec![source.clone()], None)?;
         submission._textures.push(texture.clone());
         Ok((texture, submission))
     }

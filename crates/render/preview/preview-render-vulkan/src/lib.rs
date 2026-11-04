@@ -23,9 +23,8 @@ type ExternalMasks = Vec<(
     Buffer,
 )>;
 
-pub struct Presented {
-    pub display: gpu::Texture,
-    pub rendered: Buffer,
+pub struct Rendered {
+    pub buffer: Buffer,
     pub width: u32,
     pub height: u32,
     pub audio_analysis: shrimply_preview_render_core::FrameAudioAnalysis,
@@ -34,26 +33,37 @@ pub struct Presented {
     _submissions: Vec<Submission>,
 }
 
+impl Rendered {
+    pub fn wait(&self) -> Result<(), String> {
+        if let Some(last) = self._submissions.last() {
+            last.wait()?;
+        }
+        Ok(())
+    }
+}
+
+pub struct Presented {
+    pub display: gpu::Texture,
+    pub rendered: Rendered,
+    presentation: Submission,
+}
+
 impl Presented {
     pub fn into_buffers(self) -> (gpu::Texture, Buffer) {
         assert!(
             self.completed().expect("Intel GPU submission failed"),
             "Intel frame published before GPU completion"
         );
-        (self.display, self.rendered)
+        (self.display, self.rendered.buffer)
     }
     pub fn completed(&self) -> Result<bool, String> {
-        self._submissions
-            .iter()
-            .try_fold(true, |ready, submission| {
-                submission.completed().map(|done| ready && done)
-            })
+        self.presentation.completed()
     }
 }
 
 pub struct Compositor {
     scene: Scene,
-    renderer: Renderer,
+    pub renderer: Renderer,
     images: HashMap<u32, Buffer>,
     layered_sources: HashMap<(String, usize), Buffer>,
     used_layered_sources: HashSet<(String, usize)>,
@@ -108,6 +118,44 @@ impl Compositor {
         self.scene.prepare(project, time)
     }
     pub fn render(&mut self, plan: FramePlan) -> Result<Presented, String> {
+        let rendered = self.render_gpu(plan, 0)?;
+        let (display, presentation) = self.renderer.presentation_texture(
+            &rendered.buffer,
+            rendered.width,
+            rendered.height,
+        )?;
+        Ok(Presented {
+            display,
+            rendered,
+            presentation,
+        })
+    }
+
+    pub fn render_accurate(
+        &mut self,
+        project: &Project,
+        position: Time,
+        background: u32,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<Rendered, String> {
+        loop {
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err("Export cancelled".into());
+            }
+            if let Some(plan) = self.prepare(
+                project,
+                position,
+                shrimply_preview_render_core::CompositeAccuracy::FULLY_ACCURATE,
+            )? && !plan.loading
+                && plan.accuracy.content_accurate()
+            {
+                return self.render_gpu(plan, background);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    pub fn render_gpu(&mut self, plan: FramePlan, background: u32) -> Result<Rendered, String> {
         let mut submissions = Vec::new();
         self.used_images.clear();
         self.used_layered_sources.clear();
@@ -124,19 +172,17 @@ impl Compositor {
             external_masks.push((external.dependency.clone(), buffer));
         }
         let layers = self.layers(&plan.layers, size, &external_masks, &mut submissions)?;
-        let frame = self
+        let (buffer, composite) = self
             .renderer
-            .composite_buffers(&layers, size.0, size.1, 0)?;
-        let (display, presentation) = self.renderer.presentation_texture(&frame, size.0, size.1)?;
-        let (rendered, composite) = frame.into_parts();
-        submissions.extend([composite, presentation]);
+            .composite_buffers(&layers, size.0, size.1, background)?
+            .into_parts();
+        submissions.push(composite);
         self.images.retain(|key, _| self.used_images.contains(key));
         self.layered_sources
             .retain(|key, _| self.used_layered_sources.contains(key));
         self.videos.retain(|key, _| self.used_videos.contains(key));
-        Ok(Presented {
-            display,
-            rendered,
+        Ok(Rendered {
+            buffer,
             width: size.0,
             height: size.1,
             audio_analysis: plan.audio_analysis,

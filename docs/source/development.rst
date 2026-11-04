@@ -72,10 +72,13 @@ into OpenGL. Playback does not download pixels to the CPU; copying or saving
 a preview image explicitly requests a readback.
 
 The Intel backend supports video, images, generated vector graphics,
-backgrounds, groups, layered images, and the shared raster effects. Manim,
+backgrounds, groups, layered images, and the shared raster effects. H.264,
+H.265, and H.265 Main10 export use VA-API with GPU color conversion and
+DMA-BUF surface writes. Intel export offers constant QP, CBR, and VBR;
+the GTK dialog displays the controls supported by the selected backend.
+GIF export uses its CPU encoder and explicitly reads back RGBA pixels. Manim,
 Gaussian and OBJ rendering, raster morph estimation, and SAM2 GPU analysis
-are currently unavailable on this backend. Video export still uses NVENC on
-Linux and requires NVIDIA hardware.
+are currently unavailable on this backend.
 
 Check the Intel crates and measure the decode/composite/presentation-export
 pipeline on the target machine:
@@ -84,6 +87,8 @@ pipeline on the target machine:
 
    $ make intel-check
    $ make intel-benchmark VIDEO=/path/to/video.mp4 FRAMES=120
+   $ make intel-gl-probe
+   $ SHRIMPLY_GPU=intel make gpu-export-benchmark VIDEO=/path/to/video.mp4 OUTPUT=/tmp/intel.mp4 FORMAT=hevc10
 
 Build and check
 ---------------

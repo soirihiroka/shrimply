@@ -20,6 +20,11 @@ use shrimply_visual_cuda::gpu::{CompositedVideoFrame, ExportPixelFormat};
 
 const VIDEO_HW_POOL_SIZE: i32 = 32;
 
+#[cfg(target_os = "linux")]
+mod intel;
+#[cfg(target_os = "linux")]
+pub use shrimply_visual_cuda::gpu::intel_backend_selected;
+
 pub use shrimply_export_core::video::{
     ExportAudioEncoder, ExportContainer, ExportProgress, ExportVideoCodec, extension_for_container,
 };
@@ -117,6 +122,16 @@ where
         audio_sample_rate: settings.audio_sample_rate,
         audio_bitrate_kbps: settings.audio_bitrate_kbps,
     };
+    #[cfg(target_os = "linux")]
+    if intel_backend_selected() {
+        return core::export_project(
+            project,
+            core_settings,
+            intel::IntelBackend::new(settings),
+            cancelled,
+            progress,
+        );
+    }
     core::export_project(
         project,
         core_settings,
@@ -468,13 +483,6 @@ struct HwFrameContext {
 
 impl HwFrameContext {
     fn new(project: &Project, settings: &ExportSettings) -> Result<Self, String> {
-        let width = project.canvas_size.width.max(1);
-        let height = project.canvas_size.height.max(1);
-        let pixel_format = if settings.profile == ExportProfile::Main10 {
-            ExportPixelFormat::P010
-        } else {
-            ExportPixelFormat::Nv12
-        };
         let mut device_ref = ptr::null_mut();
         let mut options = ptr::null_mut();
         let option_key = CString::new("primary_ctx").expect("static FFmpeg option key");
@@ -499,14 +507,35 @@ impl HwFrameContext {
         if device_ref.is_null() {
             return Err("FFmpeg returned a null CUDA hardware device".to_string());
         }
+        Self::initialize(
+            project,
+            settings,
+            device_ref,
+            sys::AVPixelFormat::AV_PIX_FMT_CUDA,
+        )
+    }
+
+    fn initialize(
+        project: &Project,
+        settings: &ExportSettings,
+        mut device_ref: *mut sys::AVBufferRef,
+        format: sys::AVPixelFormat,
+    ) -> Result<Self, String> {
+        let width = project.canvas_size.width.max(1);
+        let height = project.canvas_size.height.max(1);
+        let pixel_format = if settings.profile == ExportProfile::Main10 {
+            ExportPixelFormat::P010
+        } else {
+            ExportPixelFormat::Nv12
+        };
         let frames_ref = unsafe { sys::av_hwframe_ctx_alloc(device_ref) };
         if frames_ref.is_null() {
             unsafe { sys::av_buffer_unref(&mut device_ref) };
-            return Err("Could not allocate FFmpeg CUDA frame context".to_string());
+            return Err("Could not allocate FFmpeg GPU frame context".to_string());
         }
         unsafe {
             let frames = (*frames_ref).data.cast::<sys::AVHWFramesContext>();
-            (*frames).format = sys::AVPixelFormat::AV_PIX_FMT_CUDA;
+            (*frames).format = format;
             (*frames).sw_format = pixel_format.sw_format();
             (*frames).width = width as i32;
             (*frames).height = height as i32;
@@ -514,7 +543,7 @@ impl HwFrameContext {
         }
         if let Err(error) = ffmpeg_check(
             unsafe { sys::av_hwframe_ctx_init(frames_ref) },
-            "initialize FFmpeg CUDA frame context",
+            "initialize FFmpeg GPU frame context",
         ) {
             let mut frames_ref = frames_ref;
             unsafe {
@@ -535,7 +564,7 @@ impl HwFrameContext {
     fn encoder_ref(&self) -> Result<*mut sys::AVBufferRef, String> {
         let reference = unsafe { sys::av_buffer_ref(self.frames_ref) };
         if reference.is_null() {
-            Err("Could not retain FFmpeg CUDA frame context".to_string())
+            Err("Could not retain FFmpeg GPU frame context".to_string())
         } else {
             Ok(reference)
         }
@@ -544,7 +573,7 @@ impl HwFrameContext {
     fn device_ref(&self) -> Result<*mut sys::AVBufferRef, String> {
         let reference = unsafe { sys::av_buffer_ref(self.device_ref) };
         if reference.is_null() {
-            Err("Could not retain FFmpeg CUDA device context".to_string())
+            Err("Could not retain FFmpeg GPU device context".to_string())
         } else {
             Ok(reference)
         }
@@ -554,7 +583,7 @@ impl HwFrameContext {
         let mut frame = ffmpeg::frame::Video::empty();
         ffmpeg_check(
             unsafe { sys::av_hwframe_get_buffer(self.frames_ref, frame.as_mut_ptr(), 0) },
-            "allocate FFmpeg CUDA frame",
+            "allocate FFmpeg GPU frame",
         )?;
         unsafe {
             (*frame.as_mut_ptr()).width = self.width as i32;

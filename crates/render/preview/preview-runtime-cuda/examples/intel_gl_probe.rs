@@ -107,7 +107,7 @@ fn main() -> Result<(), String> {
         }
         let mut renderer = shrimply_render_vulkan::Renderer::new()?;
         let frame = renderer.composite_buffers(&[], SIZE, SIZE, 0xff00_00ff)?;
-        let (texture, ready) = renderer.presentation_texture(&frame, SIZE, SIZE)?;
+        let (texture, ready) = renderer.presentation_texture(&frame.output, SIZE, SIZE)?;
         ready.wait()?;
         // Import the same immutable image into two independent GL contexts.
         for index in 0..2 {

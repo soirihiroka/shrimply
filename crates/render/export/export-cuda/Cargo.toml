@@ -9,3 +9,7 @@ shrimply-export-core = { workspace = true, default-features = true }
 shrimply-math-core = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-visual-cuda = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+shrimply-preview-render-vulkan.workspace = true
+shrimply-render-vulkan.workspace = true

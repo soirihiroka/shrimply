@@ -79,95 +79,142 @@ unsafe extern "C" fn format(
     sys::AVPixelFormat::AV_PIX_FMT_NONE
 }
 
+#[derive(Clone, Copy)]
+struct Layout {
+    width: usize,
+    height: usize,
+    component_bytes: usize,
+    pitch: usize,
+    uv_pitch: usize,
+    y_bytes: usize,
+    y_size: usize,
+    uv_size: usize,
+    length: usize,
+}
+
+fn frame_layout(source: &ffmpeg::frame::Video) -> Result<Layout, String> {
+    let raw = unsafe { &*source.as_ptr() };
+    if raw.format != sys::AVPixelFormat::AV_PIX_FMT_VAAPI as i32 || raw.hw_frames_ctx.is_null() {
+        return Err("Intel video source is not a VA-API surface".into());
+    }
+    if raw.width <= 0 || raw.height <= 0 {
+        return Err("Intel video surface dimensions must be positive".into());
+    }
+    let context = unsafe { &*(*raw.hw_frames_ctx).data.cast::<sys::AVHWFramesContext>() };
+    let component_bytes = match context.sw_format {
+        sys::AVPixelFormat::AV_PIX_FMT_NV12 => 1,
+        sys::AVPixelFormat::AV_PIX_FMT_P010LE => 2,
+        format => return Err(format!("Unsupported Intel video surface {format:?}")),
+    };
+    let width = raw.width as usize;
+    let height = raw.height as usize;
+    let pitch = width
+        .checked_mul(component_bytes)
+        .ok_or("Video pitch overflow")?;
+    let y_bytes = pitch
+        .checked_mul(height)
+        .ok_or("Video plane size overflow")?;
+    let y_size = y_bytes.next_multiple_of(size_of::<u32>());
+    let uv_pitch = width.div_ceil(2) * 2 * component_bytes;
+    let uv_size = uv_pitch
+        .checked_mul(height.div_ceil(2))
+        .ok_or("Video chroma size overflow")?;
+    let length = y_size
+        .checked_add(uv_size)
+        .ok_or("Video frame size overflow")?;
+    Ok(Layout {
+        width,
+        height,
+        component_bytes,
+        pitch,
+        uv_pitch,
+        y_bytes,
+        y_size,
+        uv_size,
+        length,
+    })
+}
+
+fn map(
+    device: &Device,
+    source: &ffmpeg::frame::Video,
+    flags: i32,
+) -> Result<ffmpeg::frame::Video, String> {
+    let mut derived = ptr::null_mut();
+    let result = unsafe {
+        sys::av_hwframe_ctx_create_derived(
+            &mut derived,
+            sys::AVPixelFormat::AV_PIX_FMT_VULKAN,
+            device.vulkan,
+            (*source.as_ptr()).hw_frames_ctx,
+            flags,
+        )
+    };
+    if result < 0 {
+        return Err(format!(
+            "Derive Vulkan video surfaces: {}",
+            ffmpeg::Error::from(result)
+        ));
+    }
+    let mut mapped = ffmpeg::frame::Video::empty();
+    unsafe {
+        (*mapped.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_VULKAN as i32;
+        (*mapped.as_mut_ptr()).hw_frames_ctx = derived;
+    }
+    // Export explicitly to DRM PRIME first. With MAP_DIRECT, FFmpeg's
+    // VA-API mapper rejects a Vulkan destination before trying its mapper.
+    let mut drm = ffmpeg::frame::Video::empty();
+    unsafe {
+        (*drm.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
+    }
+    let result = unsafe { sys::av_hwframe_map(drm.as_mut_ptr(), source.as_ptr(), flags) };
+    if result < 0 {
+        return Err(format!(
+            "Export Intel video as DMA-BUF: {}",
+            ffmpeg::Error::from(result)
+        ));
+    }
+    let result = unsafe { sys::av_hwframe_map(mapped.as_mut_ptr(), drm.as_ptr(), flags) };
+    if result < 0 {
+        return Err(format!(
+            "Import Intel video to Vulkan without CPU copies: {}",
+            ffmpeg::Error::from(result)
+        ));
+    }
+    Ok(mapped)
+}
+
 impl Renderer {
-    /// Import the VA-API surface through DRM PRIME and copy its planes on the GPU.
-    /// Pixels never enter CPU-addressable staging storage.
-    pub fn video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
-        let raw = unsafe { &*source.frame.as_ptr() };
-        if raw.format != sys::AVPixelFormat::AV_PIX_FMT_VAAPI as i32 || raw.hw_frames_ctx.is_null()
-        {
-            return Err("Intel video source is not a VA-API surface".into());
-        }
-        if raw.width <= 0 || raw.height <= 0 {
-            return Err("Intel video surface dimensions must be positive".into());
-        }
-        let context = unsafe { &*(*raw.hw_frames_ctx).data.cast::<sys::AVHWFramesContext>() };
-        let bytes_per_component = match context.sw_format {
-            sys::AVPixelFormat::AV_PIX_FMT_NV12 => 1,
-            sys::AVPixelFormat::AV_PIX_FMT_P010LE => 2,
-            format => return Err(format!("Unsupported Intel video surface {format:?}")),
+    fn transfer_video(
+        &self,
+        source: &ffmpeg::frame::Video,
+        planes: Buffer,
+        layout: Layout,
+        write: bool,
+    ) -> Result<Submission, String> {
+        let flags = sys::AV_HWFRAME_MAP_DIRECT as i32
+            | if write {
+                sys::AV_HWFRAME_MAP_WRITE as i32
+            } else {
+                sys::AV_HWFRAME_MAP_READ as i32
+            };
+        let mut mapped = map(&self.device, source, flags)?;
+        let Layout {
+            width,
+            height,
+            y_size,
+            ..
+        } = layout;
+        let image_layout = if write {
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL
+        } else {
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL
         };
-        let mut derived = ptr::null_mut();
-        let result = unsafe {
-            sys::av_hwframe_ctx_create_derived(
-                &mut derived,
-                sys::AVPixelFormat::AV_PIX_FMT_VULKAN,
-                self.device.vulkan,
-                raw.hw_frames_ctx,
-                sys::AV_HWFRAME_MAP_READ as i32 | sys::AV_HWFRAME_MAP_DIRECT as i32,
-            )
+        let access = if write {
+            vk::AccessFlags2::TRANSFER_WRITE
+        } else {
+            vk::AccessFlags2::TRANSFER_READ
         };
-        if result < 0 {
-            return Err(format!(
-                "Derive Vulkan video surfaces: {}",
-                ffmpeg::Error::from(result)
-            ));
-        }
-        let mut mapped = ffmpeg::frame::Video::empty();
-        unsafe {
-            (*mapped.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_VULKAN as i32;
-            (*mapped.as_mut_ptr()).hw_frames_ctx = derived;
-        }
-        // Export explicitly to DRM PRIME first. With MAP_DIRECT, FFmpeg's
-        // VA-API mapper rejects a Vulkan destination before trying its mapper.
-        let mut drm = ffmpeg::frame::Video::empty();
-        unsafe {
-            (*drm.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
-        }
-        let result = unsafe {
-            sys::av_hwframe_map(
-                drm.as_mut_ptr(),
-                source.frame.as_ptr(),
-                sys::AV_HWFRAME_MAP_READ as i32 | sys::AV_HWFRAME_MAP_DIRECT as i32,
-            )
-        };
-        if result < 0 {
-            return Err(format!(
-                "Export Intel video as DMA-BUF: {}",
-                ffmpeg::Error::from(result)
-            ));
-        }
-        let result = unsafe {
-            sys::av_hwframe_map(
-                mapped.as_mut_ptr(),
-                drm.as_ptr(),
-                sys::AV_HWFRAME_MAP_READ as i32 | sys::AV_HWFRAME_MAP_DIRECT as i32,
-            )
-        };
-        if result < 0 {
-            return Err(format!(
-                "Import Intel video to Vulkan without CPU copies: {}",
-                ffmpeg::Error::from(result)
-            ));
-        }
-        let width = raw.width as usize;
-        let height = raw.height as usize;
-        let pitch = width
-            .checked_mul(bytes_per_component)
-            .ok_or("Video pitch overflow")?;
-        let y_bytes = pitch
-            .checked_mul(height)
-            .ok_or("Video plane size overflow")?;
-        let y_size = y_bytes.next_multiple_of(size_of::<u32>());
-        let uv_pitch = width.div_ceil(2) * 2 * bytes_per_component;
-        let uv_size = uv_pitch
-            .checked_mul(height.div_ceil(2))
-            .ok_or("Video chroma size overflow")?;
-        let planes = self.allocate(
-            y_size
-                .checked_add(uv_size)
-                .ok_or("Video frame size overflow")?,
-        )?;
         let command = self.command()?;
         let mut submission = Submission {
             pool: self.pool.clone(),
@@ -211,9 +258,9 @@ impl Renderer {
                     .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
                     .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                     .src_access_mask(vk::AccessFlags2::from_raw(native.access[index] as _))
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                    .dst_access_mask(access)
                     .old_layout(vk::ImageLayout::from_raw(native.layout[index]))
-                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                    .new_layout(image_layout)
                     .src_queue_family_index(native.queue_family[index])
                     .dst_queue_family_index(
                         if native.queue_family[index] == vk::QUEUE_FAMILY_IGNORED {
@@ -243,7 +290,15 @@ impl Renderer {
         unsafe {
             self.device.raw.cmd_pipeline_barrier2(
                 command,
-                &vk::DependencyInfo::default().image_memory_barriers(&barriers),
+                &vk::DependencyInfo::default()
+                    .image_memory_barriers(&barriers)
+                    .memory_barriers(&[vk::MemoryBarrier2::default()
+                        .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                        .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                        .dst_access_mask(
+                            vk::AccessFlags2::TRANSFER_READ | vk::AccessFlags2::TRANSFER_WRITE,
+                        )]),
             );
         }
         for plane in 0..2 {
@@ -274,14 +329,59 @@ impl Renderer {
                     depth: 1,
                 });
             unsafe {
-                self.device.raw.cmd_copy_image_to_buffer(
-                    command,
-                    vk::Image::from_raw(native.img[index] as _),
-                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                    planes.raw(),
-                    &[copy],
-                );
+                let image = vk::Image::from_raw(native.img[index] as _);
+                if write {
+                    self.device.raw.cmd_copy_buffer_to_image(
+                        command,
+                        planes.raw(),
+                        image,
+                        image_layout,
+                        &[copy],
+                    );
+                } else {
+                    self.device.raw.cmd_copy_image_to_buffer(
+                        command,
+                        image,
+                        image_layout,
+                        planes.raw(),
+                        &[copy],
+                    );
+                }
             }
+        }
+        let releases = (0..image_count)
+            .map(|index| {
+                let ignored = native.queue_family[index] == vk::QUEUE_FAMILY_IGNORED;
+                vk::ImageMemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .dst_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .src_access_mask(access)
+                    .old_layout(image_layout)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .src_queue_family_index(if ignored {
+                        vk::QUEUE_FAMILY_IGNORED
+                    } else {
+                        self.device.family
+                    })
+                    .dst_queue_family_index(if ignored {
+                        vk::QUEUE_FAMILY_IGNORED
+                    } else {
+                        vk::QUEUE_FAMILY_EXTERNAL
+                    })
+                    .image(vk::Image::from_raw(native.img[index] as _))
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .level_count(1)
+                            .layer_count(1),
+                    )
+            })
+            .collect::<Vec<_>>();
+        unsafe {
+            self.device.raw.cmd_pipeline_barrier2(
+                command,
+                &vk::DependencyInfo::default().image_memory_barriers(&releases),
+            );
         }
         unsafe { self.device.raw.end_command_buffer(command) }
             .map_err(|e| format!("Finish Intel video import: {e:?}"))?;
@@ -314,10 +414,10 @@ impl Renderer {
         if result.is_ok() {
             submission.submitted = true;
             for index in 0..image_count {
-                native.layout[index] = vk::ImageLayout::TRANSFER_SRC_OPTIMAL.as_raw() as _;
-                native.access[index] = vk::AccessFlags2::TRANSFER_READ.as_raw() as _;
+                native.layout[index] = vk::ImageLayout::GENERAL.as_raw() as _;
+                native.access[index] = 0;
                 if native.queue_family[index] != vk::QUEUE_FAMILY_IGNORED {
-                    native.queue_family[index] = self.device.family;
+                    native.queue_family[index] = vk::QUEUE_FAMILY_EXTERNAL;
                 }
                 if native.sem[index] != 0 {
                     native.sem_value[index] = native.sem_value[index]
@@ -330,6 +430,25 @@ impl Renderer {
         result.map_err(|e| format!("Submit Intel video import: {e:?}"))?;
         submission._video = Some(mapped);
 
+        Ok(submission)
+    }
+
+    /// Import the VA-API surface through DRM PRIME; pixels stay on the GPU.
+    pub fn video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
+        let layout = frame_layout(&source.frame)?;
+        let Layout {
+            width,
+            height,
+            pitch,
+            uv_pitch,
+            y_bytes,
+            y_size,
+            uv_size,
+            component_bytes: bytes_per_component,
+            ..
+        } = layout;
+        let planes = self.allocate(layout.length)?;
+        let submission = self.transfer_video(&source.frame, planes.clone(), layout, false)?;
         let (planes, pitch, uv_pitch, y_size, prior) = if bytes_per_component == 2 {
             let output = self.allocate((y_bytes + uv_size) / bytes_per_component)?;
             let mut arguments = self.arguments("p010_to_nv12")?;
@@ -399,5 +518,64 @@ impl Renderer {
         }?;
         converted._prior.push(prior);
         Ok((output, converted))
+    }
+
+    /// Convert RGBA and write an encoder's VA-API surface entirely on the GPU.
+    pub fn write_video(
+        &mut self,
+        rgba: &Buffer,
+        destination: &ffmpeg::frame::Video,
+    ) -> Result<Submission, String> {
+        let layout = frame_layout(destination)?;
+        let Layout {
+            width,
+            height,
+            pitch,
+            uv_pitch,
+            y_size,
+            component_bytes,
+            ..
+        } = layout;
+        let count = width
+            .checked_mul(height)
+            .ok_or("Encoder dimensions overflow")?;
+        if count.checked_mul(size_of::<u32>()) != Some(rgba.len()) {
+            return Err("RGBA buffer does not match the VA-API encoder surface dimensions".into());
+        }
+        let planes = self.allocate(layout.length)?;
+        let mut prior = Vec::new();
+        for chroma in [false, true] {
+            let name = match (component_bytes, chroma) {
+                (1, false) => "rgba_to_nv12_luma",
+                (1, true) => "rgba_to_nv12_chroma",
+                (2, false) => "rgba_to_p010_luma",
+                (2, true) => "rgba_to_p010_chroma",
+                _ => unreachable!("validated VA-API component size"),
+            };
+            let mut arguments = self.arguments(name)?;
+            arguments
+                .set("rgba", &rgba.address().to_ne_bytes())?
+                .set("width", &(width as u32).to_ne_bytes())?
+                .set("height", &(height as u32).to_ne_bytes())?
+                .set(
+                    if chroma { "uv_plane" } else { "y_plane" },
+                    &(planes.address() + if chroma { y_size as u64 } else { 0 }).to_ne_bytes(),
+                )?
+                .set(
+                    if chroma { "uv_pitch" } else { "y_pitch" },
+                    &((if chroma { uv_pitch } else { pitch }) as u64).to_ne_bytes(),
+                )?;
+            let count = if chroma {
+                width.div_ceil(2) * height.div_ceil(2)
+            } else {
+                count
+            };
+            prior.push(unsafe {
+                self.dispatch(arguments, vec![rgba.clone(), planes.clone()], [count, 1, 1])
+            }?);
+        }
+        let mut submission = self.transfer_video(destination, planes, layout, true)?;
+        submission._prior = prior;
+        Ok(submission)
     }
 }

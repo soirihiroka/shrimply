@@ -58,7 +58,8 @@ fn main() -> Result<(), String> {
             _padding_0: [0; 4],
         };
         let composite = renderer.composite_buffers(&[(parameters, rgba)], width, height, 0)?;
-        let (texture, presentation) = renderer.presentation_texture(&composite, width, height)?;
+        let (texture, presentation) =
+            renderer.presentation_texture(&composite.output, width, height)?;
         presentation.wait()?;
         // Exercise external-memory/semaphore export without downloading playback pixels.
         drop(texture.export()?);

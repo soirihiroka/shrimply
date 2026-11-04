@@ -140,6 +140,10 @@ fn open_export_page(
     project: Rc<RefCell<project::Project>>,
     preferences: preferences::SharedPreferences,
 ) {
+    #[cfg(target_os = "linux")]
+    let intel = video::intel_backend_selected();
+    #[cfg(not(target_os = "linux"))]
+    let intel = false;
     let project_fps = project.borrow().fps;
     let format_row = TypedComboRow::new(
         "Export format",
@@ -194,7 +198,17 @@ fn open_export_page(
                 "Variable Bitrate with Target Quality",
             ),
             (video::ExportRateControl::Lossless, "Lossless"),
-        ],
+        ]
+        .into_iter()
+        .filter(|(mode, _)| {
+            !intel
+                || matches!(
+                    mode,
+                    video::ExportRateControl::ConstantQp
+                        | video::ExportRateControl::ConstantBitrate
+                        | video::ExportRateControl::VariableBitrate
+                )
+        }),
         video::ExportRateControl::ConstantQp,
     );
 
@@ -224,7 +238,7 @@ fn open_export_page(
 
     let keyframe_interval_row = adw::SpinRow::with_range(0.0, 10.0, 1.0);
     keyframe_interval_row.set_title(tr!("Keyframe Interval").as_ref());
-    keyframe_interval_row.set_subtitle(tr!("Seconds; 0 lets NVENC choose").as_ref());
+    keyframe_interval_row.set_subtitle(tr!("Seconds; 0 lets the encoder choose").as_ref());
     keyframe_interval_row.set_value(0.0);
     keyframe_interval_row.set_digits(0);
 
@@ -280,13 +294,13 @@ fn open_export_page(
 
     let look_ahead_row = adw::SwitchRow::new();
     look_ahead_row.set_title(tr!("Look-ahead").as_ref());
-    look_ahead_row.set_active(true);
+    look_ahead_row.set_active(!intel);
 
     let adaptive_quantization_row = adw::SwitchRow::new();
     adaptive_quantization_row.set_title(tr!("Adaptive Quantization").as_ref());
-    adaptive_quantization_row.set_active(true);
+    adaptive_quantization_row.set_active(!intel);
 
-    let b_frames_row = adw::SpinRow::with_range(0.0, 16.0, 1.0);
+    let b_frames_row = adw::SpinRow::with_range(0.0, if intel { 2.0 } else { 16.0 }, 1.0);
     b_frames_row.set_title(tr!("B Frames").as_ref());
     b_frames_row.set_value(2.0);
     b_frames_row.set_digits(0);
@@ -294,6 +308,12 @@ fn open_export_page(
     let b_frame_as_reference_row = adw::SwitchRow::new();
     b_frame_as_reference_row.set_title(tr!("B Frame as Reference").as_ref());
     b_frame_as_reference_row.set_active(false);
+    preset_row.set_visible(!intel);
+    tuning_row.set_visible(!intel);
+    multipass_row.set_visible(!intel);
+    look_ahead_row.set_visible(!intel);
+    adaptive_quantization_row.set_visible(!intel);
+    b_frame_as_reference_row.set_visible(!intel);
 
     let audio_encoder_row = TypedComboRow::new(
         "Audio Encoder",
@@ -341,7 +361,7 @@ fn open_export_page(
             ));
             target_quality_row
                 .set_visible(selected == video::ExportRateControl::VariableBitrateTargetQuality);
-            tuning_row.set_visible(selected != video::ExportRateControl::Lossless);
+            tuning_row.set_visible(!intel && selected != video::ExportRateControl::Lossless);
         }
     });
 
