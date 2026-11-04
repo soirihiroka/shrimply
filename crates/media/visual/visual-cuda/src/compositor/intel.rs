@@ -18,6 +18,7 @@ struct Pending {
     project_generation: u64,
     exclusion: Option<Uuid>,
     started: Instant,
+    submitted: Instant,
 }
 
 pub(super) fn worker(
@@ -114,6 +115,10 @@ pub(super) fn worker(
                 Ok(true) => {}
             }
             let pending_frame = pending.take().expect("polled Intel frame disappeared");
+            shrimply_profiling::record(
+                "Intel compositor / GPU completion and polling",
+                pending_frame.submitted.elapsed(),
+            );
             let current = pending_frame.request;
             if channels.cancel_generation.load(Ordering::Acquire) == current.generation
                 && channels.latest_project_generation.load(Ordering::Acquire)
@@ -180,13 +185,22 @@ pub(super) fn worker(
             continue;
         }
         let started = Instant::now();
-        let prepared = compositor.prepare(&project, current.position, current.accuracy);
+        let prepared = {
+            let _measurement = shrimply_profiling::measure("Intel compositor / Prepare scene");
+            compositor.prepare(&project, current.position, current.accuracy)
+        };
         for update in compositor.take_manim_updates() {
             if channels.event_tx.send(VideoEvent::Manim(update)).is_err() {
                 return;
             }
         }
-        match prepared.and_then(|plan| plan.map(|plan| compositor.render(plan)).transpose()) {
+        match prepared.and_then(|plan| {
+            plan.map(|plan| {
+                let _measurement = shrimply_profiling::measure("Intel compositor / Submit frame");
+                compositor.render(plan)
+            })
+            .transpose()
+        }) {
             Ok(Some(frame)) => {
                 pending = Some(Pending {
                     frame,
@@ -195,6 +209,7 @@ pub(super) fn worker(
                     project_generation,
                     exclusion,
                     started,
+                    submitted: Instant::now(),
                 })
             }
             Ok(None) => {
