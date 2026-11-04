@@ -1,6 +1,22 @@
 import abi;
 import color;
 
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
+void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
+                  uniform uint8_t *y_plane, uniform uint8_t *uv_plane,
+                  uniform uint64_t y_pitch, uniform uint64_t uv_pitch,
+                  uniform uint width, uniform uint height, uniform uint *output) {
+  uint i = id.x;
+  if (i >= width * height)
+    return;
+  uint x = i % width, y = i / width;
+  uint64_t chroma = uint64_t(y / 2u) * uv_pitch + uint64_t(x / 2u) * 2u;
+  output[i] = color_to_rgba(from_bt709_ycbcr(
+      float(y_plane[uint64_t(y) * y_pitch + x]) / 255.0f,
+      float(uv_plane[chroma]) / 255.0f - 0.5f,
+      float(uv_plane[chroma + 1u]) / 255.0f - 0.5f, 1.0f));
+}
+
 // The current compositor produces eight-bit RGBA. Reduce P010 only on the GPU,
 // retaining its original limited/full range coding for the shared YUV sampler.
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]

@@ -828,8 +828,13 @@ composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
        (source.x < left || source.y < top || source.x >= right ||
         source.y >= bottom)))
     return false;
+#if defined(SHRIMPLY_VULKAN)
+  // Vulkan materializes decoder surfaces with nv12_to_rgba before compositing.
+  result = sample_rgba_layer(p, source.x, source.y);
+#else
   result = p.kind == LayerKind::Nv12 ? sample_nv12_layer(p, source.x, source.y)
                                      : sample_rgba_layer(p, source.x, source.y);
+#endif
   return true;
 }
 uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,

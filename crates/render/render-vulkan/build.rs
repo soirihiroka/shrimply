@@ -23,7 +23,8 @@ fn main() {
     let mut generated = String::from("static MODULES: &[Module] = &[\n");
     for module in include_str!("../render-core/shaders/kernels.txt")
         .lines()
-        .chain(["video"])
+        .filter(|name| *name != "background")
+        .chain(["video", "background_vulkan", "anime4k_vulkan"])
     {
         let artifacts = compiler.compile(
             &directory.join(format!("{module}.slang")),
@@ -43,16 +44,33 @@ fn main() {
             .expect("compute entries")
         {
             let name = entry["name"].as_str().expect("kernel name");
+            if name == "convolution" {
+                continue;
+            }
+            let buffered = name.ends_with("_vulkan");
+            let logical_name = name.strip_suffix("_vulkan").unwrap_or(name);
             let group = entry["threadGroupSize"]
                 .as_array()
                 .expect("compute group size");
             writeln!(
                 generated,
-                "KernelLayout {{ name: {name:?}, group: [{}, {}, {}], fields: &[",
+                "KernelLayout {{ name: {logical_name:?}, entry: {name:?}, buffered: {buffered}, group: [{}, {}, {}], fields: &[",
                 group[0], group[1], group[2]
             )
             .unwrap();
-            for parameter in entry["parameters"].as_array().expect("kernel parameters") {
+            let parameters = if buffered {
+                reflection["parameters"]
+                    .as_array()
+                    .expect("Vulkan buffer parameters")
+                    .iter()
+                    .find(|p| p["name"] == "arguments")
+                    .expect("Vulkan argument buffer")["type"]["elementType"]["fields"]
+                    .as_array()
+                    .expect("Vulkan argument fields")
+            } else {
+                entry["parameters"].as_array().expect("kernel parameters")
+            };
+            for parameter in parameters {
                 if parameter["binding"]["kind"] == "uniform" {
                     write_fields(&mut generated, parameter, "", 0);
                 }

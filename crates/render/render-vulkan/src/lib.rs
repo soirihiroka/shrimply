@@ -14,6 +14,9 @@ use device::Device;
 use shrimply_render_core::Nv12LayerParams;
 use std::{collections::HashMap, ffi::CString, rc::Rc, sync::Arc};
 
+// Vulkan guarantees at least 128 bytes. Larger argument blocks use a buffer.
+const PUSH_CONSTANT_BYTES: u32 = 128;
+
 struct Field {
     name: &'static str,
     offset: usize,
@@ -22,6 +25,8 @@ struct Field {
 }
 struct KernelLayout {
     name: &'static str,
+    entry: &'static str,
+    buffered: bool,
     group: [usize; 3],
     fields: &'static [Field],
 }
@@ -195,7 +200,11 @@ impl Renderer {
         let layouts = [descriptor_layout];
         let pipeline_layout = unsafe {
             device.raw.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default().set_layouts(&layouts),
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&layouts)
+                    .push_constant_ranges(&[vk::PushConstantRange::default()
+                        .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                        .size(PUSH_CONSTANT_BYTES)]),
                 None,
             )
         }
@@ -233,7 +242,7 @@ impl Renderer {
                     .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&code), None)
             }
             .map_err(|e| format!("load Slang Vulkan module: {e:?}"))?;
-            let entry = CString::new(name).map_err(|e| e.to_string())?;
+            let entry = CString::new(layout.entry).map_err(|e| e.to_string())?;
             let stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader)
@@ -354,7 +363,6 @@ impl Renderer {
         if extent.contains(&0) {
             return Err("Vulkan dispatch dimensions must be nonzero".into());
         }
-        let uniforms = self.upload(&arguments.bytes)?;
         let kernel = self.kernel(arguments.layout.name)?;
         let pipeline = kernel.pipeline;
         let group = kernel.layout.group;
@@ -369,47 +377,64 @@ impl Renderer {
                 ));
             }
         }
-        let sizes = [vk::DescriptorPoolSize::default()
-            .ty(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1)];
-        let pool = unsafe {
-            self.device.raw.create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::default()
-                    .max_sets(1)
-                    .pool_sizes(&sizes),
-                None,
-            )
+        if !arguments.layout.buffered && arguments.bytes.len() > PUSH_CONSTANT_BYTES as usize {
+            return Err(format!(
+                "{} requires an argument buffer",
+                arguments.layout.name
+            ));
         }
-        .map_err(|e| format!("create dispatch descriptors: {e:?}"))?;
-        let layouts = [self.descriptor_layout];
-        let set = unsafe {
-            self.device.raw.allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::default()
-                    .descriptor_pool(pool)
-                    .set_layouts(&layouts),
-            )
-        }
-        .map_err(|e| {
-            unsafe {
-                self.device.raw.destroy_descriptor_pool(pool, None);
+        let descriptor = if arguments.layout.buffered {
+            let uniforms = self.upload(&arguments.bytes)?;
+            let sizes = [vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::UNIFORM_BUFFER)
+                .descriptor_count(1)];
+            let pool = unsafe {
+                self.device.raw.create_descriptor_pool(
+                    &vk::DescriptorPoolCreateInfo::default()
+                        .max_sets(1)
+                        .pool_sizes(&sizes),
+                    None,
+                )
             }
-            format!("allocate dispatch descriptors: {e:?}")
-        })?[0];
-        let info = [vk::DescriptorBufferInfo::default()
-            .buffer(uniforms.raw())
-            .range(uniforms.len() as u64)];
-        unsafe {
-            self.device.raw.update_descriptor_sets(
-                &[vk::WriteDescriptorSet::default()
-                    .dst_set(set)
-                    .dst_binding(0)
-                    .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                    .buffer_info(&info)],
-                &[],
-            );
-        }
-        let command = self.command().inspect_err(|_| unsafe {
-            self.device.raw.destroy_descriptor_pool(pool, None);
+            .map_err(|e| format!("create dispatch descriptors: {e:?}"))?;
+            let layouts = [self.descriptor_layout];
+            let set = unsafe {
+                self.device.raw.allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::default()
+                        .descriptor_pool(pool)
+                        .set_layouts(&layouts),
+                )
+            }
+            .map_err(|e| {
+                unsafe {
+                    self.device.raw.destroy_descriptor_pool(pool, None);
+                }
+                format!("allocate dispatch descriptors: {e:?}")
+            })?[0];
+            let info = [vk::DescriptorBufferInfo::default()
+                .buffer(uniforms.raw())
+                .range(uniforms.len() as u64)];
+            unsafe {
+                self.device.raw.update_descriptor_sets(
+                    &[vk::WriteDescriptorSet::default()
+                        .dst_set(set)
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                        .buffer_info(&info)],
+                    &[],
+                );
+            }
+            resources.push(uniforms);
+            Some((pool, set))
+        } else {
+            None
+        };
+        let command = self.command().inspect_err(|_| {
+            if let Some((pool, _)) = descriptor {
+                unsafe {
+                    self.device.raw.destroy_descriptor_pool(pool, None);
+                }
+            }
         })?;
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
@@ -418,7 +443,7 @@ impl Renderer {
                 vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::DependencyFlags::empty(),
                 &[vk::MemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::MEMORY_WRITE | vk::AccessFlags::HOST_WRITE)
+                    .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
                     .dst_access_mask(
                         vk::AccessFlags::SHADER_READ
                             | vk::AccessFlags::SHADER_WRITE
@@ -430,20 +455,29 @@ impl Renderer {
             self.device
                 .raw
                 .cmd_bind_pipeline(command, vk::PipelineBindPoint::COMPUTE, pipeline);
-            self.device.raw.cmd_bind_descriptor_sets(
-                command,
-                vk::PipelineBindPoint::COMPUTE,
-                self.pipeline_layout,
-                0,
-                &[set],
-                &[],
-            );
+            if let Some((_, set)) = descriptor {
+                self.device.raw.cmd_bind_descriptor_sets(
+                    command,
+                    vk::PipelineBindPoint::COMPUTE,
+                    self.pipeline_layout,
+                    0,
+                    &[set],
+                    &[],
+                );
+            } else {
+                self.device.raw.cmd_push_constants(
+                    command,
+                    self.pipeline_layout,
+                    vk::ShaderStageFlags::COMPUTE,
+                    0,
+                    &arguments.bytes,
+                );
+            }
             self.device
                 .raw
                 .cmd_dispatch(command, groups[0], groups[1], groups[2]);
         }
-        resources.push(uniforms);
-        self.submit(command, resources, Some(pool))
+        self.submit(command, resources, descriptor.map(|(pool, _)| pool))
     }
 
     pub fn composite_buffers(

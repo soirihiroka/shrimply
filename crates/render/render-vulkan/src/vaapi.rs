@@ -481,41 +481,20 @@ impl Renderer {
             .checked_mul(height)
             .ok_or("Video pixel count overflow")?;
         let output = self.allocate(count.checked_mul(4).ok_or("Video RGBA size overflow")?)?;
-        let mut parameters: shrimply_render_core::Nv12LayerParams = unsafe { std::mem::zeroed() };
-        parameters.source_width = width as u32;
-        parameters.source_height = height as u32;
-        parameters.canvas_width = width as u32;
-        parameters.y_plane = planes.address() as usize as _;
-        parameters.uv_plane = (planes.address() + y_size as u64) as usize as _;
-        parameters.y_pitch = pitch;
-        parameters.uv_pitch = uv_pitch;
-        parameters.inverse = shrimply_render_core::math::Mat3::IDENTITY;
-        parameters.opacity = 1.0;
-        parameters.kind = shrimply_render_core::LayerKind::Nv12;
-        parameters.sample_method = shrimply_render_core::VideoSampleMethod::Nearest;
-        let bytes = unsafe {
-            std::slice::from_raw_parts(
-                (&parameters as *const shrimply_render_core::Nv12LayerParams).cast(),
-                size_of_val(&parameters),
-            )
-        };
-        let layer = self.upload(bytes)?;
-        let mut arguments = self.arguments("composite_nv12_layers")?;
+        let mut arguments = self.arguments("nv12_to_rgba")?;
         arguments
-            .set("layers", &layer.address().to_ne_bytes())?
-            .set("layer_count", &1_u64.to_ne_bytes())?
-            .set("transforms", &0_u64.to_ne_bytes())?
-            .set("transform_count", &0_u64.to_ne_bytes())?
-            .set("output", &output.address().to_ne_bytes())?
-            .set("output_count", &(count as u64).to_ne_bytes())?
-            .set("background", &0_u32.to_ne_bytes())?;
-        let mut converted = unsafe {
-            self.dispatch(
-                arguments,
-                vec![planes, layer, output.clone()],
-                [count, 1, 1],
-            )
-        }?;
+            .set("y_plane", &planes.address().to_ne_bytes())?
+            .set(
+                "uv_plane",
+                &(planes.address() + y_size as u64).to_ne_bytes(),
+            )?
+            .set("y_pitch", &(pitch as u64).to_ne_bytes())?
+            .set("uv_pitch", &(uv_pitch as u64).to_ne_bytes())?
+            .set("width", &(width as u32).to_ne_bytes())?
+            .set("height", &(height as u32).to_ne_bytes())?
+            .set("output", &output.address().to_ne_bytes())?;
+        let mut converted =
+            unsafe { self.dispatch(arguments, vec![planes, output.clone()], [count, 1, 1]) }?;
         converted._prior.push(prior);
         Ok((output, converted))
     }
