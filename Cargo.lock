@@ -7139,6 +7139,7 @@ dependencies = [
  "shrimply-project-document",
  "shrimply-project-evaluation",
  "shrimply-property-model",
+ "shrimply-render-core",
  "shrimply-render-vulkan",
  "shrimply-surface-gl-skia",
  "shrimply-visual-core",
