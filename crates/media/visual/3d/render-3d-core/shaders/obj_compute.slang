@@ -892,6 +892,15 @@ TransportResult shade_transport_path(
     uint first_path_bounce,
     uint random_seed)
 {
+    if (!OBJECT_TRANSPORT)
+    {
+        float4 local = shade_surface(first_surface, first_direction, pixel, 1u, random_seed);
+        TransportResult result;
+        result.radiance = local.rgb;
+        result.background = float3(0.0);
+        result.alpha = local.a;
+        return result;
+    }
     ComputeSurface surface = first_surface;
     float3 direction = first_direction;
     float3 throughput = float3(1.0);
@@ -990,7 +999,7 @@ TransportResult shade_transport_path(
                     virtual_distance,
                     virtual_ground)
                     && virtual_distance < geometry_distance;
-                if (virtual_hit && virtual_ground >= 0)
+                if (OBJECT_GROUNDS && virtual_hit && virtual_ground >= 0)
                 {
                     Ground ground = scene.grounds[virtual_ground];
                     float3 ground_position = origin + sample.direction * virtual_distance;
@@ -1040,7 +1049,7 @@ TransportResult shade_transport_path(
                         ComputeSurface reflected_surface;
                         float reflected_distance;
                         bool reflected_hit = false;
-                        if (reflection.valid)
+                        if (OBJECT_GROUND_REFLECTIONS && reflection.valid)
                         {
                             RayDesc reflection_ray = {
                                 mul(scene.model_inverse, float4(reflection.origin, 1.0)).xyz,
@@ -1131,7 +1140,7 @@ TransportResult shade_transport_path(
 
         if (!path_complete)
             continue;
-        while (continuation_count > 0u)
+        while (OBJECT_GROUNDS && continuation_count > 0u)
         {
             continuation_count -= 1u;
             GroundTransportContinuation continuation =
