@@ -120,6 +120,7 @@ impl PreviewController {
         video_tx: VideoCommandSender,
     ) -> Self {
         let area = gtk::GLArea::builder()
+            .allowed_apis(gdk::GLAPI::GL)
             .auto_render(false)
             .has_depth_buffer(false)
             .has_stencil_buffer(false)
@@ -128,6 +129,7 @@ impl PreviewController {
             .focusable(true)
             .width_request(640)
             .build();
+        area.set_required_version(3, 3);
         let preference = preferences_store::snapshot(&preferences);
         let state = Rc::new(RefCell::new(VideoSurfaceState {
             renderer: None,
