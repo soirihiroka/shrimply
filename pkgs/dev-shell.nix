@@ -26,6 +26,7 @@
   poppler_gi,
   python3,
   qt6,
+  ripgrep,
   rubberband,
   rustToolchain,
   shrimply-slang,
@@ -70,6 +71,7 @@ mkShell {
     poppler_gi
     python3
     qtEnv
+    ripgrep
     rubberband
     shrimply-slang
     uv
