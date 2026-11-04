@@ -1,6 +1,6 @@
 #[cfg(target_os = "linux")]
 fn main() {
-    use std::{fmt::Write, path::PathBuf};
+    use std::{collections::HashSet, fmt::Write, path::PathBuf};
     println!("cargo:rustc-check-cfg=cfg(ffmpeg_vulkan_queue_flags)");
     let avutil = pkg_config::Config::new()
         .cargo_metadata(false)
@@ -21,6 +21,7 @@ fn main() {
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Vulkan shader output"));
     let compiler = shrimply_slang_build::Compiler::new(&directory, &output);
     let mut generated = String::from("static MODULES: &[Module] = &[\n");
+    let mut names = HashSet::new();
     for module in include_str!("../render-core/shaders/kernels.txt")
         .lines()
         .chain(["video", "denoise"])
@@ -62,6 +63,7 @@ fn main() {
             writeln!(generated, "Module {{ code: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{code}\")), kernels: &[").unwrap();
             for entry in selected {
                 let name = entry["name"].as_str().expect("kernel name");
+                assert!(names.insert(name.to_owned()), "Duplicate Vulkan kernel {name}");
                 let entry_name = if buffered {
                     format!("{name}_vulkan")
                 } else {

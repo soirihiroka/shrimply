@@ -59,7 +59,7 @@ pub fn run() -> Result<(), String> {
     let mut obj_control = None;
     let needs_control = ENABLED_3D_CASES.iter().any(|name| name.contains(&filter));
     for (name, project) in cases {
-        if !name.contains(&filter) && !(name == "obj-control" && needs_control) {
+        if !(name.contains(&filter) || name == "obj-control" && needs_control) {
             continue;
         }
         let started = Instant::now();

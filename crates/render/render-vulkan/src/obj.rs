@@ -121,7 +121,7 @@ impl Renderer {
             self.object_environment(plan, empty_texture, &fallback, submissions)?;
         let (composite_texture, composite_buffer) = if let Some((background, size)) = background {
             let (texture, buffer) = self.float_texture(size, None)?;
-            let mut args = self.arguments("rgba_to_float")?;
+            let mut args = self.arguments("packed_rgba_to_float")?;
             let pixels = u64::from(size.0) * u64::from(size.1);
             if usize::try_from(pixels).ok().and_then(|n| n.checked_mul(4)) != Some(background.len())
             {

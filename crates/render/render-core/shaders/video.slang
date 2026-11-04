@@ -147,7 +147,7 @@ void estimate_flow(uint3 id : SV_DispatchThreadID,
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
-void rgba_to_float(uint3 id : SV_DispatchThreadID, uniform uint* input, uniform float4* output, uniform uint64_t count) {
+void packed_rgba_to_float(uint3 id : SV_DispatchThreadID, uniform uint* input, uniform float4* output, uniform uint64_t count) {
   if (id.x >= count) return;
   Color value = color_from_rgba(input[id.x]);
   output[id.x] = float4(value.r, value.g, value.b, value.a);
