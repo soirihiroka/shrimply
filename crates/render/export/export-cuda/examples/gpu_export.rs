@@ -44,6 +44,12 @@ fn main() -> Result<(), String> {
     if frames <= 0 {
         return Err("Frame count must be positive".into());
     }
+    let rate_control = match arguments.next().as_deref().unwrap_or("cqp") {
+        "cqp" => ExportRateControl::ConstantQp,
+        "cbr" => ExportRateControl::ConstantBitrate,
+        "vbr" => ExportRateControl::VariableBitrate,
+        value => return Err(format!("Expected cqp, cbr, or vbr; received {value:?}")),
+    };
     ffmpeg::init().map_err(|e| e.to_string())?;
     let project = if source
         .extension()
@@ -98,7 +104,7 @@ fn main() -> Result<(), String> {
         },
         fps: project.fps,
         background_alpha: u8::MAX,
-        rate_control: ExportRateControl::ConstantQp,
+        rate_control,
         constant_qp: 20,
         bitrate_kbps: 10_000,
         max_bitrate_kbps: 10_000,

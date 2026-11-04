@@ -425,7 +425,7 @@ intel-gl-probe: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-preview-runtime-cuda --example intel_gl_probe
 
 gpu-export-benchmark: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example gpu_export -- "$(or $(PROJECT),$(VIDEO))" "$(OUTPUT)" "$(or $(FORMAT),h264)" "$(or $(FRAMES),120)"
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example gpu_export -- "$(or $(PROJECT),$(VIDEO))" "$(OUTPUT)" "$(or $(FORMAT),h264)" "$(or $(FRAMES),120)" "$(or $(RATE_CONTROL),cqp)"
 
 gpu-playback-benchmark: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)" "$(or $(ACCURACY),playback)"

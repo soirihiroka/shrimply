@@ -114,6 +114,9 @@ pipeline on the target machine:
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark VIDEO=/path/to/video.mp4 OUTPUT=/tmp/intel.mp4 FORMAT=hevc10
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark PROJECT=/path/to/project.shrimp OUTPUT=/tmp/project.mp4 FORMAT=h264
 
+Set ``RATE_CONTROL=cbr`` or ``RATE_CONTROL=vbr`` on the export benchmark to
+exercise bitrate-controlled encoding. The default is ``RATE_CONTROL=cqp``.
+
 ``make gtk-gpu-preferences-validation`` exercises the Performance ComboRow on
 a hybrid Intel/NVIDIA machine, restarts for every device selection, and checks
 the actual GTK preview framebuffer after native GPU texture sharing. Set
