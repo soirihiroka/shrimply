@@ -9,6 +9,9 @@ fn main() -> Result<(), String> {
         time::{Duration, Instant},
     };
 
+    // First use can compile native GPU pipelines before the first frame arrives.
+    const WORKER_TIMEOUT: Duration = Duration::from_secs(180);
+
     #[cfg(target_os = "linux")]
     shrimply_visual_cuda::gpu::configure_gtk_backend()?;
     let mut arguments = std::env::args().skip(1);
@@ -31,6 +34,7 @@ fn main() -> Result<(), String> {
     let fps = project.fps;
     let (commands, events) = spawn_worker(project);
     let started = Instant::now();
+    let mut first_frame = Duration::ZERO;
     for index in 0..count {
         let position = time_from_frame(index, fps).ok_or("Invalid playback frame position")?;
         commands
@@ -45,7 +49,7 @@ fn main() -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         loop {
             match events
-                .recv_timeout(Duration::from_secs(60))
+                .recv_timeout(WORKER_TIMEOUT)
                 .map_err(|e| e.to_string())?
             {
                 VideoEvent::Error(error) => return Err(error),
@@ -55,13 +59,17 @@ fn main() -> Result<(), String> {
                 _ => {}
             }
         }
+        if index == 0 {
+            first_frame = started.elapsed();
+        }
     }
+    let rendered = started.elapsed();
     commands
         .send(VideoCommand::Stop)
         .map_err(|e| e.to_string())?;
     // Drain until the worker releases its native GPU contexts before process exit.
     loop {
-        match events.recv_timeout(Duration::from_secs(60)) {
+        match events.recv_timeout(WORKER_TIMEOUT) {
             Ok(VideoEvent::Error(error)) => return Err(error),
             Ok(_) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -73,5 +81,11 @@ fn main() -> Result<(), String> {
         "{count} preview frames in {elapsed:?}; {} fps; no pixel readbacks",
         u128::from(count) * 1_000_000_000 / elapsed.as_nanos().max(1)
     );
+    if count > 1 {
+        println!(
+            "First frame: {first_frame:?}; subsequent frames: {} fps",
+            u128::from(count - 1) * 1_000_000_000 / (rendered - first_frame).as_nanos().max(1)
+        );
+    }
     Ok(())
 }
