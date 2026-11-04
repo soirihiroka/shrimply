@@ -163,7 +163,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
             "strokes": [{"points": [{"position": [20, 20], "pressure": 1.0}, {"position": [80, 70], "pressure": 0.8}, {"position": [140, 20], "pressure": 1.0}]}], "fills": []
         })).map_err(|e| e.to_string())?);
     }
-    result.push(("source-paint".into(), project(paint)));
+    result.push(("source-paint".into(), project(paint.clone())));
     let sequence_id = uuid::Uuid::new_v4();
     let mut group_item = image.clone();
     group_item.content = VideoItemContent::FoldedSequence(SequenceReference {
@@ -383,7 +383,11 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     for factory in VectorModifierEffect::CATALOG {
         let effect = factory();
         let name = effect.display_name().replace(' ', "-").replace('/', "-");
-        let mut item = text.clone();
+        let mut item = if matches!(effect, VectorModifierEffect::PathOffset(_)) {
+            paint.clone()
+        } else {
+            text.clone()
+        };
         item.modifiers
             .push(modifier(ModifierEffect::vector(effect)));
         result.push((format!("vector-{name}"), project(item)));
@@ -415,11 +419,23 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         VisualTransitionKind::Origami,
         VisualTransitionKind::StreakWipe,
     ] {
-        let mut item = text.clone();
-        let mut transition = VisualTransition::new(TransitionSide::Intro, duration, size);
-        transition.set_kind(TransitionSide::Intro, kind);
-        item.transitions.intro = Some(transition);
-        result.push((format!("intro-{kind:?}"), project(item)));
+        let mut item = if kind == VisualTransitionKind::Drawing {
+            paint.clone()
+        } else {
+            text.clone()
+        };
+        let side = if kind == VisualTransitionKind::Diffusion {
+            TransitionSide::Outro
+        } else {
+            TransitionSide::Intro
+        };
+        let mut transition = VisualTransition::new(side, duration, size);
+        transition.set_kind(side, kind);
+        match side {
+            TransitionSide::Intro => item.transitions.intro = Some(transition),
+            TransitionSide::Outro => item.transitions.outro = Some(transition),
+        }
+        result.push((format!("transition-{side:?}-{kind:?}"), project(item)));
     }
     for kind in [
         VisualClipTransitionKind::CrossFade,
@@ -440,7 +456,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         incoming.file = Asset::new(output.join("target.png"));
         incoming.start = outgoing.end;
         let mut transition =
-            VisualClipTransition::new(incoming.id, Time::from_fraction(FRAMES, FPS * 2));
+            VisualClipTransition::new(incoming.id, Time::from_fraction(FRAMES, FPS * 4));
         transition.set_kind(kind);
         outgoing.transitions.to_next = Some(transition);
         let mut project = project(outgoing);
@@ -568,24 +584,41 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
         ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
     )
     .map_err(|e| e.to_string())?;
-    // Intel export declares limited-range BT.709; use it explicitly for this independent CPU decode.
-    unsafe {
-        let coefficients = ffmpeg_next::sys::sws_getCoefficients(ffmpeg_next::sys::SWS_CS_ITU709);
-        let result = ffmpeg_next::sys::sws_setColorspaceDetails(
-            scaler.as_mut_ptr(),
-            coefficients,
-            0,
-            coefficients,
-            1,
-            0,
-            1 << 16,
-            1 << 16,
-        );
-        if result < 0 {
-            return Err("Configure export verification color conversion".into());
+    let mut reference_encoder = ffmpeg_next::software::scaling::Context::get(
+        ffmpeg_next::format::Pixel::RGBA,
+        WIDTH,
+        HEIGHT,
+        decoder.format(),
+        WIDTH,
+        HEIGHT,
+        ffmpeg_next::software::scaling::flag::Flags::AREA,
+    )
+    .map_err(|error| error.to_string())?;
+    // Compare against an independent CPU 4:2:0 round trip. Direct RGB comparison
+    // incorrectly treats unavoidable chroma loss on warped checkerboards as a bug.
+    for (context, input_range, output_range) in
+        [(&mut scaler, 0, 1), (&mut reference_encoder, 1, 0)]
+    {
+        unsafe {
+            let coefficients =
+                ffmpeg_next::sys::sws_getCoefficients(ffmpeg_next::sys::SWS_CS_ITU709);
+            let result = ffmpeg_next::sys::sws_setColorspaceDetails(
+                context.as_mut_ptr(),
+                coefficients,
+                input_range,
+                coefficients,
+                output_range,
+                0,
+                1 << 16,
+                1 << 16,
+            );
+            if result < 0 {
+                return Err("Configure export verification color conversion".into());
+            }
         }
     }
     let mut decoded = 0;
+    let mut maximum_error_milli = 0;
     let mut receive = |decoder: &mut ffmpeg_next::decoder::Video| -> Result<(), String> {
         loop {
             let mut frame = ffmpeg_next::frame::Video::empty();
@@ -606,26 +639,50 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
             {
                 let mut rgba = ffmpeg_next::frame::Video::empty();
                 scaler.run(&frame, &mut rgba).map_err(|e| e.to_string())?;
+                let mut reference =
+                    ffmpeg_next::frame::Video::new(ffmpeg_next::format::Pixel::RGBA, WIDTH, HEIGHT);
+                let stride = reference.stride(0);
+                reference.data_mut(0).fill(0);
+                for (row, expected) in reference
+                    .data_mut(0)
+                    .chunks_exact_mut(stride)
+                    .zip(captures[capture].chunks_exact(WIDTH as usize * 4))
+                {
+                    for (pixel, expected) in row.chunks_exact_mut(4).zip(expected.chunks_exact(4)) {
+                        for channel in 0..3 {
+                            pixel[channel] = (u16::from(expected[channel]) * u16::from(expected[3])
+                                / u16::from(u8::MAX))
+                                as u8;
+                        }
+                        pixel[3] = u8::MAX;
+                    }
+                }
+                let mut chroma = ffmpeg_next::frame::Video::empty();
+                reference_encoder
+                    .run(&reference, &mut chroma)
+                    .map_err(|e| e.to_string())?;
+                let mut expected = ffmpeg_next::frame::Video::empty();
+                scaler
+                    .run(&chroma, &mut expected)
+                    .map_err(|e| e.to_string())?;
                 let mut difference = 0_u64;
                 for (row, expected) in rgba
                     .data(0)
                     .chunks_exact(rgba.stride(0))
-                    .zip(captures[capture].chunks_exact(WIDTH as usize * 4))
+                    .zip(expected.data(0).chunks_exact(expected.stride(0)))
                 {
                     for (actual, expected) in row[..WIDTH as usize * 4]
                         .chunks_exact(4)
                         .zip(expected.chunks_exact(4))
                     {
                         for channel in 0..3 {
-                            let expected = (u16::from(expected[channel]) * u16::from(expected[3])
-                                / u16::from(u8::MAX))
-                                as u8;
-                            difference += u64::from(actual[channel].abs_diff(expected));
+                            difference += u64::from(actual[channel].abs_diff(expected[channel]));
                         }
                     }
                 }
                 const MAX_AVERAGE_COLOR_ERROR: u64 = 12;
                 let samples = u64::from(WIDTH) * u64::from(HEIGHT) * 3;
+                maximum_error_milli = maximum_error_milli.max(difference * 1000 / samples);
                 if difference > samples * MAX_AVERAGE_COLOR_ERROR {
                     return Err(format!(
                         "Export differs from preview at frame {decoded}: {} milli-levels mean color error",
@@ -650,6 +707,9 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
             "Decoded {decoded} exported frames, expected {FRAMES}"
         ));
     }
+    println!(
+        "Export RGB error after 4:2:0 reference conversion: {maximum_error_milli} milli-levels"
+    );
     Ok(())
 }
 
