@@ -374,7 +374,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     }
     for factory in RasterModifierEffect::CATALOG {
         let effect = factory();
-        let name = effect.display_name().replace(' ', "-").replace('/', "-");
+        let name = effect.display_name().replace([' ', '/'], "-");
         let mut item = image.clone();
         item.modifiers
             .push(modifier(ModifierEffect::raster(effect)));
@@ -382,7 +382,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     }
     for factory in VectorModifierEffect::CATALOG {
         let effect = factory();
-        let name = effect.display_name().replace(' ', "-").replace('/', "-");
+        let name = effect.display_name().replace([' ', '/'], "-");
         let mut item = if matches!(effect, VectorModifierEffect::PathOffset(_)) {
             paint.clone()
         } else {

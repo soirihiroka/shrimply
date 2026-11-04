@@ -64,9 +64,12 @@ Use FFmpeg 8 or newer for its Vulkan scalar-layout support. The Flatpak build
 backports that feature enablement to its bundled FFmpeg 7.
 
 The GTK binary automatically keeps CUDA on machines with an available NVIDIA
-device and selects Intel otherwise. Override this with ``SHRIMPLY_GPU=intel``
-or ``SHRIMPLY_GPU=cuda``. ``SHRIMPLY_INTEL_DEVICE=/dev/dri/renderD128`` selects
-a particular Intel DRM render node when needed.
+device and selects Intel otherwise. Choose a specific device in Preferences,
+Performance, Acceleration device, then restart the editor. Startup applies
+native PRIME settings before GTK creates its OpenGL context. Override the saved
+choice with ``SHRIMPLY_GPU=intel`` or ``SHRIMPLY_GPU=cuda``.
+``SHRIMPLY_INTEL_DEVICE=/dev/dri/renderD128`` selects a particular Intel DRM
+render node when needed.
 
 Decoded NV12/P010 video surfaces are imported through DMA-BUF and processed
 with the shared Slang shaders. Source full/limited range and BT.601/BT.709
@@ -86,8 +89,12 @@ H.265, and H.265 Main10 export use VA-API with GPU color conversion and
 DMA-BUF surface writes. Intel export offers constant QP, CBR, and VBR;
 the GTK dialog displays the controls supported by the selected backend.
 GIF export uses its CPU encoder and explicitly reads back RGBA pixels. Manim,
-Gaussian and OBJ rendering, raster morph estimation, and SAM2 GPU analysis
-are currently unavailable on this backend.
+Gaussian and OBJ rendering, and raster morph estimation use the shared
+GPU implementations. Intel's 3D renderer traces rays through a software BVH
+on the GPU, including on devices without hardware ray-tracing instructions.
+SAM2, stabilization, cache baking, and transparent fill use the same analysis
+and cache workflows as CUDA. SAM2 requires a configured analysis server;
+its acceleration depends on that server's device.
 
 Check the Intel crates and measure the decode/composite/presentation-export
 pipeline on the target machine:
@@ -100,6 +107,12 @@ pipeline on the target machine:
    $ SHRIMPLY_GPU=intel make gpu-playback-benchmark PROJECT=/path/to/project.shrimp FRAMES=120
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark VIDEO=/path/to/video.mp4 OUTPUT=/tmp/intel.mp4 FORMAT=hevc10
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark PROJECT=/path/to/project.shrimp OUTPUT=/tmp/project.mp4 FORMAT=h264
+
+``make gtk-gpu-preferences-validation`` exercises the Performance ComboRow on
+a hybrid Intel/NVIDIA machine, restarts for every device selection, and checks
+the actual GTK preview framebuffer after native GPU texture sharing. Set
+``XDG_CONFIG_HOME`` to a new, empty directory so validation cannot overwrite
+existing preferences. Only the final pixel verification reads back to the CPU.
 
 Ray-tracing denoising
 ~~~~~~~~~~~~~~~~~~~~~~~~
