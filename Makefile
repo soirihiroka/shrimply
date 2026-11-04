@@ -414,8 +414,12 @@ cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-inspector-document --lib
 
 intel-check: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-render-vulkan -p shrimply-preview-render-vulkan
-	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -- -D warnings
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-render-vulkan -p shrimply-preview-render-vulkan --all-targets
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-render-vulkan -p shrimply-preview-render-vulkan --all-targets -- -D warnings
+
+.PHONY: intel-benchmark
+intel-benchmark: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-render-vulkan --example intel_gpu -- "$(VIDEO)" "$(or $(FRAMES),120)"
 
 frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost

@@ -115,10 +115,29 @@ impl Renderer {
             (*mapped.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_VULKAN as i32;
             (*mapped.as_mut_ptr()).hw_frames_ctx = derived;
         }
+        // Export explicitly to DRM PRIME first. With MAP_DIRECT, FFmpeg's
+        // VA-API mapper rejects a Vulkan destination before trying its mapper.
+        let mut drm = ffmpeg::frame::Video::empty();
+        unsafe {
+            (*drm.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
+        }
+        let result = unsafe {
+            sys::av_hwframe_map(
+                drm.as_mut_ptr(),
+                source.frame.as_ptr(),
+                sys::AV_HWFRAME_MAP_READ as i32 | sys::AV_HWFRAME_MAP_DIRECT as i32,
+            )
+        };
+        if result < 0 {
+            return Err(format!(
+                "Export Intel video as DMA-BUF: {}",
+                ffmpeg::Error::from(result)
+            ));
+        }
         let result = unsafe {
             sys::av_hwframe_map(
                 mapped.as_mut_ptr(),
-                source.frame.as_ptr(),
+                drm.as_ptr(),
                 sys::AV_HWFRAME_MAP_READ as i32 | sys::AV_HWFRAME_MAP_DIRECT as i32,
             )
         };

@@ -101,6 +101,7 @@ mkShell {
         opencv
         shrimply-slang
         qtEnv
+        vulkan-loader
       ]
     }:/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   '';

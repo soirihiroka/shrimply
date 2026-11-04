@@ -85,6 +85,8 @@ modules:
       - --enable-libopus
       - --enable-ffnvcodec
       - --enable-vulkan
+      - --enable-vaapi
+      - --enable-libdrm
       - --enable-gnutls
     sources:
       - type: archive
