@@ -1,3 +1,5 @@
+#include "scene-parameter.slang"
+
 module render_3d_toon;
 
 import render_3d_abi;
@@ -320,7 +322,7 @@ public struct ToonDirectLighting
 };
 
 public ToonDirectLighting integrate_toon_direct_lights<T : IToonShadowTracer>(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     float3 world_position,
     float3 normal,
     float3 view,

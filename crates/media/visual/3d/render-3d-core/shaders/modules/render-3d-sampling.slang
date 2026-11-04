@@ -1,3 +1,5 @@
+#include "scene-parameter.slang"
+
 module render_3d_sampling;
 
 import render_3d_abi;
@@ -180,7 +182,7 @@ public bool adaptive_converged(
 }
 
 public CameraRay camera_ray(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     float2 sample_position,
     uint2 dimensions,
     bool depth_of_field,

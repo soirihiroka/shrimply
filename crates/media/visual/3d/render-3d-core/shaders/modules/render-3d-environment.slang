@@ -1,3 +1,5 @@
+#include "scene-parameter.slang"
+
 module render_3d_environment;
 
 import render_3d_abi;
@@ -28,7 +30,7 @@ public interface IPbrEnvironmentTracer
 }
 
 public float3 integrate_pbr_environment<T : IPbrEnvironmentTracer>(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     float3 world_position,
     float3 normal,
     float3 view,

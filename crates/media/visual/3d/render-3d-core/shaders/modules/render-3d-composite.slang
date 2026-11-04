@@ -1,3 +1,5 @@
+#include "scene-parameter.slang"
+
 module render_3d_composite;
 
 import render_3d_abi;
@@ -7,7 +9,7 @@ import render_3d_ray;
 
 static const float COMPOSITE_PI = 3.14159265358979323846;
 
-public float2 shared_composite_world_uv(SceneUniforms scene, float3 direction)
+public float2 shared_composite_world_uv(SCENE_UNIFORMS scene, float3 direction)
 {
     float3 rotated = normalize(mul(
         scene.environment_inverse_rotation,
@@ -34,7 +36,7 @@ public float2 shared_composite_world_uv(SceneUniforms scene, float3 direction)
 }
 
 public bool shared_composed_background_uv(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     float3 world_position,
     uint2 texture_dimensions,
     out float2 uv)
@@ -141,7 +143,7 @@ public float4 shared_sample_composite<T : ICompositeSampler>(
         sampled.a);
 }
 
-public bool shared_environment_enabled(SceneUniforms scene)
+public bool shared_environment_enabled(SCENE_UNIFORMS scene)
 {
     return scene.environment.source == EnvironmentSource::Black
         || scene.environment.source == EnvironmentSource::Image
@@ -153,7 +155,7 @@ public bool shared_environment_enabled(SceneUniforms scene)
 }
 
 public bool shared_sample_transmission_background_at_lod<T : ICompositeSampler>(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     T sampler,
     float3 world_position,
     float lod,
@@ -174,7 +176,7 @@ public bool shared_sample_transmission_background_at_lod<T : ICompositeSampler>(
 }
 
 public bool shared_sample_composed_planes<T : ICompositeSampler>(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     T sampler,
     float3 world_origin,
     float3 world_direction,
@@ -255,7 +257,7 @@ public bool shared_sample_composed_planes<T : ICompositeSampler>(
 }
 
 public float3 shared_sample_environment<T : ICompositeSampler>(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     T sampler,
     float3 world_origin,
     float3 direction,
@@ -290,7 +292,7 @@ public float3 shared_sample_environment<T : ICompositeSampler>(
 }
 
 public bool shared_sample_transmission_background<T : ICompositeSampler>(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     T sampler,
     float3 world_origin,
     float3 world_direction,
