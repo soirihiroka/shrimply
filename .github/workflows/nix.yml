@@ -73,6 +73,8 @@ jobs:
         with:
           name: ${{ env.CACHIX_CACHE }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          # The explicit step below uploads the result and its runtime closure.
+          skipPush: true
 
       - name: Build Shrimply via Nix Flake
         run: nix build .#shrimply --print-build-logs
