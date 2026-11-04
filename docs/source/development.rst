@@ -69,7 +69,10 @@ or ``SHRIMPLY_GPU=cuda``. ``SHRIMPLY_INTEL_DEVICE=/dev/dri/renderD128`` selects
 a particular Intel DRM render node when needed.
 
 Decoded NV12/P010 video surfaces are imported through DMA-BUF and processed
-with the shared Slang shaders. GTK imports the Vulkan output texture directly
+with the shared Slang shaders. Source full/limited range and BT.601/BT.709
+matrix metadata are respected. Other color matrices fail explicitly; the
+compositor currently processes eight-bit RGBA even for Main10 input/output.
+GTK imports the Vulkan output texture directly
 into OpenGL. Playback does not download pixels to the CPU; copying or saving
 a preview image explicitly requests a readback.
 

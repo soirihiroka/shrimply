@@ -4,6 +4,14 @@ import common;
 import math;
 import nis_coefficients;
 
+#if defined(SHRIMPLY_VULKAN)
+// Remove unused filter implementations before the driver allocates registers.
+[[vk::constant_id(0)]] const uint SAMPLE_METHODS = 0xffffffffu;
+#define SAMPLE_ENABLED(method) ((SAMPLE_METHODS & (1u << uint(VideoSampleMethod::method))) != 0u)
+#else
+#define SAMPLE_ENABLED(method) true
+#endif
+
 int repeat_index(int value, int start, int length) {
   length = max(length, 1);
   int offset = (value - start) % length;
@@ -64,7 +72,7 @@ Color load_rgba(Nv12LayerParams p, int x, int y) {
 }
 float filter_weight(float value, VideoSampleMethod method) {
   float x = abs(value);
-  if (method == VideoSampleMethod::Mitchell) {
+  if (SAMPLE_ENABLED(Mitchell) && method == VideoSampleMethod::Mitchell) {
     if (x <= 1.0f)
       return 1.1666666f * x * x * x - 2.0f * x * x + 0.8888889f;
     if (x < 2.0f)
@@ -72,8 +80,8 @@ float filter_weight(float value, VideoSampleMethod method) {
              1.7777778f;
     return 0.0f;
   }
-  if (method == VideoSampleMethod::Lanczos2 ||
-      method == VideoSampleMethod::Lanczos3) {
+  if ((SAMPLE_ENABLED(Lanczos2) && method == VideoSampleMethod::Lanczos2) ||
+      (SAMPLE_ENABLED(Lanczos3) && method == VideoSampleMethod::Lanczos3)) {
     float radius = method == VideoSampleMethod::Lanczos2 ? 2.0f : 3.0f;
     if (x < 0.000001f)
       return 1.0f;
@@ -676,20 +684,20 @@ Color sample_rgba_plain(Nv12LayerParams p, float source_x, float source_y) {
   float x = source_x - 0.5f, y = source_y - 0.5f;
   if (p.sample_method == VideoSampleMethod::Nearest)
     return load_rgba(p, int(floor_f32(x + 0.5f)), int(floor_f32(y + 0.5f)));
-  if (p.sample_method == VideoSampleMethod::Fsr1Easu) {
+  if (SAMPLE_ENABLED(Fsr1Easu) && p.sample_method == VideoSampleMethod::Fsr1Easu) {
     Color bilinear = sample_rgba_bilinear_p(p, x, y);
     return magnifying(p)
                ? color_with_alpha(fsr_easu(p, x, y, false), bilinear.a)
                : bilinear;
   }
-  if (p.sample_method == VideoSampleMethod::NvidiaImageScaling)
+  if (SAMPLE_ENABLED(NvidiaImageScaling) && p.sample_method == VideoSampleMethod::NvidiaImageScaling)
     return nis_rgba(p, x, y);
-  if (p.sample_method == VideoSampleMethod::Xbrz)
+  if (SAMPLE_ENABLED(Xbrz) && p.sample_method == VideoSampleMethod::Xbrz)
     return xbrz_sample(p, x, y, false);
-  if (p.sample_method == VideoSampleMethod::Bicubic ||
-      p.sample_method == VideoSampleMethod::Mitchell ||
-      p.sample_method == VideoSampleMethod::Lanczos2 ||
-      p.sample_method == VideoSampleMethod::Lanczos3)
+  if ((SAMPLE_ENABLED(Bicubic) && p.sample_method == VideoSampleMethod::Bicubic) ||
+      (SAMPLE_ENABLED(Mitchell) && p.sample_method == VideoSampleMethod::Mitchell) ||
+      (SAMPLE_ENABLED(Lanczos2) && p.sample_method == VideoSampleMethod::Lanczos2) ||
+      (SAMPLE_ENABLED(Lanczos3) && p.sample_method == VideoSampleMethod::Lanczos3))
     return sample_rgba_weighted_p(p, x, y, p.sample_method);
   return sample_rgba_bilinear_p(p, x, y);
 }

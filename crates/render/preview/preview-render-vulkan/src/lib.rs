@@ -150,6 +150,7 @@ impl Compositor {
         background: u32,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<Rendered, String> {
+        self.scene.request_frame();
         loop {
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 return Err("Export cancelled".into());

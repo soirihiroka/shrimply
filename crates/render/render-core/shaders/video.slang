@@ -1,20 +1,35 @@
 import abi;
 import color;
 
+float2 video_chroma(uint8_t *plane, uint64_t pitch, uint width, uint height,
+                    int x, int y) {
+  uint64_t offset = uint64_t(clamp(y, 0, int((height + 1u) / 2u) - 1)) * pitch +
+                    uint64_t(clamp(x, 0, int((width + 1u) / 2u) - 1)) * 2u;
+  return float2(plane[offset], plane[offset + 1u]) / 255.0f;
+}
+
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
                   uniform uint8_t *y_plane, uniform uint8_t *uv_plane,
                   uniform uint64_t y_pitch, uniform uint64_t uv_pitch,
-                  uniform uint width, uniform uint height, uniform uint *output) {
+                  uniform uint width, uniform uint height, uniform uint *output,
+                  uniform int4 coefficients, uniform bool full_range) {
   uint i = id.x;
   if (i >= width * height)
     return;
   uint x = i % width, y = i / width;
-  uint64_t chroma = uint64_t(y / 2u) * uv_pitch + uint64_t(x / 2u) * 2u;
-  output[i] = color_to_rgba(from_bt709_ycbcr(
+  float2 position = (float2(x, y) - 0.5f) * 0.5f;
+  int2 low = int2(floor(position));
+  float2 amount = position - float2(low);
+  float2 chroma = lerp(
+      lerp(video_chroma(uv_plane, uv_pitch, width, height, low.x, low.y),
+           video_chroma(uv_plane, uv_pitch, width, height, low.x + 1, low.y), amount.x),
+      lerp(video_chroma(uv_plane, uv_pitch, width, height, low.x, low.y + 1),
+           video_chroma(uv_plane, uv_pitch, width, height, low.x + 1, low.y + 1), amount.x),
+      amount.y);
+  output[i] = color_to_rgba(from_ycbcr(
       float(y_plane[uint64_t(y) * y_pitch + x]) / 255.0f,
-      float(uv_plane[chroma]) / 255.0f - 0.5f,
-      float(uv_plane[chroma + 1u]) / 255.0f - 0.5f, 1.0f));
+      chroma, coefficients, full_range));
 }
 
 // The current compositor produces eight-bit RGBA. Reduce P010 only on the GPU,

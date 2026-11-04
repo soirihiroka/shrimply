@@ -211,6 +211,11 @@ impl Scene {
         self.scrubbing = scrubbing;
     }
 
+    /// Request another frame without discarding decoder or source caches.
+    pub fn request_frame(&mut self) {
+        self.prepared = None;
+    }
+
     pub fn invalidate(&mut self) {
         self.media.invalidate();
         self.paint_caches.clear();

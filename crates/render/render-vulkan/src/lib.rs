@@ -43,6 +43,8 @@ include!(concat!(env!("OUT_DIR"), "/kernels.rs"));
 
 pub struct Arguments {
     layout: &'static KernelLayout,
+    code: &'static [u8],
+    sample_methods: u32,
     bytes: Vec<u8>,
 }
 impl Arguments {
@@ -158,16 +160,12 @@ impl Frame {
     }
 }
 
-struct Kernel {
-    pipeline: vk::Pipeline,
-    layout: &'static KernelLayout,
-}
 pub struct Renderer {
     skia: Option<skia_safe::gpu::DirectContext>,
     device: Arc<Device>,
     pool: Rc<Pool>,
     pipeline_layout: vk::PipelineLayout,
-    kernels: HashMap<&'static str, Kernel>,
+    kernels: HashMap<(&'static str, u32), vk::Pipeline>,
     video_contexts: VecDeque<((usize, i32), Rc<vaapi::FramesContext>)>,
     video_context_limit: usize,
 }
@@ -220,15 +218,16 @@ impl Renderer {
         self.video_contexts.clear();
     }
     pub fn warmup(&mut self) -> Result<(), String> {
-        self.kernel("composite_nv12_layers").map(|_| ())
+        let mut arguments = self.arguments("composite_nv12_layers")?;
+        arguments.sample_methods = (1 << shrimply_render_core::VideoSampleMethod::Nearest as u32)
+            | (1 << shrimply_render_core::VideoSampleMethod::Bilinear as u32);
+        self.kernel(&arguments).map(|_| ())
     }
-    fn kernel(&mut self, name: &str) -> Result<&Kernel, String> {
-        if !self.kernels.contains_key(name) {
-            let (module, layout) = MODULES
-                .iter()
-                .find_map(|m| m.kernels.iter().find(|k| k.name == name).map(|k| (m, k)))
-                .ok_or_else(|| format!("Unknown Vulkan kernel {name}"))?;
-            let code = ash::util::read_spv(&mut std::io::Cursor::new(module.code))
+    fn kernel(&mut self, arguments: &Arguments) -> Result<vk::Pipeline, String> {
+        let layout = arguments.layout;
+        let key = (layout.name, arguments.sample_methods);
+        if !self.kernels.contains_key(&key) {
+            let code = ash::util::read_spv(&mut std::io::Cursor::new(arguments.code))
                 .map_err(|e| e.to_string())?;
             let shader = unsafe {
                 self.device
@@ -237,10 +236,18 @@ impl Renderer {
             }
             .map_err(|e| format!("load Slang Vulkan module: {e:?}"))?;
             let entry = CString::new(layout.entry).map_err(|e| e.to_string())?;
+            let entries = [vk::SpecializationMapEntry::default()
+                .constant_id(0)
+                .size(size_of::<u32>())];
+            let data = arguments.sample_methods.to_ne_bytes();
+            let specialization = vk::SpecializationInfo::default()
+                .map_entries(&entries)
+                .data(&data);
             let stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::COMPUTE)
                 .module(shader)
-                .name(&entry);
+                .name(&entry)
+                .specialization_info(&specialization);
             let pipelines = unsafe {
                 self.device.raw.create_compute_pipelines(
                     vk::PipelineCache::null(),
@@ -259,15 +266,17 @@ impl Renderer {
                         self.device.raw.destroy_pipeline(pipeline, None);
                     }
                 }
-                format!("compile Slang Vulkan kernel {name}: {e:?}")
+                format!("compile Slang Vulkan kernel {}: {e:?}", layout.name)
             })?[0];
-            self.kernels
-                .insert(layout.name, Kernel { pipeline, layout });
+            self.kernels.insert(key, pipeline);
         }
-        Ok(self.kernels.get(name).expect("inserted Vulkan kernel"))
+        Ok(*self.kernels.get(&key).expect("inserted Vulkan kernel"))
     }
-    pub fn arguments(&mut self, name: &str) -> Result<Arguments, String> {
-        let layout = self.kernel(name)?.layout;
+    pub fn arguments(&self, name: &str) -> Result<Arguments, String> {
+        let (module, layout) = MODULES
+            .iter()
+            .find_map(|m| m.kernels.iter().find(|k| k.name == name).map(|k| (m, k)))
+            .ok_or_else(|| format!("Unknown Vulkan kernel {name}"))?;
         let size = layout
             .fields
             .iter()
@@ -277,6 +286,8 @@ impl Renderer {
             .next_multiple_of(16);
         Ok(Arguments {
             layout,
+            code: module.code,
+            sample_methods: u32::MAX,
             bytes: vec![0; size],
         })
     }
@@ -355,9 +366,8 @@ impl Renderer {
         if extent.contains(&0) {
             return Err("Vulkan dispatch dimensions must be nonzero".into());
         }
-        let kernel = self.kernel(arguments.layout.name)?;
-        let pipeline = kernel.pipeline;
-        let group = kernel.layout.group;
+        let pipeline = self.kernel(&arguments)?;
+        let group = arguments.layout.group;
         let mut groups = [0_u32; 3];
         for axis in 0..groups.len() {
             groups[axis] = u32::try_from(extent[axis].div_ceil(group[axis]))
@@ -499,6 +509,9 @@ impl Renderer {
             address
         };
         let mut arguments = self.arguments("composite_nv12_layers")?;
+        arguments.sample_methods = layers.iter().fold(0, |mask, (layer, _)| {
+            mask | (1 << layer.sample_method as u32)
+        });
         arguments
             .set("layers", &layers_address.to_ne_bytes())?
             .set("layer_count", &(parameters.len() as u64).to_ne_bytes())?
@@ -714,8 +727,8 @@ impl Drop for Renderer {
             skia.release_resources_and_abandon();
         }
         unsafe {
-            for kernel in self.kernels.values() {
-                self.device.raw.destroy_pipeline(kernel.pipeline, None);
+            for pipeline in self.kernels.values() {
+                self.device.raw.destroy_pipeline(*pipeline, None);
             }
             self.device
                 .raw

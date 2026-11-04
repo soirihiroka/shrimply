@@ -3,6 +3,8 @@ use ash::{vk, vk::Handle};
 use ffmpeg_next::{self as ffmpeg, sys};
 use std::{ptr, rc::Rc, sync::Arc};
 
+const HD_MINIMUM_HEIGHT: u32 = 720;
+
 /// Keeps the decoder surface alive until the final GPU read completes.
 pub struct VideoFrame {
     pub frame: ffmpeg::frame::Video,
@@ -488,6 +490,27 @@ impl Renderer {
 
     /// Import the VA-API surface through DRM PRIME; pixels stay on the GPU.
     pub fn video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
+        use ffmpeg::color::{Range, Space};
+        let colorspace = match source.frame.color_space() {
+            Space::Unspecified if source.frame.height() >= HD_MINIMUM_HEIGHT => Space::BT709,
+            Space::Unspecified => Space::SMPTE170M,
+            space @ (Space::BT709
+            | Space::BT470BG
+            | Space::SMPTE170M
+            | Space::FCC
+            | Space::SMPTE240M) => space,
+            space => return Err(format!("Unsupported Intel video color matrix: {space:?}")),
+        };
+        let coefficients = unsafe {
+            std::slice::from_raw_parts(
+                sys::sws_getCoefficients(sys::AVColorSpace::from(colorspace) as i32),
+                4,
+            )
+        };
+        let coefficients = coefficients
+            .iter()
+            .flat_map(|value| value.to_ne_bytes())
+            .collect::<Vec<_>>();
         let layout = frame_layout(&source.frame)?;
         let Layout {
             width,
@@ -545,7 +568,12 @@ impl Renderer {
             .set("uv_pitch", &(uv_pitch as u64).to_ne_bytes())?
             .set("width", &(width as u32).to_ne_bytes())?
             .set("height", &(height as u32).to_ne_bytes())?
-            .set("output", &output.address().to_ne_bytes())?;
+            .set("output", &output.address().to_ne_bytes())?
+            .set("coefficients", &coefficients)?
+            .set(
+                "full_range",
+                &[u8::from(source.frame.color_range() == Range::JPEG)],
+            )?;
         let mut converted =
             unsafe { self.dispatch(arguments, vec![planes, output.clone()], [count, 1, 1]) }?;
         converted._prior.push(prior);
