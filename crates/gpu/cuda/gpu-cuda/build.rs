@@ -7,6 +7,7 @@ fn main() {}
 #[cfg(any(target_os = "linux", windows))]
 fn main() {
     println!("cargo:rerun-if-changed=bridge.c");
+    println!("cargo:rerun-if-changed=driver.h");
     println!("cargo:rerun-if-env-changed=CUDA_HOME");
     println!("cargo:rerun-if-env-changed=CUDA_TOOLKIT_PATH");
     let cuda = env::var_os("CUDA_TOOLKIT_PATH")

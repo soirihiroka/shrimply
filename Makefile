@@ -413,9 +413,9 @@ cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(EDITOR_PACKAGE) -p $(QT_EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) -p $(MCP_PACKAGE) --bins
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-inspector-document --lib
 
-intel-check: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-render-vulkan -p shrimply-preview-render-vulkan --all-targets
-	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-render-vulkan -p shrimply-preview-render-vulkan --all-targets -- -D warnings
+intel-check: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets -- -D warnings
 
 .PHONY: intel-benchmark intel-gl-probe gpu-export-benchmark
 intel-benchmark: native-deps
