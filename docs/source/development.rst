@@ -83,6 +83,12 @@ GTK imports the Vulkan output texture directly
 into OpenGL. Playback does not download pixels to the CPU; copying or saving
 a preview image explicitly requests a readback.
 
+For NVIDIA preview, the OpenGL texture is registered with the CUDA context
+matching GTK's display GPU. When the selected rendering GPU differs, CUDA
+transfers the frame between the two contexts. Direct peer transfer is used
+where supported; the driver may stage through host memory otherwise. Shrimply
+does not process or read back those pixels on the CPU.
+
 The Intel backend supports video, images, generated vector graphics,
 backgrounds, groups, layered images, and the shared raster effects. H.264,
 H.265, and H.265 Main10 export use VA-API with GPU color conversion and
@@ -113,6 +119,10 @@ a hybrid Intel/NVIDIA machine, restarts for every device selection, and checks
 the actual GTK preview framebuffer after native GPU texture sharing. Set
 ``XDG_CONFIG_HOME`` to a new, empty directory so validation cannot overwrite
 existing preferences. Only the final pixel verification reads back to the CPU.
+``make cuda-peer-copy-validation SOURCE_GPU=0 DESTINATION_GPU=1`` checks native
+CUDA transfers, including managed allocations and padded image rows. Omit the
+ordinals for a single-GPU mechanics check; cross-GPU validation needs two
+CUDA-visible NVIDIA devices.
 
 Ray-tracing denoising
 ~~~~~~~~~~~~~~~~~~~~~~~~

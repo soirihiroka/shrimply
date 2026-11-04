@@ -143,10 +143,9 @@ impl CudaTexture {
         };
         if cross_context {
             // Keep the source allocation/context alive through completion.
-            cuda_check(
-                unsafe { sys::cuCtxSynchronize() },
-                "finish cross-device preview copy",
-            )?;
+            self.context
+                .synchronize()
+                .map_err(|error| format!("Finish cross-device preview copy: {error}"))?;
         }
         copied?;
         Ok(())
