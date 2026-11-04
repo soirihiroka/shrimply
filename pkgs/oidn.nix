@@ -1,4 +1,4 @@
-{ autoPatchelfHook, fetchurl, gcc, level-zero, lib, stdenv }:
+{ autoPatchelfHook, fetchurl, gcc, level-zero, lib, stdenv, zlib }:
 stdenv.mkDerivation rec {
   pname = "shrimply-oidn";
   version = "2.5.1";
@@ -7,7 +7,7 @@ stdenv.mkDerivation rec {
     sha256 = "743c3e2aff8c220d5d70fe6cb970fb3d36f2702d2693c61d1d148e404cf37cd6";
   };
   nativeBuildInputs = [ autoPatchelfHook ];
-  buildInputs = [ gcc.cc.lib level-zero ];
+  buildInputs = [ gcc.cc.lib level-zero zlib ];
   autoPatchelfIgnoreMissingDeps = [ "libcuda.so.1" ];
   dontBuild = true;
   installPhase = ''

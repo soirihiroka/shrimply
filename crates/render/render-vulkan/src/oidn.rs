@@ -49,7 +49,9 @@ impl Renderer {
         // OIDN's SYCL backend currently lacks external semaphore interop. Fence
         // waits synchronize ownership only; no image pixels leave GPU memory.
         let release = self.external_buffers(&resources, false)?;
-        release.wait()?;
+        release
+            .wait()
+            .expect("Vulkan failed while releasing OIDN buffer ownership");
         submissions.push(release);
         let state = self.oidn.as_mut().expect("initialized OIDN GPU state");
         let result = unsafe {
@@ -78,7 +80,10 @@ impl Renderer {
         };
         // Always wait before reacquiring or propagating an asynchronous error.
         let completion = state.device.synchronize();
-        submissions.push(self.external_buffers(&resources, true)?);
+        submissions.push(
+            self.external_buffers(&resources, true)
+                .expect("Vulkan could not reacquire OIDN buffer ownership"),
+        );
         result.and(completion)
     }
 

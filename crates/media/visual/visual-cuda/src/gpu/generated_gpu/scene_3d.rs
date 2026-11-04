@@ -208,7 +208,7 @@ impl GeneratedGpuRenderer {
                         .iter_mut()
                         .zip([guide_ptr, guide_ptr + float_size * 3])
                     {
-                        unsafe {
+                        let result = unsafe {
                             filter.execute(
                                 shrimply_denoise_oidn::Images {
                                     color: shrimply_denoise_oidn::Image::Cuda(color),
@@ -223,7 +223,11 @@ impl GeneratedGpuRenderer {
                                 },
                                 quality,
                             )
-                        }?;
+                        };
+                        if let Err(error) = result {
+                            stream.synchronize().expect("CUDA failed while completing OIDN work before releasing its buffers");
+                            return Err(error);
+                        }
                     }
                 } else {
                     if self
