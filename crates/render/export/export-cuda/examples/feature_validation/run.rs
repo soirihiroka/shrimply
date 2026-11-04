@@ -2,6 +2,7 @@ use shrimply_export_cuda::*;
 use shrimply_math_core::{Time, fraction_new};
 use shrimply_preview_render_vulkan::Compositor;
 use shrimply_project_document::project::*;
+use shrimply_property_model::timeline_value::TimelineValue;
 use shrimply_visual_modifiers::{
     ModifierEffect, ModifierModel, RasterModifierEffect, VectorModifierEffect, scene_3d,
 };
@@ -231,7 +232,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         incoming.file = Asset::new(output.join("target.png"));
         incoming.start = outgoing.end;
         let mut transition =
-            VisualClipTransition::new(incoming.id, duration / Time::from_fraction(2, 1));
+            VisualClipTransition::new(incoming.id, Time::from_fraction(FRAMES, FPS * 2));
         transition.set_kind(kind);
         outgoing.transitions.to_next = Some(transition);
         let mut project = project(outgoing);

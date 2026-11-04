@@ -21,4 +21,5 @@ skia-safe.workspace = true
 shrimply-visual-modifiers.workspace = true
 shrimply-scene-3d.workspace = true
 serde_json.workspace = true
+shrimply-property-model.workspace = true
 uuid.workspace = true
