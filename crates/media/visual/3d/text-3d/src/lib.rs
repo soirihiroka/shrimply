@@ -11,7 +11,7 @@ use std::{
 use cairo::PathSegment;
 use glam::{Vec2, Vec3};
 use glib::translate::from_glib;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashSet;
 use lyon_tessellation::{
     FillOptions, FillRule, FillTessellator, VertexBuffers,
     geometry_builder::{BuffersBuilder, Positions},
@@ -31,6 +31,8 @@ use shrimply_property_model::{
 };
 use shrimply_scene_3d::{MeshMaterial, ObjMesh, PbrMaterial, TextureAtlas, Transform3d};
 use uuid::Uuid;
+
+mod math;
 
 pub const MIN_SMOOTHNESS: f32 = 1.0;
 pub const MAX_SMOOTHNESS: f32 = 12.0;
@@ -324,7 +326,7 @@ pub fn generate_mesh(geometry: &Geometry<'_>) -> Result<ObjMesh, Text3dError> {
             &mut BuffersBuilder::new(&mut fill, Positions),
         )
         .map_err(|error| Text3dError(format!("tessellate 3D text caps: {error:?}")))?;
-    let contours = boundary_contours(&fill)?;
+    let contours = math::boundary_contours(&fill)?;
     let roundness = safe_roundness(&contours, roundness, font_size);
     let mut mesh = MeshBuilder::default();
     let half_depth = depth * 0.5;
@@ -505,58 +507,6 @@ fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
         output.end(false);
     }
     Ok(output.build())
-}
-
-fn boundary_contours(fill: &VertexBuffers<Point, u32>) -> Result<Vec<Vec<Point>>, Text3dError> {
-    let mut boundary = HashMap::new();
-    for triangle in fill.indices.chunks_exact(3) {
-        let mut indices = [triangle[0], triangle[1], triangle[2]];
-        let [a, b, c] = indices.map(|index| fill.vertices[index as usize]);
-        if (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) < 0.0 {
-            indices.swap(1, 2);
-        }
-        for (from, to) in [
-            (indices[0], indices[1]),
-            (indices[1], indices[2]),
-            (indices[2], indices[0]),
-        ] {
-            if boundary.remove(&(to, from)).is_none() {
-                boundary.insert((from, to), ());
-            }
-        }
-    }
-
-    let mut outgoing = HashMap::<u32, Vec<u32>>::new();
-    for ((from, to), ()) in boundary {
-        outgoing.entry(from).or_default().push(to);
-    }
-    if let Some((&vertex, next)) = outgoing.iter().find(|(_, next)| next.len() != 1) {
-        return Err(Text3dError(format!(
-            "3D text outline contains a non-manifold boundary at {:?}: {next:?}",
-            fill.vertices[vertex as usize]
-        )));
-    }
-    let mut contours = Vec::new();
-    while let Some((&start, _)) = outgoing.iter().find(|(_, next)| !next.is_empty()) {
-        let mut contour = Vec::new();
-        let mut current = start;
-        loop {
-            contour.push(fill.vertices[current as usize]);
-            let Some(next) = outgoing.get_mut(&current).and_then(Vec::pop) else {
-                return Err(Text3dError(
-                    "3D text outline contains an open boundary".to_string(),
-                ));
-            };
-            current = next;
-            if current == start {
-                break;
-            }
-        }
-        if contour.len() >= 3 {
-            contours.push(contour);
-        }
-    }
-    Ok(contours)
 }
 
 fn contour_outward(contour: &[Point]) -> Option<Vec<Vec2>> {
