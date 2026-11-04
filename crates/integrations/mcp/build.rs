@@ -19,10 +19,10 @@ fn main() {
     .into_iter()
     .flatten()
     {
-        if let Some(path) = git(&["rev-parse", "--git-path", &path]) {
-            if let Ok(path) = Path::new(&path).canonicalize() {
-                println!("cargo:rerun-if-changed={}", path.display());
-            }
+        if let Some(path) = git(&["rev-parse", "--git-path", &path])
+            && let Ok(path) = Path::new(&path).canonicalize()
+        {
+            println!("cargo:rerun-if-changed={}", path.display());
         }
     }
     let hash = env::var("SHRIMPLY_BUILD_GIT_HASH")
