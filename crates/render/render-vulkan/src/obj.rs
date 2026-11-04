@@ -238,8 +238,19 @@ impl Renderer {
         if denoising {
             kernels.extend(["obj_software_denoise", "obj_denoise_composite_compute"]);
         }
+        const TRANSPORT: u32 = 1 << 2;
+        let transport = plan.params.path_tracing != shader::PathTracingMode::Off
+            || plan.params.transmission > 0.0
+            || plan
+                .session
+                .materials()
+                .iter()
+                .any(|material| material.flags[3] != 0 && material.pbr.transmission > 0.0);
+        let specialization =
+            plan.params.shading_model as u32 | if transport { TRANSPORT } else { 0 };
         for name in kernels {
             let mut args = self.arguments(name)?;
+            args.specialization = specialization;
             args.set("data", &state.address().to_ne_bytes())?;
             submissions.push(unsafe {
                 self.dispatch(

@@ -42,6 +42,8 @@ struct ComputeMaterial
 #include "modules/obj-software-resources.slang"
 #else
 #define OUTPUT_TEXEL(pixel) pixel
+#define OBJECT_SHADING_MODEL scene.toon.shading_model
+#define OBJECT_TRANSPORT true
 ConstantBuffer<SceneUniforms> scene;
 ConstantBuffer<OutputSize> output_size;
 ConstantBuffer<OutputSize> composite_size;
@@ -682,7 +684,7 @@ float4 shade_surface(
     float3 view = -world_direction;
     if (dot(normal, view) < 0.0)
         normal = -normal;
-    if (scene.toon.shading_model == ShadingModel::Toon
+    if (OBJECT_SHADING_MODEL == ShadingModel::Toon
         && scene.toon.texture_filter == ToonTextureFilter::Kuwahara
         && material.flags.x != 0
         && material.base_color_texture.settings.x != 0)
@@ -699,8 +701,8 @@ float4 shade_surface(
     }
     PbrSettings surface_pbr = material_pbr(material);
     bool path_tracing = scene.pbr.path_tracing != PathTracingMode::Off;
-    bool stochastic_transport = path_tracing || surface_pbr.transmission > 0.0;
-    if (scene.toon.shading_model == ShadingModel::Depth)
+    bool stochastic_transport = OBJECT_TRANSPORT && (path_tracing || surface_pbr.transmission > 0.0);
+    if (OBJECT_SHADING_MODEL == ShadingModel::Depth)
     {
         float4 clip_position = mul(
             scene.view_projection,
@@ -713,7 +715,7 @@ float4 shade_surface(
     }
 
     float3 shaded;
-    if (scene.toon.shading_model == ShadingModel::Toon)
+    if (OBJECT_SHADING_MODEL == ShadingModel::Toon)
     {
         float3 environment_diffuse;
         float3 environment_reflection;
@@ -1242,7 +1244,8 @@ float4 render_sample(
     if (trace_surface_hit(ray, surface, ray_distance))
     {
         visible_distance = length(surface.world_position - camera.world_origin);
-        color = scene.toon.shading_model == ShadingModel::Pbr
+        color = OBJECT_SHADING_MODEL == ShadingModel::Pbr
+                && OBJECT_TRANSPORT
                 && (scene.pbr.path_tracing != PathTracingMode::Off
                     || material_pbr(surface.material).transmission > 0.0)
             ? shade_stochastic_path(
@@ -1492,7 +1495,7 @@ void obj_compute(uint3 thread_id : SV_DispatchThreadID)
             outline_binary_coverage(coverage, scene.toon),
             scene.toon);
     }
-    if (scene.toon.shading_model == ShadingModel::Toon)
+    if (OBJECT_SHADING_MODEL == ShadingModel::Toon)
         color.rgb = toon_palette_quantize(color.rgb, scene.toon.color_levels);
     uint pixel_index = pixel.y * dimensions.x + pixel.x;
     if (output_size.denoising != 0)
@@ -1596,7 +1599,7 @@ void obj_outline_compute(uint3 thread_id : SV_DispatchThreadID)
             : unpack_color(output_pixels[pixel_index]),
         coverage,
         scene.toon);
-    if (scene.toon.shading_model == ShadingModel::Toon)
+    if (OBJECT_SHADING_MODEL == ShadingModel::Toon)
         color.rgb = toon_palette_quantize(color.rgb, scene.toon.color_levels);
     if (output_size.denoising != 0)
     {

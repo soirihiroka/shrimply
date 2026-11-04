@@ -24,4 +24,5 @@ serde_json.workspace = true
 shrimply-property-model.workspace = true
 shrimply-blender-core.workspace = true
 shrimply-visual-core.workspace = true
+shrimply-trust-core.workspace = true
 uuid.workspace = true

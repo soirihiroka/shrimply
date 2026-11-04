@@ -40,6 +40,9 @@ pub fn run() -> Result<(), String> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/root/.nix-profile/bin/blender"));
     shrimply_blender_core::set_binary(Some(blender.canonicalize().map_err(|e| e.to_string())?));
+    // Only approve executable fixtures created above, inside this new output directory.
+    shrimply_trust_core::Review::new([output.join("manim.py"), output.join("source.blend")])?
+        .approve(shrimply_trust_core::Kind::File)?;
     let cases = cases(&output)?;
     let mut failed = Vec::new();
     let mut completed = 0;
