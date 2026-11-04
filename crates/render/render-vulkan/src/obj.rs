@@ -70,7 +70,17 @@ include!(concat!(env!("OUT_DIR"), "/software_uniforms.rs"));
 
 pub(crate) struct Uploaded {
     identity: SceneIdentity,
-    resources: Vec<Buffer>,
+    positions: Buffer,
+    normals: Buffer,
+    tangents: Buffer,
+    tex_coords_0: Buffer,
+    tex_coords_1: Buffer,
+    colors: Buffer,
+    materials: Buffer,
+    instances: Buffer,
+    nodes: Buffer,
+    triangles: Buffer,
+    texture: Buffer,
     material_texture: SoftwareTexture,
 }
 
@@ -161,7 +171,6 @@ impl Renderer {
         uniforms.transmission_background[1] = u32::from(background.is_some()) as f32;
         let scene = self.upload(&pack_scene_uniforms(&uniforms))?;
         let uploaded = self.object.as_ref().expect("uploaded 3D geometry");
-        let resources = &uploaded.resources;
         let state = SoftwareResources {
             scene_data: scene.address(),
             output_size_data: OutputSize {
@@ -170,16 +179,16 @@ impl Renderer {
                 denoising: u32::from(denoising),
                 padding: 0,
             },
-            positions_data: resources[0].address(),
-            normals_data: resources[1].address(),
-            tangents_data: resources[2].address(),
-            tex_coords_0_data: resources[3].address(),
-            tex_coords_1_data: resources[4].address(),
-            vertex_colors_data: resources[5].address(),
-            materials_data: resources[6].address(),
-            mesh_instances_data: resources[7].address(),
-            bvh_nodes: resources[8].address(),
-            bvh_triangles: resources[9].address(),
+            positions_data: uploaded.positions.address(),
+            normals_data: uploaded.normals.address(),
+            tangents_data: uploaded.tangents.address(),
+            tex_coords_0_data: uploaded.tex_coords_0.address(),
+            tex_coords_1_data: uploaded.tex_coords_1.address(),
+            vertex_colors_data: uploaded.colors.address(),
+            materials_data: uploaded.materials.address(),
+            mesh_instances_data: uploaded.instances.address(),
+            bvh_nodes: uploaded.nodes.address(),
+            bvh_triangles: uploaded.triangles.address(),
             material_texture_data: uploaded.material_texture,
             environment_texture_data: environment_texture,
             composite_texture_data: composite_texture,
@@ -195,7 +204,22 @@ impl Renderer {
             denoised_alpha_texture_data: denoiser[6].address(),
         };
         let state = self.upload(bytes(std::slice::from_ref(&state)))?;
-        let mut retained = resources.clone();
+        let mut retained = [
+            &uploaded.positions,
+            &uploaded.normals,
+            &uploaded.tangents,
+            &uploaded.tex_coords_0,
+            &uploaded.tex_coords_1,
+            &uploaded.colors,
+            &uploaded.materials,
+            &uploaded.instances,
+            &uploaded.nodes,
+            &uploaded.triangles,
+            &uploaded.texture,
+        ]
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
         retained.extend([
             scene,
             fallback,
@@ -272,21 +296,6 @@ impl Renderer {
             .iter()
             .map(|color| color.to_array())
             .collect::<Vec<_>>();
-        let mut resources = [
-            bytes(session.positions()),
-            bytes(session.normals()),
-            bytes(session.tangents()),
-            bytes(session.tex_coords_0()),
-            bytes(session.tex_coords_1()),
-            bytes(&colors),
-            bytes(&materials),
-            bytes(session.mesh_instances()),
-            bytes(&bvh.nodes),
-            bytes(&bvh.triangles),
-        ]
-        .into_iter()
-        .map(|bytes| self.upload(bytes))
-        .collect::<Result<Vec<_>, _>>()?;
         let atlas = session.texture_atlas();
         let pixels = atlas
             .pixels
@@ -305,10 +314,19 @@ impl Renderer {
         if let Some(last) = submissions.last() {
             last.wait()?;
         }
-        resources.push(texture);
         self.object = Some(Uploaded {
             identity: session.identity().clone(),
-            resources,
+            positions: self.upload(bytes(session.positions()))?,
+            normals: self.upload(bytes(session.normals()))?,
+            tangents: self.upload(bytes(session.tangents()))?,
+            tex_coords_0: self.upload(bytes(session.tex_coords_0()))?,
+            tex_coords_1: self.upload(bytes(session.tex_coords_1()))?,
+            colors: self.upload(bytes(&colors))?,
+            materials: self.upload(bytes(&materials))?,
+            instances: self.upload(bytes(session.mesh_instances()))?,
+            nodes: self.upload(bytes(&bvh.nodes))?,
+            triangles: self.upload(bytes(&bvh.triangles))?,
+            texture,
             material_texture,
         });
         Ok(())

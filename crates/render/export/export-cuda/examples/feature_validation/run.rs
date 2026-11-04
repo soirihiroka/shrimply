@@ -28,6 +28,18 @@ pub fn run() -> Result<(), String> {
     let output = output.canonicalize().map_err(|e| e.to_string())?;
     let filter = std::env::args().nth(2).unwrap_or_default();
     create_assets(&output)?;
+    let assets = std::process::Command::new("python3")
+        .args(["packaging/intel-feature-assets.py"])
+        .arg(&output)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if !assets.success() {
+        return Err("Could not create complete media fixtures".into());
+    }
+    let blender = std::env::var_os("BLENDER_BINARY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/root/.nix-profile/bin/blender"));
+    shrimply_blender_core::set_binary(Some(blender.canonicalize().map_err(|e| e.to_string())?));
     let cases = cases(&output)?;
     let mut failed = Vec::new();
     let mut completed = 0;
@@ -110,6 +122,69 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     gif.content = VideoItemContent::Gif;
     gif.file = Asset::new("assets/loading-shrimp.gif");
     result.push(("source-gif".into(), project(gif)));
+    for (name, content, file) in [
+        ("source-video", VideoItemContent::Media, "source.mp4"),
+        (
+            "source-pdf",
+            VideoItemContent::Pdf(Box::default()),
+            "source.pdf",
+        ),
+        (
+            "source-layered-image",
+            VideoItemContent::LayeredImage(Box::default()),
+            "source.ora",
+        ),
+        (
+            "source-blender",
+            VideoItemContent::Blender(Box::default()),
+            "source.blend",
+        ),
+    ] {
+        let mut item = image.clone();
+        item.content = content;
+        item.file = Asset::new(output.join(file));
+        item.source_duration = duration;
+        result.push((name.into(), project(item)));
+    }
+    let mut paint = VideoItem::paint_item(size, Time::ZERO, duration);
+    if let VideoItemContent::Paint(content) = &mut paint.content {
+        content.drawing = TimelineValue::new_const(serde_json::from_value(serde_json::json!({
+            "strokes": [{"points": [{"position": [20, 20], "pressure": 1.0}, {"position": [80, 70], "pressure": 0.8}, {"position": [140, 20], "pressure": 1.0}]}], "fills": []
+        })).map_err(|e| e.to_string())?);
+    }
+    result.push(("source-paint".into(), project(paint)));
+    let sequence_id = uuid::Uuid::new_v4();
+    let mut group_item = image.clone();
+    group_item.content = VideoItemContent::FoldedSequence(SequenceReference {
+        sequence_id,
+        instance_id: uuid::Uuid::new_v4(),
+    });
+    let mut group = project(group_item);
+    group.folded_sequences.push(FoldedSequence {
+        id: sequence_id,
+        video_tracks: vec![VideoTrack {
+            items: vec![image.clone(), text.clone()],
+            ..Default::default()
+        }],
+        audio_tracks: vec![],
+    });
+    result.push(("source-sequence".into(), group));
+    let mut mask_item = image.clone();
+    mask_item.compositing.alpha_mask = Some(VisualAlphaMask::default());
+    result.push(("mask-shape".into(), project(mask_item)));
+    let mut mask_item = image.clone();
+    mask_item.modifiers.push(modifier(ModifierEffect::raster(
+        RasterModifierEffect::Mask(shrimply_visual_modifiers::mask::MaskModifier {
+            item_id: Some(text.id),
+            ..Default::default()
+        }),
+    )));
+    let mut masked = project(mask_item);
+    masked.video_tracks.push(VideoTrack {
+        items: vec![text.clone()],
+        ..Default::default()
+    });
+    result.push(("mask-external".into(), masked));
     let mut manim = image.clone();
     manim.content = VideoItemContent::Manim(Box::new(ManimItem {
         scene: "IntelValidation".into(),
@@ -164,6 +239,49 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
             scene.material.shading_model = shading;
         }
         result.push((format!("obj-shading-{shading:?}"), project(item)));
+    }
+    for name in [
+        "pass_through",
+        "normal",
+        "dissolve",
+        "darken",
+        "multiply",
+        "color_burn",
+        "linear_burn",
+        "darker_color",
+        "lighten",
+        "screen",
+        "color_dodge",
+        "add",
+        "lighter_color",
+        "overlay",
+        "soft_light",
+        "hard_light",
+        "vivid_light",
+        "linear_light",
+        "pin_light",
+        "hard_mix",
+        "difference",
+        "exclusion",
+        "subtract",
+        "divide",
+        "reflect",
+        "hue",
+        "saturation",
+        "color",
+        "luminosity",
+    ] {
+        let blend = serde_json::from_value(serde_json::json!(name)).map_err(|e| e.to_string())?;
+        let mut upper = image.clone();
+        upper.id = uuid::Uuid::new_v4();
+        upper.file = Asset::new(output.join("target.png"));
+        upper.compositing.blend_mode = TimelineValue::new_const(blend);
+        let mut layers = project(image.clone());
+        layers.video_tracks.push(VideoTrack {
+            items: vec![upper],
+            ..Default::default()
+        });
+        result.push((format!("blend-{name}"), layers));
     }
     for factory in RasterModifierEffect::CATALOG {
         let effect = factory();
