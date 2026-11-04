@@ -1,6 +1,9 @@
 //! Hardware validation of evaluated projects through preview and export.
 //! Native project files are never written by this example.
 #[cfg(target_os = "linux")]
+#[path = "feature_validation/gpu.rs"]
+mod gpu;
+#[cfg(target_os = "linux")]
 #[path = "feature_validation/run.rs"]
 mod run;
 

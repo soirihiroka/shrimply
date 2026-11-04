@@ -141,6 +141,8 @@ impl Renderer {
         } else {
             (empty_texture, fallback.clone())
         };
+        let denoising =
+            plan.params.denoising && plan.params.shading_model == shader::ShadingModel::Pbr;
         let region_outline = plan.params.toon_outline_mode != shader::OutlineMode::Off
             && plan.params.toon_outline_method == shader::OutlineMethod::RegionBoundary;
         let guide = if region_outline {
@@ -158,9 +160,19 @@ impl Renderer {
             fallback.clone()
         };
         let mut uniforms = plan.uniforms;
-        // This backend has no supported GPU ray-tracing denoiser yet. In particular,
-        // OIDN's Intel GPU backend requires Xe; never fall back to CPU denoising.
-        uniforms.pbr.denoising = 0;
+        let denoise_buffer = || {
+            if denoising {
+                self.allocate(float_bytes)
+            } else {
+                Ok(fallback.clone())
+            }
+        };
+        let beauty = denoise_buffer()?;
+        let denoise_background = denoise_buffer()?;
+        let alpha = denoise_buffer()?;
+        let depth_normal = denoise_buffer()?;
+        let filtered = denoise_buffer()?;
+        uniforms.pbr.denoising = u32::from(denoising);
         uniforms.transmission_background[1] = u32::from(background.is_some()) as f32;
         let scene = self.upload(&pack_scene_uniforms(&uniforms))?;
         let uploaded = self.object.as_ref().expect("uploaded 3D geometry");
@@ -169,7 +181,7 @@ impl Renderer {
             output_size_data: OutputSize {
                 width: plan.width,
                 height: plan.height,
-                denoising: 0,
+                denoising: u32::from(denoising),
                 padding: 0,
             },
             positions_data: uploaded.positions.address(),
@@ -188,13 +200,13 @@ impl Renderer {
             output_pixels_data: output.address(),
             outline_guide_data: guide.address(),
             outline_distance_data: distance.address(),
-            denoiser_beauty_data: fallback.address(),
-            denoiser_background_data: fallback.address(),
-            denoiser_alpha_data: fallback.address(),
-            denoiser_depth_normal_data: fallback.address(),
-            denoised_texture_data: fallback.address(),
-            denoised_background_texture_data: fallback.address(),
-            denoised_alpha_texture_data: fallback.address(),
+            denoiser_beauty_data: beauty.address(),
+            denoiser_background_data: denoise_background.address(),
+            denoiser_alpha_data: alpha.address(),
+            denoiser_depth_normal_data: depth_normal.address(),
+            denoised_texture_data: filtered.address(),
+            denoised_background_texture_data: denoise_background.address(),
+            denoised_alpha_texture_data: alpha.address(),
         };
         let state = self.upload(bytes(std::slice::from_ref(&state)))?;
         let mut retained = [
@@ -222,6 +234,11 @@ impl Renderer {
             composite_buffer,
             environment_buffer,
             state.clone(),
+            beauty.clone(),
+            denoise_background,
+            alpha,
+            depth_normal.clone(),
+            filtered.clone(),
         ]);
         let mut kernels = vec!["obj_compute"];
         if region_outline {
@@ -255,6 +272,24 @@ impl Renderer {
                 )
             }?);
         }
+        if denoising {
+            self.denoise_atrous(
+                &beauty,
+                &filtered,
+                &depth_normal,
+                (plan.width, plan.height),
+                submissions,
+            )?;
+            let mut args = self.arguments("obj_denoise_composite_compute")?;
+            args.set("data", &state.address().to_ne_bytes())?;
+            submissions.push(unsafe {
+                self.dispatch(
+                    args,
+                    retained,
+                    [plan.width as usize, plan.height as usize, 1],
+                )
+            }?);
+        }
         Ok(output)
     }
 
@@ -284,7 +319,7 @@ impl Renderer {
                         material.pbr.path_tracing as u32,
                         material.pbr.light_sampling_quality as u32,
                         material.pbr.render_quality as u32,
-                        0,
+                        material.pbr.denoising,
                     ],
                     surface: [
                         material.pbr.subsurface,

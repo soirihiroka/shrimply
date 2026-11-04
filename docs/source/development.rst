@@ -104,10 +104,17 @@ pipeline on the target machine:
 Ray-tracing denoising
 ~~~~~~~~~~~~~~~~~~~~
 
-The Intel Vulkan backend disables ray-tracing denoising, including when loading
-a project saved with denoising enabled. Its GTK control displays Off and is
-disabled. NVIDIA keeps its existing GPU OptiX denoiser. There is no CPU denoising
-fallback.
+The Intel Vulkan backend uses a basic spatial edge-avoiding a-trous denoiser.
+Three compute passes filter HDR ray-traced color at increasing tap spacing,
+using depth, normal, color, and alpha to limit edge bleeding. Background and
+coverage stay exact, and tone mapping follows filtering. All image buffers
+stay on the GPU. This filter has no temporal history or neural inference;
+NVIDIA keeps its existing GPU OptiX denoiser. There is no CPU denoising fallback.
+
+The implementation follows the algorithm in
+`Dammertz et al., HPG 2010 <https://doi.org/10.2312/EGGH/HPG10/067-075>`_.
+Other open-source GPU implementations include
+`Falcor's SVGF pass <https://github.com/NVIDIAGameWorks/Falcor/tree/master/Source/RenderPasses/SVGFPass>`_.
 
 The open-source alternatives evaluated for Intel are:
 
@@ -122,8 +129,8 @@ The open-source alternatives evaluated for Intel are:
   implementations target individual shadow masks and reflections, rather than
   the renderer's combined beauty output.
 
-Enabling a future backend requires a GPU implementation and hardware validation;
-installing a CPU denoiser does not enable this feature.
+Additional denoiser backends require GPU support and hardware validation;
+CPU implementations are not used as a fallback.
 
 Use ``PROFILE=release`` with either benchmark to measure optimized performance.
 The default development profile leaves Rust code unoptimized.

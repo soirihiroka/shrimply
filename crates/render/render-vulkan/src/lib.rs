@@ -8,6 +8,7 @@ mod external;
 mod vaapi;
 mod vector;
 pub use external::ExternalImage;
+mod denoise;
 mod gaussian;
 mod obj;
 mod optical_flow;

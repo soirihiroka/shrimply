@@ -185,6 +185,7 @@ jobs:
           cp dev.shrimply.Shrimply.yml "${manifest}"
           grep -q '@SHRIMPLY_SOURCE@' "${manifest}"
           sed -i "s|@SHRIMPLY_SOURCE@|${hashed_archive}|" "${manifest}"
+          sed -i "s|path: packaging/flatpak/|path: ${GITHUB_WORKSPACE}/packaging/flatpak/|" "${manifest}"
           if grep -q '@SHRIMPLY_SOURCE@' "${manifest}"; then
             echo "Flatpak source placeholder was not replaced" >&2
             exit 1

@@ -42,7 +42,7 @@ pub fn run() -> Result<(), String> {
     shrimply_blender_core::set_binary(Some(blender.canonicalize().map_err(|e| e.to_string())?));
     // Only approve executable fixtures created above, inside this new output directory.
     shrimply_trust_core::Review::new([
-        output.join("manim.py"),
+        output.join("intel_scene.py"),
         output.join("source.blend"),
         output.join("parity.py"),
     ])?
@@ -207,7 +207,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         scene: "IntelValidation".into(),
         ..Default::default()
     }));
-    manim.file = Asset::new(output.join("manim.py"));
+    manim.file = Asset::new(output.join("intel_scene.py"));
     result.push(("source-manim".into(), project(manim)));
     for scene in [
         "VisualParity",
@@ -240,6 +240,8 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         )),
     ];
     result.push(("source-obj".into(), project(obj.clone())));
+    result.push(("gpu-optical-flow".into(), project(image.clone())));
+    result.push(("gpu-denoise".into(), project(image.clone())));
     for factory in scene_3d::Scene3dModifierEffect::CATALOG {
         let effect = factory();
         let name = effect.display_name().replace(' ', "-");
@@ -440,6 +442,12 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
 }
 
 fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
+    if name == "gpu-optical-flow" {
+        return validate_optical_flow();
+    }
+    if name == "gpu-denoise" {
+        return super::gpu::denoise();
+    }
     prepare_analysis(name, &project)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     let mut compositor = Compositor::new()?;
@@ -616,6 +624,75 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_optical_flow() -> Result<(), String> {
+    const SHIFT: [i32; 2] = [8, 4];
+    const MARGIN: u32 = 24;
+    let mut source = Vec::with_capacity((WIDTH * HEIGHT * 4) as usize);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let hash = (x / 4).wrapping_mul(73_856_093) ^ (y / 4).wrapping_mul(19_349_663);
+            source.extend([hash as u8, (hash >> 8) as u8, (hash >> 16) as u8, u8::MAX]);
+        }
+    }
+    let mut target = vec![0; source.len()];
+    for y in 0..HEIGHT - SHIFT[1] as u32 {
+        for x in 0..WIDTH - SHIFT[0] as u32 {
+            let from = ((y * WIDTH + x) * 4) as usize;
+            let to = (((y + SHIFT[1] as u32) * WIDTH + x + SHIFT[0] as u32) * 4) as usize;
+            target[to..to + 4].copy_from_slice(&source[from..from + 4]);
+        }
+    }
+    let mut compositor = Compositor::new()?;
+    let mut submissions = Vec::new();
+    let source = compositor.renderer.upload(&source)?;
+    let target = compositor.renderer.upload(&target)?;
+    let flow =
+        compositor
+            .renderer
+            .optical_flow(source, target, (WIDTH, HEIGHT), &mut submissions)?;
+    submissions.last().ok_or("No flow submission")?.wait()?;
+    for (buffer, sign) in [(&flow.forward, 1.0_f32), (&flow.backward, -1.0)] {
+        let bytes = compositor.renderer.readback(buffer)?;
+        let mut errors = Vec::new();
+        for y in 0..flow.grid.1 {
+            for x in 0..flow.grid.0 {
+                let position = [
+                    x * (WIDTH - 1) / (flow.grid.0 - 1),
+                    y * (HEIGHT - 1) / (flow.grid.1 - 1),
+                ];
+                if position[0] < MARGIN
+                    || position[0] >= WIDTH - MARGIN
+                    || position[1] < MARGIN
+                    || position[1] >= HEIGHT - MARGIN
+                {
+                    continue;
+                }
+                let index = ((y * flow.grid.0 + x) * 8) as usize;
+                let displacement = [
+                    f32::from_ne_bytes(bytes[index..index + 4].try_into().unwrap()),
+                    f32::from_ne_bytes(bytes[index + 4..index + 8].try_into().unwrap()),
+                ];
+                errors.push(
+                    (displacement[0] - sign * SHIFT[0] as f32)
+                        .abs()
+                        .max((displacement[1] - sign * SHIFT[1] as f32).abs()),
+                );
+            }
+        }
+        errors.sort_by(f32::total_cmp);
+        let median = *errors
+            .get(errors.len() / 2)
+            .ok_or("No interior flow samples")?;
+        println!("Optical flow direction {sign}: median translation error {median} pixels");
+        if !median.is_finite() || median > 1.0 {
+            return Err(format!(
+                "GPU optical flow failed the known translation: {median}px"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn save_png(path: &Path, pixels: &[u8]) -> Result<(), String> {
     let info = skia_safe::ImageInfo::new(
         (WIDTH as i32, HEIGHT as i32),
@@ -658,8 +735,8 @@ fn create_assets(output: &Path) -> Result<(), String> {
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"96\"><rect x=\"20\" y=\"20\" width=\"120\" height=\"56\" fill=\"#e35732\"/></svg>",
         ),
         (
-            "manim.py",
-            "from manim import *\nclass IntelValidation(Scene):\n def construct(self):\n  circle = Circle(radius=1.0, color=BLUE, fill_opacity=1)\n  self.add(circle)\n  self.play(circle.animate.shift(RIGHT*2), run_time=0.2, rate_func=linear)\n",
+            "intel_scene.py",
+            "from manimlib import *\nclass IntelValidation(Scene):\n def construct(self):\n  circle = Circle(radius=1.0, color=BLUE, fill_opacity=1)\n  self.add(circle)\n  self.play(circle.animate.shift(RIGHT*2), run_time=0.2, rate_func=linear)\n",
         ),
         (
             "source.obj",
