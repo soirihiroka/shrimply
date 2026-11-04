@@ -530,10 +530,11 @@ fn boundary_contours(fill: &VertexBuffers<Point, u32>) -> Result<Vec<Vec<Point>>
     for ((from, to), ()) in boundary {
         outgoing.entry(from).or_default().push(to);
     }
-    if outgoing.values().any(|next| next.len() != 1) {
-        return Err(Text3dError(
-            "3D text outline contains a non-manifold boundary".to_string(),
-        ));
+    if let Some((&vertex, next)) = outgoing.iter().find(|(_, next)| next.len() != 1) {
+        return Err(Text3dError(format!(
+            "3D text outline contains a non-manifold boundary at {:?}: {next:?}",
+            fill.vertices[vertex as usize]
+        )));
     }
     let mut contours = Vec::new();
     while let Some((&start, _)) = outgoing.iter().find(|(_, next)| !next.is_empty()) {

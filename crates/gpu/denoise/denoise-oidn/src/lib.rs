@@ -13,8 +13,9 @@ const RGBA_STRIDE: usize = size_of::<[f32; 4]>();
 #[cfg(target_os = "linux")]
 const OPAQUE_FD: u32 = 1;
 
-pub fn gpu_supported(uuid: [u8; 16]) -> bool {
-    api::get().is_ok_and(|api| physical_gpu(&api, uuid).is_some())
+pub fn cuda_supported(ordinal: usize) -> bool {
+    i32::try_from(ordinal)
+        .is_ok_and(|ordinal| api::get().is_ok_and(|api| unsafe { (api.cuda_supported)(ordinal) }))
 }
 
 #[cfg(target_os = "linux")]

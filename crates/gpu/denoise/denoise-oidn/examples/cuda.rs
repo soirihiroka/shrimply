@@ -6,6 +6,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     const HEIGHT: u32 = 1080;
     const ITERATIONS: u32 = 5;
     let context = CudaContext::new(0)?;
+    if !shrimply_denoise_oidn::cuda_supported(context.ordinal()) {
+        return Err("OIDN capability detection did not recognize the CUDA validation GPU".into());
+    }
     let stream = context.new_stream()?;
     let count = (WIDTH * HEIGHT) as usize;
     let mut seed = 1u32;

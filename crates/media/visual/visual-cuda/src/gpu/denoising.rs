@@ -19,12 +19,7 @@ pub fn denoising_methods() -> Vec<(DenoisingMethod, &'static str)> {
         return methods;
     }
     methods.push((DenoisingMethod::Optix, "OptiX"));
-    if shrimply_gpu_cuda::devices().is_ok_and(|devices| {
-        devices.into_iter().any(|device| {
-            device.ordinal == shrimply_gpu_cuda::selected_device()
-                && shrimply_denoise_oidn::gpu_supported(device.uuid)
-        })
-    }) {
+    if shrimply_denoise_oidn::cuda_supported(shrimply_gpu_cuda::selected_device()) {
         methods.push((
             DenoisingMethod::OpenImageDenoise,
             "Open Image Denoise (GPU)",
