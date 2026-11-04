@@ -98,6 +98,7 @@ pub fn configure_gtk_presentation() -> Result<(), String> {
         std::process::Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
     command.args(std::env::args_os().skip(1));
     let mut restart = false;
+    let provider = std::env::var("__NV_PRIME_RENDER_OFFLOAD_PROVIDER").ok();
     for (key, value) in [
         ("DRI_PRIME", prime.as_deref()),
         (
@@ -107,6 +108,10 @@ pub fn configure_gtk_presentation() -> Result<(), String> {
         (
             "__GLX_VENDOR_LIBRARY_NAME",
             Some(if intel { "mesa" } else { "nvidia" }),
+        ),
+        (
+            "__NV_PRIME_RENDER_OFFLOAD_PROVIDER",
+            provider.as_deref().filter(|_| !intel),
         ),
     ] {
         if std::env::var_os(key).as_deref() == value.map(std::ffi::OsStr::new) {
@@ -123,6 +128,16 @@ pub fn configure_gtk_presentation() -> Result<(), String> {
     // Retain an explicitly requested GSK renderer.
     if std::env::var_os("GSK_RENDERER").is_none() {
         command.env("GSK_RENDERER", "gl");
+        restart = true;
+    }
+    // GLArea requires desktop OpenGL. NVIDIA cannot share its textures with
+    // GTK's default GLES context, so select the same API for the whole display.
+    let disabled = std::env::var("GDK_DISABLE").unwrap_or_default();
+    if !disabled
+        .split([':', ';', ',', ' ', '\t'])
+        .any(|feature| feature == "gles-api" || feature == "all")
+    {
+        command.env("GDK_DISABLE", format!("{disabled},gles-api"));
         restart = true;
     }
     if restart {
