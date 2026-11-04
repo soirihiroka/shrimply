@@ -159,8 +159,6 @@ impl Compositor {
         position: Time,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<FramePlan, String> {
-        let profiling = std::env::var_os("SHRIMPLY_INTEL_PROFILE").is_some();
-        let started = std::time::Instant::now();
         self.scene.request_frame();
         loop {
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
@@ -173,9 +171,6 @@ impl Compositor {
             )? && !plan.loading
                 && plan.accuracy.content_accurate()
             {
-                if profiling {
-                    eprintln!("Intel scene preparation wall time: {:?}", started.elapsed());
-                }
                 return Ok(plan);
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -183,8 +178,6 @@ impl Compositor {
     }
 
     pub fn render_gpu(&mut self, plan: FramePlan, background: u32) -> Result<Rendered, String> {
-        let profiling = std::env::var_os("SHRIMPLY_INTEL_PROFILE").is_some();
-        let started = std::time::Instant::now();
         let mut submissions = Vec::new();
         self.used_images.clear();
         self.used_layered_sources.clear();
@@ -201,23 +194,10 @@ impl Compositor {
             external_masks.push((external.dependency.clone(), buffer));
         }
         let layers = self.layers(&plan.layers, size, &external_masks, &mut submissions)?;
-        if profiling {
-            for submission in &submissions {
-                submission.wait()?;
-            }
-        }
-        let prepared = started.elapsed();
         let (buffer, composite) = self
             .renderer
             .composite_buffers(&layers, size.0, size.1, background)?
             .into_parts();
-        if profiling {
-            composite.wait()?;
-            eprintln!(
-                "Intel composition wall times: layers={prepared:?}, composite={:?}",
-                started.elapsed() - prepared,
-            );
-        }
         submissions.push(composite);
         self.images.retain(|key, _| self.used_images.contains(key));
         self.layered_sources

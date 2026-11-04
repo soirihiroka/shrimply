@@ -53,7 +53,7 @@ fn unmodified_video(
         || native.crop_right != 0
         || native.crop_top != 0
         || native.crop_bottom != 0
-        || native.flags & sys::AV_FRAME_FLAG_INTERLACED as i32 != 0
+        || native.flags & sys::AV_FRAME_FLAG_INTERLACED != 0
         || !matches!(
             native.chroma_location,
             sys::AVChromaLocation::AVCHROMA_LOC_UNSPECIFIED
@@ -84,7 +84,6 @@ pub(super) struct IntelBackend {
     settings: ExportSettings,
     compositor: Option<Compositor>,
     hardware_frames: Option<HwFrameContext>,
-    profile: bool,
 }
 
 impl IntelBackend {
@@ -93,7 +92,6 @@ impl IntelBackend {
             settings,
             compositor: None,
             hardware_frames: None,
-            profile: std::env::var_os("SHRIMPLY_INTEL_PROFILE").is_some(),
         }
     }
 
@@ -263,7 +261,6 @@ impl VideoBackend for IntelBackend {
         position: Time,
         cancelled: &AtomicBool,
     ) -> Result<RenderedFrame, String> {
-        let started = std::time::Instant::now();
         let compositor = self
             .compositor
             .as_mut()
@@ -290,16 +287,11 @@ impl VideoBackend for IntelBackend {
             plan,
             u32::from_le_bytes([0, 0, 0, self.settings.background_alpha]),
         )?;
-        if self.profile {
-            rendered.wait()?;
-        }
-        let composited = started.elapsed();
         let mut frame = self
             .hardware_frames
             .as_ref()
             .ok_or("Intel encoder frames were not prepared")?
             .frame()?;
-        let allocated = started.elapsed();
         let submission = self
             .compositor
             .as_mut()
@@ -309,13 +301,6 @@ impl VideoBackend for IntelBackend {
         // VA-API's encoder consumes this surface after the Vulkan release. This
         // fence waits for GPU work only; no pixels are downloaded or reuploaded.
         submission.wait()?;
-        if self.profile {
-            eprintln!(
-                "Intel export wall times: scene/GPU={composited:?}, surface={:?}, conversion/transfer={:?}",
-                allocated - composited,
-                started.elapsed() - allocated,
-            );
-        }
         set_bt709_frame_metadata(&mut frame);
         Ok(RenderedFrame {
             frame,

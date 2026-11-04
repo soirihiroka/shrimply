@@ -72,6 +72,10 @@ Decoded NV12/P010 video surfaces are imported through DMA-BUF and processed
 with the shared Slang shaders. Source full/limited range and BT.601/BT.709
 matrix metadata are respected. Other color matrices fail explicitly; the
 compositor currently processes eight-bit RGBA even for Main10 input/output.
+An unchanged, full-canvas BT.709 limited-range video can pass its native VA-API
+surface directly to the encoder when the pixel format matches. This avoids
+RGBA conversion and preserves native ten-bit samples for compatible Main10
+exports. Edited layers and other color formats use the shared compositor.
 GTK imports the Vulkan output texture directly
 into OpenGL. Playback does not download pixels to the CPU; copying or saving
 a preview image explicitly requests a readback.
@@ -95,9 +99,14 @@ pipeline on the target machine:
    $ make intel-gl-probe
    $ SHRIMPLY_GPU=intel make gpu-playback-benchmark PROJECT=/path/to/project.shrimp FRAMES=120
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark VIDEO=/path/to/video.mp4 OUTPUT=/tmp/intel.mp4 FORMAT=hevc10
+   $ SHRIMPLY_GPU=intel make gpu-export-benchmark PROJECT=/path/to/project.shrimp OUTPUT=/tmp/project.mp4 FORMAT=h264
 
 Use ``PROFILE=release`` with either benchmark to measure optimized performance.
 The default development profile leaves Rust code unoptimized.
+Native project exports use the full timeline duration. ``FRAMES`` limits the
+synthetic single-video benchmark. Compare both unchanged video and a project
+with visible edits when measuring export performance: the former can reuse
+decoder surfaces, while the latter exercises GPU rendering and conversion.
 
 Build and check
 ---------------
