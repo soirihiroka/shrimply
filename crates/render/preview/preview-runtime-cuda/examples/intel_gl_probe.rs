@@ -177,6 +177,7 @@ fn main() -> Result<(), String> {
                 parameters.motion_sample_count = 2;
                 parameters.motion_transform_count = 2;
                 transforms = vec![parameters.inverse; 2];
+                transforms[1].z_axis.x = SIZE as f32;
             } else if matches!(
                 address,
                 TextureAddressMode::BlurredMirror | TextureAddressMode::Stochastic
@@ -193,6 +194,8 @@ fn main() -> Result<(), String> {
             )?;
             let expected = if blend == LayerBlendMode::Multiply {
                 [0, 0, 0, 255]
+            } else if motion {
+                [128, 0, 128, 255]
             } else {
                 [255, 0, 0, 255]
             };
