@@ -12,7 +12,12 @@ pub use vaapi::{VideoFrame, decoder};
 use ash::vk;
 use device::Device;
 use shrimply_render_core::Nv12LayerParams;
-use std::{collections::HashMap, ffi::CString, rc::Rc, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    ffi::CString,
+    rc::Rc,
+    sync::Arc,
+};
 
 // Vulkan guarantees at least 128 bytes. Larger argument blocks use a buffer.
 const PUSH_CONSTANT_BYTES: u32 = 128;
@@ -107,7 +112,7 @@ pub struct Submission {
     fence: vk::Fence,
     submitted: bool,
     _resources: Vec<Buffer>,
-    _video: Option<ffmpeg_next::frame::Video>,
+    _video: Option<vaapi::MappedVideo>,
     _prior: Vec<Submission>,
     _images: Vec<skia_safe::Image>,
     _textures: Vec<Texture>,
@@ -163,6 +168,8 @@ pub struct Renderer {
     pool: Rc<Pool>,
     pipeline_layout: vk::PipelineLayout,
     kernels: HashMap<&'static str, Kernel>,
+    video_contexts: VecDeque<((usize, i32), Rc<vaapi::FramesContext>)>,
+    video_context_limit: usize,
 }
 impl Renderer {
     pub fn new() -> Result<Self, String> {
@@ -197,7 +204,20 @@ impl Renderer {
             device,
             pipeline_layout,
             kernels: HashMap::new(),
+            video_contexts: VecDeque::new(),
+            // A source decoder and an encoder; the compositor applies its decoder limit.
+            video_context_limit: 2,
         })
+    }
+    pub fn set_video_context_limit(&mut self, maximum: usize) {
+        assert!(maximum > 0, "video context limit must be positive");
+        self.video_context_limit = maximum;
+        while self.video_contexts.len() > maximum {
+            self.video_contexts.pop_front();
+        }
+    }
+    pub fn clear_video_contexts(&mut self) {
+        self.video_contexts.clear();
     }
     pub fn warmup(&mut self) -> Result<(), String> {
         self.kernel("composite_nv12_layers").map(|_| ())

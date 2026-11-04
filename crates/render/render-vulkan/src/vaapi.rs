@@ -1,7 +1,7 @@
 use crate::{Buffer, Renderer, Submission, device::Device};
 use ash::{vk, vk::Handle};
 use ffmpeg_next::{self as ffmpeg, sys};
-use std::{ptr, sync::Arc};
+use std::{ptr, rc::Rc, sync::Arc};
 
 /// Keeps the decoder surface alive until the final GPU read completes.
 pub struct VideoFrame {
@@ -135,58 +135,112 @@ fn frame_layout(source: &ffmpeg::frame::Video) -> Result<Layout, String> {
     })
 }
 
-fn map(
-    device: &Device,
-    source: &ffmpeg::frame::Video,
-    flags: i32,
-) -> Result<ffmpeg::frame::Video, String> {
-    let mut derived = ptr::null_mut();
-    let result = unsafe {
-        sys::av_hwframe_ctx_create_derived(
-            &mut derived,
-            sys::AVPixelFormat::AV_PIX_FMT_VULKAN,
-            device.vulkan,
-            (*source.as_ptr()).hw_frames_ctx,
-            flags,
-        )
-    };
-    if result < 0 {
-        return Err(format!(
-            "Derive Vulkan video surfaces: {}",
-            ffmpeg::Error::from(result)
-        ));
+pub(super) struct FramesContext(*mut sys::AVBufferRef);
+
+impl Drop for FramesContext {
+    fn drop(&mut self) {
+        unsafe {
+            sys::av_buffer_unref(&mut self.0);
+        }
     }
-    let mut mapped = ffmpeg::frame::Video::empty();
-    unsafe {
-        (*mapped.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_VULKAN as i32;
-        (*mapped.as_mut_ptr()).hw_frames_ctx = derived;
-    }
-    // Export explicitly to DRM PRIME first. With MAP_DIRECT, FFmpeg's
-    // VA-API mapper rejects a Vulkan destination before trying its mapper.
-    let mut drm = ffmpeg::frame::Video::empty();
-    unsafe {
-        (*drm.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
-    }
-    let result = unsafe { sys::av_hwframe_map(drm.as_mut_ptr(), source.as_ptr(), flags) };
-    if result < 0 {
-        return Err(format!(
-            "Export Intel video as DMA-BUF: {}",
-            ffmpeg::Error::from(result)
-        ));
-    }
-    let result = unsafe { sys::av_hwframe_map(mapped.as_mut_ptr(), drm.as_ptr(), flags) };
-    if result < 0 {
-        return Err(format!(
-            "Import Intel video to Vulkan without CPU copies: {}",
-            ffmpeg::Error::from(result)
-        ));
-    }
-    Ok(mapped)
 }
 
+pub(super) struct MappedVideo {
+    frame: ffmpeg::frame::Video,
+    // Must follow frame: unmap before releasing the owning context.
+    _context: Rc<FramesContext>,
+}
+
+unsafe extern "C" fn release_borrowed_context(_: *mut std::ffi::c_void, _: *mut u8) {}
+
 impl Renderer {
+    fn map_video(
+        &mut self,
+        source: &ffmpeg::frame::Video,
+        flags: i32,
+    ) -> Result<MappedVideo, String> {
+        let source_context = unsafe { (*source.as_ptr()).hw_frames_ctx };
+        let key = (unsafe { (*source_context).data } as usize, flags);
+        let context = if let Some(index) = self
+            .video_contexts
+            .iter()
+            .position(|(candidate, _)| *candidate == key)
+        {
+            self.video_contexts
+                .remove(index)
+                .expect("cached video context")
+                .1
+        } else {
+            let mut derived = ptr::null_mut();
+            let result = unsafe {
+                sys::av_hwframe_ctx_create_derived(
+                    &mut derived,
+                    sys::AVPixelFormat::AV_PIX_FMT_VULKAN,
+                    self.device.vulkan,
+                    (*source.as_ptr()).hw_frames_ctx,
+                    flags,
+                )
+            };
+            if result < 0 {
+                return Err(format!(
+                    "Derive Vulkan video surfaces: {}",
+                    ffmpeg::Error::from(result)
+                ));
+            }
+            Rc::new(FramesContext(derived))
+        };
+        self.video_contexts.push_back((key, context.clone()));
+        while self.video_contexts.len() > self.video_context_limit {
+            self.video_contexts.pop_front();
+        }
+        // FFmpeg's execution pool retains mapped buffers until its next use. An owning
+        // context reference in those buffers would form a cycle. This borrowed handle
+        // identifies the native context; MappedVideo separately retains its real owner.
+        let borrowed = unsafe {
+            sys::av_buffer_create(
+                (*context.0).data,
+                (*context.0).size,
+                Some(release_borrowed_context),
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if borrowed.is_null() {
+            return Err("Retain Vulkan mapping context".into());
+        }
+        let mut mapped = ffmpeg::frame::Video::empty();
+        unsafe {
+            (*mapped.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_VULKAN as i32;
+            (*mapped.as_mut_ptr()).hw_frames_ctx = borrowed;
+        }
+        // Export explicitly to DRM PRIME first. With MAP_DIRECT, FFmpeg's
+        // VA-API mapper rejects a Vulkan destination before trying its mapper.
+        let mut drm = ffmpeg::frame::Video::empty();
+        unsafe {
+            (*drm.as_mut_ptr()).format = sys::AVPixelFormat::AV_PIX_FMT_DRM_PRIME as i32;
+        }
+        let result = unsafe { sys::av_hwframe_map(drm.as_mut_ptr(), source.as_ptr(), flags) };
+        if result < 0 {
+            return Err(format!(
+                "Export Intel video as DMA-BUF: {}",
+                ffmpeg::Error::from(result)
+            ));
+        }
+        let result = unsafe { sys::av_hwframe_map(mapped.as_mut_ptr(), drm.as_ptr(), flags) };
+        if result < 0 {
+            return Err(format!(
+                "Import Intel video to Vulkan without CPU copies: {}",
+                ffmpeg::Error::from(result)
+            ));
+        }
+        Ok(MappedVideo {
+            frame: mapped,
+            _context: context,
+        })
+    }
+
     fn transfer_video(
-        &self,
+        &mut self,
         source: &ffmpeg::frame::Video,
         planes: Buffer,
         layout: Layout,
@@ -198,7 +252,7 @@ impl Renderer {
             } else {
                 sys::AV_HWFRAME_MAP_READ as i32
             };
-        let mut mapped = map(&self.device, source, flags)?;
+        let mut mapped = self.map_video(source, flags)?;
         let Layout {
             width,
             height,
@@ -227,8 +281,8 @@ impl Renderer {
             _images: Vec::new(),
             _textures: Vec::new(),
         };
-        let native = unsafe { &mut *(*mapped.as_mut_ptr()).data[0].cast::<sys::AVVkFrame>() };
-        let frames = unsafe { (*mapped.as_ptr()).hw_frames_ctx };
+        let native = unsafe { &mut *(*mapped.frame.as_mut_ptr()).data[0].cast::<sys::AVVkFrame>() };
+        let frames = unsafe { (*mapped.frame.as_ptr()).hw_frames_ctx };
         let frames = unsafe { (*frames).data.cast::<sys::AVHWFramesContext>() };
         let vulkan_frames = unsafe { &*(*frames).hwctx.cast::<sys::AVVulkanFramesContext>() };
         if let Some(lock) = vulkan_frames.lock_frame {

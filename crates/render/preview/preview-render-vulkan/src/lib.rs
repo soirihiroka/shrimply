@@ -91,6 +91,11 @@ impl Compositor {
     }
     pub fn set_decoder_limit(&mut self, maximum: usize) {
         self.scene.set_decoder_limit(maximum);
+        self.renderer.set_video_context_limit(
+            maximum
+                .checked_add(1)
+                .expect("video context limit overflow"),
+        );
     }
     pub fn set_exclusion(&mut self, item: Option<uuid::Uuid>) {
         self.scene.set_exclusion(item);
@@ -103,6 +108,7 @@ impl Compositor {
     }
     pub fn invalidate(&mut self) {
         self.scene.invalidate();
+        self.renderer.clear_video_contexts();
         self.images.clear();
         self.layered_sources.clear();
         self.videos.clear();
