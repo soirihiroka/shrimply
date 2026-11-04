@@ -6,9 +6,8 @@ struct BackgroundArguments {
   uint* output;
   BackgroundUniforms uniforms;
 };
-[[vk::binding(0, 0)]] ConstantBuffer<BackgroundArguments> arguments;
 
 [shader("compute")][numthreads(16, 16, 1)]
-void render_background_vulkan(uint3 id : SV_DispatchThreadID) {
+void render_background_vulkan(uint3 id : SV_DispatchThreadID, uniform BackgroundArguments *arguments) {
   write_background_pixel(id, arguments.output, arguments.uniforms);
 }

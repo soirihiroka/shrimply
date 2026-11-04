@@ -221,7 +221,6 @@ impl Renderer {
             command,
             fence: vk::Fence::null(),
             submitted: false,
-            descriptor: None,
             _resources: vec![planes.clone()],
             _video: None,
             _prior: Vec::new(),

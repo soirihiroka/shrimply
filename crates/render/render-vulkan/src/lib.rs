@@ -106,7 +106,6 @@ pub struct Submission {
     command: vk::CommandBuffer,
     fence: vk::Fence,
     submitted: bool,
-    descriptor: Option<vk::DescriptorPool>,
     _resources: Vec<Buffer>,
     _video: Option<ffmpeg_next::frame::Video>,
     _prior: Vec<Submission>,
@@ -136,9 +135,6 @@ impl Drop for Submission {
         unsafe {
             let device = &self.pool.device.raw;
             device.destroy_fence(self.fence, None);
-            if let Some(pool) = self.descriptor {
-                device.destroy_descriptor_pool(pool, None);
-            }
             device.free_command_buffers(self.pool.raw, &[self.command]);
         }
     }
@@ -165,7 +161,6 @@ pub struct Renderer {
     skia: Option<skia_safe::gpu::DirectContext>,
     device: Arc<Device>,
     pool: Rc<Pool>,
-    descriptor_layout: vk::DescriptorSetLayout,
     pipeline_layout: vk::PipelineLayout,
     kernels: HashMap<&'static str, Kernel>,
 }
@@ -185,42 +180,21 @@ impl Renderer {
             device: device.clone(),
             raw: pool,
         });
-        let bindings = [vk::DescriptorSetLayoutBinding::default()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::COMPUTE)];
-        let descriptor_layout = unsafe {
-            device.raw.create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
-                None,
-            )
-        }
-        .map_err(|e| format!("create Vulkan descriptors: {e:?}"))?;
-        let layouts = [descriptor_layout];
         let pipeline_layout = unsafe {
             device.raw.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default()
-                    .set_layouts(&layouts)
-                    .push_constant_ranges(&[vk::PushConstantRange::default()
+                &vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&[
+                    vk::PushConstantRange::default()
                         .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                        .size(PUSH_CONSTANT_BYTES)]),
+                        .size(PUSH_CONSTANT_BYTES),
+                ]),
                 None,
             )
         }
-        .map_err(|e| {
-            unsafe {
-                device
-                    .raw
-                    .destroy_descriptor_set_layout(descriptor_layout, None);
-            }
-            format!("create Vulkan pipeline layout: {e:?}")
-        })?;
+        .map_err(|e| format!("create Vulkan pipeline layout: {e:?}"))?;
         Ok(Self {
             skia: None,
             pool,
             device,
-            descriptor_layout,
             pipeline_layout,
             kernels: HashMap::new(),
         })
@@ -325,14 +299,12 @@ impl Renderer {
         &self,
         command: vk::CommandBuffer,
         resources: Vec<Buffer>,
-        descriptor: Option<vk::DescriptorPool>,
     ) -> Result<Submission, String> {
         let mut submission = Submission {
             pool: self.pool.clone(),
             command,
             fence: vk::Fence::null(),
             submitted: false,
-            descriptor,
             _resources: resources,
             _video: None,
             _prior: Vec::new(),
@@ -377,65 +349,21 @@ impl Renderer {
                 ));
             }
         }
-        if !arguments.layout.buffered && arguments.bytes.len() > PUSH_CONSTANT_BYTES as usize {
+        let push_data = if arguments.layout.buffered {
+            let uniforms = self.upload(&arguments.bytes)?;
+            let address = uniforms.address().to_ne_bytes().to_vec();
+            resources.push(uniforms);
+            address
+        } else {
+            arguments.bytes
+        };
+        if push_data.len() > PUSH_CONSTANT_BYTES as usize {
             return Err(format!(
                 "{} requires an argument buffer",
                 arguments.layout.name
             ));
         }
-        let descriptor = if arguments.layout.buffered {
-            let uniforms = self.upload(&arguments.bytes)?;
-            let sizes = [vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::UNIFORM_BUFFER)
-                .descriptor_count(1)];
-            let pool = unsafe {
-                self.device.raw.create_descriptor_pool(
-                    &vk::DescriptorPoolCreateInfo::default()
-                        .max_sets(1)
-                        .pool_sizes(&sizes),
-                    None,
-                )
-            }
-            .map_err(|e| format!("create dispatch descriptors: {e:?}"))?;
-            let layouts = [self.descriptor_layout];
-            let set = unsafe {
-                self.device.raw.allocate_descriptor_sets(
-                    &vk::DescriptorSetAllocateInfo::default()
-                        .descriptor_pool(pool)
-                        .set_layouts(&layouts),
-                )
-            }
-            .map_err(|e| {
-                unsafe {
-                    self.device.raw.destroy_descriptor_pool(pool, None);
-                }
-                format!("allocate dispatch descriptors: {e:?}")
-            })?[0];
-            let info = [vk::DescriptorBufferInfo::default()
-                .buffer(uniforms.raw())
-                .range(uniforms.len() as u64)];
-            unsafe {
-                self.device.raw.update_descriptor_sets(
-                    &[vk::WriteDescriptorSet::default()
-                        .dst_set(set)
-                        .dst_binding(0)
-                        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                        .buffer_info(&info)],
-                    &[],
-                );
-            }
-            resources.push(uniforms);
-            Some((pool, set))
-        } else {
-            None
-        };
-        let command = self.command().inspect_err(|_| {
-            if let Some((pool, _)) = descriptor {
-                unsafe {
-                    self.device.raw.destroy_descriptor_pool(pool, None);
-                }
-            }
-        })?;
+        let command = self.command()?;
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
                 command,
@@ -455,29 +383,18 @@ impl Renderer {
             self.device
                 .raw
                 .cmd_bind_pipeline(command, vk::PipelineBindPoint::COMPUTE, pipeline);
-            if let Some((_, set)) = descriptor {
-                self.device.raw.cmd_bind_descriptor_sets(
-                    command,
-                    vk::PipelineBindPoint::COMPUTE,
-                    self.pipeline_layout,
-                    0,
-                    &[set],
-                    &[],
-                );
-            } else {
-                self.device.raw.cmd_push_constants(
-                    command,
-                    self.pipeline_layout,
-                    vk::ShaderStageFlags::COMPUTE,
-                    0,
-                    &arguments.bytes,
-                );
-            }
+            self.device.raw.cmd_push_constants(
+                command,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::COMPUTE,
+                0,
+                &push_data,
+            );
             self.device
                 .raw
                 .cmd_dispatch(command, groups[0], groups[1], groups[2]);
         }
-        self.submit(command, resources, descriptor.map(|(pool, _)| pool))
+        self.submit(command, resources)
     }
 
     pub fn composite_buffers(
@@ -724,7 +641,7 @@ impl Renderer {
                 &releases,
             );
         }
-        let mut submission = self.submit(command, vec![source.clone()], None)?;
+        let mut submission = self.submit(command, vec![source.clone()])?;
         submission._textures.push(texture.clone());
         Ok((texture, submission))
     }
@@ -762,7 +679,7 @@ impl Renderer {
                 &[],
             );
         }
-        self.submit(command, vec![source.clone(), output.clone()], None)?
+        self.submit(command, vec![source.clone(), output.clone()])?
             .wait()?;
         output.copy_bytes()
     }
@@ -783,9 +700,6 @@ impl Drop for Renderer {
             self.device
                 .raw
                 .destroy_pipeline_layout(self.pipeline_layout, None);
-            self.device
-                .raw
-                .destroy_descriptor_set_layout(self.descriptor_layout, None);
         }
     }
 }
