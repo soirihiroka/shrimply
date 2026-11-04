@@ -34,3 +34,4 @@ shrimply-render-vulkan.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libloading.workspace = true
+shrimply-render-core.workspace = true
