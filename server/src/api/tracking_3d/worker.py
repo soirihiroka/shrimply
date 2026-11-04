@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from pydantic import ValidationError
 
+from api import gpu
 from api.tracking_3d.protocol import (
     ANALYSIS_REQUEST_VALIDATOR,
     ARCHIVE_MAGIC,
@@ -315,11 +316,7 @@ def load_vggt_slam(device: torch.device):
     from vggt_slam.solver import Solver
 
     torch.cuda.set_device(device)
-    dtype = (
-        torch.bfloat16
-        if torch.cuda.get_device_capability(device)[0] >= 8
-        else torch.float16
-    )
+    dtype = gpu.inference_dtype(device)
     persistent_salad_checkpoint = (
         Path.home() / ".cache" / "huggingface" / "dino_salad.ckpt"
     )

@@ -146,6 +146,7 @@ class _JobRecord:
     assignment: _WorkerRecord | None = None
     admitted: threading.Event = field(default_factory=threading.Event)
     retry_count: int = 0
+    failure: RuntimeError | None = None
 
 
 @dataclass(slots=True)
@@ -374,6 +375,8 @@ class Scheduler:
             record.admitted.wait()
             record.job.check_cancelled()
             with self.lock:
+                if record.failure is not None:
+                    raise record.failure
                 assignment = record.assignment
                 if assignment is None:
                     record.job.check_cancelled()
@@ -548,7 +551,7 @@ class Scheduler:
                 "queued_jobs": len(self.queue),
                 "active_jobs": sum(
                     job.state
-                    not in {"queued", "completed", "cancelled", "heartbeat_expired"}
+                    not in {"queued", "completed", "failed", "cancelled", "heartbeat_expired"}
                     for job in self.jobs.values()
                 ),
                 "reserved_ram_bytes": self._reserved_ram,
@@ -673,6 +676,20 @@ class Scheduler:
                     <= (os.process_cpu_count() or 1)
                     and self._evict_idle_for_locked(record.profile)
                 ):
+                    admitted = True
+                    break
+                if not self.workers and not self._factories_loading:
+                    self.queue.remove(record)
+                    record.job._record = None
+                    record.job.state = "failed"
+                    record.failure = RuntimeError(
+                        f"Insufficient available memory for {record.key.service}:"
+                        f"{record.key.model}. Choose a lower precision or smaller "
+                        "model, or free memory on the selected device."
+                    )
+                    record.admitted.set()
+                    self._clear_barriers_locked()
+                    self._notify_positions_locked()
                     admitted = True
                     break
                 if index == 0 and not record.bypassed:

@@ -102,11 +102,11 @@ def synthesize(
 ) -> None:
     precision = request_precision(request)
     key = resource.WorkerKey("tts", request.model, (("precision", precision),))
+    dtype = gpu.inference_dtype(gpu.device, precision)
     profile = tts_resources.request(
         request.model,
-        precision,
+        dtype,
         gpu.device.startswith("cuda:"),
-        gpu.bf16_supported(),
     )
     payload = msgspec.msgpack.encode(request.model_dump(mode="python"))
     lease = resource.scheduler.acquire(

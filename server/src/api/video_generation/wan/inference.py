@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Self
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from api import gpu
 from api.video_generation.protocol import ModelId, WorkerState
 
 if TYPE_CHECKING:
@@ -121,7 +122,7 @@ def generate(
     from diffusers import AutoencoderKLWan, WanImageToVideoPipeline, WanPipeline
     from diffusers.pipelines.wan.pipeline_output import WanPipelineOutput
 
-    if not torch.cuda.is_bf16_supported():
+    if not gpu.bf16_supported(device):
         raise RuntimeError("Wan requires a BF16-capable CUDA device")
 
     vae = AutoencoderKLWan.from_pretrained(

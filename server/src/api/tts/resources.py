@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 
+import torch
+
 from api.resource import ResourceProfile
-from api.tts.protocol import ModelId, Precision
+from api.tts.protocol import ModelId
 
 GIB = 1024**3
 
@@ -12,7 +14,6 @@ class ModelResources:
     vram_workspace: int
     ram_workspace: int = 2 * GIB
     cuda_ram_parameters: int = 0
-    auto_bytes_per_parameter: int = 2
     reduced_precision_parameters: int | None = None
     cuda_ram_bytes_per_parameter: int | None = None
 
@@ -46,7 +47,6 @@ MODELS = {
         vram_workspace=2 * GIB,
         ram_workspace=3 * GIB,
         cuda_ram_parameters=580_493_120,
-        auto_bytes_per_parameter=4,
     ),
     "IndexTeam/IndexTTS-2.5": ModelResources(
         parameters=2_503_000_000,
@@ -59,22 +59,9 @@ MODELS = {
 }
 
 
-def request(
-    model_id: ModelId,
-    precision: Precision,
-    cuda: bool,
-    bf16_supported: bool,
-) -> ResourceProfile:
+def request(model_id: ModelId, dtype: torch.dtype, cuda: bool) -> ResourceProfile:
     model = MODELS[model_id]
-    match precision:
-        case "auto":
-            bytes_per_parameter = model.auto_bytes_per_parameter
-        case "float32":
-            bytes_per_parameter = 4
-        case _:
-            bytes_per_parameter = 2
-    if precision == "auto" and bytes_per_parameter == 2 and not bf16_supported:
-        bytes_per_parameter = 4
+    bytes_per_parameter = dtype.itemsize
     reduced_parameters = model.reduced_precision_parameters or model.parameters
     full_precision_parameters = model.parameters - reduced_parameters
     weight_bytes = (

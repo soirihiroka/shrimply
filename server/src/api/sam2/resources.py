@@ -13,7 +13,7 @@ MODEL_PARAMETERS = {
 
 def profile(model_id: ModelId) -> ResourceProfile:
     # Weights remain resident; the measured inference workspace is transient.
-    weight_bytes = MODEL_PARAMETERS[model_id] * (2 if gpu.device.startswith("cuda:") else 4)
+    weight_bytes = MODEL_PARAMETERS[model_id] * gpu.inference_dtype(gpu.device).itemsize
     return ResourceProfile(
         resident_vram=weight_bytes if gpu.device.startswith("cuda:") else 0,
         active_vram=512 * MIB if gpu.device.startswith("cuda:") else 0,

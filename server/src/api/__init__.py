@@ -96,6 +96,8 @@ def stream_events(
         job.check_cancelled()
         if disconnected.is_set():
             raise OSError("Client disconnected")
+        if getattr(event, "kind", None) == "error":
+            resource.finish_job(job)
         payload = msgspec.msgpack.encode(event.model_dump(mode="python"))
         stream_logger.debug(
             "Queueing event thread=%s event=%s payload_bytes=%d",
@@ -120,6 +122,7 @@ def stream_events(
         try:
             run(send_event)
         except Exception as exception:
+            resource.finish_job(job)
             if not disconnected.is_set():
                 event = failure(exception)
                 payload = msgspec.msgpack.encode(event.model_dump(mode="python"))

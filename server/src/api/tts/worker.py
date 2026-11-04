@@ -15,6 +15,7 @@ import torch
 from huggingface_hub import snapshot_download
 from huggingface_hub.constants import HF_HUB_CACHE
 
+from api import gpu
 from api.model_progress import StreamedModelProgress, stream_model_progress
 from api.media import PcmAudio
 from api.tts.errors import log_failure, public_error_message
@@ -199,25 +200,6 @@ def speech_from_samples(
     )
 
 
-def model_dtype(
-    device: torch.device, model_id: ModelId, precision: Precision
-) -> torch.dtype:
-    match precision:
-        case "auto":
-            if device.type != "cuda" or model_id == "IndexTeam/IndexTTS-2":
-                return torch.float32
-            with torch.cuda.device(device):
-                return (
-                    torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
-                )
-        case "bfloat16":
-            return torch.bfloat16
-        case "float16":
-            return torch.float16
-        case "float32":
-            return torch.float32
-
-
 def run(
     connection: Connection,
     model_id: ModelId,
@@ -242,7 +224,7 @@ def run(
         voice_clone_prompts: VoiceClonePromptCache = OrderedDict()
         index_models: IndexModels | None = None
         index_2_5_models: IndexTts25Models | None = None
-        dtype = model_dtype(device, model_id, precision)
+        dtype = gpu.inference_dtype(device, precision)
         def model_progress(message: str) -> None:
             send_worker_event(
                 ProgressEvent(message=message, model=model_id, state="loading")

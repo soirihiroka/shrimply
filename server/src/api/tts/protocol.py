@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, model_validator
 
 from api.media import AudioUpload
+from api.gpu import Precision
 
 type ModelId = Literal[
     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
@@ -15,7 +16,6 @@ type ModelId = Literal[
     "IndexTeam/IndexTTS-2.5",
 ]
 type WorkerState = Literal["stopped", "loading", "generating", "ready"]
-type Precision = Literal["auto", "bfloat16", "float16", "float32"]
 type InputPurpose = Literal["text", "duration", "speed_factor"]
 MODEL_IDS: tuple[ModelId, ...] = (
     "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",

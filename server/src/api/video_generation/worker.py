@@ -50,6 +50,10 @@ def run(
         if not device.startswith("cuda:"):
             raise RuntimeError("Video generation requires a CUDA device")
         torch.cuda.set_device(device)
+        from api import gpu
+
+        if stage == "generation" and not gpu.bf16_supported(device):
+            raise RuntimeError("Video generation requires a GPU with native BF16 support")
         torch.set_num_threads(1)
 
         def progress(message: str, state: WorkerState) -> None:

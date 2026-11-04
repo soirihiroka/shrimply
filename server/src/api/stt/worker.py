@@ -17,6 +17,7 @@ from transformers.models.qwen3_asr.processing_qwen3_asr import Qwen3ASRProcessor
 from transformers.models.whisper.modeling_whisper import WhisperForConditionalGeneration
 from transformers.models.whisper.processing_whisper import WhisperProcessor
 
+from api import gpu
 from api.stt.protocol import (
     ErrorEvent,
     ModelId,
@@ -345,6 +346,7 @@ def append_segment(
 
 
 def load_transcriber(model_id: ModelId, device: torch.device) -> Transcriber:
+    dtype = gpu.inference_dtype(device)
     send_worker_event(
         ProgressEvent(message="Checking model...", model=model_id, state="loading")
     )
@@ -365,7 +367,7 @@ def load_transcriber(model_id: ModelId, device: torch.device) -> Transcriber:
         send_worker_event(
             ProgressEvent(message="Loading weights...", model=model_id, state="loading")
         )
-        model = ParakeetForTDT.from_pretrained(model_path, dtype="auto")
+        model = ParakeetForTDT.from_pretrained(model_path, dtype=dtype)
         send_worker_event(
             ProgressEvent(message="Moving to device...", model=model_id, state="loading")
         )
@@ -378,7 +380,7 @@ def load_transcriber(model_id: ModelId, device: torch.device) -> Transcriber:
             ProgressEvent(message="Loading weights...", model=model_id, state="loading")
         )
         whisper_model = WhisperForConditionalGeneration.from_pretrained(
-            model_path, dtype="auto"
+            model_path, dtype=dtype
         )
         send_worker_event(
             ProgressEvent(message="Moving to device...", model=model_id, state="loading")
@@ -394,7 +396,7 @@ def load_transcriber(model_id: ModelId, device: torch.device) -> Transcriber:
             ProgressEvent(message="Loading weights...", model=model_id, state="loading")
         )
         qwen_model = Qwen3ASRForConditionalGeneration.from_pretrained(
-            model_path, dtype="auto"
+            model_path, dtype=dtype
         )
         send_worker_event(
             ProgressEvent(
@@ -414,7 +416,7 @@ def load_transcriber(model_id: ModelId, device: torch.device) -> Transcriber:
         )
         aligner_processor = Qwen3ASRProcessor.from_pretrained(aligner_path)
         aligner = Qwen3ASRForTokenClassification.from_pretrained(
-            aligner_path, dtype="auto"
+            aligner_path, dtype=dtype
         )
         send_worker_event(
             ProgressEvent(message="Moving to device...", model=model_id, state="loading")

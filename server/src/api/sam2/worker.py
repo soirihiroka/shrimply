@@ -9,6 +9,7 @@ import torch
 from pydantic import ValidationError
 from transformers import Sam2VideoModel, Sam2VideoProcessor
 
+from api import gpu
 from api.media import load_image
 
 from api.sam2.protocol import (
@@ -165,17 +166,7 @@ def analyze_archive(connection, model, processor, device, dtype, path: str) -> i
 
 def run(connection, model_id: str, device_name: str) -> None:
     device = torch.device(device_name)
-    bf16_supported = False
-    if device.type == "cuda":
-        with torch.cuda.device(device):
-            bf16_supported = torch.cuda.is_bf16_supported()
-    dtype = (
-        torch.float32
-        if device.type == "cpu"
-        else torch.bfloat16
-        if bf16_supported
-        else torch.float16
-    )
+    dtype = gpu.inference_dtype(device)
     try:
         connection.send_bytes(
             encode_event(

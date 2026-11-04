@@ -71,18 +71,6 @@ def _run_worker(config_path: Path) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _dtype(torch, model: ModelVersion, precision: Precision):
-    match precision:
-        case "reduced":
-            return torch.float16 if model == "2" else torch.bfloat16
-        case "float32":
-            return torch.float32
-        case "float16":
-            return torch.float16
-        case "bfloat16":
-            return torch.bfloat16
-
-
 def _request(config: dict[str, object], voice: bytes):
     from api.media import EncodedAudio
     from api.tts.requests import (
@@ -127,6 +115,7 @@ def _benchmark(config: dict[str, object]) -> dict[str, object]:
     from huggingface_hub.constants import HF_HUB_CACHE
 
     from api.tts.index_beta import prepare_index_beta
+    from api import gpu
 
     if not torch.cuda.is_available():
         raise RuntimeError("IndexTTS benchmarking requires CUDA")
@@ -134,9 +123,7 @@ def _benchmark(config: dict[str, object]) -> dict[str, object]:
     runtime = cast(Runtime, config["runtime"])
     precision = cast(Precision, config["precision"])
     device = torch.device("cuda")
-    dtype = _dtype(torch, model, precision)
-    if dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
-        raise RuntimeError("This GPU does not support bfloat16 IndexTTS")
+    dtype = gpu.inference_dtype(device, "auto" if precision == "reduced" else precision)
 
     if model == "2":
         from api.tts.index_tts_2_0.inference import synthesize
