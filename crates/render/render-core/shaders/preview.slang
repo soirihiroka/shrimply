@@ -6,12 +6,12 @@ import nis_coefficients;
 
 #if defined(SHRIMPLY_VULKAN)
 // Remove unused filter implementations before the driver allocates registers.
-[[vk::constant_id(0)]] const uint SAMPLE_METHODS = 0xffffffffu;
+[[vk::constant_id(0)]] const uint COMPOSITE_OPTIONS = 0xffffffffu;
 // Upper bits describe optional compositor paths; lower bits select samplers.
 static const uint ADVANCED_BLEND = 1u << 31;
 static const uint MOTION_SAMPLES = 1u << 30;
 static const uint EXTENDED_BORDER = 1u << 29;
-#define SAMPLE_ENABLED(method) ((SAMPLE_METHODS & (1u << uint(VideoSampleMethod::method))) != 0u)
+#define SAMPLE_ENABLED(method) ((COMPOSITE_OPTIONS & (1u << uint(VideoSampleMethod::method))) != 0u)
 #else
 #define SAMPLE_ENABLED(method) true
 #endif
@@ -711,7 +711,7 @@ uint layer_sample_points(Nv12LayerParams p, float x, float y,
                          out float3 points[5]) {
   points[0] = float3(x, y, 1.0f);
 #if defined(SHRIMPLY_VULKAN)
-  if ((SAMPLE_METHODS & EXTENDED_BORDER) == 0u)
+  if ((COMPOSITE_OPTIONS & EXTENDED_BORDER) == 0u)
     return 1u;
 #endif
   float distance_value = outside_distance(p, x, y);
@@ -863,8 +863,8 @@ uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
     bool motion = p.motion_sample_count != 0u;
     LayerBlendMode blend = p.blend_mode;
 #if defined(SHRIMPLY_VULKAN)
-    motion = motion && (SAMPLE_METHODS & MOTION_SAMPLES) != 0u;
-    if ((SAMPLE_METHODS & ADVANCED_BLEND) == 0u)
+    motion = motion && (COMPOSITE_OPTIONS & MOTION_SAMPLES) != 0u;
+    if ((COMPOSITE_OPTIONS & ADVANCED_BLEND) == 0u)
       blend = LayerBlendMode::Normal;
 #endif
     uint start = p.motion_transform_offset,

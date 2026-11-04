@@ -142,23 +142,47 @@ fn main() -> Result<(), String> {
             kind: LayerKind::Rgba,
             _padding_0: [0; 4],
         };
-        for case in 0..5 {
+        for (blend, motion, address) in [
+            (
+                LayerBlendMode::Normal,
+                false,
+                TextureAddressMode::Transparent,
+            ),
+            (
+                LayerBlendMode::Multiply,
+                false,
+                TextureAddressMode::Transparent,
+            ),
+            (
+                LayerBlendMode::Normal,
+                true,
+                TextureAddressMode::Transparent,
+            ),
+            (
+                LayerBlendMode::Normal,
+                false,
+                TextureAddressMode::BlurredMirror,
+            ),
+            (
+                LayerBlendMode::Normal,
+                false,
+                TextureAddressMode::Stochastic,
+            ),
+        ] {
             let mut parameters = parameters;
+            parameters.blend_mode = blend;
+            parameters.address_mode = address;
             let mut transforms = Vec::new();
-            if case == 1 {
-                parameters.blend_mode = LayerBlendMode::Multiply;
-            } else if case == 2 {
+            if motion {
                 parameters.motion_sample_count = 2;
                 parameters.motion_transform_count = 2;
                 transforms = vec![parameters.inverse; 2];
-            } else if case >= 3 {
+            } else if matches!(
+                address,
+                TextureAddressMode::BlurredMirror | TextureAddressMode::Stochastic
+            ) {
                 parameters.padding = [SIZE as f32; 4];
                 parameters.inverse.z_axis.x = -2.0;
-                parameters.address_mode = if case == 3 {
-                    TextureAddressMode::BlurredMirror
-                } else {
-                    TextureAddressMode::Stochastic
-                };
             }
             let composited = renderer.composite_buffers_with_transforms(
                 &[(parameters, vector.clone())],
@@ -167,7 +191,7 @@ fn main() -> Result<(), String> {
                 0xffff_0000,
                 &transforms,
             )?;
-            let expected = if case == 1 {
+            let expected = if blend == LayerBlendMode::Multiply {
                 [0, 0, 0, 255]
             } else {
                 [255, 0, 0, 255]
@@ -178,7 +202,7 @@ fn main() -> Result<(), String> {
                 .any(|pixel| pixel != expected)
             {
                 return Err(format!(
-                    "Intel compositor specialization mismatch in case {case}"
+                    "Intel compositor specialization mismatch: {blend:?}, motion={motion}, {address:?}"
                 ));
             }
         }

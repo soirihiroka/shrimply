@@ -48,7 +48,7 @@ include!(concat!(env!("OUT_DIR"), "/kernels.rs"));
 pub struct Arguments {
     layout: &'static KernelLayout,
     code: &'static [u8],
-    sample_methods: u32,
+    specialization: u32,
     bytes: Vec<u8>,
 }
 impl Arguments {
@@ -223,13 +223,13 @@ impl Renderer {
     }
     pub fn warmup(&mut self) -> Result<(), String> {
         let mut arguments = self.arguments("composite_nv12_layers")?;
-        arguments.sample_methods = (1 << shrimply_render_core::VideoSampleMethod::Nearest as u32)
+        arguments.specialization = (1 << shrimply_render_core::VideoSampleMethod::Nearest as u32)
             | (1 << shrimply_render_core::VideoSampleMethod::Bilinear as u32);
         self.kernel(&arguments).map(|_| ())
     }
     fn kernel(&mut self, arguments: &Arguments) -> Result<vk::Pipeline, String> {
         let layout = arguments.layout;
-        let key = (layout.name, arguments.sample_methods);
+        let key = (layout.name, arguments.specialization);
         if !self.kernels.contains_key(&key) {
             let code = ash::util::read_spv(&mut std::io::Cursor::new(arguments.code))
                 .map_err(|e| e.to_string())?;
@@ -243,7 +243,7 @@ impl Renderer {
             let entries = [vk::SpecializationMapEntry::default()
                 .constant_id(0)
                 .size(size_of::<u32>())];
-            let data = arguments.sample_methods.to_ne_bytes();
+            let data = arguments.specialization.to_ne_bytes();
             let specialization = vk::SpecializationInfo::default()
                 .map_entries(&entries)
                 .data(&data);
@@ -291,7 +291,7 @@ impl Renderer {
         Ok(Arguments {
             layout,
             code: module.code,
-            sample_methods: u32::MAX,
+            specialization: u32::MAX,
             bytes: vec![0; size],
         })
     }
@@ -513,7 +513,7 @@ impl Renderer {
             address
         };
         let mut arguments = self.arguments("composite_nv12_layers")?;
-        arguments.sample_methods = layers.iter().fold(0, |mask, (layer, _)| {
+        arguments.specialization = layers.iter().fold(0, |mask, (layer, _)| {
             use shrimply_render_core::{LayerBlendMode, TextureAddressMode};
             mask | (1 << layer.sample_method as u32)
                 | if matches!(
