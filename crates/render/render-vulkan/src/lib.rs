@@ -7,7 +7,7 @@ pub mod device;
 mod vaapi;
 mod vector;
 pub use buffer::Buffer;
-pub use vaapi::{VideoFrame, decoder};
+pub use vaapi::{VideoFrame, decoder, video_color_space};
 
 use ash::vk;
 use device::Device;

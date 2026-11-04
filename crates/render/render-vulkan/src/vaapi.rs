@@ -5,6 +5,20 @@ use std::{ptr, rc::Rc, sync::Arc};
 
 const HD_MINIMUM_HEIGHT: u32 = 720;
 
+pub fn video_color_space(frame: &ffmpeg::frame::Video) -> Result<ffmpeg::color::Space, String> {
+    use ffmpeg::color::Space;
+    match frame.color_space() {
+        Space::Unspecified if frame.height() >= HD_MINIMUM_HEIGHT => Ok(Space::BT709),
+        Space::Unspecified => Ok(Space::SMPTE170M),
+        space @ (Space::BT709
+        | Space::BT470BG
+        | Space::SMPTE170M
+        | Space::FCC
+        | Space::SMPTE240M) => Ok(space),
+        space => Err(format!("Unsupported Intel video color matrix: {space:?}")),
+    }
+}
+
 /// Keeps the decoder surface alive until the final GPU read completes.
 pub struct VideoFrame {
     pub frame: ffmpeg::frame::Video,
@@ -490,19 +504,10 @@ impl Renderer {
 
     /// Import the VA-API surface through DRM PRIME; pixels stay on the GPU.
     pub fn video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
-        use ffmpeg::color::{Range, Space};
+        use ffmpeg::color::Range;
         let profiling = std::env::var_os("SHRIMPLY_INTEL_PROFILE").is_some();
         let started = std::time::Instant::now();
-        let colorspace = match source.frame.color_space() {
-            Space::Unspecified if source.frame.height() >= HD_MINIMUM_HEIGHT => Space::BT709,
-            Space::Unspecified => Space::SMPTE170M,
-            space @ (Space::BT709
-            | Space::BT470BG
-            | Space::SMPTE170M
-            | Space::FCC
-            | Space::SMPTE240M) => space,
-            space => return Err(format!("Unsupported Intel video color matrix: {space:?}")),
-        };
+        let colorspace = video_color_space(&source.frame)?;
         let coefficients = unsafe {
             std::slice::from_raw_parts(
                 sys::sws_getCoefficients(sys::AVColorSpace::from(colorspace) as i32),

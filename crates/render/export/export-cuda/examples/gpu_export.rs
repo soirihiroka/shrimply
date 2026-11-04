@@ -45,38 +45,48 @@ fn main() -> Result<(), String> {
         return Err("Frame count must be positive".into());
     }
     ffmpeg::init().map_err(|e| e.to_string())?;
-    let input = ffmpeg::format::input(&source).map_err(|e| e.to_string())?;
-    let stream = input
-        .streams()
-        .best(ffmpeg::media::Type::Video)
-        .ok_or("Input has no video stream")?;
-    let parameters = stream.parameters();
-    let parameters = unsafe { &*parameters.as_ptr() };
-    let size = CanvasSize {
-        width: u32::try_from(parameters.width).map_err(|_| "Invalid video width")?,
-        height: u32::try_from(parameters.height).map_err(|_| "Invalid video height")?,
+    let project = if source
+        .extension()
+        .is_some_and(|extension| extension == "shrimp")
+    {
+        // Native projects retain their timeline duration and linked asset paths.
+        shrimply_project_document::project::load_project_snapshot(&source)?
+    } else {
+        let input = ffmpeg::format::input(&source).map_err(|e| e.to_string())?;
+        let stream = input
+            .streams()
+            .best(ffmpeg::media::Type::Video)
+            .ok_or("Input has no video stream")?;
+        let parameters = stream.parameters();
+        let parameters = unsafe { &*parameters.as_ptr() };
+        let size = CanvasSize {
+            width: u32::try_from(parameters.width).map_err(|_| "Invalid video width")?,
+            height: u32::try_from(parameters.height).map_err(|_| "Invalid video height")?,
+        };
+        let rate = stream.avg_frame_rate();
+        if rate.numerator() <= 0 || rate.denominator() <= 0 {
+            return Err("Input has no valid frame rate".into());
+        }
+        let mut project = Project {
+            canvas_size: size,
+            fps: fraction_new(OUTPUT_FPS, 1),
+            ..Default::default()
+        };
+        let duration = Time::from_fraction(frames, OUTPUT_FPS);
+        let mut item = VideoItem::background_item(size, Time::ZERO, duration);
+        item.content = VideoItemContent::Media;
+        item.file = Asset::new(source);
+        item.source_width = size.width;
+        item.source_height = size.height;
+        item.source_duration = duration;
+        item.playback_fps =
+            fraction_new(i64::from(rate.numerator()), i64::from(rate.denominator()));
+        project.video_tracks.push(VideoTrack {
+            items: vec![item],
+            ..Default::default()
+        });
+        project
     };
-    let rate = stream.avg_frame_rate();
-    if rate.numerator() <= 0 || rate.denominator() <= 0 {
-        return Err("Input has no valid frame rate".into());
-    }
-    let mut project = Project {
-        canvas_size: size,
-        fps: fraction_new(OUTPUT_FPS, 1),
-        ..Default::default()
-    };
-    let duration = Time::from_fraction(frames, OUTPUT_FPS);
-    let mut item = VideoItem::background_item(size, Time::ZERO, duration);
-    item.content = VideoItemContent::Media;
-    item.file = Asset::new(source);
-    item.source_width = size.width;
-    item.source_height = size.height;
-    item.source_duration = duration;
-    item.playback_fps = fraction_new(i64::from(rate.numerator()), i64::from(rate.denominator()));
-    project.video_tracks.push(VideoTrack {
-        items: vec![item],
-        ..Default::default()
-    });
     let settings = ExportSettings {
         path,
         overwrite: false,

@@ -3,6 +3,73 @@ use shrimply_preview_render_vulkan::{Compositor, Rendered};
 
 const MAX_QUANTIZATION_PARAMETER: u32 = 51;
 
+fn unmodified_video(
+    plan: &shrimply_preview_render_core::FramePlan,
+    format: sys::AVPixelFormat,
+) -> Result<Option<ffmpeg::frame::Video>, String> {
+    use shrimply_preview_render_core::Source;
+    use shrimply_render_core::{LayerBlendMode, VideoSampleMethod, math::Mat3};
+    let [layer] = plan.layers.as_slice() else {
+        return Ok(None);
+    };
+    let Source::Video(video) = &layer.source else {
+        return Ok(None);
+    };
+    let parameters = layer.parameters;
+    if !plan.external_layers.is_empty()
+        || !layer.effects.is_empty()
+        || !layer.transitions.is_empty()
+        || layer.motion_blur.is_some()
+        || layer.alpha_mask.is_some()
+        || layer.video_mask.is_some()
+        || layer.stabilization.is_some()
+        || layer.morph_scene.is_some()
+        || layer.render_size != (plan.width, plan.height)
+        || layer.transform != Mat3::IDENTITY
+        || layer.output_transform != Mat3::IDENTITY
+        || parameters.opacity != 1.0
+        || parameters.crop != [0.0; 4]
+        || parameters.padding != [0.0; 4]
+        || parameters.motion_sample_count != 0
+        || parameters.motion_transform_count != 0
+        || (parameters.source_width, parameters.source_height) != (plan.width, plan.height)
+        || !matches!(
+            parameters.blend_mode,
+            LayerBlendMode::Normal | LayerBlendMode::PassThrough
+        )
+        || !matches!(
+            parameters.sample_method,
+            VideoSampleMethod::Nearest | VideoSampleMethod::Bilinear | VideoSampleMethod::Bicubic
+        )
+        || (video.frame.width(), video.frame.height()) != (plan.width, plan.height)
+        || video.frame.color_range() == ffmpeg::color::Range::JPEG
+        || shrimply_render_vulkan::video_color_space(&video.frame)? != ffmpeg::color::Space::BT709
+    {
+        return Ok(None);
+    }
+    let native = unsafe { &*video.frame.as_ptr() };
+    if native.hw_frames_ctx.is_null()
+        || native.crop_left != 0
+        || native.crop_right != 0
+        || native.crop_top != 0
+        || native.crop_bottom != 0
+        || native.flags & sys::AV_FRAME_FLAG_INTERLACED as i32 != 0
+        || !matches!(
+            native.chroma_location,
+            sys::AVChromaLocation::AVCHROMA_LOC_UNSPECIFIED
+                | sys::AVChromaLocation::AVCHROMA_LOC_LEFT
+        )
+    {
+        return Ok(None);
+    }
+    let context = unsafe {
+        &*(*native.hw_frames_ctx)
+            .data
+            .cast::<sys::AVHWFramesContext>()
+    };
+    Ok((context.sw_format == format).then(|| video.frame.clone()))
+}
+
 pub(super) struct IntelBackend {
     settings: ExportSettings,
     compositor: Option<Compositor>,
@@ -187,7 +254,32 @@ impl VideoBackend for IntelBackend {
         cancelled: &AtomicBool,
     ) -> Result<RenderedFrame, String> {
         let started = std::time::Instant::now();
-        let rendered = self.render(project, position, cancelled)?;
+        let compositor = self
+            .compositor
+            .as_mut()
+            .ok_or("Intel renderer was not prepared")?;
+        let plan = compositor.prepare_accurate(project, position, cancelled)?;
+        let hardware = self
+            .hardware_frames
+            .as_ref()
+            .ok_or("Intel encoder frames were not prepared")?;
+        // Like FFmpeg's passthrough filters, preserve the native decoded surface
+        // when no rendering or color/format conversion is necessary.
+        if let Some(mut frame) = unmodified_video(&plan, hardware.pixel_format().sw_format())? {
+            // Let the encoder choose picture types for the requested GOP/B-frame settings.
+            unsafe {
+                (*frame.as_mut_ptr()).pict_type = sys::AVPictureType::AV_PICTURE_TYPE_NONE;
+            }
+            set_bt709_frame_metadata(&mut frame);
+            return Ok(RenderedFrame {
+                frame,
+                timing: FrameTiming::default(),
+            });
+        }
+        let rendered = compositor.render_gpu(
+            plan,
+            u32::from_le_bytes([0, 0, 0, self.settings.background_alpha]),
+        )?;
         if self.profile {
             rendered.wait()?;
         }

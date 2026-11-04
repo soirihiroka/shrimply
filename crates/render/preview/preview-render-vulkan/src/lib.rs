@@ -75,8 +75,7 @@ pub struct Compositor {
 
 impl Compositor {
     pub fn new() -> Result<Self, String> {
-        let mut renderer = Renderer::new()?;
-        renderer.warmup()?;
+        let renderer = Renderer::new()?;
         Ok(Self {
             scene: Scene::default(),
             renderer,
@@ -150,6 +149,16 @@ impl Compositor {
         background: u32,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<Rendered, String> {
+        let plan = self.prepare_accurate(project, position, cancelled)?;
+        self.render_gpu(plan, background)
+    }
+
+    pub fn prepare_accurate(
+        &mut self,
+        project: &Project,
+        position: Time,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<FramePlan, String> {
         let profiling = std::env::var_os("SHRIMPLY_INTEL_PROFILE").is_some();
         let started = std::time::Instant::now();
         self.scene.request_frame();
@@ -167,7 +176,7 @@ impl Compositor {
                 if profiling {
                     eprintln!("Intel scene preparation wall time: {:?}", started.elapsed());
                 }
-                return self.render_gpu(plan, background);
+                return Ok(plan);
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
