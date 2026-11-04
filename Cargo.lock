@@ -6104,8 +6104,10 @@ dependencies = [
  "ffmpeg-next",
  "shrimply-export-core",
  "shrimply-math-core",
+ "shrimply-preview-render-core",
  "shrimply-preview-render-vulkan",
  "shrimply-project-document",
+ "shrimply-render-core",
  "shrimply-render-vulkan",
  "shrimply-visual-cuda",
 ]

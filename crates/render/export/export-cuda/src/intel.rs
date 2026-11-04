@@ -67,7 +67,17 @@ fn unmodified_video(
             .data
             .cast::<sys::AVHWFramesContext>()
     };
-    Ok((context.sw_format == format).then(|| video.frame.clone()))
+    if context.sw_format != format {
+        return Ok(None);
+    }
+    // Video::clone performs a software pixel copy. Reference the native surface
+    // instead, preserving its decoder context until the encoder releases it.
+    let mut frame = ffmpeg::frame::Video::empty();
+    ffmpeg_check(
+        unsafe { sys::av_frame_ref(frame.as_mut_ptr(), video.frame.as_ptr()) },
+        "Retain Intel decoder surface for export",
+    )?;
+    Ok(Some(frame))
 }
 
 pub(super) struct IntelBackend {
