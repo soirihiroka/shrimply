@@ -23,7 +23,7 @@ const VIDEO_HW_POOL_SIZE: i32 = 32;
 #[cfg(target_os = "linux")]
 mod intel;
 #[cfg(target_os = "linux")]
-pub use shrimply_visual_cuda::gpu::intel_backend_selected;
+pub use shrimply_visual_cuda::gpu::{configure_gtk_backend, intel_backend_selected};
 
 pub use shrimply_export_core::video::{
     ExportAudioEncoder, ExportContainer, ExportProgress, ExportVideoCodec, extension_for_container,
