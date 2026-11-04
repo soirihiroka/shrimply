@@ -4,6 +4,7 @@ use std::mem::size_of;
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::decode::DecodeControl;
 use crate::layer::VideoLayer;
@@ -39,6 +40,7 @@ mod devices;
 pub use devices::{AccelerationDevice, acceleration_devices};
 
 const DISPLAY_GPU_MEMORY_RESERVE_DIVISOR: u64 = 16;
+const DISPLAY_MEMORY_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 // Rendering, a queued preview, and the CUDA-to-GL copy may each hold one frame.
 const MAX_CACHED_PREVIEW_OUTPUTS: usize = 3;
 const MIGRATE_ALL_REQUIRED_BYTES: u64 = u64::MAX;
@@ -131,6 +133,7 @@ pub struct CudaVideoCompositor {
     motion_transforms: Option<DeviceBuffer<glam::Mat3>>,
     export_output: Option<DeviceBuffer<u32>>,
     preview_outputs: Vec<Arc<DeviceBuffer<u32>>>,
+    last_display_memory_check: Option<Instant>,
     export_render_events: Option<(CudaEvent, CudaEvent)>,
     export_conversion_events: Option<(CudaEvent, CudaEvent)>,
     verified_export_planes: HashSet<(sys::CUdeviceptr, sys::CUdeviceptr)>,
@@ -166,6 +169,7 @@ impl CudaVideoCompositor {
             motion_transforms: None,
             export_output: None,
             preview_outputs: Vec::new(),
+            last_display_memory_check: None,
             export_render_events: None,
             export_conversion_events: None,
             verified_export_planes: HashSet::new(),
@@ -174,7 +178,9 @@ impl CudaVideoCompositor {
             solid_layer: None,
             optical_flow: None,
         };
-        compositor.record_gpu_memory_usage();
+        if let Ok(memory) = compositor.gpu_memory_info() {
+            compositor.record_gpu_memory_usage(memory);
+        }
         Ok(compositor)
     }
 
@@ -445,7 +451,6 @@ impl CudaVideoCompositor {
         let frame = result?;
         self.fail_if_superseded()?;
         self.spill_stale_frames_for_display_memory()?;
-        self.record_gpu_memory_usage();
         Ok(frame)
     }
 
@@ -929,7 +934,9 @@ impl CudaVideoCompositor {
                 .map_or(0, |((before, _), (after, _))| after.saturating_sub(before));
             shrimply_gpu_cuda_memory::global().note_last_resort_cleanup(last_resort_recovered);
         }
-        self.record_gpu_memory_usage();
+        if let Some(memory) = after {
+            self.record_gpu_memory_usage(memory);
+        }
         let telemetry = shrimply_gpu_cuda_memory::global().telemetry();
         tracing::warn!(
             allocation_description,
@@ -979,8 +986,16 @@ impl CudaVideoCompositor {
 
     fn spill_stale_frames_for_display_memory(&mut self) -> Result<(), String> {
         self.fail_if_superseded()?;
+        // cuMemGetInfo can be expensive. Allocation and OOM recovery still query
+        // immediately; routine display-reserve maintenance only needs periodic checks.
+        if self
+            .last_display_memory_check
+            .is_some_and(|checked| checked.elapsed() < DISPLAY_MEMORY_CHECK_INTERVAL)
+        {
+            return Ok(());
+        }
         let (free, total) = self.gpu_memory_info()?;
-        if free < total / DISPLAY_GPU_MEMORY_RESERVE_DIVISOR {
+        let memory = if free < total / DISPLAY_GPU_MEMORY_RESERVE_DIVISOR {
             shrimply_gpu_cuda_memory::global().relieve_vram_pressure(
                 &self.context,
                 &self.stream,
@@ -990,7 +1005,12 @@ impl CudaVideoCompositor {
                     .as_ref()
                     .map(DecodeControl::generation_check),
             )?;
-        }
+            self.gpu_memory_info()?
+        } else {
+            (free, total)
+        };
+        self.last_display_memory_check = Some(Instant::now());
+        self.record_gpu_memory_usage(memory);
         Ok(())
     }
 
@@ -998,12 +1018,10 @@ impl CudaVideoCompositor {
         gpu_memory_info(&self.context)
     }
 
-    fn record_gpu_memory_usage(&self) {
-        if let Ok((free, total)) = self.gpu_memory_info() {
-            shrimply_profiling::set_counter("CUDA memory / Free bytes", free);
-            shrimply_profiling::set_counter("CUDA memory / Used bytes", total.saturating_sub(free));
-            shrimply_profiling::set_counter("CUDA memory / Total bytes", total);
-        }
+    fn record_gpu_memory_usage(&self, (free, total): (u64, u64)) {
+        shrimply_profiling::set_counter("CUDA memory / Free bytes", free);
+        shrimply_profiling::set_counter("CUDA memory / Used bytes", total.saturating_sub(free));
+        shrimply_profiling::set_counter("CUDA memory / Total bytes", total);
         let (frames, bytes) = gpu_allocation_stats();
         shrimply_profiling::set_counter("Visual frame / GPU frames retained", frames);
         shrimply_profiling::set_counter("Visual frame / GPU bytes retained", bytes);
@@ -1696,6 +1714,7 @@ fn render_with_generated_gpu<T>(
 }
 
 fn gpu_memory_info(context: &Arc<CudaContext>) -> Result<(u64, u64), String> {
+    let _measurement = shrimply_profiling::measure("CUDA / Query memory");
     bind_context(context, "bind CUDA context for memory query")?;
     let mut free = 0;
     let mut total = 0;
