@@ -16,6 +16,12 @@ const WIDTH: u32 = 160;
 const HEIGHT: u32 = 96;
 const FPS: i64 = 30;
 const FRAMES: i64 = 6;
+const ENABLED_3D_CASES: [&str; 4] = [
+    "obj-path-tracing",
+    "obj-refraction",
+    "obj-depth-of-field",
+    "obj-ground-reflections",
+];
 
 pub fn run() -> Result<(), String> {
     shrimply_visual_cuda::gpu::configure_gtk_backend()?;
@@ -50,13 +56,15 @@ pub fn run() -> Result<(), String> {
     let cases = cases(&output)?;
     let mut failed = Vec::new();
     let mut completed = 0;
+    let mut obj_control = None;
+    let needs_control = ENABLED_3D_CASES.iter().any(|name| name.contains(&filter));
     for (name, project) in cases {
-        if !name.contains(&filter) {
+        if !name.contains(&filter) && !(name == "obj-control" && needs_control) {
             continue;
         }
         let started = Instant::now();
         println!("START {name}");
-        match validate(&name, project, &output) {
+        match validate(&name, project, &output, &mut obj_control) {
             Ok(()) => {
                 completed += 1;
                 println!("PASS {name} {:?}", started.elapsed());
@@ -253,12 +261,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         ..Default::default()
     });
     result.push(("obj-control".into(), control));
-    for name in [
-        "obj-path-tracing",
-        "obj-refraction",
-        "obj-depth-of-field",
-        "obj-ground-reflections",
-    ] {
+    for name in ENABLED_3D_CASES {
         let mut item = obj.clone();
         let VideoItemContent::Obj(scene) = &mut item.content else {
             unreachable!();
@@ -513,7 +516,12 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     Ok(result)
 }
 
-fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
+fn validate(
+    name: &str,
+    project: Project,
+    output: &Path,
+    obj_control: &mut Option<Vec<u8>>,
+) -> Result<(), String> {
     if name == "gpu-optical-flow" {
         return validate_optical_flow();
     }
@@ -553,6 +561,14 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
         }
         save_png(&output.join(format!("{name}-{frame}.png")), &pixels)?;
         captures.push(pixels);
+    }
+    if name == "obj-control" {
+        *obj_control = Some(captures[1].clone());
+    } else if ENABLED_3D_CASES.contains(&name) {
+        let control = obj_control.as_ref().ok_or("Missing OBJ control capture")?;
+        if &captures[1] == control {
+            return Err("Enabled 3D feature did not change the control image".into());
+        }
     }
     if name == "source-manim" && captures[0] == captures[2] {
         return Err("Animated Manim frames are identical".into());

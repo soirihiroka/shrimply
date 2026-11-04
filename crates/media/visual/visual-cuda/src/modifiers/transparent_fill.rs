@@ -604,8 +604,10 @@ mod tests {
             Time::from_fraction(E2E_SOURCE_OFFSET_NUMERATOR, E2E_SOURCE_OFFSET_DENOMINATOR);
         item.playback_fps = fraction_new(E2E_SOURCE_FPS, 1);
 
-        let mut color_correction = ColorCorrectionModifier::default();
-        color_correction.brightness = TimelineValue::new_const(-0.05);
+        let color_correction = ColorCorrectionModifier {
+            brightness: TimelineValue::new_const(-0.05),
+            ..Default::default()
+        };
         item.modifiers
             .push(VisualModifier::new(ModifierEffect::Raster(Box::new(
                 RasterModifierEffect::ColorCorrection(Box::new(color_correction)),
