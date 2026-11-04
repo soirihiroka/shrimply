@@ -516,6 +516,24 @@ impl Renderer {
             params.y_plane = std::ptr::null();
             params.uv_plane = std::ptr::null();
             params.canvas_width = width;
+            // At texel centers these filters are exactly nearest sampling. Select
+            // it before pipeline specialization so unused filter code and its
+            // register pressure disappear from the native GPU kernel entirely.
+            if params.inverse == shrimply_render_core::math::Mat3::IDENTITY
+                && params.motion_sample_count == 0
+                && matches!(
+                    params.sample_method,
+                    shrimply_render_core::VideoSampleMethod::Bilinear
+                        | shrimply_render_core::VideoSampleMethod::Bicubic
+                )
+                && !matches!(
+                    params.address_mode,
+                    shrimply_render_core::TextureAddressMode::BlurredMirror
+                        | shrimply_render_core::TextureAddressMode::Stochastic
+                )
+            {
+                params.sample_method = shrimply_render_core::VideoSampleMethod::Nearest;
+            }
             parameters.push(params);
             resources.push(buffer.clone());
         }
@@ -548,7 +566,7 @@ impl Renderer {
             address
         };
         let mut arguments = self.arguments("composite_nv12_layers")?;
-        arguments.specialization = layers.iter().fold(0, |mask, (layer, _)| {
+        arguments.specialization = parameters.iter().fold(0, |mask, layer| {
             use shrimply_render_core::{LayerBlendMode, TextureAddressMode};
             mask | (1 << layer.sample_method as u32)
                 | if matches!(
