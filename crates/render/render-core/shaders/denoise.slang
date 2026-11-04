@@ -3,9 +3,8 @@ import abi;
 // Spatial edge-avoiding a-trous filtering, Dammertz et al. (HPG 2010).
 // Independent implementation: https://doi.org/10.2312/EGGH/HPG10/067-075
 // HDR color stays on the GPU; depth, normal, alpha and radiance stop edge leakage.
-static const int ATROUS_RADIUS = 2;
-static const float ATROUS_KERNEL[5] = { 1.0, 4.0, 6.0, 4.0, 1.0 };
-static const float ATROUS_NORMAL_POWER = 32.0;
+static const int ATROUS_RADIUS = 1;
+static const float ATROUS_KERNEL[3] = { 1.0, 2.0, 1.0 };
 static const float ATROUS_RELATIVE_DEPTH = 0.02;
 static const float ATROUS_RELATIVE_COLOR = 0.5;
 static const float ATROUS_ALPHA_SCALE = 32.0;
@@ -39,8 +38,11 @@ void denoise_atrous(uint3 id : SV_DispatchThreadID,
             float4 other_guide = depth_normal[other];
             float3 difference = neighbor.rgb - center.rgb;
             float depth_scale = max(abs(guide.x) * ATROUS_RELATIVE_DEPTH * float(step), ATROUS_MINIMUM);
+            float normal_weight = saturate(dot(guide.yzw, other_guide.yzw));
+            // Raise to 32 using multiplies instead of a general power function.
+            [unroll] for (uint power = 0; power < 5; ++power) normal_weight *= normal_weight;
             float weight = ATROUS_KERNEL[x + ATROUS_RADIUS] * ATROUS_KERNEL[y + ATROUS_RADIUS]
-                * pow(saturate(dot(guide.yzw, other_guide.yzw)), ATROUS_NORMAL_POWER)
+                * normal_weight
                 * exp(-abs(guide.x - other_guide.x) / depth_scale
                       - dot(difference, difference) / color_scale
                       - abs(center.a - neighbor.a) * ATROUS_ALPHA_SCALE);

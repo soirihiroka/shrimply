@@ -111,6 +111,12 @@ void estimate_flow(uint3 id : SV_DispatchThreadID,
   if (i >= grid_width * grid_height) return;
   float2 uv = float2(i % grid_width, i / grid_width) / float2(grid_width - 1, grid_height - 1);
   int2 position = int2(round(uv * float2(width - 1, height - 1)));
+  // Corner-only grids on coarse levels otherwise compare mostly clamped border
+  // pixels, and their bad matches propagate into every finer level.
+  int margin = FLOW_PATCH_RADIUS + FLOW_SEARCH_RADIUS;
+  int2 extent = int2(width - 1, height - 1);
+  int2 low_position = min(int2(margin), extent / 2);
+  position = clamp(position, low_position, max(extent - margin, low_position));
   float2 estimate = 0;
   if (has_previous) {
     float2 grid = uv * float2(previous_width - 1, previous_height - 1);

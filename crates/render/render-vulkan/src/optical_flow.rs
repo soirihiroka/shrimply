@@ -1,7 +1,7 @@
 use crate::{Buffer, Renderer, Submission};
 
-const MAX_PYRAMID_LEVELS: usize = 5;
-const MIN_PYRAMID_EDGE: u32 = 8;
+const MAX_PYRAMID_LEVELS: usize = 8;
+const MIN_PYRAMID_EDGE: u32 = 16;
 
 pub struct OpticalFlow {
     pub forward: Buffer,
@@ -27,10 +27,10 @@ impl Renderer {
         let mut pyramid = vec![(source, target, size)];
         while pyramid.len() < MAX_PYRAMID_LEVELS {
             let (source, target, size) = pyramid.last().expect("flow pyramid has endpoints");
-            if size.0.min(size.1) <= MIN_PYRAMID_EDGE {
+            let next_size = (size.0.div_ceil(2), size.1.div_ceil(2));
+            if next_size.0.min(next_size.1) < MIN_PYRAMID_EDGE {
                 break;
             }
-            let next_size = (size.0.div_ceil(2), size.1.div_ceil(2));
             let mut downsample = |input: &Buffer| -> Result<Buffer, String> {
                 let count = next_size.0 as usize * next_size.1 as usize;
                 let output = self.allocate(count * 4)?;
