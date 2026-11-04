@@ -721,16 +721,13 @@ mod tests {
     }
 
     fn assert_marker(output: crate::gpu::CompositedVideoFrame, frame: u64) {
-        output
-            .buffer
+        let buffer = output.buffer.cuda().expect("CUDA preview frame");
+        buffer
             .context()
             .synchronize()
             .expect("synchronize preview frame");
-        let stream = output.buffer.context().default_stream();
-        let pixels = output
-            .buffer
-            .to_host_vec(&stream)
-            .expect("download preview frame");
+        let stream = buffer.context().default_stream();
+        let pixels = buffer.to_host_vec(&stream).expect("download preview frame");
         let expected = marker(frame) as usize;
         let row = HEIGHT as usize / 2;
         let transparent: Vec<_> = pixels[row * WIDTH as usize..(row + 1) * WIDTH as usize]
