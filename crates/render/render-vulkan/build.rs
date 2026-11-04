@@ -23,7 +23,7 @@ fn main() {
     let mut generated = String::from("static MODULES: &[Module] = &[\n");
     for module in include_str!("../render-core/shaders/kernels.txt")
         .lines()
-        .chain(["video"])
+        .chain(["video", "denoise"])
     {
         let artifacts = compiler.compile(
             &directory.join(format!("{module}.slang")),

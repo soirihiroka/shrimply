@@ -8,4 +8,3 @@ modifiers_matte
 stabilization
 export
 background
-denoise
