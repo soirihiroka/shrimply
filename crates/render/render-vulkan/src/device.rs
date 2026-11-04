@@ -147,12 +147,28 @@ impl Device {
             let family = native.qf[..native.nb_qf as usize]
                 .iter()
                 .find(|family| {
-                    family.flags & (vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS).as_raw()
-                        == (vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS).as_raw()
+                    family.num > 0
+                        && family.flags
+                            & (vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS).as_raw()
+                            == (vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS).as_raw()
                 })
                 .ok_or("Intel Vulkan device has no graphics/compute queue")?;
             let family = family.idx as u32;
-            let queue = unsafe { raw.get_device_queue(family, 0) };
+            #[cfg(ffmpeg_vulkan_queue_flags)]
+            let flags = vk::DeviceQueueCreateFlags::from_raw(native.queue_flags);
+            #[cfg(not(ffmpeg_vulkan_queue_flags))]
+            let flags = vk::DeviceQueueCreateFlags::empty();
+            let queue = unsafe {
+                raw.get_device_queue2(
+                    &vk::DeviceQueueInfo2::default()
+                        .flags(flags)
+                        .queue_family_index(family)
+                        .queue_index(0),
+                )
+            };
+            if queue == vk::Queue::null() {
+                return Err("FFmpeg's Intel Vulkan queue is unavailable".into());
+            }
             let memory = unsafe { instance.get_physical_device_memory_properties(physical) };
             let properties = unsafe { instance.get_physical_device_properties(physical) };
             if properties.vendor_id != 0x8086 {

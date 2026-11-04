@@ -12,5 +12,6 @@ skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }
 tracing.workspace = true
 
 [target.'cfg(target_os = "linux")'.build-dependencies]
+pkg-config = "0.3"
 serde_json.workspace = true
 shrimply-slang-build.workspace = true

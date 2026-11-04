@@ -7363,6 +7363,7 @@ dependencies = [
  "ash",
  "ffmpeg-next",
  "libc",
+ "pkg-config",
  "serde_json",
  "shrimply-render-core",
  "shrimply-slang-build",

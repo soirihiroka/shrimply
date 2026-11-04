@@ -1,6 +1,22 @@
 #[cfg(target_os = "linux")]
 fn main() {
     use std::{fmt::Write, path::PathBuf};
+    println!("cargo:rustc-check-cfg=cfg(ffmpeg_vulkan_queue_flags)");
+    let avutil = pkg_config::Config::new()
+        .cargo_metadata(false)
+        .probe("libavutil")
+        .expect("FFmpeg libavutil development files");
+    let major = avutil
+        .version
+        .split('.')
+        .next()
+        .expect("libavutil major version")
+        .parse::<u32>()
+        .expect("numeric libavutil major version");
+    // FFmpeg 9 adds queue creation flags for vkGetDeviceQueue2.
+    if major >= 61 {
+        println!("cargo:rustc-cfg=ffmpeg_vulkan_queue_flags");
+    }
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../render-core/shaders");
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Vulkan shader output"));
     let compiler = shrimply_slang_build::Compiler::new(&directory, &output);
