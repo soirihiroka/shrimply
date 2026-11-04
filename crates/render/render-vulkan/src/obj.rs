@@ -243,16 +243,6 @@ impl Renderer {
             } else {
                 GROUNDS
             };
-        if std::env::var_os("SHRIMPLY_OBJ_PROBE").is_some() {
-            eprintln!(
-                "OBJ camera {:?}; model inverse {:?}; vertices {}; nodes {:?}",
-                plan.uniforms.camera_position,
-                plan.uniforms.model_inverse,
-                plan.session.positions().len(),
-                shrimply_render_3d_core::software_bvh(&plan.session)?.nodes
-            );
-            kernels = vec!["obj_software_probe"];
-        }
         for name in kernels {
             let mut args = self.arguments(name)?;
             args.specialization = specialization;
@@ -264,15 +254,6 @@ impl Renderer {
                     [plan.width as usize, plan.height as usize, 1],
                 )
             }?);
-        }
-        if std::env::var_os("SHRIMPLY_OBJ_PROBE").is_some() {
-            submissions.last().expect("object submission").wait()?;
-            let pixels = self.readback(&output)?;
-            eprintln!(
-                "OBJ raw {:?}; nonzero {}",
-                &pixels[..16],
-                pixels.iter().filter(|&&v| v != 0).count()
-            );
         }
         Ok(output)
     }
