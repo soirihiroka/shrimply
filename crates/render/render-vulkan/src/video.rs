@@ -198,11 +198,7 @@ impl Renderer {
         let mut semaphores = Vec::new();
         let mut wait_values = Vec::new();
         let mut signal_values = Vec::new();
-        let image_count = native
-            .img
-            .iter()
-            .take_while(|image| !image.is_null())
-            .count();
+        let image_count = native.img.iter().take_while(|image| **image != 0).count();
         if !matches!(image_count, 1 | 2) {
             return Err(format!(
                 "Expected one multiplane or two single-plane Intel video images, received {image_count}"
@@ -226,7 +222,7 @@ impl Renderer {
                             self.device.family
                         },
                     )
-                    .image(vk::Image::from_raw(native.img[index] as u64))
+                    .image(vk::Image::from_raw(native.img[index] as _))
                     .subresource_range(
                         vk::ImageSubresourceRange::default()
                             .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -234,8 +230,8 @@ impl Renderer {
                             .layer_count(1),
                     ),
             );
-            if !native.sem[index].is_null() {
-                semaphores.push(vk::Semaphore::from_raw(native.sem[index] as u64));
+            if native.sem[index] != 0 {
+                semaphores.push(vk::Semaphore::from_raw(native.sem[index] as _));
                 wait_values.push(native.sem_value[index]);
                 signal_values.push(
                     native.sem_value[index]
@@ -280,7 +276,7 @@ impl Renderer {
             unsafe {
                 self.device.raw.cmd_copy_image_to_buffer(
                     command,
-                    vk::Image::from_raw(native.img[index] as u64),
+                    vk::Image::from_raw(native.img[index] as _),
                     vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                     planes.raw(),
                     &[copy],
@@ -323,7 +319,7 @@ impl Renderer {
                 if native.queue_family[index] != vk::QUEUE_FAMILY_IGNORED {
                     native.queue_family[index] = self.device.family;
                 }
-                if !native.sem[index].is_null() {
+                if native.sem[index] != 0 {
                     native.sem_value[index] = native.sem_value[index]
                         .checked_add(1)
                         .expect("Vulkan semaphore overflow");
