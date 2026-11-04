@@ -8,6 +8,7 @@
   freetype,
   gcc,
   gnumake,
+  gn,
   gobject-introspection,
   gtk4,
   gtksourceview5,
@@ -54,6 +55,7 @@ mkShell {
     freetype
     gcc
     gnumake
+    gn
     gobject-introspection
     gtk4
     gtksourceview5
@@ -88,6 +90,7 @@ mkShell {
   QT_QMAKE = "${qtEnv}/bin/qmake";
   SLANG_INCLUDE_DIR = "${shrimply-slang}/include";
   SLANG_LIBRARY_DIR = "${shrimply-slang}/lib";
+  SKIA_GN_COMMAND = "${gn}/bin/gn";
 
   shellHook = ''
     export NIX_CFLAGS_COMPILE=

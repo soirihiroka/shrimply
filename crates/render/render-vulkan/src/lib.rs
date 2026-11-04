@@ -428,6 +428,9 @@ impl Renderer {
         background: u32,
         transforms: &[shrimply_render_core::math::Mat3],
     ) -> Result<Frame, String> {
+        if transforms.iter().any(|transform| !transform.is_finite()) {
+            return Err("Vulkan motion transforms must be finite".into());
+        }
         let count = (width as usize)
             .checked_mul(height as usize)
             .ok_or("Canvas size overflow")?;
@@ -439,6 +442,14 @@ impl Renderer {
             let mut params = *params;
             if params.source_width == 0
                 || params.source_height == 0
+                || params.kind != shrimply_render_core::LayerKind::Rgba
+                || params.rgba_pitch < params.source_width as usize * size_of::<u32>()
+                || !params.rgba_pitch.is_multiple_of(size_of::<u32>())
+                || params.motion_transform_count > params.motion_sample_count
+                || params
+                    .motion_transform_offset
+                    .checked_add(params.motion_transform_count)
+                    .is_none_or(|end| end as usize > transforms.len())
                 || params
                     .rgba_pitch
                     .checked_mul(params.source_height as usize)
@@ -574,6 +585,11 @@ impl Renderer {
 }
 impl Drop for Renderer {
     fn drop(&mut self) {
+        let _guard = self
+            .device
+            .submission
+            .lock()
+            .expect("Vulkan submission mutex poisoned");
         if unsafe { self.device.raw.device_wait_idle() }.is_err() {
             std::process::abort();
         }

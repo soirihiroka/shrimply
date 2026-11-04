@@ -184,6 +184,9 @@ impl VideoRenderer {
             let imported = crate::intel_gl::ImportedBuffer::new(&self.gl, display)?;
             unsafe {
                 self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
+                self.gl.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
+                self.gl.pixel_store_i32(glow::UNPACK_SKIP_ROWS, 0);
+                self.gl.pixel_store_i32(glow::UNPACK_SKIP_PIXELS, 0);
                 self.gl.tex_sub_image_2d(
                     glow::TEXTURE_2D,
                     0,

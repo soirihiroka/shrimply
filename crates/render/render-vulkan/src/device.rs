@@ -88,8 +88,11 @@ impl Device {
             };
             let family = native.qf[..native.nb_qf as usize]
                 .iter()
-                .find(|family| family.flags & vk::QueueFlags::COMPUTE.as_raw() != 0)
-                .ok_or("Intel Vulkan device has no compute queue")?;
+                .find(|family| {
+                    family.flags & (vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS).as_raw()
+                        == (vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS).as_raw()
+                })
+                .ok_or("Intel Vulkan device has no graphics/compute queue")?;
             // This context is used only for importing VA surfaces. All Vulkan
             // commands are submitted by our render worker, never a codec/filter.
             let family = family.idx as u32;

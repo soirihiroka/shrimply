@@ -5,9 +5,10 @@ import color;
 [shader("compute")][numthreads(256, 1, 1)]
 void p010_to_nv12(uint3 id : SV_DispatchThreadID,
                   uniform uint16_t *input, uniform uint8_t *output,
-                  uniform uint64_t count) {
+                  uniform uint64_t count, uniform uint64_t y_count,
+                  uniform uint64_t uv_offset) {
   if (id.x < count)
-    output[id.x] = uint8_t(input[id.x] >> 8u);
+    output[id.x] = uint8_t(input[id.x < y_count ? id.x : uv_offset + id.x - y_count] >> 8u);
 }
 
 [shader("compute")][numthreads(256, 1, 1)]

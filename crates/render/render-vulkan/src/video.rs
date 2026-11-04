@@ -8,6 +8,22 @@ pub struct VideoFrame {
     pub frame: ffmpeg::frame::Video,
 }
 
+struct FrameLock {
+    context: *mut sys::AVHWFramesContext,
+    frame: *mut sys::AVVkFrame,
+    unlock: Option<unsafe extern "C" fn(*mut sys::AVHWFramesContext, *mut sys::AVVkFrame)>,
+}
+
+impl Drop for FrameLock {
+    fn drop(&mut self) {
+        if let Some(unlock) = self.unlock {
+            unsafe {
+                unlock(self.context, self.frame);
+            }
+        }
+    }
+}
+
 pub fn decoder(
     parameters: &ffmpeg::codec::Parameters,
     time_base: ffmpeg::Rational,
@@ -117,9 +133,10 @@ impl Renderer {
         let pitch = width
             .checked_mul(bytes_per_component)
             .ok_or("Video pitch overflow")?;
-        let y_size = pitch
+        let y_bytes = pitch
             .checked_mul(height)
             .ok_or("Video plane size overflow")?;
+        let y_size = y_bytes.next_multiple_of(size_of::<u32>());
         let uv_pitch = width.div_ceil(2) * 2 * bytes_per_component;
         let uv_size = uv_pitch
             .checked_mul(height.div_ceil(2))
@@ -139,6 +156,11 @@ impl Renderer {
                 lock(frames, native);
             }
         }
+        let lock = FrameLock {
+            context: frames,
+            frame: native,
+            unlock: vulkan_frames.unlock_frame,
+        };
         let mut semaphores = Vec::new();
         let mut wait_values = Vec::new();
         let mut signal_values = Vec::new();
@@ -147,6 +169,11 @@ impl Renderer {
             .iter()
             .take_while(|image| !image.is_null())
             .count();
+        if !matches!(image_count, 1 | 2) {
+            return Err(format!(
+                "Expected one multiplane or two single-plane Intel video images, received {image_count}"
+            ));
+        }
         let mut barriers = Vec::new();
         for index in 0..image_count {
             barriers.push(
@@ -274,11 +301,7 @@ impl Renderer {
                 }
             }
         }
-        if let Some(unlock) = vulkan_frames.unlock_frame {
-            unsafe {
-                unlock(frames, native);
-            }
-        }
+        drop(lock);
         result.map_err(|e| format!("Submit Intel video import: {e:?}"))?;
         let submission = Submission {
             pool: self.pool.clone(),
@@ -292,12 +315,20 @@ impl Renderer {
         };
 
         let (planes, pitch, uv_pitch, y_size, prior) = if bytes_per_component == 2 {
-            let output = self.allocate(planes.len() / 2)?;
+            let output = self.allocate((y_bytes + uv_size) / bytes_per_component)?;
             let mut arguments = self.arguments("p010_to_nv12")?;
             arguments
                 .set("input", &planes.address().to_ne_bytes())?
                 .set("output", &output.address().to_ne_bytes())?
-                .set("count", &(output.len() as u64).to_ne_bytes())?;
+                .set("count", &(output.len() as u64).to_ne_bytes())?
+                .set(
+                    "y_count",
+                    &((y_bytes / bytes_per_component) as u64).to_ne_bytes(),
+                )?
+                .set(
+                    "uv_offset",
+                    &((y_size / bytes_per_component) as u64).to_ne_bytes(),
+                )?;
             let mut converted = unsafe {
                 self.dispatch(
                     arguments,
@@ -306,7 +337,7 @@ impl Renderer {
                 )
             }?;
             converted._prior.push(submission);
-            (output, pitch / 2, uv_pitch / 2, y_size / 2, converted)
+            (output, pitch / 2, uv_pitch / 2, y_bytes / 2, converted)
         } else {
             (planes, pitch, uv_pitch, y_size, submission)
         };

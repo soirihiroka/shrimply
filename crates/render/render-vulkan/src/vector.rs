@@ -113,7 +113,14 @@ impl Renderer {
         surface.canvas().clear(skia_safe::Color::TRANSPARENT);
         draw(surface.canvas())?;
         let image = surface.image_snapshot();
-        skia.flush_and_submit();
+        {
+            let _guard = self
+                .device
+                .submission
+                .lock()
+                .expect("Vulkan submission mutex poisoned");
+            skia.flush_and_submit();
+        }
         let (texture, origin) = gpu::images::get_backend_texture_from_image(&image, false)
             .ok_or("Get Intel vector texture")?;
         if origin != gpu::SurfaceOrigin::TopLeft {
