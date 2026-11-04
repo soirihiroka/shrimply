@@ -151,6 +151,11 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         item.content = content;
         item.file = Asset::new(output.join(file));
         item.source_duration = duration;
+        if name == "source-video" {
+            let mut translucent = item.clone();
+            translucent.compositing.opacity = TimelineValue::new_const(0.5);
+            result.push(("video-opacity".into(), project(translucent)));
+        }
         result.push((name.into(), project(item)));
     }
     let mut krita = image.clone();
@@ -242,6 +247,49 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         )),
     ];
     result.push(("source-obj".into(), project(obj.clone())));
+    let mut control = project(image.clone());
+    control.video_tracks.push(VideoTrack {
+        items: vec![obj.clone()],
+        ..Default::default()
+    });
+    result.push(("obj-control".into(), control));
+    for name in [
+        "obj-path-tracing",
+        "obj-refraction",
+        "obj-depth-of-field",
+        "obj-ground-reflections",
+    ] {
+        let mut item = obj.clone();
+        let VideoItemContent::Obj(scene) = &mut item.content else {
+            unreachable!();
+        };
+        match name {
+            "obj-path-tracing" => {
+                scene.material.path_tracing = shrimply_scene_3d::PathTracingMode::Quality
+            }
+            "obj-refraction" => {
+                scene.material.transmission = TimelineValue::new_const(0.8);
+                scene.material.ior = TimelineValue::new_const(1.5);
+                scene.material.roughness = TimelineValue::new_const(0.1);
+            }
+            "obj-depth-of-field" => {
+                scene.camera.focus_distance = TimelineValue::new_const(2.0);
+                scene.camera.f_stop = TimelineValue::new_const(1.4);
+            }
+            "obj-ground-reflections" => {
+                scene.shadow_receiver.enabled =
+                    TimelineValue::new_const(shrimply_property_model::TimelineBool::True);
+                scene.shadow_receiver.reflection = TimelineValue::new_const(0.8);
+            }
+            _ => unreachable!(),
+        }
+        let mut rendered = project(image.clone());
+        rendered.video_tracks.push(VideoTrack {
+            items: vec![item],
+            ..Default::default()
+        });
+        result.push((name.into(), rendered));
+    }
     for (method, _) in shrimply_visual_cuda::gpu::denoising_methods() {
         let mut item = obj.clone();
         if let VideoItemContent::Obj(scene) = &mut item.content {
@@ -509,6 +557,15 @@ fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
     }
     if name == "source-manim" && captures[0] == captures[2] {
         return Err("Animated Manim frames are identical".into());
+    }
+    if name == "video-opacity"
+        && captures.iter().any(|frame| {
+            frame
+                .chunks_exact(4)
+                .any(|pixel| pixel[3].abs_diff(u8::MAX.div_ceil(2)) > 1)
+        })
+    {
+        return Err("Translucent video bypassed compositing or lost its coverage".into());
     }
     if [
         "source-image",
