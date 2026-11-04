@@ -1,6 +1,8 @@
 #![cfg(target_os = "linux")]
 
 mod buffer;
+mod texture;
+pub use texture::Texture;
 pub mod device;
 mod vector;
 mod video;
@@ -103,6 +105,7 @@ pub struct Submission {
     _video: Option<ffmpeg_next::frame::Video>,
     _prior: Vec<Submission>,
     _images: Vec<skia_safe::Image>,
+    _textures: Vec<Texture>,
 }
 impl Submission {
     pub fn completed(&self) -> Result<bool, String> {
@@ -266,12 +269,12 @@ impl Renderer {
         })
     }
     pub fn upload(&self, bytes: &[u8]) -> Result<Buffer, String> {
-        let buffer = Buffer::new(self.device.clone(), bytes.len(), true, false)?;
+        let buffer = Buffer::new(self.device.clone(), bytes.len(), true)?;
         buffer.write(bytes)?;
         Ok(buffer)
     }
     pub fn allocate(&self, length: usize) -> Result<Buffer, String> {
-        Buffer::new(self.device.clone(), length, false, false)
+        Buffer::new(self.device.clone(), length, false)
     }
     fn command(&self) -> Result<vk::CommandBuffer, String> {
         let command = unsafe {
@@ -298,6 +301,7 @@ impl Renderer {
         command: vk::CommandBuffer,
         resources: Vec<Buffer>,
         descriptor: Option<vk::DescriptorPool>,
+        signal: Option<vk::Semaphore>,
     ) -> Result<Submission, String> {
         unsafe { self.device.raw.end_command_buffer(command) }
             .map_err(|e| format!("finish Vulkan command: {e:?}"))?;
@@ -307,10 +311,7 @@ impl Renderer {
                 .create_fence(&vk::FenceCreateInfo::default(), None)
         }
         .map_err(|e| format!("create Vulkan fence: {e:?}"))?;
-        let signals = resources
-            .iter()
-            .filter_map(Buffer::ready)
-            .collect::<Vec<_>>();
+        let signals = signal.into_iter().collect::<Vec<_>>();
         self.device.submit(&[command], fence, &signals)?;
         Ok(Submission {
             pool: self.pool.clone(),
@@ -321,6 +322,7 @@ impl Renderer {
             _video: None,
             _prior: Vec::new(),
             _images: Vec::new(),
+            _textures: Vec::new(),
         })
     }
     /// # Safety
@@ -408,7 +410,7 @@ impl Renderer {
             );
         }
         resources.push(uniforms);
-        self.submit(command, resources, Some(pool))
+        self.submit(command, resources, Some(pool), None)
     }
 
     pub fn composite_buffers(
@@ -505,9 +507,41 @@ impl Renderer {
         Ok(Frame { submission, output })
     }
 
-    pub fn presentation_buffer(&self, frame: &Frame) -> Result<(Buffer, Submission), String> {
-        let output = Buffer::new(self.device.clone(), frame.output.len(), false, true)?;
+    pub fn presentation_texture(
+        &self,
+        frame: &Frame,
+        width: u32,
+        height: u32,
+    ) -> Result<(Texture, Submission), String> {
+        if (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|count| count.checked_mul(size_of::<u32>()))
+            != Some(frame.output.len())
+        {
+            return Err("Presentation dimensions do not match the composited buffer".into());
+        }
+        let texture = Texture::new(self.device.clone(), width, height)?;
         let command = self.command()?;
+        let range = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(texture.levels())
+            .layer_count(1);
+        let begin = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .image(texture.image())
+            .subresource_range(range);
+        let release = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::GENERAL)
+            .src_queue_family_index(self.device.family)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_EXTERNAL)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .image(texture.image())
+            .subresource_range(range);
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
                 command,
@@ -518,13 +552,24 @@ impl Renderer {
                     .src_access_mask(vk::AccessFlags::MEMORY_WRITE)
                     .dst_access_mask(vk::AccessFlags::TRANSFER_READ)],
                 &[],
-                &[],
+                &[begin],
             );
-            self.device.raw.cmd_copy_buffer(
+            self.device.raw.cmd_copy_buffer_to_image(
                 command,
                 frame.output.raw(),
-                output.raw(),
-                &[vk::BufferCopy::default().size(output.len() as u64)],
+                texture.image(),
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[vk::BufferImageCopy::default()
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1),
+                    )
+                    .image_extent(vk::Extent3D {
+                        width,
+                        height,
+                        depth: 1,
+                    })],
             );
             self.device.raw.cmd_pipeline_barrier(
                 command,
@@ -532,21 +577,22 @@ impl Renderer {
                 vk::PipelineStageFlags::BOTTOM_OF_PIPE,
                 vk::DependencyFlags::empty(),
                 &[],
-                &[vk::BufferMemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                    .src_queue_family_index(self.device.family)
-                    .dst_queue_family_index(vk::QUEUE_FAMILY_EXTERNAL)
-                    .buffer(output.raw())
-                    .size(vk::WHOLE_SIZE)],
                 &[],
+                &[release],
             );
         }
-        let submission = self.submit(command, vec![frame.output.clone(), output.clone()], None)?;
-        Ok((output, submission))
+        let mut submission = self.submit(
+            command,
+            vec![frame.output.clone()],
+            None,
+            Some(texture.ready()),
+        )?;
+        submission._textures.push(texture.clone());
+        Ok((texture, submission))
     }
 
     pub fn readback(&self, source: &Buffer) -> Result<Vec<u8>, String> {
-        let output = Buffer::new(self.device.clone(), source.len(), true, false)?;
+        let output = Buffer::new(self.device.clone(), source.len(), true)?;
         let command = self.command()?;
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
@@ -578,7 +624,7 @@ impl Renderer {
                 &[],
             );
         }
-        self.submit(command, vec![source.clone(), output.clone()], None)?
+        self.submit(command, vec![source.clone(), output.clone()], None, None)?
             .wait()?;
         output.copy_bytes()
     }

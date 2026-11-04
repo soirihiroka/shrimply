@@ -312,6 +312,7 @@ impl Renderer {
             _video: Some(mapped),
             _prior: Vec::new(),
             _images: Vec::new(),
+            _textures: Vec::new(),
         };
 
         let (planes, pitch, uv_pitch, y_size, prior) = if bytes_per_component == 2 {

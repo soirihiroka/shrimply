@@ -191,7 +191,7 @@ impl Renderer {
                 &[restore],
             );
         }
-        let mut copy = self.submit(command, vec![copied.clone()], None)?;
+        let mut copy = self.submit(command, vec![copied.clone()], None, None)?;
         copy._images.push(image);
         let output = self.allocate(length)?;
         let mut arguments = self.arguments("unpremultiply_rgba")?;

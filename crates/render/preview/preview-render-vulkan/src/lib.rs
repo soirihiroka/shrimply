@@ -22,7 +22,7 @@ type ExternalMasks = Vec<(
 )>;
 
 pub struct Presented {
-    pub display: Buffer,
+    pub display: gpu::Texture,
     pub rendered: Buffer,
     pub width: u32,
     pub height: u32,
@@ -33,7 +33,7 @@ pub struct Presented {
 }
 
 impl Presented {
-    pub fn into_buffers(self) -> (Buffer, Buffer) {
+    pub fn into_buffers(self) -> (gpu::Texture, Buffer) {
         assert!(
             self.completed().expect("Intel GPU submission failed"),
             "Intel frame published before GPU completion"
@@ -116,7 +116,7 @@ impl Compositor {
         let frame = self
             .renderer
             .composite_buffers(&layers, size.0, size.1, 0)?;
-        let (display, presentation) = self.renderer.presentation_buffer(&frame)?;
+        let (display, presentation) = self.renderer.presentation_texture(&frame, size.0, size.1)?;
         let (rendered, composite) = frame.into_parts();
         submissions.extend([composite, presentation]);
         self.images.retain(|key, _| self.used_images.contains(key));

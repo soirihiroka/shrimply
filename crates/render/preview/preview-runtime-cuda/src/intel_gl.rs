@@ -1,21 +1,24 @@
 use crate::gl_loader;
 use glow::HasContext;
-use shrimply_render_vulkan::Buffer;
+use shrimply_render_vulkan::Texture;
 use std::os::fd::IntoRawFd;
 
 const HANDLE_TYPE_OPAQUE_FD_EXT: u32 = 0x9586;
 const DEDICATED_MEMORY_OBJECT_EXT: u32 = 0x9581;
+const TEXTURE_TILING_EXT: u32 = 0x9580;
+const OPTIMAL_TILING_EXT: i32 = 0x9584;
+const LAYOUT_GENERAL_EXT: u32 = 0x958d;
 
-pub(super) struct ImportedBuffer {
+pub(super) struct ImportedTexture {
     memory: u32,
     semaphore: u32,
-    buffer: glow::NativeBuffer,
+    pub texture: glow::NativeTexture,
     delete_memory: unsafe extern "system" fn(i32, *const u32),
     delete_semaphore: unsafe extern "system" fn(i32, *const u32),
 }
 
-impl ImportedBuffer {
-    pub fn new(gl: &glow::Context, source: &Buffer) -> Result<Self, String> {
+impl ImportedTexture {
+    pub fn new(gl: &glow::Context, source: &Texture) -> Result<Self, String> {
         for extension in ["GL_EXT_memory_object_fd", "GL_EXT_semaphore_fd"] {
             if !gl.supported_extensions().contains(extension) {
                 return Err(format!(
@@ -48,9 +51,9 @@ impl ImportedBuffer {
             "glImportMemoryFdEXT",
             unsafe extern "system" fn(u32, u64, u32, i32)
         );
-        let buffer_storage = function!(
-            "glBufferStorageMemEXT",
-            unsafe extern "system" fn(u32, isize, u32, u64)
+        let texture_storage = function!(
+            "glTexStorageMem2DEXT",
+            unsafe extern "system" fn(u32, i32, u32, i32, i32, u32, u64)
         );
         let create_semaphore = function!(
             "glGenSemaphoresEXT",
@@ -69,11 +72,11 @@ impl ImportedBuffer {
             unsafe extern "system" fn(u32, u32, *const u32, u32, *const u32, *const u32)
         );
         let (memory_fd, allocation_size, semaphore_fd) = source.export()?;
-        let buffer = unsafe { gl.create_buffer() }?;
+        let texture = unsafe { gl.create_texture() }?;
         let mut imported = Self {
             memory: 0,
             semaphore: 0,
-            buffer,
+            texture,
             delete_memory,
             delete_semaphore,
         };
@@ -106,24 +109,37 @@ impl ImportedBuffer {
                     "Import Intel Vulkan semaphore into GTK: OpenGL error 0x{error:x}"
                 ));
             }
-            gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, Some(buffer));
-            buffer_storage(
-                glow::PIXEL_UNPACK_BUFFER,
-                source.len() as isize,
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_S,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_WRAP_T,
+                glow::CLAMP_TO_EDGE as i32,
+            );
+            gl.tex_parameter_i32(glow::TEXTURE_2D, TEXTURE_TILING_EXT, OPTIMAL_TILING_EXT);
+            texture_storage(
+                glow::TEXTURE_2D,
+                source.levels() as i32,
+                glow::RGBA8,
+                source.width() as i32,
+                source.height() as i32,
                 imported.memory,
                 0,
             );
             wait_semaphore(
                 imported.semaphore,
-                1,
-                &buffer.0.get(),
                 0,
                 std::ptr::null(),
-                std::ptr::null(),
+                1,
+                &texture.0.get(),
+                &LAYOUT_GENERAL_EXT,
             );
             let error = gl.get_error();
             if error != glow::NO_ERROR {
-                gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
                 imported.destroy(gl);
                 return Err(format!(
                     "Prepare Intel GTK presentation: OpenGL error 0x{error:x}"
@@ -134,7 +150,7 @@ impl ImportedBuffer {
     }
     pub fn destroy(self, gl: &glow::Context) {
         unsafe {
-            gl.delete_buffer(self.buffer);
+            gl.delete_texture(self.texture);
             (self.delete_memory)(1, &self.memory);
             (self.delete_semaphore)(1, &self.semaphore);
         }

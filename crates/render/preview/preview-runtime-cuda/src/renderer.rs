@@ -26,7 +26,7 @@ pub struct VideoRenderer {
     rgba_texture: glow::NativeTexture,
     rgba_cuda: Option<CudaTexture>,
     #[cfg(target_os = "linux")]
-    intel_import: Option<crate::intel_gl::ImportedBuffer>,
+    intel_import: Option<crate::intel_gl::ImportedTexture>,
     cuda_context: Option<shrimply_gpu_cuda::sys::CUcontext>,
     texture_width: u32,
     texture_height: u32,
@@ -129,6 +129,11 @@ impl VideoRenderer {
             if let Some(frame) = frame {
                 self.upload_frame(frame)?;
             }
+            #[cfg(target_os = "linux")]
+            if let Some(imported) = &self.intel_import {
+                self.gl
+                    .bind_texture(glow::TEXTURE_2D, Some(imported.texture));
+            }
             self.set_sampling(appearance.upsample_method, appearance.downsample_method);
             self.gl.enable(glow::BLEND);
             self.gl.blend_func_separate(
@@ -172,36 +177,16 @@ impl VideoRenderer {
             if self.last_frame_key == Some(frame.storage_key) {
                 return Ok(());
             }
-            if self.texture_width != frame.width
-                || self.texture_height != frame.height
-                || self.cuda_context.is_some()
-            {
-                self.allocate_texture(frame.width, frame.height);
+            let imported = crate::intel_gl::ImportedTexture::new(&self.gl, display)?;
+            if let Some(previous) = self.intel_import.replace(imported) {
+                previous.destroy(&self.gl);
             }
-            if let Some(imported) = self.intel_import.take() {
-                imported.destroy(&self.gl);
-            }
-            let imported = crate::intel_gl::ImportedBuffer::new(&self.gl, display)?;
-            unsafe {
-                self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-                self.gl.pixel_store_i32(glow::UNPACK_ROW_LENGTH, 0);
-                self.gl.pixel_store_i32(glow::UNPACK_SKIP_ROWS, 0);
-                self.gl.pixel_store_i32(glow::UNPACK_SKIP_PIXELS, 0);
-                self.gl.tex_sub_image_2d(
-                    glow::TEXTURE_2D,
-                    0,
-                    0,
-                    0,
-                    frame.width as i32,
-                    frame.height as i32,
-                    glow::RGBA,
-                    glow::UNSIGNED_BYTE,
-                    glow::PixelUnpackData::BufferOffset(0),
-                );
-                self.gl.bind_buffer(glow::PIXEL_UNPACK_BUFFER, None);
-            }
-            self.intel_import = Some(imported);
+            self.rgba_cuda.take();
+            self.cuda_context = None;
+            self.texture_width = frame.width;
+            self.texture_height = frame.height;
             self.last_frame_key = Some(frame.storage_key);
+            self.mipmapped_frame_key = None;
             return Ok(());
         }
         self.ensure_texture(frame)?;

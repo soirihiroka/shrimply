@@ -4,7 +4,7 @@ use shrimply_gpu_cuda_memory::GpuBuffer as DeviceBuffer;
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct CompositedFrameStorageKey {
     serial: u64,
-    device_ptr: sys::CUdeviceptr,
+    device_ptr: u64,
     width: u32,
     height: u32,
 }
@@ -20,7 +20,7 @@ pub enum FrameBuffer {
     Cuda(DeviceBuffer<u32>),
     #[cfg(target_os = "linux")]
     Intel {
-        display: shrimply_render_vulkan::Buffer,
+        display: shrimply_render_vulkan::Texture,
         rendered: shrimply_render_vulkan::Buffer,
     },
 }
@@ -79,7 +79,7 @@ impl CompositedVideoFrame {
 
     #[cfg(target_os = "linux")]
     pub fn intel(
-        display: shrimply_render_vulkan::Buffer,
+        display: shrimply_render_vulkan::Texture,
         rendered: shrimply_render_vulkan::Buffer,
         width: u32,
         height: u32,
@@ -87,7 +87,7 @@ impl CompositedVideoFrame {
     ) -> Self {
         let storage_key = CompositedFrameStorageKey {
             serial,
-            device_ptr: display.address(),
+            device_ptr: display.id(),
             width,
             height,
         };
