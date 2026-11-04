@@ -15,3 +15,10 @@ shrimply-preview-render-core.workspace = true
 shrimply-preview-render-vulkan.workspace = true
 shrimply-render-core.workspace = true
 shrimply-render-vulkan.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+skia-safe.workspace = true
+shrimply-visual-modifiers.workspace = true
+shrimply-scene-3d.workspace = true
+serde_json.workspace = true
+uuid.workspace = true

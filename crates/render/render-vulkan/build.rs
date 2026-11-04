@@ -132,6 +132,20 @@ fn main() {
         let name = parameter["type"]["name"]
             .as_str()
             .expect("Software ABI struct name");
+        if name == "SceneUniforms" {
+            let mut packing = String::from(
+                "fn pack_scene_uniforms(value: &shrimply_render_3d_core::obj::SceneUniforms) -> Vec<u8> {\n",
+            );
+            let size = parameter["binding"]["size"]
+                .as_u64()
+                .expect("Scalar scene uniform size");
+            writeln!(packing, "let mut output = vec![0; {size}];").unwrap();
+            pack_fields(&mut packing, &parameter["type"], "value", "0", size);
+            packing.push_str("output\n}\n");
+            std::fs::write(output.join("software_uniforms.rs"), packing)
+                .expect("write scalar scene packing");
+            continue;
+        }
         let rust_type = match name {
             "SceneUniforms" => "shrimply_render_3d_core::obj::SceneUniforms",
             "MeshInstance" => "shrimply_render_3d_core::obj::MeshInstance",
@@ -202,3 +216,59 @@ fn write_fields(output: &mut String, parameter: &serde_json::Value, prefix: &str
 
 #[cfg(not(target_os = "linux"))]
 fn main() {}
+
+#[cfg(target_os = "linux")]
+fn pack_fields(
+    output: &mut String,
+    ty: &serde_json::Value,
+    expression: &str,
+    offset: &str,
+    size: u64,
+) {
+    use std::fmt::Write;
+    match ty["kind"].as_str().expect("reflected uniform type") {
+        "struct" => {
+            for field in ty["fields"].as_array().expect("uniform struct fields") {
+                let name = field["name"].as_str().unwrap();
+                let field_offset = field["binding"]["offset"].as_u64().unwrap();
+                let length = field["binding"]["size"].as_u64().unwrap();
+                pack_fields(
+                    output,
+                    &field["type"],
+                    &format!("{expression}.{name}"),
+                    &offset.parse::<u64>().map_or_else(
+                        |_| {
+                            if field_offset == 0 {
+                                offset.to_owned()
+                            } else {
+                                format!("({offset} + {field_offset})")
+                            }
+                        },
+                        |base| (base + field_offset).to_string(),
+                    ),
+                    length,
+                );
+            }
+        }
+        "array" => {
+            let count = ty["elementCount"].as_u64().expect("uniform array count");
+            let variable = format!("index_{}", expression.matches('.').count());
+            writeln!(output, "for {variable} in 0..{count} {{").unwrap();
+            pack_fields(
+                output,
+                &ty["elementType"],
+                &format!("{expression}[{variable}]"),
+                &format!("({offset} + {variable} * {})", size / count),
+                size / count,
+            );
+            output.push_str("}\n");
+        }
+        _ => {
+            let end = offset.parse::<u64>().map_or_else(
+                |_| format!("{offset} + {size}"),
+                |base| (base + size).to_string(),
+            );
+            writeln!(output, "output[{offset}..{end}].copy_from_slice(bytes(std::slice::from_ref(&{expression}))); ").unwrap();
+        }
+    }
+}

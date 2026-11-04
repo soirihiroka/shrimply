@@ -572,3 +572,8 @@ uninstall-qt:
 	rm -f "$(DESTDIR)$(BINDIR)/$(QT_EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	$(MAKE) uninstall-desktop-assets
+
+.PHONY: intel-feature-validation
+intel-feature-validation: native-deps cuda-artifacts
+	@test -n "$(OUTPUT)" || { echo "usage: make intel-feature-validation OUTPUT=/new/output/directory [CASE=filter]" >&2; exit 1; }
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example feature_validation -- "$(OUTPUT)" "$(CASE)"

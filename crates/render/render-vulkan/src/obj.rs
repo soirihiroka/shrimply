@@ -66,6 +66,7 @@ struct SoftwareResources {
     denoised_alpha_texture_data: u64,
 }
 include!(concat!(env!("OUT_DIR"), "/software_abi.rs"));
+include!(concat!(env!("OUT_DIR"), "/software_uniforms.rs"));
 
 pub(crate) struct Uploaded {
     identity: SceneIdentity,
@@ -158,7 +159,7 @@ impl Renderer {
         }
         let mut uniforms = plan.uniforms;
         uniforms.transmission_background[1] = u32::from(background.is_some()) as f32;
-        let scene = self.upload(bytes(std::slice::from_ref(&uniforms)))?;
+        let scene = self.upload(&pack_scene_uniforms(&uniforms))?;
         let uploaded = self.object.as_ref().expect("uploaded 3D geometry");
         let resources = &uploaded.resources;
         let state = SoftwareResources {
@@ -290,7 +291,11 @@ impl Renderer {
         let pixels = atlas
             .pixels
             .iter()
-            .map(|color| color.to_array())
+            .map(|color| {
+                color
+                    .to_array()
+                    .map(|channel| f32::from(channel) / f32::from(u8::MAX))
+            })
             .collect::<Vec<_>>();
         let (material_texture, texture) =
             self.float_texture((atlas.width, atlas.height), Some(&pixels))?;
