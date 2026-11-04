@@ -13,7 +13,7 @@ use glam::{Mat4, Vec3};
 use shrimply_asset::{Asset, AssetSnapshot};
 use shrimply_math_color::Color;
 
-pub use math::{SoftwareBvhNode, software_bvh, resolve_scene_uniforms};
+pub use math::{SoftwareBvhNode, resolve_scene_uniforms, software_bvh};
 pub use shrimply_transform_3d::Projection as SceneProjection;
 
 include!(concat!(env!("OUT_DIR"), "/slang_bindings.rs"));

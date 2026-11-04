@@ -139,3 +139,20 @@ void estimate_flow(uint3 id : SV_DispatchThreadID,
   }
   output[i] = float2(best);
 }
+
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
+void rgba_to_float(uint3 id : SV_DispatchThreadID, uniform uint* input, uniform float4* output, uniform uint64_t count) {
+  if (id.x >= count) return;
+  Color value = color_from_rgba(input[id.x]);
+  output[id.x] = float4(value.r, value.g, value.b, value.a);
+}
+
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
+void float_mip(uint3 id : SV_DispatchThreadID, uniform float4* input, uniform float4* output,
+               uniform uint width, uniform uint height, uniform uint output_width, uniform uint output_height) {
+  if (id.x >= output_width * output_height) return;
+  uint2 p = uint2(id.x % output_width, id.x / output_width) * 2;
+  uint2 q = min(p + 1, uint2(width - 1, height - 1));
+  output[id.x] = (input[p.y * width + p.x] + input[p.y * width + q.x] +
+                  input[q.y * width + p.x] + input[q.y * width + q.x]) * 0.25;
+}

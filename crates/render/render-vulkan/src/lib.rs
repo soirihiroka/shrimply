@@ -9,6 +9,7 @@ mod vaapi;
 mod vector;
 pub use external::ExternalImage;
 mod gaussian;
+mod obj;
 mod optical_flow;
 pub use buffer::Buffer;
 pub use optical_flow::OpticalFlow;
@@ -177,6 +178,8 @@ impl Frame {
 pub struct Renderer {
     skia: Option<skia_safe::gpu::DirectContext>,
     gaussian: Option<shrimply_3dgs_vulkan::Renderer>,
+    object: Option<obj::Uploaded>,
+    object_environment: Option<obj::Environment>,
     device: Arc<Device>,
     pool: Rc<Pool>,
     pipeline_layout: vk::PipelineLayout,
@@ -215,6 +218,8 @@ impl Renderer {
         Ok(Self {
             skia: None,
             gaussian: None,
+            object: None,
+            object_environment: None,
             pool,
             device,
             pipeline_layout,

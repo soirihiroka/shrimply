@@ -92,6 +92,7 @@ fn main() {
             "obj_denoise_composite_compute",
             "obj_outline_distance_compute",
             "obj_outline_compute",
+            "obj_software_denoise",
             "reflect_software",
         ],
     );

@@ -6630,6 +6630,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "pollster",
  "shrimply-asset",
+ "shrimply-gpu-vulkan",
  "shrimply-i18n",
  "shrimply-loading-screen-skia",
  "shrimply-manim-bridge",
@@ -7106,6 +7107,7 @@ name = "shrimply-preview-render-vulkan"
 version = "0.1.0"
 dependencies = [
  "shrimply-manim-state",
+ "shrimply-manim-wgpu",
  "shrimply-math-core",
  "shrimply-math-geometry",
  "shrimply-math-media",
@@ -7368,6 +7370,10 @@ dependencies = [
  "libc",
  "pkg-config",
  "serde_json",
+ "shrimply-3dgs-core",
+ "shrimply-3dgs-vulkan",
+ "shrimply-gpu-vulkan",
+ "shrimply-math-geometry",
  "shrimply-render-core",
  "shrimply-slang-build",
  "skia-safe",

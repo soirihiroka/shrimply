@@ -356,8 +356,22 @@ impl Compositor {
                     (plan.width, plan.height),
                     &plan.params,
                 )?,
-                Source::Obj(_) => {
-                    return Err("OBJ rendering requires a ray-tracing-capable backend".into());
+                Source::Obj(plan) => {
+                    let background = if result.is_empty() {
+                        None
+                    } else {
+                        let (buffer, submission) = self
+                            .renderer
+                            .composite_buffers(&result, size.0, size.1, 0)?
+                            .into_parts();
+                        submissions.push(submission);
+                        Some(buffer)
+                    };
+                    self.renderer.object(
+                        plan,
+                        background.as_ref().map(|buffer| (buffer, size)),
+                        submissions,
+                    )?
                 }
                 Source::Manim(frame) => self.manim_frame(frame)?,
                 Source::RasterMorph(_) => unreachable!("handled before source rendering"),
