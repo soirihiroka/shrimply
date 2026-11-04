@@ -57,6 +57,15 @@ fn main() -> Result<(), String> {
     commands
         .send(VideoCommand::Stop)
         .map_err(|e| e.to_string())?;
+    // Drain until the worker releases its native GPU contexts before process exit.
+    loop {
+        match events.recv_timeout(Duration::from_secs(60)) {
+            Ok(VideoEvent::Error(error)) => return Err(error),
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
     let elapsed = started.elapsed();
     println!(
         "{count} preview frames in {elapsed:?}; {} fps; no pixel readbacks",
