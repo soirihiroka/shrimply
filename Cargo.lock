@@ -5985,7 +5985,7 @@ dependencies = [
  "async-channel",
  "ffmpeg-next",
  "gdk-pixbuf",
- "glam",
+ "glam 0.34.1",
  "glib",
  "glow",
  "gtk4",

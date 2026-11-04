@@ -1,10 +1,13 @@
-#![cfg(target_os = "linux")]
-
+#[cfg(target_os = "linux")]
 use adw::prelude::*;
+#[cfg(target_os = "linux")]
 use shrimply_preferences_core as preferences;
+#[cfg(target_os = "linux")]
 use shrimply_visual_cuda::gpu;
+#[cfg(target_os = "linux")]
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
+#[cfg(target_os = "linux")]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(expected) = std::env::args().nth(1) {
         gpu::configure_gtk_backend()?;
@@ -134,6 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn preview_frame() -> Result<gpu::CompositedVideoFrame, String> {
     use shrimply_project_document::project::*;
     use shrimply_visual_cuda::compositor::{
@@ -191,6 +195,7 @@ fn preview_frame() -> Result<gpu::CompositedVideoFrame, String> {
     Ok(frame)
 }
 
+#[cfg(target_os = "linux")]
 fn present_frame(area: &gtk::GLArea, frame: &gpu::CompositedVideoFrame) -> Result<(), String> {
     use glow::HasContext;
     use shrimply_preview_runtime_cuda::{
@@ -238,6 +243,7 @@ fn present_frame(area: &gtk::GLArea, frame: &gpu::CompositedVideoFrame) -> Resul
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn acceleration_row(widget: &gtk::Widget) -> Option<adw::ComboRow> {
     if let Some(row) = widget.downcast_ref::<adw::ComboRow>()
         && row.title() == "Acceleration device"
@@ -252,4 +258,9 @@ fn acceleration_row(widget: &gtk::Widget) -> Option<adw::ComboRow> {
         child = widget.next_sibling();
     }
     None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    panic!("GTK hybrid GPU validation requires Linux");
 }

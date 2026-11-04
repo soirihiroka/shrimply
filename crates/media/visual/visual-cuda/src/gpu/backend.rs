@@ -77,7 +77,9 @@ pub fn configure_gtk_presentation() -> Result<(), String> {
     }
     let intel = intel_backend_selected();
     let prime = if intel {
-        let path = shrimply_render_vulkan::device::Device::render_device_path()?;
+        let path = shrimply_render_vulkan::device::Device::render_device_path()?
+            .canonicalize()
+            .map_err(|error| format!("Resolve Intel DRM render device: {error}"))?;
         let node = path.file_name().ok_or("Intel DRM device has no name")?;
         let pci = std::path::Path::new("/sys/class/drm")
             .join(node)
