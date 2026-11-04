@@ -117,6 +117,12 @@ jobs:
             ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-
             ${{ steps.application-cache-key.outputs.prefix }}-
 
+      - name: Cache PocketSphinx resources
+        uses: actions/cache@v6
+        with:
+          path: target/pocketsphinx-cache
+          key: pocketsphinx-model-v1-${{ runner.os }}-${{ hashFiles('vendor/pocketsphinx/build.rs') }}
+
       - name: Build AppKit release
         run: make appkit-release
 
