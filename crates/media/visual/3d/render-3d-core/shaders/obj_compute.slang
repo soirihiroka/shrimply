@@ -45,6 +45,7 @@ struct ComputeMaterial
 #define OBJECT_SHADING_MODEL scene.toon.shading_model
 #define OBJECT_TRANSPORT true
 #define OBJECT_GROUNDS true
+#define OBJECT_GROUND_REFLECTIONS true
 ConstantBuffer<SceneUniforms> scene;
 ConstantBuffer<OutputSize> output_size;
 ConstantBuffer<OutputSize> composite_size;
@@ -1305,7 +1306,7 @@ float4 render_sample(
         0u,
         ground_seed);
     float4 reflection = float4(0.0);
-    if (reflection_ray.valid)
+    if (OBJECT_GROUND_REFLECTIONS && reflection_ray.valid)
     {
         RayDesc reflected_ray = {
             mul(scene.model_inverse, float4(reflection_ray.origin, 1.0)).xyz,

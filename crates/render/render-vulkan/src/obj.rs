@@ -260,6 +260,7 @@ impl Renderer {
         }
         const TRANSPORT: u32 = 1 << 2;
         const GROUNDS: u32 = 1 << 3;
+        const GROUND_REFLECTIONS: u32 = 1 << 4;
         let transport = plan.params.path_tracing != shader::PathTracingMode::Off
             || plan.params.transmission > 0.0
             || plan
@@ -273,6 +274,16 @@ impl Renderer {
                 0
             } else {
                 GROUNDS
+            }
+            | if plan
+                .params
+                .grounds
+                .iter()
+                .any(|ground| ground.reflection > 0.0 && ground.opacity > 0.0)
+            {
+                GROUND_REFLECTIONS
+            } else {
+                0
             };
         for name in kernels {
             let mut args = self.arguments(name)?;
