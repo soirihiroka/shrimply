@@ -28,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: flatpak-prerelease
+  group: flatpak-prerelease-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -52,7 +52,6 @@ env:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -283,7 +282,7 @@ jobs:
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
 
       - name: Prune old Flatpak application caches
-        if: steps.save-application-cache.outcome == 'success'
+        if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
@@ -331,6 +330,7 @@ jobs:
           retention-days: 7
 
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-24.04
     permissions:

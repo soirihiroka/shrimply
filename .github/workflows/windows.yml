@@ -26,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-prerelease
+  group: windows-prerelease-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -41,7 +41,6 @@ env:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
     runs-on: windows-2022
     timeout-minutes: 180
 
@@ -277,6 +276,7 @@ jobs:
           if-no-files-found: ignore
 
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-24.04
     permissions:
