@@ -116,7 +116,7 @@ by file descriptor on the same physical GPU. It never selects a CPU device.
 The runtime is bundled with Linux packages; Intel's Level Zero GPU driver
 must also be installed for the SYCL backend. Interactive rendering uses FAST
 quality and final rendering uses HIGH. Use ``make oidn-gpu-validation`` to
-check native CUDA interop and measure filtering on the selected NVIDIA GPU.
+check native CUDA interop and measure filtering on the first NVIDIA GPU.
 
 The Intel Vulkan fallback uses a basic spatial edge-avoiding a-trous denoiser.
 Three compute passes filter HDR ray-traced color at increasing tap spacing,

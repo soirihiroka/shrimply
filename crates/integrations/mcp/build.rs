@@ -14,6 +14,8 @@ fn main() {
     }
     for path in [
         Some("HEAD".to_owned()),
+        Some("refs".to_owned()),
+        Some("packed-refs".to_owned()),
         git(&["symbolic-ref", "-q", "HEAD"]),
     ]
     .into_iter()
