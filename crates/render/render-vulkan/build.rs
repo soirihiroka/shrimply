@@ -63,7 +63,10 @@ fn main() {
             writeln!(generated, "Module {{ code: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{code}\")), kernels: &[").unwrap();
             for entry in selected {
                 let name = entry["name"].as_str().expect("kernel name");
-                assert!(names.insert(name.to_owned()), "Duplicate Vulkan kernel {name}");
+                assert!(
+                    names.insert(name.to_owned()),
+                    "Duplicate Vulkan kernel {name}"
+                );
                 let entry_name = if buffered {
                     format!("{name}_vulkan")
                 } else {
