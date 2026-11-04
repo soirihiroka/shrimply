@@ -850,6 +850,8 @@ impl Drop for Renderer {
         if let Some(skia) = &mut self.skia {
             skia.release_resources_and_abandon();
         }
+        // The borrowed Gaussian renderer uses this queue during destruction too.
+        self.gaussian.take();
         unsafe {
             for pipeline in self.kernels.values() {
                 self.device.raw.destroy_pipeline(*pipeline, None);

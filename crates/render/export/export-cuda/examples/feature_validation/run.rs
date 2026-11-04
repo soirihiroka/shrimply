@@ -283,6 +283,40 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         });
         result.push((format!("blend-{name}"), layers));
     }
+    let mut cached = image.clone();
+    cached.modifiers.push(modifier(ModifierEffect::raster(
+        RasterModifierEffect::Cache(Default::default()),
+    )));
+    result.push(("analysis-cache".into(), project(cached)));
+    let mut fill = image.clone();
+    let prompt = shrimply_visual_modifiers::transparent_fill::TransparentFillPoint {
+        id: uuid::Uuid::new_v4(),
+        position: TimelineValue::new_const(
+            serde_json::from_value(serde_json::json!([0.3, 0.5])).map_err(|e| e.to_string())?,
+        ),
+    };
+    fill.modifiers.push(modifier(ModifierEffect::raster(
+        RasterModifierEffect::TransparentFill(
+            shrimply_visual_modifiers::transparent_fill::TransparentFillModifier {
+                points: vec![prompt],
+                analysis_generation: 1,
+                ..Default::default()
+            },
+        ),
+    )));
+    result.push(("analysis-transparent-fill".into(), project(fill)));
+    for method in [
+        VideoStabilizationMethod::L1,
+        VideoStabilizationMethod::MeshFlow,
+    ] {
+        let mut video = image.clone();
+        video.content = VideoItemContent::Media;
+        video.file = Asset::new(output.join("source.mp4"));
+        video.source_duration = duration;
+        video.stabilize_video = true;
+        video.stabilization_method = method;
+        result.push((format!("analysis-stabilization-{method:?}"), project(video)));
+    }
     for factory in RasterModifierEffect::CATALOG {
         let effect = factory();
         let name = effect.display_name().replace(' ', "-").replace('/', "-");
@@ -362,6 +396,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
 }
 
 fn validate(name: &str, project: Project, output: &Path) -> Result<(), String> {
+    prepare_analysis(name, &project)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     let mut compositor = Compositor::new()?;
     let mut captures = Vec::new();
@@ -502,6 +537,60 @@ fn create_assets(output: &Path) -> Result<(), String> {
         ),
     ] {
         std::fs::write(output.join(name), text).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn prepare_analysis(name: &str, project: &Project) -> Result<(), String> {
+    if name.starts_with("analysis-stabilization-") {
+        return shrimply_visual_core::stabilization::ensure_project(project);
+    }
+    let item = &project.video_tracks[0].items[0];
+    let address = ItemAddress::Video {
+        sequence_path: vec![],
+        track_id: project.video_tracks[0].id,
+        item_id: item.id,
+    };
+    let deadline = Instant::now() + std::time::Duration::from_secs(120);
+    match name {
+        "analysis-cache" => {
+            let id = item.modifiers.last().expect("cache modifier").id;
+            shrimply_visual_cuda::modifier_cache::bake(project.clone(), address.clone(), id)?;
+            loop {
+                match shrimply_visual_cuda::modifier_cache::status(&address, id) {
+                    shrimply_visual_cuda::modifier_cache::Status::Ready => break,
+                    shrimply_visual_cuda::modifier_cache::Status::Failed(error) => {
+                        return Err(error);
+                    }
+                    _ if Instant::now() >= deadline => {
+                        return Err("Visual cache bake timed out".into());
+                    }
+                    _ => std::thread::sleep(std::time::Duration::from_millis(10)),
+                }
+            }
+        }
+        "analysis-transparent-fill" => {
+            let id = item.modifiers.last().expect("transparent fill modifier").id;
+            let run = shrimply_visual_cuda::transparent_fill_analysis::analyze(
+                project.clone(),
+                &address,
+                id,
+            )?;
+            loop {
+                use shrimply_visual_cuda::transparent_fill_analysis::Status;
+                match shrimply_visual_cuda::transparent_fill_analysis::status_for_run(run) {
+                    Status::Complete => break,
+                    Status::Failed(error) => return Err(error),
+                    Status::Cancelled => return Err("Transparent fill was cancelled".into()),
+                    _ if Instant::now() >= deadline => {
+                        shrimply_visual_cuda::transparent_fill_analysis::cancel(run);
+                        return Err("Transparent fill timed out".into());
+                    }
+                    _ => std::thread::sleep(std::time::Duration::from_millis(10)),
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
