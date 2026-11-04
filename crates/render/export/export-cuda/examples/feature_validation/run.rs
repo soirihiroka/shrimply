@@ -674,6 +674,9 @@ fn validate_optical_flow() -> Result<(), String> {
                     f32::from_ne_bytes(bytes[index..index + 4].try_into().unwrap()),
                     f32::from_ne_bytes(bytes[index + 4..index + 8].try_into().unwrap()),
                 ];
+                if displacement.iter().any(|value| !value.is_finite()) {
+                    return Err("GPU optical flow produced a non-finite displacement".into());
+                }
                 errors.push(
                     (displacement[0] - sign * SHIFT[0] as f32)
                         .abs()

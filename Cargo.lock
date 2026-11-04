@@ -5898,6 +5898,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-denoise-oidn"
+version = "0.1.0"
+dependencies = [
+ "libloading 0.9.0",
+ "shrimply-gpu-cuda",
+]
+
+[[package]]
 name = "shrimply-denoise-optix"
 version = "0.1.0"
 dependencies = [
@@ -7383,10 +7391,12 @@ dependencies = [
  "shrimply-3dgs-core",
  "shrimply-3dgs-vulkan",
  "shrimply-asset",
+ "shrimply-denoise-oidn",
  "shrimply-gpu-vulkan",
  "shrimply-math-geometry",
  "shrimply-render-3d-core",
  "shrimply-render-core",
+ "shrimply-scene-3d",
  "shrimply-slang-build",
  "skia-safe",
  "tracing",
@@ -7866,6 +7876,7 @@ dependencies = [
  "shrimply-background",
  "shrimply-blender-core",
  "shrimply-compute-client",
+ "shrimply-denoise-oidn",
  "shrimply-denoise-optix",
  "shrimply-drawing-skia",
  "shrimply-gpu-cuda",
