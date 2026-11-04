@@ -130,7 +130,9 @@ impl Scene {
                 || vector.is_some()
                 || matches!(
                     item.content,
-                    VideoItemContent::Background(_) | VideoItemContent::Gaussian(_)
+                    VideoItemContent::Background(_)
+                        | VideoItemContent::Gaussian(_)
+                        | VideoItemContent::Obj(_)
                 ) {
                 shrimply_render_core::math::Mat3::IDENTITY
             } else {

@@ -101,6 +101,30 @@ pipeline on the target machine:
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark VIDEO=/path/to/video.mp4 OUTPUT=/tmp/intel.mp4 FORMAT=hevc10
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark PROJECT=/path/to/project.shrimp OUTPUT=/tmp/project.mp4 FORMAT=h264
 
+Ray-tracing denoising
+~~~~~~~~~~~~~~~~~~~~
+
+The Intel Vulkan backend disables ray-tracing denoising, including when loading
+a project saved with denoising enabled. Its GTK control displays Off and is
+disabled. NVIDIA keeps its existing GPU OptiX denoiser. There is no CPU denoising
+fallback.
+
+The open-source alternatives evaluated for Intel are:
+
+* `Open Image Denoise <https://www.openimagedenoise.org/>`_: supports GPU beauty,
+  albedo, and normal inputs, but its Intel GPU backend requires Xe or newer.
+  The validation machine's UHD 630 is unsupported.
+* `NRD <https://github.com/NVIDIA-RTX/NRD>`_: supports Vulkan and is a potential
+  cross-vendor solution. Integration needs motion vectors, view-space depth,
+  normal/roughness guides, and appropriately separated lighting signals. The
+  current renderer does not produce the complete inputs or temporal history.
+* `FidelityFX Denoiser <https://gpuopen.com/fidelityfx-denoiser/>`_: Vulkan
+  implementations target individual shadow masks and reflections, rather than
+  the renderer's combined beauty output.
+
+Enabling a future backend requires a GPU implementation and hardware validation;
+installing a CPU denoiser does not enable this feature.
+
 Use ``PROFILE=release`` with either benchmark to measure optimized performance.
 The default development profile leaves Rust code unoptimized.
 Native project exports use the full timeline duration. ``FRAMES`` limits the
