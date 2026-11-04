@@ -511,6 +511,25 @@ impl Renderer {
             .iter()
             .flat_map(|value| value.to_ne_bytes())
             .collect::<Vec<_>>();
+        let mut chroma_x = 0;
+        let mut chroma_y = 0;
+        let location = unsafe { (*source.frame.as_ptr()).chroma_location };
+        let location = if location == sys::AVChromaLocation::AVCHROMA_LOC_UNSPECIFIED {
+            sys::AVChromaLocation::AVCHROMA_LOC_LEFT
+        } else {
+            location
+        };
+        let result =
+            unsafe { sys::av_chroma_location_enum_to_pos(&mut chroma_x, &mut chroma_y, location) };
+        if result < 0 {
+            return Err(format!(
+                "Unsupported Intel video chroma location: {location:?}"
+            ));
+        }
+        // FFmpeg specifies chroma positions in units of 1/256 luma pixels.
+        const CHROMA_POSITION_SCALE: f32 = 256.0;
+        let chroma_offset = [chroma_x, chroma_y]
+            .map(|position| (position as f32 / CHROMA_POSITION_SCALE).to_ne_bytes());
         let layout = frame_layout(&source.frame)?;
         let Layout {
             width,
@@ -570,6 +589,7 @@ impl Renderer {
             .set("height", &(height as u32).to_ne_bytes())?
             .set("output", &output.address().to_ne_bytes())?
             .set("coefficients", &coefficients)?
+            .set("chroma_offset", chroma_offset.as_flattened())?
             .set(
                 "full_range",
                 &[u8::from(source.frame.color_range() == Range::JPEG)],

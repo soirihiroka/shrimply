@@ -13,12 +13,13 @@ void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
                   uniform uint8_t *y_plane, uniform uint8_t *uv_plane,
                   uniform uint64_t y_pitch, uniform uint64_t uv_pitch,
                   uniform uint width, uniform uint height, uniform uint *output,
-                  uniform int4 coefficients, uniform bool full_range) {
+                  uniform int4 coefficients, uniform bool full_range,
+                  uniform float2 chroma_offset) {
   uint i = id.x;
   if (i >= width * height)
     return;
   uint x = i % width, y = i / width;
-  float2 position = (float2(x, y) - 0.5f) * 0.5f;
+  float2 position = (float2(x, y) - chroma_offset) * 0.5f;
   int2 low = int2(floor(position));
   float2 amount = position - float2(low);
   float2 chroma = lerp(
