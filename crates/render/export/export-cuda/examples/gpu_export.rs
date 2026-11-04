@@ -119,6 +119,7 @@ fn main() -> Result<(), String> {
         gpu_host_memory_gib: fraction_new(2, 1),
     };
     let started = Instant::now();
+    let mut exported_frames = 0;
     export_project(
         project,
         settings,
@@ -129,16 +130,21 @@ fn main() -> Result<(), String> {
                 total_frames,
                 fps_milli,
             } = progress
-                && current_frame.is_multiple_of(OUTPUT_FPS as u64)
             {
-                println!(
-                    "{current_frame}/{total_frames} frames; {} milli-fps",
-                    fps_milli
-                );
+                exported_frames = current_frame;
+                if current_frame.is_multiple_of(OUTPUT_FPS as u64) {
+                    println!(
+                        "{current_frame}/{total_frames} frames; {} milli-fps",
+                        fps_milli
+                    );
+                }
             }
         },
     )?;
-    println!("Exported {frames} frames in {:?}", started.elapsed());
+    println!(
+        "Exported {exported_frames} frames in {:?}",
+        started.elapsed()
+    );
     Ok(())
 }
 
