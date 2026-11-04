@@ -196,9 +196,11 @@ impl Renderer {
         let mut barriers = Vec::new();
         for index in 0..image_count {
             barriers.push(
-                vk::ImageMemoryBarrier::default()
-                    .src_access_mask(vk::AccessFlags::from_raw(native.access[index]))
-                    .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                vk::ImageMemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .src_access_mask(vk::AccessFlags2::from_raw(native.access[index].into()))
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
                     .old_layout(vk::ImageLayout::from_raw(native.layout[index] as i32))
                     .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                     .src_queue_family_index(native.queue_family[index])
@@ -228,14 +230,9 @@ impl Renderer {
             }
         }
         unsafe {
-            self.device.raw.cmd_pipeline_barrier(
+            self.device.raw.cmd_pipeline_barrier2(
                 command,
-                vk::PipelineStageFlags::ALL_COMMANDS,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &barriers,
+                &vk::DependencyInfo::default().image_memory_barriers(&barriers),
             );
         }
         for plane in 0..2 {
@@ -295,11 +292,7 @@ impl Renderer {
             .signal_semaphores(&semaphores)
             .push_next(&mut timeline);
         let result = {
-            let _guard = self
-                .device
-                .submission
-                .lock()
-                .expect("Vulkan submission mutex poisoned");
+            let _guard = self.device.queue_lock();
             unsafe {
                 self.device
                     .raw
@@ -309,7 +302,7 @@ impl Renderer {
         if result.is_ok() {
             for index in 0..image_count {
                 native.layout[index] = vk::ImageLayout::TRANSFER_SRC_OPTIMAL.as_raw() as _;
-                native.access[index] = vk::AccessFlags::TRANSFER_READ.as_raw();
+                native.access[index] = vk::AccessFlags2::TRANSFER_READ.as_raw() as _;
                 if native.queue_family[index] != vk::QUEUE_FAMILY_IGNORED {
                     native.queue_family[index] = self.device.family;
                 }

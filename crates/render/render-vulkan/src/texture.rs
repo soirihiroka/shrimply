@@ -2,7 +2,7 @@ use crate::device::Device;
 use ash::{vk, vk::Handle};
 use std::{
     os::fd::{FromRawFd, OwnedFd},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 #[derive(Clone)]
@@ -12,7 +12,7 @@ struct Storage {
     device: Arc<Device>,
     image: vk::Image,
     memory: vk::DeviceMemory,
-    ready: vk::Semaphore,
+    exports: Mutex<Vec<(vk::Semaphore, vk::Fence)>>,
     allocation_size: u64,
     width: u32,
     height: u32,
@@ -88,28 +88,11 @@ impl Texture {
             }
             return Err(format!("Bind Intel presentation texture: {e:?}"));
         }
-        let mut export = vk::ExportSemaphoreCreateInfo::default()
-            .handle_types(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD);
-        let ready = match unsafe {
-            device.raw.create_semaphore(
-                &vk::SemaphoreCreateInfo::default().push_next(&mut export),
-                None,
-            )
-        } {
-            Ok(semaphore) => semaphore,
-            Err(e) => {
-                unsafe {
-                    device.raw.destroy_image(image, None);
-                    device.raw.free_memory(memory, None);
-                }
-                return Err(format!("Create Intel presentation semaphore: {e:?}"));
-            }
-        };
         Ok(Self(Arc::new(Storage {
             device,
             image,
             memory,
-            ready,
+            exports: Mutex::new(Vec::new()),
             allocation_size: requirements.size,
             width,
             height,
@@ -131,10 +114,6 @@ impl Texture {
     pub(crate) fn image(&self) -> vk::Image {
         self.0.image
     }
-    pub(crate) fn ready(&self) -> vk::Semaphore {
-        self.0.ready
-    }
-
     pub fn export(&self) -> Result<(OwnedFd, u64, OwnedFd), String> {
         let memory =
             ash::khr::external_memory_fd::Device::new(&self.0.device.instance, &self.0.device.raw);
@@ -147,14 +126,51 @@ impl Texture {
         }
         .map_err(|e| format!("Export Intel texture memory: {e:?}"))?;
         let memory = unsafe { OwnedFd::from_raw_fd(fd) };
-        let semaphore = ash::khr::external_semaphore_fd::Device::new(
+        // Each GL import consumes one binary semaphore signal. A fresh signal
+        // permits multiple preview surfaces and recreated OpenGL contexts.
+        let mut export = vk::ExportSemaphoreCreateInfo::default()
+            .handle_types(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD);
+        let semaphore = unsafe {
+            self.0.device.raw.create_semaphore(
+                &vk::SemaphoreCreateInfo::default().push_next(&mut export),
+                None,
+            )
+        }
+        .map_err(|e| format!("Create Intel presentation semaphore: {e:?}"))?;
+        let fence = match unsafe {
+            self.0
+                .device
+                .raw
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+        } {
+            Ok(fence) => fence,
+            Err(error) => {
+                unsafe {
+                    self.0.device.raw.destroy_semaphore(semaphore, None);
+                }
+                return Err(format!("Create Intel export fence: {error:?}"));
+            }
+        };
+        if let Err(error) = self.0.device.submit(&[], fence, &[semaphore]) {
+            unsafe {
+                self.0.device.raw.destroy_fence(fence, None);
+                self.0.device.raw.destroy_semaphore(semaphore, None);
+            }
+            return Err(error);
+        }
+        self.0
+            .exports
+            .lock()
+            .expect("Intel export mutex poisoned")
+            .push((semaphore, fence));
+        let external = ash::khr::external_semaphore_fd::Device::new(
             &self.0.device.instance,
             &self.0.device.raw,
         );
         let fd = unsafe {
-            semaphore.get_semaphore_fd(
+            external.get_semaphore_fd(
                 &vk::SemaphoreGetFdInfoKHR::default()
-                    .semaphore(self.0.ready)
+                    .semaphore(semaphore)
                     .handle_type(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD),
             )
         }
@@ -167,10 +183,24 @@ impl Texture {
 
 impl Drop for Storage {
     fn drop(&mut self) {
+        let exports = self.exports.get_mut().expect("Intel export mutex poisoned");
+        for &(semaphore, fence) in exports.iter() {
+            unsafe {
+                if self
+                    .device
+                    .raw
+                    .wait_for_fences(&[fence], true, u64::MAX)
+                    .is_err()
+                {
+                    std::process::abort();
+                }
+                self.device.raw.destroy_fence(fence, None);
+                self.device.raw.destroy_semaphore(semaphore, None);
+            }
+        }
         unsafe {
             self.device.raw.destroy_image(self.image, None);
             self.device.raw.free_memory(self.memory, None);
-            self.device.raw.destroy_semaphore(self.ready, None);
         }
     }
 }

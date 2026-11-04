@@ -8,6 +8,8 @@ mod capture;
 mod compositor;
 #[path = "../../preview-render-core/src/gpu_effects.rs"]
 mod effects;
+#[path = "../../preview-render-core/src/gpu_layered_image.rs"]
+mod layered_image;
 pub mod modifier_cache;
 mod optical_flow;
 pub mod transparent_fill_analysis;

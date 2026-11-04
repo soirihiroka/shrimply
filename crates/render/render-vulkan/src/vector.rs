@@ -114,11 +114,7 @@ impl Renderer {
         draw(surface.canvas())?;
         let image = surface.image_snapshot();
         {
-            let _guard = self
-                .device
-                .submission
-                .lock()
-                .expect("Vulkan submission mutex poisoned");
+            let _guard = self.device.queue_lock();
             skia.flush_and_submit();
         }
         let (texture, origin) = gpu::images::get_backend_texture_from_image(&image, false)
@@ -191,7 +187,7 @@ impl Renderer {
                 &[restore],
             );
         }
-        let mut copy = self.submit(command, vec![copied.clone()], None, None)?;
+        let mut copy = self.submit(command, vec![copied.clone()], None)?;
         copy._images.push(image);
         let output = self.allocate(length)?;
         let mut arguments = self.arguments("unpremultiply_rgba")?;

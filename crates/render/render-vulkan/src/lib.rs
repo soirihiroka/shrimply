@@ -301,7 +301,6 @@ impl Renderer {
         command: vk::CommandBuffer,
         resources: Vec<Buffer>,
         descriptor: Option<vk::DescriptorPool>,
-        signal: Option<vk::Semaphore>,
     ) -> Result<Submission, String> {
         unsafe { self.device.raw.end_command_buffer(command) }
             .map_err(|e| format!("finish Vulkan command: {e:?}"))?;
@@ -311,8 +310,7 @@ impl Renderer {
                 .create_fence(&vk::FenceCreateInfo::default(), None)
         }
         .map_err(|e| format!("create Vulkan fence: {e:?}"))?;
-        let signals = signal.into_iter().collect::<Vec<_>>();
-        self.device.submit(&[command], fence, &signals)?;
+        self.device.submit(&[command], fence, &[])?;
         Ok(Submission {
             pool: self.pool.clone(),
             command,
@@ -410,7 +408,7 @@ impl Renderer {
             );
         }
         resources.push(uniforms);
-        self.submit(command, resources, Some(pool), None)
+        self.submit(command, resources, Some(pool))
     }
 
     pub fn composite_buffers(
@@ -534,14 +532,6 @@ impl Renderer {
             .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
             .image(texture.image())
             .subresource_range(range);
-        let release = vk::ImageMemoryBarrier::default()
-            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .new_layout(vk::ImageLayout::GENERAL)
-            .src_queue_family_index(self.device.family)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_EXTERNAL)
-            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-            .image(texture.image())
-            .subresource_range(range);
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
                 command,
@@ -571,6 +561,90 @@ impl Renderer {
                         depth: 1,
                     })],
             );
+            // Build mipmaps once on Vulkan. GL consumers only sample this image,
+            // so multiple preview surfaces cannot race while generating mips.
+            for level in 1..texture.levels() {
+                let previous = vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .base_mip_level(level - 1)
+                    .level_count(1)
+                    .layer_count(1);
+                self.device.raw.cmd_pipeline_barrier(
+                    command,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[vk::ImageMemoryBarrier::default()
+                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                        .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                        .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                        .image(texture.image())
+                        .subresource_range(previous)],
+                );
+                let layers = vk::ImageSubresourceLayers::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .layer_count(1);
+                self.device.raw.cmd_blit_image(
+                    command,
+                    texture.image(),
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                    texture.image(),
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[vk::ImageBlit::default()
+                        .src_subresource(layers.mip_level(level - 1))
+                        .src_offsets([
+                            vk::Offset3D::default(),
+                            vk::Offset3D {
+                                x: (width >> (level - 1)).max(1) as i32,
+                                y: (height >> (level - 1)).max(1) as i32,
+                                z: 1,
+                            },
+                        ])
+                        .dst_subresource(layers.mip_level(level))
+                        .dst_offsets([
+                            vk::Offset3D::default(),
+                            vk::Offset3D {
+                                x: (width >> level).max(1) as i32,
+                                y: (height >> level).max(1) as i32,
+                                z: 1,
+                            },
+                        ])],
+                    vk::Filter::LINEAR,
+                );
+            }
+            let mut releases = Vec::new();
+            for (base, count, layout) in [
+                (
+                    0,
+                    texture.levels() - 1,
+                    vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                ),
+                (
+                    texture.levels() - 1,
+                    1,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                ),
+            ] {
+                if count != 0 {
+                    releases.push(
+                        vk::ImageMemoryBarrier::default()
+                            .old_layout(layout)
+                            .new_layout(vk::ImageLayout::GENERAL)
+                            .src_queue_family_index(self.device.family)
+                            .dst_queue_family_index(vk::QUEUE_FAMILY_EXTERNAL)
+                            .src_access_mask(
+                                vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
+                            )
+                            .image(texture.image())
+                            .subresource_range(range.base_mip_level(base).level_count(count)),
+                    );
+                }
+            }
             self.device.raw.cmd_pipeline_barrier(
                 command,
                 vk::PipelineStageFlags::TRANSFER,
@@ -578,15 +652,10 @@ impl Renderer {
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
-                &[release],
+                &releases,
             );
         }
-        let mut submission = self.submit(
-            command,
-            vec![frame.output.clone()],
-            None,
-            Some(texture.ready()),
-        )?;
+        let mut submission = self.submit(command, vec![frame.output.clone()], None)?;
         submission._textures.push(texture.clone());
         Ok((texture, submission))
     }
@@ -624,19 +693,15 @@ impl Renderer {
                 &[],
             );
         }
-        self.submit(command, vec![source.clone(), output.clone()], None, None)?
+        self.submit(command, vec![source.clone(), output.clone()], None)?
             .wait()?;
         output.copy_bytes()
     }
 }
 impl Drop for Renderer {
     fn drop(&mut self) {
-        let _guard = self
-            .device
-            .submission
-            .lock()
-            .expect("Vulkan submission mutex poisoned");
-        if unsafe { self.device.raw.device_wait_idle() }.is_err() {
+        let _guard = self.device.queue_lock();
+        if unsafe { self.device.raw.queue_wait_idle(self.device.queue) }.is_err() {
             std::process::abort();
         }
         if let Some(skia) = &mut self.skia {

@@ -10,6 +10,7 @@ const OPTIMAL_TILING_EXT: i32 = 0x9584;
 const LAYOUT_GENERAL_EXT: u32 = 0x958d;
 
 pub(super) struct ImportedTexture {
+    _source: Texture,
     memory: u32,
     semaphore: u32,
     pub texture: glow::NativeTexture,
@@ -74,6 +75,7 @@ impl ImportedTexture {
         let (memory_fd, allocation_size, semaphore_fd) = source.export()?;
         let texture = unsafe { gl.create_texture() }?;
         let mut imported = Self {
+            _source: source.clone(),
             memory: 0,
             semaphore: 0,
             texture,

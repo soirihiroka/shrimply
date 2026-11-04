@@ -5,6 +5,8 @@ use shrimply_render_vulkan as gpu;
 mod alpha_mask;
 #[path = "../../preview-render-core/src/gpu_effects.rs"]
 mod effects;
+#[path = "../../preview-render-core/src/gpu_layered_image.rs"]
+mod layered_image;
 
 use gpu::{Buffer, Renderer, Submission, VideoFrame};
 use shrimply_math_core::Time;
@@ -53,6 +55,8 @@ pub struct Compositor {
     scene: Scene,
     renderer: Renderer,
     images: HashMap<u32, Buffer>,
+    layered_sources: HashMap<(String, usize), Buffer>,
+    used_layered_sources: HashSet<(String, usize)>,
     videos: HashMap<usize, (Arc<VideoFrame>, Buffer)>,
     used_images: HashSet<u32>,
     used_videos: HashSet<usize>,
@@ -67,6 +71,8 @@ impl Compositor {
             scene: Scene::default(),
             renderer,
             images: HashMap::new(),
+            layered_sources: HashMap::new(),
+            used_layered_sources: HashSet::new(),
             videos: HashMap::new(),
             used_images: HashSet::new(),
             used_videos: HashSet::new(),
@@ -82,6 +88,7 @@ impl Compositor {
     pub fn invalidate(&mut self) {
         self.scene.invalidate();
         self.images.clear();
+        self.layered_sources.clear();
         self.videos.clear();
     }
     pub fn take_manim_updates(&mut self) -> Vec<shrimply_manim_state::Update> {
@@ -100,6 +107,7 @@ impl Compositor {
     pub fn render(&mut self, plan: FramePlan) -> Result<Presented, String> {
         let mut submissions = Vec::new();
         self.used_images.clear();
+        self.used_layered_sources.clear();
         self.used_videos.clear();
         let mut external_masks = Vec::new();
         let size = (plan.width, plan.height);
@@ -120,6 +128,8 @@ impl Compositor {
         let (rendered, composite) = frame.into_parts();
         submissions.extend([composite, presentation]);
         self.images.retain(|key, _| self.used_images.contains(key));
+        self.layered_sources
+            .retain(|key, _| self.used_layered_sources.contains(key));
         self.videos.retain(|key, _| self.used_videos.contains(key));
         Ok(Presented {
             display,
@@ -219,7 +229,13 @@ impl Compositor {
                     submissions.push(submission);
                     buffer
                 }
-                Source::LayeredImage(plan) => self.layered(plan, submissions)?,
+                Source::LayeredImage(plan) => layered_image::composite(
+                    &mut self.renderer,
+                    plan,
+                    &mut self.layered_sources,
+                    &mut self.used_layered_sources,
+                    submissions,
+                )?,
                 Source::Gaussian(_) => {
                     return Err("Gaussian rendering is unavailable on this Intel backend".into());
                 }
@@ -337,70 +353,5 @@ impl Compositor {
             result.push((state.sampled(), buffer));
         }
         Ok(result)
-    }
-
-    fn layered(
-        &mut self,
-        plan: &shrimply_visual_core::layered_image::Prepared,
-        submissions: &mut Vec<Submission>,
-    ) -> Result<Buffer, String> {
-        let width = plan.document.width;
-        let height = plan.document.height;
-        let count = (width as usize)
-            .checked_mul(height as usize)
-            .ok_or("Layered image dimensions overflow")?;
-        let output = self.renderer.upload(&vec![
-            0;
-            count
-                .checked_mul(4)
-                .ok_or("Layered image size overflow")?
-        ])?;
-        for layer in &plan.layers {
-            let source = self
-                .renderer
-                .upload(&plan.document.layers[layer.source].rgba)?;
-            let clipping = layer
-                .clipping_base
-                .map(|(index, opacity)| {
-                    self.renderer
-                        .upload(&plan.document.layers[index].rgba)
-                        .map(|buffer| (buffer, opacity))
-                })
-                .transpose()?;
-            let mut arguments = self.renderer.arguments("composite_layered_image_layer")?;
-            let pitch = u64::from(width) * 4;
-            arguments
-                .set("params.source", &source.address().to_ne_bytes())?
-                .set(
-                    "params.clipping_base",
-                    &clipping
-                        .as_ref()
-                        .map_or(0, |(buffer, _)| buffer.address())
-                        .to_ne_bytes(),
-                )?
-                .set("params.source_pitch", &pitch.to_ne_bytes())?
-                .set(
-                    "params.clipping_base_pitch",
-                    &clipping.as_ref().map_or(0, |_| pitch).to_ne_bytes(),
-                )?
-                .set("params.width", &width.to_ne_bytes())?
-                .set("params.opacity", &layer.opacity.to_ne_bytes())?
-                .set(
-                    "params.clipping_base_opacity",
-                    &clipping
-                        .as_ref()
-                        .map_or(1.0, |(_, opacity)| *opacity)
-                        .to_ne_bytes(),
-                )?
-                .set("params.noise_seed", &layer.noise_seed.to_ne_bytes())?
-                .set("params.mode", &[layer.mode as u8])?
-                .set("output", &output.address().to_ne_bytes())?
-                .set("output_count", &(count as u64).to_ne_bytes())?;
-            let mut resources = vec![source, output.clone()];
-            resources.extend(clipping.map(|(buffer, _)| buffer));
-            submissions
-                .push(unsafe { self.renderer.dispatch(arguments, resources, [count, 1, 1]) }?);
-        }
-        Ok(output)
     }
 }

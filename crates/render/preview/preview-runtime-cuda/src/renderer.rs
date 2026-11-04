@@ -186,7 +186,8 @@ impl VideoRenderer {
             self.texture_width = frame.width;
             self.texture_height = frame.height;
             self.last_frame_key = Some(frame.storage_key);
-            self.mipmapped_frame_key = None;
+            // Vulkan prepared every mip before releasing this immutable texture.
+            self.mipmapped_frame_key = self.last_frame_key;
             return Ok(());
         }
         self.ensure_texture(frame)?;

@@ -3,7 +3,7 @@ use ffmpeg_next::sys;
 use std::{
     ffi::CString,
     ptr,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
 /// VA-API and Vulkan share one DRM device. FFmpeg owns both native contexts.
@@ -14,10 +14,27 @@ pub struct Device {
     pub queue: vk::Queue,
     pub family: u32,
     pub memory: vk::PhysicalDeviceMemoryProperties,
-    pub submission: Mutex<()>,
+    submission: Mutex<()>,
     pub va: *mut sys::AVBufferRef,
     pub vulkan: *mut sys::AVBufferRef,
     pub(crate) _entry: ash::Entry,
+}
+
+pub(crate) struct QueueLock<'a> {
+    device: &'a Device,
+    _guard: MutexGuard<'a, ()>,
+}
+
+impl Drop for QueueLock<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            let context = (*self.device.vulkan).data.cast::<sys::AVHWDeviceContext>();
+            let native = &*(*context).hwctx.cast::<sys::AVVulkanDeviceContext>();
+            if let Some(unlock) = native.unlock_queue {
+                unlock(context, self.device.family, 0);
+            }
+        }
+    }
 }
 
 // Native handles are shared immutably; queue submissions are serialized.
@@ -118,8 +135,6 @@ impl Device {
                         == (vk::QueueFlags::COMPUTE | vk::QueueFlags::GRAPHICS).as_raw()
                 })
                 .ok_or("Intel Vulkan device has no graphics/compute queue")?;
-            // This context is used only for importing VA surfaces. All Vulkan
-            // commands are submitted by our render worker, never a codec/filter.
             let family = family.idx as u32;
             let queue = unsafe { raw.get_device_queue(family, 0) };
             let memory = unsafe { instance.get_physical_device_memory_properties(physical) };
@@ -150,16 +165,31 @@ impl Device {
         result
     }
 
+    pub(crate) fn queue_lock(&self) -> QueueLock<'_> {
+        let guard = self
+            .submission
+            .lock()
+            .expect("Vulkan submission mutex poisoned");
+        unsafe {
+            let context = (*self.vulkan).data.cast::<sys::AVHWDeviceContext>();
+            let native = &*(*context).hwctx.cast::<sys::AVVulkanDeviceContext>();
+            if let Some(lock) = native.lock_queue {
+                lock(context, self.family, 0);
+            }
+        }
+        QueueLock {
+            device: self,
+            _guard: guard,
+        }
+    }
+
     pub fn submit(
         &self,
         commands: &[vk::CommandBuffer],
         fence: vk::Fence,
         signals: &[vk::Semaphore],
     ) -> Result<(), String> {
-        let _guard = self
-            .submission
-            .lock()
-            .expect("Vulkan submission mutex poisoned");
+        let _guard = self.queue_lock();
         unsafe {
             self.raw.queue_submit(
                 self.queue,
