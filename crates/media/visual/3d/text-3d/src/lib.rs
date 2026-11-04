@@ -33,6 +33,7 @@ use shrimply_scene_3d::{MeshMaterial, ObjMesh, PbrMaterial, TextureAtlas, Transf
 use uuid::Uuid;
 
 mod math;
+use math::{contour_outward, signed_area};
 
 pub const MIN_SMOOTHNESS: f32 = 1.0;
 pub const MAX_SMOOTHNESS: f32 = 12.0;
@@ -43,7 +44,6 @@ pub const DEFAULT_ROUNDNESS: f32 = 0.03;
 
 const OUTLINE_TOLERANCE_EM: f32 = 0.01;
 const LAYOUT_EM_SIZE: f64 = 1024.0;
-const MAX_BEVEL_MITER: f32 = 2.0;
 
 static APPLICATION_FONT_REVISION: AtomicU64 = AtomicU64::new(0);
 static APPLICATION_FONT_FILES: OnceLock<RwLock<Vec<PathBuf>>> = OnceLock::new();
@@ -507,42 +507,6 @@ fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
         output.end(false);
     }
     Ok(output.build())
-}
-
-fn contour_outward(contour: &[Point]) -> Option<Vec<Vec2>> {
-    let area = signed_area(contour);
-    if area.abs() <= f32::EPSILON {
-        return None;
-    }
-    Some(
-        (0..contour.len())
-            .map(|index| {
-                let previous = contour[(index + contour.len() - 1) % contour.len()];
-                let current = contour[index];
-                let next = contour[(index + 1) % contour.len()];
-                let edge_normal = |from: Point, to: Point| {
-                    let edge = Vec2::new(to.x - from.x, to.y - from.y).normalize_or_zero();
-                    if area > 0.0 {
-                        Vec2::new(edge.y, -edge.x)
-                    } else {
-                        Vec2::new(-edge.y, edge.x)
-                    }
-                };
-                let a = edge_normal(previous, current);
-                let b = edge_normal(current, next);
-                let direction = (a + b).normalize_or_zero();
-                direction * (1.0 / direction.dot(a).abs().max(0.5)).min(MAX_BEVEL_MITER)
-            })
-            .collect(),
-    )
-}
-
-fn signed_area(contour: &[Point]) -> f32 {
-    contour
-        .iter()
-        .zip(contour.iter().cycle().skip(1))
-        .map(|(a, b)| a.x * b.y - b.x * a.y)
-        .sum()
 }
 
 fn safe_roundness(contours: &[Vec<Point>], requested: f32, scale: f32) -> f32 {

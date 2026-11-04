@@ -81,6 +81,42 @@ pub(crate) fn boundary_contours(
     Ok(contours)
 }
 
+const MAX_BEVEL_MITER: f32 = 2.0;
+
+pub(crate) fn contour_outward(contour: &[Point]) -> Option<Vec<Vec2>> {
+    let area = signed_area(contour);
+    if area.abs() <= f32::EPSILON {
+        return None;
+    }
+    Some(
+        (0..contour.len())
+            .map(|index| {
+                let previous = contour[(index + contour.len() - 1) % contour.len()];
+                let current = contour[index];
+                let next = contour[(index + 1) % contour.len()];
+                let edge_normal = |from: Point, to: Point| {
+                    let edge = Vec2::new(to.x - from.x, to.y - from.y).normalize_or_zero();
+                    // Extracted boundaries keep the filled region on the left.
+                    // The right normal points into empty space, including holes.
+                    Vec2::new(edge.y, -edge.x)
+                };
+                let a = edge_normal(previous, current);
+                let b = edge_normal(current, next);
+                let direction = (a + b).normalize_or_zero();
+                direction * (1.0 / direction.dot(a).abs().max(0.5)).min(MAX_BEVEL_MITER)
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn signed_area(contour: &[Point]) -> f32 {
+    contour
+        .iter()
+        .zip(contour.iter().cycle().skip(1))
+        .map(|(a, b)| a.x * b.y - b.x * a.y)
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,7 +140,7 @@ mod tests {
         assert_eq!(contours.len(), 2);
         for contour in contours {
             assert_eq!(contour.len(), 4);
-            assert_eq!(super::super::signed_area(&contour), 2.0);
+            assert_eq!(signed_area(&contour), 2.0);
         }
     }
 
@@ -117,5 +153,33 @@ mod tests {
         let contours = boundary_contours(&fill).expect("closed triangle");
         assert_eq!(contours.len(), 1);
         assert_eq!(contours[0].len(), 3);
+    }
+    #[test]
+    fn bevel_normals_point_away_from_the_filled_region_on_both_sides_of_a_hole() {
+        let fill = VertexBuffers {
+            vertices: vec![
+                point(-2.0, -2.0),
+                point(2.0, -2.0),
+                point(2.0, 2.0),
+                point(-2.0, 2.0),
+                point(-1.0, -1.0),
+                point(-1.0, 1.0),
+                point(1.0, 1.0),
+                point(1.0, -1.0),
+            ],
+            indices: vec![
+                0, 1, 7, 0, 7, 4, 1, 2, 6, 1, 6, 7, 2, 3, 5, 2, 5, 6, 3, 0, 4, 3, 4, 5,
+            ],
+        };
+        let contours = boundary_contours(&fill).expect("closed square ring");
+        assert_eq!(contours.len(), 2);
+        assert!(contours.iter().any(|contour| signed_area(contour) < 0.0));
+        for contour in contours {
+            let sign = signed_area(&contour).signum();
+            let normals = contour_outward(&contour).expect("nondegenerate contour");
+            for (point, normal) in contour.iter().zip(normals) {
+                assert!(normal.dot(Vec2::new(point.x, point.y) * sign) > 0.0);
+            }
+        }
     }
 }
