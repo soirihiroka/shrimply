@@ -116,7 +116,48 @@ fn main() -> Result<(), String> {
         })?;
         vector_ready.wait()?;
         println!("Skia Vulkan render completed after {:?}", started.elapsed());
-        for (source, buffer) in [("Slang", &frame.output), ("Skia", &vector)] {
+        // Exercise both argument blocks that exceed Vulkan's portable push limit.
+        let red = [1.0_f32, 0.0, 0.0, 1.0].map(f32::to_ne_bytes);
+        let count = SIZE as usize * SIZE as usize;
+        let background = renderer.allocate(count * size_of::<u32>())?;
+        let mut arguments = renderer.arguments("render_background")?;
+        arguments
+            .set("output", &background.address().to_ne_bytes())?
+            .set("uniforms.common.width", &SIZE.to_ne_bytes())?
+            .set("uniforms.common.height", &SIZE.to_ne_bytes())?
+            .set("uniforms.gradient.scale", &1.0_f32.to_ne_bytes())?
+            .set("uniforms.gradient.color_a", red.as_flattened())?
+            .set("uniforms.gradient.color_b", red.as_flattened())?;
+        let background_ready = renderer.dispatch(
+            arguments,
+            vec![background.clone()],
+            [SIZE as usize, SIZE as usize, 1],
+        )?;
+        background_ready.wait()?;
+        let convolution = renderer.allocate(count * size_of::<[f32; 4]>())?;
+        let mut arguments = renderer.arguments("convolution")?;
+        arguments
+            .set("params.width", &SIZE.to_ne_bytes())?
+            .set("params.height", &SIZE.to_ne_bytes())?
+            .set("params.bias", red.as_flattened())?
+            .set("params.result_scale", &1.0_f32.to_ne_bytes())?
+            .set("output", &convolution.address().to_ne_bytes())?
+            .set("output_count", &(count as u64).to_ne_bytes())?;
+        let convolution_ready =
+            renderer.dispatch(arguments, vec![convolution.clone()], [count, 1, 1])?;
+        convolution_ready.wait()?;
+        if renderer
+            .readback(&convolution)?
+            .chunks_exact(size_of::<[f32; 4]>())
+            .any(|pixel| pixel != red.as_flattened())
+        {
+            return Err("Intel convolution argument-buffer mismatch".into());
+        }
+        for (source, buffer) in [
+            ("Slang", &frame.output),
+            ("Skia", &vector),
+            ("Background", &background),
+        ] {
             let (texture, ready) = renderer.presentation_texture(buffer, SIZE, SIZE)?;
             ready.wait()?;
             // Import the same immutable image into two independent GL contexts.
