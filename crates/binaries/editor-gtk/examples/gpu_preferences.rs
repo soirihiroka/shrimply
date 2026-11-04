@@ -1,3 +1,5 @@
+#![cfg(target_os = "linux")]
+
 use adw::prelude::*;
 use shrimply_preferences_core as preferences;
 use shrimply_visual_cuda::gpu;
@@ -16,6 +18,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         gpu::preflight()?;
+        gtk::init()?;
+        let area = gtk::GLArea::builder()
+            .allowed_apis(gtk::gdk::GLAPI::GL)
+            .build();
+        area.set_required_version(3, 3);
+        let window = gtk::Window::builder().child(&area).build();
+        window.present();
+        let context = gtk::glib::MainContext::default();
+        while !area.is_realized() {
+            context.iteration(true);
+        }
+        area.make_current();
+        if let Some(error) = area.error() {
+            return Err(error.into());
+        }
+        let address = shrimply_components_gtk::gl_loader::proc_address("glGetString");
+        if address.is_null() {
+            return Err("GTK OpenGL context lacks glGetString".into());
+        }
+        let get_string: unsafe extern "system" fn(u32) -> *const std::ffi::c_char =
+            unsafe { std::mem::transmute(address) };
+        // GL_RENDERER, reported by the actual GTK GLArea context.
+        let renderer = unsafe { get_string(0x1f01) };
+        if renderer.is_null() {
+            return Err("GTK OpenGL context has no renderer".into());
+        }
+        println!("GTK renderer: {}", unsafe {
+            std::ffi::CStr::from_ptr(renderer).to_string_lossy()
+        });
+        window.close();
         println!("Restarted backend initialized: {selected:?}");
         return Ok(());
     }
