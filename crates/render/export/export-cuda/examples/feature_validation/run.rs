@@ -2,11 +2,12 @@ use shrimply_export_cuda::*;
 use shrimply_math_core::{Time, fraction_new};
 use shrimply_preview_render_vulkan::Compositor;
 use shrimply_project_document::project::*;
-use shrimply_property_model::timeline_value::{TimelineBool, TimelineValue};
+use shrimply_property_model::timeline_value::TimelineValue;
 use shrimply_visual_modifiers::{
     ModifierEffect, ModifierModel, RasterModifierEffect, VectorModifierEffect, scene_3d,
 };
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
     time::Instant,
@@ -56,15 +57,21 @@ pub fn run() -> Result<(), String> {
     let cases = cases(&output)?;
     let mut failed = Vec::new();
     let mut completed = 0;
-    let mut obj_control = None;
-    let needs_control = ENABLED_3D_CASES.iter().any(|name| name.contains(&filter));
+    let mut controls = HashMap::new();
+    let needs_control = ENABLED_3D_CASES
+        .iter()
+        .any(|&name| name != "obj-ground-reflections" && name.contains(&filter));
+    let needs_ground_control = "obj-ground-reflections".contains(&filter);
     for (name, project) in cases {
-        if !(name.contains(&filter) || name == "obj-control" && needs_control) {
+        if !(name.contains(&filter)
+            || name == "obj-control" && needs_control
+            || name == "obj-ground-control" && needs_ground_control)
+        {
             continue;
         }
         let started = Instant::now();
         println!("START {name}");
-        match validate(&name, project, &output, &mut obj_control) {
+        match validate(&name, project, &output, &mut controls) {
             Ok(()) => {
                 completed += 1;
                 println!("PASS {name} {:?}", started.elapsed());
@@ -255,14 +262,33 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         )),
     ];
     result.push(("source-obj".into(), project(obj.clone())));
-    let mut control = project(image.clone());
-    control.video_tracks.push(VideoTrack {
-        items: vec![obj.clone()],
-        ..Default::default()
-    });
-    result.push(("obj-control".into(), control));
+    let mut ground_obj = obj.clone();
+    ground_obj.modifiers.push(modifier(ModifierEffect::scene_3d(
+        scene_3d::Scene3dModifierEffect::Ground(Box::default()),
+    )));
+    let VideoItemContent::Obj(ground_scene) = &mut ground_obj.content else {
+        unreachable!();
+    };
+    ground_scene.camera.position = TimelineValue::new_const([0.0, 1.5, 4.0].into());
+    ground_scene.camera.rotation_degrees = TimelineValue::new_const([-20.0, 0.0, 0.0].into());
+    ground_scene.camera.vertical_fov_degrees = TimelineValue::new_const(60.0);
+    for (name, item) in [
+        ("obj-control", obj.clone()),
+        ("obj-ground-control", ground_obj.clone()),
+    ] {
+        let mut control = project(image.clone());
+        control.video_tracks.push(VideoTrack {
+            items: vec![item],
+            ..Default::default()
+        });
+        result.push((name.into(), control));
+    }
     for name in ENABLED_3D_CASES {
-        let mut item = obj.clone();
+        let mut item = if name == "obj-ground-reflections" {
+            ground_obj.clone()
+        } else {
+            obj.clone()
+        };
         let VideoItemContent::Obj(scene) = &mut item.content else {
             unreachable!();
         };
@@ -271,17 +297,30 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
                 scene.material.path_tracing = shrimply_scene_3d::PathTracingMode::Quality
             }
             "obj-refraction" => {
-                scene.material.transmission = TimelineValue::new_const(0.8);
-                scene.material.ior = TimelineValue::new_const(1.5);
-                scene.material.roughness = TimelineValue::new_const(0.1);
+                let ModifierEffect::Scene3d(effect) = &mut item.modifiers[0].effect else {
+                    unreachable!()
+                };
+                let scene_3d::Scene3dModifierEffect::Object(object) = effect.as_mut() else {
+                    unreachable!()
+                };
+                object.material.transmission = TimelineValue::new_const(0.8);
+                object.material.ior = TimelineValue::new_const(1.5);
+                object.material.roughness = TimelineValue::new_const(0.1);
             }
             "obj-depth-of-field" => {
                 scene.camera.focus_distance = TimelineValue::new_const(2.0);
                 scene.camera.f_stop = TimelineValue::new_const(1.4);
             }
             "obj-ground-reflections" => {
-                scene.shadow_receiver.enabled = TimelineValue::new_const(TimelineBool::True);
-                scene.shadow_receiver.reflection = TimelineValue::new_const(0.8);
+                let ModifierEffect::Scene3d(effect) =
+                    &mut item.modifiers.last_mut().unwrap().effect
+                else {
+                    unreachable!()
+                };
+                let scene_3d::Scene3dModifierEffect::Ground(ground) = effect.as_mut() else {
+                    unreachable!()
+                };
+                ground.reflection = TimelineValue::new_const(0.8);
             }
             _ => unreachable!(),
         }
@@ -520,7 +559,7 @@ fn validate(
     name: &str,
     project: Project,
     output: &Path,
-    obj_control: &mut Option<Vec<u8>>,
+    controls: &mut HashMap<String, Vec<u8>>,
 ) -> Result<(), String> {
     if name == "gpu-optical-flow" {
         return validate_optical_flow();
@@ -562,10 +601,17 @@ fn validate(
         save_png(&output.join(format!("{name}-{frame}.png")), &pixels)?;
         captures.push(pixels);
     }
-    if name == "obj-control" {
-        *obj_control = Some(captures[1].clone());
+    if matches!(name, "obj-control" | "obj-ground-control") {
+        controls.insert(name.to_owned(), captures[1].clone());
     } else if ENABLED_3D_CASES.contains(&name) {
-        let control = obj_control.as_ref().ok_or("Missing OBJ control capture")?;
+        let control_name = if name == "obj-ground-reflections" {
+            "obj-ground-control"
+        } else {
+            "obj-control"
+        };
+        let control = controls
+            .get(control_name)
+            .ok_or("Missing OBJ control capture")?;
         if &captures[1] == control {
             return Err("Enabled 3D feature did not change the control image".into());
         }
