@@ -2,7 +2,7 @@ use shrimply_export_cuda::*;
 use shrimply_math_core::{Time, fraction_new};
 use shrimply_preview_render_vulkan::Compositor;
 use shrimply_project_document::project::*;
-use shrimply_property_model::timeline_value::TimelineValue;
+use shrimply_property_model::timeline_value::{TimelineBool, TimelineValue};
 use shrimply_visual_modifiers::{
     ModifierEffect, ModifierModel, RasterModifierEffect, VectorModifierEffect, scene_3d,
 };
@@ -277,8 +277,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
                 scene.camera.f_stop = TimelineValue::new_const(1.4);
             }
             "obj-ground-reflections" => {
-                scene.shadow_receiver.enabled =
-                    TimelineValue::new_const(shrimply_property_model::TimelineBool::True);
+                scene.shadow_receiver.enabled = TimelineValue::new_const(TimelineBool::True);
                 scene.shadow_receiver.reflection = TimelineValue::new_const(0.8);
             }
             _ => unreachable!(),
