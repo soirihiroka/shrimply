@@ -581,3 +581,7 @@ intel-feature-validation: native-deps cuda-artifacts
 .PHONY: oidn-gpu-validation
 oidn-gpu-validation:
 	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-denoise-oidn --example cuda
+
+.PHONY: text-3d-geometry-test
+text-3d-geometry-test:
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-text-3d --lib math::tests

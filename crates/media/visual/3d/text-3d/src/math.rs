@@ -80,3 +80,42 @@ pub(crate) fn boundary_contours(
     }
     Ok(contours)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lyon_tessellation::math::point;
+
+    #[test]
+    fn touching_regions_have_separate_closed_boundaries() {
+        let fill = VertexBuffers {
+            vertices: vec![
+                point(0.0, 0.0),
+                point(1.0, 0.0),
+                point(1.0, 1.0),
+                point(0.0, 1.0),
+                point(2.0, 1.0),
+                point(2.0, 2.0),
+                point(1.0, 2.0),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3, 2, 4, 5, 2, 5, 6],
+        };
+        let contours = boundary_contours(&fill).expect("closed touching regions");
+        assert_eq!(contours.len(), 2);
+        for contour in contours {
+            assert_eq!(contour.len(), 4);
+            assert_eq!(super::super::signed_area(&contour), 2.0);
+        }
+    }
+
+    #[test]
+    fn degenerate_faces_do_not_change_the_solid_boundary() {
+        let fill = VertexBuffers {
+            vertices: vec![point(0.0, 0.0), point(1.0, 0.0), point(0.0, 1.0)],
+            indices: vec![0, 1, 2, 0, 0, 1],
+        };
+        let contours = boundary_contours(&fill).expect("closed triangle");
+        assert_eq!(contours.len(), 1);
+        assert_eq!(contours[0].len(), 3);
+    }
+}
