@@ -7,6 +7,10 @@ import nis_coefficients;
 #if defined(SHRIMPLY_VULKAN)
 // Remove unused filter implementations before the driver allocates registers.
 [[vk::constant_id(0)]] const uint SAMPLE_METHODS = 0xffffffffu;
+// Upper bits describe optional compositor paths; lower bits select samplers.
+static const uint ADVANCED_BLEND = 1u << 31;
+static const uint MOTION_SAMPLES = 1u << 30;
+static const uint EXTENDED_BORDER = 1u << 29;
 #define SAMPLE_ENABLED(method) ((SAMPLE_METHODS & (1u << uint(VideoSampleMethod::method))) != 0u)
 #else
 #define SAMPLE_ENABLED(method) true
@@ -706,6 +710,10 @@ Color sample_rgba_plain(Nv12LayerParams p, float source_x, float source_y) {
 uint layer_sample_points(Nv12LayerParams p, float x, float y,
                          out float3 points[5]) {
   points[0] = float3(x, y, 1.0f);
+#if defined(SHRIMPLY_VULKAN)
+  if ((SAMPLE_METHODS & EXTENDED_BORDER) == 0u)
+    return 1u;
+#endif
   float distance_value = outside_distance(p, x, y);
   if (distance_value <= 0.0f)
     return 1u;
@@ -853,6 +861,12 @@ uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
   for (uint64_t index = 0; index < layer_count; ++index) {
     Nv12LayerParams p = layers[index];
     bool motion = p.motion_sample_count != 0u;
+    LayerBlendMode blend = p.blend_mode;
+#if defined(SHRIMPLY_VULKAN)
+    motion = motion && (SAMPLE_METHODS & MOTION_SAMPLES) != 0u;
+    if ((SAMPLE_METHODS & ADVANCED_BLEND) == 0u)
+      blend = LayerBlendMode::Normal;
+#endif
     uint start = p.motion_transform_offset,
          end = min(start + p.motion_transform_count, uint(transform_count));
     if (motion && end - start != p.motion_transform_count)
@@ -878,14 +892,14 @@ uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
       if (sampled)
         pixel =
             color_to_rgba(blend_over(single, color_from_rgba(pixel),
-                                     p.blend_mode, single.a * p.opacity, true));
+                                     blend, single.a * p.opacity, true));
       continue;
     }
     if (sum.w <= 0.0f)
       continue;
     Color source = color(sum.x / sum.w, sum.y / sum.w, sum.z / sum.w, sum.w);
     pixel = color_to_rgba(
-        blend_over(source, color_from_rgba(pixel), p.blend_mode,
+        blend_over(source, color_from_rgba(pixel), blend,
                    sum.w / float(p.motion_sample_count) * p.opacity, true));
   }
   return pixel;

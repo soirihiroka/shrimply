@@ -81,7 +81,11 @@ fn main() -> Result<(), String> {
         path,
         overwrite: false,
         video_codec,
-        container: ExportContainer::Mp4,
+        container: if video_codec == ExportVideoCodec::Gif {
+            ExportContainer::Gif
+        } else {
+            ExportContainer::Mp4
+        },
         fps: project.fps,
         background_alpha: u8::MAX,
         rate_control: ExportRateControl::ConstantQp,

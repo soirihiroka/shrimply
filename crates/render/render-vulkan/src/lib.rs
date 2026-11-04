@@ -21,6 +21,10 @@ use std::{
 
 // Vulkan guarantees at least 128 bytes. Larger argument blocks use a buffer.
 const PUSH_CONSTANT_BYTES: u32 = 128;
+// Match the optional paths in preview.slang's sampler specialization mask.
+const ADVANCED_BLEND: u32 = 1 << 31;
+const MOTION_SAMPLES: u32 = 1 << 30;
+const EXTENDED_BORDER: u32 = 1 << 29;
 
 struct Field {
     name: &'static str,
@@ -510,7 +514,29 @@ impl Renderer {
         };
         let mut arguments = self.arguments("composite_nv12_layers")?;
         arguments.sample_methods = layers.iter().fold(0, |mask, (layer, _)| {
+            use shrimply_render_core::{LayerBlendMode, TextureAddressMode};
             mask | (1 << layer.sample_method as u32)
+                | if matches!(
+                    layer.blend_mode,
+                    LayerBlendMode::Normal | LayerBlendMode::PassThrough
+                ) {
+                    0
+                } else {
+                    ADVANCED_BLEND
+                }
+                | if layer.motion_sample_count == 0 {
+                    0
+                } else {
+                    MOTION_SAMPLES
+                }
+                | if matches!(
+                    layer.address_mode,
+                    TextureAddressMode::BlurredMirror | TextureAddressMode::Stochastic
+                ) {
+                    EXTENDED_BORDER
+                } else {
+                    0
+                }
         });
         arguments
             .set("layers", &layers_address.to_ne_bytes())?

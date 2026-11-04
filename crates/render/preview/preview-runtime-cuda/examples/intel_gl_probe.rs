@@ -116,6 +116,73 @@ fn main() -> Result<(), String> {
         })?;
         vector_ready.wait()?;
         println!("Skia Vulkan render completed after {:?}", started.elapsed());
+        use shrimply_render_core::{
+            LayerBlendMode, LayerKind, Nv12LayerParams, TextureAddressMode, VideoSampleMethod,
+        };
+        let parameters = Nv12LayerParams {
+            crop: [0.0; 4],
+            padding: [0.0; 4],
+            y_plane: std::ptr::null(),
+            uv_plane: std::ptr::null(),
+            rgba: std::ptr::null(),
+            y_pitch: 0,
+            uv_pitch: 0,
+            rgba_pitch: SIZE as usize * size_of::<u32>(),
+            source_width: SIZE,
+            source_height: SIZE,
+            canvas_width: SIZE,
+            inverse: shrimply_render_core::math::Mat3::IDENTITY,
+            motion_transform_offset: 0,
+            motion_transform_count: 0,
+            motion_sample_count: 0,
+            opacity: 1.0,
+            blend_mode: LayerBlendMode::Normal,
+            sample_method: VideoSampleMethod::Bilinear,
+            address_mode: TextureAddressMode::Transparent,
+            kind: LayerKind::Rgba,
+            _padding_0: [0; 4],
+        };
+        for case in 0..5 {
+            let mut parameters = parameters;
+            let mut transforms = Vec::new();
+            if case == 1 {
+                parameters.blend_mode = LayerBlendMode::Multiply;
+            } else if case == 2 {
+                parameters.motion_sample_count = 2;
+                parameters.motion_transform_count = 2;
+                transforms = vec![parameters.inverse; 2];
+            } else if case >= 3 {
+                parameters.padding = [SIZE as f32; 4];
+                parameters.inverse.z_axis.x = -2.0;
+                parameters.address_mode = if case == 3 {
+                    TextureAddressMode::BlurredMirror
+                } else {
+                    TextureAddressMode::Stochastic
+                };
+            }
+            let composited = renderer.composite_buffers_with_transforms(
+                &[(parameters, vector.clone())],
+                SIZE,
+                SIZE,
+                0xffff_0000,
+                &transforms,
+            )?;
+            let expected = if case == 1 {
+                [0, 0, 0, 255]
+            } else {
+                [255, 0, 0, 255]
+            };
+            if renderer
+                .readback(&composited.output)?
+                .chunks_exact(4)
+                .any(|pixel| pixel != expected)
+            {
+                return Err(format!(
+                    "Intel compositor specialization mismatch in case {case}"
+                ));
+            }
+        }
+        println!("Intel sampler, blend, motion, and border specializations passed");
         // Exercise both argument blocks that exceed Vulkan's portable push limit.
         let red = [1.0_f32, 0.0, 0.0, 1.0].map(f32::to_ne_bytes);
         let count = SIZE as usize * SIZE as usize;
