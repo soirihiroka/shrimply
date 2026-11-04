@@ -1011,18 +1011,20 @@ impl CudaVideoCompositor {
 
     pub(crate) fn upload_frame(&mut self, frame: &VisualFrame) -> Result<VisualFrame, String> {
         self.release_after_reported_gpu_oom()?;
-        let error = match frame.copy_to(Device::Cuda(0)) {
+        let error = match frame.copy_to(Device::Cuda(self.context.ordinal())) {
             Ok(frame) => return Ok(frame),
             Err(error) if is_gpu_oom(&error) => error,
             Err(error) => return Err(error),
         };
         self.observed_gpu_oom_generation = gpu_oom_generation();
         self.relieve_gpu_pressure(frame.bytes(), "persistent visual upload")?;
-        frame.copy_to(Device::Cuda(0)).map_err(|retry| {
-            format!(
-                "upload visual frame after GPU pressure relief: {retry}; initial error: {error}"
-            )
-        })
+        frame
+            .copy_to(Device::Cuda(self.context.ordinal()))
+            .map_err(|retry| {
+                format!(
+                    "upload visual frame after GPU pressure relief: {retry}; initial error: {error}"
+                )
+            })
     }
 
     pub fn upload_rgba_layer(

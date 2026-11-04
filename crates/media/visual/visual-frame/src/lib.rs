@@ -80,12 +80,7 @@ struct CpuPlane {
 }
 
 impl GpuStorage {
-    fn new(
-        context: Arc<CudaContext>,
-        device_index: usize,
-        planes: Vec<GpuPlane>,
-        owner: GpuOwner,
-    ) -> Self {
+    fn new(context: Arc<CudaContext>, planes: Vec<GpuPlane>, owner: GpuOwner) -> Self {
         let allocation_bytes = planes
             .iter()
             .try_fold(0_u64, |bytes, plane| {
@@ -107,8 +102,8 @@ impl GpuStorage {
             })
             .expect("GPU visual frame counter overflowed");
         Self {
+            device_index: context.ordinal(),
             context,
-            device_index,
             planes,
             allocation_bytes,
             _owner: owner,
@@ -149,14 +144,7 @@ impl VisualFrame {
         width: u32,
         height: u32,
     ) -> Result<Self, String> {
-        Self::allocate_on(
-            context,
-            0,
-            format,
-            width,
-            height,
-            AllocationClass::Transient,
-        )
+        Self::allocate_on(context, format, width, height, AllocationClass::Transient)
     }
 
     pub fn allocate_persistent(
@@ -168,7 +156,6 @@ impl VisualFrame {
     ) -> Result<Self, String> {
         Self::allocate_on_with_description(
             context,
-            0,
             format,
             width,
             height,
@@ -186,7 +173,6 @@ impl VisualFrame {
     ) -> Result<Self, String> {
         Self::allocate_on_with_description(
             context,
-            0,
             format,
             width,
             height,
@@ -197,7 +183,6 @@ impl VisualFrame {
 
     fn allocate_on(
         context: Arc<CudaContext>,
-        device_index: usize,
         format: VisualFormat,
         width: u32,
         height: u32,
@@ -205,7 +190,6 @@ impl VisualFrame {
     ) -> Result<Self, String> {
         Self::allocate_on_with_description(
             context,
-            device_index,
             format,
             width,
             height,
@@ -216,7 +200,6 @@ impl VisualFrame {
 
     fn allocate_on_with_description(
         context: Arc<CudaContext>,
-        device_index: usize,
         format: VisualFormat,
         width: u32,
         height: u32,
@@ -266,7 +249,6 @@ impl VisualFrame {
         Ok(Self {
             inner: Arc::new(FrameStorage::Gpu(GpuStorage::new(
                 context,
-                device_index,
                 planes,
                 GpuOwner::Oxide { buffers },
             ))),
@@ -390,7 +372,6 @@ impl VisualFrame {
         Ok(Self {
             inner: Arc::new(FrameStorage::Gpu(GpuStorage::new(
                 context,
-                0,
                 planes
                     .iter()
                     .zip(memory_kinds)
@@ -667,7 +648,6 @@ impl VisualFrame {
             .map_err(|error| format!("create CUDA context for visual frame upload: {error}"))?;
         let frame = Self::allocate_on(
             context.clone(),
-            device_ordinal,
             self.format,
             self.width,
             self.height,
