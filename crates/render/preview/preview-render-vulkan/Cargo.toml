@@ -13,5 +13,6 @@ shrimply-math-geometry.workspace = true
 shrimply-math-media.workspace = true
 shrimply-project-document.workspace = true
 shrimply-manim-state.workspace = true
+shrimply-manim-wgpu = { workspace = true, features = ["vulkan"] }
 skia-safe.workspace = true
 uuid.workspace = true

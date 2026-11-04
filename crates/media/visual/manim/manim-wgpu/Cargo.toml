@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 build = false
 
+[features]
+vulkan = ["dep:shrimply-gpu-vulkan", "wgpu/vulkan"]
+
 [dependencies]
+shrimply-gpu-vulkan = { workspace = true, optional = true }
 hashbrown.workspace = true
 pollster = "1"
 shrimply-asset = { workspace = true }

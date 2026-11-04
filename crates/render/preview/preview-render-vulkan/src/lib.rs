@@ -7,6 +7,7 @@ mod alpha_mask;
 mod effects;
 #[path = "../../preview-render-core/src/gpu_layered_image.rs"]
 mod layered_image;
+mod manim;
 
 use gpu::{Buffer, Renderer, Submission, VideoFrame};
 use shrimply_math_core::Time;
@@ -71,6 +72,11 @@ pub struct Compositor {
     used_images: HashSet<u32>,
     used_videos: HashSet<usize>,
     sam2_proxy: Option<Buffer>,
+    manim: Option<shrimply_manim_wgpu::vulkan::Renderer>,
+    manim_slots: HashMap<uuid::Uuid, manim::Slot>,
+    used_manim: HashSet<uuid::Uuid>,
+    next_manim_slot: usize,
+    manim_updates: Vec<shrimply_manim_state::Update>,
 }
 
 impl Compositor {
@@ -86,6 +92,11 @@ impl Compositor {
             used_images: HashSet::new(),
             used_videos: HashSet::new(),
             sam2_proxy: None,
+            manim: None,
+            manim_slots: HashMap::new(),
+            used_manim: HashSet::new(),
+            next_manim_slot: 0,
+            manim_updates: Vec::new(),
         })
     }
     pub fn set_decoder_limit(&mut self, maximum: usize) {
@@ -111,9 +122,16 @@ impl Compositor {
         self.images.clear();
         self.layered_sources.clear();
         self.videos.clear();
+        self.manim_slots.clear();
+        if let Some(manim) = &mut self.manim {
+            manim.release_render_surfaces();
+            manim.release_gpu_animation_resources();
+        }
     }
     pub fn take_manim_updates(&mut self) -> Vec<shrimply_manim_state::Update> {
-        self.scene.take_manim_updates()
+        let mut updates = self.scene.take_manim_updates();
+        updates.append(&mut self.manim_updates);
+        updates
     }
     pub fn needs_update(&self) -> bool {
         self.scene.needs_update()
@@ -182,6 +200,7 @@ impl Compositor {
         self.used_images.clear();
         self.used_layered_sources.clear();
         self.used_videos.clear();
+        self.used_manim.clear();
         let mut external_masks = Vec::new();
         let size = (plan.width, plan.height);
         for external in &plan.external_layers {
@@ -203,6 +222,15 @@ impl Compositor {
         self.layered_sources
             .retain(|key, _| self.used_layered_sources.contains(key));
         self.videos.retain(|key, _| self.used_videos.contains(key));
+        self.manim_slots.retain(|key, slot| {
+            if self.used_manim.contains(key) {
+                return true;
+            }
+            if let Some(manim) = &mut self.manim {
+                manim.remove_target(slot.id);
+            }
+            false
+        });
         Ok(Rendered {
             buffer,
             width: size.0,
@@ -307,15 +335,15 @@ impl Compositor {
                     &mut self.used_layered_sources,
                     submissions,
                 )?,
-                Source::Gaussian(_) => {
-                    return Err("Gaussian rendering is unavailable on this Intel backend".into());
-                }
+                Source::Gaussian(plan) => self.renderer.gaussian(
+                    &plan.session,
+                    (plan.width, plan.height),
+                    &plan.params,
+                )?,
                 Source::Obj(_) => {
                     return Err("OBJ rendering requires a ray-tracing-capable backend".into());
                 }
-                Source::Manim(_) => {
-                    return Err("Manim rendering is unavailable on this Intel backend".into());
-                }
+                Source::Manim(frame) => self.manim_frame(frame)?,
                 Source::RasterMorph(_) => {
                     return Err(
                         "Raster morph estimation is unavailable on this Intel backend".into(),

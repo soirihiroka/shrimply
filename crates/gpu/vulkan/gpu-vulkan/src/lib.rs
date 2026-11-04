@@ -17,6 +17,7 @@ pub struct ExportedFrame {
     #[cfg(windows)]
     pub semaphore_handle: OwnedHandle,
     pub allocation_size: u64,
+    pub memory_type_index: u32,
     pub width: u32,
     pub height: u32,
 }
@@ -29,12 +30,15 @@ pub struct ExternalImage {
     external_layout_bind_group: wgpu::BindGroup,
     export_memory: vk::DeviceMemory,
     export_allocation_size: u64,
+    memory_type_index: u32,
+    external_owner: Cell<bool>,
+    queue_family: u32,
     semaphore: vk::Semaphore,
     next_semaphore_value: Cell<u64>,
     raw_device: ash_wgpu::Device,
 }
-pub fn device_for_cuda(
-    cuda_device_uuid: [u8; vk::UUID_SIZE],
+pub fn device_for_uuid(
+    device_uuid: [u8; vk::UUID_SIZE],
 ) -> Result<(wgpu::Device, wgpu::Queue), String> {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = wgpu::Backends::VULKAN;
@@ -55,10 +59,10 @@ pub fn device_for_cuda(
                             adapter.raw_physical_device(),
                             &mut properties,
                         );
-                    identity.device_uuid == cuda_device_uuid
+                    identity.device_uuid == device_uuid
                 })
         })
-        .ok_or("Vulkan cannot find the Vulkan device used by the CUDA context")?;
+        .ok_or("Vulkan cannot find the requested physical device")?;
     let info = adapter.get_info();
     let descriptor = wgpu::DeviceDescriptor {
         label: Some("Shrimply Vulkan device"),
@@ -95,7 +99,7 @@ pub fn device_for_cuda(
 impl ExternalImage {
     pub fn new(device: &wgpu::Device, size: [u32; 2]) -> Result<Self, String> {
         let [width, height] = size;
-        let (output, export_memory, export_allocation_size) =
+        let (output, export_memory, export_allocation_size, memory_type_index) =
             make_export_texture(device, width, height)?;
         let output_view = output.create_view(&Default::default());
         let external_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -141,6 +145,9 @@ impl ExternalImage {
                 cache: None,
             });
         let (semaphore, raw_device) = make_export_semaphore(device)?;
+        let queue_family = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }
+            .ok_or("External output device is not Vulkan")?
+            .queue_family_index();
         Ok(Self {
             width,
             height,
@@ -150,6 +157,9 @@ impl ExternalImage {
             external_layout_bind_group,
             export_memory,
             export_allocation_size,
+            memory_type_index,
+            external_owner: Cell::new(false),
+            queue_family,
             semaphore,
             next_semaphore_value: Cell::new(0),
             raw_device,
@@ -182,6 +192,76 @@ impl ExternalImage {
         drop(hal_queue);
 
         Ok(semaphore_value)
+    }
+
+    /// The consumer must finish reading and release ownership before the next acquire.
+    pub fn acquire_external(&self, encoder: &mut wgpu::CommandEncoder) -> Result<(), String> {
+        if self.external_owner.replace(false) {
+            self.transfer_ownership(encoder, true)?;
+        }
+        Ok(())
+    }
+
+    pub fn release_external(&self, encoder: &mut wgpu::CommandEncoder) -> Result<(), String> {
+        self.transfer_ownership(encoder, false)?;
+        self.external_owner.set(true);
+        Ok(())
+    }
+
+    fn transfer_ownership(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        acquire: bool,
+    ) -> Result<(), String> {
+        let texture = unsafe { self.output.as_hal::<wgpu::hal::api::Vulkan>() }
+            .ok_or("External output is not a Vulkan texture")?;
+        let image = unsafe { texture.raw_handle() };
+        // Vulkan has the same queue family for graphics, compute, and transfer in WGPU.
+        // The renderer stores the device family when the target is created.
+        let family = self.queue_family;
+        let (source, destination, source_access, destination_access) = if acquire {
+            (
+                vk::QUEUE_FAMILY_EXTERNAL,
+                family,
+                vk::AccessFlags::empty(),
+                vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+            )
+        } else {
+            (
+                family,
+                vk::QUEUE_FAMILY_EXTERNAL,
+                vk::AccessFlags::MEMORY_WRITE,
+                vk::AccessFlags::empty(),
+            )
+        };
+        unsafe {
+            encoder.as_hal_mut::<wgpu::hal::api::Vulkan, _, _>(|encoder| {
+                let encoder = encoder.ok_or("External output encoder is not Vulkan")?;
+                self.raw_device.cmd_pipeline_barrier(
+                    encoder.raw_handle(),
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[vk::ImageMemoryBarrier::default()
+                        .old_layout(vk::ImageLayout::GENERAL)
+                        .new_layout(vk::ImageLayout::GENERAL)
+                        .src_access_mask(source_access)
+                        .dst_access_mask(destination_access)
+                        .src_queue_family_index(source)
+                        .dst_queue_family_index(destination)
+                        .image(image)
+                        .subresource_range(
+                            vk::ImageSubresourceRange::default()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .level_count(1)
+                                .layer_count(1),
+                        )],
+                );
+                Ok(())
+            })
+        }
     }
 
     pub fn export(&self, device: &wgpu::Device) -> Result<ExportedFrame, String> {
@@ -246,6 +326,7 @@ impl ExternalImage {
             #[cfg(windows)]
             semaphore_handle: semaphore,
             allocation_size: self.export_allocation_size,
+            memory_type_index: self.memory_type_index,
             width: self.width,
             height: self.height,
         })
@@ -264,7 +345,7 @@ fn make_export_texture(
     device: &wgpu::Device,
     width: u32,
     height: u32,
-) -> Result<(wgpu::Texture, vk::DeviceMemory, u64), String> {
+) -> Result<(wgpu::Texture, vk::DeviceMemory, u64, u32), String> {
     let hal = unsafe { device.as_hal::<wgpu::hal::api::Vulkan>() }
         .ok_or_else(|| "Vulkan device is not Vulkan".to_string())?;
     if !hal
@@ -387,7 +468,7 @@ fn make_export_texture(
             wgpu::TextureUses::UNINITIALIZED,
         )
     };
-    Ok((texture, memory, requirements.size))
+    Ok((texture, memory, requirements.size, memory_type))
 }
 
 fn make_export_semaphore(

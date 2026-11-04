@@ -4,8 +4,11 @@ mod buffer;
 mod texture;
 pub use texture::Texture;
 pub mod device;
+mod external;
 mod vaapi;
 mod vector;
+pub use external::ExternalImage;
+mod gaussian;
 pub use buffer::Buffer;
 pub use vaapi::{VideoFrame, decoder, video_color_space};
 
@@ -171,6 +174,7 @@ impl Frame {
 
 pub struct Renderer {
     skia: Option<skia_safe::gpu::DirectContext>,
+    gaussian: Option<shrimply_3dgs_vulkan::Renderer>,
     device: Arc<Device>,
     pool: Rc<Pool>,
     pipeline_layout: vk::PipelineLayout,
@@ -208,6 +212,7 @@ impl Renderer {
         .map_err(|e| format!("create Vulkan pipeline layout: {e:?}"))?;
         Ok(Self {
             skia: None,
+            gaussian: None,
             pool,
             device,
             pipeline_layout,
@@ -371,6 +376,14 @@ impl Renderer {
         command: vk::CommandBuffer,
         resources: Vec<Buffer>,
     ) -> Result<Submission, String> {
+        self.submit_waiting(command, resources, &[])
+    }
+    fn submit_waiting(
+        &self,
+        command: vk::CommandBuffer,
+        resources: Vec<Buffer>,
+        waits: &[(vk::Semaphore, u64)],
+    ) -> Result<Submission, String> {
         let mut submission = Submission {
             pool: self.pool.clone(),
             command,
@@ -391,7 +404,26 @@ impl Renderer {
         }
         .map_err(|e| format!("create Vulkan fence: {e:?}"))?;
         submission.fence = fence;
-        self.device.submit(&[command], fence, &[])?;
+        let semaphores = waits.iter().map(|wait| wait.0).collect::<Vec<_>>();
+        let values = waits.iter().map(|wait| wait.1).collect::<Vec<_>>();
+        let stages = vec![vk::PipelineStageFlags::ALL_COMMANDS; waits.len()];
+        let mut timeline =
+            vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values);
+        let commands = [command];
+        let info = vk::SubmitInfo::default()
+            .command_buffers(&commands)
+            .wait_semaphores(&semaphores)
+            .wait_dst_stage_mask(&stages)
+            .push_next(&mut timeline);
+        {
+            let _guard = self.device.queue_lock();
+            unsafe {
+                self.device
+                    .raw
+                    .queue_submit(self.device.queue, &[info], fence)
+            }
+            .map_err(|error| format!("Submit Vulkan commands: {error:?}"))?;
+        }
         submission.submitted = true;
         Ok(submission)
     }
