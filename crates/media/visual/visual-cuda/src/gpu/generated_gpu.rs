@@ -59,6 +59,7 @@ pub struct GeneratedGpuRenderer {
     mesh_flow: Option<mesh_flow::Renderer>,
     optix_denoiser: Option<shrimply_denoise_optix::OptixDenoiser>,
     oidn_denoiser: Option<OidnDenoiser>,
+    image_copy: Option<(VulkanCommandBuffer, VulkanFence)>,
     // Drop after every renderer that owns command buffers allocated from it.
     command_pool: VulkanCommandPool,
     // Drop last so Skia and all renderer-owned Vulkan handles are gone before the device.
@@ -194,6 +195,7 @@ impl GeneratedGpuRenderer {
             queue_family_index,
             queue,
             command_pool,
+            image_copy: None,
             external_memory,
             external_semaphore,
             skia,
@@ -595,6 +597,7 @@ impl GeneratedGpuRenderer {
         let background_frame = self.background_frame.take().map(|(_, frame)| frame.bytes());
         let mut released = background_frame.is_some();
         released |= self.vector_image.take().is_some();
+        released |= self.image_copy.take().is_some();
         let interop_frames = self
             .interop_frames
             .lock()
@@ -692,7 +695,7 @@ impl GeneratedGpuRenderer {
     }
 
     fn copy_image_to_buffer(
-        &self,
+        &mut self,
         width: u32,
         height: u32,
         image: vk::Image,
@@ -703,25 +706,59 @@ impl GeneratedGpuRenderer {
     }
 
     fn copy_images_to_buffer(
-        &self,
+        &mut self,
         width: u32,
         height: u32,
         images: &[(vk::Image, u64)],
         buffer: vk::Buffer,
         source: ImageCopySource,
     ) -> Result<(), String> {
-        let allocate_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(self.command_pool.handle)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-        let command_buffer = unsafe { self.vulkan.device.allocate_command_buffers(&allocate_info) }
-            .map_err(|error| format!("allocate Vulkan generated copy command buffer: {error:?}"))?
-            [0];
-        let command_buffer = VulkanCommandBuffer {
-            vulkan: self.vulkan.clone(),
-            pool: self.command_pool.handle,
-            handle: command_buffer,
+        let (command_buffer, fence) = {
+            let _measurement = shrimply_profiling::measure("Generated copy / Acquire commands");
+            match self.image_copy.take() {
+                Some((command, fence)) => {
+                    // Every copy finishes below before these resources are cached.
+                    unsafe {
+                        self.vulkan.device.reset_command_buffer(
+                            command.handle,
+                            vk::CommandBufferResetFlags::empty(),
+                        )
+                    }
+                    .map_err(|error| format!("reset generated copy command buffer: {error:?}"))?;
+                    unsafe { self.vulkan.device.reset_fences(&[fence.handle]) }
+                        .map_err(|error| format!("reset generated copy fence: {error:?}"))?;
+                    (command, fence)
+                }
+                None => {
+                    let allocate_info = vk::CommandBufferAllocateInfo::default()
+                        .command_pool(self.command_pool.handle)
+                        .level(vk::CommandBufferLevel::PRIMARY)
+                        .command_buffer_count(1);
+                    let handle =
+                        unsafe { self.vulkan.device.allocate_command_buffers(&allocate_info) }
+                            .map_err(|error| {
+                                format!("allocate Vulkan generated copy command buffer: {error:?}")
+                            })?[0];
+                    let command = VulkanCommandBuffer {
+                        vulkan: self.vulkan.clone(),
+                        pool: self.command_pool.handle,
+                        handle,
+                    };
+                    let handle = unsafe {
+                        self.vulkan
+                            .device
+                            .create_fence(&vk::FenceCreateInfo::default(), None)
+                    }
+                    .map_err(|error| format!("create Vulkan generated copy fence: {error:?}"))?;
+                    let fence = VulkanFence {
+                        vulkan: self.vulkan.clone(),
+                        handle,
+                    };
+                    (command, fence)
+                }
+            }
         };
+        let recording = shrimply_profiling::measure("Generated copy / Record commands");
         let begin = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe {
@@ -807,19 +844,16 @@ impl GeneratedGpuRenderer {
             .map_err(|error| format!("end Vulkan generated copy command buffer: {error:?}"))?;
         let submit =
             vk::SubmitInfo::default().command_buffers(std::slice::from_ref(&command_buffer.handle));
-        let fence_info = vk::FenceCreateInfo::default();
-        let fence = unsafe { self.vulkan.device.create_fence(&fence_info, None) }
-            .map_err(|error| format!("create Vulkan generated copy fence: {error:?}"))?;
-        let fence = VulkanFence {
-            vulkan: self.vulkan.clone(),
-            handle: fence,
-        };
+        drop(recording);
+        let submitting = shrimply_profiling::measure("Generated copy / Submit");
         unsafe {
             self.vulkan
                 .device
                 .queue_submit(self.queue, &[submit], fence.handle)
         }
         .map_err(|error| format!("submit Vulkan generated image copy: {error:?}"))?;
+        drop(submitting);
+        let waiting = shrimply_profiling::measure("Generated copy / Wait");
         if let Err(error) = unsafe {
             self.vulkan
                 .device
@@ -828,6 +862,8 @@ impl GeneratedGpuRenderer {
             wait_for_vulkan_idle_or_device_lost(&self.vulkan.device);
             return Err(format!("wait for Vulkan generated image copy: {error:?}"));
         }
+        drop(waiting);
+        self.image_copy = Some((command_buffer, fence));
         Ok(())
     }
 
