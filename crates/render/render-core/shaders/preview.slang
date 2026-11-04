@@ -688,6 +688,14 @@ Color sample_rgba_plain(Nv12LayerParams p, float source_x, float source_y) {
   float x = source_x - 0.5f, y = source_y - 0.5f;
   if (p.sample_method == VideoSampleMethod::Nearest)
     return load_rgba(p, int(floor_f32(x + 0.5f)), int(floor_f32(y + 0.5f)));
+#if defined(SHRIMPLY_VULKAN)
+  // Bilinear and cardinal bicubic weights select exactly one texel at integer
+  // coordinates. Preserve those pixels without evaluating zero-weight taps.
+  if ((p.sample_method == VideoSampleMethod::Bilinear ||
+       p.sample_method == VideoSampleMethod::Bicubic) &&
+      x == floor_f32(x) && y == floor_f32(y))
+    return load_rgba(p, int(x), int(y));
+#endif
   if (SAMPLE_ENABLED(Fsr1Easu) && p.sample_method == VideoSampleMethod::Fsr1Easu) {
     Color bilinear = sample_rgba_bilinear_p(p, x, y);
     return magnifying(p)
