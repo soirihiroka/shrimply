@@ -588,7 +588,7 @@ text-3d-geometry-test:
 
 .PHONY: gtk-gpu-preferences-validation
 gtk-gpu-preferences-validation: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) run -p $(EDITOR_PACKAGE) --example gpu_preferences
+	$(DEV_BUILD_ENV) $(CARGO) run -p $(EDITOR_PACKAGE) --example gpu_preferences -- $(ARGS)
 
 .PHONY: cuda-peer-copy-validation
 cuda-peer-copy-validation:
