@@ -26,6 +26,7 @@ const PUSH_CONSTANT_BYTES: u32 = 128;
 const ADVANCED_BLEND: u32 = 1 << 31;
 const MOTION_SAMPLES: u32 = 1 << 30;
 const EXTENDED_BORDER: u32 = 1 << 29;
+const GENERAL_ADDRESS: u32 = 1 << 28;
 // Bound retained allocations across changing canvas sizes and effect graphs.
 const MAX_CACHED_BUFFER_BYTES: usize = 256 * 1024 * 1024;
 const MAX_CACHED_BUFFERS: usize = 64;
@@ -569,6 +570,11 @@ impl Renderer {
         arguments.specialization = parameters.iter().fold(0, |mask, layer| {
             use shrimply_render_core::{LayerBlendMode, TextureAddressMode};
             mask | (1 << layer.sample_method as u32)
+                | if layer.address_mode == TextureAddressMode::Transparent {
+                    0
+                } else {
+                    GENERAL_ADDRESS
+                }
                 | if matches!(
                     layer.blend_mode,
                     LayerBlendMode::Normal | LayerBlendMode::PassThrough

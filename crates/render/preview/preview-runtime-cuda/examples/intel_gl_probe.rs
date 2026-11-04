@@ -168,6 +168,17 @@ fn main() -> Result<(), String> {
                 false,
                 TextureAddressMode::Stochastic,
             ),
+            (
+                LayerBlendMode::Normal,
+                false,
+                TextureAddressMode::ClampToEdge,
+            ),
+            (LayerBlendMode::Normal, false, TextureAddressMode::Repeat),
+            (
+                LayerBlendMode::Normal,
+                false,
+                TextureAddressMode::MirrorRepeat,
+            ),
         ] {
             let mut parameters = parameters;
             parameters.blend_mode = blend;
@@ -178,10 +189,7 @@ fn main() -> Result<(), String> {
                 parameters.motion_transform_count = 2;
                 transforms = vec![parameters.inverse; 2];
                 transforms[1].z_axis.x = SIZE as f32;
-            } else if matches!(
-                address,
-                TextureAddressMode::BlurredMirror | TextureAddressMode::Stochastic
-            ) {
+            } else if address != TextureAddressMode::Transparent {
                 parameters.padding = [SIZE as f32; 4];
                 parameters.inverse.z_axis.x = -2.0;
             }

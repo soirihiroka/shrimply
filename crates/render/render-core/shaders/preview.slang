@@ -11,6 +11,8 @@ import nis_coefficients;
 static const uint ADVANCED_BLEND = 1u << 31;
 static const uint MOTION_SAMPLES = 1u << 30;
 static const uint EXTENDED_BORDER = 1u << 29;
+static const uint GENERAL_ADDRESS = 1u << 28;
+static const uint SAMPLER_MASK = GENERAL_ADDRESS - 1u;
 #define SAMPLE_ENABLED(method) ((COMPOSITE_OPTIONS & (1u << uint(VideoSampleMethod::method))) != 0u)
 #else
 #define SAMPLE_ENABLED(method) true
@@ -33,7 +35,11 @@ bool address_index(int index, uint size, float crop_start, float crop_end,
       first = clamp(int(ceil_f32(float(size) * crop_start - 0.5f)), 0, last);
   last = clamp(int(floor_f32(float(size) * (1.0f - crop_end) - 0.5f)), first,
                last);
-  if (mode == TextureAddressMode::Transparent) {
+  bool transparent = mode == TextureAddressMode::Transparent;
+#if defined(SHRIMPLY_VULKAN)
+  transparent = transparent || (COMPOSITE_OPTIONS & GENERAL_ADDRESS) == 0u;
+#endif
+  if (transparent) {
     if (index < first || index > last)
       return false;
   } else if (mode == TextureAddressMode::ClampToEdge)
@@ -686,7 +692,12 @@ float stochastic_amount(Nv12LayerParams p, float distance_value) {
 
 Color sample_rgba_plain(Nv12LayerParams p, float source_x, float source_y) {
   float x = source_x - 0.5f, y = source_y - 0.5f;
-  if (p.sample_method == VideoSampleMethod::Nearest)
+  bool nearest = p.sample_method == VideoSampleMethod::Nearest;
+#if defined(SHRIMPLY_VULKAN)
+  nearest = nearest || (COMPOSITE_OPTIONS & SAMPLER_MASK) ==
+                           (1u << uint(VideoSampleMethod::Nearest));
+#endif
+  if (nearest)
     return load_rgba(p, int(floor_f32(x + 0.5f)), int(floor_f32(y + 0.5f)));
 #if defined(SHRIMPLY_VULKAN)
   // Bilinear and cardinal bicubic weights select exactly one texel at integer
