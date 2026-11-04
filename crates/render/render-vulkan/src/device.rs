@@ -210,12 +210,21 @@ impl Device {
             unsafe { instance.get_physical_device_properties2(physical, &mut properties) };
             let properties = properties.properties;
             let compute_subgroup = (subgroup_size_control
-                && subgroups.required_subgroup_size_stages.contains(vk::ShaderStageFlags::COMPUTE))
-                .then_some((subgroups.min_subgroup_size, subgroups.max_compute_workgroup_subgroups));
+                && subgroups
+                    .required_subgroup_size_stages
+                    .contains(vk::ShaderStageFlags::COMPUTE))
+            .then_some((
+                subgroups.min_subgroup_size,
+                subgroups.max_compute_workgroup_subgroups,
+            ));
             if properties.vendor_id != 0x8086 {
                 return Err("VA-API render device is not an Intel GPU".into());
             }
-            tracing::info!(device = %unsafe { std::ffi::CStr::from_ptr(properties.device_name.as_ptr()) }.to_string_lossy(), "Intel Vulkan renderer initialized");
+            tracing::info!(
+                device = %unsafe { std::ffi::CStr::from_ptr(properties.device_name.as_ptr()) }.to_string_lossy(),
+                compute_subgroup_size = compute_subgroup.map(|(size, _)| size),
+                "Intel Vulkan renderer initialized"
+            );
             Ok(Self {
                 instance,
                 raw,
