@@ -208,6 +208,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
         ..Default::default()
     }));
     manim.file = Asset::new(output.join("intel_scene.py"));
+    manim.source_duration = duration;
     result.push(("source-manim".into(), project(manim)));
     for scene in [
         "VisualParity",
@@ -222,6 +223,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
             ..Default::default()
         }));
         item.file = Asset::new(output.join("parity.py"));
+        item.source_duration = duration;
         result.push((format!("manim-{scene}"), project(item)));
     }
     let mut gaussian = image.clone();
@@ -760,6 +762,11 @@ fn create_assets(output: &Path) -> Result<(), String> {
         format!("import os\nos.environ['SHRIMPLY_MANIM_CHECKER'] = {checker}\n{fixture}"),
     )
     .map_err(|e| e.to_string())?;
+    std::fs::copy(
+        "crates/media/visual/manim/manim-wgpu/tests/fixtures/weighted_image.wgsl",
+        output.join("weighted_image.wgsl"),
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
