@@ -75,7 +75,7 @@ struct NvidiaAffineEstimator {
 
 impl NvidiaAffineEstimator {
     fn new(previous: &Mat, width: u32, height: u32) -> Result<Self, String> {
-        let context = CudaContext::new(0)
+        let context = CudaContext::new(shrimply_gpu_cuda::selected_device())
             .map_err(|error| format!("create CUDA context for optical flow: {error:?}"))?;
         let stream = context
             .new_stream()

@@ -8,6 +8,10 @@ CUresult shrimply_cuda_init(unsigned flags) { return cuInit(flags); }
 CUresult shrimply_cuda_device_get(CUdevice *device, int ordinal) {
   return cuDeviceGet(device, ordinal);
 }
+CUresult shrimply_cuda_device_count(int *count) { return cuDeviceGetCount(count); }
+CUresult shrimply_cuda_device_name(char *name, int length, CUdevice device) {
+  return cuDeviceGetName(name, length, device);
+}
 #if defined(_WIN32)
 CUresult shrimply_cuda_device_concurrent_managed_access(int *value,
                                                         CUdevice device) {

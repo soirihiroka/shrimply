@@ -5,6 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
+shrimply-preferences-core.workspace = true
 shrimply-3dgs-vulkan.workspace = true
 shrimply-visual-core = { workspace = true, features = ["cuda-stabilization"] }
 hashbrown.workspace = true

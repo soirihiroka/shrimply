@@ -162,6 +162,9 @@ fn visual_format(format: sys::AVPixelFormat) -> Result<VisualFormat, String> {
 fn visual_frame_context() -> Result<std::sync::Arc<CudaContext>, String> {
     static CONTEXT: OnceLock<Result<std::sync::Arc<CudaContext>, String>> = OnceLock::new();
     CONTEXT
-        .get_or_init(|| CudaContext::new(0).map_err(|error| error.to_string()))
+        .get_or_init(|| {
+            CudaContext::new(shrimply_gpu_cuda::selected_device())
+                .map_err(|error| error.to_string())
+        })
         .clone()
 }

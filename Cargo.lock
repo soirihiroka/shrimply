@@ -6940,6 +6940,7 @@ dependencies = [
  "shrimply-inspector-gtk",
  "shrimply-preferences-core",
  "shrimply-trust-core",
+ "shrimply-visual-cuda",
 ]
 
 [[package]]
@@ -7884,6 +7885,7 @@ dependencies = [
  "shrimply-paint-skia",
  "shrimply-path-core",
  "shrimply-pdf",
+ "shrimply-preferences-core",
  "shrimply-preview-provider-skia",
  "shrimply-preview-render-core",
  "shrimply-preview-render-vulkan",

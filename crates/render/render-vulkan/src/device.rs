@@ -6,6 +6,8 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
+static SELECTED_DEVICE: OnceLock<std::path::PathBuf> = OnceLock::new();
+
 /// VA-API and Vulkan share one DRM device. FFmpeg owns both native contexts.
 pub struct Device {
     pub instance: ash::Instance,
@@ -44,6 +46,12 @@ unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
 impl Device {
+    pub fn select_render_device(path: std::path::PathBuf) -> Result<(), String> {
+        if SELECTED_DEVICE.set(path.clone()).is_err() && SELECTED_DEVICE.get() != Some(&path) {
+            return Err("Intel GPU device cannot change after startup".into());
+        }
+        Ok(())
+    }
     pub fn get() -> Result<Arc<Self>, String> {
         static DEVICE: OnceLock<Result<Arc<Device>, String>> = OnceLock::new();
         DEVICE.get_or_init(|| Self::new().map(Arc::new)).clone()
@@ -54,27 +62,33 @@ impl Device {
         let path = match std::env::var("SHRIMPLY_INTEL_DEVICE") {
             Ok(path) => path,
             Err(std::env::VarError::NotPresent) => {
-                let mut devices = std::fs::read_dir("/dev/dri")
-                    .map_err(|e| format!("Find Intel DRM render device: {e}"))?
-                    .filter_map(Result::ok)
-                    .filter(|entry| {
-                        let name = entry.file_name();
-                        let name = name.to_string_lossy();
-                        name.starts_with("renderD")
-                            && std::fs::read_to_string(format!(
-                                "/sys/class/drm/{name}/device/vendor"
-                            ))
-                            .is_ok_and(|vendor| vendor.trim() == "0x8086")
-                    })
-                    .map(|entry| entry.path())
-                    .collect::<Vec<_>>();
-                devices.sort();
-                devices
-                    .first()
-                    .ok_or("No Intel DRM render device found; set SHRIMPLY_INTEL_DEVICE")?
-                    .to_str()
-                    .ok_or("Intel DRM path is not UTF-8")?
-                    .to_owned()
+                if let Some(path) = SELECTED_DEVICE.get() {
+                    path.to_str()
+                        .ok_or("Intel DRM path is not UTF-8")?
+                        .to_owned()
+                } else {
+                    let mut devices = std::fs::read_dir("/dev/dri")
+                        .map_err(|e| format!("Find Intel DRM render device: {e}"))?
+                        .filter_map(Result::ok)
+                        .filter(|entry| {
+                            let name = entry.file_name();
+                            let name = name.to_string_lossy();
+                            name.starts_with("renderD")
+                                && std::fs::read_to_string(format!(
+                                    "/sys/class/drm/{name}/device/vendor"
+                                ))
+                                .is_ok_and(|vendor| vendor.trim() == "0x8086")
+                        })
+                        .map(|entry| entry.path())
+                        .collect::<Vec<_>>();
+                    devices.sort();
+                    devices
+                        .first()
+                        .ok_or("No Intel DRM render device found; set SHRIMPLY_INTEL_DEVICE")?
+                        .to_str()
+                        .ok_or("Intel DRM path is not UTF-8")?
+                        .to_owned()
+                }
             }
             Err(error) => return Err(format!("Invalid SHRIMPLY_INTEL_DEVICE: {error}")),
         };

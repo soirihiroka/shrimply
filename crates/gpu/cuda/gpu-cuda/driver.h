@@ -96,6 +96,14 @@ static const char shrimply_cuda_name_cuDeviceGetAttribute[] =
   SHRIMPLY_CUDA_CALL(cuDeviceGetAttribute, __VA_ARGS__)
 
 typedef __typeof__(&cuDeviceGetUuid) shrimply_cuda_type_cuDeviceGetUuid;
+typedef __typeof__(&cuDeviceGetCount) shrimply_cuda_type_cuDeviceGetCount;
+static const char shrimply_cuda_name_cuDeviceGetCount[] = SHRIMPLY_CUDA_STRING(cuDeviceGetCount);
+#undef cuDeviceGetCount
+#define cuDeviceGetCount(...) SHRIMPLY_CUDA_CALL(cuDeviceGetCount, __VA_ARGS__)
+typedef __typeof__(&cuDeviceGetName) shrimply_cuda_type_cuDeviceGetName;
+static const char shrimply_cuda_name_cuDeviceGetName[] = SHRIMPLY_CUDA_STRING(cuDeviceGetName);
+#undef cuDeviceGetName
+#define cuDeviceGetName(...) SHRIMPLY_CUDA_CALL(cuDeviceGetName, __VA_ARGS__)
 static const char shrimply_cuda_name_cuDeviceGetUuid[] =
     SHRIMPLY_CUDA_STRING(cuDeviceGetUuid);
 #undef cuDeviceGetUuid

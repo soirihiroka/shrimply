@@ -7,9 +7,11 @@ use std::{
     },
 };
 
+mod devices;
 #[cfg(any(target_os = "linux", windows))]
 pub mod external;
 pub mod sys;
+pub use devices::{DeviceInfo, devices, select_device, selected_device};
 
 use sys::{CUcontext, CUdevice, CUdeviceptr, CUevent, CUfunction, CUmodule, CUresult, CUstream};
 

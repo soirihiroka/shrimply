@@ -85,8 +85,19 @@ impl Renderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Manim Vulkan frame"),
                 });
+        // WGPU forbids mixing its encoding API and raw HAL commands in one
+        // encoder. Submit ownership barriers as separate command buffers around
+        // the ordinary render buffer, in a single ordered queue submission.
+        let mut commands = Vec::new();
         if external_ownership {
-            target.acquire_external(&mut encoder)?;
+            let mut acquire =
+                self.shared
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Acquire external Manim target"),
+                    });
+            target.acquire_external(&mut acquire)?;
+            commands.push(acquire.finish());
         }
         self.shared.encode(
             slot,
@@ -96,10 +107,18 @@ impl Renderer {
             &mut encoder,
         )?;
         let semaphore_value = target.prepare_submit(&self.shared.queue, &mut encoder)?;
+        commands.push(encoder.finish());
         if external_ownership {
-            target.release_external(&mut encoder)?;
+            let mut release =
+                self.shared
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Release external Manim target"),
+                    });
+            target.release_external(&mut release)?;
+            commands.push(release.finish());
         }
-        self.shared.queue.submit([encoder.finish()]);
+        self.shared.queue.submit(commands);
         Ok(RenderedExternalFrame {
             descriptor,
             semaphore_value,

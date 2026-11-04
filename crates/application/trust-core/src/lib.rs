@@ -170,6 +170,16 @@ impl Review {
             Kind::File => &self.files,
             Kind::Folder => &self.folders,
         };
+        if kind == Kind::Folder {
+            for folder in paths {
+                if folder.canonicalize().ok().as_ref() != Some(folder) || !folder.is_dir() {
+                    return Err(format!(
+                        "Source folder changed while awaiting trust: {}",
+                        folder.display()
+                    ));
+                }
+            }
+        }
         let mut conn = STORE
             .as_ref()
             .map_err(Clone::clone)?

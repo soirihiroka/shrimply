@@ -31,6 +31,10 @@ pub use frame::{CompositedFrameStorageKey, CompositedVideoFrame, FrameBuffer};
 mod backend;
 #[cfg(target_os = "linux")]
 pub use backend::{configure_gtk_backend, intel_backend_selected};
+#[cfg(target_os = "linux")]
+mod devices;
+#[cfg(target_os = "linux")]
+pub use devices::{AccelerationDevice, acceleration_devices};
 
 const DISPLAY_GPU_MEMORY_RESERVE_DIVISOR: u64 = 16;
 const MIGRATE_ALL_REQUIRED_BYTES: u64 = u64::MAX;
@@ -63,7 +67,8 @@ pub fn preflight() -> Result<(), String> {
         return shrimply_render_vulkan::Renderer::new()?.warmup();
     }
     configure_primary_context_flags()?;
-    let context = CudaContext::new(0).map_err(|error| format!("CUDA context: {error:?}"))?;
+    let context = CudaContext::new(shrimply_gpu_cuda::selected_device())
+        .map_err(|error| format!("CUDA context: {error:?}"))?;
     let mut modules = Vec::with_capacity(KERNEL_MODULES.len());
     for (name, image) in KERNEL_MODULES {
         modules.push(
@@ -126,7 +131,8 @@ pub struct CudaVideoCompositor {
 impl CudaVideoCompositor {
     pub fn new() -> Result<Self, String> {
         configure_primary_context_flags()?;
-        let context = CudaContext::new(0).map_err(|error| format!("CUDA context: {error:?}"))?;
+        let context = CudaContext::new(shrimply_gpu_cuda::selected_device())
+            .map_err(|error| format!("CUDA context: {error:?}"))?;
         let stream = context
             .new_stream()
             .map_err(|error| format!("CUDA stream: {error:?}"))?;
@@ -1693,7 +1699,10 @@ fn configure_primary_context_flags() -> Result<(), String> {
     unsafe {
         cuda_check(sys::cuInit(0), "cuInit")?;
         let mut device = 0;
-        cuda_check(sys::cuDeviceGet(&mut device, 0), "cuDeviceGet")?;
+        cuda_check(
+            sys::cuDeviceGet(&mut device, shrimply_gpu_cuda::selected_device() as i32),
+            "cuDeviceGet",
+        )?;
 
         let mut current_flags = 0;
         let mut active = 0;
