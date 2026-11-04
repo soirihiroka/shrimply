@@ -27,6 +27,12 @@ fn main() -> Result<(), String> {
         .map(|value| value.parse::<u64>().map_err(|e| e.to_string()))
         .transpose()?
         .unwrap_or(120);
+    let accuracy_name = arguments.next().unwrap_or_else(|| "playback".into());
+    let accuracy = match accuracy_name.as_str() {
+        "playback" => CompositeAccuracy::CONTINUOUS_TIME_ACCURATE,
+        "accurate" => CompositeAccuracy::FULLY_ACCURATE,
+        _ => return Err("Accuracy must be playback or accurate".into()),
+    };
     if count == 0 {
         return Err("Frame count must be positive".into());
     }
@@ -49,7 +55,7 @@ fn main() -> Result<(), String> {
                     accuracy: if index == 0 {
                         CompositeAccuracy::FULLY_ACCURATE
                     } else {
-                        CompositeAccuracy::CONTINUOUS_TIME_ACCURATE
+                        accuracy
                     },
                 })
                 .map_err(|e| e.to_string())?;
@@ -68,6 +74,11 @@ fn main() -> Result<(), String> {
                         drop(frame);
                         break;
                     }
+                    VideoEvent::Clear {
+                        position: rendered, ..
+                    } if rendered == position => {
+                        return Err(format!("No visible video at {}", position.as_label()));
+                    }
                     _ => {}
                 }
             }
@@ -77,7 +88,7 @@ fn main() -> Result<(), String> {
         }
         let elapsed = started.elapsed();
         println!(
-            "{pass}: {count} preview frames in {elapsed:?}; {} fps; first frame {first_frame:?}; no pixel readbacks",
+            "{pass}: {count} preview frames in {elapsed:?}; {} fps; first frame {first_frame:?}; mode={accuracy_name}; no pixel readbacks",
             u128::from(count) * 1_000_000_000 / elapsed.as_nanos().max(1)
         );
         println!("{pass} profile: {}", shrimply_profiling::report_json());

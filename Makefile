@@ -414,8 +414,8 @@ cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-inspector-document --lib
 
 intel-check: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets
-	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets -- -D warnings
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-visual-cuda -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-visual-cuda -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets -- -D warnings
 
 .PHONY: intel-benchmark intel-gl-probe gpu-export-benchmark gpu-playback-benchmark
 intel-benchmark: native-deps
@@ -428,7 +428,7 @@ gpu-export-benchmark: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example gpu_export -- "$(or $(PROJECT),$(VIDEO))" "$(OUTPUT)" "$(or $(FORMAT),h264)" "$(or $(FRAMES),120)"
 
 gpu-playback-benchmark: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)"
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)" "$(or $(ACCURACY),playback)"
 
 frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost

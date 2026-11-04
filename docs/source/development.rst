@@ -172,6 +172,11 @@ CPU implementations are not used as a fallback.
 
 Use ``PROFILE=release`` with either benchmark to measure optimized performance.
 The default development profile leaves Rust code unoptimized.
+The playback benchmark reports cold and warm passes separately. Its default
+``ACCURACY=playback`` uses normal continuous playback, which can reuse the latest
+decoded frame. ``ACCURACY=accurate`` waits for each requested source frame and
+uses full content quality. These render-throughput measurements exclude GTK's
+display refresh limit; use the export benchmark when comparing transcoding.
 Native project exports use the full timeline duration. ``FRAMES`` limits the
 synthetic single-video benchmark. Compare both unchanged video and a project
 with visible edits when measuring export performance: the former can reuse
