@@ -433,6 +433,10 @@ fn handle_command(
     }
     match command {
         BridgeCommand::Handshake => Ok(json!({ "connected": true })),
+        BridgeCommand::Version => serde_json::to_value(
+            shrimply_mcp::protocol::BuildVersion::current(env!("CARGO_PKG_VERSION")),
+        )
+        .map_err(|error| format!("Could not serialize editor build version: {error}")),
         BridgeCommand::Snapshot => serde_json::to_value(snapshot(project, player, selection)?)
             .map_err(|error| format!("could not serialize live snapshot: {error}")),
         BridgeCommand::Seek { frame } => {

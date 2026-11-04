@@ -71,6 +71,7 @@
               vtracerSrc = vtracer;
             }).overrideAttrs
               {
+                SHRIMPLY_BUILD_GIT_HASH = self.rev or self.dirtyRev or "";
                 src = final.lib.cleanSourceWith {
                   src = self;
                   filter =

@@ -286,6 +286,37 @@ impl ShrimplyServer {
     }
 
     #[tool(
+        description = "Return the numbered version and full Git commit hash of this MCP server and the connected editor. Works without a connected project; editor is then null",
+        annotations(read_only_hint = true)
+    )]
+    async fn get_version(
+        &self,
+        Parameters(_): Parameters<GetVersionRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<Json<VersionResponse>, McpError> {
+        let connected = self
+            .bridge
+            .read()
+            .expect("Shrimply MCP connection lock")
+            .is_some();
+        let mut response = VersionResponse {
+            mcp: BuildVersion::current(env!("CARGO_PKG_VERSION")),
+            editor: None,
+            editor_error: None,
+        };
+        if connected {
+            match self.request(BridgeCommand::Version, &context).await {
+                Ok(value) => match serde_json::from_value(value) {
+                    Ok(version) => response.editor = Some(version),
+                    Err(error) => response.editor_error = Some(error.to_string()),
+                },
+                Err(error) => response.editor_error = Some(error.to_string()),
+            }
+        }
+        Ok(Json(response))
+    }
+
+    #[tool(
         description = "List root and concrete folded-sequence presentation scopes with tracks",
         annotations(read_only_hint = true)
     )]

@@ -150,6 +150,7 @@ modules:
         CARGO_HOME: /run/ccache/cargo-home
         CARGO_TARGET_DIR: /run/ccache/cargo-target
         CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
+        SHRIMPLY_BUILD_GIT_HASH: '@SHRIMPLY_GIT_HASH@'
         # Link the bundled FFmpeg before the SDK's incompatible version.
         RUSTFLAGS: "-L native=/app/lib -C link-arg=-fuse-ld=lld"
         PATH: /run/host/usr/local/cargo/bin:/run/host/usr/local/cuda-12.9/bin:/usr/lib/sdk/llvm22/bin:/app/bin:/usr/bin

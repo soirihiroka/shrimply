@@ -102,7 +102,7 @@ pipeline on the target machine:
    $ SHRIMPLY_GPU=intel make gpu-export-benchmark PROJECT=/path/to/project.shrimp OUTPUT=/tmp/project.mp4 FORMAT=h264
 
 Ray-tracing denoising
-~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 The Intel Vulkan backend uses a basic spatial edge-avoiding a-trous denoiser.
 Three compute passes filter HDR ray-traced color at increasing tap spacing,
