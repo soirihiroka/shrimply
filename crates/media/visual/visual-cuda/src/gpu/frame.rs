@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use shrimply_gpu_cuda_memory::GpuBuffer as DeviceBuffer;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -16,7 +18,7 @@ pub struct CompositedVideoFrame {
 }
 
 pub enum FrameBuffer {
-    Cuda(DeviceBuffer<u32>),
+    Cuda(Arc<DeviceBuffer<u32>>),
     #[cfg(target_os = "linux")]
     Intel {
         display: shrimply_render_vulkan::Texture,
@@ -25,7 +27,7 @@ pub enum FrameBuffer {
 }
 
 impl FrameBuffer {
-    pub fn cuda(&self) -> Result<&DeviceBuffer<u32>, String> {
+    pub fn cuda(&self) -> Result<&Arc<DeviceBuffer<u32>>, String> {
         match self {
             Self::Cuda(buffer) => Ok(buffer),
             #[cfg(target_os = "linux")]
@@ -34,7 +36,8 @@ impl FrameBuffer {
     }
     pub fn into_cuda(self) -> Result<DeviceBuffer<u32>, String> {
         match self {
-            Self::Cuda(buffer) => Ok(buffer),
+            Self::Cuda(buffer) => Arc::try_unwrap(buffer)
+                .map_err(|_| "Cannot consume a shared CUDA preview buffer".into()),
             #[cfg(target_os = "linux")]
             Self::Intel { .. } => Err("Intel frame passed to a CUDA encoder".into()),
         }
@@ -69,7 +72,7 @@ impl CompositedVideoFrame {
             height,
         };
         Self {
-            buffer: FrameBuffer::Cuda(buffer),
+            buffer: FrameBuffer::Cuda(Arc::new(buffer)),
             width,
             height,
             storage_key,

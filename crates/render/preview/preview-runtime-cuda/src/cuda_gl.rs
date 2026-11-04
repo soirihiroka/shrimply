@@ -3,7 +3,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use libc::size_t;
-use shrimply_gpu_cuda::{CudaContext, sys};
+use shrimply_gpu_cuda::{CudaContext, CudaEvent, sys};
 use shrimply_gpu_cuda_memory::{GpuBuffer, MemoryKind};
 
 const CU_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD: u32 = 0x02;
@@ -27,6 +27,8 @@ unsafe extern "C" {
 pub struct CudaTexture {
     resource: sys::CUgraphicsResource,
     context: Arc<CudaContext>,
+    copy_complete: CudaEvent,
+    source: Option<Arc<GpuBuffer<u32>>>,
 }
 
 impl CudaTexture {
@@ -56,6 +58,9 @@ impl CudaTexture {
             context = CudaContext::new(ordinal).map_err(|error| error.to_string())?;
         }
         bind_context(&context, "bind CUDA context for GL registration")?;
+        let copy_complete = context
+            .new_event(Some(sys::CUevent_flags_enum_CU_EVENT_DISABLE_TIMING))
+            .map_err(|error| format!("Create CUDA preview copy event: {error}"))?;
         let mut resource = ptr::null_mut();
         cuda_check(
             unsafe {
@@ -69,12 +74,17 @@ impl CudaTexture {
             "cuGraphicsGLRegisterImage",
         )?;
 
-        Ok(Self { resource, context })
+        Ok(Self {
+            resource,
+            context,
+            copy_complete,
+            source: None,
+        })
     }
 
     pub fn copy_from_device(
-        &self,
-        source: &GpuBuffer<u32>,
+        &mut self,
+        source: &Arc<GpuBuffer<u32>>,
         width: u32,
         height: u32,
     ) -> Result<(), String> {
@@ -85,6 +95,13 @@ impl CudaTexture {
         if source.len() < width as usize * height as usize {
             return Err("CUDA preview frame is smaller than its dimensions".into());
         }
+
+        // A device-to-device copy may outlive cuMemcpy2D. Keep its source leased
+        // until this event completes, so the compositor cannot reuse it early.
+        self.copy_complete
+            .synchronize()
+            .map_err(|error| format!("Finish previous CUDA preview copy: {error}"))?;
+        self.source = None;
 
         bind_context(&self.context, "bind CUDA context for GL texture copy")?;
         let mut resource = self.resource;
@@ -125,6 +142,7 @@ impl CudaTexture {
             Height: height as size_t,
         };
         let cross_context = source.context().cu_ctx() != self.context.cu_ctx();
+        self.source = Some(source.clone());
         let copied = if cross_context && source.memory_kind() == MemoryKind::Device {
             cuda_check(
                 unsafe {
@@ -141,6 +159,14 @@ impl CudaTexture {
             // context; CUDA migrates them as needed, including across GPUs.
             cuda_check(unsafe { sys::cuMemcpy2D_v2(&copy) }, "cuMemcpy2D")
         };
+        if let Err(error) = self.copy_complete.record(&self.context.default_stream()) {
+            // A failed event must not let a later upload release an in-flight
+            // source. Fail clearly if the context cannot establish completion.
+            self.context
+                .synchronize()
+                .expect("Cannot establish completion of CUDA preview copy");
+            return Err(format!("Record CUDA preview copy completion: {error}"));
+        }
         if cross_context {
             // Keep the source allocation/context alive through completion.
             self.context
@@ -175,6 +201,9 @@ impl CudaTexture {
 
 impl Drop for CudaTexture {
     fn drop(&mut self) {
+        self.copy_complete
+            .synchronize()
+            .expect("Cannot release an in-flight CUDA preview copy");
         self.unregister();
     }
 }

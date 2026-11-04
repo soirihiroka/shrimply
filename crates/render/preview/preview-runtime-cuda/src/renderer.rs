@@ -195,7 +195,7 @@ impl VideoRenderer {
             return Ok(());
         }
         self.rgba_cuda
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| "CUDA RGBA texture is not registered".to_string())?
             .copy_from_device(frame.buffer.cuda()?, frame.width, frame.height)
             .map_err(|error| {
