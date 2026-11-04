@@ -235,7 +235,10 @@ static int compile(const CompileRequest& request)
     };
     option(slang::CompilerOptionName::Optimization, SLANG_OPTIMIZATION_LEVEL_HIGH);
     if (request.target == Target::Vulkan)
+    {
         option(slang::CompilerOptionName::GLSLForceScalarLayout, 1);
+        option(slang::CompilerOptionName::VulkanUseEntryPointName, 1);
+    }
     if (cuda)
         option(slang::CompilerOptionName::Capability, global_session->findCapability(CUDA_CAPABILITY));
     if (spirv)
