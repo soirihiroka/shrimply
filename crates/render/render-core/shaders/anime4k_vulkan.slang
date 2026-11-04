@@ -12,6 +12,6 @@ struct ConvolutionArguments {
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void convolution_vulkan(uint3 id : SV_DispatchThreadID) {
-  convolution(id, arguments.params, arguments.terms, arguments.term_count,
+  convolve_pixel(id, arguments.params, arguments.terms, arguments.term_count,
               arguments.output, arguments.output_count);
 }

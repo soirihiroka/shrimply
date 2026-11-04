@@ -10,5 +10,5 @@ struct BackgroundArguments {
 
 [shader("compute")][numthreads(16, 16, 1)]
 void render_background_vulkan(uint3 id : SV_DispatchThreadID) {
-  render_background(id, arguments.output, arguments.uniforms);
+  write_background_pixel(id, arguments.output, arguments.uniforms);
 }
