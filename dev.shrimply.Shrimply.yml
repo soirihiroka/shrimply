@@ -159,6 +159,8 @@ modules:
         url: https://github.com/opencv/opencv.git
         tag: 4.14.0
         commit: 0654a42e19215ef25b1d367d822f3c630447e7c7
+      - type: patch
+        path: packaging/flatpak/opencv-ffmpeg9.patch
 
   - name: shrimply-gtk
     buildsystem: simple
