@@ -122,6 +122,8 @@ LIP_SYNC_MODEL := $(CARGO_TARGET_DIR)/release/res/lip-sync/pocketsphinx-ci.model
 LIP_SYNC_RESOURCE_DIR := $(DATADIR)/shrimply/lip-sync
 LIP_SYNC_LICENSE_DIR := $(DATADIR)/licenses/shrimply
 ICONS_RESOURCE_DIR := $(DATADIR)/shrimply/icons
+MANIM_WORKER_RESOURCE_DIR := $(PREFIX)/share/shrimply/crates/media/visual/manim/manim-bridge/python
+MANIM_SOURCE_RESOURCE_DIR := $(PREFIX)/share/shrimply/external/manim
 
 FEDORA_PACKAGES := \
 	rust \
@@ -508,6 +510,7 @@ install: release desktop-icon project-mime
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(MCP_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(MCP_BIN_NAME)"
+	sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)"
 	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
@@ -560,6 +563,7 @@ uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(MCP_BIN_NAME)"
+	rm -rf "$(DESTDIR)$(MANIM_WORKER_RESOURCE_DIR)" "$(DESTDIR)$(MANIM_SOURCE_RESOURCE_DIR)"
 	rm -rf "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"

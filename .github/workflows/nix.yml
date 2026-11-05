@@ -9,6 +9,7 @@ on:
       - "flake.nix"
       - "flake.lock"
       - "pkgs/**"
+      - "packaging/linux/**"
       - "crates/**"
       - "assets/**"
       - "vendor/**"

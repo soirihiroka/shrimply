@@ -108,12 +108,6 @@ rustPlatform.buildRustPackage {
     chmod -R u+w "$sourceRoot/external"
   '';
 
-  postPatch = ''
-    substituteInPlace crates/media/visual/manim/manim-bridge/src/lib.rs \
-      --replace-fail 'Path::new(env!("CARGO_MANIFEST_DIR")).join("python")' \
-      'PathBuf::from("'"$out"'/share/shrimply/crates/media/visual/manim/manim-bridge/python")'
-  '';
-
   nativeBuildInputs = [
     clang
     cmake
@@ -221,12 +215,7 @@ rustPlatform.buildRustPackage {
     install -Dm644 dev.shrimply.Shrimply.desktop \
       "$out/share/applications/dev.shrimply.Shrimply.desktop"
 
-    # The Manim worker resolves its uv project relative to this layout.
-    install -d "$out/share/shrimply/crates/media/visual/manim/manim-bridge" \
-      "$out/share/shrimply/external"
-    cp -r crates/media/visual/manim/manim-bridge/python \
-      "$out/share/shrimply/crates/media/visual/manim/manim-bridge/python"
-    cp -r external/manim "$out/share/shrimply/external/manim"
+    sh packaging/linux/install-manim-worker.sh "$out"
 
     runHook postInstall
   '';

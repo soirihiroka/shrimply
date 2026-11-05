@@ -8,6 +8,7 @@ on:
       - ".github/workflows/flatpak.yml"
       - ".github/scripts/**"
       - "packaging/flatpak/**"
+      - "packaging/linux/**"
       - "dev.shrimply.Shrimply.yml"
       - ".cargo/**"
       - ".gitmodules"

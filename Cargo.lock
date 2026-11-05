@@ -6589,6 +6589,7 @@ dependencies = [
  "shrimply-local-ipc",
  "shrimply-manim-ir",
  "shrimply-math-core",
+ "shrimply-path-core",
  "shrimply-project-document",
  "shrimply-trust-core",
  "tracing",

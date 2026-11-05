@@ -195,6 +195,16 @@ modules:
         make install PREFIX=/app
         RUSTUP=/run/host/usr/local/cargo/bin/rustup
         CUDA_PTX_TARGET="${CUDA_PTX_TARGET}"
+      # Compile Python extensions against the SDK, never on the user's machine.
+      - >-
+        UV_PROJECT_ENVIRONMENT=/app/share/shrimply/crates/media/visual/manim/manim-bridge/python/.venv
+        build-tools/uv/uv sync --frozen --no-dev --no-editable
+        --python /usr/bin/python3.14
+        --project /app/share/shrimply/crates/media/visual/manim/manim-bridge/python
+      - >-
+        /app/share/shrimply/crates/media/visual/manim/manim-bridge/python/.venv/bin/python
+        -c 'import av, manimpango, manimlib, msgpack'
+      - test ! -e /app/bin/uv
       - rm /app/bin/shrimply-mcp
       - test ! -e /app/bin/shrimply-mcp
       - test ! -e /app/bin/shrimply-qt
@@ -204,3 +214,7 @@ modules:
       - type: archive
         path: '@SHRIMPLY_SOURCE@'
         strip-components: 0
+      - type: archive
+        url: https://github.com/astral-sh/uv/releases/download/0.12.5/uv-x86_64-unknown-linux-musl.tar.gz
+        sha256: a4742988791c9aeae68c78150d6cba762062ad2a47e53738c2779d2b596bfcdb
+        dest: build-tools/uv
