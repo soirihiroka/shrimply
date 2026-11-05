@@ -1,13 +1,4 @@
 static const uint COMPUTE_GROUP_SIZE = 256u;
-// Preserve the workgroup size while mapping Vulkan image threads directly to texels.
-#if defined(SHRIMPLY_VULKAN)
-static const uint IMAGE_COMPUTE_GROUP_WIDTH = 16u;
-static const uint IMAGE_COMPUTE_GROUP_HEIGHT =
-    COMPUTE_GROUP_SIZE / IMAGE_COMPUTE_GROUP_WIDTH;
-#else
-static const uint IMAGE_COMPUTE_GROUP_WIDTH = COMPUTE_GROUP_SIZE;
-static const uint IMAGE_COMPUTE_GROUP_HEIGHT = 1u;
-#endif
 
 #if defined(SHRIMPLY_VULKAN)
 typedef uint64_t BufferPitch;

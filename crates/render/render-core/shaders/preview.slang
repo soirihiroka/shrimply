@@ -923,33 +923,19 @@ uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
   }
   return pixel;
 }
-[shader("compute")][numthreads(IMAGE_COMPUTE_GROUP_WIDTH, IMAGE_COMPUTE_GROUP_HEIGHT, 1)] void
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 composite_nv12_layers(uint3 id : SV_DispatchThreadID,
                       uniform Nv12LayerParams *layers,
                       uniform uint64_t layer_count, uniform Mat3 *transforms,
                       uniform uint64_t transform_count, uniform uint *output,
-#if defined(SHRIMPLY_VULKAN)
-                      uniform uint width, uniform uint height,
-#else
-                      uniform uint64_t output_count,
-#endif
-                      uniform uint background) {
-#if defined(SHRIMPLY_VULKAN)
-  uint x = id.x, y = id.y;
-  if (x >= width || y >= height)
-    return;
-  uint i = y * width + x;
-#else
+                      uniform uint64_t output_count, uniform uint background) {
   uint i = id.x;
   if (i >= output_count)
     return;
-#endif
   output[i] = background;
   if (layer_count == 0u)
     return;
-#if !defined(SHRIMPLY_VULKAN)
   uint x = i % layers[0].canvas_width, y = i / layers[0].canvas_width;
-#endif
   output[i] = composite_pixel(layers, layer_count, transforms, transform_count,
                               x, y, background);
 }[shader("compute")]

@@ -8,24 +8,17 @@ float2 video_chroma(uint8_t *plane, uint64_t pitch, uint width, uint height,
   return float2(plane[offset], plane[offset + 1u]) / 255.0f;
 }
 
-[shader("compute")][numthreads(IMAGE_COMPUTE_GROUP_WIDTH, IMAGE_COMPUTE_GROUP_HEIGHT, 1)]
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
                   uniform uint8_t *y_plane, uniform uint8_t *uv_plane,
                   uniform uint64_t y_pitch, uniform uint64_t uv_pitch,
                   uniform uint width, uniform uint height, uniform uint *output,
                   uniform int4 coefficients, uniform bool full_range,
                   uniform float2 chroma_offset) {
-#if defined(SHRIMPLY_VULKAN)
-  uint x = id.x, y = id.y;
-  if (x >= width || y >= height)
-    return;
-  uint i = y * width + x;
-#else
   uint i = id.x;
   if (i >= width * height)
     return;
   uint x = i % width, y = i / width;
-#endif
   float2 position = (float2(x, y) - chroma_offset) * 0.5f;
   int2 low = int2(floor(position));
   float2 amount = position - float2(low);

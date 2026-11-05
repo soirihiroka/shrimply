@@ -559,7 +559,7 @@ impl Renderer {
                 &[u8::from(source.frame.color_range() == Range::JPEG)],
             )?;
         let mut converted =
-            unsafe { self.dispatch(arguments, vec![planes, output.clone()], [width, height, 1]) }?;
+            unsafe { self.dispatch(arguments, vec![planes, output.clone()], [count, 1, 1]) }?;
         converted._prior.push(prior);
         Ok((output, converted))
     }
@@ -609,13 +609,13 @@ impl Renderer {
                     if chroma { "uv_pitch" } else { "y_pitch" },
                     &((if chroma { uv_pitch } else { pitch }) as u64).to_ne_bytes(),
                 )?;
-            let extent = if chroma {
-                [width.div_ceil(2), height.div_ceil(2), 1]
+            let count = if chroma {
+                width.div_ceil(2) * height.div_ceil(2)
             } else {
-                [width, height, 1]
+                count
             };
             prior.push(unsafe {
-                self.dispatch(arguments, vec![rgba.clone(), planes.clone()], extent)
+                self.dispatch(arguments, vec![rgba.clone(), planes.clone()], [count, 1, 1])
             }?);
         }
         let mut submission = self.transfer_video(destination, planes, layout, true)?;
