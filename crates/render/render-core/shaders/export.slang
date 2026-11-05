@@ -21,57 +21,78 @@ Color average_block(uint *rgba, uint width, uint height, uint cx, uint cy) {
   return color(result.r / count, result.g / count, result.b / count, 1.0f);
 }
 
-[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
+[shader("compute")][numthreads(IMAGE_COMPUTE_GROUP_WIDTH, IMAGE_COMPUTE_GROUP_HEIGHT, 1)] void
 rgba_to_nv12_luma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
                   uniform uint width, uniform uint height,
                   uniform uint8_t *y_plane, uniform uint64_t y_pitch) {
+#if defined(SHRIMPLY_VULKAN)
+  uint x = id.x, y = id.y;
+  if (x >= width || y >= height)
+    return;
+#else
   uint i = id.x;
   if (i >= width * height)
     return;
-  y_plane[uint64_t(i / width) * y_pitch + i % width] =
-      uint8_t(to_bt709_ycbcr(load_pixel(rgba, width, i % width, i / width)).x);
+  uint x = i % width, y = i / width;
+#endif
+  y_plane[uint64_t(y) * y_pitch + x] =
+      uint8_t(to_bt709_ycbcr(load_pixel(rgba, width, x, y)).x);
 }
 
-    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void rgba_to_nv12_chroma(uint3 id : SV_DispatchThreadID,
-                                          uniform uint *rgba,
-                                          uniform uint width,
-                                          uniform uint height,
-                                          uniform uint8_t *uv_plane,
-                                          uniform uint64_t uv_pitch) {
-  uint cw = max((width + 1u) / 2u, 1u), ch = max((height + 1u) / 2u, 1u),
-       i = id.x;
+[shader("compute")][numthreads(IMAGE_COMPUTE_GROUP_WIDTH, IMAGE_COMPUTE_GROUP_HEIGHT, 1)] void
+rgba_to_nv12_chroma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
+                    uniform uint width, uniform uint height,
+                    uniform uint8_t *uv_plane, uniform uint64_t uv_pitch) {
+  uint cw = max((width + 1u) / 2u, 1u), ch = max((height + 1u) / 2u, 1u);
+#if defined(SHRIMPLY_VULKAN)
+  uint cx = id.x, cy = id.y;
+  if (cx >= cw || cy >= ch)
+    return;
+#else
+  uint i = id.x;
   if (i >= cw * ch)
     return;
   uint cx = i % cw, cy = i / cw;
+#endif
   uint3 value = to_bt709_ycbcr(average_block(rgba, width, height, cx, cy));
   uint64_t offset = uint64_t(cy) * uv_pitch + uint64_t(cx) * 2u;
   uv_plane[offset] = uint8_t(value.y);
   uv_plane[offset + 1u] = uint8_t(value.z);
 }
 
-[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
+[shader("compute")][numthreads(IMAGE_COMPUTE_GROUP_WIDTH, IMAGE_COMPUTE_GROUP_HEIGHT, 1)] void
 rgba_to_p010_luma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
                   uniform uint width, uniform uint height,
                   uniform uint16_t *y_plane, uniform uint64_t y_pitch) {
+#if defined(SHRIMPLY_VULKAN)
+  uint x = id.x, y = id.y;
+  if (x >= width || y >= height)
+    return;
+#else
   uint i = id.x;
   if (i >= width * height)
     return;
   uint x = i % width, y = i / width;
+#endif
   y_plane[uint64_t(y) * (y_pitch / 2u) + x] =
       uint16_t(to_bt709_ycbcr(load_pixel(rgba, width, x, y)).x << 8u);
 }
 
-    [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void rgba_to_p010_chroma(uint3 id : SV_DispatchThreadID,
-                                          uniform uint *rgba,
-                                          uniform uint width,
-                                          uniform uint height,
-                                          uniform uint16_t *uv_plane,
-                                          uniform uint64_t uv_pitch) {
-  uint cw = max((width + 1u) / 2u, 1u), ch = max((height + 1u) / 2u, 1u),
-       i = id.x;
+[shader("compute")][numthreads(IMAGE_COMPUTE_GROUP_WIDTH, IMAGE_COMPUTE_GROUP_HEIGHT, 1)] void
+rgba_to_p010_chroma(uint3 id : SV_DispatchThreadID, uniform uint *rgba,
+                    uniform uint width, uniform uint height,
+                    uniform uint16_t *uv_plane, uniform uint64_t uv_pitch) {
+  uint cw = max((width + 1u) / 2u, 1u), ch = max((height + 1u) / 2u, 1u);
+#if defined(SHRIMPLY_VULKAN)
+  uint cx = id.x, cy = id.y;
+  if (cx >= cw || cy >= ch)
+    return;
+#else
+  uint i = id.x;
   if (i >= cw * ch)
     return;
   uint cx = i % cw, cy = i / cw;
+#endif
   uint3 value = to_bt709_ycbcr(average_block(rgba, width, height, cx, cy));
   uint64_t offset = uint64_t(cy) * (uv_pitch / 2u) + uint64_t(cx) * 2u;
   uv_plane[offset] = uint16_t(value.y << 8u);

@@ -662,9 +662,11 @@ impl Renderer {
             .set("transforms", &transforms_address.to_ne_bytes())?
             .set("transform_count", &(transforms.len() as u64).to_ne_bytes())?
             .set("output", &output.address().to_ne_bytes())?
-            .set("output_count", &(count as u64).to_ne_bytes())?
+            .set("width", &width.to_ne_bytes())?
+            .set("height", &height.to_ne_bytes())?
             .set("background", &background.to_ne_bytes())?;
-        let submission = unsafe { self.dispatch(arguments, resources, [count, 1, 1]) }?;
+        let submission =
+            unsafe { self.dispatch(arguments, resources, [width as usize, height as usize, 1]) }?;
         Ok(Frame { submission, output })
     }
 
