@@ -188,7 +188,10 @@ jobs:
       - name: Resolve dependency cache key
         id: dependency-cache-key
         run: |
-          sed '/^  - name: shrimply-gtk$/,$d' dev.shrimply.Shrimply.yml \
+          {
+            sed '/^  - name: shrimply-gtk$/,$d' dev.shrimply.Shrimply.yml
+            printf '%s\n' "${{ hashFiles('packaging/flatpak/*.patch') }}"
+          } \
             | sha256sum \
             | cut -d ' ' -f 1 \
             | sed 's/^/hash=/' >> "${GITHUB_OUTPUT}"
@@ -229,7 +232,8 @@ jobs:
         run: |
           sdk_commit="$(flatpak info --user --show-commit "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}")"
           native_versions="$(dpkg-query -W)"
-          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${sdk_commit}" "${native_versions}" \
+          # Generated FFI bindings must match the bundled native libraries.
+          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${sdk_commit}" "${native_versions}" "${{ steps.dependency-cache-key.outputs.hash }}" \
             | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1)"
           echo "prefix=flatpak-application-v2-ubuntu-24.04-${{ runner.arch }}-cuda-${CUDA_VERSION}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
 
