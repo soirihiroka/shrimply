@@ -43,3 +43,7 @@ Known limitations
 
 The Flatpak is missing some features, including MCP support. To build Shrimply
 from source, see :doc:`development`.
+
+Build a local bundle with ``make flatpak-gtk``. This passes the checkout's full
+Git commit to Docker. When building from a source archive without Git metadata,
+set ``SHRIMPLY_BUILD_GIT_HASH`` to the archive's full source commit SHA.

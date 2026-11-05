@@ -193,8 +193,13 @@ impl Renderer {
                     .src_access_mask(vk::AccessFlags::TRANSFER_READ)],
             );
         }
-        self.submit_waiting(command, vec![output.clone()], &[(source.semaphore, value)])?
-            .wait()?;
+        self.submit_with_semaphores(
+            command,
+            vec![output.clone()],
+            &[(source.semaphore, value)],
+            &[],
+        )?
+        .wait()?;
         Ok(output)
     }
 }

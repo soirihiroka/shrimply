@@ -177,15 +177,18 @@ impl VideoBackend for IntelBackend {
             .encoder()
             .video()
             .map_err(|e| e.to_string())?;
-        encoder.set_width(project.canvas_size.width);
-        encoder.set_height(project.canvas_size.height);
-        encoder.set_format(Pixel::VAAPI);
-        encoder.set_time_base(video_time_base(settings.fps)?);
-        encoder.set_frame_rate(Some(video_frame_rate(settings.fps)?));
-        encoder.set_gop(video_gop(settings));
-        encoder.set_max_b_frames(settings.b_frames as usize);
-        if self.settings.rate_control != ExportRateControl::ConstantQp {
-            encoder.set_bit_rate(settings.bitrate_kbps as usize * 1_000);
+        let default_bitrate = unsafe { (*encoder.as_ptr()).bit_rate };
+        core::configure_video_encoder(
+            &mut encoder,
+            project,
+            settings,
+            Pixel::VAAPI,
+            global_header,
+        )?;
+        if self.settings.rate_control == ExportRateControl::ConstantQp {
+            // CQP leaves bitrate selection at the encoder's default.
+            unsafe { (*encoder.as_mut_ptr()).bit_rate = default_bitrate };
+        } else {
             encoder.set_max_bit_rate(
                 if self.settings.rate_control == ExportRateControl::ConstantBitrate {
                     settings.bitrate_kbps
@@ -200,10 +203,6 @@ impl VideoBackend for IntelBackend {
             (*context).sw_pix_fmt = hardware.pixel_format().sw_format();
             (*context).hw_device_ctx = hardware.device_ref()?;
             (*context).hw_frames_ctx = hardware.encoder_ref()?;
-            set_bt709_video_metadata(context);
-            if global_header {
-                (*context).flags |= sys::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
-            }
         }
         let mut options = ffmpeg::Dictionary::new();
         options.set("profile", profile_name(&self.settings));

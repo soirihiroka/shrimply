@@ -6116,6 +6116,7 @@ dependencies = [
  "serde_json",
  "shrimply-blender-core",
  "shrimply-export-core",
+ "shrimply-gpu-cuda",
  "shrimply-math-core",
  "shrimply-preview-render-core",
  "shrimply-preview-render-vulkan",

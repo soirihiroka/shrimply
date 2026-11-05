@@ -1513,7 +1513,13 @@ void obj_compute(uint3 thread_id : SV_DispatchThreadID)
     if (output_size.denoising != 0)
     {
         denoiser_beauty[OUTPUT_TEXEL(pixel)] = color;
+#ifdef SHRIMPLY_SOFTWARE_RAYS
+        // Refraction shares the beauty coverage for edge-aware spatial filtering.
+        // Final output alpha remains in the separate, unfiltered coverage buffer.
+        denoiser_background[OUTPUT_TEXEL(pixel)] = float4(background.rgb, color.a);
+#else
         denoiser_background[OUTPUT_TEXEL(pixel)] = background;
+#endif
         denoiser_alpha[OUTPUT_TEXEL(pixel)] = color.aaaa;
 #ifdef SHRIMPLY_SOFTWARE_RAYS
         CameraRay camera = camera_ray(scene, float2(pixel) + 0.5, dimensions, false, 0u);

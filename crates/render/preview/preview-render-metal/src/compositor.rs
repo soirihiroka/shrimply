@@ -150,20 +150,7 @@ impl Compositor {
         time: Time,
     ) -> Result<Option<Image>, String> {
         self.update(project, time, 0)?;
-        for update in self.take_manim_updates() {
-            match update {
-                shrimply_manim_state::Update::Parameters {
-                    render_is_current: false,
-                    ..
-                } => {
-                    return Err("Manim parameters changed while preparing the frame; wait for the preview to update and try again".into());
-                }
-                shrimply_manim_state::Update::Error {
-                    error: Some(error), ..
-                } => return Err(error),
-                _ => {}
-            }
-        }
+        shrimply_manim_state::validate_render_updates(self.take_manim_updates())?;
         self.take_presented()
             .filter(|frame| {
                 frame.time == time && !frame.loading && frame.accuracy.content_accurate()

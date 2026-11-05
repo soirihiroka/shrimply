@@ -52,6 +52,7 @@ pub fn run() -> Result<(), String> {
         output.join("intel_scene.py"),
         output.join("source.blend"),
         output.join("parity.py"),
+        output.join("parameters.py"),
     ])?
     .approve(shrimply_trust_core::Kind::File)?;
     let cases = cases(&output)?;
@@ -230,6 +231,21 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     manim.file = Asset::new(output.join("intel_scene.py"));
     manim.source_duration = duration;
     result.push(("source-manim".into(), project(manim)));
+    if shrimply_visual_cuda::gpu::intel_backend_selected() {
+        let mut item = image.clone();
+        item.file = Asset::new(output.join("parameters.py"));
+        item.content = VideoItemContent::Manim(Box::new(ManimItem {
+            scene: "ParametersValidation".into(),
+            ..Default::default()
+        }));
+        result.push(("manim-parameters-stale".into(), project(item.clone())));
+        if let VideoItemContent::Manim(manim) = &mut item.content {
+            manim
+                .parameters
+                .insert("scale".into(), ManimParameterValue::Integer(1));
+        }
+        result.push(("manim-parameters-current".into(), project(item)));
+    }
     for scene in [
         "VisualParity",
         "ThreeDParity",
@@ -337,6 +353,28 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
             scene.material.denoising = method;
         }
         result.push((format!("denoiser-{method:?}"), project(item)));
+    }
+    if shrimply_visual_cuda::gpu::intel_backend_selected() {
+        let mut glass = obj.clone();
+        glass.modifiers.truncate(1);
+        let VideoItemContent::Obj(scene) = &mut glass.content else {
+            unreachable!();
+        };
+        scene.environment.intensity = TimelineValue::new_const(0.0);
+        let ModifierEffect::Scene3d(effect) = &mut glass.modifiers[0].effect else {
+            unreachable!();
+        };
+        let scene_3d::Scene3dModifierEffect::Object(object) = effect.as_mut() else {
+            unreachable!();
+        };
+        object.material.transmission = TimelineValue::new_const(1.0);
+        object.material.roughness = TimelineValue::new_const(0.35);
+        let mut rendered = project(image.clone());
+        rendered.video_tracks.push(VideoTrack {
+            items: vec![glass],
+            ..Default::default()
+        });
+        result.push(("gpu-refraction-denoise".into(), rendered));
     }
     result.push(("gpu-optical-flow".into(), project(image.clone())));
     result.push(("gpu-denoise".into(), project(image.clone())));
@@ -566,6 +604,34 @@ fn validate(
     }
     if name == "gpu-denoise" {
         return super::gpu::denoise();
+    }
+    if name == "gpu-refraction-denoise" {
+        return super::gpu::refraction(project, output);
+    }
+    if name == "manim-parameters-stale" {
+        let cancelled = AtomicBool::new(false);
+        let error = Compositor::new()?
+            .prepare_accurate(&project, Time::ZERO, &cancelled)
+            .err()
+            .ok_or("Accurate rendering accepted unreconciled Manim parameters")?;
+        if !error.contains("Manim parameters changed") {
+            return Err(error);
+        }
+        let mut compositor = Compositor::new()?;
+        loop {
+            match compositor.capture_rgba(
+                &project,
+                Time::ZERO,
+                shrimply_preview_render_core::CaptureTarget::Items(vec![
+                    project.video_tracks[0].items[0].id,
+                ]),
+            ) {
+                Err(error) if error.contains("Manim parameters changed") => return Ok(()),
+                Err(error) => return Err(error),
+                Ok(Some(_)) => return Err("Capture accepted unreconciled Manim parameters".into()),
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(1)),
+            }
+        }
     }
     prepare_analysis(name, &project)?;
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -903,7 +969,7 @@ fn validate_optical_flow() -> Result<(), String> {
     Ok(())
 }
 
-fn save_png(path: &Path, pixels: &[u8]) -> Result<(), String> {
+pub(super) fn save_png(path: &Path, pixels: &[u8]) -> Result<(), String> {
     let info = skia_safe::ImageInfo::new(
         (WIDTH as i32, HEIGHT as i32),
         skia_safe::ColorType::RGBA8888,
@@ -947,6 +1013,10 @@ fn create_assets(output: &Path) -> Result<(), String> {
         (
             "intel_scene.py",
             "from manimlib import *\nclass IntelValidation(Scene):\n def construct(self):\n  circle = Circle(radius=1.0, color=BLUE, fill_opacity=1)\n  self.add(circle)\n  self.play(circle.animate.shift(RIGHT*2), run_time=0.2, rate_func=linear)\n",
+        ),
+        (
+            "parameters.py",
+            "from fractions import Fraction\nfrom manimlib import Scene, Square\nfrom shrimply_manim import use_int\nclass ParametersValidation(Scene):\n def construct(self):\n  scale = use_int(1, key='scale')\n  self.add(Square(fill_opacity=1).scale(scale))\n  self.wait(Fraction(1, 5))\n",
         ),
         (
             "source.obj",

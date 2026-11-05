@@ -1,6 +1,56 @@
 use shrimply_preview_render_vulkan::Compositor;
 use std::time::Instant;
 
+pub fn refraction(
+    mut project: shrimply_project_document::project::Project,
+    output: &std::path::Path,
+) -> Result<(), String> {
+    use shrimply_project_document::project::VideoItemContent;
+    use shrimply_scene_3d::DenoisingMethod;
+    let mut compositor = Compositor::new()?;
+    let mut original = Vec::new();
+    let methods = std::iter::once(DenoisingMethod::Off).chain(
+        shrimply_visual_cuda::gpu::denoising_methods()
+            .into_iter()
+            .map(|(method, _)| method)
+            .filter(|method| *method != DenoisingMethod::Off),
+    );
+    for method in methods {
+        let VideoItemContent::Obj(scene) = &mut project.video_tracks[1].items[0].content else {
+            return Err("Missing refraction validation scene".into());
+        };
+        scene.material.denoising = method;
+        compositor.invalidate();
+        let rendered = compositor.render_accurate(
+            &project,
+            shrimply_math_core::Time::ZERO,
+            0,
+            &std::sync::atomic::AtomicBool::new(false),
+        )?;
+        rendered.wait()?;
+        let pixels = compositor.renderer.readback(&rendered.buffer)?;
+        super::run::save_png(&output.join(format!("refraction-{method:?}.png")), &pixels)?;
+        if method == DenoisingMethod::Off {
+            original = pixels;
+            continue;
+        }
+        if pixels == original {
+            return Err(format!(
+                "{method:?} did not filter transmitted background color"
+            ));
+        }
+        if pixels
+            .chunks_exact(4)
+            .zip(original.chunks_exact(4))
+            .any(|(filtered, original)| filtered[3] != original[3])
+        {
+            return Err(format!("{method:?} changed refraction output alpha"));
+        }
+        println!("{method:?} filtered transmitted background color and preserved alpha");
+    }
+    Ok(())
+}
+
 pub fn denoise() -> Result<(), String> {
     const SIZE: (u32, u32) = (160, 96);
     const BACKGROUND_ROWS: u32 = 4;

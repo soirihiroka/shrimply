@@ -6,6 +6,7 @@ edition = "2024"
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 ffmpeg-next.workspace = true
 shrimply-export-core = { workspace = true, default-features = true }
+shrimply-gpu-cuda.workspace = true
 shrimply-math-core = { workspace = true }
 shrimply-profiling.workspace = true
 shrimply-project-document = { workspace = true, default-features = true }

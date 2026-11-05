@@ -1,6 +1,8 @@
 use crate::{Buffer, Renderer, Submission};
 use shrimply_asset::AssetSnapshot;
-use shrimply_render_3d_core::{PreparedFrame, SceneIdentity, SoftwareBvhNode, obj as shader};
+use shrimply_render_3d_core::{
+    ComputeMaterial, ComputePbr, PreparedFrame, SceneIdentity, SoftwareBvhNode, obj as shader,
+};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -18,24 +20,6 @@ struct OutputSize {
     height: u32,
     denoising: u32,
     guides: u32,
-}
-#[repr(C)]
-struct ComputePbr {
-    modes: [u32; 4],
-    surface: [f32; 4],
-    ior: f32,
-    padding: [f32; 3],
-}
-#[repr(C)]
-struct ComputeMaterial {
-    base_color: [f32; 4],
-    metallic_roughness_normal_alpha: [f32; 4],
-    flags: [u32; 4],
-    base_color_texture: shader::TextureMapping,
-    metallic_roughness_texture: shader::TextureMapping,
-    normal_texture: shader::TextureMapping,
-    surface: [u32; 4],
-    pbr: ComputePbr,
 }
 #[repr(C)]
 struct SoftwareResources {
@@ -179,6 +163,7 @@ impl Renderer {
         let alpha = denoise_buffer()?;
         let depth_normal = denoise_buffer()?;
         let filtered = denoise_buffer()?;
+        let filtered_background = denoise_buffer()?;
         let albedo = if oidn {
             denoise_buffer()?
         } else {
@@ -218,7 +203,7 @@ impl Renderer {
             denoiser_depth_normal_data: depth_normal.address(),
             denoiser_albedo_data: albedo.address(),
             denoised_texture_data: filtered.address(),
-            denoised_background_texture_data: denoise_background.address(),
+            denoised_background_texture_data: filtered_background.address(),
             denoised_alpha_texture_data: alpha.address(),
         };
         let state = self.upload(bytes(std::slice::from_ref(&state)))?;
@@ -248,10 +233,11 @@ impl Renderer {
             environment_buffer,
             state.clone(),
             beauty.clone(),
-            denoise_background,
+            denoise_background.clone(),
             alpha,
             depth_normal.clone(),
             filtered.clone(),
+            filtered_background.clone(),
             albedo.clone(),
         ]);
         let mut kernels = vec!["obj_compute"];
@@ -301,8 +287,10 @@ impl Renderer {
             if oidn {
                 self.denoise_oidn(
                     crate::oidn::Guides {
-                        color: &beauty,
-                        output: &filtered,
+                        colors: [
+                            (&beauty, &filtered),
+                            (&denoise_background, &filtered_background),
+                        ],
                         albedo: &albedo,
                         depth_normal: &depth_normal,
                         size: (plan.width, plan.height),
@@ -316,13 +304,18 @@ impl Renderer {
                     submissions,
                 )?;
             } else {
-                self.denoise_atrous(
-                    &beauty,
-                    &filtered,
-                    &depth_normal,
-                    (plan.width, plan.height),
-                    submissions,
-                )?;
+                for (input, output) in [
+                    (&beauty, &filtered),
+                    (&denoise_background, &filtered_background),
+                ] {
+                    self.denoise_atrous(
+                        input,
+                        output,
+                        &depth_normal,
+                        (plan.width, plan.height),
+                        submissions,
+                    )?;
+                }
             }
             let mut args = self.arguments("obj_denoise_composite_compute")?;
             args.set("data", &state.address().to_ne_bytes())?;
@@ -350,31 +343,7 @@ impl Renderer {
         let materials = session
             .materials()
             .iter()
-            .map(|material| ComputeMaterial {
-                base_color: material.base_color_factor,
-                metallic_roughness_normal_alpha: material.metallic_roughness_normal_alpha,
-                flags: material.flags,
-                base_color_texture: material.base_color_texture,
-                metallic_roughness_texture: material.metallic_roughness_texture,
-                normal_texture: material.normal_texture,
-                surface: material.surface,
-                pbr: ComputePbr {
-                    modes: [
-                        material.pbr.path_tracing as u32,
-                        material.pbr.light_sampling_quality as u32,
-                        material.pbr.render_quality as u32,
-                        material.pbr.denoising,
-                    ],
-                    surface: [
-                        material.pbr.subsurface,
-                        material.pbr.clearcoat,
-                        material.pbr.sheen,
-                        material.pbr.transmission,
-                    ],
-                    ior: material.pbr.ior,
-                    padding: [0.0; 3],
-                },
-            })
+            .map(ComputeMaterial::from)
             .collect::<Vec<_>>();
         let colors = session
             .colors()

@@ -66,6 +66,26 @@ pub enum Update {
     },
 }
 
+/// Accurate captures use an immutable project snapshot: parameter reconciliation
+/// requires an updated project, so waiting for it here cannot make progress.
+pub fn validate_render_updates(updates: Vec<Update>) -> Result<(), String> {
+    for update in updates {
+        match update {
+            Update::Parameters {
+                render_is_current: false,
+                ..
+            } => {
+                return Err("Manim parameters changed while preparing the frame; wait for the preview to update and try again".into());
+            }
+            Update::Error {
+                error: Some(error), ..
+            } => return Err(error),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyResult {
     pub duration: Option<Time>,

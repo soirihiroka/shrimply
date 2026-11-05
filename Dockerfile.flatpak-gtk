@@ -41,12 +41,13 @@ ENV PATH=/usr/local/cargo/bin:${PATH}
 
 WORKDIR /src
 COPY . .
+ARG SHRIMPLY_BUILD_GIT_HASH
 RUN tar --sort=name --owner=0 --group=0 --numeric-owner \
         -cf /shrimply-source.tar . \
     && source_hash="$(sha256sum /shrimply-source.tar | cut -d ' ' -f 1)" \
     && mv /shrimply-source.tar "/shrimply-source-${source_hash}.tar" \
-    && sed -i "s|@SHRIMPLY_SOURCE@|/shrimply-source-${source_hash}.tar|" \
-        dev.shrimply.Shrimply.yml
+    && bash packaging/flatpak/prepare-manifest.sh dev.shrimply.Shrimply.yml \
+        "/shrimply-source-${source_hash}.tar" "${SHRIMPLY_BUILD_GIT_HASH}"
 
 CMD mkdir -p /usr/local/libclang-deps \
     && for library in libbsd.so.0 libedit.so.2 libffi.so.8 libicudata.so.74 libicuuc.so.74 liblzma.so.5 libmd.so.0 libtinfo.so.6 libxml2.so.2 libz.so.1 libzstd.so.1; do ln -sf "/run/host/usr/lib/x86_64-linux-gnu/${library}" "/usr/local/libclang-deps/${library}"; done \

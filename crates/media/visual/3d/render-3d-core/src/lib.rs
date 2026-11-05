@@ -18,6 +18,56 @@ pub use shrimply_transform_3d::Projection as SceneProjection;
 
 include!(concat!(env!("OUT_DIR"), "/slang_bindings.rs"));
 
+#[repr(C)]
+pub struct ComputePbr {
+    pub modes: [u32; 4],
+    pub surface: [f32; 4],
+    pub ior: f32,
+    pub padding: [f32; 3],
+}
+
+#[repr(C, align(16))]
+pub struct ComputeMaterial {
+    pub base_color: [f32; 4],
+    pub metallic_roughness_normal_alpha: [f32; 4],
+    pub flags: [u32; 4],
+    pub base_color_texture: obj::TextureMapping,
+    pub metallic_roughness_texture: obj::TextureMapping,
+    pub normal_texture: obj::TextureMapping,
+    pub surface: [u32; 4],
+    pub pbr: ComputePbr,
+}
+
+impl From<&obj::MeshMaterial> for ComputeMaterial {
+    fn from(material: &obj::MeshMaterial) -> Self {
+        Self {
+            base_color: material.base_color_factor,
+            metallic_roughness_normal_alpha: material.metallic_roughness_normal_alpha,
+            flags: material.flags,
+            base_color_texture: material.base_color_texture,
+            metallic_roughness_texture: material.metallic_roughness_texture,
+            normal_texture: material.normal_texture,
+            surface: material.surface,
+            pbr: ComputePbr {
+                modes: [
+                    material.pbr.path_tracing as u32,
+                    material.pbr.light_sampling_quality as u32,
+                    material.pbr.render_quality as u32,
+                    material.pbr.denoising,
+                ],
+                surface: [
+                    material.pbr.subsurface,
+                    material.pbr.clearcoat,
+                    material.pbr.sheen,
+                    material.pbr.transmission,
+                ],
+                ior: material.pbr.ior,
+                padding: material.pbr._padding,
+            },
+        }
+    }
+}
+
 const MAX_ENVIRONMENT_WIDTH: u32 = 2048;
 pub const MAX_SCENE_LIGHTS: usize = 32;
 pub const MAX_SCENE_GROUNDS: usize = 32;

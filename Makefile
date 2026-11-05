@@ -99,6 +99,7 @@ DOCKER ?= docker
 FLATPAK_GTK_IMAGE ?= shrimply-flatpak-gtk-builder
 FLATPAK_GTK_CACHE ?= $(CURDIR)/target/flatpak-gtk
 FLATPAK_BUNDLE := dist/shrimply-gtk-x86_64.flatpak
+SHRIMPLY_BUILD_GIT_HASH ?= $(shell git rev-parse HEAD)
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -522,7 +523,7 @@ install: release desktop-icon project-mime
 flatpak-gtk:
 	@command -v $(DOCKER) >/dev/null 2>&1 || { echo "Missing Docker ($(DOCKER))" >&2; exit 1; }
 	mkdir -p "$(dir $(FLATPAK_BUNDLE))" "$(FLATPAK_GTK_CACHE)"
-	$(DOCKER) build -f Dockerfile.flatpak-gtk -t "$(FLATPAK_GTK_IMAGE)" .
+	$(DOCKER) build -f Dockerfile.flatpak-gtk -t "$(FLATPAK_GTK_IMAGE)" --build-arg SHRIMPLY_BUILD_GIT_HASH="$(SHRIMPLY_BUILD_GIT_HASH)" .
 	$(DOCKER) run --rm --privileged \
 		--env OUTPUT_UID="$$(id -u)" \
 		--env OUTPUT_GID="$$(id -g)" \

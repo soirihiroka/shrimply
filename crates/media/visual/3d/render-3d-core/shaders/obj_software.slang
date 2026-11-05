@@ -7,4 +7,3 @@ void reflect_software(uniform SoftwareResources resources, uniform SoftwareTextu
                       uniform ComputeMaterial material, uniform ComputePbr pbr,
                       uniform SceneUniforms uniforms, uniform MeshInstance instance,
                       uniform SoftwareBvhNode node) {}
-

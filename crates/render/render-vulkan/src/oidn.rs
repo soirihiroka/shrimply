@@ -5,12 +5,11 @@ use std::sync::Arc;
 
 pub(crate) struct State {
     device: Arc<Device>,
-    filter: Filter,
+    filters: [Filter; 2],
 }
 
 pub(crate) struct Guides<'a> {
-    pub color: &'a Buffer,
-    pub output: &'a Buffer,
+    pub colors: [(&'a Buffer, &'a Buffer); 2],
     pub albedo: &'a Buffer,
     pub depth_normal: &'a Buffer,
     pub size: (u32, u32),
@@ -26,24 +25,27 @@ impl Renderer {
         if self.oidn.is_none() {
             let device = Device::for_uuid(self.device_uuid())?;
             self.oidn = Some(State {
-                filter: Filter::new(device.clone())?,
+                filters: [Filter::new(device.clone())?, Filter::new(device.clone())?],
                 device,
             });
         }
-        let resources = vec![
-            guides.color.clone(),
-            guides.output.clone(),
-            guides.albedo.clone(),
-            guides.depth_normal.clone(),
-        ];
+        let resources = guides
+            .colors
+            .into_iter()
+            .flat_map(|(color, output)| [color.clone(), output.clone()])
+            .chain([guides.albedo.clone(), guides.depth_normal.clone()])
+            .collect::<Vec<_>>();
         let device = self
             .oidn
             .as_ref()
             .expect("initialized OIDN GPU state")
             .device
             .clone();
-        let color = guides.color.oidn(&device)?;
-        let output = guides.output.oidn(&device)?;
+        let colors = guides
+            .colors
+            .into_iter()
+            .map(|(color, output)| Ok((color.oidn(&device)?, output.oidn(&device)?)))
+            .collect::<Result<Vec<_>, String>>()?;
         let albedo = guides.albedo.oidn(&device)?;
         let normal = guides.depth_normal.oidn(&device)?;
         // OIDN's SYCL backend currently lacks external semaphore interop. Fence
@@ -54,30 +56,35 @@ impl Renderer {
             .expect("Vulkan failed while releasing OIDN buffer ownership");
         submissions.push(release);
         let state = self.oidn.as_mut().expect("initialized OIDN GPU state");
-        let result = unsafe {
-            state.filter.execute(
-                Images {
-                    color: Image::Shared {
-                        buffer: color,
-                        offset: 0,
-                    },
-                    output: Image::Shared {
-                        buffer: output,
-                        offset: 0,
-                    },
-                    albedo: Some(Image::Shared {
-                        buffer: albedo,
-                        offset: 0,
-                    }),
-                    normal: Some(Image::Shared {
-                        buffer: normal,
-                        offset: size_of::<f32>(),
-                    }),
-                    size: guides.size,
-                },
-                guides.quality,
-            )
-        };
+        let result =
+            state
+                .filters
+                .iter_mut()
+                .zip(colors)
+                .try_for_each(|(filter, (color, output))| unsafe {
+                    filter.execute(
+                        Images {
+                            color: Image::Shared {
+                                buffer: color,
+                                offset: 0,
+                            },
+                            output: Image::Shared {
+                                buffer: output,
+                                offset: 0,
+                            },
+                            albedo: Some(Image::Shared {
+                                buffer: albedo,
+                                offset: 0,
+                            }),
+                            normal: Some(Image::Shared {
+                                buffer: normal,
+                                offset: size_of::<f32>(),
+                            }),
+                            size: guides.size,
+                        },
+                        guides.quality,
+                    )
+                });
         // Always wait before reacquiring or propagating an asynchronous error.
         let completion = state.device.synchronize();
         submissions.push(

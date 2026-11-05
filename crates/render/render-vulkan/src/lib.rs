@@ -398,13 +398,14 @@ impl Renderer {
         command: vk::CommandBuffer,
         resources: Vec<Buffer>,
     ) -> Result<Submission, String> {
-        self.submit_waiting(command, resources, &[])
+        self.submit_with_semaphores(command, resources, &[], &[])
     }
-    fn submit_waiting(
+    fn submit_with_semaphores(
         &self,
         command: vk::CommandBuffer,
         resources: Vec<Buffer>,
         waits: &[(vk::Semaphore, u64)],
+        signals: &[(vk::Semaphore, u64)],
     ) -> Result<Submission, String> {
         let mut submission = Submission {
             pool: self.pool.clone(),
@@ -426,16 +427,20 @@ impl Renderer {
         }
         .map_err(|e| format!("create Vulkan fence: {e:?}"))?;
         submission.fence = fence;
-        let semaphores = waits.iter().map(|wait| wait.0).collect::<Vec<_>>();
-        let values = waits.iter().map(|wait| wait.1).collect::<Vec<_>>();
+        let wait_semaphores = waits.iter().map(|wait| wait.0).collect::<Vec<_>>();
+        let wait_values = waits.iter().map(|wait| wait.1).collect::<Vec<_>>();
+        let signal_semaphores = signals.iter().map(|signal| signal.0).collect::<Vec<_>>();
+        let signal_values = signals.iter().map(|signal| signal.1).collect::<Vec<_>>();
         let stages = vec![vk::PipelineStageFlags::ALL_COMMANDS; waits.len()];
-        let mut timeline =
-            vk::TimelineSemaphoreSubmitInfo::default().wait_semaphore_values(&values);
+        let mut timeline = vk::TimelineSemaphoreSubmitInfo::default()
+            .wait_semaphore_values(&wait_values)
+            .signal_semaphore_values(&signal_values);
         let commands = [command];
         let info = vk::SubmitInfo::default()
             .command_buffers(&commands)
-            .wait_semaphores(&semaphores)
+            .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&stages)
+            .signal_semaphores(&signal_semaphores)
             .push_next(&mut timeline);
         {
             let _guard = self.device.queue_lock();

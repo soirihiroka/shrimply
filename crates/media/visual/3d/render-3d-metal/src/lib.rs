@@ -17,6 +17,8 @@ use objc2_metal::{
     MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
 };
 
+use shrimply_render_3d_core::{ComputeMaterial, ComputePbr};
+
 include!(concat!(env!("OUT_DIR"), "/obj_metal.rs"));
 
 pub struct Rendered {
@@ -69,26 +71,6 @@ struct OutputSize {
     height: u32,
     denoising: u32,
     guides: u32,
-}
-
-#[repr(C, align(16))]
-struct ComputeMaterial {
-    base_color: [f32; 4],
-    metallic_roughness_normal_alpha: [f32; 4],
-    flags: [u32; 4],
-    base_color_texture: shrimply_render_3d_core::obj::TextureMapping,
-    metallic_roughness_texture: shrimply_render_3d_core::obj::TextureMapping,
-    normal_texture: shrimply_render_3d_core::obj::TextureMapping,
-    surface: [u32; 4],
-    pbr: ComputePbr,
-}
-
-#[repr(C)]
-struct ComputePbr {
-    modes: [u32; 4],
-    surface: [f32; 4],
-    ior: f32,
-    padding: [f32; 3],
 }
 
 impl Renderer {
@@ -240,31 +222,7 @@ impl Renderer {
             .session
             .materials()
             .iter()
-            .map(|material| ComputeMaterial {
-                base_color: material.base_color_factor,
-                metallic_roughness_normal_alpha: material.metallic_roughness_normal_alpha,
-                flags: material.flags,
-                base_color_texture: material.base_color_texture,
-                metallic_roughness_texture: material.metallic_roughness_texture,
-                normal_texture: material.normal_texture,
-                surface: material.surface,
-                pbr: ComputePbr {
-                    modes: [
-                        material.pbr.path_tracing as u32,
-                        material.pbr.light_sampling_quality as u32,
-                        material.pbr.render_quality as u32,
-                        material.pbr.denoising,
-                    ],
-                    surface: [
-                        material.pbr.subsurface,
-                        material.pbr.clearcoat,
-                        material.pbr.sheen,
-                        material.pbr.transmission,
-                    ],
-                    ior: material.pbr.ior,
-                    padding: material.pbr._padding,
-                },
-            })
+            .map(ComputeMaterial::from)
             .collect::<Vec<_>>();
         let materials = metal.upload(bytes_slice(&compute_materials))?;
         let mesh_instances = metal.upload(bytes_slice(plan.session.mesh_instances()))?;

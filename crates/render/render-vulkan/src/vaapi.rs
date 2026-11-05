@@ -285,18 +285,6 @@ impl Renderer {
         } else {
             vk::AccessFlags2::TRANSFER_READ
         };
-        let command = self.command()?;
-        let mut submission = Submission {
-            pool: self.pool.clone(),
-            command,
-            fence: vk::Fence::null(),
-            submitted: false,
-            _resources: vec![planes.clone()],
-            _video: None,
-            _prior: Vec::new(),
-            _images: Vec::new(),
-            _textures: Vec::new(),
-        };
         let native = unsafe { &mut *(*mapped.frame.as_mut_ptr()).data[0].cast::<sys::AVVkFrame>() };
         let frames = unsafe { (*mapped.frame.as_ptr()).hw_frames_ctx };
         let frames = unsafe { (*frames).data.cast::<sys::AVHWFramesContext>() };
@@ -311,9 +299,8 @@ impl Renderer {
             frame: native,
             unlock: vulkan_frames.unlock_frame,
         };
-        let mut semaphores = Vec::new();
-        let mut wait_values = Vec::new();
-        let mut signal_values = Vec::new();
+        let mut waits = Vec::new();
+        let mut signals = Vec::new();
         let image_count = native.img.iter().take_while(|image| **image != 0).count();
         if !matches!(image_count, 1 | 2) {
             return Err(format!(
@@ -347,15 +334,17 @@ impl Renderer {
                     ),
             );
             if native.sem[index] != 0 {
-                semaphores.push(vk::Semaphore::from_raw(native.sem[index] as _));
-                wait_values.push(native.sem_value[index]);
-                signal_values.push(
+                let semaphore = vk::Semaphore::from_raw(native.sem[index] as _);
+                waits.push((semaphore, native.sem_value[index]));
+                signals.push((
+                    semaphore,
                     native.sem_value[index]
                         .checked_add(1)
                         .expect("Vulkan video semaphore overflow"),
-                );
+                ));
             }
         }
+        let command = self.command()?;
         unsafe {
             self.device.raw.cmd_pipeline_barrier2(
                 command,
@@ -452,51 +441,21 @@ impl Renderer {
                 &vk::DependencyInfo::default().image_memory_barriers(&releases),
             );
         }
-        unsafe { self.device.raw.end_command_buffer(command) }
-            .map_err(|e| format!("Finish Intel video import: {e:?}"))?;
-        let fence = unsafe {
-            self.device
-                .raw
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-        }
-        .map_err(|e| format!("Create video import fence: {e:?}"))?;
-        submission.fence = fence;
-        let stages = vec![vk::PipelineStageFlags::TRANSFER; semaphores.len()];
-        let mut timeline = vk::TimelineSemaphoreSubmitInfo::default()
-            .wait_semaphore_values(&wait_values)
-            .signal_semaphore_values(&signal_values);
-        let commands = [command];
-        let submit = vk::SubmitInfo::default()
-            .command_buffers(&commands)
-            .wait_semaphores(&semaphores)
-            .wait_dst_stage_mask(&stages)
-            .signal_semaphores(&semaphores)
-            .push_next(&mut timeline);
-        let result = {
-            let _guard = self.device.queue_lock();
-            unsafe {
-                self.device
-                    .raw
-                    .queue_submit(self.device.queue, &[submit], fence)
+        let mut submission =
+            self.submit_with_semaphores(command, vec![planes], &waits, &signals)?;
+        for index in 0..image_count {
+            native.layout[index] = vk::ImageLayout::GENERAL.as_raw() as _;
+            native.access[index] = 0;
+            if native.queue_family[index] != vk::QUEUE_FAMILY_IGNORED {
+                native.queue_family[index] = vk::QUEUE_FAMILY_EXTERNAL;
             }
-        };
-        if result.is_ok() {
-            submission.submitted = true;
-            for index in 0..image_count {
-                native.layout[index] = vk::ImageLayout::GENERAL.as_raw() as _;
-                native.access[index] = 0;
-                if native.queue_family[index] != vk::QUEUE_FAMILY_IGNORED {
-                    native.queue_family[index] = vk::QUEUE_FAMILY_EXTERNAL;
-                }
-                if native.sem[index] != 0 {
-                    native.sem_value[index] = native.sem_value[index]
-                        .checked_add(1)
-                        .expect("Vulkan semaphore overflow");
-                }
+            if native.sem[index] != 0 {
+                native.sem_value[index] = native.sem_value[index]
+                    .checked_add(1)
+                    .expect("Vulkan semaphore overflow");
             }
         }
         drop(lock);
-        result.map_err(|e| format!("Submit Intel video import: {e:?}"))?;
         submission._video = Some(mapped);
 
         Ok(submission)

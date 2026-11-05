@@ -182,12 +182,13 @@ impl Compositor {
     ) -> Result<Option<Vec<u8>>, String> {
         self.scene.set_capture_target(Some(target));
         self.scene.request_frame();
-        let Some(plan) = self.prepare(
+        let plan = self.prepare(
             project,
             position,
             shrimply_preview_render_core::CompositeAccuracy::FULLY_ACCURATE,
-        )?
-        else {
+        )?;
+        shrimply_manim_state::validate_render_updates(self.take_manim_updates())?;
+        let Some(plan) = plan else {
             return Ok(None);
         };
         if plan.loading || !plan.accuracy.content_accurate() {
@@ -220,11 +221,14 @@ impl Compositor {
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 return Err("Export cancelled".into());
             }
-            if let Some(plan) = self.prepare(
+            let plan = self.prepare(
                 project,
                 position,
                 shrimply_preview_render_core::CompositeAccuracy::FULLY_ACCURATE,
-            )? && !plan.loading
+            )?;
+            shrimply_manim_state::validate_render_updates(self.take_manim_updates())?;
+            if let Some(plan) = plan
+                && !plan.loading
                 && plan.accuracy.content_accurate()
             {
                 return Ok(plan);
