@@ -973,6 +973,7 @@ impl shrimply_visual_core::sam2::analysis::ProxyFrameSource for Sam2ProxyFrameSo
         objc2::rc::autoreleasepool(|_| {
             self.compositor
                 .update(request.project, request.timeline_position, self.request_id)?;
+            shrimply_manim_state::validate_render_updates(self.compositor.take_manim_updates())?;
             if let Some(rgba) = self.compositor.take_sam2_proxy() {
                 let _ = self.compositor.take_presented();
                 return Ok(shrimply_visual_core::sam2::analysis::ProxyFrameStatus::Ready(rgba));

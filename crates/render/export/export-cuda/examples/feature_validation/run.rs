@@ -231,7 +231,7 @@ fn cases(output: &Path) -> Result<Vec<(String, Project)>, String> {
     manim.file = Asset::new(output.join("intel_scene.py"));
     manim.source_duration = duration;
     result.push(("source-manim".into(), project(manim)));
-    if shrimply_visual_cuda::gpu::intel_backend_selected() {
+    {
         let mut item = image.clone();
         item.file = Asset::new(output.join("parameters.py"));
         item.content = VideoItemContent::Manim(Box::new(ManimItem {
@@ -609,10 +609,28 @@ fn validate(
         return super::gpu::refraction(project, output);
     }
     if name == "manim-parameters-stale" {
+        const REPEATED_REQUESTS: usize = 2;
+        if !shrimply_visual_cuda::gpu::intel_backend_selected() {
+            let mut renderer = shrimply_visual_cuda::compositor::VideoExportRenderer::new(48_000)?;
+            for _ in 0..REPEATED_REQUESTS {
+                loop {
+                    match renderer.render(&project, Time::ZERO, 0) {
+                        Err(error) if error.contains("Manim parameters changed") => break,
+                        Err(error)
+                            if error == shrimply_visual_cuda::compositor::EXPORT_ASSETS_LOADING =>
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                        }
+                        Err(error) => return Err(error),
+                        Ok(_) => return Err("CUDA accepted unreconciled Manim parameters".into()),
+                    }
+                }
+            }
+            return Ok(());
+        }
         use shrimply_visual_core::sam2::analysis::{
             AnalysisTarget, ProxyFrameRequest, ProxyFrameSource, ProxyFrameStatus,
         };
-        const REPEATED_REQUESTS: usize = 2;
         let cancelled = AtomicBool::new(false);
         let mut compositor = Compositor::new()?;
         for _ in 0..REPEATED_REQUESTS {

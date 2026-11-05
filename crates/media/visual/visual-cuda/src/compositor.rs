@@ -814,6 +814,7 @@ impl VideoExportRenderer {
                 )),
             }
         }
+        shrimply_manim_state::validate_render_updates(rendered.manim_updates)?;
         if rendered.errors.is_empty() {
             match rendered.frame {
                 Some(frame) => Ok(frame),

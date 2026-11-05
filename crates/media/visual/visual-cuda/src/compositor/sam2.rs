@@ -53,6 +53,7 @@ impl crate::sam2_analysis::ProxyFrameSource for ProxyFrameSource {
                 None,
                 None,
             );
+            shrimply_manim_state::validate_render_updates(rendered.manim_updates)?;
             if !rendered.errors.is_empty() {
                 return Err(format!(
                     "SAM2 clip analysis failed at {}: {}",
