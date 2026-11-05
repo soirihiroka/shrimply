@@ -2,6 +2,8 @@ use crate::store;
 use adw::prelude::*;
 use shrimply_components_gtk::tr;
 
+const DEVICE_NAME_MAX_WIDTH_CHARS: i32 = 60;
+
 pub fn row(preferences: store::SharedPreferences) -> adw::ComboRow {
     let saved = store::snapshot(&preferences).acceleration_device;
     let mut choices = vec![(String::new(), tr!("Automatic").to_string())];
@@ -17,10 +19,32 @@ pub fn row(preferences: store::SharedPreferences) -> adw::ComboRow {
         .iter()
         .map(|(_, name)| name.as_str())
         .collect::<Vec<_>>();
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let item = item
+            .downcast_ref::<gtk::ListItem>()
+            .expect("acceleration device factory received a non-list item");
+        let label = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .max_width_chars(DEVICE_NAME_MAX_WIDTH_CHARS)
+            .build();
+        let name = item
+            .property_expression_weak("item")
+            .chain_property::<gtk::StringObject>("string");
+        name.bind(&label, "label", gtk::Widget::NONE);
+        name.bind(&label, "tooltip-text", gtk::Widget::NONE);
+        item.set_child(Some(&label));
+    });
     let row = adw::ComboRow::builder()
         .title(tr!("Acceleration device").as_ref())
-        .subtitle(tr!("Rendering, playback and export. Restart required.").as_ref())
+        .tooltip_text(tr!("Rendering, playback and export. Restart required.").as_ref())
         .model(&gtk::StringList::new(&labels))
+        .list_factory(&factory)
+        .use_subtitle(true)
+        .subtitle_lines(0)
         .use_markup(false)
         .selected(
             choices

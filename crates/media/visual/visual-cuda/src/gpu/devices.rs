@@ -48,6 +48,7 @@ fn intel_devices() -> Result<Vec<AccelerationDevice>, String> {
             .map(|entry| entry.path())
             .collect::<Vec<_>>();
         let mut result = Vec::new();
+        let mut render_devices = std::collections::HashSet::new();
         for physical in
             unsafe { instance.enumerate_physical_devices() }.map_err(|error| error.to_string())?
         {
@@ -77,6 +78,10 @@ fn intel_devices() -> Result<Vec<AccelerationDevice>, String> {
             }) else {
                 continue;
             };
+            // Multiple ICDs can expose the same physical DRM render device.
+            if !render_devices.insert((drm.render_major, drm.render_minor)) {
+                continue;
+            }
             result.push(AccelerationDevice {
                 id: format!("intel:{}", uuid::Uuid::from_bytes(identity.device_uuid)),
                 name: unsafe { CStr::from_ptr(base.device_name.as_ptr()) }
