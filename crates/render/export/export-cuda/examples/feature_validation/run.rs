@@ -654,6 +654,9 @@ fn validate(
             },
             modifier_id: sam2.id,
         };
+        project.video_tracks[0].items[0]
+            .modifiers
+            .push(modifier(ModifierEffect::Rasterize(Default::default())));
         project.video_tracks[0].items[0].modifiers.push(sam2);
         let mut source = shrimply_preview_render_vulkan::Sam2ProxyFrameSource::new()?;
         for _ in 0..REPEATED_REQUESTS {
