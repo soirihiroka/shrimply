@@ -1,7 +1,7 @@
 #![cfg(any(target_os = "linux", windows))]
-mod vulkan;
 use hashbrown::HashMap;
 use shrimply_gpu_cuda::{CudaContext, sys};
+use shrimply_manim_wgpu::vulkan;
 use shrimply_visual_frame::VisualFrame;
 use std::{
     ptr,

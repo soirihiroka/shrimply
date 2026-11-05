@@ -150,20 +150,7 @@ impl Compositor {
         time: Time,
     ) -> Result<Option<Image>, String> {
         self.update(project, time, 0)?;
-        for update in self.take_manim_updates() {
-            match update {
-                shrimply_manim_state::Update::Parameters {
-                    render_is_current: false,
-                    ..
-                } => {
-                    return Err("Manim parameters changed while preparing the frame; wait for the preview to update and try again".into());
-                }
-                shrimply_manim_state::Update::Error {
-                    error: Some(error), ..
-                } => return Err(error),
-                _ => {}
-            }
-        }
+        shrimply_manim_state::validate_render_updates(self.take_manim_updates())?;
         self.take_presented()
             .filter(|frame| {
                 frame.time == time && !frame.loading && frame.accuracy.content_accurate()
@@ -445,9 +432,18 @@ impl Compositor {
                     (buffer, None)
                 }
                 Source::Image(image) => (self.image_buffer(image, used_sources)?, None),
-                Source::LayeredImage(plan) => {
-                    (self.layered_image_buffer(plan, effect_submissions)?, None)
-                }
+                Source::LayeredImage(plan) => (
+                    crate::layered_image::composite(
+                        self.compute
+                            .as_mut()
+                            .ok_or("Metal renderer is unavailable for LayeredImage")?,
+                        plan,
+                        &mut self.layered_sources,
+                        &mut self.used_layered_sources,
+                        effect_submissions,
+                    )?,
+                    None,
+                ),
                 Source::Gaussian(plan) => {
                     if self.gaussian.is_none() {
                         self.gaussian = Some(shrimply_3dgs_metal::Renderer::new(
@@ -592,7 +588,10 @@ impl Compositor {
             let mask_buffer = layer
                 .video_mask
                 .as_ref()
-                .map(|mask| self.image_buffer(&mask.image, used_sources))
+                .map(|mask| {
+                    let shrimply_preview_render_core::DecodedImage::Raster(image) = &mask.image;
+                    self.image_buffer(image, used_sources)
+                })
                 .transpose()?;
             let renderer = self.compute.as_mut().expect("initialized Metal compositor");
             let buffer = if let Some((mask, mask_buffer)) =
@@ -903,115 +902,6 @@ impl Compositor {
         })
     }
 
-    fn layered_image_buffer(
-        &mut self,
-        plan: &shrimply_visual_core::layered_image::Prepared,
-        submissions: &mut Vec<shrimply_render_metal::Submission>,
-    ) -> Result<shrimply_render_metal::Buffer, String> {
-        let width = plan.document.width.max(1);
-        let height = plan.document.height.max(1);
-        let pixel_count = usize::try_from(width)
-            .ok()
-            .and_then(|width| {
-                usize::try_from(height)
-                    .ok()
-                    .and_then(|height| width.checked_mul(height))
-            })
-            .ok_or("Layered image dimensions overflow Metal address space")?;
-        let byte_count = pixel_count
-            .checked_mul(size_of::<u32>())
-            .ok_or("Layered image byte size overflow")?;
-        let pitch = usize::try_from(width)
-            .ok()
-            .and_then(|width| width.checked_mul(size_of::<u32>()))
-            .and_then(|pitch| u64::try_from(pitch).ok())
-            .ok_or("Layered image row pitch overflow")?;
-        let output_count = u64::try_from(pixel_count)
-            .map_err(|_| "Layered image pixel count exceeds the shared Slang ABI")?;
-
-        for (index, layer) in plan.document.layers.iter().enumerate() {
-            if layer.rgba.len() != byte_count {
-                return Err(format!(
-                    "Layered image layer {} has {} RGBA bytes, expected {byte_count}",
-                    layer.name,
-                    layer.rgba.len()
-                ));
-            }
-            let key = (plan.source_key.clone(), index);
-            self.used_layered_sources.insert(key.clone());
-            if !self.layered_sources.contains_key(&key) {
-                let source = self
-                    .compute
-                    .as_ref()
-                    .ok_or("Metal renderer is unavailable for LayeredImage")?
-                    .upload(&layer.rgba)?;
-                self.layered_sources.insert(key, source);
-            }
-        }
-
-        // The shared kernel blends into its destination, so the first layer must
-        // observe transparent pixels rather than uninitialized Metal storage.
-        let output = self
-            .compute
-            .as_ref()
-            .ok_or("Metal renderer is unavailable for LayeredImage")?
-            .upload(&vec![0; byte_count])?;
-        for layer in &plan.layers {
-            let source = self
-                .layered_sources
-                .get(&(plan.source_key.clone(), layer.source))
-                .cloned()
-                .ok_or("Shared LayeredImage plan references a missing source layer")?;
-            let clipping = layer
-                .clipping_base
-                .map(|(index, opacity)| {
-                    self.layered_sources
-                        .get(&(plan.source_key.clone(), index))
-                        .cloned()
-                        .map(|buffer| (buffer, opacity))
-                        .ok_or("Shared LayeredImage plan references a missing clipping base")
-                })
-                .transpose()?;
-            let renderer = self
-                .compute
-                .as_mut()
-                .ok_or("Metal renderer is unavailable for LayeredImage")?;
-            let mut arguments = renderer.arguments("composite_layered_image_layer")?;
-            arguments
-                .set("params.source", &source.address().to_ne_bytes())?
-                .set(
-                    "params.clipping_base",
-                    &clipping
-                        .as_ref()
-                        .map_or(0, |(buffer, _)| buffer.address())
-                        .to_ne_bytes(),
-                )?
-                .set("params.source_pitch", &pitch.to_ne_bytes())?
-                .set(
-                    "params.clipping_base_pitch",
-                    &clipping.as_ref().map_or(0, |_| pitch).to_ne_bytes(),
-                )?
-                .set("params.width", &width.to_ne_bytes())?
-                .set("params.opacity", &layer.opacity.to_ne_bytes())?
-                .set(
-                    "params.clipping_base_opacity",
-                    &clipping
-                        .as_ref()
-                        .map_or(1.0, |(_, opacity)| *opacity)
-                        .to_ne_bytes(),
-                )?
-                .set("params.noise_seed", &layer.noise_seed.to_ne_bytes())?
-                .set("params.mode", &[layer.mode as u8])?
-                .set("output", &output.address().to_ne_bytes())?
-                .set("output_count", &output_count.to_ne_bytes())?;
-            let mut resources = vec![source, output.clone()];
-            resources.extend(clipping.map(|(buffer, _)| buffer));
-            submissions
-                .push(unsafe { renderer.dispatch(arguments, resources, [pixel_count, 1, 1]) }?);
-        }
-        Ok(output)
-    }
-
     fn image_buffer(
         &mut self,
         image: &Image,
@@ -1083,6 +973,7 @@ impl shrimply_visual_core::sam2::analysis::ProxyFrameSource for Sam2ProxyFrameSo
         objc2::rc::autoreleasepool(|_| {
             self.compositor
                 .update(request.project, request.timeline_position, self.request_id)?;
+            shrimply_manim_state::validate_render_updates(self.compositor.take_manim_updates())?;
             if let Some(rgba) = self.compositor.take_sam2_proxy() {
                 let _ = self.compositor.take_presented();
                 return Ok(shrimply_visual_core::sam2::analysis::ProxyFrameStatus::Ready(rgba));

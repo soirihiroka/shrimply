@@ -23,6 +23,8 @@ fn main() -> glib::ExitCode {
     }
     shrimply_process_reporting::diagnostics::init();
     shrimply_components_gtk::i18n::init_system_locale();
+    // Linux selects and validates its GPU backend in the editor.
+    #[cfg(target_os = "windows")]
     if let Err(error) = shrimply_cross_ui_core::launcher::check_nvidia_gpu() {
         tracing::error!("{error}");
         if let Err(error) = adw::init() {

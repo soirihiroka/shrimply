@@ -8,6 +8,7 @@ on:
       - ".github/workflows/flatpak.yml"
       - ".github/scripts/**"
       - "packaging/flatpak/**"
+      - "packaging/linux/**"
       - "dev.shrimply.Shrimply.yml"
       - ".cargo/**"
       - ".gitmodules"
@@ -28,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: flatpak-prerelease
+  group: flatpak-prerelease-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -52,7 +53,6 @@ env:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       actions: write
@@ -183,19 +183,16 @@ jobs:
           mv "${source_archive}" "${hashed_archive}"
 
           manifest="${RUNNER_TEMP}/dev.shrimply.Shrimply.yml"
-          cp dev.shrimply.Shrimply.yml "${manifest}"
-          grep -q '@SHRIMPLY_SOURCE@' "${manifest}"
-          sed -i "s|@SHRIMPLY_SOURCE@|${hashed_archive}|" "${manifest}"
-          if grep -q '@SHRIMPLY_SOURCE@' "${manifest}"; then
-            echo "Flatpak source placeholder was not replaced" >&2
-            exit 1
-          fi
+          bash packaging/flatpak/prepare-manifest.sh "${manifest}" "${hashed_archive}" "${GITHUB_SHA}"
           echo "manifest=${manifest}" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve dependency cache key
         id: dependency-cache-key
         run: |
-          sed '/^  - name: shrimply-gtk$/,$d' dev.shrimply.Shrimply.yml \
+          {
+            sed '/^  - name: shrimply-gtk$/,$d' dev.shrimply.Shrimply.yml
+            printf '%s\n' "${{ hashFiles('packaging/flatpak/*.patch') }}"
+          } \
             | sha256sum \
             | cut -d ' ' -f 1 \
             | sed 's/^/hash=/' >> "${GITHUB_OUTPUT}"
@@ -236,7 +233,8 @@ jobs:
         run: |
           sdk_commit="$(flatpak info --user --show-commit "org.gnome.Sdk//${GNOME_RUNTIME_VERSION}")"
           native_versions="$(dpkg-query -W)"
-          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${sdk_commit}" "${native_versions}" \
+          # Generated FFI bindings must match the bundled native libraries.
+          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${sdk_commit}" "${native_versions}" "${{ steps.dependency-cache-key.outputs.hash }}" \
             | LC_ALL=C sort | sha256sum | cut -d ' ' -f 1)"
           echo "prefix=flatpak-application-v2-ubuntu-24.04-${{ runner.arch }}-cuda-${CUDA_VERSION}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
 
@@ -283,7 +281,7 @@ jobs:
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
 
       - name: Prune old Flatpak application caches
-        if: steps.save-application-cache.outcome == 'success'
+        if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
@@ -331,6 +329,7 @@ jobs:
           retention-days: 7
 
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-24.04
     permissions:

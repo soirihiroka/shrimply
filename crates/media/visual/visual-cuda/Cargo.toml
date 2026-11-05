@@ -5,6 +5,7 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
+shrimply-preferences-core.workspace = true
 shrimply-3dgs-vulkan.workspace = true
 shrimply-visual-core = { workspace = true, features = ["cuda-stabilization"] }
 hashbrown.workspace = true
@@ -48,6 +49,7 @@ shrimply-manim-state = { workspace = true }
 shrimply-manim-cuda = { workspace = true }
 shrimply-nvidia-optical-flow = { workspace = true }
 shrimply-denoise-optix = { workspace = true }
+shrimply-denoise-oidn.workspace = true
 shrimply-paint-skia = { workspace = true }
 shrimply-path-core.workspace = true
 shrimply-pdf = { workspace = true }
@@ -73,3 +75,8 @@ shrimply-transform-3d = { workspace = true }
 [build-dependencies]
 serde_json.workspace = true
 shrimply-slang-build = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+shrimply-preview-render-core.workspace = true
+shrimply-render-vulkan.workspace = true
+shrimply-preview-render-vulkan.workspace = true

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/bridge.c");
+    println!("cargo:rerun-if-changed=../../cuda/gpu-cuda/driver.h");
     println!("cargo:rerun-if-env-changed=OPTIX_ROOT");
     println!("cargo:rerun-if-env-changed=CUDA_HOME");
     println!("cargo:rerun-if-env-changed=CUDA_TOOLKIT_PATH");
@@ -39,6 +40,7 @@ fn main() {
         .warnings(true)
         .extra_warnings(true)
         .compile("shrimply_optix_denoiser_bridge");
+    #[cfg(windows)]
     println!("cargo:rustc-link-lib=dylib=cuda");
     #[cfg(windows)]
     println!(

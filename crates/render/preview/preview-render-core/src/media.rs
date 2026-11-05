@@ -107,7 +107,7 @@ pub struct LayeredImageFrame {
 
 #[derive(Clone)]
 pub struct ImageFrame {
-    pub image: Image,
+    pub image: decode::DecodedImage,
     pub presentation_time: Option<Time>,
 }
 
@@ -125,7 +125,7 @@ struct Batch {
 struct Completed {
     epoch: u64,
     generation: u64,
-    frames: Result<HashMap<Key, (Source, Frame)>, String>,
+    frames: Result<HashMap<Key, (Request, Frame)>, String>,
 }
 #[derive(Default)]
 struct Slots {
@@ -148,7 +148,7 @@ struct Shared {
 pub struct Media {
     shared: Arc<Shared>,
     worker: Option<JoinHandle<()>>,
-    frames: HashMap<Key, (Source, Frame)>,
+    frames: HashMap<Key, (Request, Frame)>,
     requested: Vec<Request>,
     revision: u64,
     error: Option<String>,
@@ -264,11 +264,20 @@ impl Media {
             self.requested.clone_from(&requests);
         }
         let generation = self.shared.generation.load(Ordering::Relaxed);
-        self.frames
-            .retain(|id, (source, _)| requests.iter().any(|r| r.id == *id && r.source == *source));
-        let ready = requests
-            .iter()
-            .all(|request| self.frames.contains_key(&request.id));
+        self.frames.retain(|id, (completed, _)| {
+            requests
+                .iter()
+                .any(|r| r.id == *id && r.source == completed.source)
+        });
+        let ready = requests.iter().all(|request| {
+            self.frames.get(&request.id).is_some_and(|(completed, _)| {
+                // Playback can show the last completed frame. A precise seek,
+                // capture, or export must wait for this exact request.
+                !request.accuracy.time_accurate()
+                    || request.accuracy.continuous_playback()
+                    || completed == request
+            })
+        });
         if changed {
             slots.pending = Some(Batch {
                 epoch,
@@ -364,7 +373,7 @@ fn worker(shared: Arc<Shared>) {
                         request.source.file.path().display()
                     )
                 })?;
-            frames.insert(request.id.clone(), (request.source.clone(), frame));
+            frames.insert(request.id.clone(), (request.clone(), frame));
             Ok(())
         });
         let mut slots = shared.slots.lock().expect("preview media slots poisoned");
@@ -456,7 +465,10 @@ fn load(
                     )?;
                 let (presentation_time, image) = match image {
                     Some((presentation_time, image)) => (Some(presentation_time), image),
-                    None if request.id.plane == Plane::Alpha => (None, transparent_mask_image()?),
+                    None if request.id.plane == Plane::Alpha => (
+                        None,
+                        decode::DecodedImage::Raster(transparent_mask_image()?),
+                    ),
                     None => return Err("video contains no decodable frame".into()),
                 };
                 Frame::Image(ImageFrame {
@@ -494,7 +506,7 @@ fn load(
                     })
                 } else {
                     Frame::Image(ImageFrame {
-                        image,
+                        image: decode::DecodedImage::Raster(image),
                         presentation_time: None,
                     })
                 }
@@ -515,12 +527,14 @@ fn load(
                     None,
                 );
                 Frame::Image(ImageFrame {
-                    image: skia_safe::images::raster_from_data(
-                        &info,
-                        Data::new_copy(&rendered.rgba),
-                        rendered.size.width as usize * size_of::<u32>(),
-                    )
-                    .ok_or("Could not create PDF page image")?,
+                    image: decode::DecodedImage::Raster(
+                        skia_safe::images::raster_from_data(
+                            &info,
+                            Data::new_copy(&rendered.rgba),
+                            rendered.size.width as usize * size_of::<u32>(),
+                        )
+                        .ok_or("Could not create PDF page image")?,
+                    ),
                     presentation_time: None,
                 })
             }

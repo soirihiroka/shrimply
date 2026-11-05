@@ -33,6 +33,29 @@ cleanup:
   - "*.la"
 
 modules:
+  - name: level-zero
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DBUILD_TESTS=OFF
+    sources:
+      - type: git
+        url: https://github.com/oneapi-src/level-zero.git
+        tag: v1.35.0
+        commit: 9e1a8b2c07ed6ce1f00b0a195fa5efa0db8e3650
+
+  - name: open-image-denoise
+    buildsystem: simple
+    build-commands:
+      - install -d /app/lib /app/share/licenses/oidn
+      - cp -a lib/*.so* /app/lib/
+      - rm -f /app/lib/*device_cpu* /app/lib/*device_hip* /app/lib/libtbb*
+      - cp -a doc/LICENSE* doc/third-party-programs*.txt /app/share/licenses/oidn/
+    sources:
+      - type: archive
+        url: https://github.com/RenderKit/oidn/releases/download/v2.5.1/oidn-2.5.1.x86_64.linux.tar.gz
+        sha256: 743c3e2aff8c220d5d70fe6cb970fb3d36f2702d2693c61d1d148e404cf37cd6
+
   - name: rubberband
     buildsystem: meson
     config-opts:
@@ -85,11 +108,13 @@ modules:
       - --enable-libopus
       - --enable-ffnvcodec
       - --enable-vulkan
+      - --enable-vaapi
+      - --enable-libdrm
       - --enable-gnutls
     sources:
       - type: archive
-        url: https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz
-        sha256: 733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1
+        url: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+        sha256: 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
 
   - name: poppler
     buildsystem: cmake-ninja
@@ -134,6 +159,8 @@ modules:
         url: https://github.com/opencv/opencv.git
         tag: 4.14.0
         commit: 0654a42e19215ef25b1d367d822f3c630447e7c7
+      - type: patch
+        path: packaging/flatpak/opencv-ffmpeg9.patch
 
   - name: shrimply-gtk
     buildsystem: simple
@@ -146,6 +173,7 @@ modules:
         CARGO_HOME: /run/ccache/cargo-home
         CARGO_TARGET_DIR: /run/ccache/cargo-target
         CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
+        SHRIMPLY_BUILD_GIT_HASH: '@SHRIMPLY_GIT_HASH@'
         # Link the bundled FFmpeg before the SDK's incompatible version.
         RUSTFLAGS: "-L native=/app/lib -C link-arg=-fuse-ld=lld"
         PATH: /run/host/usr/local/cargo/bin:/run/host/usr/local/cuda-12.9/bin:/usr/lib/sdk/llvm22/bin:/app/bin:/usr/bin
@@ -167,6 +195,16 @@ modules:
         make install PREFIX=/app
         RUSTUP=/run/host/usr/local/cargo/bin/rustup
         CUDA_PTX_TARGET="${CUDA_PTX_TARGET}"
+      # Compile Python extensions against the SDK, never on the user's machine.
+      - >-
+        UV_PROJECT_ENVIRONMENT=/app/share/shrimply/crates/media/visual/manim/manim-bridge/python/.venv
+        build-tools/uv/uv sync --frozen --no-dev --no-editable
+        --python /usr/bin/python3.14
+        --project /app/share/shrimply/crates/media/visual/manim/manim-bridge/python
+      - >-
+        /app/share/shrimply/crates/media/visual/manim/manim-bridge/python/.venv/bin/python
+        -c 'import av, manimpango, manimlib, msgpack'
+      - test ! -e /app/bin/uv
       - rm /app/bin/shrimply-mcp
       - test ! -e /app/bin/shrimply-mcp
       - test ! -e /app/bin/shrimply-qt
@@ -176,3 +214,7 @@ modules:
       - type: archive
         path: '@SHRIMPLY_SOURCE@'
         strip-components: 0
+      - type: archive
+        url: https://github.com/astral-sh/uv/releases/download/0.12.5/uv-x86_64-unknown-linux-musl.tar.gz
+        sha256: a4742988791c9aeae68c78150d6cba762062ad2a47e53738c2779d2b596bfcdb
+        dest: build-tools/uv

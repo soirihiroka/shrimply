@@ -22,6 +22,7 @@ fn main() {
         .warnings(true)
         .compile("shrimply_nvidia_optical_flow_bridge");
 
+    #[cfg(windows)]
     println!("cargo:rustc-link-lib=dylib=cuda");
     #[cfg(windows)]
     if let Some(cuda) = env::var_os("CUDA_HOME")
@@ -36,6 +37,7 @@ fn main() {
     #[cfg(unix)]
     println!("cargo:rustc-link-lib=dylib=dl");
     println!("cargo:rerun-if-changed=src/bridge.cpp");
+    println!("cargo:rerun-if-changed=../../../../gpu/cuda/gpu-cuda/driver.h");
     println!("cargo:rerun-if-changed=include/nvOpticalFlowCommon.h");
     println!("cargo:rerun-if-changed=include/nvOpticalFlowCuda.h");
 }

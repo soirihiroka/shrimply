@@ -5,23 +5,31 @@ use shrimply_math_core::Fraction;
 use shrimply_project_document::project::{fraction_denominator, fraction_numerator};
 use std::path::Path;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum HevcBackend {
     Nvenc,
     X265,
+    #[cfg(target_os = "linux")]
+    Vaapi {
+        device: std::path::PathBuf,
+    },
 }
 
 impl HevcBackend {
-    fn name(self) -> &'static str {
+    fn name(&self) -> &'static str {
         match self {
             Self::Nvenc => "hevc_nvenc",
             Self::X265 => "libx265",
+            #[cfg(target_os = "linux")]
+            Self::Vaapi { .. } => "hevc_vaapi",
         }
     }
-    fn pixel(self) -> Pixel {
+    fn pixel(&self) -> Pixel {
         match self {
             Self::Nvenc => Pixel::NV12,
             Self::X265 => Pixel::YUV420P,
+            #[cfg(target_os = "linux")]
+            Self::Vaapi { .. } => Pixel::NV12,
         }
     }
 }
@@ -45,6 +53,7 @@ pub struct VideoCacheEncoder {
     width: u32,
     height: u32,
     pixel: Pixel,
+    alpha_pixel: Pixel,
 }
 
 impl VideoCacheEncoder {
@@ -76,10 +85,22 @@ impl VideoCacheEncoder {
             time_base,
             frame_rate,
             global_header,
-            backend,
+            backend: backend.clone(),
         };
         let color = open_encoder(&format, color_qp, false)?;
-        let alpha = open_encoder(&format, 0, true)?;
+        let alpha_backend = backend.clone();
+        #[cfg(target_os = "linux")]
+        let alpha_backend = if matches!(backend, HevcBackend::Vaapi { .. }) {
+            // Intel HEVC does not offer lossless encoding; the alpha stream must remain exact.
+            HevcBackend::X265
+        } else {
+            alpha_backend
+        };
+        let alpha_format = EncoderFormat {
+            backend: alpha_backend,
+            ..format
+        };
+        let alpha = open_encoder(&alpha_format, 0, true)?;
         let color_stream = {
             let mut stream = output
                 .add_stream_with(color.as_ref())
@@ -125,6 +146,7 @@ impl VideoCacheEncoder {
             alpha_time_base,
             scaler,
             pixel: backend.pixel(),
+            alpha_pixel: alpha_format.backend.pixel(),
             width,
             height,
         })
@@ -174,7 +196,7 @@ impl VideoCacheEncoder {
         self.scaler
             .run(&rgba, &mut color)
             .map_err(|error| format!("could not convert visual cache color frame: {error}"))?;
-        let mut alpha = ffmpeg::frame::Video::new(self.pixel, self.width, self.height);
+        let mut alpha = ffmpeg::frame::Video::new(self.alpha_pixel, self.width, self.height);
         alpha.set_color_range(ffmpeg::color::Range::JPEG);
         alpha.data_mut(0).fill(0);
         for plane in 1..alpha.planes() {
@@ -193,6 +215,33 @@ impl VideoCacheEncoder {
         color.set_kind(ffmpeg::util::picture::Type::I);
         alpha.set_pts(Some(pts));
         alpha.set_kind(ffmpeg::util::picture::Type::I);
+        #[cfg(target_os = "linux")]
+        let color = if self.color.format() == Pixel::VAAPI {
+            let mut hardware = ffmpeg::frame::Video::empty();
+            let context = unsafe { (*self.color.as_ptr()).hw_frames_ctx };
+            let result =
+                unsafe { ffmpeg::sys::av_hwframe_get_buffer(context, hardware.as_mut_ptr(), 0) };
+            if result < 0 {
+                return Err(format!(
+                    "Allocate Intel visual cache surface: {}",
+                    ffmpeg::Error::from(result)
+                ));
+            }
+            let result = unsafe {
+                ffmpeg::sys::av_hwframe_transfer_data(hardware.as_mut_ptr(), color.as_ptr(), 0)
+            };
+            if result < 0 {
+                return Err(format!(
+                    "Upload Intel visual cache surface: {}",
+                    ffmpeg::Error::from(result)
+                ));
+            }
+            hardware.set_pts(Some(pts));
+            hardware.set_kind(ffmpeg::util::picture::Type::I);
+            hardware
+        } else {
+            color
+        };
         self.color
             .send_frame(&color)
             .map_err(|error| format!("could not encode visual cache color: {error}"))?;
@@ -259,7 +308,9 @@ fn open_encoder(
         frame_rate,
         global_header,
         backend,
-    } = *format;
+    } = format;
+    let (width, height, time_base, frame_rate, global_header) =
+        (*width, *height, *time_base, *frame_rate, *global_header);
     let name = backend.name();
     let codec = ffmpeg::codec::encoder::find_by_name(name)
         .ok_or_else(|| format!("FFmpeg encoder {name} was not found"))?;
@@ -274,6 +325,14 @@ fn open_encoder(
     encoder.set_gop(2);
     encoder.set_max_b_frames(0);
     encoder.set_format(backend.pixel());
+    #[cfg(target_os = "linux")]
+    if let HevcBackend::Vaapi { device } = backend {
+        let frames = vaapi_frames(device, width, height)?;
+        unsafe {
+            (*encoder.as_mut_ptr()).hw_frames_ctx = frames;
+        }
+        encoder.set_format(Pixel::VAAPI);
+    }
     if alpha {
         // Alpha is stored directly as 0..255 luma, not studio-range video.
         encoder.set_color_range(ffmpeg::color::Range::JPEG);
@@ -293,6 +352,11 @@ fn open_encoder(
             options.set("bf", "0");
             options.set("rc-lookahead", "0");
             options.set("tune", if qp == 0 { "lossless" } else { "hq" });
+        }
+        #[cfg(target_os = "linux")]
+        HevcBackend::Vaapi { .. } => {
+            options.set("rc_mode", "CQP");
+            options.set("qp", &qp.to_string());
         }
         HevcBackend::X265 => {
             options.set("preset", "fast");
@@ -330,4 +394,57 @@ fn receive_packets(
             Err(error) => return Err(format!("could not receive visual cache packet: {error}")),
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn vaapi_frames(
+    path: &Path,
+    width: u32,
+    height: u32,
+) -> Result<*mut ffmpeg::sys::AVBufferRef, String> {
+    use ffmpeg::sys;
+    use std::{ffi::CString, os::unix::ffi::OsStrExt, ptr};
+    let width = i32::try_from(width).map_err(|_| "Cache width exceeds FFmpeg limits")?;
+    let height = i32::try_from(height).map_err(|_| "Cache height exceeds FFmpeg limits")?;
+    let path = CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    let mut device = ptr::null_mut();
+    let result = unsafe {
+        sys::av_hwdevice_ctx_create(
+            &mut device,
+            sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
+            path.as_ptr(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if result < 0 {
+        return Err(format!(
+            "Open Intel cache encoder: {}",
+            ffmpeg::Error::from(result)
+        ));
+    }
+    let mut frames = unsafe { sys::av_hwframe_ctx_alloc(device) };
+    unsafe {
+        sys::av_buffer_unref(&mut device);
+    }
+    if frames.is_null() {
+        return Err("Allocate Intel cache frame pool".into());
+    }
+    let context = unsafe { &mut *(*frames).data.cast::<sys::AVHWFramesContext>() };
+    context.format = sys::AVPixelFormat::AV_PIX_FMT_VAAPI;
+    context.sw_format = sys::AVPixelFormat::AV_PIX_FMT_NV12;
+    context.width = width;
+    context.height = height;
+    context.initial_pool_size = 2; // Color input and the encoder's current reference.
+    let result = unsafe { sys::av_hwframe_ctx_init(frames) };
+    if result < 0 {
+        unsafe {
+            sys::av_buffer_unref(&mut frames);
+        }
+        return Err(format!(
+            "Initialize Intel cache frame pool: {}",
+            ffmpeg::Error::from(result)
+        ));
+    }
+    Ok(frames)
 }

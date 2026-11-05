@@ -1,8 +1,9 @@
 Flatpak Installation
 ====================
 
-The Flatpak provides pre-alpha GTK builds for x86_64 Linux. Flatpak and a
-compatible NVIDIA driver must be installed on your system.
+The Flatpak provides pre-alpha GTK builds for x86_64 Linux. Install Flatpak
+and either a compatible NVIDIA driver or Intel's Mesa and VA-API drivers.
+See :ref:`development-intel-preview` for the Intel preview backend's scope.
 
 Install and launch
 ------------------
@@ -42,3 +43,7 @@ Known limitations
 
 The Flatpak is missing some features, including MCP support. To build Shrimply
 from source, see :doc:`development`.
+
+Build a local bundle with ``make flatpak-gtk``. This passes the checkout's full
+Git commit to Docker. When building from a source archive without Git metadata,
+set ``SHRIMPLY_BUILD_GIT_HASH`` to the archive's full source commit SHA.

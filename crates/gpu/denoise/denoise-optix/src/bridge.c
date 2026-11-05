@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../../../cuda/gpu-cuda/driver.h"
 
 typedef struct ShrimplyOptixDenoiser {
     OptixDeviceContext context;

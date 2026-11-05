@@ -1,4 +1,5 @@
 mod decode;
+pub use decode::DecodedImage;
 mod generated;
 mod items;
 mod layers;
@@ -36,7 +37,7 @@ pub struct Layer {
 }
 
 pub struct VideoMask {
-    pub image: Image,
+    pub image: DecodedImage,
     pub size: (u32, u32),
     pub sampling: shrimply_render_core::VideoSampleMethod,
 }
@@ -45,6 +46,8 @@ pub enum Source {
     Generated(Box<shrimply_visual_core::generated::GeneratedFrame>),
     Group(Vec<Layer>),
     Image(Image),
+    #[cfg(target_os = "linux")]
+    Video(std::sync::Arc<shrimply_render_vulkan::VideoFrame>),
     Background(Box<shrimply_render_core::background_spirv::BackgroundUniforms>),
     Manim(ManimFrame),
     RasterMorph(Box<RasterMorph>),
@@ -116,6 +119,7 @@ pub struct MorphCacheKey {
 /// Selects capture output while retaining the full project for external dependencies.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CaptureTarget {
+    Items(Vec<uuid::Uuid>),
     Item(ItemAddress),
     Track(TrackAddress),
     ModifierInput {
@@ -207,6 +211,11 @@ impl Scene {
         self.scrubbing = scrubbing;
     }
 
+    /// Request another frame without discarding decoder or source caches.
+    pub fn request_frame(&mut self) {
+        self.prepared = None;
+    }
+
     pub fn invalidate(&mut self) {
         self.media.invalidate();
         self.paint_caches.clear();
@@ -291,6 +300,7 @@ impl Scene {
                 ..Default::default()
             },
             capture_target.as_ref().map(|target| match target {
+                CaptureTarget::Items(ids) => items::Target::Items(ids),
                 CaptureTarget::Item(address) => items::Target::Item {
                     address,
                     scope_positions: None,

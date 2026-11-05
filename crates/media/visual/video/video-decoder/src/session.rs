@@ -930,7 +930,8 @@ fn ffmpeg_error(result: i32) -> String {
 pub(crate) fn create_cuda_device_context() -> Result<*mut sys::AVBufferRef, String> {
     unsafe {
         let mut hw_device_ctx = ptr::null_mut();
-        let device = CString::new("0").map_err(|error| error.to_string())?;
+        let device = CString::new(shrimply_gpu_cuda::selected_device().to_string())
+            .map_err(|error| error.to_string())?;
         let mut options = ptr::null_mut();
         let option_key = CString::new("primary_ctx").map_err(|error| error.to_string())?;
         let option_value = CString::new("1").map_err(|error| error.to_string())?;
@@ -966,8 +967,12 @@ pub(crate) fn cuda_memory_info() -> Result<(usize, usize), String> {
             return Err("could not initialize CUDA while checking decoder memory".to_string());
         }
         let mut device = 0;
-        if cuda_sys::cuDeviceGet(&mut device, 0) != cuda_sys::cudaError_enum_CUDA_SUCCESS {
-            return Err("could not select CUDA device 0 while checking decoder memory".to_string());
+        if cuda_sys::cuDeviceGet(&mut device, shrimply_gpu_cuda::selected_device() as i32)
+            != cuda_sys::cudaError_enum_CUDA_SUCCESS
+        {
+            return Err(
+                "could not select the CUDA device while checking decoder memory".to_string(),
+            );
         }
         let mut context = ptr::null_mut();
         if cuda_sys::cuDevicePrimaryCtxRetain(&mut context, device)

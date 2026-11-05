@@ -16,6 +16,7 @@ enum class Target
     Cuda,
     Metal,
     Host,
+    Vulkan,
 };
 
 struct CompileRequest
@@ -217,7 +218,7 @@ static bool reflect_type(
 static int compile(const CompileRequest& request)
 {
     const bool cuda = request.target == Target::Cuda;
-    const bool spirv = request.target == Target::Spirv;
+    const bool spirv = request.target == Target::Spirv || request.target == Target::Vulkan;
 
     Slang::ComPtr<slang::IGlobalSession> global_session;
     if (SLANG_FAILED(slang::createGlobalSession(global_session.writeRef())))
@@ -233,6 +234,11 @@ static int compile(const CompileRequest& request)
         options.push_back(entry);
     };
     option(slang::CompilerOptionName::Optimization, SLANG_OPTIMIZATION_LEVEL_HIGH);
+    if (request.target == Target::Vulkan)
+    {
+        option(slang::CompilerOptionName::GLSLForceScalarLayout, 1);
+        option(slang::CompilerOptionName::VulkanUseEntryPointName, 1);
+    }
     if (cuda)
         option(slang::CompilerOptionName::Capability, global_session->findCapability(CUDA_CAPABILITY));
     if (spirv)
@@ -244,7 +250,8 @@ static int compile(const CompileRequest& request)
     slang::TargetDesc target = {};
     switch (request.target)
     {
-    case Target::Spirv: target.format = SLANG_SPIRV; break;
+    case Target::Spirv:
+    case Target::Vulkan: target.format = SLANG_SPIRV; break;
     case Target::Cuda: target.format = SLANG_CUDA_SOURCE; break;
     case Target::Metal: target.format = SLANG_METAL; break;
     case Target::Host: target.format = SLANG_CPP_SOURCE; break;
@@ -263,6 +270,14 @@ static int compile(const CompileRequest& request)
     description.searchPaths = search_paths;
     description.targetCount = 1;
     description.targets = &target;
+    // Slang's SPIR-V emitter cannot lower UIntPtr. Vulkan device addresses
+    // use a 64-bit ABI, matching the host pitches on supported Linux targets.
+    const slang::PreprocessorMacroDesc vulkan_macros[] = {{"SHRIMPLY_VULKAN", "1"}};
+    if (request.target == Target::Vulkan)
+    {
+        description.preprocessorMacros = vulkan_macros;
+        description.preprocessorMacroCount = std::size(vulkan_macros);
+    }
     Slang::ComPtr<slang::ISession> session;
     if (SLANG_FAILED(global_session->createSession(description, session.writeRef())))
         return 1;

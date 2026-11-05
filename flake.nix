@@ -62,6 +62,7 @@
         in
         {
           shrimply-slang = prev.callPackage ./pkgs/slang.nix { };
+          shrimply-oidn = prev.callPackage ./pkgs/oidn.nix { };
           shrimply =
             (final.callPackage ./pkgs/shrimply.nix {
               inherit rustPlatform;
@@ -71,6 +72,7 @@
               vtracerSrc = vtracer;
             }).overrideAttrs
               {
+                SHRIMPLY_BUILD_GIT_HASH = self.rev or self.dirtyRev or "";
                 src = final.lib.cleanSourceWith {
                   src = self;
                   filter =

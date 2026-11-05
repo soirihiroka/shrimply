@@ -27,7 +27,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: macos-prerelease
+  group: macos-prerelease-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -40,7 +40,6 @@ env:
 
 jobs:
   build-and-release:
-    if: github.ref == 'refs/heads/main'
     runs-on: macos-26
     permissions:
       actions: write
@@ -118,6 +117,12 @@ jobs:
             ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-
             ${{ steps.application-cache-key.outputs.prefix }}-
 
+      - name: Cache PocketSphinx resources
+        uses: actions/cache@v6
+        with:
+          path: target/pocketsphinx-cache
+          key: pocketsphinx-model-v1-${{ runner.os }}-${{ hashFiles('vendor/pocketsphinx/build.rs') }}
+
       - name: Build AppKit release
         run: make appkit-release
 
@@ -133,7 +138,7 @@ jobs:
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
 
       - name: Prune old macOS application caches
-        if: steps.save-application-cache.outcome == 'success'
+        if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
@@ -239,6 +244,7 @@ jobs:
           test -s "${MACOS_ARCHIVE}.sha256"
 
       - name: Publish prerelease
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

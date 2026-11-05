@@ -214,6 +214,29 @@ fn uv_executable() -> Result<PathBuf, String> {
 }
 
 fn python_command(module: &str) -> Result<(Command, bool), String> {
+    #[cfg(target_os = "linux")]
+    let installed = std::env::current_exe()
+        .map_err(|error| format!("locate installed Manim worker: {error}"))?
+        .parent()
+        .and_then(Path::parent)
+        .map(|prefix| prefix.join("share/shrimply/crates/media/visual/manim/manim-bridge/python"))
+        .filter(|project| project.is_dir());
+    #[cfg(target_os = "linux")]
+    if let Some(project) = installed.as_ref()
+        && project.join(".venv/bin/python").is_file()
+    {
+        // Flatpak prepares dependencies against its SDK during packaging. Run
+        // that environment directly: the runtime has no compiler or headers.
+        let mut command = Command::new(project.join(".venv/bin/python"));
+        command
+            .arg(project.join(format!("shrimply_manim/{module}.py")))
+            .env("PYTHONDONTWRITEBYTECODE", "1");
+        return Ok((command, true));
+    }
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("FLATPAK_ID").is_some() {
+        return Err("Bundled Manim Python environment is missing".into());
+    }
     let executable = uv_executable()?;
     let macos = executable
         .parent()
@@ -228,6 +251,10 @@ fn python_command(module: &str) -> Result<(Command, bool), String> {
         .map(|directory| directory.join("resources/manim-worker"))
         .filter(|project| project.is_dir())
         .unwrap_or(project);
+    #[cfg(target_os = "linux")]
+    let installed_environment = installed.is_some();
+    #[cfg(target_os = "linux")]
+    let project = installed.unwrap_or(project);
     let mut command = Command::new(&executable);
     command
         .args(["run", "--python", "3.14", "--project"])
@@ -235,6 +262,20 @@ fn python_command(module: &str) -> Result<(Command, bool), String> {
     let environment = std::env::var_os("UV_PROJECT_ENVIRONMENT")
         .map(PathBuf::from)
         .unwrap_or_else(|| project.join(".venv"));
+    #[cfg(target_os = "linux")]
+    let environment = if installed_environment {
+        let environment = match std::env::var_os("UV_PROJECT_ENVIRONMENT") {
+            Some(path) => PathBuf::from(path),
+            None => shrimply_path_core::cache_directory()?.join("manim"),
+        };
+        command
+            .args(["--frozen", "--no-dev", "--no-editable"])
+            .env("UV_PROJECT_ENVIRONMENT", &environment)
+            .env("PYTHONDONTWRITEBYTECODE", "1");
+        environment
+    } else {
+        environment
+    };
     #[cfg(target_os = "macos")]
     let environment = if macos.is_some() {
         use objc2_foundation::{NSFileManager, NSSearchPathDirectory, NSSearchPathDomainMask};
@@ -289,7 +330,7 @@ impl WorkerHandle {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
         let child = Child::spawn(&mut command, Some(source))
-            .map_err(|error| format!("start one-shot Manim compiler with uv: {error}"))?;
+            .map_err(|error| format!("start one-shot Manim compiler: {error}"))?;
         let id = child.id();
         tracing::info!(
             worker_id = id,

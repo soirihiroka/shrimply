@@ -215,3 +215,5 @@ pub fn max_affine_scale(matrix: Mat3) -> f32 {
     let determinant = (a * d - b * c).powi(2);
     ((trace + (trace * trace - 4.0 * determinant).max(0.0).sqrt()) * 0.5).sqrt()
 }
+
+pub use morph::{FLOW_GRID_SPACING, optical_flow_grid_size};

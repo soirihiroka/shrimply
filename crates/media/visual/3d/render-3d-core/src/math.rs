@@ -1,3 +1,5 @@
+mod bvh;
+pub use bvh::{SoftwareBvhNode, software_bvh};
 use glam::{Mat4, Vec3, camera::rh::proj::directx};
 
 use crate::{
@@ -283,7 +285,7 @@ pub(crate) fn pbr_settings(params: &SceneRenderParams) -> crate::obj::PbrSetting
     };
     settings.light_sampling_quality = params.light_sampling_quality;
     settings.render_quality = params.render_quality;
-    settings.denoising = u32::from(params.denoising && pbr);
+    settings.denoising = if pbr { params.denoising as u32 } else { 0 };
     settings.subsurface = params.subsurface.clamp(0.0, 1.0);
     settings.clearcoat = params.clearcoat.clamp(0.0, 1.0);
     settings.sheen = params.sheen.clamp(0.0, 1.0);

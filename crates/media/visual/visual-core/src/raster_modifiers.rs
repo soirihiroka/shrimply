@@ -4,7 +4,7 @@ use shrimply_project_evaluation::{
     TransformExpressionCache, VisualEvaluation, resolve_color, resolve_scalar,
 };
 use shrimply_render_core::{VideoSampleMethod, effects::PixelEffect};
-use shrimply_visual_modifiers::{ModifierEffect, ModifierModel, RasterModifierEffect};
+use shrimply_visual_modifiers::{ModifierEffect, RasterModifierEffect};
 
 pub enum Operation {
     Pixel(PixelEffect),
@@ -148,9 +148,7 @@ pub fn after_source(
 ) -> Result<Vec<Modifier>, String> {
     let mut resolved = Vec::new();
     for modifier_index in plan(request.item)?.raster {
-        let visual_modifier = &request.item.modifiers[modifier_index];
-        let name = visual_modifier.effect.display_name();
-        let modifier = modifier(
+        if let Some(modifier) = modifier(
             ModifierRequest {
                 project: request.project,
                 address: request.address,
@@ -163,14 +161,9 @@ pub fn after_source(
             evaluation,
             expressions,
             content_accurate,
-        )?
-        .ok_or_else(|| {
-            format!(
-                "modifier {} ({name}) did not produce a raster operation",
-                modifier_index + 1
-            )
-        })?;
-        resolved.push(modifier);
+        )? {
+            resolved.push(modifier);
+        }
     }
     Ok(resolved)
 }

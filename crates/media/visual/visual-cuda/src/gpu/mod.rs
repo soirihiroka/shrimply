@@ -4,6 +4,7 @@ use std::mem::size_of;
 use std::ptr;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::decode::DecodeControl;
 use crate::layer::VideoLayer;
@@ -17,7 +18,9 @@ use shrimply_visual_frame::{
     Device, GPU_FRAME_ALLOCATION_EXHAUSTED, gpu_allocation_stats, gpu_oom_generation,
 };
 
+mod denoising;
 mod device_buffer;
+pub use denoising::denoising_methods;
 mod frame;
 pub(crate) mod generated_gpu;
 mod kernels;
@@ -25,9 +28,21 @@ pub(crate) mod layered_image;
 mod layers;
 pub(crate) mod modifiers;
 
-pub use frame::{CompositedFrameStorageKey, CompositedVideoFrame};
+pub use frame::{CompositedFrameStorageKey, CompositedVideoFrame, FrameBuffer};
+
+#[cfg(target_os = "linux")]
+mod backend;
+#[cfg(target_os = "linux")]
+pub use backend::{configure_gtk_backend, configure_gtk_presentation, intel_backend_selected};
+#[cfg(target_os = "linux")]
+mod devices;
+#[cfg(target_os = "linux")]
+pub use devices::{AccelerationDevice, acceleration_devices};
 
 const DISPLAY_GPU_MEMORY_RESERVE_DIVISOR: u64 = 16;
+const DISPLAY_MEMORY_CHECK_INTERVAL: Duration = Duration::from_millis(500);
+// Rendering, a queued preview, and the CUDA-to-GL copy may each hold one frame.
+const MAX_CACHED_PREVIEW_OUTPUTS: usize = 3;
 const MIGRATE_ALL_REQUIRED_BYTES: u64 = u64::MAX;
 const RENDER_SUPERSEDED: &str = "video render superseded";
 const KERNEL_MODULES: &[(&str, &[u8])] = &[
@@ -53,8 +68,13 @@ const KERNEL_MODULES: &[(&str, &[u8])] = &[
 ];
 
 pub fn preflight() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if intel_backend_selected() {
+        return shrimply_render_vulkan::Renderer::new()?.warmup();
+    }
     configure_primary_context_flags()?;
-    let context = CudaContext::new(0).map_err(|error| format!("CUDA context: {error:?}"))?;
+    let context = CudaContext::new(shrimply_gpu_cuda::selected_device())
+        .map_err(|error| format!("CUDA context: {error:?}"))?;
     let mut modules = Vec::with_capacity(KERNEL_MODULES.len());
     for (name, image) in KERNEL_MODULES {
         modules.push(
@@ -92,6 +112,13 @@ impl ExportPixelFormat {
     }
 }
 
+#[derive(Clone, Copy)]
+enum RenderTarget {
+    Preview,
+    Layer,
+    Export(u8),
+}
+
 pub struct CudaVideoCompositor {
     generated_renderer: Option<generated_gpu::GeneratedGpuRenderer>,
     generated_renderer_generation: u64,
@@ -102,9 +129,11 @@ pub struct CudaVideoCompositor {
     next_serial: u64,
     render_control: Option<DecodeControl>,
     observed_gpu_oom_generation: u64,
-    export_layer_params: Option<DeviceBuffer<kernels::Nv12LayerParams>>,
-    export_motion_transforms: Option<DeviceBuffer<glam::Mat3>>,
+    layer_params: Vec<DeviceBuffer<kernels::Nv12LayerParams>>,
+    motion_transforms: Vec<DeviceBuffer<glam::Mat3>>,
     export_output: Option<DeviceBuffer<u32>>,
+    preview_outputs: Vec<Arc<DeviceBuffer<u32>>>,
+    last_display_memory_check: Option<Instant>,
     export_render_events: Option<(CudaEvent, CudaEvent)>,
     export_conversion_events: Option<(CudaEvent, CudaEvent)>,
     verified_export_planes: HashSet<(sys::CUdeviceptr, sys::CUdeviceptr)>,
@@ -117,7 +146,8 @@ pub struct CudaVideoCompositor {
 impl CudaVideoCompositor {
     pub fn new() -> Result<Self, String> {
         configure_primary_context_flags()?;
-        let context = CudaContext::new(0).map_err(|error| format!("CUDA context: {error:?}"))?;
+        let context = CudaContext::new(shrimply_gpu_cuda::selected_device())
+            .map_err(|error| format!("CUDA context: {error:?}"))?;
         let stream = context
             .new_stream()
             .map_err(|error| format!("CUDA stream: {error:?}"))?;
@@ -135,9 +165,11 @@ impl CudaVideoCompositor {
             next_serial: 1,
             render_control: None,
             observed_gpu_oom_generation: gpu_oom_generation(),
-            export_layer_params: None,
-            export_motion_transforms: None,
+            layer_params: Vec::new(),
+            motion_transforms: Vec::new(),
             export_output: None,
+            preview_outputs: Vec::new(),
+            last_display_memory_check: None,
             export_render_events: None,
             export_conversion_events: None,
             verified_export_planes: HashSet::new(),
@@ -146,7 +178,9 @@ impl CudaVideoCompositor {
             solid_layer: None,
             optical_flow: None,
         };
-        compositor.record_gpu_memory_usage();
+        if let Ok(memory) = compositor.gpu_memory_info() {
+            compositor.record_gpu_memory_usage(memory);
+        }
         Ok(compositor)
     }
 
@@ -323,7 +357,11 @@ impl CudaVideoCompositor {
         layer: &VideoLayer,
         modifiers: &[&dyn modifiers::GpuModifier],
     ) -> Result<VisualFrame, String> {
-        let frame = self.render(canvas_size, std::slice::from_ref(layer))?;
+        let frame = self.render_frame(
+            canvas_size,
+            std::slice::from_ref(layer),
+            RenderTarget::Layer,
+        )?;
         let frame = self.apply_modifiers(frame, modifiers)?;
         generated_gpu::visual_frame_from_canvas(self.context.clone(), frame)
     }
@@ -333,7 +371,11 @@ impl CudaVideoCompositor {
         canvas_size: CanvasSize,
         layer: &VideoLayer,
     ) -> Result<Rc<VisualFrame>, String> {
-        let frame = self.render(canvas_size, std::slice::from_ref(layer))?;
+        let frame = self.render_frame(
+            canvas_size,
+            std::slice::from_ref(layer),
+            RenderTarget::Layer,
+        )?;
         Ok(Rc::new(generated_gpu::visual_frame_from_canvas(
             self.context.clone(),
             frame,
@@ -346,7 +388,11 @@ impl CudaVideoCompositor {
         layers: &[VideoLayer],
         background_alpha: Option<u8>,
     ) -> Result<Rc<VisualFrame>, String> {
-        let frame = self.render_frame(canvas_size, layers, background_alpha)?;
+        let frame = self.render_frame(
+            canvas_size,
+            layers,
+            background_alpha.map_or(RenderTarget::Layer, RenderTarget::Export),
+        )?;
         Ok(Rc::new(generated_gpu::visual_frame_from_canvas(
             self.context.clone(),
             frame,
@@ -358,7 +404,7 @@ impl CudaVideoCompositor {
         canvas_size: CanvasSize,
         layers: &[VideoLayer],
     ) -> Result<CompositedVideoFrame, String> {
-        self.render_frame(canvas_size, layers, None)
+        self.render_frame(canvas_size, layers, RenderTarget::Preview)
     }
 
     pub fn render_export(
@@ -367,7 +413,8 @@ impl CudaVideoCompositor {
         layers: &[VideoLayer],
         background_alpha: u8,
     ) -> Result<CompositedVideoFrame, String> {
-        let frame = self.render_frame(canvas_size, layers, Some(background_alpha))?;
+        let frame =
+            self.render_frame(canvas_size, layers, RenderTarget::Export(background_alpha))?;
 
         // Export callers release their decoded source frames when this returns.
         // Keep them alive until CUDA has finished reading from those buffers.
@@ -381,7 +428,7 @@ impl CudaVideoCompositor {
         &mut self,
         canvas_size: CanvasSize,
         layers: &[VideoLayer],
-        background_alpha: Option<u8>,
+        target: RenderTarget,
     ) -> Result<CompositedVideoFrame, String> {
         self.fail_if_superseded()?;
         shrimply_gpu_cuda_memory::global().begin_frame();
@@ -390,11 +437,11 @@ impl CudaVideoCompositor {
             .checked_mul(u64::from(canvas_size.height.max(1)))
             .and_then(|pixels| pixels.checked_mul(size_of::<u32>() as u64))
             .ok_or_else(|| "CUDA compositor canvas size overflow".to_string())?;
-        let result = match self.render_frame_once(canvas_size, layers, background_alpha) {
+        let result = match self.render_frame_once(canvas_size, layers, target) {
             Err(error) if is_gpu_oom(&error) => {
                 self.relieve_gpu_pressure(requested_bytes, "CUDA compositor output")?;
                 tracing::warn!(%error, "retrying CUDA compositor frame after GPU pressure relief");
-                self.render_frame_once(canvas_size, layers, background_alpha)
+                self.render_frame_once(canvas_size, layers, target)
                     .map_err(|retry| {
                         format!("CUDA compositor failed after GPU pressure relief: {retry}")
                     })
@@ -404,7 +451,6 @@ impl CudaVideoCompositor {
         let frame = result?;
         self.fail_if_superseded()?;
         self.spill_stale_frames_for_display_memory()?;
-        self.record_gpu_memory_usage();
         Ok(frame)
     }
 
@@ -412,8 +458,12 @@ impl CudaVideoCompositor {
         &mut self,
         canvas_size: CanvasSize,
         layers: &[VideoLayer],
-        background_alpha: Option<u8>,
+        target: RenderTarget,
     ) -> Result<CompositedVideoFrame, String> {
+        let background_alpha = match target {
+            RenderTarget::Export(alpha) => Some(alpha),
+            _ => None,
+        };
         let export = background_alpha.is_some();
         let width = canvas_size.width.max(1);
         let height = canvas_size.height.max(1);
@@ -430,10 +480,20 @@ impl CudaVideoCompositor {
                 self.render_control.as_ref(),
             )?
         };
-        let spare_output = if export {
-            self.export_output.take()
-        } else {
-            None
+        let spare_output = match target {
+            RenderTarget::Export(_) => self.export_output.take(),
+            RenderTarget::Layer => None,
+            RenderTarget::Preview => {
+                self.preview_outputs
+                    .retain(|buffer| buffer.len() == pixel_count);
+                self.preview_outputs
+                    .iter()
+                    .position(|buffer| Arc::strong_count(buffer) == 1)
+                    .map(|index| {
+                        Arc::try_unwrap(self.preview_outputs.swap_remove(index))
+                            .unwrap_or_else(|_| unreachable!("preview output has no other owners"))
+                    })
+            }
         };
         let mut buffer = {
             let _measurement = shrimply_profiling::measure("CUDA compositor / Acquire output");
@@ -467,11 +527,7 @@ impl CudaVideoCompositor {
                     &self.context,
                     &self.stream,
                     &prepared.params,
-                    if export {
-                        self.export_layer_params.take()
-                    } else {
-                        None
-                    },
+                    &mut self.layer_params,
                 )?)
             }
         };
@@ -479,11 +535,7 @@ impl CudaVideoCompositor {
             &self.context,
             &self.stream,
             &prepared.motion_transforms,
-            if export {
-                self.export_motion_transforms.take()
-            } else {
-                None
-            },
+            &mut self.motion_transforms,
         )?;
         if export && self.export_render_events.is_none() {
             let flags = Some(sys::CUevent_flags_enum_CU_EVENT_DEFAULT);
@@ -561,10 +613,8 @@ impl CudaVideoCompositor {
                 .map_err(|error| format!("record CUDA compositor end event: {error:?}"))?;
         }
 
-        if export {
-            self.export_layer_params = params;
-            self.export_motion_transforms = Some(motion_transforms);
-        }
+        self.layer_params.extend(params);
+        self.motion_transforms.push(motion_transforms);
 
         if !export {
             let _measurement = shrimply_profiling::measure("CUDA compositor / Synchronize");
@@ -575,7 +625,13 @@ impl CudaVideoCompositor {
 
         let serial = self.next_serial;
         self.next_serial = self.next_serial.wrapping_add(1).max(1);
-        Ok(CompositedVideoFrame::new(buffer, width, height, serial))
+        let frame = CompositedVideoFrame::new(buffer, width, height, serial);
+        if matches!(target, RenderTarget::Preview)
+            && self.preview_outputs.len() < MAX_CACHED_PREVIEW_OUTPUTS
+        {
+            self.preview_outputs.push(frame.buffer.cuda()?.clone());
+        }
+        Ok(frame)
     }
 
     pub(crate) fn render_generated_visual(
@@ -836,9 +892,12 @@ impl CudaVideoCompositor {
             );
             return Ok(());
         }
-        let mut released = self.export_layer_params.take().is_some();
-        released |= self.export_motion_transforms.take().is_some();
+        let mut released = !self.layer_params.is_empty() || !self.motion_transforms.is_empty();
+        self.layer_params.clear();
+        self.motion_transforms.clear();
         released |= self.export_output.take().is_some();
+        released |= !self.preview_outputs.is_empty();
+        self.preview_outputs.clear();
         released |= self.solid_layer.take().is_some();
         released |= self.modifier_workspace.clear_cached_gpu_resources();
         if let Some(renderer) = self.generated_renderer.as_mut() {
@@ -876,7 +935,9 @@ impl CudaVideoCompositor {
                 .map_or(0, |((before, _), (after, _))| after.saturating_sub(before));
             shrimply_gpu_cuda_memory::global().note_last_resort_cleanup(last_resort_recovered);
         }
-        self.record_gpu_memory_usage();
+        if let Some(memory) = after {
+            self.record_gpu_memory_usage(memory);
+        }
         let telemetry = shrimply_gpu_cuda_memory::global().telemetry();
         tracing::warn!(
             allocation_description,
@@ -926,8 +987,16 @@ impl CudaVideoCompositor {
 
     fn spill_stale_frames_for_display_memory(&mut self) -> Result<(), String> {
         self.fail_if_superseded()?;
+        // cuMemGetInfo can be expensive. Allocation and OOM recovery still query
+        // immediately; routine display-reserve maintenance only needs periodic checks.
+        if self
+            .last_display_memory_check
+            .is_some_and(|checked| checked.elapsed() < DISPLAY_MEMORY_CHECK_INTERVAL)
+        {
+            return Ok(());
+        }
         let (free, total) = self.gpu_memory_info()?;
-        if free < total / DISPLAY_GPU_MEMORY_RESERVE_DIVISOR {
+        let memory = if free < total / DISPLAY_GPU_MEMORY_RESERVE_DIVISOR {
             shrimply_gpu_cuda_memory::global().relieve_vram_pressure(
                 &self.context,
                 &self.stream,
@@ -937,7 +1006,12 @@ impl CudaVideoCompositor {
                     .as_ref()
                     .map(DecodeControl::generation_check),
             )?;
-        }
+            self.gpu_memory_info()?
+        } else {
+            (free, total)
+        };
+        self.last_display_memory_check = Some(Instant::now());
+        self.record_gpu_memory_usage(memory);
         Ok(())
     }
 
@@ -945,12 +1019,10 @@ impl CudaVideoCompositor {
         gpu_memory_info(&self.context)
     }
 
-    fn record_gpu_memory_usage(&self) {
-        if let Ok((free, total)) = self.gpu_memory_info() {
-            shrimply_profiling::set_counter("CUDA memory / Free bytes", free);
-            shrimply_profiling::set_counter("CUDA memory / Used bytes", total.saturating_sub(free));
-            shrimply_profiling::set_counter("CUDA memory / Total bytes", total);
-        }
+    fn record_gpu_memory_usage(&self, (free, total): (u64, u64)) {
+        shrimply_profiling::set_counter("CUDA memory / Free bytes", free);
+        shrimply_profiling::set_counter("CUDA memory / Used bytes", total.saturating_sub(free));
+        shrimply_profiling::set_counter("CUDA memory / Total bytes", total);
         let (frames, bytes) = gpu_allocation_stats();
         shrimply_profiling::set_counter("Visual frame / GPU frames retained", frames);
         shrimply_profiling::set_counter("Visual frame / GPU bytes retained", bytes);
@@ -958,18 +1030,20 @@ impl CudaVideoCompositor {
 
     pub(crate) fn upload_frame(&mut self, frame: &VisualFrame) -> Result<VisualFrame, String> {
         self.release_after_reported_gpu_oom()?;
-        let error = match frame.copy_to(Device::Cuda(0)) {
+        let error = match frame.copy_to(Device::Cuda(self.context.ordinal())) {
             Ok(frame) => return Ok(frame),
             Err(error) if is_gpu_oom(&error) => error,
             Err(error) => return Err(error),
         };
         self.observed_gpu_oom_generation = gpu_oom_generation();
         self.relieve_gpu_pressure(frame.bytes(), "persistent visual upload")?;
-        frame.copy_to(Device::Cuda(0)).map_err(|retry| {
-            format!(
-                "upload visual frame after GPU pressure relief: {retry}; initial error: {error}"
-            )
-        })
+        frame
+            .copy_to(Device::Cuda(self.context.ordinal()))
+            .map_err(|retry| {
+                format!(
+                    "upload visual frame after GPU pressure relief: {retry}; initial error: {error}"
+                )
+            })
     }
 
     pub fn upload_rgba_layer(
@@ -1282,7 +1356,7 @@ impl CudaVideoCompositor {
             ));
         }
 
-        let source_ptr = source.buffer.cu_deviceptr() as usize as *const u32;
+        let source_ptr = source.buffer.cuda()?.cu_deviceptr() as usize as *const u32;
         let y = unsafe { (*raw).data[0] };
         let uv = unsafe { (*raw).data[1] };
         if y.is_null() || uv.is_null() {
@@ -1425,7 +1499,7 @@ impl CudaVideoCompositor {
         pixel_format: ExportPixelFormat,
     ) -> Result<ExportGpuTiming, String> {
         let timing = self.copy_to_ffmpeg_hw_frame(&source, destination, pixel_format)?;
-        self.export_output = Some(source.buffer);
+        self.export_output = Some(source.buffer.into_cuda()?);
         Ok(timing)
     }
 
@@ -1444,6 +1518,7 @@ impl CudaVideoCompositor {
         let started = std::time::Instant::now();
         let pixels = source
             .buffer
+            .cuda()?
             .to_host_vec(&self.stream)
             .map_err(|error| format!("copy GIF frame from CUDA: {error:?}"))?;
         let width = source.width as usize;
@@ -1470,7 +1545,7 @@ impl CudaVideoCompositor {
                 .elapsed_ms(&render_events.1)
                 .map_err(|error| format!("time CUDA compositor kernel: {error:?}"))?,
         );
-        self.export_output = Some(source.buffer);
+        self.export_output = Some(source.buffer.into_cuda()?);
         Ok(ExportGpuTiming {
             compositor_ns,
             conversion_ns,
@@ -1640,6 +1715,7 @@ fn render_with_generated_gpu<T>(
 }
 
 fn gpu_memory_info(context: &Arc<CudaContext>) -> Result<(u64, u64), String> {
+    let _measurement = shrimply_profiling::measure("CUDA / Query memory");
     bind_context(context, "bind CUDA context for memory query")?;
     let mut free = 0;
     let mut total = 0;
@@ -1683,7 +1759,10 @@ fn configure_primary_context_flags() -> Result<(), String> {
     unsafe {
         cuda_check(sys::cuInit(0), "cuInit")?;
         let mut device = 0;
-        cuda_check(sys::cuDeviceGet(&mut device, 0), "cuDeviceGet")?;
+        cuda_check(
+            sys::cuDeviceGet(&mut device, shrimply_gpu_cuda::selected_device() as i32),
+            "cuDeviceGet",
+        )?;
 
         let mut current_flags = 0;
         let mut active = 0;

@@ -15,7 +15,7 @@ struct OutputSize
     uint width;
     uint height;
     uint denoising;
-    uint padding;
+    uint guides;
 };
 
 struct ComputePbr
@@ -38,24 +38,14 @@ struct ComputeMaterial
     ComputePbr pbr;
 };
 
-PbrSettings material_pbr(ComputeMaterial material)
-{
-    if (material.flags.w == 0)
-        return scene.pbr;
-    PbrSettings result;
-    result.path_tracing = PathTracingMode(material.pbr.modes.x);
-    result.light_sampling_quality = LightSamplingQuality(material.pbr.modes.y);
-    result.render_quality = RenderQuality(material.pbr.modes.z);
-    result.denoising = material.pbr.modes.w;
-    result.subsurface = material.pbr.surface.x;
-    result.clearcoat = material.pbr.surface.y;
-    result.sheen = material.pbr.surface.z;
-    result.transmission = material.pbr.surface.w;
-    result.ior = material.pbr.ior;
-    result._padding = material.pbr.padding;
-    return result;
-}
-
+#ifdef SHRIMPLY_SOFTWARE_RAYS
+#include "modules/obj-software-resources.slang"
+#else
+#define OUTPUT_TEXEL(pixel) pixel
+#define OBJECT_SHADING_MODEL scene.toon.shading_model
+#define OBJECT_TRANSPORT true
+#define OBJECT_GROUNDS true
+#define OBJECT_GROUND_REFLECTIONS true
 ConstantBuffer<SceneUniforms> scene;
 ConstantBuffer<OutputSize> output_size;
 ConstantBuffer<OutputSize> composite_size;
@@ -85,6 +75,27 @@ RWTexture2D<float4> denoiser_depth_normal;
 Texture2D<float4> denoised_texture;
 Texture2D<float4> denoised_background_texture;
 Texture2D<float4> denoised_alpha_texture;
+
+#endif
+
+PbrSettings material_pbr(ComputeMaterial material)
+{
+    if (material.flags.w == 0)
+        return scene.pbr;
+    PbrSettings result;
+    result.path_tracing = PathTracingMode(material.pbr.modes.x);
+    result.light_sampling_quality = LightSamplingQuality(material.pbr.modes.y);
+    result.render_quality = RenderQuality(material.pbr.modes.z);
+    result.denoising = material.pbr.modes.w;
+    result.subsurface = material.pbr.surface.x;
+    result.clearcoat = material.pbr.surface.y;
+    result.sheen = material.pbr.surface.z;
+    result.transmission = material.pbr.surface.w;
+    result.ior = material.pbr.ior;
+    result._padding = material.pbr.padding;
+    return result;
+}
+
 
 float2 vertex_uv(uint vertex, uint set)
 {
@@ -380,7 +391,7 @@ void obj_composite_upload_compute(uint3 thread_id : SV_DispatchThreadID)
     uint2 dimensions = uint2(composite_size.width, composite_size.height);
     if (pixel.x >= dimensions.x || pixel.y >= dimensions.y)
         return;
-    composite_texture_output[pixel] = unpack_color(
+    composite_texture_output[OUTPUT_TEXEL(pixel)] = unpack_color(
         composite_pixels[pixel.y * dimensions.x + pixel.x]);
 }
 
@@ -392,7 +403,7 @@ struct ComputeSurface
     float3 base_color;
     float metallic;
     float roughness;
-    ComputeMaterial material;
+    uint material_index;
 };
 
 ComputeSurface load_surface(
@@ -477,7 +488,7 @@ ComputeSurface load_surface(
         material.metallic_roughness_normal_alpha.y,
         metallic_roughness,
         scene.material.y);
-    result.material = material;
+    result.material_index = material_index;
     return result;
 }
 
@@ -665,7 +676,7 @@ float4 shade_surface(
     uint path_bounce,
     inout uint seed)
 {
-    ComputeMaterial material = surface.material;
+    ComputeMaterial material = materials[surface.material_index];
     float3 world_position = surface.world_position;
     float3 normal = surface.normal;
     float4 mesh_base_color = surface.mesh_base_color;
@@ -675,7 +686,7 @@ float4 shade_surface(
     float3 view = -world_direction;
     if (dot(normal, view) < 0.0)
         normal = -normal;
-    if (scene.toon.shading_model == ShadingModel::Toon
+    if (OBJECT_SHADING_MODEL == ShadingModel::Toon
         && scene.toon.texture_filter == ToonTextureFilter::Kuwahara
         && material.flags.x != 0
         && material.base_color_texture.settings.x != 0)
@@ -692,8 +703,8 @@ float4 shade_surface(
     }
     PbrSettings surface_pbr = material_pbr(material);
     bool path_tracing = scene.pbr.path_tracing != PathTracingMode::Off;
-    bool stochastic_transport = path_tracing || surface_pbr.transmission > 0.0;
-    if (scene.toon.shading_model == ShadingModel::Depth)
+    bool stochastic_transport = OBJECT_TRANSPORT && (path_tracing || surface_pbr.transmission > 0.0);
+    if (OBJECT_SHADING_MODEL == ShadingModel::Depth)
     {
         float4 clip_position = mul(
             scene.view_projection,
@@ -706,7 +717,7 @@ float4 shade_surface(
     }
 
     float3 shaded;
-    if (scene.toon.shading_model == ShadingModel::Toon)
+    if (OBJECT_SHADING_MODEL == ShadingModel::Toon)
     {
         float3 environment_diffuse;
         float3 environment_reflection;
@@ -881,6 +892,15 @@ TransportResult shade_transport_path(
     uint first_path_bounce,
     uint random_seed)
 {
+    if (!OBJECT_TRANSPORT)
+    {
+        float4 local = shade_surface(first_surface, first_direction, pixel, 1u, random_seed);
+        TransportResult result;
+        result.radiance = local.rgb;
+        result.background = float3(0.0);
+        result.alpha = local.a;
+        return result;
+    }
     ComputeSurface surface = first_surface;
     float3 direction = first_direction;
     float3 throughput = float3(1.0);
@@ -889,7 +909,7 @@ TransportResult shade_transport_path(
     bool transmitted = false;
     uint path_bounce = first_path_bounce;
     uint seed = random_seed;
-    float alpha = surface.material.flags.x != 0
+    float alpha = materials[surface.material_index].flags.x != 0
         ? surface.mesh_base_color.a
         : scene.base_color.a;
     uint bounce_limit = pbr_transport_bounce_limit(scene.pbr);
@@ -903,7 +923,7 @@ TransportResult shade_transport_path(
         bool path_complete = false;
         float4 local = shade_surface(surface, direction, pixel, 1u, seed);
         radiance += throughput * local.rgb;
-        PbrSettings settings = material_pbr(surface.material);
+        PbrSettings settings = material_pbr(materials[surface.material_index]);
         if ((!path_tracing && settings.transmission <= 0.0)
             || path_bounce >= bounce_limit)
         {
@@ -979,7 +999,7 @@ TransportResult shade_transport_path(
                     virtual_distance,
                     virtual_ground)
                     && virtual_distance < geometry_distance;
-                if (virtual_hit && virtual_ground >= 0)
+                if (OBJECT_GROUNDS && virtual_hit && virtual_ground >= 0)
                 {
                     Ground ground = scene.grounds[virtual_ground];
                     float3 ground_position = origin + sample.direction * virtual_distance;
@@ -1029,7 +1049,7 @@ TransportResult shade_transport_path(
                         ComputeSurface reflected_surface;
                         float reflected_distance;
                         bool reflected_hit = false;
-                        if (reflection.valid)
+                        if (OBJECT_GROUND_REFLECTIONS && reflection.valid)
                         {
                             RayDesc reflection_ray = {
                                 mul(scene.model_inverse, float4(reflection.origin, 1.0)).xyz,
@@ -1054,7 +1074,7 @@ TransportResult shade_transport_path(
                             transmitted = false;
                             path_bounce = reflection.path_bounce;
                             seed = reflection.random_seed;
-                            alpha = surface.material.flags.x != 0
+                            alpha = materials[surface.material_index].flags.x != 0
                                 ? surface.mesh_base_color.a
                                 : scene.base_color.a;
                             continue;
@@ -1120,7 +1140,7 @@ TransportResult shade_transport_path(
 
         if (!path_complete)
             continue;
-        while (continuation_count > 0u)
+        while (OBJECT_GROUNDS && continuation_count > 0u)
         {
             continuation_count -= 1u;
             GroundTransportContinuation continuation =
@@ -1235,9 +1255,10 @@ float4 render_sample(
     if (trace_surface_hit(ray, surface, ray_distance))
     {
         visible_distance = length(surface.world_position - camera.world_origin);
-        color = scene.toon.shading_model == ShadingModel::Pbr
+        color = OBJECT_SHADING_MODEL == ShadingModel::Pbr
+                && OBJECT_TRANSPORT
                 && (scene.pbr.path_tracing != PathTracingMode::Off
-                    || material_pbr(surface.material).transmission > 0.0)
+                    || material_pbr(materials[surface.material_index]).transmission > 0.0)
             ? shade_stochastic_path(
                 surface,
                 camera.world_direction,
@@ -1246,6 +1267,7 @@ float4 render_sample(
                 background)
             : shade_surface(surface, camera.world_direction, pixel, 0u, seed);
     }
+    if (!OBJECT_GROUNDS) return color;
     int ground_index = -1;
     float ground_distance = visible_distance + RAY_MINIMUM;
     float3 ground_position = float3(0.0);
@@ -1293,7 +1315,7 @@ float4 render_sample(
         0u,
         ground_seed);
     float4 reflection = float4(0.0);
-    if (reflection_ray.valid)
+    if (OBJECT_GROUND_REFLECTIONS && reflection_ray.valid)
     {
         RayDesc reflected_ray = {
             mul(scene.model_inverse, float4(reflection_ray.origin, 1.0)).xyz,
@@ -1485,21 +1507,38 @@ void obj_compute(uint3 thread_id : SV_DispatchThreadID)
             outline_binary_coverage(coverage, scene.toon),
             scene.toon);
     }
-    if (scene.toon.shading_model == ShadingModel::Toon)
+    if (OBJECT_SHADING_MODEL == ShadingModel::Toon)
         color.rgb = toon_palette_quantize(color.rgb, scene.toon.color_levels);
     uint pixel_index = pixel.y * dimensions.x + pixel.x;
     if (output_size.denoising != 0)
     {
-        denoiser_beauty[pixel] = color;
-        denoiser_background[pixel] = background;
-        denoiser_alpha[pixel] = color.aaaa;
-        OutlineSurface guide = trace_outline_surface(
-            float2(pixel) + 0.5,
-            dimensions,
-            0u);
-        denoiser_depth_normal[pixel] = guide.hit != 0
+        denoiser_beauty[OUTPUT_TEXEL(pixel)] = color;
+#ifdef SHRIMPLY_SOFTWARE_RAYS
+        // Refraction shares the beauty coverage for edge-aware spatial filtering.
+        // Final output alpha remains in the separate, unfiltered coverage buffer.
+        denoiser_background[OUTPUT_TEXEL(pixel)] = float4(background.rgb, color.a);
+#else
+        denoiser_background[OUTPUT_TEXEL(pixel)] = background;
+#endif
+        denoiser_alpha[OUTPUT_TEXEL(pixel)] = color.aaaa;
+#ifdef SHRIMPLY_SOFTWARE_RAYS
+        CameraRay camera = camera_ray(scene, float2(pixel) + 0.5, dimensions, false, 0u);
+        ComputeSurface guide;
+        float distance;
+        bool hit = camera.valid && trace_surface_hit(camera.object_ray, guide, distance);
+        if (hit && dot(guide.normal, -camera.world_direction) < 0.0)
+            guide.normal = -guide.normal;
+        denoiser_depth_normal[OUTPUT_TEXEL(pixel)] = hit
+            ? float4(length(scene.camera_position.xyz - guide.world_position), guide.normal)
+            : float4(RAY_MAXIMUM, 0.0, 0.0, 0.0);
+        if (output_size.guides != 0)
+            denoiser_albedo[OUTPUT_TEXEL(pixel)] = hit ? float4(guide.base_color, 1.0) : float4(0.0);
+#else
+        OutlineSurface guide = trace_outline_surface(float2(pixel) + 0.5, dimensions, 0u);
+        denoiser_depth_normal[OUTPUT_TEXEL(pixel)] = guide.hit != 0
             ? float4(guide.depth, guide.normal)
             : float4(RAY_MAXIMUM, 0.0, 0.0, 0.0);
+#endif
     }
     else
         output_pixels[pixel_index] = pack_color(color);
@@ -1524,8 +1563,8 @@ void obj_denoise_composite_compute(uint3 thread_id : SV_DispatchThreadID)
     uint2 dimensions = uint2(output_size.width, output_size.height);
     if (pixel.x >= dimensions.x || pixel.y >= dimensions.y)
         return;
-    float4 beauty = denoised_texture[pixel];
-    float4 background = denoised_background_texture[pixel];
+    float4 beauty = denoised_texture[OUTPUT_TEXEL(pixel)];
+    float4 background = denoised_background_texture[OUTPUT_TEXEL(pixel)];
     float3 color = float3(
         aces_tone_map(beauty.r),
         aces_tone_map(beauty.g),
@@ -1536,7 +1575,7 @@ void obj_denoise_composite_compute(uint3 thread_id : SV_DispatchThreadID)
         linear_to_srgb(color.g),
         linear_to_srgb(color.b));
     output_pixels[pixel.y * dimensions.x + pixel.x]
-        = pack_color(float4(color, denoised_alpha_texture[pixel].r));
+        = pack_color(float4(color, denoised_alpha_texture[OUTPUT_TEXEL(pixel)].r));
 }
 
 [shader("compute")]
@@ -1585,16 +1624,16 @@ void obj_outline_compute(uint3 thread_id : SV_DispatchThreadID)
     uint pixel_index = pixel.y * dimensions.x + pixel.x;
     float4 color = composite_outline(
         output_size.denoising != 0
-            ? denoiser_beauty[pixel]
+            ? denoiser_beauty[OUTPUT_TEXEL(pixel)]
             : unpack_color(output_pixels[pixel_index]),
         coverage,
         scene.toon);
-    if (scene.toon.shading_model == ShadingModel::Toon)
+    if (OBJECT_SHADING_MODEL == ShadingModel::Toon)
         color.rgb = toon_palette_quantize(color.rgb, scene.toon.color_levels);
     if (output_size.denoising != 0)
     {
-        denoiser_beauty[pixel] = color;
-        denoiser_alpha[pixel] = color.aaaa;
+        denoiser_beauty[OUTPUT_TEXEL(pixel)] = color;
+        denoiser_alpha[OUTPUT_TEXEL(pixel)] = color.aaaa;
     }
     else
         output_pixels[pixel_index] = pack_color(color);

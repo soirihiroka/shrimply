@@ -48,6 +48,8 @@ pub fn run(options: Options) -> Result<(), String> {
         return Err("Project has no video or audio duration to render".into());
     }
     project::set_active_project_path(&path);
+    #[cfg(target_os = "linux")]
+    shrimply_export_cuda::configure_gtk_backend()?;
     let preferences = preferences::snapshot(&preferences::open_with_defaults());
     shrimply_blender_core::set_binary(preferences.blender_binary.clone());
     shrimply_audio_engine::pneuma::set_server_url(&preferences.compute_server_url);

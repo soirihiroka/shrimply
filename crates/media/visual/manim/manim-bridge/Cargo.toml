@@ -17,6 +17,9 @@ shrimply-math-core = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 tracing.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+shrimply-path-core.workspace = true
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
 objc2-foundation.workspace = true

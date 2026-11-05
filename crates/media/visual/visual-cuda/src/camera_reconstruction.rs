@@ -1,8 +1,7 @@
-use ffmpeg_next::{format::Pixel, frame::Video};
 use shrimply_3dgs_core::TrackingCameraSource;
 use shrimply_project_document::project::{ItemAddress, Project, Time, TrackAddress};
 
-use crate::compositor::VideoExportRenderer;
+use crate::analysis_renderer::{Renderer, Target};
 
 pub use shrimply_visual_core::camera_reconstruction::{
     AnalysisStatus, ReconstructedCameraSample, apply_custom_camera_offset, cancel,
@@ -28,11 +27,10 @@ pub fn analyze(
 
 fn renderer()
 -> Result<Box<dyn shrimply_visual_core::camera_reconstruction::AnalysisFrameRenderer>, String> {
-    VideoExportRenderer::new(ANALYSIS_AUDIO_SAMPLE_RATE)
-        .map(|renderer| Box::new(renderer) as Box<_>)
+    Renderer::new(ANALYSIS_AUDIO_SAMPLE_RATE).map(|renderer| Box::new(renderer) as Box<_>)
 }
 
-impl shrimply_visual_core::camera_reconstruction::AnalysisFrameRenderer for VideoExportRenderer {
+impl shrimply_visual_core::camera_reconstruction::AnalysisFrameRenderer for Renderer {
     fn render_jpeg(
         &mut self,
         project: &Project,
@@ -43,16 +41,9 @@ impl shrimply_visual_core::camera_reconstruction::AnalysisFrameRenderer for Vide
         if cancelled.load(std::sync::atomic::Ordering::Acquire) {
             return Err("camera analysis cancelled".into());
         }
-        let gpu = self
-            .render_track(project, position, track)
-            .map_err(|error| format!("could not render source frame: {error}"))?;
-        let mut rgba = Video::new(
-            Pixel::RGBA,
-            project.canvas_size.width,
-            project.canvas_size.height,
-        );
-        self.copy_to_rgba_frame(gpu, &mut rgba)
-            .map_err(|error| format!("could not copy source frame: {error}"))?;
+        let Some(rgba) = self.frame(project, position, Target::Track(track))? else {
+            return Ok(None);
+        };
         shrimply_visual_core::camera_reconstruction::encode_tracking_frame(
             rgba.data(0),
             project.canvas_size,

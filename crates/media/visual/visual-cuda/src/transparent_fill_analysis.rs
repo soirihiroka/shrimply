@@ -1,19 +1,18 @@
-use ffmpeg_next::{format::Pixel, frame};
 use shrimply_project_document::project::{ItemAddress, Project, Time};
 use uuid::Uuid;
 
-use crate::compositor::{EXPORT_ASSETS_LOADING, VideoExportRenderer};
+use crate::analysis_renderer::{Renderer, Target};
 
 pub use shrimply_visual_core::transparent_fill::analysis::{
     FrameSource, FrameStatus, PreparedStatus, RunId, Status, active_run_prepared, cancel,
     prepare_status, status, status_for_run, status_prepared,
 };
 
-struct CudaFrameSource {
-    renderer: VideoExportRenderer,
+struct AnalysisFrameSource {
+    renderer: Renderer,
 }
 
-impl FrameSource for CudaFrameSource {
+impl FrameSource for AnalysisFrameSource {
     fn frame(
         &mut self,
         project: &Project,
@@ -22,16 +21,20 @@ impl FrameSource for CudaFrameSource {
         width: u32,
         height: u32,
     ) -> Result<FrameStatus, String> {
-        let composited = match self
-            .renderer
-            .render_transparent_fill_input(project, position, address)
-        {
-            Ok(frame) => frame,
-            Err(error) if error == EXPORT_ASSETS_LOADING => return Ok(FrameStatus::Pending),
-            Err(error) => return Err(error),
+        let Some(output) = self.renderer.frame(
+            project,
+            position,
+            Target::ModifierInput {
+                address,
+                snap_content: true,
+            },
+        )?
+        else {
+            return Ok(FrameStatus::Pending);
         };
-        let mut output = frame::Video::new(Pixel::RGBA, width, height);
-        self.renderer.copy_to_rgba_frame(composited, &mut output)?;
+        if output.width() != width || output.height() != height {
+            return Err("Transparent fill input dimensions changed".into());
+        }
         let row_bytes = width as usize * 4;
         let stride = output.stride(0);
         let mut rgba = Vec::with_capacity(row_bytes * height as usize);
@@ -51,6 +54,6 @@ pub fn analyze(
         project,
         address,
         modifier_id,
-        || VideoExportRenderer::new(48_000).map(|renderer| CudaFrameSource { renderer }),
+        || Renderer::new(48_000).map(|renderer| AnalysisFrameSource { renderer }),
     )
 }

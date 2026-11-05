@@ -279,3 +279,15 @@ fn contour_length(contour: &MorphContour) -> f32 {
 fn curve_length(curve: &[Vec2; 4]) -> f32 {
     curve[0].distance(curve[1]) + curve[1].distance(curve[2]) + curve[2].distance(curve[3])
 }
+
+pub const FLOW_GRID_SPACING: u32 = 4;
+
+pub fn optical_flow_grid_size(width: u32, height: u32) -> Result<glam::UVec2, String> {
+    if width < 2 || height < 2 {
+        return Err("Morph endpoints must be at least two pixels wide and high".into());
+    }
+    Ok(glam::UVec2::new(
+        (width - 1).div_ceil(FLOW_GRID_SPACING) + 1,
+        (height - 1).div_ceil(FLOW_GRID_SPACING) + 1,
+    ))
+}

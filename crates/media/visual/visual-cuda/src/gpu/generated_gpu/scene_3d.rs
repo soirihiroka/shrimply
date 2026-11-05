@@ -59,6 +59,15 @@ impl GeneratedGpuRenderer {
     ) -> Result<VisualFrame, String> {
         let width = width.max(1);
         let height = height.max(1);
+        if !matches!(
+            params.denoising,
+            shrimply_scene_3d::DenoisingMethod::Off
+                | shrimply_scene_3d::DenoisingMethod::Auto
+                | shrimply_scene_3d::DenoisingMethod::Optix
+                | shrimply_scene_3d::DenoisingMethod::OpenImageDenoise
+        ) {
+            return Err("Selected denoiser is unavailable on the CUDA backend; select Auto, OptiX or Open Image Denoise".into());
+        }
         let mut renderer = match self.scene_3d.take() {
             Some(renderer) => renderer,
             None => Scene3dRenderer::new(self)?,
@@ -163,31 +172,90 @@ impl GeneratedGpuRenderer {
                     "tone-mapped 3D output",
                 )?;
 
-                if self
-                    .optix_denoiser
-                    .as_ref()
-                    .is_none_or(|denoiser| !denoiser.matches(width, height))
-                {
-                    self.optix_denoiser = Some(shrimply_denoise_optix::OptixDenoiser::new(
-                        context.clone(),
-                        stream,
-                        width,
-                        height,
-                    )?);
-                    tracing::info!(width, height, "Initialized guided OptiX AOV denoiser");
+                if params.denoising == shrimply_scene_3d::DenoisingMethod::OpenImageDenoise {
+                    if self
+                        .oidn_denoiser
+                        .as_ref()
+                        .is_none_or(|denoiser| !Arc::ptr_eq(&denoiser.stream, stream))
+                    {
+                        let device = unsafe {
+                            shrimply_denoise_oidn::Device::for_cuda(
+                                context.ordinal(),
+                                stream.cu_stream().cast(),
+                            )
+                        }?;
+                        self.oidn_denoiser = Some(super::OidnDenoiser {
+                            filters: [
+                                shrimply_denoise_oidn::Filter::new(device.clone())?,
+                                shrimply_denoise_oidn::Filter::new(device)?,
+                            ],
+                            stream: stream.clone(),
+                        });
+                    }
+                    let quality = match params.render_quality {
+                        shrimply_render_3d_core::obj::RenderQuality::Interactive => {
+                            shrimply_denoise_oidn::Quality::Interactive
+                        }
+                        shrimply_render_3d_core::obj::RenderQuality::Final => {
+                            shrimply_denoise_oidn::Quality::Final
+                        }
+                    };
+                    for (filter, color) in self
+                        .oidn_denoiser
+                        .as_mut()
+                        .expect("initialized OIDN GPU filters")
+                        .filters
+                        .iter_mut()
+                        .zip([guide_ptr, guide_ptr + float_size * 3])
+                    {
+                        let result = unsafe {
+                            filter.execute(
+                                shrimply_denoise_oidn::Images {
+                                    color: shrimply_denoise_oidn::Image::Cuda(color),
+                                    output: shrimply_denoise_oidn::Image::Cuda(color),
+                                    albedo: Some(shrimply_denoise_oidn::Image::Cuda(
+                                        guide_ptr + float_size,
+                                    )),
+                                    normal: Some(shrimply_denoise_oidn::Image::Cuda(
+                                        guide_ptr + float_size * 2,
+                                    )),
+                                    size: (width, height),
+                                },
+                                quality,
+                            )
+                        };
+                        if let Err(error) = result {
+                            stream.synchronize().expect("CUDA failed while completing OIDN work before releasing its buffers");
+                            return Err(error);
+                        }
+                    }
+                } else {
+                    if self
+                        .optix_denoiser
+                        .as_ref()
+                        .is_none_or(|denoiser| !denoiser.matches(width, height))
+                    {
+                        self.optix_denoiser = Some(shrimply_denoise_optix::OptixDenoiser::new(
+                            context.clone(),
+                            stream,
+                            width,
+                            height,
+                        )?);
+                        tracing::info!(width, height, "Initialized guided OptiX AOV denoiser");
+                    }
+                    self.optix_denoiser
+                        .as_mut()
+                        .expect("OptiX denoiser was initialized")
+                        .denoise(
+                            stream,
+                            shrimply_denoise_optix::DenoiseInputs {
+                                beauty: guide_ptr,
+                                refraction: guide_ptr + float_size * 3,
+                                albedo: guide_ptr + float_size,
+                                normal: guide_ptr + float_size * 2,
+                            },
+                        )?;
                 }
-                self.optix_denoiser
-                    .as_mut()
-                    .expect("OptiX denoiser was initialized")
-                    .denoise(
-                        stream,
-                        shrimply_denoise_optix::DenoiseInputs {
-                            beauty: guide_ptr,
-                            refraction: guide_ptr + float_size * 3,
-                            albedo: guide_ptr + float_size,
-                            normal: guide_ptr + float_size * 2,
-                        },
-                    )?;
                 let launch_count = u32::try_from(pixel_count)
                     .map_err(|_| "3D output is too large for a CUDA launch".to_string())?;
                 let toon_color_levels = matches!(
@@ -211,6 +279,13 @@ impl GeneratedGpuRenderer {
                 stream
                     .synchronize()
                     .map_err(|error| format!("synchronize OptiX output: {error:?}"))?;
+                if params.denoising == shrimply_scene_3d::DenoisingMethod::OpenImageDenoise {
+                    self.oidn_denoiser
+                        .as_ref()
+                        .expect("initialized OIDN GPU filters")
+                        .filters[0]
+                        .check()?;
+                }
                 let output = output
                     .cast_chunks::<u8>()
                     .map_err(|_| "3D output buffer cannot be viewed as bytes".to_string())?;
@@ -372,7 +447,7 @@ impl Scene3dRenderer {
             self.environments
                 .retain(|cached, _| cached.asset() != identity.asset() || cached == identity);
         }
-        let denoise = params.denoising
+        let denoise = params.denoising != shrimply_scene_3d::DenoisingMethod::Off
             && params.shading_model == shrimply_render_3d_core::obj::ShadingModel::Pbr;
         self.ensure_target(width, height, denoise)?;
         if let Some(background) = transmission_background {

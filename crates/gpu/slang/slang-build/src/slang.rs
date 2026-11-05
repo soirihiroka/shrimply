@@ -24,6 +24,7 @@ pub enum Target {
     Cuda,
     Metal,
     Host,
+    Vulkan,
 }
 
 #[repr(C)]
@@ -117,7 +118,7 @@ impl Compiler {
             "Slang artifact name must contain only ASCII letters, digits, '_' or '-'"
         );
         let extension = match target {
-            Target::Spirv => "spv",
+            Target::Spirv | Target::Vulkan => "spv",
             Target::Cuda => "cu",
             Target::Metal => "metal",
             Target::Host => "cpp",

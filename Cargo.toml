@@ -68,6 +68,7 @@ members = [
     "crates/ui/preview/preview-interaction-skia",
     "crates/render/preview/preview-render-core",
     "crates/render/preview/preview-render-metal",
+    "crates/render/preview/preview-render-vulkan",
     "crates/render/loading-screen-skia",
     "crates/render/drawing-skia",
     "crates/application/playback-performance",
@@ -80,6 +81,7 @@ members = [
     "crates/render/render-core",
     "crates/render/render-kernels-cuda",
     "crates/render/render-metal",
+    "crates/render/render-vulkan",
     "crates/resource-pipeline",
     "crates/integrations/compute-client",
     "crates/gpu/slang/slang-build",
@@ -139,6 +141,7 @@ members = [
     "crates/media/visual/3d/3dgs/3dgs-core",
     "crates/media/visual/3d/3dgs/3dgs-metal",
     "crates/gpu/denoise/denoise-optix",
+    "crates/gpu/denoise/denoise-oidn",
     "crates/media/visual/3d/render-3d-core",
     "crates/media/visual/3d/render-3d-metal",
     "crates/media/visual/3d/scene-3d",
@@ -182,6 +185,7 @@ shrimply-cross-ui-core = { path = "crates/ui/application/cross-ui-core" }
 shrimply-cross-ui-theme = { path = "crates/ui/theme/cross-ui-theme" }
 shrimply-decoder-pool = { path = "crates/media/visual/video/decoder-pool" }
 shrimply-denoise-optix = { path = "crates/gpu/denoise/denoise-optix" }
+shrimply-denoise-oidn = { path = "crates/gpu/denoise/denoise-oidn" }
 shrimply-discrete-keyframe-graph-skia = { path = "crates/ui/keyframe-graph/discrete-keyframe-graph-skia" }
 shrimply-drawing-skia = { path = "crates/render/drawing-skia" }
 shrimply-editor-state = { path = "crates/application/editor-state" }
@@ -244,6 +248,7 @@ shrimply-preview-provider-skia = { path = "crates/ui/preview/preview-provider-sk
 shrimply-preview-qt = { path = "crates/ui/preview/preview-qt" }
 shrimply-preview-render-core = { path = "crates/render/preview/preview-render-core" }
 shrimply-preview-render-metal = { path = "crates/render/preview/preview-render-metal" }
+shrimply-preview-render-vulkan = { path = "crates/render/preview/preview-render-vulkan" }
 shrimply-preview-runtime-cuda = { path = "crates/render/preview/preview-runtime-cuda" }
 shrimply-process-reporting = { path = "crates/diagnostics/process-reporting" }
 shrimply-recent-projects = { path = "crates/project/recent-projects" }
@@ -258,6 +263,7 @@ shrimply-render-3d-metal = { path = "crates/media/visual/3d/render-3d-metal" }
 shrimply-render-core = { path = "crates/render/render-core" }
 shrimply-render-kernels-cuda = { path = "crates/render/render-kernels-cuda" }
 shrimply-render-metal = { path = "crates/render/render-metal" }
+shrimply-render-vulkan = { path = "crates/render/render-vulkan" }
 shrimply-resource-pipeline = { path = "crates/resource-pipeline" }
 shrimply-scene-3d = { path = "crates/media/visual/3d/scene-3d" }
 shrimply-scene-3d-modifiers = { path = "crates/media/visual/3d/scene-3d-modifiers" }

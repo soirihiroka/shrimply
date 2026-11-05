@@ -29,6 +29,7 @@ mod visual;
 pub(crate) use shrimply_visual_core::generated::GeneratedVisual;
 pub(super) use visual::visual_frame_from_canvas;
 
+const MAX_CACHED_INTEROP_FRAMES: usize = 3;
 const VECTOR_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 const VECTOR_SKIA_FORMAT: skia_vk::Format = skia_vk::Format::R8G8B8A8_UNORM;
 static IMPORTED_VULKAN_FRAMES: AtomicU64 = AtomicU64::new(0);
@@ -49,17 +50,26 @@ pub struct GeneratedGpuRenderer {
     skia: gpu::DirectContext,
     expression_cache: TransformExpressionCache,
     gaussian_3d: Option<shrimply_3dgs_vulkan::Renderer>,
-    gaussian_frames: Arc<Mutex<Vec<ImportedVulkanFrame>>>,
+    interop_frames: Arc<Mutex<Vec<ImportedVulkanFrame>>>,
+    vector_image: Option<(u32, u32, VulkanImage)>,
     background_frame: Option<(background::RenderKey, VisualFrame)>,
     background: Option<background::Renderer>,
     manim: Option<shrimply_manim_cuda::Renderer>,
     scene_3d: Option<scene_3d::Scene3dRenderer>,
     mesh_flow: Option<mesh_flow::Renderer>,
     optix_denoiser: Option<shrimply_denoise_optix::OptixDenoiser>,
+    oidn_denoiser: Option<OidnDenoiser>,
+    image_copy: Option<(VulkanCommandBuffer, VulkanFence)>,
     // Drop after every renderer that owns command buffers allocated from it.
     command_pool: VulkanCommandPool,
     // Drop last so Skia and all renderer-owned Vulkan handles are gone before the device.
     vulkan: Arc<VulkanDevice>,
+}
+
+struct OidnDenoiser {
+    filters: [shrimply_denoise_oidn::Filter; 2],
+    // Filters and their OIDN device must be dropped before their CUDA stream.
+    stream: Arc<shrimply_gpu_cuda::CudaStream>,
 }
 
 impl GeneratedGpuRenderer {
@@ -185,18 +195,21 @@ impl GeneratedGpuRenderer {
             queue_family_index,
             queue,
             command_pool,
+            image_copy: None,
             external_memory,
             external_semaphore,
             skia,
             expression_cache: TransformExpressionCache::default(),
             gaussian_3d: None,
-            gaussian_frames: Arc::new(Mutex::new(Vec::new())),
+            interop_frames: Arc::new(Mutex::new(Vec::new())),
+            vector_image: None,
             background_frame: None,
             background: None,
             manim: None,
             scene_3d: None,
             mesh_flow: None,
             optix_denoiser: None,
+            oidn_denoiser: None,
         })
     }
 
@@ -214,23 +227,7 @@ impl GeneratedGpuRenderer {
             .checked_mul(u64::from(height))
             .and_then(|pixels| pixels.checked_mul(4))
             .ok_or_else(|| "3DGS output dimensions overflow".to_string())?;
-        let imported = {
-            let mut frames = self
-                .gaussian_frames
-                .lock()
-                .expect("3DGS interop frame cache lock poisoned");
-            frames
-                .iter()
-                .position(|frame| frame._buffer.buffer_size == size)
-                .map(|index| frames.swap_remove(index))
-        };
-        let imported = match imported {
-            Some(imported) => imported,
-            None => {
-                let buffer = self.create_exported_buffer(size)?;
-                self.import_buffer_to_cuda_allocation(context.clone(), buffer, None)?
-            }
-        };
+        let imported = self.acquire_interop_buffer(context, size)?;
         let mut renderer = match self.gaussian_3d.take() {
             Some(renderer) => renderer,
             None => shrimply_3dgs_vulkan::Renderer::new(shrimply_3dgs_vulkan::RenderContext {
@@ -249,7 +246,7 @@ impl GeneratedGpuRenderer {
             renderer.render_to_buffer(session, width, height, params, imported._buffer.buffer);
         self.gaussian_3d = Some(renderer);
         rendered?;
-        self.visual_frame_from_imported(width, height, imported, Some(self.gaussian_frames.clone()))
+        self.visual_frame_from_imported(width, height, imported, Some(self.interop_frames.clone()))
     }
 
     pub(crate) fn render_background(
@@ -397,12 +394,17 @@ impl GeneratedGpuRenderer {
         let render_size = canvas_sizes.0;
         let width = render_size.width.max(1);
         let height = render_size.height.max(1);
-        let (image, buffer) = {
+        let (image, imported) = {
             let _measurement = shrimply_profiling::measure("Generated visual / Allocate targets");
-            (
-                self.create_render_image(width, height)?,
-                self.create_exported_buffer(width as u64 * height as u64 * 4)?,
-            )
+            let image = match self.vector_image.take() {
+                Some((w, h, image)) if w == width && h == height => image,
+                _ => self.create_render_image(width, height)?,
+            };
+            let imported = self.acquire_interop_buffer(
+                context,
+                u64::from(width) * u64::from(height) * size_of::<u32>() as u64,
+            )?;
+            (image, imported)
         };
 
         {
@@ -435,12 +437,39 @@ impl GeneratedGpuRenderer {
                 width,
                 height,
                 image.image,
-                buffer.buffer,
+                imported._buffer.buffer,
                 ImageCopySource::ColorAttachment,
             )?;
         }
         let _measurement = shrimply_profiling::measure("Generated visual / CUDA import");
-        self.import_buffer_to_cuda(context, width, height, buffer)
+        self.vector_image = Some((width, height, image));
+        self.visual_frame_from_imported(width, height, imported, Some(self.interop_frames.clone()))
+    }
+
+    fn acquire_interop_buffer(
+        &mut self,
+        context: Arc<CudaContext>,
+        size: u64,
+    ) -> Result<ImportedVulkanFrame, String> {
+        let imported = {
+            let mut frames = self
+                .interop_frames
+                .lock()
+                .expect("generated interop frame cache lock poisoned");
+            frames
+                .iter()
+                .position(|frame| {
+                    frame._buffer.buffer_size == size && frame.context.cu_ctx() == context.cu_ctx()
+                })
+                .map(|index| frames.swap_remove(index))
+        };
+        match imported {
+            Some(imported) => Ok(imported),
+            None => {
+                let buffer = self.create_exported_buffer(size)?;
+                self.import_buffer_to_cuda_allocation(context, buffer, None)
+            }
+        }
     }
 
     fn create_render_image(&mut self, width: u32, height: u32) -> Result<VulkanImage, String> {
@@ -567,13 +596,15 @@ impl GeneratedGpuRenderer {
     pub(super) fn release_render_surfaces(&mut self, requested_bytes: u64) -> Result<bool, String> {
         let background_frame = self.background_frame.take().map(|(_, frame)| frame.bytes());
         let mut released = background_frame.is_some();
-        let gaussian_frames = self
-            .gaussian_frames
+        released |= self.vector_image.take().is_some();
+        released |= self.image_copy.take().is_some();
+        let interop_frames = self
+            .interop_frames
             .lock()
-            .expect("3DGS interop frame cache lock poisoned")
+            .expect("generated interop frame cache lock poisoned")
             .drain(..)
             .count();
-        released |= gaussian_frames > 0;
+        released |= interop_frames > 0;
         if let Some(manim) = self.manim.as_mut() {
             let manim_released = manim.release_render_surfaces();
             released |= manim_released;
@@ -587,7 +618,7 @@ impl GeneratedGpuRenderer {
             tracing::warn!(
                 requested_bytes,
                 background_frame_bytes = background_frame.unwrap_or(0),
-                gaussian_frames,
+                interop_frames,
                 retained,
                 "released cached generated-renderer GPU resources"
             );
@@ -618,6 +649,7 @@ impl GeneratedGpuRenderer {
         released |= self.scene_3d.take().is_some();
         released |= self.mesh_flow.take().is_some();
         released |= self.optix_denoiser.take().is_some();
+        released |= self.oidn_denoiser.take().is_some();
         let skia_before = self.skia.resource_cache_usage().resource_bytes;
         self.skia.free_gpu_resources();
         let skia_retained = self.skia.resource_cache_usage().resource_bytes;
@@ -663,7 +695,7 @@ impl GeneratedGpuRenderer {
     }
 
     fn copy_image_to_buffer(
-        &self,
+        &mut self,
         width: u32,
         height: u32,
         image: vk::Image,
@@ -674,25 +706,59 @@ impl GeneratedGpuRenderer {
     }
 
     fn copy_images_to_buffer(
-        &self,
+        &mut self,
         width: u32,
         height: u32,
         images: &[(vk::Image, u64)],
         buffer: vk::Buffer,
         source: ImageCopySource,
     ) -> Result<(), String> {
-        let allocate_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(self.command_pool.handle)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
-        let command_buffer = unsafe { self.vulkan.device.allocate_command_buffers(&allocate_info) }
-            .map_err(|error| format!("allocate Vulkan generated copy command buffer: {error:?}"))?
-            [0];
-        let command_buffer = VulkanCommandBuffer {
-            vulkan: self.vulkan.clone(),
-            pool: self.command_pool.handle,
-            handle: command_buffer,
+        let (command_buffer, fence) = {
+            let _measurement = shrimply_profiling::measure("Generated copy / Acquire commands");
+            match self.image_copy.take() {
+                Some((command, fence)) => {
+                    // Every copy finishes below before these resources are cached.
+                    unsafe {
+                        self.vulkan.device.reset_command_buffer(
+                            command.handle,
+                            vk::CommandBufferResetFlags::empty(),
+                        )
+                    }
+                    .map_err(|error| format!("reset generated copy command buffer: {error:?}"))?;
+                    unsafe { self.vulkan.device.reset_fences(&[fence.handle]) }
+                        .map_err(|error| format!("reset generated copy fence: {error:?}"))?;
+                    (command, fence)
+                }
+                None => {
+                    let allocate_info = vk::CommandBufferAllocateInfo::default()
+                        .command_pool(self.command_pool.handle)
+                        .level(vk::CommandBufferLevel::PRIMARY)
+                        .command_buffer_count(1);
+                    let handle =
+                        unsafe { self.vulkan.device.allocate_command_buffers(&allocate_info) }
+                            .map_err(|error| {
+                                format!("allocate Vulkan generated copy command buffer: {error:?}")
+                            })?[0];
+                    let command = VulkanCommandBuffer {
+                        vulkan: self.vulkan.clone(),
+                        pool: self.command_pool.handle,
+                        handle,
+                    };
+                    let handle = unsafe {
+                        self.vulkan
+                            .device
+                            .create_fence(&vk::FenceCreateInfo::default(), None)
+                    }
+                    .map_err(|error| format!("create Vulkan generated copy fence: {error:?}"))?;
+                    let fence = VulkanFence {
+                        vulkan: self.vulkan.clone(),
+                        handle,
+                    };
+                    (command, fence)
+                }
+            }
         };
+        let recording = shrimply_profiling::measure("Generated copy / Record commands");
         let begin = vk::CommandBufferBeginInfo::default()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         unsafe {
@@ -778,19 +844,16 @@ impl GeneratedGpuRenderer {
             .map_err(|error| format!("end Vulkan generated copy command buffer: {error:?}"))?;
         let submit =
             vk::SubmitInfo::default().command_buffers(std::slice::from_ref(&command_buffer.handle));
-        let fence_info = vk::FenceCreateInfo::default();
-        let fence = unsafe { self.vulkan.device.create_fence(&fence_info, None) }
-            .map_err(|error| format!("create Vulkan generated copy fence: {error:?}"))?;
-        let fence = VulkanFence {
-            vulkan: self.vulkan.clone(),
-            handle: fence,
-        };
+        drop(recording);
+        let submitting = shrimply_profiling::measure("Generated copy / Submit");
         unsafe {
             self.vulkan
                 .device
                 .queue_submit(self.queue, &[submit], fence.handle)
         }
         .map_err(|error| format!("submit Vulkan generated image copy: {error:?}"))?;
+        drop(submitting);
+        let waiting = shrimply_profiling::measure("Generated copy / Wait");
         if let Err(error) = unsafe {
             self.vulkan
                 .device
@@ -799,6 +862,8 @@ impl GeneratedGpuRenderer {
             wait_for_vulkan_idle_or_device_lost(&self.vulkan.device);
             return Err(format!("wait for Vulkan generated image copy: {error:?}"));
         }
+        drop(waiting);
+        self.image_copy = Some((command_buffer, fence));
         Ok(())
     }
 
@@ -1328,14 +1393,26 @@ struct PooledImportedVulkanFrame {
 
 impl Drop for PooledImportedVulkanFrame {
     fn drop(&mut self) {
-        self.pool
-            .lock()
-            .expect("3DGS interop frame cache lock poisoned")
-            .push(
-                self.imported
-                    .take()
-                    .expect("pooled 3DGS interop frame was not returned"),
-            );
+        let imported = self
+            .imported
+            .take()
+            .expect("pooled generated interop frame was not returned");
+        // Vulkan may write this allocation again as soon as it enters the pool.
+        // Finish CUDA readers, including asynchronous cache copies, first.
+        imported
+            .context
+            .synchronize()
+            .expect("Cannot recycle a generated frame while CUDA readers are pending");
+        let retired = {
+            let mut frames = self
+                .pool
+                .lock()
+                .expect("generated interop frame cache lock poisoned");
+            let retired = (frames.len() == MAX_CACHED_INTEROP_FRAMES).then(|| frames.remove(0));
+            frames.push(imported);
+            retired
+        };
+        drop(retired);
     }
 }
 
@@ -1460,11 +1537,20 @@ impl Drop for ExportedBuffer {
 }
 
 fn pick_physical_device(instance: &Instance) -> Result<(vk::PhysicalDevice, u32), String> {
+    let ordinal = shrimply_gpu_cuda::selected_device();
+    let uuid = shrimply_gpu_cuda::devices()
+        .map_err(|error| format!("Identify selected CUDA device: {error}"))?
+        .into_iter()
+        .find(|device| device.ordinal == ordinal)
+        .ok_or_else(|| format!("Selected CUDA device {ordinal} is unavailable"))?
+        .uuid;
     let devices = unsafe { instance.enumerate_physical_devices() }
         .map_err(|error| format!("enumerate Vulkan physical devices: {error:?}"))?;
     for physical_device in devices {
-        let properties = unsafe { instance.get_physical_device_properties(physical_device) };
-        if properties.vendor_id != 0x10de {
+        let mut identity = vk::PhysicalDeviceIDProperties::default();
+        let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut identity);
+        unsafe { instance.get_physical_device_properties2(physical_device, &mut properties) };
+        if identity.device_uuid != uuid {
             continue;
         }
         let queues =
@@ -1475,7 +1561,9 @@ fn pick_physical_device(instance: &Instance) -> Result<(vk::PhysicalDevice, u32)
             }
         }
     }
-    Err("no NVIDIA Vulkan graphics device found for CUDA generated rendering".to_string())
+    Err(format!(
+        "No Vulkan graphics device matches selected CUDA device {ordinal}"
+    ))
 }
 
 fn make_skia_context(

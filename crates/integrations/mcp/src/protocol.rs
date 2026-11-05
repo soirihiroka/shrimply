@@ -95,6 +95,7 @@ pub struct BridgeRequest {
 #[serde(rename_all = "snake_case", tag = "command", content = "payload")]
 pub enum BridgeCommand {
     Handshake,
+    Version,
     Snapshot,
     GetManimClip(GetManimClipRequest),
     SetManimClip(SetManimClipRequest),
@@ -159,6 +160,33 @@ pub struct CreateProjectResponse {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GetEditorStateRequest {}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct GetVersionRequest {}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct BuildVersion {
+    pub version: String,
+    /// Full source commit SHA; absent only when source provenance was unavailable at build time.
+    pub git_hash: Option<String>,
+}
+
+impl BuildVersion {
+    pub fn current(version: &str) -> Self {
+        Self {
+            version: version.into(),
+            git_hash: option_env!("SHRIMPLY_BUILD_GIT_HASH").map(str::to_owned),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct VersionResponse {
+    pub mcp: BuildVersion,
+    pub editor: Option<BuildVersion>,
+    /// Includes errors from an older editor that does not implement this query.
+    pub editor_error: Option<String>,
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ListScopesRequest {}

@@ -76,7 +76,7 @@ cat > "${FLATPAK_PAGES_DIR}/index.html" <<EOF
 <title>Shrimply Prerelease</title>
 <h1>Shrimply Prerelease</h1>
 <p>Pre-alpha GTK builds for x86_64 Linux, updated from main.
-A compatible NVIDIA driver is required.</p>
+An Intel GPU with Vulkan and VA-API drivers, or a compatible NVIDIA GPU and driver, is required.</p>
 <p><a href="shrimply-prerelease.flatpakref">Install Shrimply</a> ·
 <a href="shrimply-prerelease.flatpakrepo">Add Flatpak repository</a> ·
 <a href="https://github.com/${GITHUB_REPOSITORY}/releases">Download bundles</a></p>

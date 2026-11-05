@@ -155,6 +155,19 @@ Color from_bt709_ycbcr(float luma, float cb, float cr, float alpha) {
                clamp(luma + 2.1124017f * cb, 0.0f, 1.0f), alpha);
 }
 
+// swscale supplies fixed-point YUV coefficients for the source matrix.
+Color from_ycbcr(float luma, float2 chroma, int4 coefficients, bool full_range) {
+  const float FIXED_POINT_SCALE = 65536.0f;
+  float4 matrix = float4(coefficients) / FIXED_POINT_SCALE;
+  luma = full_range ? luma : (luma - 16.0f / 255.0f) * (255.0f / 219.0f);
+  chroma -= 128.0f / 255.0f;
+  if (full_range)
+    chroma *= 224.0f / 255.0f;
+  return color(clamp(luma + matrix.x * chroma.y, 0.0f, 1.0f),
+               clamp(luma - matrix.z * chroma.x - matrix.w * chroma.y, 0.0f, 1.0f),
+               clamp(luma + matrix.y * chroma.x, 0.0f, 1.0f), 1.0f);
+}
+
 uint3 to_bt709_ycbcr(Color value) {
   return uint3(
       uint(clamp(16.0f + 219.0f * rec709_luma(value), 0.0f, 255.0f) + 0.5f),

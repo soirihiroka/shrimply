@@ -604,8 +604,10 @@ mod tests {
             Time::from_fraction(E2E_SOURCE_OFFSET_NUMERATOR, E2E_SOURCE_OFFSET_DENOMINATOR);
         item.playback_fps = fraction_new(E2E_SOURCE_FPS, 1);
 
-        let mut color_correction = ColorCorrectionModifier::default();
-        color_correction.brightness = TimelineValue::new_const(-0.05);
+        let color_correction = ColorCorrectionModifier {
+            brightness: TimelineValue::new_const(-0.05),
+            ..Default::default()
+        };
         item.modifiers
             .push(VisualModifier::new(ModifierEffect::Raster(Box::new(
                 RasterModifierEffect::ColorCorrection(Box::new(color_correction)),
@@ -721,16 +723,13 @@ mod tests {
     }
 
     fn assert_marker(output: crate::gpu::CompositedVideoFrame, frame: u64) {
-        output
-            .buffer
+        let buffer = output.buffer.cuda().expect("CUDA preview frame");
+        buffer
             .context()
             .synchronize()
             .expect("synchronize preview frame");
-        let stream = output.buffer.context().default_stream();
-        let pixels = output
-            .buffer
-            .to_host_vec(&stream)
-            .expect("download preview frame");
+        let stream = buffer.context().default_stream();
+        let pixels = buffer.to_host_vec(&stream).expect("download preview frame");
         let expected = marker(frame) as usize;
         let row = HEIGHT as usize / 2;
         let transparent: Vec<_> = pixels[row * WIDTH as usize..(row + 1) * WIDTH as usize]

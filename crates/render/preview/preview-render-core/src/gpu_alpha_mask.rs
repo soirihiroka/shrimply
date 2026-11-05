@@ -1,5 +1,5 @@
+use crate::gpu::{Buffer, Renderer, Submission};
 use shrimply_render_core::math::{Mat3, Vec2};
-use shrimply_render_metal::{Buffer, Renderer, Submission};
 use shrimply_visual_core::alpha_mask::ResolvedShapeAlphaMask;
 
 pub(super) fn video(

@@ -1,0 +1,25 @@
+[package]
+name = "shrimply-render-vulkan"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ash.workspace = true
+shrimply-gpu-vulkan.workspace = true
+shrimply-3dgs-vulkan.workspace = true
+shrimply-3dgs-core.workspace = true
+ffmpeg-next.workspace = true
+libc.workspace = true
+shrimply-render-core.workspace = true
+shrimply-render-3d-core.workspace = true
+shrimply-scene-3d.workspace = true
+shrimply-denoise-oidn.workspace = true
+shrimply-asset.workspace = true
+shrimply-math-geometry.workspace = true
+skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }
+tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+pkg-config = "0.3"
+serde_json.workspace = true
+shrimply-slang-build.workspace = true

@@ -1,7 +1,7 @@
+use crate::{ExternalFrameDescriptor, PreparedAnimation, Renderer as SharedRenderer};
 use hashbrown::HashMap;
 pub use shrimply_gpu_vulkan::ExportedFrame;
 use shrimply_gpu_vulkan::ExternalImage as Target;
-use shrimply_manim_wgpu::{ExternalFrameDescriptor, PreparedAnimation, Renderer as SharedRenderer};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RenderedExternalFrame {
@@ -14,10 +14,8 @@ pub struct Renderer {
     targets: HashMap<usize, Target>,
 }
 impl Renderer {
-    pub fn new(
-        cuda_device_uuid: [u8; shrimply_gpu_cuda::DEVICE_UUID_BYTES],
-    ) -> Result<Self, String> {
-        let (device, queue) = shrimply_gpu_vulkan::device_for_cuda(cuda_device_uuid)?;
+    pub fn new(device_uuid: [u8; 16]) -> Result<Self, String> {
+        let (device, queue) = shrimply_gpu_vulkan::device_for_uuid(device_uuid)?;
         Ok(Self {
             shared: SharedRenderer::from_device(device, queue),
             targets: HashMap::new(),
@@ -44,6 +42,25 @@ impl Renderer {
         animation: &PreparedAnimation,
         frame_index: usize,
     ) -> Result<RenderedExternalFrame, String> {
+        self.render(slot, animation, frame_index, false)
+    }
+
+    pub fn render_shared(
+        &mut self,
+        slot: usize,
+        animation: &PreparedAnimation,
+        frame_index: usize,
+    ) -> Result<RenderedExternalFrame, String> {
+        self.render(slot, animation, frame_index, true)
+    }
+
+    fn render(
+        &mut self,
+        slot: usize,
+        animation: &PreparedAnimation,
+        frame_index: usize,
+        external_ownership: bool,
+    ) -> Result<RenderedExternalFrame, String> {
         let descriptor = SharedRenderer::external_frame_descriptor(animation);
         if !matches!(descriptor.samples, 1 | 2 | 4 | 8 | 16) {
             return Err(format!(
@@ -68,6 +85,20 @@ impl Renderer {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("Manim Vulkan frame"),
                 });
+        // WGPU forbids mixing its encoding API and raw HAL commands in one
+        // encoder. Submit ownership barriers as separate command buffers around
+        // the ordinary render buffer, in a single ordered queue submission.
+        let mut commands = Vec::new();
+        if external_ownership {
+            let mut acquire =
+                self.shared
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Acquire external Manim target"),
+                    });
+            target.acquire_external(&mut acquire)?;
+            commands.push(acquire.finish());
+        }
         self.shared.encode(
             slot,
             animation,
@@ -76,7 +107,18 @@ impl Renderer {
             &mut encoder,
         )?;
         let semaphore_value = target.prepare_submit(&self.shared.queue, &mut encoder)?;
-        self.shared.queue.submit([encoder.finish()]);
+        commands.push(encoder.finish());
+        if external_ownership {
+            let mut release =
+                self.shared
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Release external Manim target"),
+                    });
+            target.release_external(&mut release)?;
+            commands.push(release.finish());
+        }
+        self.shared.queue.submit(commands);
         Ok(RenderedExternalFrame {
             descriptor,
             semaphore_value,

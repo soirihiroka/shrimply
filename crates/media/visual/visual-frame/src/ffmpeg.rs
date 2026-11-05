@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use ffmpeg_next::sys;
 use shrimply_gpu_cuda::{CudaContext, sys as cuda_sys};
 
-use crate::{VisualFormat, VisualFrame};
+use crate::{VisualFormat, VisualFrame, VisualPlane};
 
 #[derive(Clone, Copy)]
 struct CudaContextInfo {
@@ -40,60 +40,56 @@ impl TryFrom<&ffmpeg_next::frame::Video> for VisualFrame {
         let width = raw.width.max(0) as u32;
         let height = raw.height.max(0) as u32;
         let format = unsafe { (*frames_context).sw_format };
-        let frame = Self::allocate_persistent(
-            context,
-            visual_format(format)?,
-            width,
-            height,
-            "retained decoded video frame",
-        )?;
         let (row_bytes, heights) = cuda_plane_layout(format, width, height)?;
-        let push = unsafe { cuda_sys::cuCtxPushCurrent_v2(cuda.context) };
-        if push != cuda_sys::cudaError_enum_CUDA_SUCCESS {
-            return Err(format!("activate CUDA context for frame copy: {push:?}"));
-        }
-        let copy = (0..2).try_for_each(|index| {
-            let mut descriptor: cuda_sys::CUDA_MEMCPY2D = unsafe { std::mem::zeroed() };
-            descriptor.srcMemoryType = cuda_sys::CUmemorytype_enum_CU_MEMORYTYPE_DEVICE;
-            descriptor.srcDevice = raw.data[index] as usize as cuda_sys::CUdeviceptr;
-            descriptor.srcPitch = raw.linesize[index].max(0) as usize;
-            descriptor.dstMemoryType = match frame
-                .memory_kind(index)
-                .expect("video VisualFrame lost allocation metadata")
-            {
-                shrimply_gpu_cuda_memory::MemoryKind::Device => {
-                    cuda_sys::CUmemorytype_enum_CU_MEMORYTYPE_DEVICE
-                }
-                shrimply_gpu_cuda_memory::MemoryKind::Managed => {
-                    cuda_sys::CUmemorytype_enum_CU_MEMORYTYPE_UNIFIED
-                }
-            };
-            let destination = frame
-                .plane(index)
-                .expect("video VisualFrame lost a required plane");
-            descriptor.dstDevice = destination.device_ptr;
-            descriptor.dstPitch = destination.pitch_bytes;
-            descriptor.WidthInBytes = row_bytes[index];
-            descriptor.Height = heights[index];
-            let result = unsafe { cuda_sys::cuMemcpy2DAsync_v2(&descriptor, cuda.stream) };
-            (result == cuda_sys::cudaError_enum_CUDA_SUCCESS)
-                .then_some(())
-                .ok_or_else(|| format!("copy decoded CUDA video plane: {result:?}"))
+        let planes = std::array::from_fn::<_, 2, _>(|index| VisualPlane {
+            device_ptr: raw.data[index] as usize as cuda_sys::CUdeviceptr,
+            pitch_bytes: raw.linesize[index].max(0) as usize,
+            width_bytes: row_bytes[index],
+            height: heights[index],
         });
-        let synchronize = copy.and_then(|()| {
-            let result = unsafe { cuda_sys::cuStreamSynchronize(cuda.stream) };
-            (result == cuda_sys::cudaError_enum_CUDA_SUCCESS)
-                .then_some(())
-                .ok_or_else(|| format!("finish decoded CUDA video copy: {result:?}"))
-        });
-        let mut popped = ptr::null_mut();
-        if unsafe { cuda_sys::cuCtxPopCurrent_v2(&mut popped) }
-            != cuda_sys::cudaError_enum_CUDA_SUCCESS
-        {
-            std::process::abort();
+        context
+            .bind_to_thread()
+            .map_err(|error| format!("activate CUDA context for decoded frame: {error}"))?;
+        // FFmpeg may still be copying the decoded surface on its own stream.
+        let ready = unsafe { cuda_sys::cuStreamSynchronize(cuda.stream) };
+        if ready != cuda_sys::cudaError_enum_CUDA_SUCCESS {
+            return Err(format!("finish decoded CUDA video frame: {ready:?}"));
         }
-        synchronize?;
-        Ok(frame)
+        // AVFrame refs keep FFmpeg's CUDA pool allocation alive without another
+        // image allocation or copy. Video::clone copies pixels, so use av_frame_clone.
+        let retained = unsafe { sys::av_frame_clone(decoded.as_ptr()) };
+        if retained.is_null() {
+            return Err("Could not retain decoded CUDA video frame".into());
+        }
+        let owner = DecodedFrame {
+            _frame: unsafe { ffmpeg_next::frame::Video::wrap(retained) },
+            context: context.clone(),
+        };
+        unsafe {
+            Self::from_external_gpu(
+                context,
+                visual_format(format)?,
+                width,
+                height,
+                &planes,
+                Box::new(owner),
+            )
+        }
+    }
+}
+
+struct DecodedFrame {
+    _frame: ffmpeg_next::frame::Video,
+    context: std::sync::Arc<CudaContext>,
+}
+
+impl Drop for DecodedFrame {
+    fn drop(&mut self) {
+        // Match owned CUDA buffer lifetime guarantees: a decoder pool must not
+        // reuse this surface while a compositor/cache stream still reads it.
+        self.context
+            .synchronize()
+            .expect("Cannot release a decoded CUDA frame while GPU readers are pending");
     }
 }
 
@@ -162,6 +158,9 @@ fn visual_format(format: sys::AVPixelFormat) -> Result<VisualFormat, String> {
 fn visual_frame_context() -> Result<std::sync::Arc<CudaContext>, String> {
     static CONTEXT: OnceLock<Result<std::sync::Arc<CudaContext>, String>> = OnceLock::new();
     CONTEXT
-        .get_or_init(|| CudaContext::new(0).map_err(|error| error.to_string()))
+        .get_or_init(|| {
+            CudaContext::new(shrimply_gpu_cuda::selected_device())
+                .map_err(|error| error.to_string())
+        })
         .clone()
 }

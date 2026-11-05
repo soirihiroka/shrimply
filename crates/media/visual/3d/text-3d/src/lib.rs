@@ -11,7 +11,7 @@ use std::{
 use cairo::PathSegment;
 use glam::{Vec2, Vec3};
 use glib::translate::from_glib;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashSet;
 use lyon_tessellation::{
     FillOptions, FillRule, FillTessellator, VertexBuffers,
     geometry_builder::{BuffersBuilder, Positions},
@@ -32,6 +32,9 @@ use shrimply_property_model::{
 use shrimply_scene_3d::{MeshMaterial, ObjMesh, PbrMaterial, TextureAtlas, Transform3d};
 use uuid::Uuid;
 
+mod math;
+use math::{contour_outward, signed_area};
+
 pub const MIN_SMOOTHNESS: f32 = 1.0;
 pub const MAX_SMOOTHNESS: f32 = 12.0;
 pub const DEFAULT_SMOOTHNESS: f32 = 4.0;
@@ -41,7 +44,6 @@ pub const DEFAULT_ROUNDNESS: f32 = 0.03;
 
 const OUTLINE_TOLERANCE_EM: f32 = 0.01;
 const LAYOUT_EM_SIZE: f64 = 1024.0;
-const MAX_BEVEL_MITER: f32 = 2.0;
 
 static APPLICATION_FONT_REVISION: AtomicU64 = AtomicU64::new(0);
 static APPLICATION_FONT_FILES: OnceLock<RwLock<Vec<PathBuf>>> = OnceLock::new();
@@ -324,7 +326,7 @@ pub fn generate_mesh(geometry: &Geometry<'_>) -> Result<ObjMesh, Text3dError> {
             &mut BuffersBuilder::new(&mut fill, Positions),
         )
         .map_err(|error| Text3dError(format!("tessellate 3D text caps: {error:?}")))?;
-    let contours = boundary_contours(&fill)?;
+    let contours = math::boundary_contours(&fill)?;
     let roundness = safe_roundness(&contours, roundness, font_size);
     let mut mesh = MeshBuilder::default();
     let half_depth = depth * 0.5;
@@ -505,93 +507,6 @@ fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
         output.end(false);
     }
     Ok(output.build())
-}
-
-fn boundary_contours(fill: &VertexBuffers<Point, u32>) -> Result<Vec<Vec<Point>>, Text3dError> {
-    let mut boundary = HashMap::new();
-    for triangle in fill.indices.chunks_exact(3) {
-        let mut indices = [triangle[0], triangle[1], triangle[2]];
-        let [a, b, c] = indices.map(|index| fill.vertices[index as usize]);
-        if (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) < 0.0 {
-            indices.swap(1, 2);
-        }
-        for (from, to) in [
-            (indices[0], indices[1]),
-            (indices[1], indices[2]),
-            (indices[2], indices[0]),
-        ] {
-            if boundary.remove(&(to, from)).is_none() {
-                boundary.insert((from, to), ());
-            }
-        }
-    }
-
-    let mut outgoing = HashMap::<u32, Vec<u32>>::new();
-    for ((from, to), ()) in boundary {
-        outgoing.entry(from).or_default().push(to);
-    }
-    if outgoing.values().any(|next| next.len() != 1) {
-        return Err(Text3dError(
-            "3D text outline contains a non-manifold boundary".to_string(),
-        ));
-    }
-    let mut contours = Vec::new();
-    while let Some((&start, _)) = outgoing.iter().find(|(_, next)| !next.is_empty()) {
-        let mut contour = Vec::new();
-        let mut current = start;
-        loop {
-            contour.push(fill.vertices[current as usize]);
-            let Some(next) = outgoing.get_mut(&current).and_then(Vec::pop) else {
-                return Err(Text3dError(
-                    "3D text outline contains an open boundary".to_string(),
-                ));
-            };
-            current = next;
-            if current == start {
-                break;
-            }
-        }
-        if contour.len() >= 3 {
-            contours.push(contour);
-        }
-    }
-    Ok(contours)
-}
-
-fn contour_outward(contour: &[Point]) -> Option<Vec<Vec2>> {
-    let area = signed_area(contour);
-    if area.abs() <= f32::EPSILON {
-        return None;
-    }
-    Some(
-        (0..contour.len())
-            .map(|index| {
-                let previous = contour[(index + contour.len() - 1) % contour.len()];
-                let current = contour[index];
-                let next = contour[(index + 1) % contour.len()];
-                let edge_normal = |from: Point, to: Point| {
-                    let edge = Vec2::new(to.x - from.x, to.y - from.y).normalize_or_zero();
-                    if area > 0.0 {
-                        Vec2::new(edge.y, -edge.x)
-                    } else {
-                        Vec2::new(-edge.y, edge.x)
-                    }
-                };
-                let a = edge_normal(previous, current);
-                let b = edge_normal(current, next);
-                let direction = (a + b).normalize_or_zero();
-                direction * (1.0 / direction.dot(a).abs().max(0.5)).min(MAX_BEVEL_MITER)
-            })
-            .collect(),
-    )
-}
-
-fn signed_area(contour: &[Point]) -> f32 {
-    contour
-        .iter()
-        .zip(contour.iter().cycle().skip(1))
-        .map(|(a, b)| a.x * b.y - b.x * a.y)
-        .sum()
 }
 
 fn safe_roundness(contours: &[Vec<Point>], requested: f32, scale: f32) -> f32 {

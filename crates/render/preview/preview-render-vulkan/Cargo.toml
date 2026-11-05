@@ -1,0 +1,19 @@
+[package]
+name = "shrimply-preview-render-vulkan"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+shrimply-render-vulkan.workspace = true
+shrimply-render-core.workspace = true
+shrimply-profiling.workspace = true
+shrimply-preview-render-core.workspace = true
+shrimply-visual-core.workspace = true
+shrimply-math-core.workspace = true
+shrimply-math-geometry.workspace = true
+shrimply-math-media.workspace = true
+shrimply-project-document.workspace = true
+shrimply-manim-state.workspace = true
+shrimply-manim-wgpu = { workspace = true, features = ["vulkan"] }
+skia-safe.workspace = true
+uuid.workspace = true

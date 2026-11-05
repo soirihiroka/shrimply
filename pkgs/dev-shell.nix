@@ -8,6 +8,7 @@
   freetype,
   gcc,
   gnumake,
+  gn,
   gobject-introspection,
   gtk4,
   gtksourceview5,
@@ -25,11 +26,16 @@
   poppler_gi,
   python3,
   qt6,
+  ripgrep,
   rubberband,
   rustToolchain,
   shrimply-slang,
+  shrimply-oidn,
   uv,
   vte-gtk4,
+  vulkan-headers,
+  vulkan-loader,
+  zlib,
 }:
 let
   cudaStubs = lib.getOutput "stubs" cudaPackages.cuda_cudart;
@@ -52,6 +58,7 @@ mkShell {
     freetype
     gcc
     gnumake
+    gn
     gobject-introspection
     gtk4
     gtksourceview5
@@ -66,10 +73,13 @@ mkShell {
     poppler_gi
     python3
     qtEnv
+    ripgrep
     rubberband
     shrimply-slang
     uv
     vte-gtk4
+    vulkan-headers
+    vulkan-loader
   ];
 
   CARGO = "cargo";
@@ -84,6 +94,7 @@ mkShell {
   QT_QMAKE = "${qtEnv}/bin/qmake";
   SLANG_INCLUDE_DIR = "${shrimply-slang}/include";
   SLANG_LIBRARY_DIR = "${shrimply-slang}/lib";
+  SKIA_GN_COMMAND = "${gn}/bin/gn";
 
   shellHook = ''
     export NIX_CFLAGS_COMPILE=
@@ -91,9 +102,13 @@ mkShell {
     export LD_LIBRARY_PATH="${
       lib.makeLibraryPath [
         gcc.cc.lib
+        zlib
         opencv
         shrimply-slang
+        shrimply-oidn
         qtEnv
+        libglvnd
+        vulkan-loader
       ]
     }:/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   '';

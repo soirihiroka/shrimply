@@ -93,10 +93,8 @@ float alpha_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
       clamp(yy - 0.21324861f * chroma.x - 0.53290933f * chroma.y, 0.0f, 1.0f),
       clamp(yy + 2.1124017f * chroma.x, 0.0f, 1.0f), 1.0f);
 }
-[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
-convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams params,
-            uniform ConvolutionTerm *terms, uniform uint64_t term_count,
-            uniform float4 *output, uniform uint64_t output_count) {
+void convolve_pixel(uint3 id, ConvolutionParams params, ConvolutionTerm *terms,
+                     uint64_t term_count, float4 *output, uint64_t output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
@@ -122,7 +120,14 @@ convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams params,
                            0.0f, 0.0f) *
               params.residual_scale;
   output[i] = result;
-}[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void depth_to_space_x2(uint3 id : SV_DispatchThreadID,
+}
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
+void convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams params,
+                  uniform ConvolutionTerm *terms, uniform uint64_t term_count,
+                  uniform float4 *output, uniform uint64_t output_count) {
+  convolve_pixel(id, params, terms, term_count, output, output_count);
+}
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void depth_to_space_x2(uint3 id : SV_DispatchThreadID,
                                      uniform ImageDescriptor convolution,
                                      uniform ImageDescriptor residual,
                                      uniform uint width, uniform float4 *output,

@@ -17,6 +17,8 @@ use objc2_metal::{
     MTLTexture, MTLTextureDescriptor, MTLTextureType, MTLTextureUsage,
 };
 
+use shrimply_render_3d_core::{ComputeMaterial, ComputePbr};
+
 include!(concat!(env!("OUT_DIR"), "/obj_metal.rs"));
 
 pub struct Rendered {
@@ -68,27 +70,7 @@ struct OutputSize {
     width: u32,
     height: u32,
     denoising: u32,
-    padding: u32,
-}
-
-#[repr(C, align(16))]
-struct ComputeMaterial {
-    base_color: [f32; 4],
-    metallic_roughness_normal_alpha: [f32; 4],
-    flags: [u32; 4],
-    base_color_texture: shrimply_render_3d_core::obj::TextureMapping,
-    metallic_roughness_texture: shrimply_render_3d_core::obj::TextureMapping,
-    normal_texture: shrimply_render_3d_core::obj::TextureMapping,
-    surface: [u32; 4],
-    pbr: ComputePbr,
-}
-
-#[repr(C)]
-struct ComputePbr {
-    modes: [u32; 4],
-    surface: [f32; 4],
-    ior: f32,
-    padding: [f32; 3],
+    guides: u32,
 }
 
 impl Renderer {
@@ -158,7 +140,17 @@ impl Renderer {
     ) -> Result<Rendered, String> {
         let width = plan.width.max(1);
         let height = plan.height.max(1);
-        let denoising = plan.params.denoising
+        if !matches!(
+            plan.params.denoising,
+            shrimply_scene_3d::DenoisingMethod::Off
+                | shrimply_scene_3d::DenoisingMethod::Auto
+                | shrimply_scene_3d::DenoisingMethod::MetalSvgf
+        ) {
+            return Err(
+                "Selected denoiser is unavailable on Metal; select Auto or Metal SVGF".into(),
+            );
+        }
+        let denoising = plan.params.denoising != shrimply_scene_3d::DenoisingMethod::Off
             && plan.params.shading_model == shrimply_render_3d_core::obj::ShadingModel::Pbr;
         if denoising && plan.uniforms.camera_lens[1] > 0.0 {
             return Err(
@@ -199,7 +191,7 @@ impl Renderer {
             width,
             height,
             denoising: u32::from(denoising),
-            padding: 0,
+            guides: 0,
         }))?;
         let (composite_width, composite_height) =
             composite_background.map_or((1, 1), |background| (background.width, background.height));
@@ -222,7 +214,7 @@ impl Renderer {
                     width: background.width,
                     height: background.height,
                     denoising: 0,
-                    padding: 0,
+                    guides: 0,
                 }))
             })
             .transpose()?;
@@ -230,31 +222,7 @@ impl Renderer {
             .session
             .materials()
             .iter()
-            .map(|material| ComputeMaterial {
-                base_color: material.base_color_factor,
-                metallic_roughness_normal_alpha: material.metallic_roughness_normal_alpha,
-                flags: material.flags,
-                base_color_texture: material.base_color_texture,
-                metallic_roughness_texture: material.metallic_roughness_texture,
-                normal_texture: material.normal_texture,
-                surface: material.surface,
-                pbr: ComputePbr {
-                    modes: [
-                        material.pbr.path_tracing as u32,
-                        material.pbr.light_sampling_quality as u32,
-                        material.pbr.render_quality as u32,
-                        material.pbr.denoising,
-                    ],
-                    surface: [
-                        material.pbr.subsurface,
-                        material.pbr.clearcoat,
-                        material.pbr.sheen,
-                        material.pbr.transmission,
-                    ],
-                    ior: material.pbr.ior,
-                    padding: material.pbr._padding,
-                },
-            })
+            .map(ComputeMaterial::from)
             .collect::<Vec<_>>();
         let materials = metal.upload(bytes_slice(&compute_materials))?;
         let mesh_instances = metal.upload(bytes_slice(plan.session.mesh_instances()))?;

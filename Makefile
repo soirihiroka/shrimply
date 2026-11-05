@@ -99,6 +99,7 @@ DOCKER ?= docker
 FLATPAK_GTK_IMAGE ?= shrimply-flatpak-gtk-builder
 FLATPAK_GTK_CACHE ?= $(CURDIR)/target/flatpak-gtk
 FLATPAK_BUNDLE := dist/shrimply-gtk-x86_64.flatpak
+SHRIMPLY_BUILD_GIT_HASH ?= $(shell git rev-parse HEAD)
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -121,6 +122,8 @@ LIP_SYNC_MODEL := $(CARGO_TARGET_DIR)/release/res/lip-sync/pocketsphinx-ci.model
 LIP_SYNC_RESOURCE_DIR := $(DATADIR)/shrimply/lip-sync
 LIP_SYNC_LICENSE_DIR := $(DATADIR)/licenses/shrimply
 ICONS_RESOURCE_DIR := $(DATADIR)/shrimply/icons
+MANIM_WORKER_RESOURCE_DIR := $(PREFIX)/share/shrimply/crates/media/visual/manim/manim-bridge/python
+MANIM_SOURCE_RESOURCE_DIR := $(PREFIX)/share/shrimply/external/manim
 
 FEDORA_PACKAGES := \
 	rust \
@@ -150,7 +153,7 @@ FEDORA_PACKAGES := \
 	qt6-qtbase-devel \
 	qt6-qtdeclarative-devel
 
-.PHONY: native-deps windows-ffmpeg windows-ffmpeg-verify windows-native-deps windows-build windows-dev windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt install-codex-mcp-dev install-agy-mcp-dev uninstall uninstall-qt flatpak-gtk
+.PHONY: native-deps windows-ffmpeg windows-ffmpeg-verify windows-native-deps windows-build windows-dev windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check intel-check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt install-codex-mcp-dev install-agy-mcp-dev uninstall uninstall-qt flatpak-gtk
 native-deps:
 	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists libpipewire-0.3 || { echo "Missing PipeWire development files (pkg-config: libpipewire-0.3)" >&2; exit 1; }
@@ -413,6 +416,23 @@ cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(EDITOR_PACKAGE) -p $(QT_EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) -p $(MCP_PACKAGE) --bins
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-inspector-document --lib
 
+intel-check: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-visual-cuda -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-visual-cuda -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets -- -D warnings
+
+.PHONY: intel-benchmark intel-gl-probe gpu-export-benchmark gpu-playback-benchmark
+intel-benchmark: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-render-vulkan --example intel_gpu -- "$(VIDEO)" "$(or $(FRAMES),120)"
+
+intel-gl-probe: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-preview-runtime-cuda --example intel_gl_probe
+
+gpu-export-benchmark: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example gpu_export -- "$(or $(PROJECT),$(VIDEO))" "$(OUTPUT)" "$(or $(FORMAT),h264)" "$(or $(FRAMES),120)" "$(or $(RATE_CONTROL),cqp)"
+
+gpu-playback-benchmark: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)" "$(or $(ACCURACY),playback)"
+
 frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost
 
@@ -490,6 +510,7 @@ install: release desktop-icon project-mime
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(MCP_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(MCP_BIN_NAME)"
+	sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)"
 	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
@@ -505,7 +526,7 @@ install: release desktop-icon project-mime
 flatpak-gtk:
 	@command -v $(DOCKER) >/dev/null 2>&1 || { echo "Missing Docker ($(DOCKER))" >&2; exit 1; }
 	mkdir -p "$(dir $(FLATPAK_BUNDLE))" "$(FLATPAK_GTK_CACHE)"
-	$(DOCKER) build -f Dockerfile.flatpak-gtk -t "$(FLATPAK_GTK_IMAGE)" .
+	$(DOCKER) build -f Dockerfile.flatpak-gtk -t "$(FLATPAK_GTK_IMAGE)" --build-arg SHRIMPLY_BUILD_GIT_HASH="$(SHRIMPLY_BUILD_GIT_HASH)" .
 	$(DOCKER) run --rm --privileged \
 		--env OUTPUT_UID="$$(id -u)" \
 		--env OUTPUT_GID="$$(id -g)" \
@@ -542,6 +563,7 @@ uninstall:
 	rm -f "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(MCP_BIN_NAME)"
+	rm -rf "$(DESTDIR)$(MANIM_WORKER_RESOURCE_DIR)" "$(DESTDIR)$(MANIM_SOURCE_RESOURCE_DIR)"
 	rm -rf "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
@@ -555,3 +577,24 @@ uninstall-qt:
 	rm -f "$(DESTDIR)$(BINDIR)/$(QT_EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	$(MAKE) uninstall-desktop-assets
+
+.PHONY: intel-feature-validation
+intel-feature-validation: native-deps cuda-artifacts
+	@test -n "$(OUTPUT)" || { echo "usage: make intel-feature-validation OUTPUT=/new/output/directory [CASE=filter]" >&2; exit 1; }
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example feature_validation -- "$(OUTPUT)" "$(CASE)"
+
+.PHONY: oidn-gpu-validation
+oidn-gpu-validation:
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-denoise-oidn --example cuda
+
+.PHONY: text-3d-geometry-test
+text-3d-geometry-test:
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-text-3d --lib math::tests
+
+.PHONY: gtk-gpu-preferences-validation
+gtk-gpu-preferences-validation: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) run -p $(EDITOR_PACKAGE) --example gpu_preferences -- $(ARGS)
+
+.PHONY: cuda-peer-copy-validation
+cuda-peer-copy-validation:
+	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-gpu-cuda --example peer_copy -- "$(or $(SOURCE_GPU),0)" "$(or $(DESTINATION_GPU),0)"

@@ -3,6 +3,7 @@ use std::{
     env, fs,
     io::Write,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 const REVISION: &str = "9b9573cd21b253c9ba58739bbd1aa0b50b991bff";
@@ -17,6 +18,10 @@ const LDA_INPUT_DIM: usize = 39;
 const LM_WORD_COUNT: usize = 43;
 const IMPOSSIBLE: f32 = -1.0e30;
 const LOG_BASE: f32 = 1.0001;
+const DOWNLOAD_ATTEMPTS: usize = 3;
+const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+const DOWNLOAD_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 struct Source {
     name: &'static str,
@@ -119,12 +124,30 @@ fn fetch(source: &Source, destination: &Path) {
         "cargo:warning=downloading pinned PocketSphinx resource {}",
         source.name
     );
-    let response = reqwest::blocking::get(&url)
-        .and_then(reqwest::blocking::Response::error_for_status)
-        .unwrap_or_else(|error| panic!("download {url}: {error}"));
-    let bytes = response
-        .bytes()
-        .unwrap_or_else(|error| panic!("read {url}: {error}"));
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
+        .timeout(DOWNLOAD_TIMEOUT)
+        .build()
+        .expect("create PocketSphinx download client");
+    let mut attempt = 0;
+    let bytes = loop {
+        attempt += 1;
+        match client
+            .get(&url)
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .and_then(reqwest::blocking::Response::bytes)
+        {
+            Ok(bytes) => break bytes,
+            Err(error) if attempt < DOWNLOAD_ATTEMPTS => {
+                println!("cargo:warning=PocketSphinx download attempt {attempt} failed: {error:?}");
+                std::thread::sleep(DOWNLOAD_RETRY_DELAY);
+            }
+            Err(error) => {
+                panic!("download {url} failed after {attempt} attempts: {error:?}")
+            }
+        }
+    };
     let temporary = destination.with_extension(format!("part-{}", std::process::id()));
     fs::write(&temporary, &bytes).expect("write downloaded model resource");
     if !verified(&temporary, source) {

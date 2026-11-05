@@ -707,7 +707,7 @@ impl Renderer {
 
 impl Drop for Renderer {
     fn drop(&mut self) {
-        match unsafe { self.context.device.device_wait_idle() } {
+        match unsafe { self.context.device.queue_wait_idle(self.context.queue) } {
             Ok(()) | Err(vk::Result::ERROR_DEVICE_LOST) => {}
             Err(error) => {
                 tracing::error!(

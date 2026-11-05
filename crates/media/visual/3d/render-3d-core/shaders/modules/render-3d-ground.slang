@@ -1,3 +1,5 @@
+#include "scene-parameter.slang"
+
 module render_3d_ground;
 
 import render_3d_abi;
@@ -112,7 +114,7 @@ public struct GroundReflectionRay
 };
 
 public GroundReflectionRay sample_ground_reflection(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     Ground ground,
     float3 world_position,
     float3 normal,
@@ -159,7 +161,7 @@ public float4 finish_ground_reflection(
 }
 
 public float4 ground_reflection<T : IGroundReflectionTracer>(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     Ground ground,
     float3 world_position,
     float3 normal,
@@ -187,7 +189,7 @@ public float4 ground_reflection<T : IGroundReflectionTracer>(
 }
 
 public float integrate_ground_shadow<T : IGroundShadowTracer>(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     float3 world_position,
     float3 normal,
     inout uint state,
@@ -269,7 +271,7 @@ public void composite_ground_shadow(inout float4 destination, float shadow_alpha
 }
 
 public float4 toon_ground_shadow(
-    SceneUniforms scene,
+    SCENE_UNIFORMS scene,
     float shadow_occlusion,
     float receiver_strength,
     float2 pixel_position)

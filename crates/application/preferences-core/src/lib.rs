@@ -34,6 +34,7 @@ const KEY_PREVIEW_DOWNSAMPLE_METHOD: &str = "preview_downsample_method";
 const KEY_PREVIEW_ZOOM_PAN_ENABLED: &str = "preview_zoom_pan_enabled";
 const KEY_PREVIEW_GUIDES_VISIBLE: &str = "preview_guides_visible";
 const KEY_TEMPORAL_DECODER_POOL_SIZE: &str = "temporal_decoder_pool_size";
+const KEY_ACCELERATION_DEVICE: &str = "acceleration_device";
 const KEY_GPU_HOST_MEMORY_GIB: &str = "gpu_host_memory_gib";
 const KEY_BLENDER_BINARY: &str = "blender_binary";
 const DEFAULT_CAPTION_FONT_SIZE: f32 = 32.0;
@@ -142,6 +143,7 @@ pub struct PreferencesSnapshot {
     pub preview_guides_visible: bool,
     pub temporal_decoder_pool_size: u32,
     pub gpu_host_memory_gib: Fraction,
+    pub acceleration_device: String,
     pub blender_binary: Option<PathBuf>,
 }
 
@@ -175,6 +177,7 @@ pub struct PreferencesStore {
     preview_guides_visible: bool,
     temporal_decoder_pool_size: u32,
     gpu_host_memory_gib: Fraction,
+    acceleration_device: String,
     blender_binary: Option<PathBuf>,
     conn: Option<Connection>,
     listeners: Vec<PreferenceListenerEntry>,
@@ -391,6 +394,9 @@ impl PreferencesStore {
                 maximum_gpu_host_memory_gib,
             )
         });
+        let acceleration_device = conn.as_ref().map_or_else(String::new, |conn| {
+            read_string_or_default(conn, KEY_ACCELERATION_DEVICE, "", |_| true)
+        });
         let default_blender_binary = if cfg!(target_os = "macos") {
             "/Applications/Blender.app/Contents/MacOS/Blender"
         } else {
@@ -425,6 +431,7 @@ impl PreferencesStore {
             preview_guides_visible,
             temporal_decoder_pool_size,
             gpu_host_memory_gib,
+            acceleration_device,
             blender_binary,
             conn,
             listeners: Vec::new(),
@@ -667,6 +674,21 @@ pub fn set_gpu_host_memory_gib(store: &SharedPreferences, size_gib: Fraction) {
         return;
     }
     notify_listeners(state);
+}
+
+pub fn set_acceleration_device(store: &SharedPreferences, device: &str) -> Result<(), String> {
+    let mut state = store.borrow_mut();
+    if state.acceleration_device == device {
+        return Ok(());
+    }
+    if let Some(conn) = &state.conn {
+        write_string(conn, KEY_ACCELERATION_DEVICE, device).map_err(|error| error.to_string())?;
+    } else {
+        return Err("Preferences database is unavailable".into());
+    }
+    state.acceleration_device = device.to_owned();
+    notify_listeners(state);
+    Ok(())
 }
 
 pub fn set_blender_binary(store: &SharedPreferences, binary: Option<&Path>) {
@@ -1022,6 +1044,7 @@ fn snapshot_from_state(state: &PreferencesStore) -> PreferencesSnapshot {
         preview_guides_visible: state.preview_guides_visible,
         temporal_decoder_pool_size: state.temporal_decoder_pool_size,
         gpu_host_memory_gib: state.gpu_host_memory_gib,
+        acceleration_device: state.acceleration_device.clone(),
         blender_binary: state.blender_binary.clone(),
     }
 }

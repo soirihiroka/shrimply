@@ -11,6 +11,7 @@ pub(crate) fn visual_frame_from_canvas(
 ) -> Result<VisualFrame, String> {
     let buffer = frame
         .buffer
+        .into_cuda()?
         .cast_chunks::<u8>()
         .map_err(|_| "generated CUDA output buffer cannot be viewed as bytes".to_string())?;
     let plane = VisualPlane {

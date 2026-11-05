@@ -23,6 +23,16 @@ An installed release can use ``shrimply-mcp`` as the command. After
 
 The Flatpak build does not include MCP.
 
+Query build versions
+--------------------
+
+``get_version`` returns the numbered ``version`` and full ``git_hash`` for the
+MCP server and the connected editor separately. It also works without a project
+connection; ``editor`` is then null. An older editor that cannot answer the
+query is reported in ``editor_error``. Packaged builds carry their source SHA;
+``git_hash`` is null only for source builds without Git metadata or a supplied
+``SHRIMPLY_BUILD_GIT_HASH``.
+
 Create or connect to a project
 ------------------------------
 
