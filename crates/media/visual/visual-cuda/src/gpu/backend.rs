@@ -3,6 +3,7 @@ use std::os::unix::process::CommandExt;
 use std::sync::OnceLock;
 
 static INTEL: OnceLock<bool> = OnceLock::new();
+const VULKAN_PREFERENCE_BOOTSTRAP: &str = "SHRIMPLY_VULKAN_PREFERENCE_BOOTSTRAP";
 
 /// GTK selects once, before any render worker starts. Existing CUDA hosts keep
 /// their current backend; SHRIMPLY_GPU=intel explicitly selects the Intel GPU.
@@ -13,6 +14,18 @@ pub fn configure_gtk_backend() -> Result<(), String> {
     } else {
         String::new()
     };
+    let intel_preference = preference
+        .starts_with("intel:")
+        .then_some(preference.as_str());
+    // Resolving the saved UUID also enumerates Vulkan. Filter before that work,
+    // but remember the attempt through CUDA fallback if this device disappeared.
+    if INTEL.get().is_none()
+        && intel_preference.is_some()
+        && std::env::var_os(VULKAN_PREFERENCE_BOOTSTRAP).as_deref()
+            != intel_preference.map(std::ffi::OsStr::new)
+    {
+        configure_vulkan_loader(true, intel_preference)?;
+    }
     let selected = if preference.is_empty() {
         None
     } else {
@@ -58,6 +71,7 @@ pub fn configure_gtk_backend() -> Result<(), String> {
     if INTEL.set(intel).is_err() && INTEL.get() != Some(&intel) {
         return Err("GTK GPU backend cannot change after initialization".into());
     }
+    configure_vulkan_loader(intel, intel_preference)?;
     tracing::info!(
         backend = if intel { "intel" } else { "cuda" },
         "GTK GPU backend selected"
@@ -67,6 +81,69 @@ pub fn configure_gtk_backend() -> Result<(), String> {
 
 pub fn intel_backend_selected() -> bool {
     INTEL.get().copied().unwrap_or(false)
+}
+
+/// Intel rendering does not use NVIDIA's Vulkan ICD. Avoid loading it unless
+/// the user selected their own loader configuration, and undo only our filter
+/// when restarting with CUDA. Re-exec keeps driver thread environments intact.
+fn configure_vulkan_loader(intel: bool, intel_preference: Option<&str>) -> Result<(), String> {
+    const DISABLE: &str = "VK_LOADER_DRIVERS_DISABLE";
+    const MANAGED: &str = "SHRIMPLY_MANAGED_VK_DRIVERS_DISABLE";
+    const NVIDIA: &str = "*nvidia*";
+    let disabled = std::env::var_os(DISABLE);
+    let marker = std::env::var_os(MANAGED);
+    let managed = marker.as_deref() == Some(std::ffi::OsStr::new(NVIDIA)) && disabled == marker;
+    let explicit = [
+        "VK_LOADER_DRIVERS_SELECT",
+        "VK_DRIVER_FILES",
+        "VK_ICD_FILENAMES",
+        "VK_ADD_DRIVER_FILES",
+    ]
+    .iter()
+    .any(|key| std::env::var_os(key).is_some())
+        || disabled.is_some() && !managed;
+    let filter = intel && !explicit;
+    let environment = [
+        (
+            DISABLE,
+            if filter {
+                Some(std::ffi::OsStr::new(NVIDIA))
+            } else if managed {
+                None
+            } else {
+                disabled.as_deref()
+            },
+        ),
+        (MANAGED, filter.then(|| std::ffi::OsStr::new(NVIDIA))),
+        (
+            VULKAN_PREFERENCE_BOOTSTRAP,
+            if explicit {
+                None
+            } else {
+                intel_preference.map(std::ffi::OsStr::new)
+            },
+        ),
+    ];
+    if environment
+        .iter()
+        .all(|(key, value)| std::env::var_os(key).as_deref() == *value)
+    {
+        return Ok(());
+    }
+    let mut command =
+        std::process::Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
+    command.args(std::env::args_os().skip(1));
+    for (key, value) in environment {
+        if let Some(value) = value {
+            command.env(key, value);
+        } else {
+            command.env_remove(key);
+        }
+    }
+    Err(format!(
+        "Restart with selected Vulkan drivers: {}",
+        command.exec()
+    ))
 }
 
 /// Apply native PRIME selection before GTK loads its OpenGL driver. Re-exec
