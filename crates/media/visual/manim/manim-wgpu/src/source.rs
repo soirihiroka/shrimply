@@ -189,16 +189,19 @@ impl Source {
     }
 
     fn take_parameters(&mut self) -> Option<(Vec<ManimParameter>, bool)> {
+        // Reconciliation is required until the project changes. Accurate callers
+        // must still receive this failure after an earlier request consumed it.
+        if let CompileState::NeedsParameters(parameters) = &self.state {
+            return Some((parameters.clone(), false));
+        }
         if self.parameters_reported {
             return None;
         }
-        let (parameters, current) = match &self.state {
-            CompileState::Ready { parameters, .. } => (parameters, true),
-            CompileState::NeedsParameters(parameters) => (parameters, false),
-            _ => return None,
+        let CompileState::Ready { parameters, .. } = &self.state else {
+            return None;
         };
         self.parameters_reported = true;
-        Some((parameters.clone(), current))
+        Some((parameters.clone(), true))
     }
 
     pub fn take_updates(&mut self) -> Vec<Update> {

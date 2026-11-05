@@ -609,29 +609,73 @@ fn validate(
         return super::gpu::refraction(project, output);
     }
     if name == "manim-parameters-stale" {
+        use shrimply_visual_core::sam2::analysis::{
+            AnalysisTarget, ProxyFrameRequest, ProxyFrameSource, ProxyFrameStatus,
+        };
+        const REPEATED_REQUESTS: usize = 2;
         let cancelled = AtomicBool::new(false);
-        let error = Compositor::new()?
-            .prepare_accurate(&project, Time::ZERO, &cancelled)
-            .err()
-            .ok_or("Accurate rendering accepted unreconciled Manim parameters")?;
-        if !error.contains("Manim parameters changed") {
-            return Err(error);
-        }
         let mut compositor = Compositor::new()?;
-        loop {
-            match compositor.capture_rgba(
-                &project,
-                Time::ZERO,
-                shrimply_preview_render_core::CaptureTarget::Items(vec![
-                    project.video_tracks[0].items[0].id,
-                ]),
-            ) {
-                Err(error) if error.contains("Manim parameters changed") => return Ok(()),
-                Err(error) => return Err(error),
-                Ok(Some(_)) => return Err("Capture accepted unreconciled Manim parameters".into()),
-                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(1)),
+        for _ in 0..REPEATED_REQUESTS {
+            let error = compositor
+                .prepare_accurate(&project, Time::ZERO, &cancelled)
+                .err()
+                .ok_or("Accurate rendering accepted unreconciled Manim parameters")?;
+            if !error.contains("Manim parameters changed") {
+                return Err(error);
             }
         }
+        for _ in 0..REPEATED_REQUESTS {
+            loop {
+                match compositor.capture_rgba(
+                    &project,
+                    Time::ZERO,
+                    shrimply_preview_render_core::CaptureTarget::Items(vec![
+                        project.video_tracks[0].items[0].id,
+                    ]),
+                ) {
+                    Err(error) if error.contains("Manim parameters changed") => break,
+                    Err(error) => return Err(error),
+                    Ok(Some(_)) => {
+                        return Err("Capture accepted unreconciled Manim parameters".into());
+                    }
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(1)),
+                }
+            }
+        }
+        let mut project = project;
+        let sam2 = modifier(ModifierEffect::raster(RasterModifierEffect::Sam2(
+            Default::default(),
+        )));
+        let target = AnalysisTarget {
+            address: ItemAddress::Video {
+                sequence_path: vec![],
+                track_id: project.video_tracks[0].id,
+                item_id: project.video_tracks[0].items[0].id,
+            },
+            modifier_id: sam2.id,
+        };
+        project.video_tracks[0].items[0].modifiers.push(sam2);
+        let mut source = shrimply_preview_render_vulkan::Sam2ProxyFrameSource::new()?;
+        for _ in 0..REPEATED_REQUESTS {
+            loop {
+                match source.frame(ProxyFrameRequest {
+                    project: &project,
+                    target: &target,
+                    timeline_position: Time::ZERO,
+                    sequence_position: Time::ZERO,
+                }) {
+                    Err(error) if error.contains("Manim parameters changed") => break,
+                    Err(error) => return Err(error),
+                    Ok(ProxyFrameStatus::Ready(_)) => {
+                        return Err("SAM2 accepted unreconciled Manim parameters".into());
+                    }
+                    Ok(ProxyFrameStatus::Pending) => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                }
+            }
+        }
+        return Ok(());
     }
     prepare_analysis(name, &project)?;
     let cancelled = Arc::new(AtomicBool::new(false));

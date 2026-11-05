@@ -24,12 +24,13 @@ impl ProxyFrameSource for Sam2ProxyFrameSource {
         }
         self.compositor.sam2_proxy = None;
         self.compositor.scene.request_frame();
-        let Some(plan) = self.compositor.prepare(
+        let plan = self.compositor.prepare(
             request.project,
             request.timeline_position,
             CompositeAccuracy::FULLY_ACCURATE,
-        )?
-        else {
+        )?;
+        shrimply_manim_state::validate_render_updates(self.compositor.take_manim_updates())?;
+        let Some(plan) = plan else {
             return Ok(ProxyFrameStatus::Pending);
         };
         let rendered = self.compositor.render_gpu(plan, 0)?;
