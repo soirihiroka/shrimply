@@ -52,7 +52,8 @@ impl AudioRuntime {
         let output_channels = config.channels as usize;
         let sample_rate = config.sample_rate;
         tracing::info!(
-            "Building streaming audio output: device={}, sample_format={:?}, sample_rate={}, channels={}, buffer_size={:?}",
+            "Building streaming audio output: host={}, device={}, sample_format={:?}, sample_rate={}, channels={}, buffer_size={:?}",
+            host.id(),
             device,
             output_config.sample_format(),
             sample_rate,

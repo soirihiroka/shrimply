@@ -18,6 +18,7 @@ pub(super) struct PlaybackWindow {
 
 pub(super) type SharedPlaybackWindow = Arc<RwLock<Arc<PlaybackWindow>>>;
 
+#[derive(Clone)]
 pub(super) struct PlaybackFailure {
     pub(super) message: String,
     pub(super) requested: bool,
@@ -273,7 +274,6 @@ fn handle_output_error(error: cpal::Error, output_state: &OutputState) {
 }
 
 pub(super) fn fail_output(message: String, output_state: &OutputState) {
-    tracing::error!("{message}");
     let mut failure = output_state
         .failure
         .lock()
@@ -281,5 +281,8 @@ pub(super) fn fail_output(message: String, output_state: &OutputState) {
     let requested = output_state.requested.swap(false, Ordering::SeqCst);
     output_state.playing.store(false, Ordering::SeqCst);
     output_state.previewing.store(false, Ordering::SeqCst);
-    failure.get_or_insert(PlaybackFailure { message, requested });
+    if failure.is_none() {
+        tracing::error!("{message}");
+        *failure = Some(PlaybackFailure { message, requested });
+    }
 }

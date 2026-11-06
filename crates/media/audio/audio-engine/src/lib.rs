@@ -76,7 +76,7 @@ impl PlayerState {
                 .failure
                 .lock()
                 .expect("audio failure lock poisoned")
-                .take()
+                .clone()
         });
         if let Some(failure) = failure {
             let runtime = self.runtime.as_ref().expect("failed audio runtime exists");
@@ -93,7 +93,14 @@ impl PlayerState {
 
     fn runtime(&mut self, levels: &SharedAudioLevels) -> Option<&AudioRuntime> {
         self.collect_failure();
-        if self.stopped || self.failure.is_some() {
+        if self.stopped
+            || self.failure.is_some()
+            || !self
+                .project
+                .audio_tracks
+                .iter()
+                .any(|track| track.enabled && track.items.iter().any(|item| item.enabled))
+        {
             return None;
         }
         if self.runtime.is_none() {
