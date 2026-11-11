@@ -25,7 +25,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{
     MainThreadMarker, NSArray, NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRect,
-    NSString, ns_string,
+    NSString, NSTimer, ns_string,
 };
 use shrimply_cross_ui_core::editor::EditorSession;
 use shrimply_editor_state::player_state;
@@ -33,10 +33,13 @@ use std::cell::{Cell, OnceCell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 
+const SESSION_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
+
 struct EditorIvars {
     session: OnceCell<Rc<EditorSession>>,
     imports: Rc<RefCell<media::Imports>>,
     display_link: OnceCell<Retained<objc2_quartz_core::CADisplayLink>>,
+    session_timer: OnceCell<Retained<NSTimer>>,
     last_error: RefCell<Option<String>>,
     playback_display: Cell<Option<player_state::Snapshot>>,
     last_callback: Cell<Option<std::time::Instant>>,
@@ -135,6 +138,14 @@ define_class!(
             };
             unsafe { display_link.addToRunLoop_forMode(&objc2_foundation::NSRunLoop::mainRunLoop(), objc2_foundation::NSRunLoopCommonModes); }
             self.ivars().display_link.set(display_link).expect("display link already installed");
+            // Agent requests must keep running when the window's display link is suspended.
+            let session_timer = unsafe {
+                NSTimer::timerWithTimeInterval_target_selector_userInfo_repeats(
+                    SESSION_POLL_INTERVAL.as_secs_f64(), self, sel!(pollSession:), None, true,
+                )
+            };
+            unsafe { objc2_foundation::NSRunLoop::mainRunLoop().addTimer_forMode(&session_timer, objc2_foundation::NSRunLoopCommonModes); }
+            self.ivars().session_timer.set(session_timer).expect("session timer already installed");
             self.begin_project_load();
 
         }
@@ -144,6 +155,7 @@ define_class!(
         #[unsafe(method(windowWillClose:))]
         fn will_close(&self, _notification: &NSNotification) {
             if let Some(display_link) = self.ivars().display_link.get() { display_link.invalidate(); }
+            if let Some(timer) = self.ivars().session_timer.get() { timer.invalidate(); }
             if let Some(monitor) = self.ivars().event_monitor.get() {
                 unsafe { objc2_app_kit::NSEvent::removeMonitor(monitor); }
             }
@@ -232,6 +244,28 @@ define_class!(
             }
         }
 
+        #[unsafe(method(pollSession:))]
+        fn poll_session(&self, _timer: &NSTimer) {
+            let Some(session) = self.ivars().session.get() else {
+                self.poll_project_load();
+                return;
+            };
+            if !self.ivars().trust_dialog_open.get() && let Ok(request) = self.ivars().trust_requests.try_recv() {
+                self.ivars().trust_dialog_open.set(true);
+                let result = trust::confirm(&request.review, self.mtm()).ok_or_else(|| "Trust approval was canceled".to_string())
+                    .and_then(|kind| request.review.approve(kind));
+                let _ = request.response.send(result);
+                self.ivars().trust_dialog_open.set(false);
+            }
+            for error in shrimply_trust_core::poll_edits() { self.show_error(&error); }
+            let update = {
+                let _timing = shrimply_process_reporting::diagnostics::timing("Session polling and view-state queue");
+                session.poll()
+            };
+            if let Some(error) = update.audio_playback_stopped { self.show_error(&error); }
+            if let Some(title) = update.title { self.ivars().window.get().expect("window installed").setTitle(&NSString::from_str(&title.text)); }
+        }
+
         #[unsafe(method(renderFrame:))]
         fn render_frame(&self, _display_link: &objc2_quartz_core::CADisplayLink) {
             shrimply_process_reporting::diagnostics::flush_timings();
@@ -242,17 +276,8 @@ define_class!(
             shrimply_process_reporting::diagnostics::count("Display-link callback");
             let _timing = shrimply_process_reporting::diagnostics::timing("UI callback total");
             if self.ivars().session.get().is_none() {
-                self.poll_project_load();
                 return;
             }
-            if !self.ivars().trust_dialog_open.get() && let Ok(request) = self.ivars().trust_requests.try_recv() {
-                self.ivars().trust_dialog_open.set(true);
-                let result = trust::confirm(&request.review, self.mtm()).ok_or_else(|| "Trust approval was canceled".to_string())
-                    .and_then(|kind| request.review.approve(kind));
-                let _ = request.response.send(result);
-                self.ivars().trust_dialog_open.set(false);
-            }
-            for error in shrimply_trust_core::poll_edits() { self.show_error(&error); }
             self.poll_blender_probe();
             self.poll_compute_server_probes();
             let session = self.ivars().session.get().expect("project loaded");
@@ -267,12 +292,6 @@ define_class!(
             {
                 self.show_error(&error);
             }
-            let update = {
-                let _timing = shrimply_process_reporting::diagnostics::timing("Session polling and view-state queue");
-                session.poll()
-            };
-            if let Some(error) = update.audio_playback_stopped { self.show_error(&error); }
-            if let Some(title) = update.title { self.ivars().window.get().expect("window installed").setTitle(&NSString::from_str(&title.text)); }
             if self.ivars().loading.borrow().is_some() {
                 self.poll_preview_startup();
                 return;
@@ -886,6 +905,7 @@ pub fn run(project: Option<&Path>) -> Result<bool, ()> {
         session: OnceCell::new(),
         imports: Rc::new(RefCell::new(media::Imports::default())),
         display_link: OnceCell::new(),
+        session_timer: OnceCell::new(),
         last_callback: Cell::new(None),
         last_error: RefCell::new(None),
         playback_display: Cell::new(None),

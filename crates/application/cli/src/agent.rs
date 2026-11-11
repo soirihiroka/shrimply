@@ -6,7 +6,11 @@ use shrimply_project_document::project;
 use std::{
     io::{IsTerminal, Read},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
+
+const SESSION_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+const SESSION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub fn run(arguments: Vec<std::ffi::OsString>) -> u8 {
     let matches = match catalog::cli().try_get_matches_from(arguments) {
@@ -209,26 +213,24 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
                 json!({"success":true,"project":path,"dry_run":true,"planned":{"open":if headless {"headless"}else{"native_editor"}}}),
             );
         }
-        if project::project_lock_owner(&path)?.is_some() {
-            let bridge = Bridge::connect(&path).map_err(|error| error.to_string())?;
-            let result = bridge
-                .request(BridgeCommand::Handshake)
-                .map_err(|error| error.to_string())?;
-            return Ok(json!({"success":true,"project":path,"result":result}));
-        }
-        if headless {
-            Bridge::launch(&path).map_err(|error| error.to_string())?;
+        let reused = project::project_lock_owner(&path)?.is_some();
+        let bridge = if reused {
+            Bridge::connect(&path).map_err(|error| error.to_string())?
+        } else if headless {
+            Bridge::launch(&path).map_err(|error| error.to_string())?
         } else {
-            launch_editor(&path)?;
-        }
-        return Ok(
-            json!({"success":true,"project":path,"result":{"opened":true,"mode":if headless {"headless"}else{"live"}}}),
-        );
+            launch_editor(&path)?
+        };
+        let mut result = bridge
+            .request(BridgeCommand::Handshake)
+            .map_err(|error| error.to_string())?;
+        result.as_object_mut().unwrap().remove("connected");
+        result["ready"] = json!(true);
+        result["opened"] = json!(true);
+        return Ok(json!({"success":true,"project":path,"result":result}));
     }
-    if definition.name == "project_close"
-        && !dry_run
-        && project::project_lock_owner(&path)?.is_none()
-    {
+    let mut owner = project::project_lock_owner(&path)?;
+    if definition.name == "project_close" && !dry_run && owner.is_none() {
         return Ok(
             json!({"success":true,"project":path,"result":{"closed":true,"already_closed":true}}),
         );
@@ -239,9 +241,11 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
         dry_run,
         if_revision,
     };
-    let mut result = if project::project_lock_owner(&path)?.is_some() {
-        Bridge::connect(&path)
-            .and_then(|bridge| bridge.request(BridgeCommand::Execute(call)))
+    let mut result = if owner.is_some() {
+        let bridge = Bridge::connect(&path).map_err(|error| error.to_string())?;
+        owner = Some(bridge.owner.clone());
+        bridge
+            .request(BridgeCommand::Execute(call))
             .map_err(|error| error.to_string())?
     } else if dry_run || preview::is_snapshot_query(definition.name) {
         let snapshot = preview::saved_snapshot(
@@ -262,6 +266,17 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
             .request(BridgeCommand::Execute(call))
             .map_err(|error| error.to_string())?
     };
+    if definition.name == "project_close" && !dry_run {
+        let deadline = Instant::now() + SESSION_WAIT_TIMEOUT;
+        while project::project_lock_owner(&path)? == owner {
+            if Instant::now() >= deadline {
+                return Err("headless session accepted close but has not released the project within 30 seconds; inspect the owner before retrying".into());
+            }
+            std::thread::sleep(SESSION_POLL_INTERVAL);
+        }
+        result.as_object_mut().unwrap().remove("closing");
+        result["closed"] = json!(true);
+    }
     if definition.name == "view_frame"
         && !dry_run
         && let Some(output) = leaf.get_one::<String>("output")
@@ -516,7 +531,7 @@ fn load_snapshot(path: &Path) -> Result<LiveSnapshot, String> {
     }
 }
 
-fn launch_editor(path: &Path) -> Result<(), String> {
+fn launch_editor(path: &Path) -> Result<Bridge, String> {
     let current = std::env::current_exe().map_err(|error| error.to_string())?;
     #[cfg(not(target_os = "macos"))]
     let editor = current.with_file_name("shrimply-editor");
@@ -529,18 +544,18 @@ fn launch_editor(path: &Path) -> Result<(), String> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|error| error.to_string())?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while std::time::Instant::now() < deadline {
+    let deadline = Instant::now() + SESSION_WAIT_TIMEOUT;
+    while Instant::now() < deadline {
         if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
             return Err(format!("editor exited before becoming ready: {status}"));
         }
-        if Bridge::connect(path).is_ok() {
+        if let Ok(bridge) = Bridge::connect(path) {
             std::thread::spawn(move || {
                 let _ = child.wait();
             });
-            return Ok(());
+            return Ok(bridge);
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(SESSION_POLL_INTERVAL);
     }
     Err("editor has not exposed its editing API within 30 seconds; check the editor window".into())
 }

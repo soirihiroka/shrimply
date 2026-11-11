@@ -60,21 +60,21 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "connect_project",
         "project open",
-        "Open a project in the native editor or start a managed headless session",
+        "Reuse an existing project owner, or open the native editor (use --headless to start a managed headless owner). Does not keep this CLI connected",
         ConnectProjectRequest,
         false
     ),
     command!(
         "get_editor_state",
         "editor get",
-        "Return live project, playhead, selection, active scope, and track state",
+        "Return project, playhead, selection, active scope, and track state from the active owner, or saved state when closed. Check execution_mode",
         GetEditorStateRequest,
         true
     ),
     command!(
         "get_version",
         "version",
-        "Return the numbered version and full Git commit hash of this CLI and the connected editor. Works without a connected project; editor is then null",
+        "Return this CLI's version and full Git commit hash; optionally query --project's active owner. editor_error reports connection errors",
         GetVersionRequest,
         true
     ),
@@ -88,21 +88,21 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "query_clips",
         "clips list",
-        "Query live clip presentations. The optional half-open frame range is stateless and independent from editor selection",
+        "List clip summaries from the active owner or saved project. Filter TTS with --source-kind tts; use clips get for scripts. Frame range is independent from editor selection",
         QueryClipsRequest,
         true
     ),
     command!(
         "get_clip",
         "clips get",
-        "Get full live metadata for one concrete clip address or every presentation of an item UUID",
+        "Get full clip metadata from the active owner or saved project, including stored TTS text at metadata.source.inputs.text.value and source time_offset. Scripts describe the full source, including trimmed-out speech",
         GetClipRequest,
         true
     ),
     command!(
         "get_clip_info",
         "clips inspect",
-        "Return a deep inspector-style dump for a clip, including filesystem, container, stream, tag, artwork, and image EXIF metadata. Embedded artwork bytes are returned as image content only when include_artwork is true",
+        "Inspect clip filesystem, container, streams, tags, and image EXIF metadata. --include-artwork adds embedded artwork metadata; image bytes are not included in JSON",
         GetClipInfoRequest,
         true
     ),
@@ -123,7 +123,7 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "query_expressions",
         "expressions list",
-        "Query expression IDs, property paths, enabled state, and source across live clip metadata",
+        "Query expression IDs, property paths, enabled state, and source across clip metadata from the active owner or saved project",
         QueryExpressionsRequest,
         true
     ),
@@ -354,7 +354,7 @@ pub static COMMANDS: &[Command] = &[
     command!(
         "project_close",
         "project close",
-        "Save and close a managed headless session",
+        "Save and stop a managed headless owner, waiting until it releases the project. Already closed succeeds; GUI owners must be closed through their window",
         GetEditorStateRequest,
         false
     ),

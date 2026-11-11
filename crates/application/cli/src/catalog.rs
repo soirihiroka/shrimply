@@ -3,11 +3,13 @@ use serde_json::Value;
 use shrimply_editing_api::commands::{COMMANDS, Command as Definition};
 
 const DISCOVERY: &str = "Agents: start with `shrimply cli search \"describe the task\"`. It returns up to five compact JSON matches. Run the matched command with --help, or replace leading shrimply with `shrimply schema` for exact request fields. Editing commands support --dry-run. Times are zero-based integer frames; frame rates accept exact ratios. No GUI is required.";
+const SESSIONS: &str = "Each command uses short-lived connections to the active project owner. No connect/disconnect step is needed. When closed, reads use saved state and edits start a headless owner. Concurrent requests are serialized by that owner; use --if-revision to reject edits based on stale state. project close stops a headless owner; it does not close a GUI.";
 
 pub fn cli() -> Command {
     let mut root = branch("shrimply", &[])
         .about("Create, inspect, edit, and render Shrimply projects")
         .before_help(DISCOVERY)
+        .after_help(SESSIONS)
         .arg(
             Arg::new("project")
                 .long("project")
@@ -75,7 +77,7 @@ fn leaf(name: &str, definition: &Definition) -> Command {
     let mut command = Command::new(name.to_owned())
         .about(definition.summary)
         .after_help(format!(
-            "Inspect the exact request: shrimply schema {}",
+            "Inspect the exact request: shrimply schema {}\n\n{SESSIONS}",
             definition.path
         ));
     let mut fields = std::collections::BTreeSet::new();
@@ -143,7 +145,9 @@ fn leaf(name: &str, definition: &Definition) -> Command {
             Arg::new("headless")
                 .long("headless")
                 .action(clap::ArgAction::SetTrue)
-                .help("Start a managed session without opening a GUI"),
+                .help(
+                    "Start a headless owner if closed; an existing GUI or headless owner is reused",
+                ),
         );
     }
     if definition.name == "view_frame" {

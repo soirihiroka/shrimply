@@ -132,6 +132,25 @@ exists, a mutating command starts a managed headless instance of the same
 binary. Read-only commands can inspect the saved file without a session.
 An unreachable owner is an error; the CLI never edits a second copy behind it.
 
+There is no persistent agent connection or connect/disconnect step. Each CLI
+invocation uses short-lived connections and exits after its response. The
+project owner remains open. ``project open`` reuses an existing owner, even
+with ``--headless``; it does not switch an open GUI into headless mode.
+Responses identify their state with ``execution_mode``: ``live`` for a GUI,
+``headless`` for a managed owner, or ``saved`` for a file read without an owner.
+
+Multiple CLI processes can target the same project. The owner serializes
+requests, so concurrent edits do not overwrite independent changes. Reads
+observe a complete state before or after each edit. For decisions based on a
+previous read, pass its ``content_revision`` as ``--if-revision``; an intervening
+content edit causes a revision conflict. Without that guard, commands execute
+against the state when they reach the owner, in arrival order.
+
+The GTK title icon indicates current or recent editing API activity, including
+reads. It remains visible for three seconds after the final client disconnects.
+GTK and AppKit poll the editing API independently of display callbacks, so
+requests continue processing while their windows are minimized or off-display.
+
 .. code-block:: console
 
    $ shrimply project open --project movie.shrimp --headless
@@ -146,6 +165,17 @@ before opening the project in a GUI. ``project close`` never closes GUI
 windows. API edits are persisted before success is reported. Undo keeps
 imported media so redo remains valid. Undo history does not survive a
 session restart.
+
+``project close`` succeeds only after the headless owner releases the project,
+so the next command can safely open it again. Requests queued after close has
+been accepted fail rather than editing a shutting-down session. Inspect state
+before retrying a failed edit; transport failures do not prove it was rolled back.
+
+For stored speech scripts, use ``clips list --source-kind tts --all --recursive``
+and ``clips get --item-id UUID``. The script is at
+``result.metadata.source.inputs.text.value``. It describes the full generated
+source, including speech removed by trimming or splitting. Inspect ``time_offset``
+and the clip bounds separately; stored text is not a transcript of the audible range.
 
 Imports copy into project media by default. ``link=true`` retains external
 paths. Existing track, collision, and folded-sequence rules are preserved.

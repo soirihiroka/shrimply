@@ -6,7 +6,6 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const START_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -42,6 +41,8 @@ pub fn socket_path(pid: u32) -> Result<PathBuf, String> {
 pub struct Bridge {
     project_path: String,
     socket_path: PathBuf,
+    stream: Stream,
+    pub owner: shrimply_project_document::project::ProjectLockOwner,
 }
 
 impl Bridge {
@@ -52,15 +53,22 @@ impl Bridge {
             .ok_or_else(|| {
                 BridgeError::Transport(format!("{} has no project session", path.display()))
             })?;
-        let bridge = Self {
+        let socket_path = socket_path(owner.pid()).map_err(BridgeError::Transport)?;
+        let stream = Stream::connect(&socket_path).map_err(|error| {
+            BridgeError::Transport(format!(
+                "project session at {}: {error}; inspect state before retrying",
+                socket_path.display()
+            ))
+        })?;
+        Ok(Self {
             project_path: path
                 .to_str()
                 .ok_or_else(|| BridgeError::Transport("project path must be UTF-8".into()))?
                 .into(),
-            socket_path: socket_path(owner.pid()).map_err(BridgeError::Transport)?,
-        };
-        bridge.request_timeout(BridgeCommand::Handshake, HANDSHAKE_TIMEOUT)?;
-        Ok(bridge)
+            socket_path,
+            stream,
+            owner,
+        })
     }
 
     /// Start the same binary as a detached project owner; concurrent callers reuse the winner.
@@ -126,26 +134,22 @@ impl Bridge {
         }
     }
 
-    pub fn request(&self, command: BridgeCommand) -> Result<serde_json::Value, BridgeError> {
-        self.request_timeout(command, RESPONSE_TIMEOUT)
-    }
-
-    fn request_timeout(
-        &self,
-        command: BridgeCommand,
-        timeout: Duration,
-    ) -> Result<serde_json::Value, BridgeError> {
+    /// Send one request on this connection, then close it, including on failure.
+    /// The request validates project ownership; no separate queued handshake is needed.
+    pub fn request(mut self, command: BridgeCommand) -> Result<serde_json::Value, BridgeError> {
         let transport = |error: std::io::Error| {
             BridgeError::Transport(format!(
                 "project session at {}: {error}; inspect state before retrying",
                 self.socket_path.display()
             ))
         };
-        let mut stream = Stream::connect(&self.socket_path).map_err(transport)?;
+        let stream = &mut self.stream;
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT))
             .map_err(transport)?;
-        stream.set_read_timeout(Some(timeout)).map_err(transport)?;
+        stream
+            .set_read_timeout(Some(RESPONSE_TIMEOUT))
+            .map_err(transport)?;
         let request = BridgeRequest {
             project_path: self.project_path.clone(),
             command,

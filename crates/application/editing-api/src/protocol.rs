@@ -192,7 +192,7 @@ pub enum RangeMatch {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectProjectRequest {
-    /// Absolute path to a native .shrimp video project already open in Shrimply.
+    /// Existing native .shrimp project. Reuses its owner when already open.
     pub project_path: String,
 }
 
@@ -250,13 +250,16 @@ pub struct ListScopesRequest {}
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QueryClipsRequest {
+    /// Return every match; conflicts with offset and limit. Otherwise returns up to 100.
     #[serde(default)]
     pub all: bool,
     /// Defaults to the root sequence scope.
     pub scope: Option<ScopeRef>,
+    /// Include clips inside folded sequences; defaults to false.
     #[serde(default)]
     pub recursive: bool,
     pub kind: Option<ClipKind>,
+    /// Filter the source type, for example tts, media, caption, or text.
     pub source_kind: Option<String>,
     pub track_id: Option<String>,
     pub item_id: Option<String>,
@@ -283,6 +286,7 @@ pub struct GetClipRequest {
 pub struct GetClipInfoRequest {
     pub address: Option<ClipAddress>,
     pub item_id: Option<String>,
+    /// Include embedded artwork metadata, without image bytes.
     #[serde(default)]
     pub include_artwork: bool,
 }

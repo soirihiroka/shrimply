@@ -240,6 +240,7 @@ fn start_session(
             .map_err(|error| format!("could not start editing API bridge: {error}"))?,
     );
 
+    let executor_stop = stop.clone();
     let task = context.spawn_local(async move {
         while let Ok(work) = receiver.recv().await {
             let project_path = shrimply_project_document::project::normalized_project_path(
@@ -271,9 +272,9 @@ fn start_session(
                             )
                             .await
                         }
-                        BridgeCommand::Handshake => Ok(
-                            json!({"connected":true,"mode":if headless {"headless"} else {"live"}}),
-                        ),
+                        BridgeCommand::Handshake => {
+                            Ok(json!({"ready":true,"mode":if headless {"headless"} else {"live"}}))
+                        }
                         BridgeCommand::Version => serde_json::to_value(
                             shrimply_editing_api::protocol::BuildVersion::current(env!(
                                 "CARGO_PKG_VERSION"
@@ -313,7 +314,19 @@ fn start_session(
                 result: result.as_ref().ok().cloned(),
                 error: result.err(),
             };
-            let _ = work.response.send(response);
+            let closing = response
+                .result
+                .as_ref()
+                .and_then(|value| value.get("closing"))
+                .and_then(Value::as_bool)
+                == Some(true);
+            if work.response.send(response).is_err() && closing {
+                executor_stop.store(true, Ordering::Release);
+            }
+            if closing {
+                // Reject queued work once close succeeds; the transport finishes the reply.
+                break;
+            }
         }
     });
 
@@ -426,7 +439,7 @@ fn serve_connection(
                 response,
                 canceled: canceled.clone(),
             })
-            .map_err(|_| "GTK editing API executor stopped".to_string())?;
+            .map_err(|_| "editing API executor stopped; the session may be closing".to_string())?;
         stream
             .set_nonblocking(true)
             .map_err(|error| format!("could not monitor editing API client: {error}"))?;

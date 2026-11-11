@@ -24,13 +24,14 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 const DEFAULT_WINDOW_WIDTH: i32 = 1800;
 const DEFAULT_WINDOW_HEIGHT: i32 = 1100;
 const DEFAULT_INSPECTOR_WIDTH: i32 = inspector::INSPECTOR_MIN_WIDTH;
 const DEFAULT_TOP_PANEL_HEIGHT: i32 = 660;
 const PANEL_ANIMATION_DURATION_MS: u32 = 250;
+const SESSION_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const LOADING_WINDOW_WIDTH: i32 = 800;
 const LOADING_WINDOW_HEIGHT: i32 = 600;
 const LOADING_SHRIMP_WIDTH: i32 = 160;
@@ -194,8 +195,12 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     header_bar.pack_start(&panel_toggles);
     shrimply_components_gtk::trust::handle_imports(window);
     let polling_session = session.clone();
-    let polling_window = window.clone();
-    window.add_tick_callback(move |_, _| {
+    let polling_window = window.downgrade();
+    // Frame callbacks stop when minimized; the editing API must keep processing requests.
+    glib::timeout_add_local(SESSION_POLL_INTERVAL, move || {
+        let Some(polling_window) = polling_window.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
         let update = polling_session.poll();
         connection_indicator.set_visible(update.editing_api_active);
         if let Some(error) = update.audio_playback_stopped {

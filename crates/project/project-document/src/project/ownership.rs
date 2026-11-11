@@ -19,7 +19,7 @@ const LOCK_ACQUIRE_ATTEMPTS: usize = 8;
 const PROCESS_STOP_WAIT_ATTEMPTS: usize = 20;
 const PROCESS_STOP_WAIT_MILLIS: u64 = 25;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProjectLockOwner {
     System { pid: u32 },
