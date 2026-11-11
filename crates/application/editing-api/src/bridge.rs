@@ -1,5 +1,7 @@
 use crate::protocol::{BridgeCommand, BridgeRequest, BridgeResponse};
+use sha2::{Digest, Sha256};
 use shrimply_local_ipc::Stream;
+use shrimply_project_document::project::ProjectLockOwner;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -9,6 +11,7 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const START_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const FLATPAK_INSTANCE_HASH_LENGTH: usize = 16;
 
 #[derive(Debug)]
 pub enum BridgeError {
@@ -34,8 +37,22 @@ pub fn runtime_directory() -> Result<PathBuf, String> {
     Ok(shrimply_path_core::cache_directory()?.join("run"))
 }
 
-pub fn socket_path(pid: u32) -> Result<PathBuf, String> {
-    Ok(runtime_directory()?.join(format!("editing-{pid}.sock")))
+pub fn socket_path(owner: &ProjectLockOwner) -> Result<PathBuf, String> {
+    let filename = match owner {
+        ProjectLockOwner::System { pid } => format!("editing-{pid}.sock"),
+        ProjectLockOwner::Flatpak { pid, instance_id } => {
+            // Keep namespace identity stable across builds without exceeding Unix socket path limits.
+            let instance_hash = Sha256::digest(instance_id.as_bytes())
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            format!(
+                "editing-{}-{pid}.sock",
+                &instance_hash[..FLATPAK_INSTANCE_HASH_LENGTH]
+            )
+        }
+    };
+    Ok(runtime_directory()?.join(filename))
 }
 
 pub struct Bridge {
@@ -53,7 +70,7 @@ impl Bridge {
             .ok_or_else(|| {
                 BridgeError::Transport(format!("{} has no project session", path.display()))
             })?;
-        let socket_path = socket_path(owner.pid()).map_err(BridgeError::Transport)?;
+        let socket_path = socket_path(&owner).map_err(BridgeError::Transport)?;
         let stream = Stream::connect(&socket_path).map_err(|error| {
             BridgeError::Transport(format!(
                 "project session at {}: {error}; inspect state before retrying",

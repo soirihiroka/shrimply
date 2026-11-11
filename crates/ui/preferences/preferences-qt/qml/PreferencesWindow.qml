@@ -385,8 +385,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Label { text: backend.translate("CLI") }
                                     Label {
-                                        text: root.cliMessage.length > 0 ? root.cliMessage
-                                            : backend.translate("Run shrimply from a terminal")
+                                        text: root.cliMessage.length > 0 ? root.cliMessage : "shrimply"
                                         textFormat: Text.PlainText
                                         wrapMode: Text.Wrap
                                         Layout.fillWidth: true

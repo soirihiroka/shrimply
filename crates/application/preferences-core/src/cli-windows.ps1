@@ -28,7 +28,7 @@ try {
     $updatedPath = (@($directory) + $entries) -join ';'
     # The User target persists the value and broadcasts WM_SETTINGCHANGE.
     [Environment]::SetEnvironmentVariable('Path', $updatedPath, 'User')
-    Write-Output "Installed $launcher on your user PATH. Open a new terminal to use shrimply."
+    Write-Output $launcher
 } catch {
     [Console]::Error.WriteLine($_.Exception.Message)
     exit 1

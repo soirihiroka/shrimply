@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -188,27 +188,49 @@ fn start_session(
 ) -> Result<Server, String> {
     let context = glib::MainContext::new();
     runtime_directory()?;
-    let socket_path = shrimply_editing_api::bridge::socket_path(std::process::id())
-        .map_err(|error| error.to_string())?;
-    if socket_path.exists() {
-        #[cfg(unix)]
-        let metadata = socket_path.metadata().map_err(|error| {
-            format!(
-                "could not inspect editing API socket {}: {error}",
-                socket_path.display()
-            )
-        })?;
-        #[cfg(unix)]
-        if metadata.uid() != effective_uid() {
+    let owner = shrimply_project_document::project::current_project_lock_owner()?;
+    let socket_path = shrimply_editing_api::bridge::socket_path(&owner)?;
+    let existing = match fs::symlink_metadata(&socket_path) {
+        Ok(metadata) => Some(metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
             return Err(format!(
-                "refusing editing API socket owned by another user: {}",
+                "could not inspect editing API socket {}: {error}",
                 socket_path.display()
             ));
         }
-        return Err(format!(
-            "editing API socket already exists: {}",
-            socket_path.display()
-        ));
+    };
+    if let Some(_metadata) = existing {
+        #[cfg(unix)]
+        if _metadata.uid() != effective_uid() || !_metadata.file_type().is_socket() {
+            return Err(format!(
+                "refusing to replace an editing API path that is not a socket owned by this user: {}",
+                socket_path.display()
+            ));
+        }
+        match UnixStream::connect(&socket_path) {
+            Ok(_) => {
+                return Err(format!(
+                    "editing API socket is already active: {}",
+                    socket_path.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+                fs::remove_file(&socket_path).map_err(|error| {
+                    format!(
+                        "could not remove stale editing API socket {}: {error}",
+                        socket_path.display()
+                    )
+                })?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "could not check editing API socket {}: {error}",
+                    socket_path.display()
+                ));
+            }
+        }
     }
     let listener = UnixListener::bind(&socket_path).map_err(|error| {
         format!(

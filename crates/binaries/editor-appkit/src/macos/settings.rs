@@ -395,7 +395,7 @@ pub(super) fn sync_cli_window(window: &NSWindow, mtm: MainThreadMarker) {
     button.setEnabled(status.is_ok());
     let help = match status {
         Ok(Some(path)) => path,
-        Ok(None) => "Run shrimply from a terminal".into(),
+        Ok(None) => "shrimply".into(),
         Err(error) => error,
     };
     button.setToolTip(Some(&NSString::from_str(&help)));

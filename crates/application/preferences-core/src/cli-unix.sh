@@ -61,4 +61,4 @@ if command -v fish >/dev/null 2>&1 || [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/fi
     printf '%s\n' '# Shrimply CLI PATH' 'fish_add_path --prepend --move "$HOME/.local/bin"' > "$fish_config/shrimply-cli.fish"
 fi
 
-printf 'Installed %s. Open a new terminal to use shrimply.\n' "$target"
+printf '%s\n' "$target"

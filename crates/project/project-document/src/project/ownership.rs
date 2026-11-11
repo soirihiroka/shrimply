@@ -278,7 +278,7 @@ fn read_project_lock_owner(lock_path: &Path) -> Option<ProjectLockOwner> {
         })
 }
 
-fn current_project_lock_owner() -> Result<ProjectLockOwner, String> {
+pub fn current_project_lock_owner() -> Result<ProjectLockOwner, String> {
     let pid = process::id();
     #[cfg(target_os = "linux")]
     if let Some(instance_id) = current_flatpak_instance_id()? {

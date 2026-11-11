@@ -5,7 +5,7 @@ use shrimply_components_gtk::tr;
 pub fn row() -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(tr!("CLI").as_ref())
-        .subtitle(tr!("Run shrimply from a terminal").as_ref())
+        .subtitle("shrimply")
         .use_markup(false)
         .build();
     let button = gtk::Button::builder()
