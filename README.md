@@ -26,10 +26,9 @@ System requirements:
 Intel requires Mesa Vulkan/OpenGL and VA-API drivers; see the
 [Intel backend requirements and supported features](docs/source/development.rst#intel-gpu-preview-on-linux-gtk).
 
-Shrimply is currently pre-alpha software, which means you should expect:
+Shrimply is currently pre-alpha software (though we are getting closer to the first alpha version), which means you should expect:
 
 - Slop
-- ~~Unable to build~~ (we got CI now!)
 - Undocumented footguns
 - Random performance regressions
 - Irreversible project file breakage
@@ -39,18 +38,11 @@ If you noticed any performance/correctness issue, feel free to open [issues](htt
 
 See the [documentation](https://shrimply.pages.dev) for more.
 
-## Agent CLI
+## CLI
 
-Use the binary to discover and perform editing actions, with or without an editor:
+Shrimply now has an agent friendly CLI that replaces the MCP.
 
-```sh
-shrimply cli search "replace caption text"
-shrimply schema text replace
-shrimply text replace --project movie.shrimp --all --find old --replace new --dry-run
-```
-
-See the [editing CLI guide](docs/source/integrations/cli.rst) for command schemas,
-JSON input/output, atomic batches, and headless sessions.
+See the [CLI guide](docs/source/integrations/cli.rst) for details.
 
 ## Contributing
 
