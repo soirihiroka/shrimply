@@ -49,7 +49,7 @@ pub struct MicRecordingSnapshot {
 
 impl MicRecording {
     pub fn start() -> Result<Self, String> {
-        let host = cpal::default_host();
+        let host = super::host::connect()?;
         let device = host
             .default_input_device()
             .ok_or_else(|| "No default audio input device".to_string())?;
@@ -70,7 +70,8 @@ impl MicRecording {
 
         stream.play().map_err(|error| error.to_string())?;
         tracing::info!(
-            "Microphone recording started: device={}, sample_format={:?}, sample_rate={}, channels={}",
+            "Microphone recording started: host={}, device={}, sample_format={:?}, sample_rate={}, channels={}",
+            host.id().name(),
             device,
             input_config.sample_format(),
             sample_rate,

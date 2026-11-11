@@ -1,0 +1,37 @@
+[package]
+name = "shrimply-editing-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shrimply-visual-core.workspace = true
+async-channel.workspace = true
+base64.workspace = true
+ffmpeg-next.workspace = true
+glib.workspace = true
+libc.workspace = true
+serde_json.workspace = true
+skia-safe.workspace = true
+shrimply-editing-api.workspace = true
+shrimply-local-ipc.workspace = true
+shrimply-media-import.workspace = true
+shrimply-audio-engine.workspace = true
+shrimply-blender-core.workspace = true
+shrimply-asset.workspace = true
+shrimply-math-core.workspace = true
+shrimply-manim-bridge.workspace = true
+shrimply-project-document.workspace = true
+shrimply-compute-client.workspace = true
+shrimply-editor-state.workspace = true
+shrimply-timeline-edit.workspace = true
+shrimply-transcription.workspace = true
+shrimply-tts.workspace = true
+shrimply-visual-modifiers.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+shrimply-visual-cuda.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+shrimply-preview-render-metal.workspace = true

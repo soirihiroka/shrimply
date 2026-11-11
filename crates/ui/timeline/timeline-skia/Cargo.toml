@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-media-import.workspace = true
 shrimply-trust-core.workspace = true
 async-channel.workspace = true
 serde_json.workspace = true

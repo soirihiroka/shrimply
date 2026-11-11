@@ -10,8 +10,6 @@ use super::SharedAudioLevels;
 use super::output::{self, OutputState, PlaybackWindow};
 use super::worker::{self, AudioCommand};
 
-const OUTPUT_PERIOD_MS: u32 = 40;
-
 pub(super) struct AudioRuntime {
     stream: cpal::Stream,
     command_tx: Sender<AudioCommand>,
@@ -22,7 +20,7 @@ pub(super) struct AudioRuntime {
 
 impl AudioRuntime {
     pub(super) fn new(project: &Project, levels: SharedAudioLevels) -> Result<Self, String> {
-        let host = cpal::default_host();
+        let host = super::host::connect()?;
         let device = host
             .default_output_device()
             .ok_or_else(|| "No default audio output device".to_string())?;
@@ -40,19 +38,12 @@ impl AudioRuntime {
             })
             .map(|range| range.with_sample_rate(48_000))
             .unwrap_or(default_config);
-        let mut config = output_config.config();
-        if let cpal::SupportedBufferSize::Range { min, max } = *output_config.buffer_size() {
-            let period_frames = config
-                .sample_rate
-                .saturating_mul(OUTPUT_PERIOD_MS)
-                .div_ceil(1_000)
-                .clamp(min, max);
-            config.buffer_size = cpal::BufferSize::Fixed(period_frames);
-        }
+        let config = output_config.config();
         let output_channels = config.channels as usize;
         let sample_rate = config.sample_rate;
         tracing::info!(
-            "Building streaming audio output: device={}, sample_format={:?}, sample_rate={}, channels={}, buffer_size={:?}",
+            "Building streaming audio output: host={}, device={}, sample_format={:?}, sample_rate={}, channels={}, buffer_size={:?}",
+            host.id().name(),
             device,
             output_config.sample_format(),
             sample_rate,
@@ -72,6 +63,7 @@ impl AudioRuntime {
         let recoverable_error_log = Arc::new(Mutex::new(None));
         let output_state = OutputState {
             window,
+            shutting_down: Arc::new(AtomicBool::new(false)),
             requested: Arc::new(AtomicBool::new(true)),
             playing,
             previewing,
@@ -130,6 +122,8 @@ impl AudioRuntime {
 
 impl Drop for AudioRuntime {
     fn drop(&mut self) {
+        // Closing a server stream can race with its outstanding timing callbacks.
+        self.output.shutting_down.store(true, Ordering::SeqCst);
         self.output.requested.store(false, Ordering::SeqCst);
         self.output.playing.store(false, Ordering::SeqCst);
         self.output.previewing.store(false, Ordering::SeqCst);

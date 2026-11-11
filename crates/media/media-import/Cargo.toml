@@ -1,0 +1,24 @@
+[package]
+name = "shrimply-media-import"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shrimply-trust-core.workspace = true
+ffmpeg-next.workspace = true
+glam.workspace = true
+hashbrown.workspace = true
+imagesize.workspace = true
+shrimply-3dgs-core = { workspace = true }
+shrimply-blender-core = { workspace = true }
+shrimply-property-model = { workspace = true }
+shrimply-math-core = { workspace = true }
+shrimply-pdf = { workspace = true }
+shrimply-project-document = { workspace = true, default-features = true }
+shrimply-resource-pipeline = { workspace = true }
+shrimply-scene-3d = { workspace = true }
+shrimply-timeline-edit = { workspace = true }
+shrimply-layered-image-loader = { workspace = true }
+shrimply-visual-modifiers = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
+tracing.workspace = true

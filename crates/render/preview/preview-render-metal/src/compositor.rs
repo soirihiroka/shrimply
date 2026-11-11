@@ -23,10 +23,28 @@ pub fn render_png(
     time: Time,
     maximum_decoders: usize,
 ) -> Result<Vec<u8>, String> {
+    render_png_cancelable(
+        project,
+        time,
+        maximum_decoders,
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+}
+
+/// Accurate frame capture with cooperative cancellation between GPU polls.
+pub fn render_png_cancelable(
+    project: &Project,
+    time: Time,
+    maximum_decoders: usize,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<u8>, String> {
     objc2::rc::autoreleasepool(|_| {
         let mut renderer = Compositor::default();
         renderer.set_decoder_limit(maximum_decoders);
         loop {
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return Err("Frame capture cancelled".into());
+            }
             if let Some(image) = renderer.poll_accurate_image(project, time)? {
                 return image
                     .encode(None, skia_safe::EncodedImageFormat::PNG, None)

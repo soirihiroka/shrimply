@@ -9,6 +9,8 @@ Keep things simple and stupid:
 
 Avoid writing tests unless requested.
 
+Use `git mv` to move things that should be tracked.
+
 Run `make check` whenever a big change is done.
 
 Never attempt to build inside the sandbox.
@@ -46,6 +48,7 @@ Only bump project version when there is a need for it.
 
 Never implement placeholder of any kind. It either works or it just fails entirely.
 
-Avoid editing the shrimply file directly, and instead opt to use the shrimply MCP.
-Inform the user when the MCP is missing certain features that are needed
-instead of writing the file directly.
+Avoid editing .shrimp project files directly. Use the Shrimply binary editing API.
+Start with `shrimply cli search "describe the task"`, inspect command help or
+`shrimply schema`, and use `--dry-run` to preview edits.
+Inform the user when the binary API is missing features that are needed.

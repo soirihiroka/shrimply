@@ -66,6 +66,19 @@ pub(super) fn can_redo() -> bool {
     })
 }
 
+pub fn history_destination(redo: bool) -> Option<Project> {
+    HISTORY.with(|slot| {
+        let slot = slot.borrow();
+        let history = slot.as_ref()?;
+        let index = if redo {
+            history.index.checked_add(1)?
+        } else {
+            history.index.checked_sub(1)?
+        };
+        history.snapshots.get(index).cloned()
+    })
+}
+
 pub(super) fn undo(project: &mut Project) -> Option<usize> {
     HISTORY.with(|slot| slot.borrow_mut().as_mut()?.undo(project))
 }

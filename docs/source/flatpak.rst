@@ -41,7 +41,8 @@ The bundle also receives updates from the prerelease repository.
 Known limitations
 -----------------
 
-The Flatpak is missing some features, including MCP support. To build Shrimply
+The binary editing API is available inside the Flatpak sandbox. Host CLI sessions
+cannot attach to an editor owned by a different sandbox. To build Shrimply
 from source, see :doc:`development`.
 
 Build a local bundle with ``make flatpak-gtk``. This passes the checkout's full

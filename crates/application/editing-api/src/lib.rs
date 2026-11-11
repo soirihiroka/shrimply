@@ -4,5 +4,8 @@ mod expression;
 mod property;
 pub mod protocol;
 pub mod query;
-#[cfg(feature = "server")]
-pub mod server;
+
+pub mod commands;
+pub mod extra;
+pub mod preview;
+pub mod text;

@@ -24,6 +24,7 @@ use crate::query::{model_item_address, model_kind, model_track_address};
 
 #[derive(Default)]
 pub struct MutationResult {
+    pub details: Option<serde_json::Value>,
     pub changed_item_ids: Vec<Uuid>,
     pub deleted_addresses: Vec<ClipAddress>,
     pub deleted_presentations: Vec<ClipSummary>,
@@ -37,6 +38,11 @@ pub fn apply_non_import(
     scope: &SequenceScopeId,
 ) -> Result<MutationResult, String> {
     match operation {
+        EditOperation::SetProjectSettings(request) => crate::extra::settings(project, request),
+        EditOperation::SplitClip(request) => crate::extra::split(project, request),
+        EditOperation::DuplicateClip(request) => crate::extra::duplicate(project, request),
+        EditOperation::ReorderTrack(request) => crate::extra::reorder(project, request),
+        EditOperation::ReplaceText(request) => crate::text::apply(project, request),
         EditOperation::InsertFiles(_) => {
             Err("insert_files must be handled by the native importer".to_string())
         }
@@ -396,6 +402,7 @@ fn insert_captions(
     }
     let track_ids = HashSet::from([target.track_id()]);
     Ok(MutationResult {
+        details: None,
         changed_item_ids,
         deleted_addresses: deleted_presentations
             .iter()
@@ -522,6 +529,7 @@ fn insert_text(
             crate::query::addresses_for_tracks(project, &HashSet::from([inserted.track_id()]))?;
     }
     Ok(MutationResult {
+        details: None,
         changed_item_ids: vec![item_id],
         deleted_addresses: deleted_presentations
             .iter()

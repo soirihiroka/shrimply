@@ -5,7 +5,8 @@ use std::time::Duration;
 use windows::Win32::Networking::WinSock::{
     ADDRESS_FAMILY, AF_UNIX, FIONBIO, SEND_RECV_FLAGS, SO_RCVTIMEO, SO_SNDTIMEO, SOCK_STREAM,
     SOCKADDR, SOCKADDR_UN, SOCKET, SOCKET_ERROR, SOL_SOCKET, SOMAXCONN, WSADATA, WSAGetLastError,
-    WSAStartup, accept, bind, closesocket, ioctlsocket, listen, recv, send, setsockopt, socket,
+    WSAStartup, accept, bind, closesocket, connect, ioctlsocket, listen, recv, send, setsockopt,
+    socket,
 };
 
 static WINSOCK: OnceLock<Result<(), i32>> = OnceLock::new();
@@ -47,6 +48,25 @@ impl Listener {
 }
 
 impl Stream {
+    pub fn connect(path: &Path) -> io::Result<Self> {
+        initialize()?;
+        let address = address(path)?;
+        let socket =
+            unsafe { socket(i32::from(AF_UNIX), SOCK_STREAM, 0) }.map_err(|_| last_error())?;
+        if unsafe {
+            connect(
+                socket,
+                (&raw const address).cast::<SOCKADDR>(),
+                i32::try_from(std::mem::size_of_val(&address)).expect("socket address fits i32"),
+            )
+        } == SOCKET_ERROR
+        {
+            let error = last_error();
+            close(socket);
+            return Err(error);
+        }
+        Ok(Self(socket))
+    }
     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
         set_nonblocking(self.0, nonblocking)
     }

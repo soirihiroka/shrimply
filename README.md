@@ -39,6 +39,19 @@ If you noticed any performance/correctness issue, feel free to open [issues](htt
 
 See the [documentation](https://shrimply.pages.dev) for more.
 
+## Agent CLI
+
+Use the binary to discover and perform editing actions, with or without an editor:
+
+```sh
+shrimply cli search "replace caption text"
+shrimply schema text replace
+shrimply text replace --project movie.shrimp --all --find old --replace new --dry-run
+```
+
+See the [editing CLI guide](docs/source/integrations/cli.rst) for command schemas,
+JSON input/output, atomic batches, and headless sessions.
+
 ## Contributing
 
 Contributions are welcome.

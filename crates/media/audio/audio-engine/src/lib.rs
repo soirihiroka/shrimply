@@ -14,6 +14,7 @@ pub mod beat;
 mod beat_cache;
 mod beat_math;
 mod effects;
+mod host;
 pub mod modifier_cache;
 mod opus_cache;
 mod output;
@@ -71,12 +72,13 @@ struct PlayerState {
 impl PlayerState {
     fn collect_failure(&mut self) {
         let failure = self.runtime.as_ref().and_then(|runtime| {
+            // Keep the failure latched until dropping the stream has stopped its callbacks.
             runtime
                 .output
                 .failure
                 .lock()
                 .expect("audio failure lock poisoned")
-                .take()
+                .clone()
         });
         if let Some(failure) = failure {
             let runtime = self.runtime.as_ref().expect("failed audio runtime exists");

@@ -86,7 +86,6 @@ jobs:
           ls -la result/bin/
           test -x result/bin/shrimply
           test -x result/bin/shrimply-editor
-          test -x result/bin/shrimply-mcp
 
       - name: Explicitly push build result to Cachix
         if: ${{ env.CACHIX_CACHE != '' && env.CACHIX_AUTH_TOKEN != '' }}

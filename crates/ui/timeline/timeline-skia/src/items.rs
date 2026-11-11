@@ -7,7 +7,7 @@ use crate::project::{
     Transform, VideoItem, VideoItemContent, VisualTrack, default_playback_speed,
     generated_item_natural_end_position, generated_item_natural_span,
     media_item_natural_end_position, media_natural_end_interval, media_real_span,
-    scaled_time_delta, video_natural_end_interval,
+    video_natural_end_interval,
 };
 use crate::timeline_search::{self, TimeSlice};
 use shrimply_timeline_edit::TrackKey;

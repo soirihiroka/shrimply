@@ -201,6 +201,10 @@ without launching. The binary is ``target/debug/shrimply-qt``.
 
 Build this site with ``make docs``.
 
+Linux audio uses native PipeWire, with direct PulseAudio as a fallback. It does
+not fall back to ALSA. If neither audio server is available, playback reports an
+error. The audio startup log includes the selected backend.
+
 Docker [Experimental]
 ---------------------
 

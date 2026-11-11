@@ -9,7 +9,6 @@ use glam::{UVec2, Vec2};
 use shrimply_math_core::Fraction;
 use shrimply_resource_pipeline::{JobContext, Pipeline, Processor, Subscription};
 
-use shrimply_editor_state::player_state::{self, ProjectChange, SharedPlayerState};
 use shrimply_project_document::project::{
     Asset, AssetSnapshot, AudioItem, CanvasSize, CaptionItem, LayerVisibility, LayeredImageItem,
     Project, RepeatStrategy, ResolvedTransform, Time, Transform, VideoItem, VideoItemContent,
@@ -17,7 +16,6 @@ use shrimply_project_document::project::{
 };
 use shrimply_project_document::timeline_search;
 use shrimply_property_model::timeline_value::*;
-use shrimply_timeline_edit::selection_state::{self, SharedSelectionState};
 use shrimply_visual_modifiers::{ModifierEffect, scene_3d::Scene3dModifierEffect};
 
 use shrimply_timeline_edit::{ItemKey, TrackKind, insert_sorted, next_group_id};
@@ -246,31 +244,6 @@ pub fn direct_media_kind(kind: FileKind) -> bool {
             | FileKind::Ply
             | FileKind::Audio
     )
-}
-
-pub fn finish_track_import(
-    player_state: &SharedPlayerState,
-    selection_state: &SharedSelectionState,
-    result: Result<(ImportResult, Time), String>,
-) -> Result<(), String> {
-    let (result, duration) = result?;
-    let focused_item = result.selection.first().copied();
-    selection_state::set_selected_items(selection_state, result.selection, focused_item);
-    player_state::refresh_project(
-        player_state,
-        ProjectChange {
-            duration: Some(duration),
-            frame_rate: None,
-            audio: result.audio,
-            audio_beats: result.audio,
-            audio_waveforms: result.audio,
-            video: result.video,
-            live_preview: false,
-            captions: result.captions,
-            inspector: true,
-        },
-    );
-    Ok(())
 }
 
 pub fn inspect(
@@ -768,10 +741,10 @@ pub fn remux_mkv_to_mp4(input: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-pub(crate) fn remux_to_mp4(
+pub fn remux_to_mp4(
     input: &Path,
     cancellation: shrimply_resource_pipeline::CancelToken,
-) -> Result<crate::external_content::OwnedFile, String> {
+) -> Result<OwnedFile, String> {
     let mut path = input.with_extension("mp4");
     loop {
         match fs::OpenOptions::new()
@@ -791,7 +764,7 @@ pub(crate) fn remux_to_mp4(
             Err(error) => return Err(format!("could not create {}: {error}", path.display())),
         }
     }
-    let output = crate::external_content::OwnedFile::new(path);
+    let output = OwnedFile::new(path);
     remux(input, output.path(), cancellation)?;
     Ok(output)
 }
@@ -1236,4 +1209,32 @@ fn image_extension(extension: &str) -> bool {
     )
 }
 
-pub use crate::import_placement::*;
+pub struct OwnedFile {
+    path: PathBuf,
+    keep: bool,
+}
+
+impl OwnedFile {
+    pub fn new(path: PathBuf) -> Self {
+        Self { path, keep: false }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn keep(mut self) {
+        self.keep = true;
+    }
+}
+
+impl Drop for OwnedFile {
+    fn drop(&mut self) {
+        if !self.keep
+            && let Err(error) = fs::remove_file(&self.path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(path = %self.path.display(), %error, "Could not remove abandoned external import file");
+        }
+    }
+}

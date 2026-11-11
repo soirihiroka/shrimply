@@ -44,35 +44,7 @@ pub(crate) struct PendingDownload {
     batch: crate::import_queue::BatchId,
 }
 
-pub(crate) struct OwnedFile {
-    path: PathBuf,
-    keep: bool,
-}
-
-impl OwnedFile {
-    pub(crate) fn new(path: PathBuf) -> Self {
-        Self { path, keep: false }
-    }
-
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub(crate) fn keep(mut self) {
-        self.keep = true;
-    }
-}
-
-impl Drop for OwnedFile {
-    fn drop(&mut self) {
-        if !self.keep
-            && let Err(error) = fs::remove_file(&self.path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(path = %self.path.display(), %error, "Could not remove abandoned external import file");
-        }
-    }
-}
+pub(crate) use shrimply_media_import::OwnedFile;
 
 pub fn classify_external_text(text: String) -> ExternalText {
     let url = text
@@ -429,7 +401,9 @@ impl crate::scene::Scene {
                         .expect("external download exists");
                     match result.and_then(|file| {
                         self.external_owned_files.insert(pending.batch, vec![file]);
-                        let path = self.external_owned_files[&pending.batch][0].path.clone();
+                        let path = self.external_owned_files[&pending.batch][0]
+                            .path()
+                            .to_path_buf();
                         self.external_imports.enqueue_reserved(
                             pending.batch,
                             vec![path],

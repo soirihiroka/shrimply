@@ -1,4 +1,4 @@
-use crate::args::Options;
+use crate::render_options::Options;
 use shrimply_export_core::video::{ExportProgress, ExportVideoCodec};
 use shrimply_preferences_core as preferences;
 use shrimply_project_document::project;
@@ -11,41 +11,10 @@ use std::{
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 
 pub fn run(options: Options) -> Result<(), String> {
-    let path = options
-        .project
-        .canonicalize()
-        .map_err(|error| format!("Could not open {}: {error}", options.project.display()))?;
-    if !options.overwrite
-        && options
-            .output
-            .try_exists()
-            .map_err(|error| error.to_string())?
-    {
-        return Err(format!(
-            "Output already exists: {}. Use --overwrite to replace it.",
-            options.output.display()
-        ));
-    }
-    eprintln!("Loading {}", path.display());
-    let project = project::load_project_snapshot(&path)?;
+    eprintln!("Loading {}", options.project.display());
+    let (path, project) = load(&options)?;
     for source in project.executable_sources() {
         shrimply_trust_core::require(&source)?;
-    }
-    // The exporter also writes a benchmark sidecar; neither path may replace a source.
-    let mut benchmark_path = options.output.as_os_str().to_os_string();
-    benchmark_path.push(".benchmark.json");
-    for output in [&options.output, &PathBuf::from(benchmark_path)] {
-        let resolved = output
-            .canonicalize()
-            .or_else(|_| std::path::absolute(output))
-            .map_err(|error| format!("Could not resolve {}: {error}", output.display()))?;
-        if resolved == path {
-            return Err("Export destination would replace the input project".into());
-        }
-        shrimply_export_core::ensure_output_is_not_an_asset(&project, output)?;
-    }
-    if shrimply_export_core::video::export_duration(&project) <= project::Time::ZERO {
-        return Err("Project has no video or audio duration to render".into());
     }
     project::set_active_project_path(&path);
     #[cfg(target_os = "linux")]
@@ -183,4 +152,53 @@ fn settings(
         audio_bitrate_kbps: options.audio_bitrate,
         maximum_temporal_decoders: preferences.temporal_decoder_pool_size as usize,
     }
+}
+
+/// Validate saved inputs and output paths without initializing an execution backend.
+pub fn dry_run(options: &Options) -> Result<serde_json::Value, String> {
+    let (path, project) = load(options)?;
+    Ok(
+        serde_json::json!({"success":true,"dry_run":true,"validation":"partial","execution_mode":"saved","project":path,"output":options.output,"codec":format!("{:?}",options.codec),"container":format!("{:?}",options.container),"base_revision":shrimply_editing_api::preview::revision(&project)?,"deferred":["GPU setup, source execution, media decoding, encoding, and output creation were not performed"]}),
+    )
+}
+
+fn load(options: &Options) -> Result<(PathBuf, project::Project), String> {
+    let path = options
+        .project
+        .canonicalize()
+        .map_err(|error| format!("Could not open {}: {error}", options.project.display()))?;
+    if !options.overwrite
+        && options
+            .output
+            .try_exists()
+            .map_err(|error| error.to_string())?
+    {
+        return Err(format!(
+            "Output already exists: {}. Use --overwrite to replace it.",
+            options.output.display()
+        ));
+    }
+    let project = project::load_project_snapshot(&path)?;
+    // The exporter also writes a benchmark sidecar; neither path may replace a source.
+    let mut benchmark_path = options.output.as_os_str().to_os_string();
+    benchmark_path.push(".benchmark.json");
+    for output in [&options.output, &PathBuf::from(benchmark_path)] {
+        let resolved = output
+            .canonicalize()
+            .or_else(|_| std::path::absolute(output))
+            .map_err(|error| format!("Could not resolve {}: {error}", output.display()))?;
+        if resolved == path {
+            return Err("Export destination would replace the input project".into());
+        }
+        shrimply_export_core::ensure_output_is_not_an_asset(&project, output)?;
+    }
+    if shrimply_export_core::video::export_duration(&project) <= project::Time::ZERO {
+        return Err("Project has no video or audio duration to render".into());
+    }
+    if let Some(expected) = &options.if_revision
+        && shrimply_editing_api::preview::revision(&project)? != *expected
+    {
+        return Err("revision conflict: saved project changed; inspect it and retry".into());
+    }
+    Ok((path, project))
 }

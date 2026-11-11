@@ -312,7 +312,7 @@ pub fn interactive_requests() -> mpsc::Receiver<Request> {
     receiver
 }
 
-/// Called by an explicit import worker, never by preview, export, or MCP.
+/// Called by an explicit import worker, never by preview, export, or the editing API.
 pub fn approve_import(paths: Vec<PathBuf>) -> Result<(), String> {
     let review = Review::new(paths)?;
     if review.files.is_empty() {

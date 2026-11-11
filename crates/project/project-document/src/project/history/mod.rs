@@ -2,6 +2,7 @@ mod memory;
 mod status;
 mod storage;
 
+pub use memory::history_destination;
 pub use status::{CommitStatus, connect_commit_status, poll as poll_commit_status};
 pub use storage::{create_new_project_file, create_project_file, serialize_project_json};
 
@@ -151,6 +152,61 @@ pub fn commit_edit_checked(project: &Project, message: &str) -> Result<(), Strin
     }
     memory::commit(project, None);
     Ok(())
+}
+
+/// Persist a prepared API edit before advancing the in-memory undo history.
+pub fn commit_edit_saved(project: &Project, message: &str) -> Result<(), String> {
+    project
+        .validate()
+        .map_err(|error| format!("cannot commit invalid project: {error}"))?;
+    let sender = HISTORY_WORKER
+        .with(|slot| slot.borrow().as_ref().cloned())
+        .ok_or("project history is unavailable")?;
+    let (response_tx, response_rx) = mpsc::channel();
+    begin_commit_status(message);
+    sender
+        .send(HistoryJob::CommitSaved {
+            project: Box::new(project.clone()),
+            response_tx,
+        })
+        .map_err(|_| "project history worker stopped unexpectedly")?;
+    let result = response_rx
+        .recv()
+        .map_err(|_| "project history worker dropped the commit response")?;
+    finish_commit_status();
+    result?;
+    memory::commit(project, None);
+    Ok(())
+}
+
+/// Persist a history destination before moving its cursor or exposing the project.
+pub fn change_history_saved(project: &mut Project, redo: bool) -> Result<bool, String> {
+    let Some(candidate) = memory::history_destination(redo) else {
+        return Ok(false);
+    };
+    let mut candidate = candidate;
+    candidate.cursor_position = project.cursor_position;
+    candidate.timeline_zoom = project.timeline_zoom;
+    candidate.expanded_sequence_paths = project.expanded_sequence_paths.clone();
+    let sender = HISTORY_WORKER
+        .with(|slot| slot.borrow().as_ref().cloned())
+        .ok_or("project history is unavailable")?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(HistoryJob::CommitSaved {
+            project: Box::new(candidate),
+            response_tx,
+        })
+        .map_err(|_| "project history worker stopped unexpectedly")?;
+    response_rx
+        .recv()
+        .map_err(|_| "project history worker dropped the commit response")??;
+    if redo {
+        memory::redo(project);
+    } else {
+        memory::undo(project);
+    }
+    Ok(true)
 }
 
 pub fn commit_coalesced_edit(project: &Project, group: &str) -> bool {
@@ -307,6 +363,10 @@ fn queue_project(project: &Project, action: &str) -> bool {
 }
 
 enum HistoryJob {
+    CommitSaved {
+        project: Box<Project>,
+        response_tx: Sender<Result<(), String>>,
+    },
     Update {
         step: u64,
         project: Box<Project>,
@@ -395,6 +455,18 @@ fn start_history_worker(mut project: Project, mut path: PathBuf) -> SyncSender<H
             };
 
             match job {
+                HistoryJob::CommitSaved {
+                    project: updated,
+                    response_tx,
+                } => {
+                    let result = save_project(&path, &updated);
+                    if result.is_ok() {
+                        project = *updated;
+                        pending_save = false;
+                        pending_content = false;
+                    }
+                    let _ = response_tx.send(result);
+                }
                 HistoryJob::Update {
                     step,
                     project: updated,

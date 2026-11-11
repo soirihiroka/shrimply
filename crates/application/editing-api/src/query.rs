@@ -208,13 +208,20 @@ pub fn query_clips(
         scope_tracks(project, scope)?;
     }
     let offset = request.offset.unwrap_or(0);
-    let limit = request
-        .limit
-        .unwrap_or(DEFAULT_QUERY_LIMIT)
-        .min(MAX_QUERY_LIMIT);
+    if request.all && (request.offset.is_some() || request.limit.is_some()) {
+        return Err("all conflicts with pagination offset/limit".into());
+    }
+    let limit = if request.all {
+        usize::MAX
+    } else {
+        request
+            .limit
+            .unwrap_or(DEFAULT_QUERY_LIMIT)
+            .min(MAX_QUERY_LIMIT)
+    };
     let mut clips = presentations(project)?
         .into_iter()
-        .filter(|clip| in_requested_scope(&clip.summary.address, snapshot, request))
+        .filter(|clip| in_requested_scope(&clip.summary.address, request))
         .filter(|clip| {
             request
                 .kind
@@ -278,7 +285,7 @@ pub fn query_clips(
     Ok(QueryClipsResponse {
         clips,
         offset,
-        limit,
+        limit: if request.all { total } else { limit },
         total,
     })
 }
@@ -552,37 +559,14 @@ pub fn addresses_for_tracks(
     Ok(addresses)
 }
 
-fn in_requested_scope(
-    address: &ClipAddress,
-    snapshot: &LiveSnapshot,
-    request: &QueryClipsRequest,
-) -> bool {
-    if let Some(scope) = &request.scope {
-        return in_scope(
-            &address.sequence_path,
-            &scope.sequence_path,
-            request.recursive,
-        );
-    }
-    let scopes = match address.kind {
-        ClipKind::Comment => {
-            return snapshot.active_scope.instance_path.is_empty()
-                && address.sequence_path.is_empty();
-        }
-        ClipKind::Caption => {
-            return snapshot.active_scope.instance_path.is_empty()
-                && address.sequence_path.is_empty();
-        }
-        ClipKind::Video => &snapshot.active_scope.video_paths,
-        ClipKind::Audio => &snapshot.active_scope.audio_paths,
-    };
-    scopes.iter().any(|scope| {
-        in_scope(
-            &address.sequence_path,
-            &scope.sequence_path,
-            request.recursive,
-        )
-    })
+fn in_requested_scope(address: &ClipAddress, request: &QueryClipsRequest) -> bool {
+    let root = ScopeRef::default();
+    let scope = request.scope.as_ref().unwrap_or(&root);
+    in_scope(
+        &address.sequence_path,
+        &scope.sequence_path,
+        request.recursive,
+    )
 }
 
 fn range_matches(project: &Project, clip: &Presentation, request: &QueryClipsRequest) -> bool {

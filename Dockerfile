@@ -45,7 +45,7 @@ RUN make install install-qt DESTDIR=/stage PREFIX=/usr
 
 # --- Bundle the runtime libraries
 RUN mkdir -p /stage/usr/lib/shrimply && \
-    for bin in shrimply shrimply-editor shrimply-mcp shrimply-qt shrimply-editor-qt; do \
+    for bin in shrimply shrimply-editor shrimply-qt shrimply-editor-qt; do \
         ldd "/stage/usr/bin/$bin" | awk '{print $3}' | grep '^/'; \
     done | sort -u \
       | grep -Ev '/(ld-linux[^/]*|libc|libm|libdl|libpthread|librt|libresolv)\.so' \
@@ -111,7 +111,6 @@ RUN for bin in shrimply shrimply-editor shrimply-qt shrimply-editor-qt; do \
         printf '#!/bin/sh\nhere="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\nexport GI_TYPELIB_PATH="$here/../lib/shrimply/girepository-1.0"\nexport GSETTINGS_SCHEMA_DIR="$here/../share/glib-2.0/schemas"\nexport XDG_DATA_DIRS="$here/../share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\nexport FLEXIBLASRC="$here/../lib/shrimply/flexiblasrc"\nexport FLEXIBLAS_LIBRARY_PATH="$here/../lib/shrimply/flexiblas"\nexec "$here/%s.bin" "$@"\n' "$bin" > "/stage/usr/bin/$bin"; \
         chmod 0755 "/stage/usr/bin/$bin"; \
     done
-RUN patchelf --set-rpath '$ORIGIN/../lib/shrimply' /stage/usr/bin/shrimply-mcp
 
 RUN printf '[Paths]\nPrefix = ../lib/shrimply/qt6\nPlugins = plugins\nImports = qml\nQml2Imports = qml\n' \
     > /stage/usr/bin/qt.conf

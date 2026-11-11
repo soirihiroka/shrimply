@@ -64,7 +64,7 @@ License
    :caption: Compute and automation
 
    server/index
-   integrations/mcp
+   integrations/cli
 
 .. toctree::
    :maxdepth: 2

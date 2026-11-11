@@ -44,7 +44,9 @@ members = [
     "crates/media/visual/manim/manim-cuda",
     "crates/media/visual/manim/manim-metal",
     "crates/media/media-info",
-    "crates/integrations/mcp",
+    "crates/application/editing-api",
+    "crates/application/editing-runtime",
+    "crates/media/media-import",
     "crates/ui/paint/paint-edit-skia",
     "crates/media/visual/paint/paint-geometry",
     "crates/media/visual/paint/paint-interpolation",
@@ -154,6 +156,10 @@ default-members = ["crates/binaries/editor-gtk", "crates/binaries/launcher-gtk"]
 exclude = ["external/vtracer"]
 
 [workspace.dependencies]
+shrimply-editing-runtime = { path = "crates/application/editing-runtime" }
+shrimply-media-import = { path = "crates/media/media-import" }
+clap = { version = "4.6", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "string"] }
+regex = "1"
 shrimply-cli = { path = "crates/application/cli" }
 shrimply-trust-core = { path = "crates/application/trust-core" }
 shrimply-caption-export-core = { path = "crates/render/export/caption-export-core" }
@@ -223,7 +229,7 @@ shrimply-math-core = { path = "crates/math/core" }
 shrimply-math-geometry = { path = "crates/math/geometry" }
 shrimply-math-interpolation = { path = "crates/math/interpolation" }
 shrimply-math-media = { path = "crates/math/media" }
-shrimply-mcp = { path = "crates/integrations/mcp", default-features = false }
+shrimply-editing-api = { path = "crates/application/editing-api" }
 shrimply-media-info = { path = "crates/media/media-info" }
 shrimply-mesh-flow-stabilization = { path = "crates/media/visual/stabilization/mesh-flow-stabilization" }
 shrimply-nvidia-optical-flow = { path = "crates/media/visual/stabilization/nvidia-optical-flow" }
@@ -300,7 +306,7 @@ autodiff = "0.7"
 cached = { version = "4", default-features = false, features = ["ahash"] }
 cairo = { package = "cairo-rs", version = "0.22" }
 cint = "0.3"
-cpal = "0.18"
+cpal = { version = "0.18.2", features = ["pipewire", "pulseaudio"] }
 cxx = "1"
 cxx-qt = "0.10"
 cxx-qt-build = "0.10"
@@ -371,7 +377,6 @@ rayon = "1"
 realfft = "3"
 reqwest = { version = "0.13", default-features = false }
 libloading = "0.9"
-rmcp = { version = "3", default-features = false, features = ["macros", "server", "transport-io"] }
 rhai = "1"
 rmp-serde = "1"
 rust-ini = "0.21"

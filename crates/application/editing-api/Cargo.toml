@@ -1,24 +1,9 @@
 [package]
-name = "shrimply-mcp"
+name = "shrimply-editing-api"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-name = "shrimply_mcp"
-path = "src/lib.rs"
-
-[[bin]]
-name = "shrimply-mcp"
-path = "src/main.rs"
-required-features = ["server"]
-
-[features]
-default = ["server"]
-server = ["dep:rmcp", "dep:tokio"]
-
 [dependencies]
-base64.workspace = true
-rmcp = { workspace = true, optional = true }
 schemars.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -28,5 +13,11 @@ shrimply-media-info = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-timeline-edit = { workspace = true }
 shrimply-visual-modifiers = { workspace = true }
-tokio = { workspace = true, optional = true }
 uuid = { workspace = true, features = ["serde"] }
+shrimply-local-ipc.workspace = true
+shrimply-path-core.workspace = true
+sha2.workspace = true
+regex.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_System_Threading"] }

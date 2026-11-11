@@ -8,6 +8,7 @@ use super::CHANNELS;
 use super::SharedAudioLevels;
 
 const RECOVERABLE_ERROR_LOG_INTERVAL: Duration = Duration::from_secs(1);
+const STREAM_INIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub(super) struct PlaybackWindow {
@@ -18,6 +19,7 @@ pub(super) struct PlaybackWindow {
 
 pub(super) type SharedPlaybackWindow = Arc<RwLock<Arc<PlaybackWindow>>>;
 
+#[derive(Clone)]
 pub(super) struct PlaybackFailure {
     pub(super) message: String,
     pub(super) requested: bool,
@@ -26,6 +28,7 @@ pub(super) struct PlaybackFailure {
 #[derive(Clone)]
 pub(super) struct OutputState {
     pub(super) window: SharedPlaybackWindow,
+    pub(super) shutting_down: Arc<AtomicBool>,
     pub(super) requested: Arc<AtomicBool>,
     pub(super) playing: Arc<AtomicBool>,
     pub(super) previewing: Arc<AtomicBool>,
@@ -150,7 +153,7 @@ pub(super) fn build_stream(
                 *config,
                 move |data: &mut [f32], _| write_f32(data, &output_state),
                 move |error| handle_output_error(error, &error_state),
-                None,
+                Some(STREAM_INIT_TIMEOUT),
             )
             .map_err(|error| error.to_string()),
         cpal::SampleFormat::I16 => device
@@ -158,7 +161,7 @@ pub(super) fn build_stream(
                 *config,
                 move |data: &mut [i16], _| write_i16(data, &output_state),
                 move |error| handle_output_error(error, &error_state),
-                None,
+                Some(STREAM_INIT_TIMEOUT),
             )
             .map_err(|error| error.to_string()),
         cpal::SampleFormat::U16 => device
@@ -166,7 +169,7 @@ pub(super) fn build_stream(
                 *config,
                 move |data: &mut [u16], _| write_u16(data, &output_state),
                 move |error| handle_output_error(error, &error_state),
-                None,
+                Some(STREAM_INIT_TIMEOUT),
             )
             .map_err(|error| error.to_string()),
         other => Err(format!("Unsupported audio output sample format {other:?}")),
@@ -251,6 +254,9 @@ fn write_frame<T: Copy>(frame: &mut [T], left: f32, right: f32, convert: impl Fn
 }
 
 fn handle_output_error(error: cpal::Error, output_state: &OutputState) {
+    if output_state.shutting_down.load(Ordering::SeqCst) {
+        return;
+    }
     if matches!(
         error.kind(),
         cpal::ErrorKind::Xrun | cpal::ErrorKind::RealtimeDenied | cpal::ErrorKind::DeviceChanged
@@ -273,13 +279,16 @@ fn handle_output_error(error: cpal::Error, output_state: &OutputState) {
 }
 
 pub(super) fn fail_output(message: String, output_state: &OutputState) {
-    tracing::error!("{message}");
     let mut failure = output_state
         .failure
         .lock()
         .expect("audio failure lock poisoned");
+    if failure.is_some() || output_state.shutting_down.load(Ordering::SeqCst) {
+        return;
+    }
+    tracing::error!("{message}");
     let requested = output_state.requested.swap(false, Ordering::SeqCst);
     output_state.playing.store(false, Ordering::SeqCst);
     output_state.previewing.store(false, Ordering::SeqCst);
-    failure.get_or_insert(PlaybackFailure { message, requested });
+    *failure = Some(PlaybackFailure { message, requested });
 }

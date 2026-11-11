@@ -4,7 +4,6 @@ use shrimply_components_gtk::ui::I18nFileFilterExt;
 use shrimply_export_gtk as export;
 use shrimply_process_reporting::crash;
 mod header_menu;
-mod mcp;
 use shrimply_components_gtk::project_settings::ProjectSettingsSelector;
 use shrimply_editor_state::player_state;
 use shrimply_inspector_gtk as inspector;
@@ -116,23 +115,7 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     let preferences = session.preferences.clone();
     let audio_levels = session.audio_levels.clone();
     let audio_player = session.audio_player.clone();
-    let mcp_server = RefCell::new(if std::env::var_os("FLATPAK_ID").is_some() {
-        tracing::info!("Live MCP bridge disabled in Flatpak");
-        None
-    } else {
-        Some(
-            mcp::start(
-                project.clone(),
-                player_state.clone(),
-                selection_state.clone(),
-                preferences.clone(),
-            )
-            .unwrap_or_else(|error| panic!("could not start live MCP bridge: {error}")),
-        )
-    });
-    window.connect_destroy(move |_| {
-        mcp_server.borrow_mut().take();
-    });
+
     let timeline = timeline::new(
         project.clone(),
         player_state.clone(),

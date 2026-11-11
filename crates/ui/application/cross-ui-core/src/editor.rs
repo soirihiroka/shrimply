@@ -58,6 +58,7 @@ pub struct SessionUpdate {
 }
 
 pub struct EditorSession {
+    editing: shrimply_editing_runtime::Server,
     pub project: Rc<RefCell<Project>>,
     pub player_state: player_state::SharedPlayerState,
     pub playback_performance: shrimply_playback_performance::SharedCollector,
@@ -129,11 +130,19 @@ impl EditorSession {
             let project = project.borrow();
             RefCell::new((project.name.clone(), project.tags.clone()))
         };
+        let selection_state = selection_state::new();
+        let editing = shrimply_editing_runtime::start(
+            project.clone(),
+            player_state.clone(),
+            selection_state.clone(),
+            preferences.clone(),
+        )?;
         Ok(Self {
+            editing,
             project,
             player_state,
             playback_performance,
-            selection_state: selection_state::new(),
+            selection_state,
             preview_focus: preview_focus::new(),
             preferences,
             audio_levels,
@@ -148,6 +157,7 @@ impl EditorSession {
     }
 
     pub fn poll(&self) -> SessionUpdate {
+        self.editing.poll();
         project::poll_commit_status();
         player_state::tick(&self.player_state);
         let audio_playback_stopped = self.audio_player.take_failure();

@@ -31,7 +31,7 @@ pub struct ScopeRef {
     pub sequence_path: Vec<String>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipKind {
     Comment,
@@ -40,7 +40,7 @@ pub enum ClipKind {
     Audio,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct TrackAddress {
     pub kind: ClipKind,
     #[serde(default)]
@@ -48,7 +48,7 @@ pub struct TrackAddress {
     pub track_id: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct ClipAddress {
     pub kind: ClipKind,
     #[serde(default)]
@@ -85,7 +85,78 @@ pub struct LiveSnapshot {
     pub asset_revisions: BTreeMap<String, u64>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ApiCall {
+    pub name: String,
+    #[serde(default = "empty_arguments")]
+    pub arguments: Value,
+    #[serde(default)]
+    pub dry_run: bool,
+    pub if_revision: Option<String>,
+}
+
+fn empty_arguments() -> Value {
+    serde_json::json!({})
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectSettingsRequest {
+    pub name: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub fps: Option<ExactFraction>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SplitClipRequest {
+    pub address: ClipAddress,
+    pub frame: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DuplicateClipRequest {
+    pub address: ClipAddress,
+    pub start_frame: u64,
+    pub destination: Option<TrackAddress>,
+    #[serde(default)]
+    pub collision: CollisionBehavior,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReorderTrackRequest {
+    pub address: TrackAddress,
+    /// Zero-based destination within the same track kind and sequence scope.
+    pub index: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TextReplaceRequest {
+    pub addresses: Option<Vec<ClipAddress>>,
+    pub track_id: Option<String>,
+    pub range: Option<FrameRange>,
+    pub scope: Option<ScopeRef>,
+    #[serde(default)]
+    pub recursive: bool,
+    #[serde(default)]
+    pub all: bool,
+    pub find: Option<String>,
+    pub replace: Option<String>,
+    /// Rust regex syntax in a sed-style s/pattern/replacement/gi expression.
+    pub expression: Option<String>,
+    #[serde(default)]
+    pub global: bool,
+    #[serde(default)]
+    pub ignore_case: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BridgeRequest {
     pub project_path: String,
     pub command: BridgeCommand,
@@ -97,17 +168,7 @@ pub enum BridgeCommand {
     Handshake,
     Version,
     Snapshot,
-    GetManimClip(GetManimClipRequest),
-    SetManimClip(SetManimClipRequest),
-    ReloadManimSource(ReloadManimSourceRequest),
-    ListSttModels,
-    ListTtsModels,
-    Seek { frame: u64 },
-    ViewFrame { frame: u64 },
-    AnalyzeTransparentFill(AnalyzeTransparentFillRequest),
-    TranscribeAudio(TranscribeAudioRequest),
-    GenerateTts(GenerateTtsRequest),
-    Apply(EditRequest),
+    Execute(ApiCall),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -129,17 +190,14 @@ pub enum RangeMatch {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConnectProjectRequest {
     /// Absolute path to a native .shrimp video project already open in Shrimply.
     pub project_path: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct ConnectProjectResponse {
-    pub project_path: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateProjectRequest {
     /// Absolute path for the new native .shrimp video project.
     pub project_path: String,
@@ -153,15 +211,12 @@ pub struct CreateProjectRequest {
     pub fps: Option<ExactFraction>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct CreateProjectResponse {
-    pub project_path: String,
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetEditorStateRequest {}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetVersionRequest {}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -182,18 +237,22 @@ impl BuildVersion {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct VersionResponse {
-    pub mcp: BuildVersion,
+    pub cli: BuildVersion,
     pub editor: Option<BuildVersion>,
     /// Includes errors from an older editor that does not implement this query.
     pub editor_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListScopesRequest {}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QueryClipsRequest {
-    /// Defaults to the editor's active scope.
+    #[serde(default)]
+    pub all: bool,
+    /// Defaults to the root sequence scope.
     pub scope: Option<ScopeRef>,
     #[serde(default)]
     pub recursive: bool,
@@ -213,12 +272,14 @@ pub struct QueryClipsRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetClipRequest {
     pub address: Option<ClipAddress>,
     pub item_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetClipInfoRequest {
     pub address: Option<ClipAddress>,
     pub item_id: Option<String>,
@@ -227,6 +288,7 @@ pub struct GetClipInfoRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetManimClipRequest {
     pub address: ClipAddress,
 }
@@ -251,6 +313,7 @@ pub enum ManimParameterValue {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetManimClipRequest {
     pub address: ClipAddress,
     /// Select a discovered scene. Changing scenes clears all parameter overrides.
@@ -261,6 +324,7 @@ pub struct SetManimClipRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReloadManimSourceRequest {
     pub address: ClipAddress,
 }
@@ -285,6 +349,7 @@ pub struct ReloadManimSourceResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetTrackRequest {
     pub address: TrackAddress,
     pub offset: Option<usize>,
@@ -292,6 +357,7 @@ pub struct GetTrackRequest {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QueryExpressionsRequest {
     pub address: Option<ClipAddress>,
     pub source_contains: Option<String>,
@@ -300,11 +366,13 @@ pub struct QueryExpressionsRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SeekPlayheadRequest {
     pub frame: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ViewFrameRequest {
     pub frame: u64,
 }
@@ -316,6 +384,7 @@ pub struct ViewFrameResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AnalyzeTransparentFillRequest {
     pub address: ClipAddress,
     pub modifier_id: String,
@@ -348,6 +417,7 @@ pub struct InitialClipProperties {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ImportEntry {
     pub source: String,
     #[serde(default)]
@@ -360,6 +430,7 @@ pub struct ImportEntry {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InsertFilesRequest {
     pub files: Vec<ImportEntry>,
     pub frame: Option<u64>,
@@ -373,6 +444,7 @@ pub struct InsertFilesRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CaptionCueInput {
     pub start_frame: u64,
     pub end_frame: u64,
@@ -382,6 +454,7 @@ pub struct CaptionCueInput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InsertCaptionsRequest {
     /// Existing root caption track. Omit to create a new caption track.
     pub track: Option<TrackAddress>,
@@ -395,6 +468,7 @@ pub struct InsertCaptionsRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InsertTtsRequest {
     /// Existing audio track. Omit to choose an audio track with room.
     pub track: Option<TrackAddress>,
@@ -402,13 +476,14 @@ pub struct InsertTtsRequest {
     pub frame: Option<u64>,
     /// Defaults to the editor's configured visual item duration.
     pub duration_frames: Option<u64>,
-    /// Defaults to the edit-script or editor's active scope.
+    /// Defaults to the edit-script scope or root sequence.
     pub scope: Option<ScopeRef>,
     #[serde(default)]
     pub collision: CollisionBehavior,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InsertTextRequest {
     pub text: String,
     /// Existing video track. Omit to choose one with room or create a new track.
@@ -416,13 +491,14 @@ pub struct InsertTextRequest {
     /// Defaults to the edit-script anchor or current playhead.
     pub frame: Option<u64>,
     pub duration_frames: u64,
-    /// Defaults to the edit-script or editor's active scope.
+    /// Defaults to the edit-script scope or root sequence.
     pub scope: Option<ScopeRef>,
     #[serde(default)]
     pub collision: CollisionBehavior,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InsertTextOperation {
     pub text: String,
     pub track: Option<TrackAddress>,
@@ -443,6 +519,7 @@ pub enum TtsInputValue {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListTtsModelsRequest {}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -452,6 +529,7 @@ pub struct ListTtsModelsResponse {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListSttModelsRequest {}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -461,6 +539,7 @@ pub struct ListSttModelsResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TranscribeAudioRequest {
     /// Transcribe every audio clip on this track. Provide exactly one of track or clips.
     pub track: Option<TrackAddress>,
@@ -474,6 +553,7 @@ pub struct TranscribeAudioRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GenerateTtsRequest {
     pub text: String,
     /// Defaults to the editor's last selected model, then the server's first model.
@@ -484,13 +564,14 @@ pub struct GenerateTtsRequest {
     pub track: Option<TrackAddress>,
     /// Defaults to the current playhead.
     pub frame: Option<u64>,
-    /// Defaults to the editor's active scope.
+    /// Defaults to the root sequence scope.
     pub scope: Option<ScopeRef>,
     #[serde(default)]
     pub collision: CollisionBehavior,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveClipRequest {
     pub address: ClipAddress,
     /// Absolute projected frame. Provide exactly one of this and offset_frames.
@@ -503,6 +584,7 @@ pub struct MoveClipRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TrimClipRequest {
     pub address: ClipAddress,
     pub start_frame: Option<u64>,
@@ -516,11 +598,13 @@ pub struct TrimClipRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeleteClipsRequest {
     pub addresses: Vec<ClipAddress>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetClipPropertiesRequest {
     pub address: ClipAddress,
     pub text: Option<String>,
@@ -562,6 +646,7 @@ pub struct CropEdges {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetVideoTransformRequest {
     pub address: ClipAddress,
     /// Applied first; explicitly supplied fields then override the fitted transform.
@@ -591,6 +676,7 @@ pub struct KeyframeInput {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpsertKeyframesRequest {
     pub address: ClipAddress,
     /// JSON Pointer to a scalar or vec2 TimelineValue in get_clip metadata.
@@ -599,6 +685,7 @@ pub struct UpsertKeyframesRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeleteKeyframesRequest {
     pub address: ClipAddress,
     /// JSON Pointer to a scalar or vec2 TimelineValue in get_clip metadata.
@@ -608,6 +695,7 @@ pub struct DeleteKeyframesRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpsertPropertyExpressionRequest {
     pub address: ClipAddress,
     /// JSON Pointer to a scalar or vec2 TimelineValue in get_clip metadata.
@@ -618,6 +706,7 @@ pub struct UpsertPropertyExpressionRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeletePropertyExpressionRequest {
     pub address: ClipAddress,
     /// JSON Pointer to a scalar or vec2 TimelineValue in get_clip metadata.
@@ -640,12 +729,14 @@ pub struct ClipTransitionUpdate {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetClipTransitionsRequest {
     pub address: ClipAddress,
     pub updates: Vec<ClipTransitionUpdate>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetExpressionRequest {
     pub address: ClipAddress,
     pub expression_id: String,
@@ -654,12 +745,14 @@ pub struct SetExpressionRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetTrackEnabledRequest {
     pub address: TrackAddress,
     pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetCaptionTrackLanguageRequest {
     pub address: TrackAddress,
     /// CLDR locale identifier such as en_US, en_GB, or ja_JP. Null clears it.
@@ -667,11 +760,13 @@ pub struct SetCaptionTrackLanguageRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DeleteTrackRequest {
     pub address: TrackAddress,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateTrackRequest {
     pub kind: ClipKind,
     pub scope: Option<ScopeRef>,
@@ -679,6 +774,7 @@ pub struct CreateTrackRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateTrackOperation {
     pub kind: ClipKind,
     pub enabled: Option<bool>,
@@ -687,6 +783,11 @@ pub struct CreateTrackOperation {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "type", content = "args")]
 pub enum EditOperation {
+    SetProjectSettings(ProjectSettingsRequest),
+    SplitClip(SplitClipRequest),
+    DuplicateClip(DuplicateClipRequest),
+    ReorderTrack(ReorderTrackRequest),
+    ReplaceText(TextReplaceRequest),
     InsertFiles(InsertFilesRequest),
     InsertCaptions(InsertCaptionsRequest),
     InsertTts(InsertTtsRequest),
@@ -709,6 +810,7 @@ pub enum EditOperation {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RunEditScriptRequest {
     pub frame: Option<u64>,
     pub scope: Option<ScopeRef>,
@@ -716,6 +818,7 @@ pub struct RunEditScriptRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EditRequest {
     pub history_label: String,
     pub frame: Option<u64>,
@@ -862,6 +965,8 @@ pub struct ProjectClipsResource {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditOperationResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
     pub index: usize,
     pub operation: String,
     pub changed_addresses: Vec<ClipAddress>,
@@ -877,3 +982,27 @@ pub struct EditResponse {
     pub revision: u64,
 }
 use std::collections::BTreeMap;
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RenderProjectRequest {
+    /// Destination file. Existing files require overwrite=true.
+    pub output: String,
+    /// h264, h265, or gif.
+    pub codec: Option<String>,
+    /// mp4, mkv, or gif; defaults to the output extension.
+    pub container: Option<String>,
+    /// Positive exact rate; defaults to the project frame rate. Named flags also accept decimals or ratios such as 30000/1001.
+    pub fps: Option<ExactFraction>,
+    /// Video bitrate in Kbps; defaults to 10000.
+    pub video_bitrate: Option<u32>,
+    /// aac (default), fdk-aac, or opus; macOS also supports audiotoolbox-aac.
+    pub audio_encoder: Option<String>,
+    /// Audio bitrate in Kbps; defaults to 192.
+    pub audio_bitrate: Option<u32>,
+    /// Audio sample rate in Hz; defaults to 48000.
+    pub audio_sample_rate: Option<u32>,
+    /// Replace an existing destination file.
+    #[serde(default)]
+    pub overwrite: bool,
+}

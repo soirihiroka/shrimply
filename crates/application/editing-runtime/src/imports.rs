@@ -3,13 +3,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use shrimply_asset::{Asset, AssetSnapshot};
-use shrimply_math_core::{Time, time_from_frame};
-use shrimply_mcp::edit::MutationResult;
-use shrimply_mcp::protocol::{
+use shrimply_editing_api::edit::MutationResult;
+use shrimply_editing_api::protocol::{
     ClipKind, CollisionBehavior, EditOperation, EditOperationResult, EditRequest,
     GenerateTtsRequest, ImportEntry, InitialClipProperties, InsertTtsRequest, ScopeRef,
     SetClipPropertiesRequest,
 };
+use shrimply_math_core::{Time, time_from_frame};
 use shrimply_project_document::project::{
     AudioItem, AudioSource, ItemKind, Project, ProjectItem, SequenceScopeId,
     TrackAddress as ModelTrackAddress,
@@ -18,7 +18,7 @@ use shrimply_timeline_edit::TrackKind;
 use shrimply_timeline_edit::edit as timeline_edit;
 use uuid::Uuid;
 
-use crate::timeline::import as native;
+use shrimply_media_import as native;
 
 pub struct PreparedEdit {
     pub project: Project,
@@ -74,10 +74,11 @@ impl PreparedEdit {
             .zip(&self.operations)
             .enumerate()
             .map(|(index, (mutation, operation))| {
-                let changed_presentations = shrimply_mcp::query::presentations_affected_by_items(
-                    &self.project,
-                    &mutation.changed_item_ids.iter().copied().collect(),
-                )?;
+                let changed_presentations =
+                    shrimply_editing_api::query::presentations_affected_by_items(
+                        &self.project,
+                        &mutation.changed_item_ids.iter().copied().collect(),
+                    )?;
                 let mut changed_addresses = changed_presentations
                     .iter()
                     .map(|clip| clip.address.clone())
@@ -94,6 +95,7 @@ impl PreparedEdit {
                 let mut presentations = changed_presentations;
                 presentations.extend(mutation.deleted_presentations.clone());
                 Ok(EditOperationResult {
+                    details: mutation.details.clone(),
                     index,
                     operation: (*operation).to_string(),
                     changed_addresses,
@@ -151,7 +153,7 @@ pub fn prepare(
                 &script_scope,
                 default_visual_duration,
             ),
-            _ => shrimply_mcp::edit::apply_non_import(
+            _ => shrimply_editing_api::edit::apply_non_import(
                 &mut prepared.project,
                 operation,
                 anchor,
@@ -254,7 +256,7 @@ pub fn insert_generated_tts(
 }
 
 struct TtsInsertion<'a> {
-    track: Option<&'a shrimply_mcp::protocol::TrackAddress>,
+    track: Option<&'a shrimply_editing_api::protocol::TrackAddress>,
     scope: &'a ResolvedScope,
     frame: u64,
     duration: Time,
@@ -279,7 +281,7 @@ fn insert_tts_item(
         collision,
     } = insertion;
     let target = track
-        .map(shrimply_mcp::query::model_track_address)
+        .map(shrimply_editing_api::query::model_track_address)
         .transpose()?;
     if target
         .as_ref()
@@ -384,25 +386,29 @@ fn insert_tts_item(
         Ok((item_id, overwritten))
     })?;
     let deleted_presentations =
-        shrimply_mcp::query::presentations_affected_by_items(&original, &overwritten)?;
+        shrimply_editing_api::query::presentations_affected_by_items(&original, &overwritten)?;
     let created_track_ids = track_ids(project)
         .difference(&original_tracks)
         .copied()
         .collect();
     Ok(MutationResult {
+        details: None,
         changed_item_ids: vec![item_id],
         deleted_addresses: deleted_presentations
             .iter()
             .map(|clip| clip.address.clone())
             .collect(),
         deleted_presentations,
-        changed_tracks: shrimply_mcp::query::addresses_for_tracks(project, &created_track_ids)?,
+        changed_tracks: shrimply_editing_api::query::addresses_for_tracks(
+            project,
+            &created_track_ids,
+        )?,
     })
 }
 
 fn apply_import(
     prepared: &mut PreparedEdit,
-    request: &shrimply_mcp::protocol::InsertFilesRequest,
+    request: &shrimply_editing_api::protocol::InsertFilesRequest,
     script_anchor: u64,
     script_scope: &ResolvedScope,
     default_visual_duration: Time,
@@ -468,7 +474,7 @@ fn apply_import(
                     .ok_or_else(|| "remux output has no file name".to_string())?;
                 source.stored.set_file_name(name);
             }
-            let frame = shrimply_mcp::edit::frame_with_offset(anchor, entry.offset_frames)
+            let frame = shrimply_editing_api::edit::frame_with_offset(anchor, entry.offset_frames)
                 .map_err(|error| format!("import {error}"))?;
             let projected_start = time_from_frame(frame, project.fps)
                 .ok_or_else(|| "import frame exceeds the supported exact range".to_string())?;
@@ -520,7 +526,7 @@ fn apply_import(
         }
         Ok(())
     })?;
-    let deleted_presentations = shrimply_mcp::query::presentations_affected_by_items(
+    let deleted_presentations = shrimply_editing_api::query::presentations_affected_by_items(
         &original_project,
         &overwritten_item_ids,
     )?;
@@ -529,13 +535,17 @@ fn apply_import(
         .copied()
         .collect();
     Ok(MutationResult {
+        details: None,
         changed_item_ids,
         deleted_addresses: deleted_presentations
             .iter()
             .map(|clip| clip.address.clone())
             .collect(),
         deleted_presentations,
-        changed_tracks: shrimply_mcp::query::addresses_for_tracks(project, &created_track_ids)?,
+        changed_tracks: shrimply_editing_api::query::addresses_for_tracks(
+            project,
+            &created_track_ids,
+        )?,
     })
 }
 
@@ -903,7 +913,7 @@ fn apply_initial_properties(
     for address in addresses {
         let kind = address.kind();
         let request = SetClipPropertiesRequest {
-            address: shrimply_mcp::query::protocol_item_address(&address),
+            address: shrimply_editing_api::query::protocol_item_address(&address),
             text: (kind == ItemKind::Caption)
                 .then(|| properties.text.clone())
                 .flatten(),
@@ -929,7 +939,12 @@ fn apply_initial_properties(
             continue;
         }
         let operation = EditOperation::SetClipProperties(request);
-        shrimply_mcp::edit::apply_non_import(project, &operation, 0, &SequenceScopeId::root())?;
+        shrimply_editing_api::edit::apply_non_import(
+            project,
+            &operation,
+            0,
+            &SequenceScopeId::root(),
+        )?;
     }
     Ok(())
 }
@@ -1050,7 +1065,7 @@ fn validate_targets(
     scope: &SequenceScopeId,
 ) -> Result<(), String> {
     for target in entries.iter().flat_map(|entry| &entry.targets) {
-        let address = shrimply_mcp::query::model_track_address(target)?;
+        let address = shrimply_editing_api::query::model_track_address(target)?;
         if project.track(&address).is_none() {
             return Err(format!("target track {} was not found", target.track_id));
         }
@@ -1087,7 +1102,7 @@ fn import_start(
         .targets
         .iter()
         .filter(|target| target.kind == kind)
-        .map(|target| shrimply_mcp::query::parse_path(&target.sequence_path))
+        .map(|target| shrimply_editing_api::query::parse_path(&target.sequence_path))
         .collect::<Result<HashSet<_>, _>>()?;
     if target_paths.len() > 1 {
         return Err(format!(
@@ -1117,7 +1132,7 @@ fn import_start(
 }
 
 fn resolve_scope(project: &Project, scope: &ScopeRef) -> Result<ResolvedScope, String> {
-    let path = shrimply_mcp::query::parse_path(&scope.sequence_path)?;
+    let path = shrimply_editing_api::query::parse_path(&scope.sequence_path)?;
     if path.is_empty() {
         return Ok(ResolvedScope {
             logical: SequenceScopeId::root(),
@@ -1215,7 +1230,7 @@ impl Drop for StagedDirectory {
         if !self.promoted && self.staging.exists() {
             fs::remove_dir_all(&self.staging).unwrap_or_else(|error| {
                 panic!(
-                    "could not clean staged MCP import {}: {error}",
+                    "could not clean staged editing API import {}: {error}",
                     self.staging.display()
                 )
             });
@@ -1387,6 +1402,11 @@ fn sanitized_name(name: &str) -> String {
 
 fn operation_name(operation: &EditOperation) -> &'static str {
     match operation {
+        EditOperation::SetProjectSettings(_) => "set_project_settings",
+        EditOperation::SplitClip(_) => "split_clip",
+        EditOperation::DuplicateClip(_) => "duplicate_clip",
+        EditOperation::ReorderTrack(_) => "reorder_track",
+        EditOperation::ReplaceText(_) => "replace_text",
         EditOperation::InsertFiles(_) => "insert_files",
         EditOperation::InsertCaptions(_) => "insert_captions",
         EditOperation::InsertTts(_) => "insert_tts",

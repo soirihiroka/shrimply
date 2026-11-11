@@ -451,7 +451,7 @@ version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ece0579b43cf6e927b3370c7d44359c7122e7e52b3ea635bc8484da571442edb"
 dependencies = [
- "darling 0.20.11",
+ "darling",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -549,18 +549,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "rand_core",
-]
-
-[[package]]
-name = "chrono"
-version = "0.4.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
-dependencies = [
- "iana-time-zone",
- "num-traits",
- "serde",
- "windows-link",
 ]
 
 [[package]]
@@ -803,6 +791,7 @@ dependencies = [
  "block2",
  "coreaudio-rs",
  "dasp_sample",
+ "futures",
  "jni",
  "js-sys",
  "libc",
@@ -818,6 +807,9 @@ dependencies = [
  "objc2-core-audio-types",
  "objc2-core-foundation",
  "objc2-foundation",
+ "pipewire",
+ "portable-atomic",
+ "pulseaudio",
  "web-sys",
  "windows",
  "windows-core",
@@ -1032,18 +1024,8 @@ version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
 dependencies = [
- "darling_core 0.20.11",
- "darling_macro 0.20.11",
-]
-
-[[package]]
-name = "darling"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed17f5901b6630b993ca003def43f2f8ef4014fc13b047b57aad617ff32bc2ec"
-dependencies = [
- "darling_core 0.24.1",
- "darling_macro 0.24.1",
+ "darling_core",
+ "darling_macro",
 ]
 
 [[package]]
@@ -1061,38 +1043,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "darling_core"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6837e2cf7485aaae18f86181d2f0e9a7ed297a025e220aeabf63fdebd3a2ddff"
-dependencies = [
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim 0.11.1",
- "syn 3.0.9",
-]
-
-[[package]]
 name = "darling_macro"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
 dependencies = [
- "darling_core 0.20.11",
+ "darling_core",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ac7135c3ef02b2f7833bbeb1be5ba7f966dcde8a87c6b87f65a778d71a02785"
-dependencies = [
- "darling_core 0.24.1",
- "quote",
- "syn 3.0.9",
 ]
 
 [[package]]
@@ -1396,6 +1354,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fba3fe847045ecff794b9c138293a80db914678c453ad63fbf0c6a9eb6e00b22"
 dependencies = [
  "encoding_rs",
+]
+
+[[package]]
+name = "enum-primitive-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba7795da175654fe16979af73f81f26a8ea27638d8d9823d317016888a63dc4c"
+dependencies = [
+ "num-traits",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -2477,30 +2446,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iana-time-zone"
-version = "0.1.65"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470"
-dependencies = [
- "android_system_properties",
- "core-foundation-sys",
- "iana-time-zone-haiku",
- "js-sys",
- "log",
- "wasm-bindgen",
- "windows-core",
-]
-
-[[package]]
-name = "iana-time-zone-haiku"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "icu_collections"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2709,8 +2654,6 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
- "serde",
- "serde_core",
 ]
 
 [[package]]
@@ -4549,6 +4492,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulseaudio"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ba79a4c6904c987cc31fa50e9b750539404511c2dbd9ce95e5e58444177a21e"
+dependencies = [
+ "bitflags 2.13.2",
+ "byteorder",
+ "enum-primitive-derive",
+ "futures",
+ "log",
+ "mio",
+ "num-traits",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4933,42 +4892,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rmcp"
-version = "3.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ece64e19631fc38758181e637c15509a2c2709ee53bfde1e1d58f9dc991f919e"
-dependencies = [
- "chrono",
- "futures",
- "indexmap 2.14.2",
- "libc",
- "pastey",
- "pin-project-lite",
- "rmcp-macros",
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "rmcp-macros"
-version = "3.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "967fa7f7935d7d6217d593df0e8e5c9307bcaf256974a5a9ee64476c97735389"
-dependencies = [
- "darling 0.24.1",
- "proc-macro2",
- "quote",
- "serde_json",
- "syn 3.0.9",
-]
-
-[[package]]
 name = "rmp"
 version = "0.8.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5250,7 +5173,6 @@ version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
 dependencies = [
- "chrono",
  "dyn-clone",
  "ref-cast",
  "schemars_derive",
@@ -5649,8 +5571,15 @@ dependencies = [
 name = "shrimply-cli"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
+ "clap 4.6.7",
+ "schemars",
+ "serde",
+ "serde_json",
  "shrimply-audio-engine",
  "shrimply-blender-core",
+ "shrimply-editing-api",
+ "shrimply-editing-runtime",
  "shrimply-export-core",
  "shrimply-export-cuda",
  "shrimply-export-metal",
@@ -5858,6 +5787,7 @@ dependencies = [
  "shrimply-asset",
  "shrimply-audio-engine",
  "shrimply-blender-core",
+ "shrimply-editing-runtime",
  "shrimply-editor-state",
  "shrimply-i18n",
  "shrimply-kdenlive-parser",
@@ -5931,6 +5861,60 @@ dependencies = [
  "shrimply-math-color",
  "shrimply-math-geometry",
  "skia-safe",
+]
+
+[[package]]
+name = "shrimply-editing-api"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shrimply-local-ipc",
+ "shrimply-math-core",
+ "shrimply-media-info",
+ "shrimply-path-core",
+ "shrimply-project-document",
+ "shrimply-property-model",
+ "shrimply-timeline-edit",
+ "shrimply-visual-modifiers",
+ "uuid",
+ "windows",
+]
+
+[[package]]
+name = "shrimply-editing-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "base64 0.23.1",
+ "ffmpeg-next",
+ "glib",
+ "libc",
+ "serde_json",
+ "shrimply-asset",
+ "shrimply-audio-engine",
+ "shrimply-blender-core",
+ "shrimply-compute-client",
+ "shrimply-editing-api",
+ "shrimply-editor-state",
+ "shrimply-local-ipc",
+ "shrimply-manim-bridge",
+ "shrimply-math-core",
+ "shrimply-media-import",
+ "shrimply-preview-render-metal",
+ "shrimply-project-document",
+ "shrimply-timeline-edit",
+ "shrimply-transcription",
+ "shrimply-tts",
+ "shrimply-visual-core",
+ "shrimply-visual-cuda",
+ "shrimply-visual-modifiers",
+ "skia-safe",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -6008,7 +5992,6 @@ dependencies = [
  "shrimply-kdenlive-parser",
  "shrimply-manim-bridge",
  "shrimply-math-core",
- "shrimply-mcp",
  "shrimply-otio-parser",
  "shrimply-playback-performance",
  "shrimply-preferences-core",
@@ -6726,21 +6709,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "shrimply-mcp"
+name = "shrimply-media-import"
 version = "0.1.0"
 dependencies = [
- "base64 0.23.1",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
+ "ffmpeg-next",
+ "glam 0.34.1",
+ "hashbrown 0.17.1",
+ "imagesize",
+ "shrimply-3dgs-core",
+ "shrimply-blender-core",
+ "shrimply-layered-image-loader",
  "shrimply-math-core",
- "shrimply-media-info",
+ "shrimply-pdf",
  "shrimply-project-document",
  "shrimply-property-model",
+ "shrimply-resource-pipeline",
+ "shrimply-scene-3d",
  "shrimply-timeline-edit",
+ "shrimply-trust-core",
  "shrimply-visual-modifiers",
- "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -7617,6 +7605,7 @@ dependencies = [
  "shrimply-math-color",
  "shrimply-math-core",
  "shrimply-math-media",
+ "shrimply-media-import",
  "shrimply-pdf",
  "shrimply-playback-performance",
  "shrimply-process-reporting",
