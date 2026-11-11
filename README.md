@@ -26,12 +26,12 @@ System requirements:
 Intel requires Mesa Vulkan/OpenGL and VA-API drivers; see the
 [Intel backend requirements and supported features](docs/source/development.rst#intel-gpu-preview-on-linux-gtk).
 
-Shrimply is currently pre-alpha software (though we are getting closer to the first alpha version), which means you should expect:
+Shrimply is pre-alpha software (though we are getting closer to the first alpha release), which means you should expect:
 
 - Slop
 - Undocumented footguns
 - Random performance regressions
-- Irreversible project file breakage
+- Major changes in behavior
 - Random crashes and resource leaks
 
 If you noticed any performance/correctness issue, feel free to open [issues](https://github.com/soirihiroka/shrimply/issues).
