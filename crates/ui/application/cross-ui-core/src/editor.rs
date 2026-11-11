@@ -55,6 +55,7 @@ pub struct EditorTitle {
 pub struct SessionUpdate {
     pub audio_playback_stopped: Option<String>,
     pub title: Option<EditorTitle>,
+    pub editing_api_active: bool,
 }
 
 pub struct EditorSession {
@@ -157,7 +158,7 @@ impl EditorSession {
     }
 
     pub fn poll(&self) -> SessionUpdate {
-        self.editing.poll();
+        let editing_api_active = self.editing.poll();
         project::poll_commit_status();
         player_state::tick(&self.player_state);
         let audio_playback_stopped = self.audio_player.take_failure();
@@ -220,6 +221,7 @@ impl EditorSession {
         SessionUpdate {
             audio_playback_stopped,
             title: self.title_dirty.replace(false).then(|| self.title()),
+            editing_api_active,
         }
     }
 

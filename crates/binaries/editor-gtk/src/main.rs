@@ -163,7 +163,7 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     layout.set_shrink_start_child(false);
     layout.set_shrink_end_child(false);
 
-    let (header_bar, title) = header_bar();
+    let (header_bar, title, connection_indicator) = header_bar();
     let inspector_toggle = gtk::ToggleButton::builder()
         .active(true)
         .icon_name("dock-left-symbolic")
@@ -197,6 +197,7 @@ fn build_ui(window: &adw::ApplicationWindow, project: project::Project) {
     let polling_window = window.clone();
     window.add_tick_callback(move |_, _| {
         let update = polling_session.poll();
+        connection_indicator.set_visible(update.editing_api_active);
         if let Some(error) = update.audio_playback_stopped {
             let dialog = adw::AlertDialog::new(Some("Audio playback stopped"), Some(&error));
             dialog.present(Some(&polling_window));
@@ -699,14 +700,25 @@ fn project_loading_view_with_subtitle(subtitle: &str) -> adw::ToolbarView {
     toolbar
 }
 
-fn header_bar() -> (adw::HeaderBar, gtk::Label) {
+fn header_bar() -> (adw::HeaderBar, gtk::Label, gtk::Image) {
     let title = gtk::Label::builder()
         .label(tr!("Shrimply").as_ref())
         .css_classes(["title"])
         .build();
+    let connection_indicator = gtk::Image::builder()
+        .icon_name("network-server-symbolic")
+        .pixel_size(16)
+        .tooltip_text(tr!("Editing API activity (active or within the last 3 seconds)").as_ref())
+        .css_classes(["success"])
+        .visible(false)
+        .build();
+    let title_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    title_box.append(&connection_indicator);
+    title_box.append(&title);
 
     (
-        adw::HeaderBar::builder().title_widget(&title).build(),
+        adw::HeaderBar::builder().title_widget(&title_box).build(),
         title,
+        connection_indicator,
     )
 }

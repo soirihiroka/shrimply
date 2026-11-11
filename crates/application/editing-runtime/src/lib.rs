@@ -61,6 +61,7 @@ const EDIT_EXECUTION_TIMEOUT: Duration = Duration::from_secs(29 * 60);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const WORK_QUEUE_CAPACITY: usize = 32;
 const HEADLESS_POLL_INTERVAL: Duration = Duration::from_millis(5);
+const CONNECTION_INDICATOR_HOLD: Duration = Duration::from_secs(3);
 const MANIM_ANTI_ALIASING_SAMPLES: [i64; 5] = [0, 2, 4, 8, 16];
 
 struct Work {
@@ -130,11 +131,18 @@ impl EditorSelection {
     }
 }
 
+#[derive(Default)]
+struct ConnectionActivity {
+    active: usize,
+    last_finished: Option<Instant>,
+}
+
 pub struct Server {
     socket_path: PathBuf,
     stop: Arc<AtomicBool>,
     context: glib::MainContext,
     task: glib::JoinHandle<()>,
+    connections: Arc<Mutex<ConnectionActivity>>,
 }
 
 impl Drop for Server {
@@ -223,10 +231,12 @@ fn start_session(
     let (sender, receiver) = async_channel::bounded::<Work>(WORK_QUEUE_CAPACITY);
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = stop.clone();
+    let connections = Arc::new(Mutex::new(ConnectionActivity::default()));
+    let worker_connections = connections.clone();
     drop(
         thread::Builder::new()
             .name("shrimply-editing-bridge".to_string())
-            .spawn(move || accept_loop(listener, sender, worker_stop))
+            .spawn(move || accept_loop(listener, sender, worker_stop, worker_connections))
             .map_err(|error| format!("could not start editing API bridge: {error}"))?,
     );
 
@@ -313,6 +323,7 @@ fn start_session(
         stop,
         context,
         task,
+        connections,
     })
 }
 
@@ -342,7 +353,8 @@ fn effective_uid() -> u32 {
 }
 
 impl Server {
-    pub fn poll(&self) {
+    /// Process requests and report active or recently completed client connections.
+    pub fn poll(&self) -> bool {
         self.context
             .with_thread_default(|| {
                 while self.context.pending() {
@@ -350,17 +362,34 @@ impl Server {
                 }
             })
             .expect("editing context must remain on its owning thread");
+        let connections = self.connections.lock().unwrap();
+        connections.active > 0
+            || connections
+                .last_finished
+                .is_some_and(|time| time.elapsed() < CONNECTION_INDICATOR_HOLD)
     }
 }
 
-fn accept_loop(listener: UnixListener, sender: async_channel::Sender<Work>, stop: Arc<AtomicBool>) {
+fn accept_loop(
+    listener: UnixListener,
+    sender: async_channel::Sender<Work>,
+    stop: Arc<AtomicBool>,
+    connections: Arc<Mutex<ConnectionActivity>>,
+) {
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok(_) if stop.load(Ordering::Acquire) => break,
             Ok((stream, _)) => {
                 let sender = sender.clone();
                 let stop = stop.clone();
-                thread::spawn(move || serve_connection(stream, &sender, &stop));
+                let connections = connections.clone();
+                connections.lock().unwrap().active += 1;
+                thread::spawn(move || {
+                    serve_connection(stream, &sender, &stop);
+                    let mut connections = connections.lock().unwrap();
+                    connections.active -= 1;
+                    connections.last_finished = Some(Instant::now());
+                });
             }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(10));
