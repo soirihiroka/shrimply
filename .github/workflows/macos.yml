@@ -31,6 +31,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  TZ: UTC
   CARGO_HOME: ${{ github.workspace }}/.ci/cargo
   CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
   MACOS_APP: dist/Shrimply.app
