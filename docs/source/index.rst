@@ -14,7 +14,7 @@ Shrimply is a simple yet powerful cross-platform video editor.
 
 .. raw:: html
 
-   <iframe src="https://yapnation.pages.dev/embed/thread/?id=a3107889-ba1b-49ff-8653-c05d8ac5e022" title="Shrimply thread" width="100%" height="640" style="border:0" loading="lazy" allowfullscreen></iframe>
+   <iframe src="https://yapioca.com/embed/thread/?i=oxB4ibobSf-GU8BdisXgIg&amp;design=material" title="Yapioca thread" width="100%" height="640" style="border:0" loading="lazy" allowfullscreen></iframe>
 
 Installation
 ------------
