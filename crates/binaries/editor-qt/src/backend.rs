@@ -178,6 +178,9 @@ pub mod qobject {
         #[cxx_name = "clearPreferenceBlenderBinary"]
         fn clear_preference_blender_binary(self: Pin<&mut EditorBackend>);
         #[qinvokable]
+        #[cxx_name = "configurePreferenceCli"]
+        fn configure_preference_cli(self: Pin<&mut EditorBackend>, install: bool);
+        #[qinvokable]
         #[cxx_name = "refreshPreferenceServerStatus"]
         fn refresh_preference_server_status(self: Pin<&mut EditorBackend>);
         #[qinvokable]
@@ -237,6 +240,14 @@ pub mod qobject {
         #[cxx_name = "preferenceBlenderFinished"]
         fn preference_blender_finished(self: Pin<&mut EditorBackend>, error: QString);
         #[qsignal]
+        #[cxx_name = "preferenceCliFinished"]
+        fn preference_cli_finished(
+            self: Pin<&mut EditorBackend>,
+            overwrite: bool,
+            message: QString,
+            error: QString,
+        );
+        #[qsignal]
         #[cxx_name = "preferenceServerStatusChanged"]
         fn preference_server_status_changed(self: Pin<&mut EditorBackend>, error: QString);
         #[qsignal]
@@ -267,6 +278,7 @@ pub struct EditorBackendRust {
     session: Option<Pin<Box<EditorSession>>>,
     pending_lock_owner: Option<project::ProjectLockOwner>,
     blender_probe: Option<Receiver<Result<PathBuf, String>>>,
+    cli_request: Option<Receiver<Result<(bool, String), String>>>,
     server_request: Option<Receiver<Result<shrimply_preferences_qt::ServerStatus, String>>>,
     server_status: Option<shrimply_preferences_qt::ServerStatus>,
 }
@@ -302,6 +314,7 @@ impl Default for EditorBackendRust {
             session: None,
             pending_lock_owner: None,
             blender_probe: None,
+            cli_request: None,
             server_request: None,
             server_status: None,
         }
@@ -772,6 +785,23 @@ impl qobject::EditorBackend {
         self.preference_connector().clear_blender_binary();
     }
 
+    pub fn configure_preference_cli(mut self: Pin<&mut Self>, install: bool) {
+        if self.as_ref().rust().cli_request.is_some() {
+            return;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = if install {
+                shrimply_preferences_qt::cli::install().map(|message| (true, message))
+            } else {
+                shrimply_preferences_qt::cli::status()
+                    .map(|path| (path.is_some(), path.unwrap_or_default()))
+            };
+            let _ = sender.send(result);
+        });
+        self.as_mut().rust_mut().get_mut().cli_request = Some(receiver);
+    }
+
     pub fn refresh_preference_server_status(mut self: Pin<&mut Self>) {
         let url = self
             .as_mut()
@@ -863,6 +893,34 @@ impl qobject::EditorBackend {
     }
 
     fn poll_preference_tasks(mut self: Pin<&mut Self>) {
+        let cli = self
+            .as_ref()
+            .rust()
+            .cli_request
+            .as_ref()
+            .map(Receiver::try_recv);
+        let cli = match cli {
+            Some(Ok(result)) => Some(result),
+            Some(Err(TryRecvError::Disconnected)) => {
+                Some(Err("CLI setup stopped unexpectedly".into()))
+            }
+            None | Some(Err(TryRecvError::Empty)) => None,
+        };
+        if let Some(result) = cli {
+            self.as_mut().rust_mut().get_mut().cli_request = None;
+            match result {
+                Ok((overwrite, message)) => self.as_mut().preference_cli_finished(
+                    overwrite,
+                    QString::from(message),
+                    QString::default(),
+                ),
+                Err(error) => self.as_mut().preference_cli_finished(
+                    false,
+                    QString::default(),
+                    QString::from(error),
+                ),
+            }
+        }
         let blender = self
             .as_ref()
             .rust()

@@ -419,6 +419,7 @@ define_class!(
         fn show_settings(&self, _sender: &NSObject) {
             if let Some(window) = self.ivars().settings_window.borrow().as_ref() {
                 window.makeKeyAndOrderFront(None);
+                settings::sync_cli_window(window, self.mtm());
                 self.refresh_compute_servers();
                 return;
             }
@@ -431,6 +432,21 @@ define_class!(
             let store = &self.ivars().session.get().expect("project loaded").preferences;
             if let Err(error) = settings::change_numeric(store, sender) {
                 self.show_error(error);
+            }
+        }
+
+        #[unsafe(method(installCli:))]
+        fn install_cli(&self, sender: &NSButton) {
+            match shrimply_editor_state::preferences::cli::install() {
+                Ok(message) => {
+                    sender.setTitle(ns_string!("Overwrite"));
+                    sender.setToolTip(Some(&NSString::from_str(&message)));
+                    let alert = NSAlert::new(self.mtm());
+                    alert.setMessageText(ns_string!("CLI installed"));
+                    alert.setInformativeText(&NSString::from_str(&message));
+                    alert.runModal();
+                }
+                Err(error) => self.show_error(&error),
             }
         }
 

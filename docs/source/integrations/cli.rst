@@ -7,6 +7,31 @@ There is no separate agent server executable or client registration step.
 Use the installed ``shrimply`` binary (``shrimply.exe`` on Windows),
 ``target/debug/shrimply``, or ``target/qt/debug/shrimply`` for Qt on Linux.
 
+Install the terminal command
+----------------------------
+
+Open :menuselection:`Preferences --> External` (on macOS,
+:menuselection:`Settings --> Integrations`). The :guilabel:`CLI` row has an
+:guilabel:`Install` button, or :guilabel:`Overwrite` when a command already exists.
+The action selects the copy of Shrimply whose settings you are using.
+Open a new terminal after installation, then run ``shrimply --help``.
+
+On Linux and macOS, installation creates a launcher in ``~/.local/bin`` and
+adds that directory to the startup configuration for Bash, Zsh, and Fish when
+available. Existing shell configuration is preserved. Overwrite replaces the
+user launcher; it does not modify another installation's executable.
+
+Flatpak installs the launcher on the host through ``flatpak-spawn --host``.
+It uses ``flatpak run`` with the running app's installation, architecture, and
+branch, preserving command arguments, exit status, and the working directory.
+The launcher continues to work after Flatpak updates.
+
+On Windows, installation adds the application's directory to the user PATH,
+keeping the executable beside its bundled libraries and editor. Overwrite
+moves that directory ahead of other user PATH entries. If a different system
+command takes precedence, installation reports the conflict instead of
+changing system-wide files or PATH settings.
+
 Discover an action
 ------------------
 

@@ -213,6 +213,9 @@ pub fn page(
         .icon_name("application-x-executable-symbolic")
         .name("external")
         .build();
+    let cli_group = adw::PreferencesGroup::new();
+    cli_group.add(&crate::cli::row());
+    page.add(&cli_group);
     page.add(blender_group);
     page.add(&endpoint_group);
     page.add(&server_group);

@@ -28,7 +28,7 @@ const BLENDER_BUTTON_GAP: f64 = 8.0;
 const SERVER_BUTTON_WIDTH: f64 = 90.0;
 const SERVER_BUTTON_GAP: f64 = 8.0;
 const FEATURES_HEIGHT: f64 = 44.0;
-const INTEGRATIONS_HEIGHT: f64 = 720.0;
+const INTEGRATIONS_HEIGHT: f64 = 720.0 + ROW_HEIGHT;
 const APPEARANCE_HEIGHT: f64 = 620.0 + ROW_HEIGHT;
 const STEPPER_WIDTH: f64 = 20.0;
 const STEPPER_GAP: f64 = 8.0;
@@ -44,6 +44,7 @@ const TAG_UPSAMPLE: isize = 7;
 const TAG_DOWNSAMPLE: isize = 8;
 const TAG_BLENDER_CHOOSE: isize = 201;
 const TAG_BLENDER_CLEAR: isize = 202;
+const TAG_CLI_INSTALL: isize = 203;
 const TAG_SERVER_SELECTOR: isize = 210;
 const TAG_SERVER_URL: isize = 211;
 const TAG_SERVER_REMOVE: isize = 212;
@@ -321,6 +322,22 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
     section(&integrations, "Integrations", &mut y, mtm);
     compute_server_rows(&integrations, editor, store, &mut y, mtm);
     section(&integrations, "Local Tools", &mut y, mtm);
+    label(&integrations, "CLI", y, mtm);
+    let cli_button = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            ns_string!("Install"),
+            Some(editor),
+            Some(sel!(installCli:)),
+            mtm,
+        )
+    };
+    cli_button.setFrame(NSRect::new(
+        NSPoint::new(CONTROL_X, y - CONTROL_Y_OFFSET),
+        NSSize::new(CONTROL_WIDTH, CONTROL_HEIGHT),
+    ));
+    cli_button.setTag(TAG_CLI_INSTALL);
+    integrations.addSubview(&cli_button);
+    y -= ROW_HEIGHT;
     blender_row(
         &integrations,
         editor,
@@ -360,9 +377,28 @@ pub(super) fn show(editor: &Editor) -> objc2::rc::Retained<NSWindow> {
     }
     tabs.setSelectedTabViewItemIndex(0);
     window.setContentViewController(Some(&tabs));
+    sync_cli_window(&window, mtm);
     window.center();
     window.makeKeyAndOrderFront(None);
     window
+}
+
+pub(super) fn sync_cli_window(window: &NSWindow, mtm: MainThreadMarker) {
+    let content = integrations_content(window, mtm);
+    let button = tagged::<NSButton>(&content, TAG_CLI_INSTALL, "CLI install button");
+    let status = preferences::cli::status();
+    button.setTitle(if status.as_ref().is_ok_and(|path| path.is_some()) {
+        ns_string!("Overwrite")
+    } else {
+        ns_string!("Install")
+    });
+    button.setEnabled(status.is_ok());
+    let help = match status {
+        Ok(Some(path)) => path,
+        Ok(None) => "Run shrimply from a terminal".into(),
+        Err(error) => error,
+    };
+    button.setToolTip(Some(&NSString::from_str(&help)));
 }
 
 fn compute_server_rows(

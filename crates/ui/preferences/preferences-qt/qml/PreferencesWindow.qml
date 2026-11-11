@@ -15,6 +15,10 @@ ApplicationWindow {
     property bool blenderBusy: false
     property bool serverBusy: false
     property string serverError: ""
+    property bool cliBusy: true
+    property bool cliAvailable: false
+    property bool cliOverwrite: false
+    property string cliMessage: ""
 
     title: backend.translate("Preferences — Shrimply")
     transientParent: owner
@@ -95,6 +99,9 @@ ApplicationWindow {
         configure(decoderPool, "temporal-decoder-pool-size")
         configure(gpuMemory, "gpu-host-memory")
         blenderPath.text = backend.preferenceValue("blender-binary")
+        cliBusy = true
+        cliAvailable = false
+        backend.configurePreferenceCli(false)
         reloadServers()
         loading = false
         show()
@@ -106,6 +113,16 @@ ApplicationWindow {
 
     Connections {
         target: backend
+        function onPreferenceCliFinished(overwrite, message, error) {
+            root.cliBusy = false
+            if (error.length > 0) {
+                root.showConnectorError(error)
+                return
+            }
+            root.cliOverwrite = overwrite
+            root.cliMessage = message
+            root.cliAvailable = true
+        }
         function onPreferenceBlenderFinished(error) {
             root.blenderBusy = false
             if (!root.showConnectorError(error))
@@ -360,6 +377,31 @@ ApplicationWindow {
                     ColumnLayout {
                         width: servicesScroll.availableWidth
                         spacing: 16
+                        GroupBox {
+                            Layout.fillWidth: true
+                            RowLayout {
+                                anchors.fill: parent
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: backend.translate("CLI") }
+                                    Label {
+                                        text: root.cliMessage.length > 0 ? root.cliMessage
+                                            : backend.translate("Run shrimply from a terminal")
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.Wrap
+                                        Layout.fillWidth: true
+                                    }
+                                }
+                                Button {
+                                    text: root.cliOverwrite ? backend.translate("Overwrite") : backend.translate("Install")
+                                    enabled: !root.cliBusy && root.cliAvailable
+                                    onClicked: {
+                                        root.cliBusy = true
+                                        backend.configurePreferenceCli(true)
+                                    }
+                                }
+                            }
+                        }
                         GroupBox {
                             title: backend.translate("Trusted executable sources")
                             Layout.fillWidth: true
