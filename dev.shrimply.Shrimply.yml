@@ -205,8 +205,8 @@ modules:
         /app/share/shrimply/crates/media/visual/manim/manim-bridge/python/.venv/bin/python
         -c 'import av, manimpango, manimlib, msgpack'
       - test ! -e /app/bin/uv
-      - test ! -e /app/bin/shrimply-qt
-      - test ! -e /app/bin/shrimply-editor-qt
+      - test ! -e /app/libexec/shrimply/qt/shrimply
+      - test ! -e /app/libexec/shrimply/qt/shrimply-editor
       - test ! -e /app/share/applications/dev.shrimply.Shrimply.Qt.desktop
     sources:
       - type: archive

@@ -54,9 +54,9 @@ Render a saved project without opening the launcher or editor::
    shrimply render project.shrimp -o animation.gif
    shrimply render --help
 
-The Qt and macOS applications accept the same commands through ``shrimply-qt``
-and ``shrimply-appkit``. Use the executable inside the application bundle on
-macOS: ``Shrimply.app/Contents/MacOS/Shrimply``.
+The Qt and macOS applications accept the same commands through ``shrimply``
+(``shrimply.exe`` on Windows). Use the executable inside the application bundle
+on macOS: ``Shrimply.app/Contents/MacOS/shrimply``.
 
 Rendering uses the saved file, including when the project is open in another
 process. Unsaved editor changes are excluded. Supported inputs are ``.shrimp``,

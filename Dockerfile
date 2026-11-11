@@ -45,8 +45,8 @@ RUN make install install-qt DESTDIR=/stage PREFIX=/usr
 
 # --- Bundle the runtime libraries
 RUN mkdir -p /stage/usr/lib/shrimply && \
-    for bin in shrimply shrimply-editor shrimply-qt shrimply-editor-qt; do \
-        ldd "/stage/usr/bin/$bin" | awk '{print $3}' | grep '^/'; \
+    for bin in bin/shrimply bin/shrimply-editor libexec/shrimply/qt/shrimply libexec/shrimply/qt/shrimply-editor; do \
+        ldd "/stage/usr/$bin" | awk '{print $3}' | grep '^/'; \
     done | sort -u \
       | grep -Ev '/(ld-linux[^/]*|libc|libm|libdl|libpthread|librt|libresolv)\.so' \
       | grep -Ev '/lib(GL|EGL|GLX|GLdispatch|drm|gbm)\.so' \
@@ -105,15 +105,15 @@ RUN mkdir -p /stage/usr/lib/shrimply/girepository-1.0 /stage/usr/share/glib-2.0/
     cp -a /usr/share/icons/hicolor /stage/usr/share/icons/
 
 # Bundle all previous fixes into Shrimply and shrimply-editor binaries
-RUN for bin in shrimply shrimply-editor shrimply-qt shrimply-editor-qt; do \
-        patchelf --set-rpath '$ORIGIN/../lib/shrimply' "/stage/usr/bin/$bin"; \
-        mv "/stage/usr/bin/$bin" "/stage/usr/bin/$bin.bin"; \
-        printf '#!/bin/sh\nhere="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\nexport GI_TYPELIB_PATH="$here/../lib/shrimply/girepository-1.0"\nexport GSETTINGS_SCHEMA_DIR="$here/../share/glib-2.0/schemas"\nexport XDG_DATA_DIRS="$here/../share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\nexport FLEXIBLASRC="$here/../lib/shrimply/flexiblasrc"\nexport FLEXIBLAS_LIBRARY_PATH="$here/../lib/shrimply/flexiblas"\nexec "$here/%s.bin" "$@"\n' "$bin" > "/stage/usr/bin/$bin"; \
-        chmod 0755 "/stage/usr/bin/$bin"; \
+RUN for bin in bin/shrimply bin/shrimply-editor libexec/shrimply/qt/shrimply libexec/shrimply/qt/shrimply-editor; do \
+        patchelf --set-rpath '$ORIGIN/../lib/shrimply:$ORIGIN/../../../lib/shrimply' "/stage/usr/$bin"; \
+        mv "/stage/usr/$bin" "/stage/usr/$bin.bin"; \
+        printf '#!/bin/sh\nhere="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"\nprefix="$(CDPATH= cd -- "$here/%s" && pwd)"\nexport GI_TYPELIB_PATH="$prefix/lib/shrimply/girepository-1.0"\nexport GSETTINGS_SCHEMA_DIR="$prefix/share/glib-2.0/schemas"\nexport XDG_DATA_DIRS="$prefix/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"\nexport FLEXIBLASRC="$prefix/lib/shrimply/flexiblasrc"\nexport FLEXIBLAS_LIBRARY_PATH="$prefix/lib/shrimply/flexiblas"\nexec "$here/%s.bin" "$@"\n' "$(case "$bin" in bin/*) echo .. ;; *) echo ../../.. ;; esac)" "${bin##*/}" > "/stage/usr/$bin"; \
+        chmod 0755 "/stage/usr/$bin"; \
     done
 
-RUN printf '[Paths]\nPrefix = ../lib/shrimply/qt6\nPlugins = plugins\nImports = qml\nQml2Imports = qml\n' \
-    > /stage/usr/bin/qt.conf
+RUN printf '[Paths]\nPrefix = ../../../lib/shrimply/qt6\nPlugins = plugins\nImports = qml\nQml2Imports = qml\n' \
+    > /stage/usr/libexec/shrimply/qt/qt.conf
 
 FROM scratch AS export
 COPY --from=builder /stage /

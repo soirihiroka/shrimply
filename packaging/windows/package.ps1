@@ -39,10 +39,10 @@ if (Test-Path $archive) { Remove-Item -Force $archive }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
 $qmlDirs = @{
-    "shrimply-qt.exe" = @(
+    "shrimply.exe" = @(
         "crates/binaries/launcher-qt/qml"
     )
-    "shrimply-editor-qt.exe" = @(
+    "shrimply-editor.exe" = @(
         "crates/binaries/editor-qt/qml"
         "crates/ui/components/components-qt/qml"
         "crates/ui/export/export-qt/qml"
@@ -51,7 +51,7 @@ $qmlDirs = @{
     )
 }
 
-foreach ($name in @("shrimply-qt.exe", "shrimply-editor-qt.exe")) {
+foreach ($name in @("shrimply.exe", "shrimply-editor.exe")) {
     $source = Join-Path $release $name
     if (!(Test-Path $source)) { throw "Missing release executable: $source" }
     Copy-Item $source $stage

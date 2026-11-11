@@ -197,7 +197,8 @@ Build and check
    $ make release
 
 ``make dev-qt`` builds and launches the Qt app. ``make qt-build`` builds it
-without launching. The binary is ``target/debug/shrimply-qt``.
+without launching. The binary is ``target/qt/debug/shrimply`` on Linux and
+``target/debug/shrimply.exe`` on Windows.
 
 Build this site with ``make docs``.
 

@@ -29,7 +29,7 @@ fn main() -> ExitCode {
     if let Some(path) = args.next() {
         if args.next().is_some() {
             eprintln!(
-                "usage: shrimply-qt [PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive]"
+                "usage: shrimply [PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive]"
             );
             return ExitCode::FAILURE;
         }
@@ -60,7 +60,7 @@ fn main() -> ExitCode {
     };
     backend::qobject::set_breeze_icon_fallback();
     app.as_mut()
-        .set_application_name(&QString::from("shrimply-qt"));
+        .set_application_name(&QString::from("shrimply"));
     app.as_mut()
         .set_application_display_name(&QString::from("Shrimply"));
     let mut engine = QQmlApplicationEngine::new();

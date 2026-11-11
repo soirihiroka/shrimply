@@ -161,12 +161,12 @@ pub fn model_path() -> Result<PathBuf, String> {
     let directory = executable
         .parent()
         .ok_or("executable has no parent directory")?;
-    let candidates = [
-        directory.join("res/lip-sync/pocketsphinx-ci.model"),
-        directory.join("../share/shrimply/lip-sync/pocketsphinx-ci.model"),
-    ];
-    candidates
-        .into_iter()
+    std::iter::once(directory.join("res/lip-sync/pocketsphinx-ci.model"))
+        .chain(
+            directory
+                .ancestors()
+                .map(|prefix| prefix.join("share/shrimply/lip-sync/pocketsphinx-ci.model")),
+        )
         .find(|path| path.is_file())
         .ok_or_else(|| "PocketSphinx model not found; set SHRIMPLY_LIP_SYNC_MODEL".to_owned())
 }

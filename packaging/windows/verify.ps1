@@ -99,7 +99,7 @@ function Use-PackagedRuntime {
 }
 
 function Assert-ArgumentFailures([string]$directory) {
-    $launcher = Join-Path $directory "shrimply-qt.exe"
+    $launcher = Join-Path $directory "shrimply.exe"
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
@@ -110,7 +110,7 @@ function Assert-ArgumentFailures([string]$directory) {
         }
         $output = (& $launcher first.shrimp second.shrimp 2>&1) -join "`n"
         $exitCode = $LASTEXITCODE
-        if ($exitCode -ne 1 -or $output -notmatch [regex]::Escape("usage: shrimply-qt")) {
+        if ($exitCode -ne 1 -or $output -notmatch [regex]::Escape("usage: shrimply")) {
             throw "Launcher did not reject excess project arguments cleanly (code $exitCode)`n$output"
         }
     } finally {
@@ -121,7 +121,7 @@ function Assert-ArgumentFailures([string]$directory) {
 function Assert-QmlStartup([string]$directory) {
     $stdout = Join-Path $env:RUNNER_TEMP "shrimply-windows-startup.stdout"
     $stderr = Join-Path $env:RUNNER_TEMP "shrimply-windows-startup.stderr"
-    $process = Start-Process (Join-Path $directory "shrimply-qt.exe") `
+    $process = Start-Process (Join-Path $directory "shrimply.exe") `
         -WorkingDirectory $directory -PassThru `
         -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     Start-Sleep -Seconds 8
@@ -133,7 +133,7 @@ function Assert-QmlStartup([string]$directory) {
     elseif (!$process.WaitForExit(2000)) { Stop-Process -Id $process.Id }
 }
 
-foreach ($name in @("shrimply-qt.exe", "shrimply-editor-qt.exe")) {
+foreach ($name in @("shrimply.exe", "shrimply-editor.exe")) {
     Assert-PeX64 (Join-Path $release $name)
 }
 if (!(Test-Path $archive) -or !(Test-Path $checksum)) { throw "Windows archive is missing" }

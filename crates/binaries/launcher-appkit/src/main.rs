@@ -10,7 +10,7 @@ fn main() -> std::process::ExitCode {
     let mut args = std::env::args_os().skip(1);
     if let Some(path) = args.next() {
         if args.next().is_some() {
-            eprintln!("usage: shrimply-appkit [PROJECT]");
+            eprintln!("usage: shrimply [PROJECT]");
             return std::process::ExitCode::FAILURE;
         }
         return shrimply_editor_appkit::run(Some(std::path::Path::new(&path)));
@@ -21,5 +21,5 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    panic!("shrimply-appkit requires macOS");
+    panic!("shrimply requires macOS");
 }

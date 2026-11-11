@@ -519,17 +519,7 @@ fn load_snapshot(path: &Path) -> Result<LiveSnapshot, String> {
 fn launch_editor(path: &Path) -> Result<(), String> {
     let current = std::env::current_exe().map_err(|error| error.to_string())?;
     #[cfg(not(target_os = "macos"))]
-    let editor = {
-        let name = current
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("shrimply");
-        current.with_file_name(if name.ends_with("-qt") {
-            "shrimply-editor-qt"
-        } else {
-            "shrimply-editor"
-        })
-    };
+    let editor = current.with_file_name("shrimply-editor");
     #[cfg(target_os = "macos")]
     let editor = current;
     let mut child = std::process::Command::new(editor)

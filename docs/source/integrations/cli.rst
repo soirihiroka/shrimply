@@ -4,8 +4,8 @@ Agent Editing CLI
 The Shrimply binary creates, inspects, edits, and renders projects directly.
 It supports native GTK, Qt, and AppKit editors and headless project sessions.
 There is no separate agent server executable or client registration step.
-Use the installed binary, ``target/debug/shrimply``, or the corresponding
-``shrimply-qt`` / ``shrimply-appkit`` launcher.
+Use the installed ``shrimply`` binary (``shrimply.exe`` on Windows),
+``target/debug/shrimply``, or ``target/qt/debug/shrimply`` for Qt on Linux.
 
 Discover an action
 ------------------

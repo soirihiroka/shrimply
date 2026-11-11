@@ -247,7 +247,7 @@ pub fn launch_qt_editor(_path: &Path) -> Result<Child, String> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn launch_qt_editor(path: &Path) -> Result<Child, String> {
-    launch_sibling_editor(path, "shrimply-editor-qt")
+    launch_sibling_editor(path, "shrimply-editor")
 }
 
 fn launch_sibling_editor(path: &Path, binary_name: &str) -> Result<Child, String> {

@@ -2,7 +2,7 @@ use cxx_qt_build::{CxxQtBuilder, QmlModule};
 
 fn main() {
     if std::env::var_os("CARGO_CFG_WINDOWS").is_some() {
-        println!("cargo:rustc-link-arg-bin=shrimply-editor-qt=/STACK:8388608");
+        println!("cargo:rustc-link-arg-bin=shrimply-editor=/STACK:8388608");
     }
 
     unsafe {

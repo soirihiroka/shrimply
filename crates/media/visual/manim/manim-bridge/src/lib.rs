@@ -217,10 +217,9 @@ fn python_command(module: &str) -> Result<(Command, bool), String> {
     #[cfg(target_os = "linux")]
     let installed = std::env::current_exe()
         .map_err(|error| format!("locate installed Manim worker: {error}"))?
-        .parent()
-        .and_then(Path::parent)
+        .ancestors()
         .map(|prefix| prefix.join("share/shrimply/crates/media/visual/manim/manim-bridge/python"))
-        .filter(|project| project.is_dir());
+        .find(|project| project.is_dir());
     #[cfg(target_os = "linux")]
     if let Some(project) = installed.as_ref()
         && project.join(".venv/bin/python").is_file()

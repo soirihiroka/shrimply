@@ -68,10 +68,10 @@ GTK_COMPONENTS_PACKAGE := shrimply-components-gtk
 QT_COMPONENTS_PACKAGE := shrimply-components-qt
 GTK_COMPONENTS_DEMO_PACKAGE := shrimply-components-demo-gtk
 QT_COMPONENTS_DEMO_PACKAGE := shrimply-components-demo-qt
-QT_BIN_NAME := shrimply-qt
-APPKIT_BIN_NAME := shrimply-appkit
-APPKIT_EDITOR_BIN_NAME := shrimply-editor-appkit
-QT_EDITOR_BIN_NAME := shrimply-editor-qt
+QT_BIN_NAME := shrimply
+APPKIT_BIN_NAME := shrimply
+QT_EDITOR_BIN_NAME := shrimply-editor
+QT_TARGET_DIR ?= $(if $(filter Linux,$(HOST_OS)),$(CARGO_TARGET_DIR)/qt,$(CARGO_TARGET_DIR))
 BINARY_PACKAGES := \
 	$(EDITOR_PACKAGE) \
 	$(QT_EDITOR_PACKAGE) \
@@ -84,7 +84,7 @@ BINARY_PACKAGES := \
 	$(QT_COMPONENTS_DEMO_PACKAGE)
 RUST_LOG ?= info,shrimply=debug,shrimply_editor=debug,shrimply_launcher=debug,shrimply_launcher_qt=debug,shrimply_timeline_gtk=debug
 DEV_LOG ?= target/$(BIN_NAME)-dev.log
-QT_DEV_LOG ?= target/$(QT_BIN_NAME)-dev.log
+QT_DEV_LOG ?= $(QT_TARGET_DIR)/$(QT_BIN_NAME)-dev.log
 CRASH_CORE ?= target/$(EDITOR_BIN_NAME).core
 CRASH_STACK ?= target/$(EDITOR_BIN_NAME).stack
 CRASH_PROFILE ?= debug
@@ -97,6 +97,7 @@ SHRIMPLY_BUILD_GIT_HASH ?= $(shell git rev-parse HEAD)
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
+QT_BINDIR ?= $(if $(filter Linux,$(HOST_OS)),$(PREFIX)/libexec/shrimply/qt,$(BINDIR))
 DATADIR ?= $(PREFIX)/share
 APPLICATIONSDIR ?= $(DATADIR)/applications
 ICONDIR ?= $(DATADIR)/icons/hicolor/scalable/apps
@@ -249,7 +250,7 @@ appkit-build: appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
 	mkdir -p "$(APPKIT_APP)/Contents/MacOS" "$(APPKIT_APP)/Contents/Resources"
-	cp $(CARGO_TARGET_DIR)/debug/$(APPKIT_BIN_NAME) "$(APPKIT_APP)/Contents/MacOS/Shrimply"
+	cp $(CARGO_TARGET_DIR)/debug/$(APPKIT_BIN_NAME) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
 	cp packaging/macos/Info.plist "$(APPKIT_APP)/Contents/Info.plist"
 	cp "$(APPKIT_ICON_DIR)/Assets.car" "$(APPKIT_ICON_DIR)/Shrimply.icns" "$(APPKIT_APP)/Contents/Resources/"
 
@@ -282,21 +283,21 @@ else
 endif
 
 dev-mac: appkit-build
-	RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/Shrimply"
+	RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
 
 qt-build: native-deps qt-native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 
 dev-qt: SHELL := /bin/bash
 qt-desktop-file: desktop-icon project-mime
-	sed -e 's|^Exec=.*|Exec="$(CURDIR)/target/debug/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(CURDIR)/target/debug/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
+	sed -e 's|^Exec=.*|Exec="$(abspath $(QT_TARGET_DIR))/debug/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(abspath $(QT_TARGET_DIR))/debug/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
 	fi
 
 dev-qt: qt-build
 	@started="$$(date --iso-8601=seconds)"; \
-	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(QT_BIN_NAME) 2>&1 \
+	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME) 2>&1 \
 		| tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' > "$(QT_DEV_LOG)"); \
 	status=$${PIPESTATUS[0]}; \
 	if [[ $$status -ne 0 ]]; then \
@@ -317,7 +318,7 @@ docs-check:
 run: dev
 
 run-qt: qt-build
-	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(QT_BIN_NAME)
+	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME)
 
 build: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) build -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
@@ -339,10 +340,10 @@ endif
 
 ifeq ($(HOST_OS),Windows_NT)
 windows-build: windows-native-deps cuda-artifacts
-	$(BUILD_ENV) QMAKE="$(QT_QMAKE)" CARGO_TERM_COLOR=always $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+	$(BUILD_ENV) QMAKE="$(QT_QMAKE)" CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 
 windows-dev: windows-build
-	$(BUILD_ENV) RUST_LOG="$(RUST_LOG)" target/debug/$(QT_BIN_NAME).exe
+	$(BUILD_ENV) RUST_LOG="$(RUST_LOG)" $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME).exe
 else
 windows-build windows-dev:
 	@echo "$@ requires Windows; current host: $(HOST_OS)" >&2
@@ -407,7 +408,8 @@ manim-parameter-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-manim-bridge --test two_pass_parameters -- --ignored --nocapture
 
 cargo-check: native-deps qt-native-deps
-	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(EDITOR_PACKAGE) -p $(QT_EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
+	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-inspector-document --lib
 
 intel-check: native-deps cuda-artifacts
@@ -464,7 +466,8 @@ fmt-check:
 	$(BUILD_ENV) $(CARGO) fmt --check
 
 lint: native-deps qt-native-deps
-	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(EDITOR_PACKAGE) -p $(QT_EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
+	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins -- -D warnings
+	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
 	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-inspector-document --lib -- -D warnings
 
 test: cuda-artifacts
@@ -493,12 +496,15 @@ crash-report:
 
 clean:
 	$(CARGO) clean $(foreach package,$(BINARY_PACKAGES),--package $(package))
+ifneq ($(QT_TARGET_DIR),$(CARGO_TARGET_DIR))
+	$(CARGO) clean --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
+endif
 
 deps-fedora:
 	$(DNF) install $(FEDORA_PACKAGES)
 
 qt-release: native-deps qt-native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
+	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
 
 install: release desktop-icon project-mime
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
@@ -529,13 +535,13 @@ flatpak-gtk:
 	@echo "Flatpak bundle: $(FLATPAK_BUNDLE)"
 
 install-qt: qt-release desktop-icon project-mime
-	$(INSTALL) -Dm755 target/release/$(QT_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(QT_BIN_NAME)"
-	$(INSTALL) -Dm755 target/release/$(QT_EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(QT_EDITOR_BIN_NAME)"
-	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
+	$(INSTALL) -Dm755 $(QT_TARGET_DIR)/release/$(QT_BIN_NAME) "$(DESTDIR)$(QT_BINDIR)/$(QT_BIN_NAME)"
+	$(INSTALL) -Dm755 $(QT_TARGET_DIR)/release/$(QT_EDITOR_BIN_NAME) "$(DESTDIR)$(QT_BINDIR)/$(QT_EDITOR_BIN_NAME)"
+	$(INSTALL) -Dm644 $(QT_TARGET_DIR)/release/res/lip-sync/pocketsphinx-ci.model "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
-	sed -e 's|^Exec=.*|Exec="$(BINDIR)/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
+	sed -e 's|^Exec=.*|Exec="$(QT_BINDIR)/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(QT_BINDIR)/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
 	fi
@@ -555,8 +561,8 @@ uninstall:
 	$(MAKE) uninstall-desktop-assets
 
 uninstall-qt:
-	rm -f "$(DESTDIR)$(BINDIR)/$(QT_BIN_NAME)"
-	rm -f "$(DESTDIR)$(BINDIR)/$(QT_EDITOR_BIN_NAME)"
+	rm -f "$(DESTDIR)$(QT_BINDIR)/$(QT_BIN_NAME)"
+	rm -f "$(DESTDIR)$(QT_BINDIR)/$(QT_EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	$(MAKE) uninstall-desktop-assets
 

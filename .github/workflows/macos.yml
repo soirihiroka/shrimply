@@ -152,7 +152,7 @@ jobs:
         run: |
           contents="${MACOS_APP}/Contents"
           mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources"
-          install -m 755 target/release/shrimply-appkit "${contents}/MacOS/Shrimply"
+          install -m 755 target/release/shrimply "${contents}/MacOS/shrimply"
           install -m 644 packaging/macos/Info.plist "${contents}/Info.plist"
           install -m 755 "$(command -v uv)" "${contents}/MacOS/uv"
           python_project="crates/media/visual/manim/manim-bridge/python"
@@ -172,7 +172,7 @@ jobs:
           if ! dylibbundler \
             --bundle-deps \
             --overwrite-dir \
-            --fix-file "${contents}/MacOS/Shrimply" \
+            --fix-file "${contents}/MacOS/shrimply" \
             --fix-file "${contents}/MacOS/uv" \
             --dest-dir "${contents}/Frameworks" \
             --install-path '@executable_path/../Frameworks/' \
@@ -201,8 +201,8 @@ jobs:
           test -s "${contents}/Resources/Assets.car"
           test -s "${contents}/Resources/Shrimply.icns"
           codesign --verify --deep --strict "${MACOS_APP}"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "Shrimply"
-          test "$(lipo -archs "${contents}/MacOS/Shrimply")" = "arm64"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "shrimply"
+          test "$(lipo -archs "${contents}/MacOS/shrimply")" = "arm64"
           env PATH=/usr/bin:/bin "${contents}/MacOS/uv" --version
           test -s "${contents}/Resources/manim-worker/pyproject.toml"
           test -s "${contents}/Resources/manim-worker/uv.lock"
@@ -218,11 +218,11 @@ jobs:
             exit 1
           fi
 
-          if "${contents}/MacOS/Shrimply" "${RUNNER_TEMP}/missing.shrimp"; then
+          if "${contents}/MacOS/shrimply" "${RUNNER_TEMP}/missing.shrimp"; then
             echo "Launcher unexpectedly accepted a missing project" >&2
             exit 1
           fi
-          if "${contents}/MacOS/Shrimply" first.shrimp second.shrimp; then
+          if "${contents}/MacOS/shrimply" first.shrimp second.shrimp; then
             echo "Editor unexpectedly accepted multiple projects" >&2
             exit 1
           fi

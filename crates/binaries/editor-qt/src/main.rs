@@ -19,7 +19,7 @@ fn main() -> ExitCode {
     let mut paths = std::env::args_os().skip(1);
     if paths.next().is_none() || paths.next().is_some() {
         eprintln!(
-            "usage: shrimply-editor-qt PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive"
+            "usage: shrimply-editor PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive"
         );
         return ExitCode::FAILURE;
     }
@@ -31,7 +31,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
     app.as_mut()
-        .set_application_name(&QString::from("shrimply-editor-qt"));
+        .set_application_name(&QString::from("shrimply-editor"));
     app.as_mut()
         .set_application_display_name(&QString::from("Shrimply"));
     backend::qobject::configure_icons();
