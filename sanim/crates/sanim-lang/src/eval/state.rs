@@ -20,7 +20,6 @@ pub struct ExecutionState {
     retained_bytes: usize,
     retained_items: usize,
     logical_operations: u64,
-    hotspots: imbl::OrdMap<(String, usize, usize, usize), u64>,
     overhead: usize,
     payload: usize,
     age: u64,
@@ -224,7 +223,6 @@ impl Store {
             runtime.retained_bytes = saved.retained_bytes;
             runtime.retained_items = saved.retained_items;
             runtime.logical_operations = saved.logical_operations;
-            runtime.hotspots = saved.hotspots.clone();
             runtime.completed_statements += index as u64;
             runtime.statistics.restored_statements = index as u64;
             runtime.statistics.restored_until = saved.cursor;
@@ -305,7 +303,6 @@ impl Store {
             retained_bytes: runtime.retained_bytes,
             retained_items: runtime.retained_items,
             logical_operations: runtime.logical_operations,
-            hotspots: runtime.hotspots.clone(),
             overhead,
             payload,
             age: self.age,

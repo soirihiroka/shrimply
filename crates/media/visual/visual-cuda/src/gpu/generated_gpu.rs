@@ -52,6 +52,7 @@ pub struct GeneratedGpuRenderer {
     gaussian_3d: Option<shrimply_3dgs_vulkan::Renderer>,
     interop_frames: Arc<Mutex<Vec<ImportedVulkanFrame>>>,
     vector_image: Option<(u32, u32, VulkanImage)>,
+    vector_frame: Option<(VectorRenderKey, VisualFrame)>,
     background_frame: Option<(background::RenderKey, VisualFrame)>,
     background: Option<background::Renderer>,
     manim: Option<shrimply_manim_cuda::Renderer>,
@@ -70,6 +71,13 @@ struct OidnDenoiser {
     filters: [shrimply_denoise_oidn::Filter; 2],
     // Filters and their OIDN device must be dropped before their CUDA stream.
     stream: Arc<shrimply_gpu_cuda::CudaStream>,
+}
+#[derive(PartialEq)]
+struct VectorRenderKey {
+    source: (std::any::TypeId, u64),
+    sizes: (CanvasSize, CanvasSize),
+    operations: Vec<VectorOperation>,
+    strategy: SkiaDrawingStrategy,
 }
 
 impl GeneratedGpuRenderer {
@@ -203,6 +211,7 @@ impl GeneratedGpuRenderer {
             gaussian_3d: None,
             interop_frames: Arc::new(Mutex::new(Vec::new())),
             vector_image: None,
+            vector_frame: None,
             background_frame: None,
             background: None,
             manim: None,
@@ -391,6 +400,15 @@ impl GeneratedGpuRenderer {
         drawing_strategy: SkiaDrawingStrategy,
     ) -> Result<VisualFrame, String> {
         let _measurement = shrimply_profiling::measure("Generated visual / Total");
+        let key = visual.cache_key().map(|source| VectorRenderKey { source, sizes: canvas_sizes, operations: operations.to_vec(), strategy: drawing_strategy });
+        if let Some((previous, frame)) = &self.vector_frame
+            && key.as_ref() == Some(previous)
+        {
+            shrimply_profiling::increment("Generated vector GPU cache / Hit");
+            return Ok(frame.clone());
+        }
+        if key.is_some() { shrimply_profiling::increment("Generated vector GPU cache / Miss"); }
+        self.vector_frame = None;
         let render_size = canvas_sizes.0;
         let width = render_size.width.max(1);
         let height = render_size.height.max(1);
@@ -443,7 +461,9 @@ impl GeneratedGpuRenderer {
         }
         let _measurement = shrimply_profiling::measure("Generated visual / CUDA import");
         self.vector_image = Some((width, height, image));
-        self.visual_frame_from_imported(width, height, imported, Some(self.interop_frames.clone()))
+        let frame = self.visual_frame_from_imported(width, height, imported, Some(self.interop_frames.clone()))?;
+        self.vector_frame = key.map(|key| (key, frame.clone()));
+        Ok(frame)
     }
 
     fn acquire_interop_buffer(
@@ -596,6 +616,7 @@ impl GeneratedGpuRenderer {
     pub(super) fn release_render_surfaces(&mut self, requested_bytes: u64) -> Result<bool, String> {
         let background_frame = self.background_frame.take().map(|(_, frame)| frame.bytes());
         let mut released = background_frame.is_some();
+        released |= self.vector_frame.take().is_some();
         released |= self.vector_image.take().is_some();
         released |= self.image_copy.take().is_some();
         let interop_frames = self

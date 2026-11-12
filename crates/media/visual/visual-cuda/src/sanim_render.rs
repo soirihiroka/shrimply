@@ -49,7 +49,7 @@ impl VisualElement for SanimElement {
             request.decode_control.is_none(),
         )?;
         if let Some(error) = self.source.take_error() {
-            tracing::warn!(%error,"Sanim reload failed; showing last good animation");
+            tracing::warn!(%error,"Sanim source preparation failed");
         }
         let (recording, loading) = match status {
             shrimply_visual_core::sanim::Status::Empty => return Ok(VisualRender::Empty),

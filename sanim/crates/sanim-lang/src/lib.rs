@@ -428,7 +428,7 @@ impl Engine {
         prepared.statistics.prepare_micros =
             started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
         if prepared.statistics.prepare_micros > self.limits.warn_prepare_micros {
-            prepared.performance.push(PerformanceWarning{code:"P002".into(),message:format!("preparation took {}us (budget {}us); {} expressions rebuilt, {} reused, {} assets decoded. Inspect source hotspots and move repeated work outside loops.",prepared.statistics.prepare_micros,self.limits.warn_prepare_micros,prepared.statistics.evaluated_expressions,prepared.statistics.reused_expressions,prepared.statistics.decoded_assets),source:entry.into(),span:Span::default(),operations:prepared.statistics.operations});
+            prepared.performance.push(PerformanceWarning{code:"P002".into(),message:format!("preparation took {}us (budget {}us); {} expressions evaluated, {} expression cache hits, {} assets decoded; {} statements restored. Inspect the reported source hotspots and cache-key/native/query timings.",prepared.statistics.prepare_micros,self.limits.warn_prepare_micros,prepared.statistics.evaluated_expressions,prepared.statistics.reused_expressions,prepared.statistics.decoded_assets,prepared.statistics.restored_statements),source:entry.into(),span:Span::default(),operations:prepared.statistics.operations});
         }
         if self.values.len() > self.limits.max_cache_entries {
             self.values.clear();

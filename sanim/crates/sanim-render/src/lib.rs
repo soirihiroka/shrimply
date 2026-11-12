@@ -61,9 +61,11 @@ pub struct Recording {
     pub width: u32,
     pub height: u32,
     pub record_micros: u64,
+    id: u64,
     picture: Picture,
 }
 impl Recording {
+    pub fn id(&self) -> u64 { self.id }
     /// Record native vector commands, including host loading/diagnostic overlays.
     pub fn capture(
         width: u32,
@@ -82,6 +84,11 @@ impl Recording {
             width,
             height,
             record_micros: started.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
+            id: {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static NEXT: AtomicU64 = AtomicU64::new(1);
+                NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1)).expect("recording identity overflow")
+            },
             picture: recorder
                 .finish_recording_as_picture(None)
                 .ok_or("Skia recording failed")?,

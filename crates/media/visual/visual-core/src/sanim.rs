@@ -137,14 +137,14 @@ impl Source {
             }
             if state.generation != self.generation {
                 self.generation = state.generation;
-                self.error = state.diagnostic.as_ref().map(ToString::to_string);
+                self.error = state.diagnostic.as_ref().filter(|_| !state.preparing).map(ToString::to_string);
             }
             if strict && let Some(error) = &state.diagnostic {
                 return Err(error.to_string());
             }
             let Some(prepared) = state.prepared.clone() else {
                 let recording = self.feedback(canvas, &state, None)?;
-                return if state.diagnostic.is_some() {
+                return if !state.preparing && state.diagnostic.is_some() {
                     Ok(Status::Failed(recording))
                 } else {
                     Ok(Status::Loading(recording))
@@ -218,7 +218,7 @@ impl Source {
         {
             return Ok(previous.recording.clone());
         }
-        let error = state.diagnostic.as_ref().map(ToString::to_string);
+        let error = state.diagnostic.as_ref().filter(|_| !state.preparing).map(ToString::to_string);
         let recording =
             feedback::record(canvas, &state.progress, error.as_deref(), base.as_deref())?;
         self.feedback = Some(feedback::Feedback {
@@ -233,6 +233,7 @@ impl Source {
 
 pub struct RecordedVisual(pub Arc<Recording>);
 impl crate::generated::GeneratedVisual for RecordedVisual {
+    fn cache_key(&self) -> Option<(std::any::TypeId, u64)> { Some((std::any::TypeId::of::<Self>(), self.0.id())) }
     fn draw(
         &self,
         canvas: &skia_safe::Canvas,
