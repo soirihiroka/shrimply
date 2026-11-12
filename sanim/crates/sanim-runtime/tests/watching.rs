@@ -290,3 +290,115 @@ fn external_viewport_configuration_is_acknowledged_and_reloaded() {
         sanim_core::Fraction::from(24)
     );
 }
+
+#[test]
+fn progress_distinguishes_ready_failed_reload_and_recovery() {
+    use sanim_runtime::State;
+    let f = Fixture::new();
+    f.write("main.sanim", "wait(1s)");
+    let runtime = f.open();
+    let initial = runtime.snapshot();
+    if initial.preparing {
+        assert_eq!(initial.progress.state, State::Running);
+        assert!(!initial.reloading);
+    }
+    let first = until(&runtime, |s| !s.preparing && s.prepared.is_some());
+    assert_eq!(first.progress.state, State::Ready);
+    assert!(!first.reloading);
+    f.write("main.sanim", "let broken = (");
+    let failed = until(&runtime, |s| !s.preparing && s.diagnostic.is_some());
+    assert_eq!(failed.progress.state, State::Failed);
+    assert!(failed.reloading);
+    assert!(std::sync::Arc::ptr_eq(
+        first.prepared.as_ref().unwrap(),
+        failed.prepared.as_ref().unwrap()
+    ));
+    runtime.reload().unwrap();
+    let unchanged = runtime.wait_for_change(failed.generation, Duration::from_millis(200));
+    assert_eq!(unchanged.progress.state, State::Failed);
+    assert_eq!(
+        unchanged.progress.elapsed_micros,
+        failed.progress.elapsed_micros
+    );
+    f.write("main.sanim", "wait(2s)");
+    let ready = until(&runtime, |s| {
+        !s.preparing && s.revision > first.revision && s.diagnostic.is_none()
+    });
+    assert_eq!(ready.progress.state, State::Ready);
+    assert!(!ready.reloading);
+}
+
+#[test]
+fn wake_observer_can_read_and_request_another_revision() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let f = Fixture::new();
+    f.write("main.sanim", "reflect count = 1\nwait(count*1s)");
+    let runtime = Arc::new(f.open());
+    until(&runtime, |s| !s.preparing && s.prepared.is_some());
+    let weak = Arc::downgrade(&runtime);
+    let requested = Arc::new(AtomicBool::new(false));
+    runtime.set_waker(Some(Arc::new(move || {
+        if let Some(runtime) = weak.upgrade() {
+            let state = runtime.snapshot();
+            if state.applied_inputs == 1
+                && state.progress.state == sanim_runtime::State::Ready
+                && !requested.swap(true, Ordering::Relaxed)
+            {
+                runtime
+                    .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(3))]))
+                    .unwrap();
+            }
+        }
+    })));
+    runtime
+        .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(2))]))
+        .unwrap();
+    let ready = until(&runtime, |s| !s.preparing && s.applied_inputs == 2);
+    assert_eq!(ready.progress.state, sanim_runtime::State::Ready);
+    assert_eq!(
+        ready.prepared.unwrap().animation.duration,
+        sanim_core::Fraction::from(3)
+    );
+    runtime.set_waker(None);
+}
+
+#[test]
+fn last_runtime_owner_can_be_dropped_inside_worker_observer() {
+    use std::sync::{Arc, Barrier, mpsc};
+    let f = Fixture::new();
+    f.write("main.sanim", "reflect count = 1\nwait(count*1s)");
+    let runtime = Arc::new(f.open());
+    until(&runtime, |s| !s.preparing && s.prepared.is_some());
+    let weak = Arc::downgrade(&runtime);
+    let barrier = Arc::new(Barrier::new(2));
+    let observer_barrier = barrier.clone();
+    let (send, receive) = mpsc::channel();
+    runtime.set_waker(Some(Arc::new(move || {
+        if let Some(runtime) = weak.upgrade() {
+            let state = runtime.snapshot();
+            if state.applied_inputs == 1
+                && state.progress.state == sanim_runtime::State::Ready
+                && std::thread::current().name() == Some("sanim-runtime")
+            {
+                send.send(false).unwrap();
+                observer_barrier.wait();
+                drop(runtime);
+                send.send(true).unwrap();
+            }
+        }
+    })));
+    runtime
+        .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(2))]))
+        .unwrap();
+    assert!(!receive.recv_timeout(Duration::from_secs(8)).unwrap());
+    drop(runtime);
+    barrier.wait();
+    assert!(
+        receive
+            .recv_timeout(Duration::from_secs(8))
+            .expect("observer deadlocked dropping the last runtime owner")
+    );
+}

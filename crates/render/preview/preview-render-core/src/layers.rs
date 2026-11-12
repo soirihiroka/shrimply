@@ -293,7 +293,15 @@ impl Scene {
                     if let std::collections::hash_map::Entry::Vacant(entry) =
                         self.sanim.entry(item.id)
                     {
-                        let mut source = shrimply_visual_core::sanim::Source::new(item)?;
+                        let mut source = shrimply_visual_core::sanim::Source::with_viewport(
+                            item,
+                            shrimply_visual_core::sanim::Viewport {
+                                width: project.canvas_size.width,
+                                height: project.canvas_size.height,
+                                rate: project.fps,
+                                ..Default::default()
+                            },
+                        )?;
                         source.set_waker(self.source_waker.clone());
                         entry.insert(source);
                     }
@@ -311,37 +319,35 @@ impl Scene {
                     if let Some(error) = source.take_error() {
                         self.sanim_errors.push(error);
                     }
-                    match status {
+                    let frame = match status {
                         shrimply_visual_core::sanim::Status::Empty => continue,
-                        shrimply_visual_core::sanim::Status::Loading => {
-                            self.manim_loading = true;
-                            self.manim_pending = true;
-                            return Ok(Vec::new());
+                        shrimply_visual_core::sanim::Status::Loading(frame) => {
+                            self.sanim_loading = true;
+                            frame
                         }
-                        shrimply_visual_core::sanim::Status::Ready(frame) => {
-                            let width = frame.width;
-                            let height = frame.height;
-                            let operations = if capture_host {
-                                Vec::new()
-                            } else {
-                                vec![shrimply_visual_core::generated::VectorOperation::Transform(
-                                    transform.composed(),
-                                )]
-                            };
-                            let generated = shrimply_visual_core::generated::GeneratedFrame {
-                                visual: Box::new(shrimply_visual_core::sanim::RecordedVisual(
-                                    frame,
-                                )),
-                                evaluation: evaluation.clone(),
-                                operations,
-                                render_size: render_canvas,
-                                canvas_size: project.canvas_size,
-                                drawing_strategy: item.skia_drawing_strategy,
-                            };
-                            (Source::Generated(Box::new(generated)), width, height)
-                        }
-                    }
+                        shrimply_visual_core::sanim::Status::Failed(frame)
+                        | shrimply_visual_core::sanim::Status::Ready(frame) => frame,
+                    };
+                    let width = frame.width;
+                    let height = frame.height;
+                    let operations = if capture_host {
+                        Vec::new()
+                    } else {
+                        vec![shrimply_visual_core::generated::VectorOperation::Transform(
+                            transform.composed(),
+                        )]
+                    };
+                    let generated = shrimply_visual_core::generated::GeneratedFrame {
+                        visual: Box::new(shrimply_visual_core::sanim::RecordedVisual(frame)),
+                        evaluation: evaluation.clone(),
+                        operations,
+                        render_size: render_canvas,
+                        canvas_size: project.canvas_size,
+                        drawing_strategy: item.skia_drawing_strategy,
+                    };
+                    (Source::Generated(Box::new(generated)), width, height)
                 }
+
                 VideoItemContent::Manim(_) => {
                     let fps = shrimply_manim_wgpu::effective_fps(item, project.fps);
                     if let std::collections::hash_map::Entry::Vacant(entry) =
@@ -791,7 +797,10 @@ impl Scene {
         incoming: MorphEndpoint,
         progress: f32,
     ) -> Result<Layer, String> {
-        let cacheable = !outgoing.audio_pending && !incoming.audio_pending && !self.manim_loading;
+        let cacheable = !outgoing.audio_pending
+            && !incoming.audio_pending
+            && !self.manim_loading
+            && !self.sanim_loading;
         let outgoing_address = outgoing.address;
         let incoming_address = incoming.address;
         let outgoing = outgoing.layer;

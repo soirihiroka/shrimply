@@ -171,7 +171,10 @@ fn warm_query_cache_reuses_results_but_data_changes_invalidate() {
     let warm = engine
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
-    assert_eq!(warm.statistics.reused_queries, 1);
+    assert_eq!(warm.statistics.restored_statements, 2);
+    assert_eq!(warm.statistics.executed_queries, 0);
+    assert_eq!(warm.statistics.reused_queries, 0);
+    assert_eq!(warm.statistics.operations, 0);
     files.insert("data.csv", "value\n2\n");
     let changed = engine
         .prepare("main.sanim", &files, &BTreeMap::new())

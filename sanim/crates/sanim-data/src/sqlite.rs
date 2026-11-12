@@ -32,7 +32,7 @@ fn input(value: &Value) -> Result<Sql, String> {
         Value::None => Sql::Null,
         Value::Some(value) => return input(value),
         Value::Bool(value) => Sql::Integer(i64::from(*value)),
-        Value::String(value) => Sql::Text(value.clone()),
+        Value::String(value) => Sql::Text(value.to_string()),
         Value::Number(value) => {
             if value.value.fract() == Fraction::from(0) {
                 use num_traits::ToPrimitive;
@@ -43,7 +43,7 @@ fn input(value: &Value) -> Result<Sql, String> {
             Sql::Real(math::to_f64(value.value)?)
         }
         Value::Fraction(value) => Sql::Text(value.to_string()),
-        Value::Data(value) => match value {
+        Value::Data(value) => match value.as_ref() {
             serde_json::Value::Null => Sql::Null,
             serde_json::Value::Bool(v) => Sql::Integer(i64::from(*v)),
             serde_json::Value::String(v) => Sql::Text(v.clone()),
@@ -68,7 +68,7 @@ fn output(value: ValueRef<'_>, ty: &Type, limits: Limits) -> Result<Value, Strin
         return if value == ValueRef::Null {
             Ok(Value::None)
         } else {
-            output(value, inner, limits).map(|v| Value::Some(Box::new(v)))
+            output(value, inner, limits).map(|v| Value::Some(std::sync::Arc::new(v)))
         };
     }
     match (ty, value) {
@@ -165,7 +165,7 @@ pub fn query(
         let Value::Table { row_type, rows } = table else {
             return Err(format!("'{name}' must be a Table<Row>"));
         };
-        let Type::Record(fields) = row_type else {
+        let Type::Record(fields) = row_type.as_ref() else {
             return Err(format!("'{name}' requires a record row schema"));
         };
         if fields.is_empty() {
@@ -279,7 +279,7 @@ pub fn query(
                 .collect::<Result<BTreeMap<_, _>, String>>()?,
             Some(Value::Dict(fields)) => fields
                 .iter()
-                .map(|(k, v)| Ok((k.clone(), input(&Value::Data(v.clone()))?)))
+                .map(|(k, v)| Ok((k.clone(), input(&Value::Data(v.clone().into()))?)))
                 .collect::<Result<_, String>>()?,
             None => BTreeMap::new(),
             _ => return Err("SQL params require Dict or a named record".into()),
@@ -338,13 +338,13 @@ pub fn query(
                 }
             }
             rows.push(if *row_type.as_ref() == Type::Dict {
-                Value::Dict(unstructured)
+                Value::Dict(unstructured.into_iter().collect())
             } else {
-                Value::Record(fields)
+                Value::Record(fields.into())
             });
         }
         Ok(Value::Table {
-            row_type: *row_type.clone(),
+            row_type: row_type.clone().into(),
             rows: rows.into(),
         })
     })();

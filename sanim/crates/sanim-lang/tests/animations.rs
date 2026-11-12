@@ -96,10 +96,10 @@ fn group_reveals_keep_child_geometry_and_layout_unchanged() {
         .animation
         .layout(Fraction::from(1), Fraction::from(300), Fraction::from(200))
         .unwrap();
-    let Geometry::Group { children: a } = &start[0].geometry else {
+    let Geometry::Group { children: a } = start[0].geometry.as_ref() else {
         panic!("group")
     };
-    let Geometry::Group { children: b } = &end[0].geometry else {
+    let Geometry::Group { children: b } = end[0].geometry.as_ref() else {
         panic!("group")
     };
     assert_eq!(a, b);

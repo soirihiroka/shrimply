@@ -226,3 +226,34 @@ fn cli_defaults_are_external_hd_30fps_and_css_dpi() {
     assert_eq!(result["viewport"]["height"], 1080);
     assert_eq!(result["viewport"]["dpi"], 96);
 }
+
+#[test]
+fn progress_is_opt_in_structured_stderr_without_changing_results() {
+    let (output, _) = run("wait(1s)", &["check", "--json", "--progress"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["ok"], true);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(!events.is_empty());
+    assert!(events.iter().all(|event| event["event"] == "progress"));
+    assert_eq!(events.last().unwrap()["progress"]["state"], "ready");
+    let (without, _) = run("wait(1s)", &["check", "--json"]);
+    assert!(without.stderr.is_empty());
+    let (failed, _) = run("let broken = (", &["check", "--json", "--progress"]);
+    assert!(!failed.status.success());
+    let stderr = String::from_utf8(failed.stderr).unwrap();
+    let events: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(events[events.len() - 2]["progress"]["state"], "failed");
+    assert_eq!(events.last().unwrap()["ok"], false);
+}

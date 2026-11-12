@@ -4,6 +4,7 @@ use crate::{
     Animation, Element, Fraction, Geometry, Vec2,
     math::{float_arithmetic as calc, to_f64},
 };
+use std::sync::Arc;
 
 impl Animation {
     pub fn layout(
@@ -26,6 +27,23 @@ impl Animation {
 }
 
 pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> Result<(), String> {
+    if element.horizontal.origin.unit == crate::Unit::Percent {
+        let width = element
+            .layout
+            .width
+            .map(to_f64)
+            .transpose()?
+            .unwrap_or(parent_width);
+        element.horizontal.origin = crate::Number {
+            value: crate::math::from_f64(calc(
+                "+",
+                calc("*", to_f64(element.horizontal.origin.value)?, width)?,
+                to_f64(element.horizontal.offset)?,
+            )?)?,
+            unit: crate::Unit::Length,
+        };
+        element.horizontal.offset = Fraction::from(0);
+    }
     if element.position.unit == crate::Unit::Percent {
         element.position = Vec2 {
             values: [
@@ -36,7 +54,7 @@ pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> 
         };
     }
     // Alignment anchors the element's bounds to the corresponding parent edge.
-    let (own_min, own_max) = if matches!(element.geometry, Geometry::Group { .. }) {
+    let (own_min, own_max) = if matches!(element.geometry.as_ref(), Geometry::Group { .. }) {
         (
             [0.0; 2],
             [
@@ -63,10 +81,8 @@ pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> 
             ],
         )
     } else {
-        let mut local = element.clone();
-        local.position = Vec2::zero(crate::Unit::Length);
-        local.rotation = Fraction::from(0);
-        let b = crate::verify::bounds(&local)?;
+        let b =
+            crate::verify::bounds_at(element, Vec2::zero(crate::Unit::Length), Fraction::from(0))?;
         (b.min.values, b.max.values)
     };
     for (axis, parent) in [parent_width, parent_height].into_iter().enumerate() {
@@ -88,7 +104,9 @@ pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> 
             calc("-", calc("*", parent, anchor)?, own)?,
         )?;
     }
-    if let Geometry::Group { children } = &mut element.geometry {
+    if matches!(element.geometry.as_ref(), Geometry::Group { .. })
+        && let Geometry::Group { children } = Arc::make_mut(&mut element.geometry)
+    {
         let width = element
             .layout
             .width
@@ -132,7 +150,7 @@ pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> 
 }
 
 pub fn extent(element: &Element) -> Result<(f64, f64), String> {
-    let (w, h) = match &element.geometry {
+    let (w, h) = match element.geometry.as_ref() {
         Geometry::Circle { radius } => (
             calc("*", to_f64(*radius)?, 2.0)?,
             calc("*", to_f64(*radius)?, 2.0)?,
@@ -153,9 +171,11 @@ pub fn extent(element: &Element) -> Result<(f64, f64), String> {
             )?,
         ),
         _ => {
-            let mut local = element.clone();
-            local.position = Vec2::zero(crate::Unit::Length);
-            let bounds = crate::verify::bounds(&local)?;
+            let bounds = crate::verify::bounds_at(
+                element,
+                Vec2::zero(crate::Unit::Length),
+                element.rotation,
+            )?;
             return Ok((
                 calc("-", bounds.max.values[0], bounds.min.values[0])?,
                 calc("-", bounds.max.values[1], bounds.min.values[1])?,

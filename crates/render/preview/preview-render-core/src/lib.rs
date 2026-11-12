@@ -158,6 +158,7 @@ pub struct Scene {
     manim: std::collections::HashMap<uuid::Uuid, shrimply_manim_wgpu::Source>,
     sanim: std::collections::HashMap<uuid::Uuid, shrimply_visual_core::sanim::Source>,
     sanim_errors: Vec<String>,
+    sanim_loading: bool,
     sanim_active: std::collections::HashSet<uuid::Uuid>,
     strict_sources: bool,
     source_waker: Option<shrimply_visual_core::generated::SourceWake>,
@@ -252,6 +253,7 @@ impl Scene {
         self.sampled_audio.clear();
         self.morphs.clear();
         self.manim_loading = false;
+        self.sanim_loading = false;
         self.manim_pending = false;
         self.blender.clear();
         self.blender_images.clear();
@@ -375,6 +377,7 @@ impl Scene {
             return Ok(None);
         }
         self.manim_loading = false;
+        self.sanim_loading = false;
         self.manim_pending = false;
         self.blender_loading = false;
         self.stabilization_pending = false;
@@ -407,7 +410,7 @@ impl Scene {
         Ok(Some(FramePlan {
             time,
             accuracy,
-            loading: self.manim_loading || self.blender_loading,
+            loading: self.manim_loading || self.blender_loading || self.sanim_loading,
             audio_analysis: audio,
             layers,
             external_layers,

@@ -201,7 +201,7 @@ impl Session {
                     .collect();
                 fn expand(element: &sanim_core::Element, dirty: &mut BTreeSet<String>) -> bool {
                     let mut dependent = false;
-                    if let sanim_core::Geometry::Group { children } = &element.geometry {
+                    if let sanim_core::Geometry::Group { children } = element.geometry.as_ref() {
                         for child in children {
                             dependent |= expand(child, dirty);
                         }

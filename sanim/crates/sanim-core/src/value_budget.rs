@@ -39,7 +39,7 @@ pub fn charge(
                 }
             }
             serde_json::Value::Object(values) => {
-                for (key, value) in values {
+                for (key, value) in values.iter() {
                     *bytes = bytes
                         .checked_sub(key.len())
                         .ok_or("generated value byte budget exceeded")?;
@@ -60,7 +60,7 @@ pub fn charge(
             return Err("generated element nesting limit exceeded".into());
         }
         take(bytes, items, std::mem::size_of_val(value) + value.id.len())?;
-        match &value.geometry {
+        match value.geometry.as_ref() {
             Geometry::Group { children } => {
                 for child in children {
                     element(child, bytes, items, depth - 1)?;
@@ -100,7 +100,7 @@ pub fn charge(
             }
             Value::Data(value) => json(value, bytes, items, depth - 1)?,
             Value::Dict(values) => {
-                for (key, value) in values {
+                for (key, value) in values.iter() {
                     *bytes = bytes
                         .checked_sub(key.len())
                         .ok_or("generated value byte budget exceeded")?;
@@ -113,7 +113,7 @@ pub fn charge(
                 }
             }
             Value::Record(values) => {
-                for (key, value) in values {
+                for (key, value) in values.iter() {
                     *bytes = bytes
                         .checked_sub(key.len())
                         .ok_or("generated value byte budget exceeded")?;
@@ -122,7 +122,7 @@ pub fn charge(
             }
             Value::Some(value) => visit(value, bytes, items, depth - 1)?,
             Value::Variant { fields, .. } => {
-                for value in fields {
+                for value in fields.iter() {
                     visit(value, bytes, items, depth - 1)?;
                 }
             }

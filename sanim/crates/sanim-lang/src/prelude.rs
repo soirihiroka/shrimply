@@ -9,7 +9,7 @@ pub struct Parameter {
 }
 pub(crate) type Evaluator = for<'a> fn(
     &str,
-    &std::collections::BTreeMap<String, sanim_core::Value>,
+    &imbl::OrdMap<String, sanim_core::Value>,
     native::Context<'a>,
 ) -> Result<sanim_core::Value, String>;
 pub(crate) type TypeRule = fn(&Builtin, &[Type]) -> Result<Type, String>;
@@ -250,6 +250,24 @@ fn build_builtins() -> Vec<Builtin> {
         add(
             name,
             vec![p("element", Element, true)],
+            Motion,
+            false,
+            Execution::Native(native::motion),
+            native_types::fixed,
+        );
+    }
+    for name in ["ExpandX", "StretchXTo"] {
+        let mut params = vec![p("element", Element, true)];
+        if name == "StretchXTo" {
+            params.push(p("to", num.clone(), true));
+        }
+        params.extend([
+            p("origin", Numeric(Dimension::Percent), false),
+            p("offset", length.clone(), false),
+        ]);
+        add(
+            name,
+            params,
             Motion,
             false,
             Execution::Native(native::motion),

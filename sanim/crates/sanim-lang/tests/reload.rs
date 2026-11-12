@@ -131,8 +131,10 @@ fn warm_prepare_reuses_assets_and_expressions() {
         .unwrap();
     assert_eq!(first.fingerprint, second.fingerprint);
     assert_eq!(second.statistics.decoded_assets, 0);
-    assert_eq!(second.statistics.reused_assets, 1);
-    assert!(second.statistics.reused_expressions > 0);
+    assert_eq!(second.statistics.restored_statements, 2);
+    assert_eq!(second.statistics.reused_assets, 0);
+    assert_eq!(second.statistics.evaluated_expressions, 0);
+    assert_eq!(second.statistics.operations, 0);
 }
 #[test]
 fn invalid_override_is_transactional() {

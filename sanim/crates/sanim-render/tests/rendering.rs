@@ -190,7 +190,8 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
     })
     .prepare("main.sanim", &files, &BTreeMap::new())
     .unwrap();
-    let sanim_core::Geometry::Text { outline, .. } = &prepared.animation.layers[0].element.geometry
+    let sanim_core::Geometry::Text { outline, .. } =
+        prepared.animation.layers[0].element.geometry.as_ref()
     else {
         panic!("text geometry")
     };
@@ -370,7 +371,8 @@ fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
     geometry_edit.layers[0].element.geometry = sanim_core::Geometry::Rectangle {
         width: Fraction::from(16),
         height: Fraction::from(24),
-    };
+    }
+    .into();
     renderer.prepare(geometry_edit).unwrap();
     assert_eq!(renderer.geometry_cache_hits, 1);
     renderer.clear_cache();
@@ -389,7 +391,8 @@ fn nonfinite_path_measurements_fail_before_recording() {
             unit: sanim_core::Unit::Length,
         },
         width: Fraction::from(1),
-    };
+    }
+    .into();
     let error = match Scene::new(animation) {
         Ok(_) => panic!("overflowing length accepted"),
         Err(error) => error,

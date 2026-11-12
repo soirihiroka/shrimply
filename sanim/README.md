@@ -49,6 +49,9 @@ headless Skia frames to an external FFmpeg encoder for H.264 MP4 output. `--help
 frame/time selection, output sizing, and bounded watch sessions. `inspect`
 exports source dependencies, reflected values, resolved types and symbols,
 scheduling effects, verification evidence, and performance measurements as JSON.
+`--progress` emits observed preparation phases/counts as JSON on stderr, leaving
+the command's stdout protocol unchanged. Counts are phase-local; unknown totals
+remain unknown rather than becoming an estimated overall percentage.
 
 ## Crates
 
@@ -121,7 +124,7 @@ retain their schemas in reflection and typed JSON/TOML/NPY data loading.
 `Circle`, `Rect`/`Rectangle`, `Line`, `Polygon`, `Text`, `Group`, `Row` and `Column`
 construct immutable elements. `MoveTo`, `Shift`, `FadeIn`, `FadeOut`, `RotateTo`,
 `ScaleTo`, `FillTo`, `Create`, `Write`, `Uncreate`, `Unwrite`, `GrowFromCenter`,
-and `ShrinkToCenter` construct motions. `play` schedules one or more motions
+`ShrinkToCenter`, `ExpandX` and `StretchXTo` construct motions. `play` schedules one or more motions
 in parallel, then advances the script cursor; `wait` advances it without motion.
 `add` inserts a still element. Functions may schedule animation. There is no
 per-frame script execution.
@@ -139,6 +142,13 @@ the group or use separate plays. Reveal traces remain inside the original bounds
 zero rotation throughout the motion, and a target whose size is not controlled
 by a parent flow layout. Errors suggest `ScaleTo` or animating the containing
 group. `ScaleTo` remains a positive-scale animation using the existing anchor.
+`ExpandX(element, origin=50%, offset=0pt)` expands a group from zero width to full
+width without changing vertical coordinates or layout dimensions. Its origin is
+relative to the group's layout width, with an optional local pt offset (for
+example the median of a box plot). Primitive defaults use their local origin;
+groups default to 50%. `StretchXTo(element, to, ...)` continues from the current
+horizontal scale. Stretching uses native Skia transforms; continuous bounds
+proofs conservatively report unknown for this transform.
 See [`examples/animations.sanim`](examples/animations.sanim) for the full supported set.
 
 Supported easings are `linear`, `cubic_in`, `cubic_out`, and `smooth`. Tracks hold
@@ -261,10 +271,32 @@ data schema, content and relevant limits. Expression and asset/query caches each
 have an aggregate byte cap as well as an entry cap. Tables and arrays share
 immutable storage across bindings and warm preparations. Unchanged dependencies are reused;
 source/schema/input changes invalidate affected expression results. Scheduling
-effects and user calls are replayed conservatively while their pure subexpressions
-can reuse cached results. This is incremental preparation, not an in-place AST
-patcher. Scene changes identify affected element IDs. Renderer frame caching is
-separate and keyed by immutable scene identity, time and viewport.
+effects and user calls before a valid execution checkpoint are skipped entirely.
+Checkpoints store persistent bindings, scene/timeline indexes, cursor, reflected
+inputs, assertions, resource/function versions and consumed logical budgets.
+`imbl` maps/vectors share tree nodes; immutable data, strings, geometry, fonts and
+runtime schemas share their payloads. Restoring a retained boundary does not copy
+large tables or geometry. The current checkpoint granularity is a root statement;
+an edited loop or function invocation resumes before its enclosing root statement.
+Changed code, inputs or files roll back before their earliest dependent use.
+Hoisted declarations and types are checked afresh, and deferred visual assertions
+are verified against the completed new timeline. Failed suffixes preserve usable
+prefix states. Checkpoints have independent entry/estimated-byte accounting under
+the host cache limits; `Engine::execution_state(boundary)` directly returns a
+retained immutable state root. Statistics report restored statements/time separately
+from work actually executed on this attempt.
+
+`Prepared::time_map` links source spans and repeated helper calls to exact timeline
+ranges and root boundaries. `at_frame(frame)` uses a direct frame table (O(1));
+source overlap queries use an augmented interval index. The table is built with a
+boundary sweep, and its size is checked against `Limits::max_time_map_bytes`
+before allocating. There is no timeline scan during frame lookup.
+
+Scene changes identify affected element IDs. `TimelineDiff` computes conservative
+visual invalidation intervals; recording/layout/raster caches preserve unchanged
+intervals across edits, including an earlier prefix and later reconverged state.
+Computed layouts, Skia command recordings and raster outputs use separate
+byte/entry-bounded LRU caches. Identical hold frames share a canonical state.
 Renderer surfaces, compositing and path work have independent budgets.
 `Renderer::prepare` caches paths and contour lengths by immutable geometry content,
 so color, opacity, timing and viewport edits reuse geometry. This cache is bounded
@@ -377,6 +409,11 @@ write bursts are debounced; periodic content polling recovers missed events.
 `Runtime::snapshot()` performs no source reads or preparation on the caller's
 thread. It exposes last-good prepared content, the current diagnostic, revision,
 changed element IDs, early planned duration and reflected-input acknowledgement.
+Its progress snapshot distinguishes initial loading, reloading with last-good
+content, failure and readiness, including the current resource and elapsed time.
+Notifications are coalesced; native previews draw that feedback as Skia commands
+on the compositor's GPU canvas. Strict exports return diagnostics instead of
+rendering loading/error screens.
 `set_waker` notifies the host without polling; callbacks run outside state locks. `set_inputs` accepts a
 complete JSON override snapshot; values are checked against the newly compiled
 source schema, so a type change can be repaired with matching input values.

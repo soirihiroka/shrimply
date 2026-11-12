@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+imbl.workspace = true
 sanim-core.workspace = true
 sanim-data.workspace = true
 serde.workspace = true

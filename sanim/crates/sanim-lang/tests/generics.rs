@@ -37,7 +37,7 @@ fn structural_constraints_expose_only_guaranteed_fields() {
 #[test]
 fn generic_reads_use_call_specific_schemas_and_track_dependencies() {
     let p=run("fn load<T:Readable=Data>(path:String):T{return read<T>(path)}\nlet raw=load(\"value.json\")\nlet number_value=load<Number>(\"value.json\")\n").unwrap();
-    assert_eq!(p.bindings["raw"], Value::Data(serde_json::json!(12)));
+    assert_eq!(p.bindings["raw"], Value::Data(serde_json::json!(12).into()));
     assert_eq!(
         p.bindings["number_value"].number().unwrap().value,
         Fraction::from(12)

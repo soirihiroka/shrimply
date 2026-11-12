@@ -1,13 +1,19 @@
 //! Background preparation and dependency watching, independent of any editor.
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+mod notifications;
 use sanim_core::{Diagnostic, Viewport};
 pub use sanim_lang;
+pub use sanim_lang::progress::{Phase, Progress, State};
 use sanim_lang::{FileSources, Limits, Prepared, Reload, Session};
 pub use sanim_render;
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex, mpsc},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -24,6 +30,10 @@ pub struct Snapshot {
     pub diagnostic: Option<Diagnostic>,
     pub changed_elements: Arc<[String]>,
     pub preparing: bool,
+    /// Latest observed phase/counts; totals are phase-local and may be unknown.
+    pub progress: Progress,
+    /// A last-good scene is retained while a reload is running or has failed.
+    pub reloading: bool,
     pub requested_inputs: u64,
     pub applied_inputs: u64,
 }
@@ -45,8 +55,10 @@ pub struct Runtime {
     commands: mpsc::SyncSender<Command>,
     shared: Shared,
     worker: Option<thread::JoinHandle<()>>,
+    progress_worker: Option<thread::JoinHandle<()>>,
     waker: Waker,
     configuration: Mutex<Configuration>,
+    stopping: Arc<AtomicBool>,
 }
 impl Runtime {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
@@ -78,6 +90,10 @@ impl Runtime {
         let shared = Arc::new((
             Mutex::new(Snapshot {
                 preparing: true,
+                progress: Progress {
+                    resource: Some(entry.clone()),
+                    ..Progress::default()
+                },
                 ..Snapshot::default()
             }),
             Condvar::new(),
@@ -86,11 +102,22 @@ impl Runtime {
         let published = shared.clone();
         let waker = Waker::default();
         let worker_waker = waker.clone();
+        let (progress_changes, progress_receiver) = mpsc::sync_channel(1);
+        let progress_worker = thread::Builder::new()
+            .name("sanim-progress".into())
+            .spawn({
+                let shared = shared.clone();
+                let waker = waker.clone();
+                move || notifications::run(shared, waker, progress_receiver)
+            })
+            .map_err(|error| error.to_string())?;
         let changed = commands.clone();
         let configuration = Configuration {
             viewport: viewport.clone(),
             ..Configuration::default()
         };
+        let stopping = Arc::new(AtomicBool::new(false));
+        let worker_stopping = stopping.clone();
         let worker = thread::Builder::new()
             .name("sanim-runtime".into())
             .spawn(move || {
@@ -98,10 +125,10 @@ impl Runtime {
                     root,
                     entry,
                     sources,
-                    (limits, viewport),
+                    (limits, viewport, worker_stopping),
                     receiver,
                     changed,
-                    (published, worker_waker),
+                    (published, worker_waker, progress_changes),
                 )
             })
             .map_err(|e| e.to_string())?;
@@ -109,8 +136,10 @@ impl Runtime {
             commands,
             shared,
             worker: Some(worker),
+            progress_worker: Some(progress_worker),
             waker,
             configuration: Mutex::new(configuration),
+            stopping,
         })
     }
     /// Register a host notification. Called without runtime locks, including once on registration.
@@ -158,6 +187,8 @@ impl Runtime {
             let mut state = self.shared.0.lock().expect("Sanim runtime state poisoned");
             state.requested_inputs += 1;
             state.preparing = true;
+            state.progress.state = State::Running;
+            state.reloading = state.prepared.is_some();
             state.requested_inputs
         };
         let command = Command::Inputs(serial, configuration.clone());
@@ -179,12 +210,22 @@ impl Runtime {
 }
 impl Drop for Runtime {
     fn drop(&mut self) {
-        let _ = self.commands.send(Command::Stop);
-        if let Some(worker) = self.worker.take() {
-            worker.join().expect("Sanim runtime worker panicked");
+        self.stopping.store(true, Ordering::Release);
+        // A full queue already wakes the worker; the stop flag prevents another job.
+        let _ = self.commands.try_send(Command::Stop);
+        let workers = [self.worker.take(), self.progress_worker.take()];
+        let reentrant = workers
+            .iter()
+            .flatten()
+            .any(|worker| worker.thread().id() == thread::current().id());
+        if !reentrant {
+            for worker in workers.into_iter().flatten() {
+                worker.join().expect("Sanim runtime worker panicked");
+            }
         }
     }
 }
+
 fn publish(shared: &Shared, waker: &Waker, update: impl FnOnce(&mut Snapshot)) {
     let mut state = shared.0.lock().expect("Sanim runtime state poisoned");
     update(&mut state);
@@ -203,10 +244,10 @@ fn worker(
     root: PathBuf,
     entry: String,
     sources: FileSources,
-    (limits, viewport): (Limits, Viewport),
+    (limits, viewport, stopping): (Limits, Viewport, Arc<AtomicBool>),
     receiver: mpsc::Receiver<Command>,
     changed: mpsc::SyncSender<Command>,
-    (shared, waker): (Shared, Waker),
+    (shared, waker, progress_changes): (Shared, Waker, mpsc::SyncSender<()>),
 ) {
     let mut session = Session::new(&entry);
     session.engine.limits = limits;
@@ -237,11 +278,46 @@ fn worker(
     let mut input_dirty = false;
     let mut last_poll = Instant::now();
     loop {
+        if stopping.load(Ordering::Acquire) {
+            return;
+        }
         if dirty {
-            {
+            let started = Instant::now();
+            let (previous_progress, previous_reloading, previous_generation) = {
                 let mut state = shared.0.lock().expect("Sanim runtime state poisoned");
+                let previous = (state.progress.clone(), state.reloading, state.generation);
                 state.preparing = true;
-            }
+                state.reloading = state.prepared.is_some();
+                state.progress = Progress {
+                    resource: Some(entry.clone()),
+                    ..Progress::default()
+                };
+                previous
+            };
+            let engine_progress = Arc::new(AtomicBool::new(false));
+            session.engine.set_progress_observer(Some(Arc::new({
+                let shared = shared.clone();
+                let progress_changes = progress_changes.clone();
+                let engine_progress = engine_progress.clone();
+                let stopping = stopping.clone();
+                move |mut progress: Progress| {
+                    if stopping.load(Ordering::Acquire) {
+                        return;
+                    }
+                    engine_progress.store(true, Ordering::Relaxed);
+                    // Individual timing/full passes do not complete the whole published reload.
+                    progress.state = State::Running;
+                    progress.elapsed_micros =
+                        started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+                    {
+                        let mut state = shared.0.lock().expect("Sanim runtime state poisoned");
+                        state.progress = progress;
+                        state.reloading = state.prepared.is_some();
+                    }
+                    let _ = progress_changes.try_send(());
+                }
+            })));
+            let _ = progress_changes.try_send(());
             if input_dirty {
                 session.engine.viewport = raw.viewport.clone();
                 session.set_json_inputs(raw.inputs.clone());
@@ -259,6 +335,9 @@ fn worker(
                     });
                 }
             });
+            if stopping.load(Ordering::Acquire) {
+                return;
+            }
             match outcome {
                 Reload::Updated {
                     revision,
@@ -272,6 +351,14 @@ fn worker(
                     s.changed_elements = changed_elements.into();
                     s.applied_inputs = input_serial;
                     s.preparing = s.applied_inputs < s.requested_inputs;
+                    s.progress.state = if s.preparing {
+                        State::Running
+                    } else {
+                        State::Ready
+                    };
+                    s.progress.elapsed_micros =
+                        started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+                    s.reloading = s.preparing;
                 }),
                 Reload::Failed { mut diagnostic, .. } => {
                     if diagnostic.source.is_empty() {
@@ -281,6 +368,14 @@ fn worker(
                         s.diagnostic = Some(diagnostic);
                         s.applied_inputs = input_serial;
                         s.preparing = s.applied_inputs < s.requested_inputs;
+                        s.progress.state = if s.preparing {
+                            State::Running
+                        } else {
+                            State::Failed
+                        };
+                        s.progress.elapsed_micros =
+                            started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+                        s.reloading = s.prepared.is_some();
                     });
                 }
                 Reload::Unchanged => {
@@ -293,9 +388,12 @@ fn worker(
                     } else {
                         state.planned_duration
                     };
+                    let observed = engine_progress.load(Ordering::Relaxed);
                     let changed = state.diagnostic != diagnostic
                         || state.applied_inputs != input_serial
-                        || state.planned_duration != duration;
+                        || state.planned_duration != duration
+                        || state.generation != previous_generation
+                        || observed;
                     if changed {
                         state.generation += 1;
                         shared.1.notify_all();
@@ -308,6 +406,22 @@ fn worker(
                     state.applied_inputs = input_serial;
                     state.preparing = state.applied_inputs < state.requested_inputs;
                     state.changed_elements = Arc::from([]);
+                    if observed {
+                        state.progress.state = if state.preparing {
+                            State::Running
+                        } else if state.diagnostic.is_some() {
+                            State::Failed
+                        } else {
+                            State::Ready
+                        };
+                        state.progress.elapsed_micros =
+                            started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+                        state.reloading = state.prepared.is_some()
+                            && (state.preparing || state.diagnostic.is_some());
+                    } else {
+                        state.progress = previous_progress;
+                        state.reloading = previous_reloading;
+                    }
                     drop(state);
                     if changed {
                         wake_host(&waker);

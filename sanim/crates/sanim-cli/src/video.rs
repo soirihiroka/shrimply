@@ -96,9 +96,8 @@ pub(super) fn render(prepared: &Prepared, args: &Args) -> Result<(), String> {
     let result = (|| {
         let mut input = encoder.stdin.take().ok_or("FFmpeg stdin unavailable")?;
         for index in 0..frames {
-            let recording =
-                renderer.record(&scene, scene.animation().frame_time(index)?, &options)?;
-            let frame = recording.rasterize_opaque()?;
+            let frame =
+                renderer.render_opaque(&scene, scene.animation().frame_time(index)?, &options)?;
             input
                 .write_all(&frame.rgba)
                 .map_err(|e| format!("FFmpeg frame {index}: {e}"))?;

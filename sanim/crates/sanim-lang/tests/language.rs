@@ -122,7 +122,7 @@ fn reflection_describes_nested_types() {
     let p = prepare(
         "type Style = { fill: Color, width: Length, outline: Option<Color> }\nreflect style: Style = { fill: Color(\"red\"), width: 16pt, outline: None }\n",
     );
-    assert!(matches!(p.reflected[0].ty, Type::Record(_)));
+    assert!(matches!(p.reflected[0].ty.as_ref(), Type::Record(_)));
     assert_eq!(p.reflected[0].default, p.reflected[0].value);
 }
 #[test]
@@ -328,10 +328,13 @@ fn reflection_checks_every_list_item() {
     sources.insert("main.sanim", "reflect values: List<Number> = [1]\n");
     let input = BTreeMap::from([(
         "values".into(),
-        Value::List(vec![
-            Value::Number(Number::scalar(1)),
-            Value::String("bad".into()),
-        ]),
+        Value::List(
+            vec![
+                Value::Number(Number::scalar(1)),
+                Value::String("bad".into()),
+            ]
+            .into(),
+        ),
     )]);
     assert_eq!(
         Engine::default()

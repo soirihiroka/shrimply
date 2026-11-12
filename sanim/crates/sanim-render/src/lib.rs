@@ -2,7 +2,9 @@
 use sanim_core::{math::to_f64, *};
 use skia_safe::{Canvas, Picture, PictureRecorder, Rect};
 use std::{collections::BTreeMap, sync::Arc};
+mod cache;
 mod draw;
+use cache::Cache;
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -30,8 +32,9 @@ impl Options {
 }
 
 pub struct Scene {
-    animation: Animation,
+    animation: Arc<Animation>,
     key: String,
+    times: SampleTimes,
     paths: BTreeMap<String, shrimply_drawing_skia::path::PreparedPath>,
 }
 impl Scene {
@@ -61,6 +64,29 @@ pub struct Recording {
     picture: Picture,
 }
 impl Recording {
+    /// Record native vector commands, including host loading/diagnostic overlays.
+    pub fn capture(
+        width: u32,
+        height: u32,
+        draw: impl FnOnce(&Canvas) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
+            return Err("recording requires positive dimensions within Skia's range".into());
+        }
+        let started = std::time::Instant::now();
+        let mut recorder = PictureRecorder::new();
+        let canvas = recorder.begin_recording(Rect::from_wh(width as f32, height as f32), true);
+        canvas.clip_rect(Rect::from_wh(width as f32, height as f32), None, false);
+        draw(canvas)?;
+        Ok(Self {
+            width,
+            height,
+            record_micros: started.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
+            picture: recorder
+                .finish_recording_as_picture(None)
+                .ok_or("Skia recording failed")?,
+        })
+    }
     pub fn draw(&self, canvas: &Canvas) {
         canvas.draw_picture(&self.picture, None, None);
     }
@@ -122,16 +148,91 @@ impl Recording {
     }
 }
 
-#[derive(Default)]
+/// Independent bounds for calculated states, GPU command recordings and optional CPU pixels.
+#[derive(Clone, Copy, Debug)]
+pub struct CacheLimits {
+    pub entries: usize,
+    pub state_bytes: usize,
+    pub recording_bytes: usize,
+    pub raster_bytes: usize,
+}
+impl Default for CacheLimits {
+    fn default() -> Self {
+        const MIB: usize = 1024 * 1024;
+        Self {
+            entries: 256,
+            state_bytes: 64 * MIB,
+            recording_bytes: 64 * MIB,
+            raster_bytes: 128 * MIB,
+        }
+    }
+}
+
+/// A calculated layout snapshot, independent of raster output and recording work limits.
+pub struct FrameState {
+    elements: Vec<Element>,
+    pub compute_micros: u64,
+}
+impl FrameState {
+    pub fn elements(&self) -> &[Element] {
+        &self.elements
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct StateKey {
+    scene: String,
+    time: Fraction,
+    width: Fraction,
+    height: Fraction,
+}
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct RecordKey {
+    state: StateKey,
+    width: u32,
+    height: u32,
+    max_work: usize,
+    max_pixels: usize,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum RasterKind {
+    Rgba,
+    Png,
+    Opaque,
+}
+
 pub struct Renderer {
-    recordings: BTreeMap<String, Arc<Recording>>,
-    frames: BTreeMap<String, Arc<Frame>>,
+    states: Cache<StateKey, FrameState>,
+    recordings: Cache<RecordKey, Recording>,
+    frames: Cache<(RecordKey, RasterKind), Frame>,
+    previous: Option<(String, Arc<Animation>)>,
     pub cache_hits: u64,
+    pub state_cache_hits: u64,
+    pub states_computed: u64,
     pub geometry_cache_hits: u64,
     geometry_cache: BTreeMap<String, shrimply_drawing_skia::path::PreparedPath>,
     geometry_cache_bytes: usize,
 }
+impl Default for Renderer {
+    fn default() -> Self {
+        Self::with_cache_limits(CacheLimits::default())
+    }
+}
 impl Renderer {
+    pub fn with_cache_limits(limits: CacheLimits) -> Self {
+        Self {
+            states: Cache::new(limits.state_bytes, limits.entries),
+            recordings: Cache::new(limits.recording_bytes, limits.entries),
+            frames: Cache::new(limits.raster_bytes, limits.entries),
+            previous: None,
+            cache_hits: 0,
+            state_cache_hits: 0,
+            states_computed: 0,
+            geometry_cache_hits: 0,
+            geometry_cache: BTreeMap::new(),
+            geometry_cache_bytes: 0,
+        }
+    }
     /// Preserve immutable path geometry across source, style, timing and viewport edits.
     pub fn prepare(&mut self, animation: Animation) -> Result<Scene, String> {
         let key = digest(&serde_json::to_vec(&animation).map_err(|error| error.to_string())?);
@@ -139,17 +240,69 @@ impl Renderer {
         for layer in &animation.layers {
             draw::prepare_paths(&layer.element, &mut paths, self)?;
         }
+        let times = SampleTimes::new(&animation);
+        if let Some((old_key, old)) = &self.previous
+            && old_key != &key
+        {
+            let diff = TimelineDiff::between(old, &animation);
+            let update = |mut state: StateKey| {
+                if state.scene == *old_key {
+                    if diff.affects(state.time) {
+                        return None;
+                    }
+                    state.scene = key.clone();
+                    state.time = times.canonical(state.time).expect("cached sample time");
+                }
+                Some(state)
+            };
+            self.states.rekey(&update);
+            self.recordings.rekey(|mut record| {
+                record.state = update(record.state)?;
+                Some(record)
+            });
+            self.frames.rekey(|(mut record, png)| {
+                record.state = update(record.state)?;
+                Some((record, png))
+            });
+        }
+        let animation = Arc::new(animation);
+        self.previous = Some((key.clone(), animation.clone()));
         Ok(Scene {
             animation,
             key,
+            times,
             paths,
         })
     }
     pub fn clear_cache(&mut self) {
         self.recordings.clear();
+        self.states.clear();
         self.frames.clear();
         self.geometry_cache.clear();
         self.geometry_cache_bytes = 0;
+        self.previous = None;
+    }
+    pub fn frame_state(
+        &mut self,
+        scene: &Scene,
+        time: Fraction,
+        options: &Options,
+    ) -> Result<Arc<FrameState>, String> {
+        let key = state_key(scene, time, options)?;
+        if let Some(state) = self.states.get(&key) {
+            self.state_cache_hits += 1;
+            return Ok(state);
+        }
+        let started = std::time::Instant::now();
+        let elements = scene.animation.layout(key.time, key.width, key.height)?;
+        let bytes = state_bytes(&elements);
+        let state = Arc::new(FrameState {
+            elements,
+            compute_micros: started.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
+        });
+        self.states_computed += 1;
+        self.states.insert(key, state.clone(), bytes);
+        Ok(state)
     }
     pub fn record(
         &mut self,
@@ -170,54 +323,35 @@ impl Renderer {
         if options.width > i32::MAX as u32 || options.height > i32::MAX as u32 {
             return Err("output exceeds Skia dimensions".into());
         }
-        let key = cache_key(scene, time, options, false);
+        let key = record_key(scene, time, options)?;
         if let Some(recording) = self.recordings.get(&key) {
             self.cache_hits += 1;
-            return Ok(recording.clone());
+            return Ok(recording);
         }
-        let elements =
-            scene
-                .animation
-                .layout(time, options.logical_width, options.logical_height)?;
-        let mut recorder = PictureRecorder::new();
-        let canvas = recorder.begin_recording(
-            Rect::from_wh(options.width as f32, options.height as f32),
-            true,
-        );
-        canvas.clip_rect(
-            Rect::from_wh(options.width as f32, options.height as f32),
-            None,
-            false,
-        );
-        let logical_width = to_f64(options.logical_width)? as f32;
-        let logical_height = to_f64(options.logical_height)? as f32;
-        canvas.scale((
-            options.width as f32 / logical_width,
-            options.height as f32 / logical_height,
-        ));
-        let background = draw::paint(&scene.animation.background, Fraction::from(1))?;
-        canvas.draw_rect(Rect::from_wh(logical_width, logical_height), &background);
-        let mut drawing = draw::Drawing {
-            paths: &scene.paths,
-            pixels,
-            work: options.max_work,
-        };
-        for element in &elements {
-            draw::element_draw(canvas, element, Reveal::default(), &mut drawing)?;
-        }
-        let picture = recorder
-            .finish_recording_as_picture(None)
-            .ok_or("Skia recording failed")?;
-        let recording = Arc::new(Recording {
-            width: options.width,
-            height: options.height,
-            picture,
-            record_micros: started.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
-        });
-        if self.recordings.len() >= 8 {
-            self.recordings.clear();
-        }
-        self.recordings.insert(key, recording.clone());
+        let state = self.frame_state(scene, time, options)?;
+        let mut recording = Recording::capture(options.width, options.height, |canvas| {
+            let logical_width = to_f64(options.logical_width)? as f32;
+            let logical_height = to_f64(options.logical_height)? as f32;
+            canvas.scale((
+                options.width as f32 / logical_width,
+                options.height as f32 / logical_height,
+            ));
+            let background = draw::paint(&scene.animation.background, Fraction::from(1))?;
+            canvas.draw_rect(Rect::from_wh(logical_width, logical_height), &background);
+            let mut drawing = draw::Drawing {
+                paths: &scene.paths,
+                pixels,
+                work: options.max_work,
+            };
+            for element in &state.elements {
+                draw::element_draw(canvas, element, Reveal::default(), &mut drawing)?;
+            }
+            Ok(())
+        })?;
+        recording.record_micros = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
+        let recording = Arc::new(recording);
+        let bytes = recording.picture.approximate_bytes_used() + std::mem::size_of::<Recording>();
+        self.recordings.insert(key, recording.clone(), bytes);
         Ok(recording)
     }
     pub fn render(
@@ -226,35 +360,83 @@ impl Renderer {
         time: Fraction,
         options: &Options,
     ) -> Result<Arc<Frame>, String> {
+        self.render_kind(
+            scene,
+            time,
+            options,
+            if options.encode_png {
+                RasterKind::Png
+            } else {
+                RasterKind::Rgba
+            },
+        )
+    }
+    pub fn render_opaque(
+        &mut self,
+        scene: &Scene,
+        time: Fraction,
+        options: &Options,
+    ) -> Result<Arc<Frame>, String> {
+        self.render_kind(scene, time, options, RasterKind::Opaque)
+    }
+    fn render_kind(
+        &mut self,
+        scene: &Scene,
+        time: Fraction,
+        options: &Options,
+        kind: RasterKind,
+    ) -> Result<Arc<Frame>, String> {
         let started = std::time::Instant::now();
-        // Validate limits through record even when a raster result is cached.
-        let recording = self.record(scene, time, options)?;
-        let key = cache_key(scene, time, options, options.encode_png);
+        // Limits are part of the key: a cached raster already passed these exact checks.
+        let key = (record_key(scene, time, options)?, kind);
         if let Some(frame) = self.frames.get(&key) {
-            return Ok(frame.clone());
+            self.cache_hits += 1;
+            return Ok(frame);
         }
-        let mut frame = recording.rasterize(options.encode_png)?;
+        let recording = self.record(scene, time, options)?;
+        let mut frame = match kind {
+            RasterKind::Opaque => recording.rasterize_opaque()?,
+            _ => recording.rasterize(kind == RasterKind::Png)?,
+        };
         frame.render_micros = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
         let frame = Arc::new(frame);
-        if self.frames.len() >= 8 {
-            self.frames.clear();
-        }
-        self.frames.insert(key, frame.clone());
+        let bytes = frame.rgba.capacity() + frame.png.capacity() + std::mem::size_of::<Frame>();
+        self.frames.insert(key, frame.clone(), bytes);
         Ok(frame)
     }
 }
-fn cache_key(scene: &Scene, time: Fraction, options: &Options, png: bool) -> String {
-    digest(
-        format!(
-            "{}:{time}:{}:{}:{}:{}:{}:{}:{png}",
-            scene.key,
-            options.width,
-            options.height,
-            options.logical_width,
-            options.logical_height,
-            options.max_work,
-            options.max_pixels
-        )
-        .as_bytes(),
-    )
+fn state_key(scene: &Scene, time: Fraction, options: &Options) -> Result<StateKey, String> {
+    Ok(StateKey {
+        scene: scene.key.clone(),
+        time: scene.times.canonical(time)?,
+        width: options.logical_width,
+        height: options.logical_height,
+    })
+}
+fn record_key(scene: &Scene, time: Fraction, options: &Options) -> Result<RecordKey, String> {
+    Ok(RecordKey {
+        state: state_key(scene, time, options)?,
+        width: options.width,
+        height: options.height,
+        max_work: options.max_work,
+        max_pixels: options.max_pixels,
+    })
+}
+fn state_bytes(elements: &Vec<Element>) -> usize {
+    elements.capacity() * std::mem::size_of::<Element>()
+        + elements.iter().map(element_bytes).sum::<usize>()
+}
+fn element_bytes(element: &Element) -> usize {
+    element.id.capacity()
+        + match element.geometry.as_ref() {
+            Geometry::Group { children } => {
+                children.len() * std::mem::size_of::<Element>()
+                    + children.iter().map(element_bytes).sum::<usize>()
+            }
+            Geometry::Polygon { points } => points.capacity() * std::mem::size_of::<Vec2>(),
+            Geometry::Text { text, outline, .. } => {
+                text.capacity() + outline.capacity() * std::mem::size_of::<TextSegment>()
+            }
+            _ => 0,
+        }
 }

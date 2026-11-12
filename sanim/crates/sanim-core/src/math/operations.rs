@@ -196,13 +196,9 @@ pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
         });
     }
     match (a, b) {
-        (Value::String(mut a), Value::String(b)) => {
-            a.push_str(&b);
-            Ok(Value::String(a))
-        }
-        (Value::List(mut a), Value::List(b)) => {
-            a.extend(b);
-            Ok(Value::List(a))
+        (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}").into())),
+        (Value::List(a), Value::List(b)) => {
+            Ok(Value::List(a.iter().chain(b.iter()).cloned().collect()))
         }
         (Value::Matrix4(a), Value::Matrix4(b)) => {
             if op == "*" {

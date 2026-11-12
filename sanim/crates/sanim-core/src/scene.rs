@@ -1,8 +1,9 @@
 use crate::{Color, Value, Vec2, math};
 use fraction::Fraction;
+use imbl::{OrdMap, OrdSet, Vector};
 use num_traits::{CheckedMul, Zero};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Geometry {
@@ -18,16 +19,16 @@ pub enum Geometry {
         width: Fraction,
     },
     Polygon {
-        points: Vec<Vec2>,
+        points: Arc<Vec<Vec2>>,
     },
     Text {
         text: String,
         size: Fraction,
-        outline: Vec<TextSegment>,
+        outline: Arc<Vec<TextSegment>>,
         bounds: crate::verify::Bounds,
     },
     Group {
-        children: Vec<Element>,
+        children: Vector<Element>,
     },
 }
 
@@ -43,7 +44,7 @@ pub enum TextSegment {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Element {
     pub id: String,
-    pub geometry: Geometry,
+    pub geometry: Arc<Geometry>,
     pub position: Vec2,
     pub rotation: Fraction,
     pub scale: Fraction,
@@ -51,7 +52,29 @@ pub struct Element {
     pub fill: Color,
     #[serde(default)]
     pub reveal: Reveal,
+    #[serde(default)]
+    pub horizontal: HorizontalTransform,
     pub layout: Layout,
+}
+
+/// Horizontal drawing transform; layout dimensions remain stable while a range expands.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HorizontalTransform {
+    pub scale: Fraction,
+    pub origin: crate::Number,
+    pub offset: Fraction,
+}
+impl Default for HorizontalTransform {
+    fn default() -> Self {
+        Self {
+            scale: Fraction::from(1),
+            origin: crate::Number {
+                value: Fraction::from(0),
+                unit: crate::Unit::Length,
+            },
+            offset: Fraction::from(0),
+        }
+    }
 }
 
 /// Vector reveal state; independent of opacity, geometry and layout.
@@ -119,6 +142,7 @@ pub enum Property {
     Position,
     Rotation,
     Scale,
+    StretchX,
     Opacity,
     Fill,
     Reveal,
@@ -132,6 +156,8 @@ pub struct Motion {
     pub from: Option<Value>,
     #[serde(default)]
     pub reveal: Option<RevealKind>,
+    #[serde(default)]
+    pub horizontal: Option<HorizontalTransform>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,6 +178,8 @@ pub struct Track {
     pub easing: Easing,
     #[serde(default)]
     pub reveal: Option<RevealKind>,
+    #[serde(default)]
+    pub horizontal: Option<HorizontalTransform>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -210,12 +238,12 @@ pub struct Animation {
     pub rate: Fraction,
     pub duration: Fraction,
     pub background: Color,
-    pub layers: Vec<Layer>,
+    pub layers: Vector<Layer>,
     /// Each property has its own sorted track index; sampling uses binary search.
-    pub tracks: BTreeMap<String, BTreeMap<Property, Vec<Track>>>,
-    element_index: BTreeMap<String, Vec<usize>>,
+    pub tracks: OrdMap<String, OrdMap<Property, Vector<Track>>>,
+    element_index: OrdMap<String, Vector<usize>>,
     #[serde(default)]
-    flow_controlled: std::collections::BTreeSet<String>,
+    flow_controlled: OrdSet<String>,
 }
 
 impl Default for Animation {
@@ -232,10 +260,10 @@ impl Animation {
             rate: viewport.rate,
             duration: Fraction::zero(),
             background: Color([Fraction::zero(); 4]),
-            layers: vec![],
-            tracks: BTreeMap::new(),
-            element_index: BTreeMap::new(),
-            flow_controlled: std::collections::BTreeSet::new(),
+            layers: Vector::new(),
+            tracks: OrdMap::new(),
+            element_index: OrdMap::new(),
+            flow_controlled: OrdSet::new(),
         }
     }
 }
@@ -250,6 +278,10 @@ impl Element {
             }),
             Property::Scale => Value::Number(crate::Number {
                 value: self.scale,
+                unit: crate::Unit::Number,
+            }),
+            Property::StretchX => Value::Number(crate::Number {
+                value: self.horizontal.scale,
                 unit: crate::Unit::Number,
             }),
             Property::Opacity => Value::Number(crate::Number {
@@ -268,6 +300,16 @@ impl Element {
             Property::Position => self.position = value.vec2()?,
             Property::Rotation => self.rotation = value.number()?.value,
             Property::Scale => self.scale = value.number()?.value,
+            Property::StretchX => {
+                let n = value.number()?;
+                if n.unit != crate::Unit::Number
+                    || !math::finite(&n.value)
+                    || n.value < Fraction::from(0)
+                {
+                    return Err("horizontal scale must be a finite nonnegative Number".into());
+                }
+                self.horizontal.scale = n.value;
+            }
             Property::Opacity => self.opacity = value.number()?.value,
             Property::Reveal => {
                 let number = value.number()?;
@@ -294,7 +336,7 @@ impl Element {
         if self.id == id {
             return Some(self);
         }
-        if let Geometry::Group { children } = &self.geometry {
+        if let Geometry::Group { children } = self.geometry.as_ref() {
             children.iter().find_map(|v| v.find(id))
         } else {
             None
@@ -302,7 +344,7 @@ impl Element {
     }
     pub fn ids(&self, ids: &mut Vec<String>) {
         ids.push(self.id.clone());
-        if let Geometry::Group { children } = &self.geometry {
+        if let Geometry::Group { children } = self.geometry.as_ref() {
             for child in children {
                 child.ids(ids);
             }
@@ -332,33 +374,53 @@ impl Animation {
     }
     pub fn sample_element(&self, element: &Element, time: Fraction) -> Result<Element, String> {
         let mut out = element.clone();
-        if let Some(properties) = self.tracks.get(&element.id) {
+        self.sample_in_place(&mut out, time)?;
+        Ok(out)
+    }
+    pub fn sample_property(
+        &self,
+        element: &Element,
+        property: Property,
+        time: Fraction,
+    ) -> Result<Value, String> {
+        self.tracks
+            .get(&element.id)
+            .and_then(|properties| properties.get(&property))
+            .and_then(|tracks| Track::at(tracks, time))
+            .map_or_else(
+                || Ok(element.property(property)),
+                |track| track.sample(time),
+            )
+    }
+    fn sample_in_place(&self, out: &mut Element, time: Fraction) -> Result<(), String> {
+        if let Some(properties) = self.tracks.get(&out.id) {
             for (property, tracks) in properties {
-                let count = tracks.partition_point(|v| v.start <= time);
-                if count > 0 {
-                    let track = &tracks[count - 1];
+                if let Some(track) = Track::at(tracks, time) {
                     out.set(*property, track.sample(time)?)?;
+                    if let Some(horizontal) = track.horizontal {
+                        out.horizontal.origin = horizontal.origin;
+                        out.horizontal.offset = horizontal.offset;
+                    }
                     if let Some(kind) = track.reveal {
                         out.reveal.kind = kind;
                     }
                 }
             }
         }
-        if let Geometry::Group { children } = &element.geometry {
-            out.geometry = Geometry::Group {
-                children: children
-                    .iter()
-                    .map(|v| self.sample_element(v, time))
-                    .collect::<Result<_, _>>()?,
-            };
+        if matches!(out.geometry.as_ref(), Geometry::Group { .. })
+            && let Geometry::Group { children } = Arc::make_mut(&mut out.geometry)
+        {
+            for child in children {
+                self.sample_in_place(child, time)?;
+            }
         }
-        Ok(out)
+        Ok(())
     }
     pub fn find(&self, id: &str) -> Option<&Element> {
         let path = self.element_index.get(id)?;
-        let mut element = &self.layers.get(*path.first()?)?.element;
-        for index in &path[1..] {
-            let Geometry::Group { children } = &element.geometry else {
+        let mut element = &self.layers.get(*path.front()?)?.element;
+        for index in path.iter().skip(1) {
+            let Geometry::Group { children } = element.geometry.as_ref() else {
                 return None;
             };
             element = children.get(*index)?;
@@ -377,9 +439,9 @@ impl Animation {
                 return Err(format!("duplicate element identity '{id}'"));
             }
         }
-        fn index(element: &Element, path: Vec<usize>, map: &mut BTreeMap<String, Vec<usize>>) {
-            map.insert(element.id.clone(), path.clone());
-            if let Geometry::Group { children } = &element.geometry {
+        fn index(element: &Element, path: Vec<usize>, map: &mut OrdMap<String, Vector<usize>>) {
+            map.insert(element.id.clone(), path.iter().copied().collect());
+            if let Geometry::Group { children } = element.geometry.as_ref() {
                 for (i, child) in children.iter().enumerate() {
                     let mut path = path.clone();
                     path.push(i);
@@ -389,7 +451,7 @@ impl Animation {
         }
         index(&element, vec![self.layers.len()], &mut self.element_index);
         collect_flow_positions(&element, &mut self.flow_controlled);
-        self.layers.push(Layer { birth, element });
+        self.layers.push_back(Layer { birth, element });
         Ok(())
     }
     pub fn schedule(
@@ -408,11 +470,11 @@ impl Animation {
         let mut writes = vec![];
         let mut targets = std::collections::BTreeSet::new();
         let mut new_ids = std::collections::BTreeSet::new();
-        let mut pending_flow = std::collections::BTreeSet::new();
+        let mut pending_flow = OrdSet::new();
         let mut descendants = std::collections::BTreeSet::new();
         for motion in motions {
             collect_flow_positions(&motion.element, &mut pending_flow);
-            if let Geometry::Group { children } = &motion.element.geometry {
+            if let Geometry::Group { children } = motion.element.geometry.as_ref() {
                 let mut ids = vec![];
                 for child in children {
                     child.ids(&mut ids);
@@ -517,12 +579,36 @@ impl Animation {
                     }
                 }
             }
-            let current = self.sample_element(
-                self.find(&motion.element.id).unwrap_or(&motion.element),
-                start,
-            )?;
+            if motion.property == Property::StretchX {
+                for value in std::iter::once(&motion.to).chain(motion.from.iter()) {
+                    let n = value.number()?;
+                    if n.unit != crate::Unit::Number
+                        || !math::finite(&n.value)
+                        || n.value < Fraction::from(0)
+                    {
+                        return Err(
+                            "horizontal scale endpoints must be finite nonnegative Numbers".into(),
+                        );
+                    }
+                }
+                if let Some(horizontal) = motion.horizontal
+                    && (!matches!(
+                        horizontal.origin.unit,
+                        crate::Unit::Length | crate::Unit::Percent
+                    ) || !math::finite(&horizontal.origin.value)
+                        || !math::finite(&horizontal.offset))
+                {
+                    return Err("horizontal stretch origin requires a finite pt or % value and finite pt offset".into());
+                }
+            }
+            let element = self.find(&motion.element.id).unwrap_or(&motion.element);
+            let current = self.sample_property(element, motion.property, start)?;
             if centered_growth
-                && (current.rotation != Fraction::from(0)
+                && (self
+                    .sample_property(element, Property::Rotation, start)?
+                    .number()?
+                    .value
+                    != Fraction::from(0)
                     || motions.iter().any(|other| {
                         other.element.id == motion.element.id
                             && other.property == Property::Rotation
@@ -539,10 +625,7 @@ impl Animation {
             {
                 return Err("GrowFromCenter/ShrinkToCenter require zero rotation throughout the motion; use ScaleTo for rotated geometry, or reset rotation in an earlier play".into());
             }
-            let mut from = motion
-                .from
-                .clone()
-                .unwrap_or_else(|| current.property(motion.property));
+            let mut from = motion.from.clone().unwrap_or(current);
             let mut to = motion.to.clone();
             if let (Value::Vec2(a), Value::Vec2(b)) = (&mut from, &mut to) {
                 if !matches!(b.unit, crate::Unit::Length | crate::Unit::Percent) {
@@ -564,7 +647,7 @@ impl Animation {
                 .tracks
                 .get(&motion.element.id)
                 .and_then(|v| v.get(&motion.property));
-            if tracks.and_then(|v| v.last()).is_some_and(|v| v.end > start) {
+            if tracks.and_then(|v| v.back()).is_some_and(|v| v.end > start) {
                 return Err(format!(
                     "overlapping writers for {}.{:?}",
                     motion.element.id, motion.property
@@ -580,6 +663,7 @@ impl Animation {
                     to,
                     easing,
                     reveal: motion.reveal,
+                    horizontal: motion.horizontal,
                 },
             ));
         }
@@ -592,7 +676,7 @@ impl Animation {
                 .or_default()
                 .entry(property)
                 .or_default()
-                .push(track);
+                .push_back(track);
         }
         self.duration = self.duration.max(end);
         Ok(())
@@ -605,8 +689,8 @@ impl Animation {
     }
 }
 
-fn collect_flow_positions(element: &Element, ids: &mut std::collections::BTreeSet<String>) {
-    if let Geometry::Group { children } = &element.geometry {
+fn collect_flow_positions(element: &Element, ids: &mut OrdSet<String>) {
+    if let Geometry::Group { children } = element.geometry.as_ref() {
         if element.layout.direction.is_some() {
             ids.extend(children.iter().map(|child| child.id.clone()));
         }
@@ -617,6 +701,18 @@ fn collect_flow_positions(element: &Element, ids: &mut std::collections::BTreeSe
 }
 
 impl Track {
+    pub fn at(tracks: &Vector<Self>, time: Fraction) -> Option<&Self> {
+        let count = tracks
+            .binary_search_by(|track| {
+                if track.start <= time {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                }
+            })
+            .unwrap_err();
+        count.checked_sub(1).map(|index| &tracks[index])
+    }
     pub fn sample(&self, time: Fraction) -> Result<Value, String> {
         let p = math::progress(time, self.start, self.end)?;
         let one = Fraction::from(1);

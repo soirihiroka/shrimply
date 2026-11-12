@@ -165,7 +165,11 @@ fn native_sanim_failed_preview_keeps_frame_but_new_export_fails() {
     let failed = changed(&source, revision);
     assert!(failed.diagnostic.is_some());
     let preview = ready(&mut source, &item, canvas, false);
-    assert!(Arc::ptr_eq(&first, &preview));
+    assert!(
+        !Arc::ptr_eq(&first, &preview),
+        "preview includes a reload diagnostic overlay"
+    );
+    assert_eq!(center(&first), center(&preview));
     assert!(source.take_error().is_some());
     assert!(
         source

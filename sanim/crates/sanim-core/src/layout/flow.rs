@@ -21,7 +21,7 @@ type Positions = Arc<[[f64; 2]]>;
 thread_local! { static CACHE:RefCell<BTreeMap<Key,Positions>>=const{RefCell::new(BTreeMap::new())}; }
 
 pub(super) fn positions(
-    children: &[Element],
+    children: &imbl::Vector<Element>,
     style: &Layout,
     width: f64,
     height: f64,

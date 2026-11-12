@@ -146,7 +146,10 @@ pub fn create_renderer(
         VideoItemContent::Svg => Ok(Box::new(SvgRenderSession::new(item, canvas_size)?)),
         VideoItemContent::Pdf(_) => Ok(Box::new(PdfRenderSession::new(item)?)),
         VideoItemContent::Manim(_) => Ok(Box::new(ManimElement::new(item, canvas_size)?)),
-        VideoItemContent::Sanim(_) => Ok(Box::new(crate::sanim_render::SanimElement::new(item)?)),
+        VideoItemContent::Sanim(_) => Ok(Box::new(crate::sanim_render::SanimElement::new(
+            item,
+            canvas_size,
+        )?)),
         VideoItemContent::Blender(_) => Ok(Box::new(BlenderElement::new(item, canvas_size)?)),
         VideoItemContent::LayeredImage(_) => Ok(Box::new(LayeredImageRenderSession::new(item)?)),
         VideoItemContent::Text(_) => Ok(Box::new(TextElement::new(canvas_size))),

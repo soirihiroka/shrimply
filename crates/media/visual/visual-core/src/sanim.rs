@@ -1,4 +1,5 @@
 //! Shared native Sanim source for all preview/export backends.
+pub use sanim_core::Viewport;
 use sanim_runtime::{
     Runtime,
     sanim_render::{Options, Recording, Renderer, Scene},
@@ -11,10 +12,12 @@ use std::{collections::BTreeMap, sync::Arc};
 
 pub enum Status {
     Empty,
-    Loading,
+    Loading(Arc<Recording>),
+    Failed(Arc<Recording>),
     Ready(Arc<Recording>),
 }
 
+mod feedback;
 #[cfg(test)]
 mod tests;
 pub struct Source {
@@ -29,13 +32,18 @@ pub struct Source {
     warned_revision: u64,
     error: Option<String>,
     export: Option<Arc<sanim_runtime::sanim_lang::Prepared>>,
+    feedback: Option<feedback::Feedback>,
 }
 impl Source {
     pub fn new(item: &VideoItem) -> Result<Self, String> {
+        Self::with_viewport(item, sanim_core::Viewport::default())
+    }
+    pub fn with_viewport(item: &VideoItem, viewport: sanim_core::Viewport) -> Result<Self, String> {
         let VideoItemContent::Sanim(settings) = &item.content else {
             return Err("Sanim source received another clip type".into());
         };
-        let runtime = Runtime::open(item.file.path())?;
+        let runtime =
+            Runtime::with_viewport(item.file.path(), viewport.clone(), Default::default())?;
         if !settings.parameters.is_empty() {
             runtime.set_inputs(settings.parameters.clone())?;
         }
@@ -43,7 +51,7 @@ impl Source {
             file: item.file.clone(),
             parameters: settings.parameters.clone(),
             runtime,
-            viewport: sanim_core::Viewport::default(),
+            viewport,
             waker: None,
             renderer: Renderer::default(),
             scene: None,
@@ -51,6 +59,7 @@ impl Source {
             warned_revision: 0,
             error: None,
             export: None,
+            feedback: None,
         })
     }
     pub fn set_waker(&mut self, wake: Option<crate::generated::SourceWake>) {
@@ -59,7 +68,7 @@ impl Source {
     }
     pub fn needs_update(&self) -> bool {
         let state = self.runtime.snapshot();
-        state.generation != self.generation || state.preparing && state.prepared.is_none()
+        state.generation != self.generation
     }
     pub fn take_error(&mut self) -> Option<String> {
         self.error.take()
@@ -77,7 +86,7 @@ impl Source {
         }
         if self.file != item.file {
             let wake = self.waker.clone();
-            *self = Self::new(item)?;
+            *self = Self::with_viewport(item, self.viewport.clone())?;
             self.set_waker(wake);
         }
         let viewport = sanim_core::Viewport {
@@ -133,11 +142,12 @@ impl Source {
             if strict && let Some(error) = &state.diagnostic {
                 return Err(error.to_string());
             }
-            let Some(prepared) = state.prepared else {
-                return if let Some(error) = state.diagnostic {
-                    Err(error.to_string())
+            let Some(prepared) = state.prepared.clone() else {
+                let recording = self.feedback(canvas, &state, None)?;
+                return if state.diagnostic.is_some() {
+                    Ok(Status::Failed(recording))
                 } else {
-                    Ok(Status::Loading)
+                    Ok(Status::Loading(recording))
                 };
             };
             if strict {
@@ -183,7 +193,41 @@ impl Source {
             time.seconds.min(prepared.animation.duration),
             &options,
         )?;
+        if !strict {
+            let state = self.runtime.snapshot();
+            if state.preparing || state.diagnostic.is_some() {
+                return Ok(Status::Ready(self.feedback(canvas, &state, Some(frame))?));
+            }
+        }
         Ok(Status::Ready(frame))
+    }
+    fn feedback(
+        &mut self,
+        canvas: CanvasSize,
+        state: &sanim_runtime::Snapshot,
+        base: Option<Arc<Recording>>,
+    ) -> Result<Arc<Recording>, String> {
+        if let Some(previous) = &self.feedback
+            && previous.generation == state.generation
+            && previous.canvas == canvas
+            && match (&previous.base, &base) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+        {
+            return Ok(previous.recording.clone());
+        }
+        let error = state.diagnostic.as_ref().map(ToString::to_string);
+        let recording =
+            feedback::record(canvas, &state.progress, error.as_deref(), base.as_deref())?;
+        self.feedback = Some(feedback::Feedback {
+            generation: state.generation,
+            canvas,
+            base,
+            recording: recording.clone(),
+        });
+        Ok(recording)
     }
 }
 

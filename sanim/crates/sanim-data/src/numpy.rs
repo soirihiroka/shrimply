@@ -30,7 +30,7 @@ pub fn archive(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String>
         }
         output.insert(name.clone(), decode(&content, ty, limits)?);
     }
-    Ok(Value::Record(output))
+    Ok(Value::Record(output.into_iter().collect()))
 }
 
 pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> {
@@ -112,7 +112,7 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
         }
         return if array {
             Ok(Value::Array {
-                element_type: element.clone(),
+                element_type: element.clone().into(),
                 shape,
                 values: converted.into(),
             })
@@ -269,7 +269,7 @@ fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String
                 }
                 _ => return Err("unsupported NPY math component".into()),
             };
-            values.push(Value::Data(number));
+            values.push(Value::Data(number.into()));
             continue;
         }
         let value = match kind {
@@ -297,7 +297,7 @@ fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String
         }));
     }
     Ok(Value::Array {
-        element_type: *inner.clone(),
+        element_type: inner.clone().into(),
         shape,
         values: values.into(),
     })

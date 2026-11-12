@@ -1,6 +1,6 @@
 use crate::{Element, Fraction, Motion, Number, Unit};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Type {
@@ -335,7 +335,7 @@ pub type Vec4 = Vector<4>;
 pub enum Value {
     Unit,
     Bool(bool),
-    String(String),
+    String(Arc<str>),
     Number(Number),
     Fraction(Fraction),
     Vec2(Vec2),
@@ -343,31 +343,31 @@ pub enum Value {
     Vec4(Vec4),
     Matrix4(Box<crate::math::linear::Matrix4>),
     Color(Color),
-    List(Vec<Value>),
+    List(Arc<[Value]>),
     Table {
-        row_type: Type,
+        row_type: Arc<Type>,
         rows: std::sync::Arc<Vec<Value>>,
     },
     Array {
-        element_type: Type,
+        element_type: Arc<Type>,
         shape: Vec<usize>,
         values: std::sync::Arc<Vec<Value>>,
     },
-    Record(BTreeMap<String, Value>),
-    Some(Box<Value>),
+    Record(imbl::OrdMap<String, Value>),
+    Some(Arc<Value>),
     None,
     Variant {
-        ty: Type,
+        ty: Arc<Type>,
         tag: String,
-        fields: Vec<Value>,
+        fields: Arc<[Value]>,
     },
-    Element(Box<Element>),
-    Motion(Box<Motion>),
-    Predicate(Box<crate::verify::Predicate>),
+    Element(Arc<Element>),
+    Motion(Arc<Motion>),
+    Predicate(Arc<crate::verify::Predicate>),
     Function(String),
     Font(std::sync::Arc<Vec<u8>>),
-    Data(serde_json::Value),
-    Dict(BTreeMap<String, serde_json::Value>),
+    Data(Arc<serde_json::Value>),
+    Dict(imbl::OrdMap<String, serde_json::Value>),
 }
 
 impl Value {
@@ -384,12 +384,14 @@ impl Value {
             Self::Matrix4(_) => Type::Matrix4,
             Self::Color(_) => Type::Color,
             Self::List(v) => Type::List(Box::new(v.first().map_or(Type::Unknown, Self::ty))),
-            Self::Table { row_type, .. } => Type::Table(Box::new(row_type.clone())),
-            Self::Array { element_type, .. } => Type::Array(Box::new(element_type.clone())),
+            Self::Table { row_type, .. } => Type::Table(Box::new(row_type.as_ref().clone())),
+            Self::Array { element_type, .. } => {
+                Type::Array(Box::new(element_type.as_ref().clone()))
+            }
             Self::Record(v) => Type::Record(v.iter().map(|(k, v)| (k.clone(), v.ty())).collect()),
             Self::Some(v) => Type::Option(Box::new(v.ty())),
             Self::None => Type::Option(Box::new(Type::Unknown)),
-            Self::Variant { ty, .. } => ty.clone(),
+            Self::Variant { ty, .. } => ty.as_ref().clone(),
             Self::Element(_) => Type::Element,
             Self::Motion(_) => Type::Motion,
             Self::Predicate(_) => Type::Predicate,
@@ -467,20 +469,15 @@ impl Value {
     }
     pub fn lookup(&self, key: &Value) -> Result<Value, String> {
         let value = match self {
-            Self::Dict(entries) => entries.get(key.string()?).cloned().map(Self::Data),
-            Self::Data(serde_json::Value::Object(entries)) => {
-                entries.get(key.string()?).cloned().map(Self::Data)
-            }
-            Self::Data(serde_json::Value::Array(items)) => {
-                items.get(key.number()?.usize()?).cloned().map(Self::Data)
-            }
-            Self::Data(_) => return Err(
-                "Data indexing requires an object or array; use decode<T> to validate its shape"
-                    .into(),
-            ),
+            Self::Dict(entries) => entries.get(key.string()?).cloned().map(|value| Self::Data(value.into())),
+            Self::Data(data) => match data.as_ref() {
+                serde_json::Value::Object(entries) => entries.get(key.string()?).cloned().map(|value| Self::Data(value.into())),
+                serde_json::Value::Array(items) => items.get(key.number()?.usize()?).cloned().map(|value| Self::Data(value.into())),
+                _ => return Err("Data indexing requires an object or array; use decode<T> to validate its shape".into()),
+            },
             _ => self.list()?.get(key.number()?.usize()?).cloned(),
         };
-        Ok(value.map(|v| Self::Some(Box::new(v))).unwrap_or(Self::None))
+        Ok(value.map(|v| Self::Some(Arc::new(v))).unwrap_or(Self::None))
     }
 }
 
@@ -488,7 +485,7 @@ impl Value {
 pub struct ReflectedInput {
     pub key: String,
     pub name: String,
-    pub ty: Type,
+    pub ty: Arc<Type>,
     pub default: Value,
     pub value: Value,
 }
@@ -525,9 +522,9 @@ pub fn enum_namespace(ty: &Type) -> Value {
                 (
                     tag.clone(),
                     Value::Variant {
-                        ty: ty.clone(),
+                        ty: ty.clone().into(),
                         tag: tag.clone(),
-                        fields: vec![],
+                        fields: vec![].into(),
                     },
                 )
             })

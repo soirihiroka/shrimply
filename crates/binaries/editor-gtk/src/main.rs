@@ -47,6 +47,16 @@ enum PanelSide {
 fn main() -> glib::ExitCode {
     crash::install();
     shrimply_process_reporting::diagnostics::init();
+    let mut args = std::env::args_os().skip(1);
+    let project_path = match (args.next(), args.next()) {
+        (Some(path), None) => PathBuf::from(path),
+        _ => {
+            eprintln!(
+                "usage: shrimply-editor PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive\nRun shrimply without arguments to open the start window."
+            );
+            return glib::ExitCode::FAILURE;
+        }
+    };
     #[cfg(target_os = "linux")]
     if let Err(error) = shrimply_visual_cuda::gpu::configure_gtk_backend()
         .and_then(|()| shrimply_visual_cuda::gpu::configure_gtk_presentation())
@@ -62,19 +72,6 @@ fn main() -> glib::ExitCode {
     glib::set_printerr_handler(|message| {
         tracing::error!("glib printerr: {}", message.trim_end());
     });
-    let mut args = std::env::args_os().skip(1);
-    let Some(project_path) = args.next().map(PathBuf::from) else {
-        eprintln!(
-            "usage: shrimply-editor PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive"
-        );
-        return glib::ExitCode::FAILURE;
-    };
-    if args.next().is_some() {
-        eprintln!(
-            "usage: shrimply-editor PROJECT.shrimp|PROJECT.json|TIMELINE.otio|PROJECT.kdenlive"
-        );
-        return glib::ExitCode::FAILURE;
-    }
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "Shrimply started");
 
     let app = adw::Application::new(

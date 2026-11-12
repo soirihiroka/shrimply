@@ -11,9 +11,16 @@ pub struct SanimElement {
     source: shrimply_visual_core::sanim::Source,
 }
 impl SanimElement {
-    pub fn new(item: &VideoItem) -> Result<Self, String> {
+    pub fn new(item: &VideoItem, canvas: CanvasSize) -> Result<Self, String> {
         Ok(Self {
-            source: shrimply_visual_core::sanim::Source::new(item)?,
+            source: shrimply_visual_core::sanim::Source::with_viewport(
+                item,
+                shrimply_visual_core::sanim::Viewport {
+                    width: canvas.width,
+                    height: canvas.height,
+                    ..Default::default()
+                },
+            )?,
         })
     }
 }
@@ -44,28 +51,28 @@ impl VisualElement for SanimElement {
         if let Some(error) = self.source.take_error() {
             tracing::warn!(%error,"Sanim reload failed; showing last good animation");
         }
-        match status {
-            shrimply_visual_core::sanim::Status::Empty => Ok(VisualRender::Empty),
-            shrimply_visual_core::sanim::Status::Loading => {
-                Ok(VisualRender::Loading(request.render_canvas))
-            }
-            shrimply_visual_core::sanim::Status::Ready(recording) => {
-                let prepared = DeferredSanim {
-                    recording,
-                    evaluation: VisualEvaluation::for_item_with_audio(
-                        request.project,
-                        request.item,
-                        request.position,
-                        request.audio_analysis,
-                    ),
-                    canvas: request.project.canvas_size,
-                };
-                Ok(VisualRender::Ready(Visual::Vector(VectorVisual::prepared(
-                    Box::new(prepared),
-                    request.state,
-                ))))
-            }
-        }
+        let (recording, loading) = match status {
+            shrimply_visual_core::sanim::Status::Empty => return Ok(VisualRender::Empty),
+            shrimply_visual_core::sanim::Status::Loading(recording) => (recording, true),
+            shrimply_visual_core::sanim::Status::Failed(recording)
+            | shrimply_visual_core::sanim::Status::Ready(recording) => (recording, false),
+        };
+        let prepared = DeferredSanim {
+            recording,
+            evaluation: VisualEvaluation::for_item_with_audio(
+                request.project,
+                request.item,
+                request.position,
+                request.audio_analysis,
+            ),
+            canvas: request.project.canvas_size,
+        };
+        let visual = Visual::Vector(VectorVisual::prepared(Box::new(prepared), request.state));
+        Ok(if loading {
+            VisualRender::LoadingPlaceholder(visual)
+        } else {
+            VisualRender::Ready(visual)
+        })
     }
 }
 struct DeferredSanim {

@@ -8,15 +8,17 @@ mod native;
 mod native_types;
 pub mod parser;
 pub mod prelude;
+pub mod progress;
 pub mod source;
 pub mod watch;
 
+pub use eval::state::ExecutionState;
 pub use sanim_core as core;
 use sanim_core::{Animation, Diagnostic, ReflectedInput, Span, Type, Value, digest};
 use serde::Serialize;
 use source::Snapshot;
 pub use source::{FileSources, MemorySources, Sources};
-use std::{collections::BTreeMap, sync::Arc, time::Instant};
+use std::{collections::BTreeMap, sync::Arc};
 pub use watch::{Reload, Session};
 
 #[derive(Clone, Debug, Serialize)]
@@ -25,6 +27,7 @@ pub struct Limits {
     pub max_parse_steps: usize,
     pub max_modules: usize,
     pub max_type_bytes: usize,
+    pub max_time_map_bytes: usize,
     pub max_operations: u64,
     pub max_iterations: usize,
     pub max_elements: usize,
@@ -42,6 +45,7 @@ impl Default for Limits {
             max_parse_steps: 200_000,
             max_modules: 128,
             max_type_bytes: 8 * 1024 * 1024,
+            max_time_map_bytes: 16 * 1024 * 1024,
             max_operations: 1_000_000,
             max_iterations: 100_000,
             max_elements: 10_000,
@@ -64,6 +68,10 @@ pub struct Statistics {
     pub decoded_assets: u64,
     pub reused_assets: u64,
     pub operations: u64,
+    pub restored_statements: u64,
+    pub restored_until: sanim_core::Fraction,
+    pub checkpoint_count: usize,
+    pub checkpoint_bytes: usize,
     pub prepare_micros: u64,
     pub executed_queries: u64,
     pub reused_queries: u64,
@@ -84,14 +92,15 @@ pub struct PerformanceWarning {
 #[derive(Clone, Debug, Serialize)]
 pub struct Prepared {
     pub animation: Animation,
-    pub bindings: BTreeMap<String, Value>,
-    pub reflected: Vec<ReflectedInput>,
+    pub time_map: sanim_core::TimeMap,
+    pub bindings: imbl::OrdMap<String, Value>,
+    pub reflected: imbl::Vector<ReflectedInput>,
     pub types: BTreeMap<String, Type>,
     pub symbols: BTreeMap<String, Type>,
     pub scheduling_helpers: Vec<String>,
     pub durations: BTreeMap<String, Vec<sanim_core::NodeDuration>>,
-    pub checks: Vec<sanim_core::verify::Verification>,
-    pub contracts: Vec<sanim_core::verify::Contract>,
+    pub checks: imbl::Vector<sanim_core::verify::Verification>,
+    pub contracts: imbl::Vector<sanim_core::verify::Contract>,
     pub dependencies: BTreeMap<String, String>,
     pub fingerprint: String,
     pub statistics: Statistics,
@@ -172,6 +181,8 @@ pub struct Engine {
     values: cache::ValueCache,
     assets: cache::ValueCache,
     pub(crate) attempted: BTreeMap<String, String>,
+    progress_observer: Option<progress::Observer>,
+    states: eval::state::Store,
 }
 
 #[derive(Clone)]
@@ -189,10 +200,28 @@ impl Engine {
             ..Self::default()
         }
     }
+    pub fn set_progress_observer(&mut self, observer: Option<progress::Observer>) {
+        self.progress_observer = observer;
+    }
+    fn with_progress<T>(
+        &mut self,
+        entry: &str,
+        prepare: impl FnOnce(&mut Self, &progress::Reporter) -> Result<T, Diagnostic>,
+    ) -> Result<T, Diagnostic> {
+        let reporter = progress::Reporter::new(self.progress_observer.clone(), entry);
+        let result = prepare(self, &reporter);
+        reporter.finish(result.as_ref().err());
+        result
+    }
+    /// O(1) access to a retained immutable execution root. Cloning it preserves shared storage.
+    pub fn execution_state(&self, boundary: usize) -> Option<Arc<ExecutionState>> {
+        self.states.get(boundary)
+    }
     pub fn clear_cache(&mut self) {
         self.parsed.clear();
         self.values.clear();
         self.assets.clear();
+        self.states.clear();
     }
     pub fn prepare(
         &mut self,
@@ -200,7 +229,9 @@ impl Engine {
         sources: &dyn Sources,
         overrides: &BTreeMap<String, Value>,
     ) -> Result<Prepared, Diagnostic> {
-        self.prepare_inputs(entry, sources, overrides, None, false)
+        self.with_progress(entry, |engine, reporter| {
+            engine.prepare_inputs(entry, sources, overrides, None, false, reporter)
+        })
     }
     pub fn prepare_json(
         &mut self,
@@ -208,7 +239,16 @@ impl Engine {
         sources: &dyn Sources,
         overrides: &BTreeMap<String, serde_json::Value>,
     ) -> Result<Prepared, Diagnostic> {
-        self.prepare_inputs(entry, sources, &BTreeMap::new(), Some(overrides), false)
+        self.with_progress(entry, |engine, reporter| {
+            engine.prepare_inputs(
+                entry,
+                sources,
+                &BTreeMap::new(),
+                Some(overrides),
+                false,
+                reporter,
+            )
+        })
     }
     /// Resolve timeline length without creating animation layers or rendering pixels.
     pub fn duration_json(
@@ -217,8 +257,11 @@ impl Engine {
         sources: &dyn Sources,
         overrides: &BTreeMap<String, serde_json::Value>,
     ) -> Result<DurationReport, Diagnostic> {
-        self.duration_prepared(entry, sources, &BTreeMap::new(), Some(overrides))
-            .and_then(DurationReport::from_prepared)
+        self.with_progress(entry, |engine, reporter| {
+            engine
+                .duration_prepared(entry, sources, &BTreeMap::new(), Some(overrides), reporter)
+                .and_then(DurationReport::from_prepared)
+        })
     }
     pub fn duration(
         &mut self,
@@ -226,8 +269,11 @@ impl Engine {
         sources: &dyn Sources,
         overrides: &BTreeMap<String, Value>,
     ) -> Result<DurationReport, Diagnostic> {
-        self.duration_prepared(entry, sources, overrides, None)
-            .and_then(DurationReport::from_prepared)
+        self.with_progress(entry, |engine, reporter| {
+            engine
+                .duration_prepared(entry, sources, overrides, None, reporter)
+                .and_then(DurationReport::from_prepared)
+        })
     }
     fn duration_prepared(
         &mut self,
@@ -235,10 +281,11 @@ impl Engine {
         sources: &dyn Sources,
         overrides: &BTreeMap<String, Value>,
         json: Option<&BTreeMap<String, serde_json::Value>>,
+        reporter: &progress::Reporter,
     ) -> Result<Prepared, Diagnostic> {
-        match self.prepare_inputs(entry, sources, overrides, json, true) {
+        match self.prepare_inputs(entry, sources, overrides, json, true, reporter) {
             Err(error) if error.code == "S390" => {
-                self.prepare_inputs(entry, sources, overrides, json, false).map(|mut prepared|{prepared.performance.push(PerformanceWarning{code:"P004".into(),message:"duration depends on sampled animation state; full scene preparation was required".into(),source:error.source,span:error.span,operations:prepared.statistics.operations});prepared})
+                self.prepare_inputs(entry, sources, overrides, json, false, reporter).map(|mut prepared|{prepared.performance.push(PerformanceWarning{code:"P004".into(),message:"duration depends on sampled animation state; full scene preparation was required".into(),source:error.source,span:error.span,operations:prepared.statistics.operations});prepared})
             }
             result => result,
         }
@@ -250,8 +297,14 @@ impl Engine {
         overrides: &BTreeMap<String, Value>,
         json: Option<&BTreeMap<String, serde_json::Value>>,
         duration_only: bool,
+        reporter: &progress::Reporter,
     ) -> Result<Prepared, Diagnostic> {
-        let started = Instant::now();
+        let started = reporter.started;
+        let observed_sources = progress::ObservedSources {
+            provider: sources,
+            reporter,
+        };
+        let sources = &observed_sources;
         self.values
             .configure(self.limits.max_cache_bytes, self.limits.max_cache_entries);
         self.assets
@@ -259,6 +312,7 @@ impl Engine {
         let mut snapshot = Snapshot {
             provider: sources,
             reads: BTreeMap::new(),
+            hashes: Default::default(),
         };
         let mut statistics = Statistics::default();
         self.viewport
@@ -274,9 +328,14 @@ impl Engine {
                 &mut snapshot,
                 &mut loaded,
                 &mut vec![],
-                &mut statistics,
-                &type_budget,
+                (&mut statistics, &type_budget, reporter),
             )?;
+            reporter.emit(
+                progress::Phase::Checking,
+                Some(loaded.len() as u64),
+                Some(loaded.len() as u64),
+                Some(&entry),
+            );
             let mut converted = BTreeMap::new();
             if let Some(json) = json {
                 let mut inputs = BTreeMap::new();
@@ -330,9 +389,8 @@ impl Engine {
                 } else {
                     overrides
                 },
-                (&self.limits, &self.viewport, duration_only),
-                &mut self.values,
-                &mut self.assets,
+                (&self.limits, &self.viewport, duration_only, reporter),
+                (&mut self.values, &mut self.assets, &mut self.states),
                 &mut statistics,
             )?;
             prepared.dependencies = snapshot.fingerprints();
@@ -341,7 +399,14 @@ impl Engine {
         })();
         self.attempted = snapshot.fingerprints();
         let mut prepared = result?;
-        for (path, expected) in &prepared.dependencies {
+        let total = prepared.dependencies.len() as u64;
+        reporter.emit(
+            progress::Phase::Finalizing,
+            Some(0),
+            Some(total),
+            Some(entry),
+        );
+        for (index, (path, expected)) in prepared.dependencies.iter().enumerate() {
             let current=sources.read(path).map(|bytes|digest(&bytes)).map_err(|e|Diagnostic::new("S203",format!("dependency '{path}' changed or disappeared while preparing: {e}; retry the revision"),entry,Span::default()))?;
             if &current != expected {
                 return Err(Diagnostic::new(
@@ -353,6 +418,12 @@ impl Engine {
                     Span::default(),
                 ));
             }
+            reporter.emit(
+                progress::Phase::Finalizing,
+                Some(index as u64 + 1),
+                Some(total),
+                Some(path),
+            );
         }
         prepared.statistics.prepare_micros =
             started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
@@ -376,8 +447,11 @@ impl Engine {
         snapshot: &mut Snapshot<'_>,
         loaded: &mut Vec<Loaded>,
         active: &mut Vec<String>,
-        statistics: &mut Statistics,
-        type_budget: &std::cell::Cell<usize>,
+        (statistics, type_budget, reporter): (
+            &mut Statistics,
+            &std::cell::Cell<usize>,
+            &progress::Reporter,
+        ),
     ) -> Result<(), Diagnostic> {
         if loaded.iter().any(|v| v.id == id) {
             return Ok(());
@@ -398,6 +472,12 @@ impl Engine {
                 Span::default(),
             ));
         }
+        reporter.emit(
+            progress::Phase::Sources,
+            Some(statistics.parsed_modules + statistics.reused_modules),
+            None,
+            Some(id),
+        );
         let bytes = snapshot
             .read(id)
             .map_err(|e| Diagnostic::new("S201", e, id, Span::default()))?;
@@ -424,6 +504,12 @@ impl Engine {
             statistics.parsed_modules += 1;
             module
         };
+        reporter.emit(
+            progress::Phase::Sources,
+            Some(statistics.parsed_modules + statistics.reused_modules),
+            None,
+            Some(id),
+        );
         active.push(id.into());
         let mut imports = BTreeMap::new();
         let mut checks = BTreeMap::new();
@@ -460,8 +546,7 @@ impl Engine {
                     snapshot,
                     loaded,
                     active,
-                    statistics,
-                    type_budget,
+                    (&mut *statistics, type_budget, reporter),
                 )?;
                 let imported = loaded
                     .iter()
@@ -473,6 +558,12 @@ impl Engine {
                 imports.insert(alias.clone(), path_resolved);
             }
         }
+        reporter.emit(
+            progress::Phase::Checking,
+            Some(loaded.len() as u64),
+            None,
+            Some(id),
+        );
         let checked = checker::check(
             id,
             &module,
@@ -488,6 +579,12 @@ impl Engine {
             imports,
             checked: Arc::new(checked),
         });
+        reporter.emit(
+            progress::Phase::Checking,
+            Some(loaded.len() as u64),
+            None,
+            Some(id),
+        );
         Ok(())
     }
 }

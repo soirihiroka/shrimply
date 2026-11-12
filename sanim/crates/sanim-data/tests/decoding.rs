@@ -387,7 +387,7 @@ fn json_and_npy_vectors_retain_f64_range() {
 }
 #[test]
 fn sql_instruction_budget_interrupts_recursive_queries() {
-    let tables = Value::Record(BTreeMap::new());
+    let tables = Value::Record(Default::default());
     let ty = Type::Table(Box::new(Type::Dict));
     let limits = Limits {
         max_sql_steps: 1000,
@@ -400,7 +400,7 @@ fn sql_instruction_budget_interrupts_recursive_queries() {
 fn sql_rejects_multiple_statements() {
     let e = sanim_data::sqlite::query(
         "SELECT 1 AS value; SELECT 2 AS value",
-        &Value::Record(BTreeMap::new()),
+        &Value::Record(Default::default()),
         None,
         &Type::Table(Box::new(Type::Dict)),
         Limits::default(),

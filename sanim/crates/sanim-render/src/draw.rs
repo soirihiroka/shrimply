@@ -12,13 +12,14 @@ pub(crate) fn prepare_paths(
     paths: &mut BTreeMap<String, PreparedPath>,
     renderer: &mut crate::Renderer,
 ) -> Result<(), String> {
-    if let Geometry::Group { children } = &element.geometry {
+    if let Geometry::Group { children } = element.geometry.as_ref() {
         for child in children {
             prepare_paths(child, paths, renderer)?;
         }
         return Ok(());
     }
-    let key = digest(&serde_json::to_vec(&element.geometry).map_err(|error| error.to_string())?);
+    let key =
+        digest(&serde_json::to_vec(element.geometry.as_ref()).map_err(|error| error.to_string())?);
     if let Some(path) = renderer.geometry_cache.get(&key) {
         if paths.insert(element.id.clone(), path.clone()).is_some() {
             return Err(format!("duplicate element identity '{}'", element.id));
@@ -26,7 +27,7 @@ pub(crate) fn prepare_paths(
         renderer.geometry_cache_hits += 1;
         return Ok(());
     }
-    let path = match &element.geometry {
+    let path = match element.geometry.as_ref() {
         Geometry::Circle { radius } => {
             let radius = to_f64(*radius)? as f32;
             shape::ellipse_path(
@@ -64,7 +65,7 @@ pub(crate) fn prepare_paths(
         Geometry::Text { outline, .. } => {
             let mut path = PathBuilder::new();
             let point = |p: [f64; 2]| (p[0] as f32, p[1] as f32);
-            for segment in outline {
+            for segment in outline.iter() {
                 match segment {
                     TextSegment::Move(p) => {
                         path.move_to(point(*p));
@@ -134,6 +135,7 @@ pub(crate) fn element_draw(
     };
     if element.opacity == Fraction::from(0)
         || element.scale == Fraction::from(0)
+        || element.horizontal.scale == Fraction::from(0)
         || reveal.progress == Fraction::from(0)
     {
         return Ok(());
@@ -147,10 +149,16 @@ pub(crate) fn element_draw(
         canvas.rotate(to_f64(element.rotation)? as f32, None);
         let scale = to_f64(element.scale)? as f32;
         canvas.scale((scale, scale));
+        if element.horizontal.scale != Fraction::from(1) {
+            let origin = to_f64(element.horizontal.origin.value)? as f32;
+            canvas.translate((origin, 0.));
+            canvas.scale((to_f64(element.horizontal.scale)? as f32, 1.));
+            canvas.translate((-origin, 0.));
+        }
         if !canvas.local_to_device().is_finite() {
             return Err("composed transform exceeds Skia numeric range".into());
         }
-        if let Geometry::Group { children } = &element.geometry {
+        if let Geometry::Group { children } = element.geometry.as_ref() {
             if element.opacity != Fraction::from(1) {
                 drawing.work = drawing
                     .work
@@ -174,10 +182,10 @@ pub(crate) fn element_draw(
             .ok_or("path rendering exceeds render work budget")?;
         let mut paint = paint(&element.fill, element.opacity)?;
         let progress = to_f64(reveal.progress)? as f32;
-        if let Geometry::Line { width, .. } = element.geometry {
+        if let Geometry::Line { width, .. } = element.geometry.as_ref() {
             paint
                 .set_style(skia_safe::paint::Style::Stroke)
-                .set_stroke_width(to_f64(width)? as f32);
+                .set_stroke_width(to_f64(*width)? as f32);
             canvas.draw_path(&prepared.partial(progress, false), &paint);
         } else if progress >= 1.0 {
             canvas.draw_path(&prepared.path, &paint);

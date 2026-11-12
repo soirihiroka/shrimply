@@ -3,7 +3,6 @@ use sanim_core::{
     verify::{Predicate, Relation},
     *,
 };
-use std::collections::BTreeMap;
 
 pub(crate) struct Context<'a> {
     pub module: &'a str,
@@ -16,7 +15,7 @@ pub(crate) struct Context<'a> {
 
 pub(crate) fn color(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     Ok(Value::Color(Color::parse(
@@ -29,7 +28,7 @@ pub(crate) fn color(
 
 pub(crate) fn fraction(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let numerator = number(args, "numerator", Fraction::from(0))?;
@@ -46,7 +45,7 @@ pub(crate) fn fraction(
 
 pub(crate) fn vector(
     name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let n = match name {
@@ -70,7 +69,7 @@ pub(crate) fn vector(
 
 pub(crate) fn matrix(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let Some(rows) = args.get("rows") else {
@@ -95,7 +94,7 @@ pub(crate) fn matrix(
 
 pub(crate) fn dot(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -112,7 +111,7 @@ pub(crate) fn dot(
 
 pub(crate) fn matrix_operation(
     name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -131,7 +130,7 @@ pub(crate) fn matrix_operation(
 
 pub(crate) fn len(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -140,8 +139,8 @@ pub(crate) fn len(
     };
     let size = match required("items")? {
         Value::Dict(items) => items.len(),
-        Value::Data(serde_json::Value::Object(items)) => items.len(),
-        Value::Data(serde_json::Value::Array(items)) => items.len(),
+        Value::Data(items) if items.is_object() => items.as_object().expect("object").len(),
+        Value::Data(items) if items.is_array() => items.as_array().expect("array").len(),
         Value::Data(_) => return Err("len requires object or array Data".into()),
         value => value.list()?.len(),
     };
@@ -153,7 +152,7 @@ pub(crate) fn len(
 
 pub(crate) fn range(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     context: Context<'_>,
 ) -> Result<Value, String> {
     let Context { limits, .. } = context;
@@ -200,7 +199,7 @@ pub(crate) fn range(
 
 pub(crate) fn get(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -212,19 +211,19 @@ pub(crate) fn get(
 
 pub(crate) fn data(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
         args.get(name)
             .ok_or_else(|| format!("missing argument '{name}'"))
     };
-    Ok(Value::Data(sanim_data::to_json(required("value")?)?))
+    Ok(Value::Data(sanim_data::to_json(required("value")?)?.into()))
 }
 
 pub(crate) fn keys(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -233,27 +232,36 @@ pub(crate) fn keys(
     };
     let keys = match required("value")? {
         Value::Dict(values) => values.keys().cloned().collect::<Vec<_>>(),
-        Value::Data(serde_json::Value::Object(values)) => values.keys().cloned().collect(),
+        Value::Data(values) if values.is_object() => values
+            .as_object()
+            .expect("object")
+            .keys()
+            .cloned()
+            .collect(),
         _ => return Err("keys requires Dict or object Data".into()),
     };
-    Ok(Value::List(keys.into_iter().map(Value::String).collect()))
+    Ok(Value::List(
+        keys.into_iter()
+            .map(|key| Value::String(key.into()))
+            .collect(),
+    ))
 }
 
 pub(crate) fn some(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
         args.get(name)
             .ok_or_else(|| format!("missing argument '{name}'"))
     };
-    Ok(Value::Some(Box::new(required("value")?.clone())))
+    Ok(Value::Some(std::sync::Arc::new(required("value")?.clone())))
 }
 
 pub(crate) fn unwrap(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -261,7 +269,7 @@ pub(crate) fn unwrap(
             .ok_or_else(|| format!("missing argument '{name}'"))
     };
     match required("option")? {
-        Value::Some(value) => Ok(*value.clone()),
+        Value::Some(value) => Ok(value.as_ref().clone()),
         Value::None => Ok(required("default")?.clone()),
         _ => Err("expected Option".into()),
     }
@@ -269,7 +277,7 @@ pub(crate) fn unwrap(
 
 pub(crate) fn scalar(
     name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -318,24 +326,27 @@ pub(crate) fn scalar(
 
 pub(crate) fn str(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
         args.get(name)
             .ok_or_else(|| format!("missing argument '{name}'"))
     };
-    Ok(Value::String(match required("value")? {
-        Value::String(v) => v.clone(),
-        Value::Number(n) => format!("{}", n.value),
-        Value::Bool(v) => v.to_string(),
-        other => serde_json::to_string(other).map_err(|e| e.to_string())?,
-    }))
+    Ok(Value::String(
+        (match required("value")? {
+            Value::String(v) => v.to_string(),
+            Value::Number(n) => format!("{}", n.value),
+            Value::Bool(v) => v.to_string(),
+            other => serde_json::to_string(other).map_err(|e| e.to_string())?,
+        })
+        .into(),
+    ))
 }
 
 pub(crate) fn wait(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     context: Context<'_>,
 ) -> Result<Value, String> {
     let Context {
@@ -356,7 +367,7 @@ pub(crate) fn wait(
 
 pub(crate) fn background(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     context: Context<'_>,
 ) -> Result<Value, String> {
     let Some(Value::Color(color)) = args.get("color") else {
@@ -368,7 +379,7 @@ pub(crate) fn background(
 
 pub(crate) fn add(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     context: Context<'_>,
 ) -> Result<Value, String> {
     let Context {
@@ -384,7 +395,7 @@ pub(crate) fn add(
     let Value::Element(element) = required("element")? else {
         return Err("add requires Element".into());
     };
-    animation.add(*element.clone(), *cursor)?;
+    animation.add(element.as_ref().clone(), *cursor)?;
     if animation.element_count() > limits.max_elements {
         return Err(format!(
             "element count exceeds limit {}",
@@ -396,7 +407,7 @@ pub(crate) fn add(
 
 pub(crate) fn always(
     _name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -406,13 +417,13 @@ pub(crate) fn always(
     let Value::Predicate(mut predicate) = required("condition")?.clone() else {
         return Err("always requires a visual relationship".into());
     };
-    predicate.continuous = true;
+    std::sync::Arc::make_mut(&mut predicate).continuous = true;
     Ok(Value::Predicate(predicate))
 }
 
 pub(crate) fn math_function(
     name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let function = math::functions::function(name).expect("registered math function");
@@ -437,7 +448,7 @@ pub(crate) fn math_function(
 
 pub(crate) fn motion(
     name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     context: Context<'_>,
 ) -> Result<Value, String> {
     let Context {
@@ -454,7 +465,9 @@ pub(crate) fn motion(
         "MoveTo" => (Property::Position, required("to")?.clone(), None),
         "Shift" => {
             let offset = required("to")?.vec2()?;
-            let mut current = animation.sample_element(element, *cursor)?.position;
+            let mut current = animation
+                .sample_property(element, Property::Position, *cursor)?
+                .vec2()?;
             if current.values.iter().all(|v| *v == 0.0) {
                 current.unit = offset.unit;
             }
@@ -513,10 +526,22 @@ pub(crate) fn motion(
             }
             (Property::Scale, required("to")?.clone(), None)
         }
+        "ExpandX" => (
+            Property::StretchX,
+            Value::Number(Number::scalar(1)),
+            Some(Value::Number(Number::scalar(0))),
+        ),
+        "StretchXTo" => {
+            let to = required("to")?.number()?;
+            if !math::finite(&to.value) || to.value < Fraction::from(0) {
+                return Err("horizontal scale must be finite and nonnegative".into());
+            }
+            (Property::StretchX, required("to")?.clone(), None)
+        }
         _ => (Property::Fill, required("to")?.clone(), None),
     };
-    Ok(Value::Motion(Box::new(Motion {
-        element: *element.clone(),
+    Ok(Value::Motion(std::sync::Arc::new(Motion {
+        element: element.as_ref().clone(),
         property,
         to,
         from,
@@ -525,12 +550,34 @@ pub(crate) fn motion(
             "Write" | "Unwrite" => Some(RevealKind::Write),
             _ => None,
         },
+        horizontal: if name == "ExpandX"
+            || name == "StretchXTo" && (args.contains_key("origin") || args.contains_key("offset"))
+        {
+            Some(HorizontalTransform {
+                scale: Fraction::from(1),
+                origin: Number {
+                    value: number(
+                        args,
+                        "origin",
+                        if matches!(element.geometry.as_ref(), Geometry::Group { .. }) {
+                            Fraction::new(1u64, 2u64)
+                        } else {
+                            Fraction::from(0)
+                        },
+                    )?,
+                    unit: Unit::Percent,
+                },
+                offset: number(args, "offset", Fraction::from(0))?,
+            })
+        } else {
+            None
+        },
     })))
 }
 
 pub(crate) fn relationship(
     name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
     let required = |name: &str| {
@@ -551,7 +598,7 @@ pub(crate) fn relationship(
         let Value::Element(right) = required("b")? else {
             return Err("relationship requires Element".into());
         };
-        Some(*right.clone())
+        Some(right.as_ref().clone())
     };
     let relation = match name {
         "above" => Relation::Above,
@@ -568,8 +615,8 @@ pub(crate) fn relationship(
     if gap < Fraction::from(0) {
         return Err("relationship gap must be nonnegative".into());
     }
-    Ok(Value::Predicate(Box::new(Predicate {
-        left: *left.clone(),
+    Ok(Value::Predicate(std::sync::Arc::new(Predicate {
+        left: left.as_ref().clone(),
         right,
         relation,
         gap,
@@ -579,7 +626,7 @@ pub(crate) fn relationship(
 
 pub(crate) fn element(
     name: &str,
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     context: Context<'_>,
 ) -> Result<Value, String> {
     let Context {
@@ -606,13 +653,15 @@ pub(crate) fn element(
                 .iter()
                 .map(|v| {
                     if let Value::Element(e) = v {
-                        Ok(*e.clone())
+                        Ok(e.as_ref().clone())
                     } else {
                         Err("Group children must be Elements")
                     }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Geometry::Group { children }
+            Geometry::Group {
+                children: children.into(),
+            }
         }
         "Line" => {
             let end = required("end")?.vec2()?;
@@ -636,7 +685,9 @@ pub(crate) fn element(
             if points.iter().any(|p| p.unit != sanim_core::Unit::Length) {
                 return Err("Polygon vertices must be local pt offsets".into());
             }
-            Geometry::Polygon { points }
+            Geometry::Polygon {
+                points: points.into(),
+            }
         }
         "Text" => {
             let Value::Font(font) = required("font")? else {
@@ -648,7 +699,7 @@ pub(crate) fn element(
             Geometry::Text {
                 text: text.into(),
                 size,
-                outline,
+                outline: outline.into(),
                 bounds,
             }
         }
@@ -739,21 +790,22 @@ pub(crate) fn element(
     if layout.gap < Fraction::from(0) || layout.padding < Fraction::from(0) {
         return Err("layout gap and padding must be nonnegative".into());
     }
-    Ok(Value::Element(Box::new(Element {
+    Ok(Value::Element(std::sync::Arc::new(Element {
         id,
-        geometry,
+        geometry: geometry.into(),
         position,
         rotation: number(args, "rotation", Fraction::from(0))?,
         scale: positive(args, "scale", Fraction::from(1))?,
         opacity,
         fill,
         reveal: Reveal::default(),
+        horizontal: HorizontalTransform::default(),
         layout,
     })))
 }
 
 fn number(
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     name: &str,
     default: Fraction,
 ) -> Result<Fraction, String> {
@@ -763,7 +815,7 @@ fn number(
         .map(|n| n.map_or(default, |v| v.value))
 }
 fn positive(
-    args: &BTreeMap<String, Value>,
+    args: &imbl::OrdMap<String, Value>,
     name: &str,
     default: Fraction,
 ) -> Result<Fraction, String> {

@@ -109,7 +109,7 @@ fn convert(
                         .collect(),
                 ))
             } else {
-                Ok(Value::Data(value.clone()))
+                Ok(Value::Data(value.clone().into()))
             }
         }
         Type::Bool => value.as_bool().map(Value::Bool).ok_or_else(bad),
@@ -208,7 +208,7 @@ fn convert(
                 })
                 .collect::<Result<_, _>>()?;
             Ok(Value::Variant {
-                ty: ty.clone(),
+                ty: ty.clone().into(),
                 tag: tag.into(),
                 fields,
             })
@@ -264,7 +264,7 @@ fn convert(
             let _ = inner;
             Ok(Value::None)
         }
-        Type::Option(inner) => Ok(Value::Some(Box::new(convert(
+        Type::Option(inner) => Ok(Value::Some(std::sync::Arc::new(convert(
             value,
             inner,
             path,
@@ -296,7 +296,7 @@ fn convert(
                     )?,
                 );
             }
-            Ok(Value::Record(out))
+            Ok(Value::Record(out.into_iter().collect()))
         }
         Type::List(inner) | Type::Table(inner) | Type::Array(inner) => {
             let rows = value.as_array().ok_or_else(bad)?;
@@ -316,15 +316,15 @@ fn convert(
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(match ty {
                 Type::Table(_) => Value::Table {
-                    row_type: *inner.clone(),
+                    row_type: inner.clone().into(),
                     rows: values.into(),
                 },
                 Type::Array(_) => Value::Array {
-                    element_type: *inner.clone(),
+                    element_type: inner.clone().into(),
                     shape: vec![values.len()],
                     values: values.into(),
                 },
-                _ => Value::List(values),
+                _ => Value::List(values.into()),
             })
         }
         _ => Err(format!("{path}: {ty:?} cannot be decoded from this format")),
@@ -386,12 +386,12 @@ fn validate_dynamic(
 /// Convert language data to ordinary data, preserving the unstructured boundary.
 pub fn to_json(value: &Value) -> Result<Json, String> {
     Ok(match value {
-        Value::Data(value) => value.clone(),
+        Value::Data(value) => value.as_ref().clone(),
         Value::Dict(values) => {
             Json::Object(values.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
         }
         Value::Bool(value) => Json::Bool(*value),
-        Value::String(value) => Json::String(value.clone()),
+        Value::String(value) => Json::String(value.to_string()),
         Value::Number(n) => {
             if n.unit == Unit::Number && n.value.denom() == Some(&1) {
                 let text = n.value.to_string();

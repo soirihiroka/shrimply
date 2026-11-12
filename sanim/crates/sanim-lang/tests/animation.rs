@@ -89,7 +89,7 @@ fn row_layout_wraps_when_parent_shrinks() {
         .animation
         .layout(Fraction::from(0), Fraction::from(100), Fraction::from(100))
         .unwrap();
-    let sanim_core::Geometry::Group { children } = &rows[0].geometry else {
+    let sanim_core::Geometry::Group { children } = rows[0].geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children[1].position.values[1], 40.0);
@@ -103,7 +103,7 @@ fn nested_group_positions_remain_local() {
         .animation
         .layout(Fraction::from(0), Fraction::from(800), Fraction::from(600))
         .unwrap();
-    let sanim_core::Geometry::Group { children } = &group[0].geometry else {
+    let sanim_core::Geometry::Group { children } = group[0].geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children[0].position.values[0], 100.0);
@@ -203,7 +203,7 @@ fn taffy_flex_layout_aligns_distributes_and_resizes() {
                 Fraction::from(100),
             )
             .unwrap();
-        let sanim_core::Geometry::Group { children } = &layout[0].geometry else {
+        let sanim_core::Geometry::Group { children } = layout[0].geometry.as_ref() else {
             panic!()
         };
         assert_eq!(children[0].position.values, [20., 50.]);
@@ -219,7 +219,7 @@ fn column_layout_supports_spacing_and_cross_axis_alignment() {
         .animation
         .layout(Fraction::from(0), Fraction::from(100), Fraction::from(200))
         .unwrap();
-    let sanim_core::Geometry::Group { children } = &layout[0].geometry else {
+    let sanim_core::Geometry::Group { children } = layout[0].geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children[0].position.values, [50., 60.]);
@@ -234,7 +234,7 @@ fn non_flow_groups_apply_padding_to_the_child_viewport() {
         .animation
         .layout(Fraction::from(0), Fraction::from(100), Fraction::from(100))
         .unwrap();
-    let sanim_core::Geometry::Group { children } = &layout[0].geometry else {
+    let sanim_core::Geometry::Group { children } = layout[0].geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children[0].position.values, [85., 85.]);

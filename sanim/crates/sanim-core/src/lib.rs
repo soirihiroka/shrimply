@@ -4,6 +4,10 @@ pub mod layout;
 pub use duration::{NodeDuration, TimelineEffect};
 pub mod math;
 pub mod scene;
+pub mod time_map;
+pub mod timeline_diff;
+pub use time_map::{TimeMap, TimeMapEntry, TimeMapKind};
+pub use timeline_diff::{SampleTimes, TimeRange, TimelineDiff};
 pub mod type_budget;
 pub mod types;
 pub mod value_budget;
@@ -60,8 +64,11 @@ impl std::error::Error for Diagnostic {}
 pub fn digest(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut result = String::with_capacity(64);
-    for byte in Sha256::digest(bytes) {
+    for byte in digest_bytes(bytes) {
         write!(result, "{byte:02x}").expect("writing to String");
     }
     result
+}
+pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
 }

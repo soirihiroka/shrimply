@@ -97,6 +97,7 @@ pub fn resolve(module: &str, path: &str) -> Result<String, String> {
 pub(crate) struct Snapshot<'a> {
     pub provider: &'a dyn Sources,
     pub reads: BTreeMap<String, Result<Arc<Vec<u8>>, String>>,
+    pub hashes: std::cell::RefCell<BTreeMap<String, String>>,
 }
 impl Snapshot<'_> {
     pub fn read(&mut self, path: &str) -> Result<Arc<Vec<u8>>, String> {
@@ -108,16 +109,21 @@ impl Snapshot<'_> {
     }
     pub fn fingerprints(&self) -> BTreeMap<String, String> {
         self.reads
-            .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    match v {
-                        Ok(bytes) => digest(bytes),
-                        Err(e) => format!("error:{e}"),
-                    },
-                )
-            })
+            .keys()
+            .map(|path| (path.clone(), self.fingerprint(path)))
             .collect()
+    }
+    pub fn fingerprint(&self, path: &str) -> String {
+        if let Some(hash) = self.hashes.borrow().get(path) {
+            return hash.clone();
+        }
+        let hash = match &self.reads[path] {
+            Ok(bytes) => digest(bytes),
+            Err(error) => format!("error:{error}"),
+        };
+        self.hashes
+            .borrow_mut()
+            .insert(path.to_owned(), hash.clone());
+        hash
     }
 }

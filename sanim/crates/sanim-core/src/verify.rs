@@ -109,7 +109,7 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
         }
         let mut sampled =
             animation.sample_element(animation.find(&element.id).unwrap_or(element), time)?;
-        if matches!(sampled.geometry, Geometry::Group { .. }) {
+        if matches!(sampled.geometry.as_ref(), Geometry::Group { .. }) {
             return Err("group assertions require composed layout evidence".into());
         }
         crate::layout::resolve(
@@ -189,7 +189,9 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
     }
     for element in std::iter::once(&predicate.left).chain(predicate.right.iter()) {
         if animation.tracks.get(&element.id).is_some_and(|v| {
-            v.contains_key(&Property::Rotation) || v.contains_key(&Property::Scale)
+            v.contains_key(&Property::Rotation)
+                || v.contains_key(&Property::Scale)
+                || v.contains_key(&Property::StretchX)
         }) {
             return result(
                 Evidence::Unknown,
@@ -322,11 +324,22 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
 }
 
 pub fn bounds(element: &Element) -> Result<Bounds, String> {
-    if element.rotation != Fraction::from(0) {
+    if element.horizontal.scale != Fraction::from(1) {
+        return Err("horizontal stretch bounds require renderer evidence".into());
+    }
+    bounds_at(element, element.position, element.rotation)
+}
+
+pub(crate) fn bounds_at(
+    element: &Element,
+    position: Vec2,
+    rotation: Fraction,
+) -> Result<Bounds, String> {
+    if rotation != Fraction::from(0) {
         return Err("rotated bounds require renderer evidence".into());
     }
     let zero = 0.0_f64;
-    let (min, max) = match &element.geometry {
+    let (min, max) = match element.geometry.as_ref() {
         Geometry::Circle { radius } => (
             Vec2 {
                 values: [-to_f64(*radius)?, -to_f64(*radius)?],
@@ -444,22 +457,22 @@ pub fn bounds(element: &Element) -> Result<Bounds, String> {
     let x1 = calc(
         "+",
         calc("*", min.values[0], to_f64(element.scale)?)?,
-        element.position.values[0],
+        position.values[0],
     )?;
     let x2 = calc(
         "+",
         calc("*", max.values[0], to_f64(element.scale)?)?,
-        element.position.values[0],
+        position.values[0],
     )?;
     let y1 = calc(
         "+",
         calc("*", min.values[1], to_f64(element.scale)?)?,
-        element.position.values[1],
+        position.values[1],
     )?;
     let y2 = calc(
         "+",
         calc("*", max.values[1], to_f64(element.scale)?)?,
-        element.position.values[1],
+        position.values[1],
     )?;
     let values = [x1, x2, y1, y2];
     if element.scale != Fraction::from(0)

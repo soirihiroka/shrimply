@@ -9,13 +9,14 @@ use std::{
 
 mod video;
 
-const HELP: &str = "sanim — headless animation language\n\nUsage: sanim <check|inspect|duration|render|video|watch> <file.sanim> [options]\n\n  --json                 Structured results and diagnostics\n  --set name=JSON         Override a reflected input (repeatable)\n  --output PATH           PNG or MP4 destination (render/video/watch)\n  --ffmpeg PATH          FFmpeg executable for video (default ffmpeg)\n  --frame N               Exact zero-based frame index (default 0)\n  --time DURATION         Exact presentation time, e.g. 125ms\n  --width N --height N    Output pixels\n  --fps RATE             Exact frame rate (default 30)\n  --dpi N                Output DPI (default 96; CSS points)\n  --poll-ms N            Watch interval (default 100)\n  --cycles N             Stop watching after N polls (default unlimited)\n";
+const HELP: &str = "sanim — headless animation language\n\nUsage: sanim <check|inspect|duration|render|video|watch> <file.sanim> [options]\n\n  --json                 Structured results and diagnostics\n  --progress             Observed preparation events as JSON on stderr\n  --set name=JSON         Override a reflected input (repeatable)\n  --output PATH           PNG or MP4 destination (render/video/watch)\n  --ffmpeg PATH          FFmpeg executable for video (default ffmpeg)\n  --frame N               Exact zero-based frame index (default 0)\n  --time DURATION         Exact presentation time, e.g. 125ms\n  --width N --height N    Output pixels\n  --fps RATE             Exact frame rate (default 30)\n  --dpi N                Output DPI (default 96; CSS points)\n  --poll-ms N            Watch interval (default 100)\n  --cycles N             Stop watching after N polls (default unlimited)\n";
 
 #[derive(Default)]
 struct Args {
     command: String,
     path: PathBuf,
     json: bool,
+    progress: bool,
     sets: BTreeMap<String, serde_json::Value>,
     output: Option<PathBuf>,
     frame: u64,
@@ -72,8 +73,12 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
     let mut i = 2;
     while i < argv.len() {
         let name = &argv[i];
-        if name == "--json" {
-            args.json = true;
+        if name == "--json" || name == "--progress" {
+            if name == "--json" {
+                args.json = true;
+            } else {
+                args.progress = true;
+            }
             i += 1;
             continue;
         }
@@ -147,6 +152,9 @@ fn run(args: Args) -> Result<(), String> {
     if args.command == "watch" {
         let mut session = Session::new(entry);
         session.engine.viewport = args.viewport();
+        session
+            .engine
+            .set_progress_observer(progress_observer(args.progress));
         let mut renderer = Renderer::default();
         let mut cycles = 0;
         session.set_json_inputs(args.sets.clone());
@@ -183,6 +191,7 @@ fn run(args: Args) -> Result<(), String> {
         return Ok(());
     }
     let mut engine = Engine::new(args.viewport());
+    engine.set_progress_observer(progress_observer(args.progress));
     if args.command == "duration" {
         let report = engine
             .duration_json(entry, &sources, &args.sets)
@@ -246,6 +255,17 @@ fn diagnostic(error: &sanim_core::Diagnostic, json: bool) -> String {
     } else {
         error.to_string()
     }
+}
+
+fn progress_observer(enabled: bool) -> Option<sanim_lang::progress::Observer> {
+    enabled.then(|| {
+        std::sync::Arc::new(|progress| {
+            eprintln!(
+                "{}",
+                serde_json::json!({"event":"progress","progress":progress})
+            );
+        }) as sanim_lang::progress::Observer
+    })
 }
 fn render(prepared: &Prepared, args: &Args, renderer: &mut Renderer) -> Result<u64, String> {
     let started = std::time::Instant::now();
