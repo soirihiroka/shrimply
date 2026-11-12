@@ -267,12 +267,15 @@ pub struct Color(pub [Fraction; 4]);
 
 impl Color {
     pub fn parse(text: &str) -> Result<Self, String> {
-        if let Some((_, color)) = shrimply_math_color::Color::ADWAITA.iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(text)) {
+        if let Some((_, color)) = shrimply_math_color::Color::ADWAITA
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(text))
+        {
             // Shared palette RGB values originate as bytes. Recover those exact
             // values; preserve decimal alpha rather than quantizing it to a byte.
             let mut channels = shrimply_math_color::Color::<u8>::from_srgba(color.to_array())
-                .to_array().map(|channel| Fraction::new(u64::from(channel), 255u64));
+                .to_array()
+                .map(|channel| Fraction::new(u64::from(channel), 255u64));
             channels[3] = crate::math::decimal(&color.a.to_string())?;
             return Ok(Self(channels));
         }

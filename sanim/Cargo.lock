@@ -1067,6 +1067,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shrimply-math-color",
  "taffy",
 ]
 

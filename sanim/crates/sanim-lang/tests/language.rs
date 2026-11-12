@@ -424,3 +424,25 @@ fn math_helpers_preserve_angle_units_and_fraction_values() {
     );
     assert_eq!(p.bindings["rounded"], Value::Fraction(Fraction::from(1)));
 }
+
+#[test]
+fn adwaita_colors_work_in_reflection_and_typed_data_loading() {
+    let mut files = MemorySources::default();
+    files.insert("main.sanim", "reflect tint:Color=Color(\"BLUE3\")\nlet loaded=read<Color>(\"color.json\")\nlet default_color=Color()\nadd(Circle(fill:tint))");
+    files.insert("color.json", "\"orange3\"");
+    let prepared = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(
+        prepared.bindings["tint"],
+        Value::Color(sanim_core::Color::parse("#3584e4").unwrap())
+    );
+    assert_eq!(
+        prepared.bindings["loaded"],
+        Value::Color(sanim_core::Color::parse("#ff7800").unwrap())
+    );
+    assert_eq!(
+        prepared.bindings["default_color"],
+        Value::Color(sanim_core::Color::parse("red3").unwrap())
+    );
+}
