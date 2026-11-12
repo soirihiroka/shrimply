@@ -77,7 +77,7 @@ fn changed(source: &Source, old: u64) -> sanim_runtime::Snapshot {
 #[test]
 fn native_sanim_frames_reflow_with_editor_viewport() {
     let f = Fixture::new(
-        "add(Circle(radius: 2pt,position: Vec2(25%,0%),fill: Color(\"red\")))\nwait(1s)\n",
+        "bg(Color(\"transparent\"))\nadd(Circle(radius: 2pt,position: Vec2(25%,0%),fill: Color(\"red\")))\nwait(1s)\n",
     );
     let item = f.item();
     let mut source = Source::new(&item).unwrap();
