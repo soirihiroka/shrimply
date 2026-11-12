@@ -290,6 +290,9 @@ impl InspectorController {
         if let Some(result) = self.relink_executable_source(target, path, text) {
             return result;
         }
+        if let Some(result) = self.set_sanim_text(target, path, text, commit_name) {
+            return result;
+        }
         if let Some(result) = self.set_manim_text_field(target, path, text, commit_name) {
             return result;
         }
@@ -506,6 +509,9 @@ impl InspectorController {
         value: shrimply_math_core::Fraction,
         commit_name: &str,
     ) -> Result<(), String> {
+        if let Some(result) = self.set_sanim_fraction(target, path, value, commit_name) {
+            return result;
+        }
         if let Some(result) = self.set_manim_fraction(target, path, value, commit_name) {
             return result;
         }

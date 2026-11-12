@@ -49,6 +49,7 @@ mod execute;
 mod frames;
 mod imports;
 mod manim;
+mod sanim;
 mod speech;
 
 use frames::*;

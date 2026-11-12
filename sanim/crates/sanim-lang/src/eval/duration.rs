@@ -141,9 +141,9 @@ impl Runtime<'_, '_> {
                 }
                 self.invoke(&key, &evaluated, expr.span, false, Some(&provided))?;
             }
-            ExprKind::Unary(_, value) | ExprKind::Member(value, _) => {
-                self.duration_effects(value, env)?
-            }
+            ExprKind::Unary(_, value)
+            | ExprKind::Member(value, _)
+            | ExprKind::Reflect { value, .. } => self.duration_effects(value, env)?,
             ExprKind::Binary(op, left, right)
                 if matches!(op.as_str(), "and" | "or")
                     && !self.timeline_effect(right.span).is_zero() =>

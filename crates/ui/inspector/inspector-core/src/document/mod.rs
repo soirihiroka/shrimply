@@ -71,6 +71,7 @@ impl InspectorToggleAction {
 
 impl crate::InspectorController {
     pub fn poll_document_dependencies(&self) -> bool {
+        let sanim = self.sanim_reflection.borrow_mut().poll();
         let blender = crate::video::blender::poll_metadata();
         let manim_scenes = crate::manim_parameters::poll_scenes();
         let media = self.media_metadata.borrow_mut().poll();
@@ -81,7 +82,8 @@ impl crate::InspectorController {
         let tts = self.poll_tts();
         let fill = self.poll_transparent_fill_analysis();
         let caches = self.poll_visual_caches();
-        blender
+        sanim
+            || blender
             || manim_scenes
             || media
             || voices
@@ -426,19 +428,21 @@ impl crate::InspectorController {
             && matches!(target, InspectorTarget::Item(ItemAddress::Video { .. }))
             && !control.commit_name.is_empty()
             && values.iter().all(|value| (0.0..=255.0).contains(value))
-            && let Some(result) = self.set_manim_color(
-                target,
-                &control.path,
-                shrimply_project_document::project::Color::new(
-                    values[0] as u8,
-                    values[1] as u8,
-                    values[2] as u8,
-                    values[3] as u8,
-                ),
-                &control.commit_name,
-            )
         {
-            return result;
+            let color = shrimply_project_document::project::Color::new(
+                values[0] as u8,
+                values[1] as u8,
+                values[2] as u8,
+                values[3] as u8,
+            );
+            if let Some(result) = self
+                .set_sanim_color(target, &control.path, color, &control.commit_name)
+                .or_else(|| {
+                    self.set_manim_color(target, &control.path, color, &control.commit_name)
+                })
+            {
+                return result;
+            }
         }
         if let Some(crate::InspectorControlAction::SetSam2PointPosition {
             modifier_id,

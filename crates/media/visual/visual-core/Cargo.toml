@@ -9,6 +9,7 @@ cuda-stabilization = ["dep:shrimply-affine-l1-stabilization"]
 [dependencies]
 sanim-runtime.workspace = true
 sanim-core.workspace = true
+sanim-data.workspace = true
 shrimply-paint-skia = { workspace = true }
 shrimply-math-geometry = { workspace = true }
 shrimply-math-core = { workspace = true }

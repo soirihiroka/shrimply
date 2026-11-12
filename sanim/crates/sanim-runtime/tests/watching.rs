@@ -478,3 +478,24 @@ fn replaced_dependency_directory_reinstalls_watches_for_later_edits() {
         sanim_core::Fraction::from(3)
     );
 }
+
+#[test]
+fn observation_retains_published_state_without_keeping_runtime_workers_alive() {
+    let f = Fixture::new();
+    f.write(
+        "main.sanim",
+        "reflect(\"Display Color\") tint=Color()\nwait(1s)\n",
+    );
+    let runtime = std::sync::Arc::new(f.open());
+    let ready = until(&runtime, |s| s.prepared.is_some() && !s.preparing);
+    let observed = runtime.observe();
+    let weak = std::sync::Arc::downgrade(&runtime);
+    drop(runtime);
+    assert!(
+        weak.upgrade().is_none(),
+        "UI observations must never own a worker or join its thread when dropped"
+    );
+    let last = observed.snapshot();
+    assert_eq!(last.generation, ready.generation);
+    assert_eq!(last.prepared.unwrap().reflected[0].label, "Display Color");
+}

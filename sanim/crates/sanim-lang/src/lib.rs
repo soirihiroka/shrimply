@@ -10,6 +10,7 @@ mod native_types;
 pub mod parser;
 pub mod prelude;
 pub mod progress;
+mod reflection;
 pub mod source;
 pub mod watch;
 
@@ -92,6 +93,8 @@ pub struct PerformanceWarning {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Prepared {
+    /// Normalized animation entry path relative to its source root.
+    pub source: String,
     pub animation: Animation,
     pub time_map: sanim_core::TimeMap,
     pub bindings: imbl::OrdMap<String, Value>,
@@ -109,6 +112,33 @@ pub struct Prepared {
 }
 
 impl Prepared {
+    /// Verify that metadata still describes the current source/import/data bytes.
+    /// This performs I/O; hosts should call it from their background API worker.
+    pub fn validate_dependencies(&self, sources: &dyn Sources) -> Result<(), Diagnostic> {
+        self.validate_dependencies_with(sources, |_, _, _| {})
+    }
+    fn validate_dependencies_with(
+        &self,
+        sources: &dyn Sources,
+        mut observed: impl FnMut(u64, u64, &str),
+    ) -> Result<(), Diagnostic> {
+        let total = self.dependencies.len() as u64;
+        for (index, (path, expected)) in self.dependencies.iter().enumerate() {
+            let current=sources.read(path).map(|bytes|digest(&bytes)).map_err(|error|Diagnostic::new("S203",format!("dependency '{path}' changed or disappeared: {error}; refresh the source before using this revision"),&self.source,Span::default()))?;
+            if &current != expected {
+                return Err(Diagnostic::new(
+                    "S203",
+                    format!(
+                        "dependency '{path}' changed; the prepared revision is stale. Refresh once the edit is complete."
+                    ),
+                    &self.source,
+                    Span::default(),
+                ));
+            }
+            observed(index as u64 + 1, total, path);
+        }
+        Ok(())
+    }
     /// Reflow into an external viewport and revalidate required visual contracts.
     pub fn animation_for_viewport(&self, width: u32, height: u32) -> Result<Animation, Diagnostic> {
         if width == 0 || height == 0 {
@@ -337,59 +367,26 @@ impl Engine {
                 Some(loaded.len() as u64),
                 Some(&entry),
             );
-            let mut converted = BTreeMap::new();
-            if let Some(json) = json {
-                let mut inputs = BTreeMap::new();
-                for module in &loaded {
-                    for statement in &module.ast.statements {
-                        if let ast::StatementKind::Bind {
-                            name,
-                            reflect: true,
-                            ..
-                        } = &statement.kind
-                        {
-                            let key = if module.id == entry {
-                                name.clone()
-                            } else {
-                                format!("{}::{name}", module.id)
-                            };
-                            inputs.insert(
-                                key,
-                                (&module.id, statement.span, &module.checked.exports[name]),
-                            );
-                        }
-                    }
-                }
-                for (key, value) in json {
-                    let (source, span, ty) = inputs.get(key).ok_or_else(|| {
-                        Diagnostic::new(
-                            "S302",
-                            format!("unknown reflected input '{key}'"),
-                            &entry,
-                            Span::default(),
-                        )
-                    })?;
-                    converted.insert(
-                        key.clone(),
-                        sanim_data::validate(value, ty, self.limits.data).map_err(|e| {
-                            Diagnostic::new(
-                                "S302",
-                                format!("input '{key}' must be {ty}: {e}"),
-                                source,
-                                *span,
-                            )
-                        })?,
-                    );
-                }
-            }
+            let inputs = sanim_core::reflection::Schema::new(
+                &entry,
+                loaded
+                    .iter()
+                    .flat_map(|module| module.checked.reflected.values().cloned()),
+            )?;
+            let converted = if let Some(json) = json {
+                inputs.normalize(json, |ty, value| {
+                    sanim_data::validate(value, ty, self.limits.data)
+                })?
+            } else {
+                inputs.normalize(overrides, |ty, value| {
+                    eval::validate_value(ty, value)?;
+                    Ok(value.clone())
+                })?
+            };
             let mut prepared = eval::evaluate(
                 &loaded,
                 &mut snapshot,
-                if json.is_some() {
-                    &converted
-                } else {
-                    overrides
-                },
+                &converted,
                 (&self.limits, &self.viewport, duration_only, reporter),
                 (&mut self.values, &mut self.assets, &mut self.states),
                 &mut statistics,
@@ -407,25 +404,14 @@ impl Engine {
             Some(total),
             Some(entry),
         );
-        for (index, (path, expected)) in prepared.dependencies.iter().enumerate() {
-            let current=sources.read(path).map(|bytes|digest(&bytes)).map_err(|e|Diagnostic::new("S203",format!("dependency '{path}' changed or disappeared while preparing: {e}; retry the revision"),entry,Span::default()))?;
-            if &current != expected {
-                return Err(Diagnostic::new(
-                    "S203",
-                    format!(
-                        "dependency '{path}' changed while preparing; the revision was discarded. Retry once the edit is complete."
-                    ),
-                    entry,
-                    Span::default(),
-                ));
-            }
+        prepared.validate_dependencies_with(sources, |completed, total, path| {
             reporter.emit(
                 progress::Phase::Finalizing,
-                Some(index as u64 + 1),
+                Some(completed),
                 Some(total),
                 Some(path),
             );
-        }
+        })?;
         prepared.statistics.prepare_micros =
             started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
         if prepared.statistics.prepare_micros > self.limits.warn_prepare_micros {

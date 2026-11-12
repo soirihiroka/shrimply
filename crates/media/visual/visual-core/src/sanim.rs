@@ -18,12 +18,15 @@ pub enum Status {
 }
 
 mod feedback;
+pub mod reflection;
 #[cfg(test)]
 mod tests;
 pub struct Source {
     file: Asset,
     parameters: BTreeMap<String, serde_json::Value>,
     runtime: Runtime,
+    observation: Arc<sanim_runtime::Observation>,
+    published: bool,
     viewport: sanim_core::Viewport,
     waker: Option<crate::generated::SourceWake>,
     renderer: Renderer,
@@ -50,7 +53,9 @@ impl Source {
         Ok(Self {
             file: item.file.clone(),
             parameters: settings.parameters.clone(),
+            observation: Arc::new(runtime.observe()),
             runtime,
+            published: false,
             viewport,
             waker: None,
             renderer: Renderer::default(),
@@ -107,6 +112,10 @@ impl Source {
             self.export = None;
             self.runtime.set_inputs(settings.parameters.clone())?;
             self.parameters = settings.parameters.clone();
+        }
+        if !strict && !self.published {
+            reflection::publish(item, &self.observation);
+            self.published = true;
         }
         let pinned = self.export.as_ref().filter(|_| strict).cloned();
         let prepared = if let Some(prepared) = pinned {

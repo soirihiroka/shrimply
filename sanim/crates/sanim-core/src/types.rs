@@ -483,11 +483,16 @@ impl Value {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ReflectedInput {
-    pub key: String,
-    pub name: String,
-    pub ty: Arc<Type>,
+    #[serde(flatten)]
+    pub declaration: Arc<crate::reflection::Declaration>,
     pub default: Value,
     pub value: Value,
+}
+impl std::ops::Deref for ReflectedInput {
+    type Target = crate::reflection::Declaration;
+    fn deref(&self) -> &Self::Target {
+        &self.declaration
+    }
 }
 
 /// Shared declaration drives native enum type information, values, and tag decoding.

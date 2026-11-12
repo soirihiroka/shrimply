@@ -75,6 +75,13 @@ pub(super) async fn call(
         .then(|| content_revision(&project.borrow()))
         .transpose()?;
     let result = match call.name.as_str() {
+        "get_sanim_clip" => {
+            super::sanim::get_sanim_clip(project, decode!(GetSanimClipRequest), canceled).await
+        }
+        "set_sanim_clip" => {
+            super::sanim::set_sanim_clip(project, player, decode!(SetSanimClipRequest), canceled)
+                .await
+        }
         "get_manim_clip" => get_manim_clip(project, decode!(GetManimClipRequest), canceled).await,
         "set_manim_clip" => {
             set_manim_clip(project, player, decode!(SetManimClipRequest), canceled).await

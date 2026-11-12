@@ -104,21 +104,9 @@ pub(crate) fn evaluate(
     };
     if duration_only {
         for module in loaded {
-            for (name, ty) in &module.checked.reflected {
-                let key = if loaded.last().is_some_and(|last| last.id == module.id) {
-                    name.clone()
-                } else {
-                    format!("{}::{name}", module.id)
-                };
-                if let Some(value) = overrides.get(&key) {
-                    validate_value(ty, value).map_err(|e| {
-                        runtime.error(
-                            "S302",
-                            format!("reflected input '{key}': {e}"),
-                            Span::default(),
-                        )
-                    })?;
-                    runtime.used_overrides.insert(key);
+            for declaration in module.checked.reflected.values() {
+                if overrides.contains_key(&declaration.key) {
+                    runtime.used_overrides.insert(declaration.key.clone());
                 }
             }
         }
@@ -311,6 +299,7 @@ pub(crate) fn evaluate(
     }).collect();
     performance.extend(runtime.performance);
     Ok(Prepared {
+        source: root.id.clone(),
         animation: runtime.animation,
         time_map: runtime.time_map,
         bindings,
@@ -480,53 +469,8 @@ impl Runtime<'_, '_> {
             self.work(statement.span)?;
             let before = self.statistics.operations;
             match &statement.kind {
-                StatementKind::Bind {
-                    name,
-                    value,
-                    reflect,
-                    ..
-                } => {
-                    let default = self.expression(value, env)?;
-                    let mut value = default.clone();
-                    if *reflect {
-                        let root = self.loaded.last().is_some_and(|v| v.id == self.module);
-                        let key = if root {
-                            name.clone()
-                        } else {
-                            format!("{}::{name}", self.module)
-                        };
-                        let ty = self
-                            .loaded
-                            .iter()
-                            .find(|v| v.id == self.module)
-                            .and_then(|v| v.checked.reflected.get(name))
-                            .cloned()
-                            .ok_or_else(|| {
-                                self.error("S301", "missing reflected type", statement.span)
-                            })?;
-                        if let Some(supplied) = self.overrides.get(&key) {
-                            validate_value(&ty, supplied).map_err(|e| {
-                                self.error(
-                                    "S302",
-                                    format!("reflected input '{key}': {e}"),
-                                    statement.span,
-                                )
-                            })?;
-                            value = supplied.clone();
-                            self.used_overrides.insert(key.clone());
-                        }
-                        self.input_versions.insert(
-                            key.clone(),
-                            (self.overrides.get(&key).cloned(), self.root_statement),
-                        );
-                        self.reflected.push_back(ReflectedInput {
-                            key,
-                            name: name.clone(),
-                            ty: ty.into(),
-                            default,
-                            value: value.clone(),
-                        });
-                    }
+                StatementKind::Bind { name, value, .. } => {
+                    let value = self.expression(value, env)?;
                     sanim_core::value_budget::charge(
                         &value,
                         &mut self.retained_bytes,
@@ -835,6 +779,53 @@ impl Runtime<'_, '_> {
             ExprKind::String(v) => Ok(Value::String(v.clone().into())),
             ExprKind::Bool(v) => Ok(Value::Bool(*v)),
             ExprKind::None => Ok(Value::None),
+            ExprKind::Reflect { value, .. } => {
+                let default = self.expression(value, env)?;
+                let declaration = self
+                    .loaded
+                    .iter()
+                    .find(|module| module.id == self.module)
+                    .and_then(|module| module.checked.reflected.get(&expr.span.start))
+                    .cloned()
+                    .ok_or_else(|| {
+                        self.error(
+                            "S301",
+                            "missing reflected expression declaration",
+                            expr.span,
+                        )
+                    })?;
+                let key = &declaration.key;
+                let supplied = self.overrides.get(key);
+                let current = supplied.unwrap_or(&default).clone();
+                if supplied.is_some() {
+                    self.used_overrides.insert(key.clone());
+                }
+                self.input_versions
+                    .insert(key.clone(), (supplied.cloned(), self.root_statement));
+                // Inline defaults/current values live in reflection metadata even when the
+                // enclosing expression only retains a small projection of them.
+                for retained in std::iter::once(&default).chain(supplied) {
+                    sanim_core::value_budget::charge(
+                        retained,
+                        &mut self.retained_bytes,
+                        &mut self.retained_items,
+                        self.limits.data.max_depth,
+                    )
+                    .map_err(|message| {
+                        self.error(
+                            "S303",
+                            format!("reflected input '{key}' storage budget: {message}"),
+                            expr.span,
+                        )
+                    })?;
+                }
+                self.reflected.push_back(ReflectedInput {
+                    declaration,
+                    default,
+                    value: current.clone(),
+                });
+                Ok(current)
+            }
             ExprKind::Name(name) if prelude::values().contains_key(name.as_str()) => {
                 Ok(prelude::values()[name.as_str()].clone())
             }
@@ -1564,7 +1555,9 @@ fn cacheable(expr: &Expr) -> bool {
             matches!(&callee.kind,ExprKind::Name(name)if prelude::builtin(name).is_some_and(|v|!v.schedule&&v.result!=Type::Motion&&matches!(v.execute,prelude::Execution::Native(_))))
                 && args.iter().all(|(_, v)| cacheable(v))
         }
-        ExprKind::Member(_, _) | ExprKind::Index(_, _) => false,
+        // Recording metadata and override dependencies is part of evaluating an input.
+        // Cache its pure default, but never skip this boundary or an enclosing expression.
+        ExprKind::Reflect { .. } | ExprKind::Member(_, _) | ExprKind::Index(_, _) => false,
         ExprKind::Unary(_, a) => cacheable(a),
         ExprKind::Binary(_, a, b) => cacheable(a) && cacheable(b),
         ExprKind::List(values) => values.iter().all(cacheable),

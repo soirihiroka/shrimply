@@ -392,6 +392,10 @@ sanim-check:
 sanim-integration-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import sanim --lib
 
+.PHONY: sanim-reflection-bench
+sanim-reflection-bench: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import native_sanim_reflection_benchmark --lib -- --ignored --nocapture
+
 check: editing-api-check
 
 ifneq ($(HOST_OS),Windows_NT)

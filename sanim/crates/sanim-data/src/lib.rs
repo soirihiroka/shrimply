@@ -400,21 +400,7 @@ pub fn to_json(value: &Value) -> Result<Json, String> {
                         .map_err(|e| e.to_string())?,
                 )
             } else {
-                let (value, suffix) = match n.unit {
-                    Unit::Number => (n.value, ""),
-                    Unit::Length => (n.value, "pt"),
-                    Unit::Duration => (n.value, "s"),
-                    Unit::Angle => (n.value, "deg"),
-                    Unit::Rate => (n.value, "fps"),
-                    Unit::Percent => (
-                        sanim_core::math::arithmetic(
-                            "*",
-                            n.value,
-                            sanim_core::Fraction::from(100),
-                        )?,
-                        "%",
-                    ),
-                };
+                let (value, suffix) = n.display_parts()?;
                 Json::String(format!("{value}{suffix}"))
             }
         }

@@ -7947,6 +7947,7 @@ dependencies = [
  "png",
  "rusqlite",
  "sanim-core",
+ "sanim-data",
  "sanim-runtime",
  "serde",
  "serde_json",

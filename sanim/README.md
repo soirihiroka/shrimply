@@ -5,7 +5,7 @@ has its own Rust workspace so language development and tests do not build the
 editor, GPU kernels, Python, or GUI dependencies.
 
 ```text
-reflect tint: Color = Color("orange3")
+let tint = reflect(Color("orange3"))
 
 fn make_marker(identity: String, radius: Length = 24pt): Element {
     return Circle(id= identity, radius= radius, fill= tint)
@@ -74,11 +74,60 @@ Colons declare types (`name: Type`) and separate Python-style dictionary entries
 (`{"key": value}`). Older colon-style call/record value syntax remains readable
 for source compatibility, but new source uses `=`.
 
-Bindings are immutable. `reflect` adds a runtime input with an inferred or
-explicit type, a checked default, and a stable key. Root keys are binding names;
-imported-module keys are `module/path.sanim::name`. Renaming a key is an API
-change. Reflected inputs and ordinary bindings are both known during preparation.
-Inputs cannot be declared conditionally or inside helpers.
+Bindings are immutable. `reflect(value)` is an expression that exposes a typed
+runtime input with a checked default, a config key, and a display label:
+
+```sanim
+let color1 = reflect(Color(), label="Display Color")
+let accent = reflect(Color("blue3"), key="palette.accent", label="Accent Color")
+let grid_line_width = reflect(2pt)
+let title = reflect("title") + "test"
+let optional_count:Option<Number> = reflect(None)
+let style = {fill=reflect(Color()), radius=reflect(12pt)}
+add(Circle(id="marker", fill=reflect(Color(), key="marker.fill")))
+```
+
+The first positional argument is always the default value. Named `key` and
+`label` metadata must be static string literals. Reflection preserves the
+default's type, including native colors, compound values and contextually typed
+`None`. In the title example, the input default is `"title"`; the resulting
+binding is `"titletest"`. Overriding the input replaces only the wrapped value,
+then the surrounding expression runs normally.
+
+Default keys are `relative/file.sanim::variable_name`, including the entry file,
+relative to the animation source root. Nested record fields and named constructor
+arguments add their field path: the style above exposes `style.fill` and
+`style.radius` after the file prefix. A sole reflection under an operator keeps
+the binding name; multiple operator inputs gain distinct `left`/`right` paths.
+Anonymous constructors use a semantic path such as `Circle.fill`; use explicit
+keys when repeated anonymous shapes need independent controls or when identity
+must survive code restructuring. Default labels split snake_case, camelCase, acronym
+boundaries and numeric suffixes (`grid_line_width` → “Grid Line Width”, `color1`
+→ “Color 1”). Labels can change without changing config identity. Explicit keys
+are used exactly as written and remain stable when the variable is renamed.
+Duplicate keys anywhere in the import graph fail with both declaration locations.
+Explicit keys also cannot capture a different input's legacy root name, preventing old configs from silently targeting another input.
+Existing bare entry-variable override keys remain readable for compatibility;
+metadata and editor controls always report canonical keys. Supplying an override
+under both its canonical key and its legacy name is an error.
+If several explicitly keyed inputs share an inferred name, that name is an
+ambiguous alias: use their distinct canonical keys to address them.
+
+Reflection metadata includes the variable name, label, source span, complete type,
+default and current value. The compiler and hosts share `reflection::Schema` for
+key resolution and validation, including records, lists and optional values.
+Resetting an input removes its override; JSON null remains a valid Option/Data
+value. Reflected inputs and ordinary bindings are both known during preparation.
+Inputs can control bounded loops and exact duration planning. Reflection must be
+evaluated once at module scope: it cannot appear inside helpers, loops, branches,
+short-circuited operands or another reflection. Defaults cannot schedule animation
+or run assertions; bind the input first, then use it in the animation script.
+
+Older declaration syntax remains readable and desugars to the same expression:
+`reflect("Display Color", key="palette.accent") color = Color()` means
+`let color = reflect(Color(), label="Display Color", key="palette.accent")`.
+In this older declaration form, the positional string is a label. In an expression,
+`reflect("Display Color")` exposes that string as the default value.
 
 Standard names are already available and cannot be redefined in any scope.
 Shadowing enclosing bindings is also an error. Case matters: `color` is valid;
@@ -461,5 +510,21 @@ revision per clip for the export session; later file edits do not mix revisions
 within that clip. The timeline clip envelope remains an editor setting after
 reload; extending source content does not automatically move neighboring clips.
 The editor replays vector recordings onto its existing GPU canvas, avoiding a
-CPU→GPU→CPU→GPU pixel round trip. No Python process or intermediate video is required. Reflected values are available through the
-headless schema API; dedicated Sanim inspector controls are not implemented yet.
+CPU→GPU→CPU→GPU pixel round trip. No Python process or intermediate video is required. Reflected values appear as labeled, typed inspector controls with source/type
+tooltips and explicit default/reset actions. Colors, booleans, strings, exact
+numbers and units use native controls; structured values use schema-validated
+JSON. Off-playhead metadata discovery runs on a background worker, while visible
+clips reuse read-only preview observations.
+
+`shrimply sanim get` reports canonical config keys, display labels, defaults,
+current values and full type information. `shrimply sanim set` accepts typed JSON
+`parameters` and separate `reset_keys`; JSON null is an input value rather than a
+reset instruction. Source metadata is validated before transactional edits,
+which use the editor's normal undoable project operations.
+
+Explicit font assets use Pango's file-capable Fontconfig/FreeType backend (or
+Win32), independent of the platform's default PangoCairo backend. On macOS,
+use a Pango build with Fontconfig/FreeType enabled; Homebrew's Pango provides
+this. CoreText's Pango font map cannot load private font files. Shaping stays
+asset-based with fallback disabled; unsupported builds fail with a diagnostic
+instead of substituting an installed font.

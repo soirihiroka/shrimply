@@ -197,3 +197,343 @@ fn native_sanim_reuses_same_frame_without_encoding_png() {
     assert!(Arc::ptr_eq(&a, &b));
     assert!(b.rasterize(false).unwrap().png.is_empty());
 }
+
+#[test]
+fn native_sanim_reflection_observations_do_not_publish_strict_export_sessions() {
+    let f = Fixture::new(
+        "reflect(\"Display Color\",key=\"theme.accent\") color1=Color(\"red\")\nadd(Circle(fill=color1))\nwait(1s)",
+    );
+    let item = f.item();
+    let canvas = CanvasSize {
+        width: 100,
+        height: 100,
+    };
+    let mut source = Source::with_viewport(
+        &item,
+        Viewport {
+            width: 100,
+            height: 100,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    ready(&mut source, &item, canvas, true);
+    assert!(reflection::observation(item.id, item.file.path()).is_none());
+    ready(&mut source, &item, canvas, false);
+    let state = reflection::observation(item.id, item.file.path())
+        .unwrap()
+        .snapshot();
+    let prepared = state.prepared.unwrap();
+    assert_eq!(prepared.reflected[0].key, "theme.accent");
+    assert_eq!(prepared.reflected[0].label, "Display Color");
+    assert_eq!(prepared.reflected[0].name, "color1");
+    assert_eq!(prepared.reflected[0].source, "scene.sanim");
+}
+
+#[test]
+fn native_sanim_reflection_patches_validate_aliases_and_distinguish_null_from_reset() {
+    let f = Fixture::new("reflect optional:Option<Number>=Some(2)\nreflect count=1\nwait(1s)");
+    let mut item = f.item();
+    let VideoItemContent::Sanim(settings) = &mut item.content else {
+        unreachable!()
+    };
+    settings
+        .parameters
+        .insert("count".into(), serde_json::json!(7));
+    let state = reflection::inspect(
+        &item,
+        Viewport::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+        reflection::Inspection::Values,
+    )
+    .unwrap();
+    let prepared = state.prepared.unwrap();
+    assert!(
+        reflection::patch(
+            &mut item,
+            &prepared,
+            &BTreeMap::from([
+                ("optional".into(), serde_json::Value::Null),
+                ("count".into(), serde_json::json!(3))
+            ]),
+            &[]
+        )
+        .unwrap()
+    );
+    let VideoItemContent::Sanim(settings) = &item.content else {
+        panic!()
+    };
+    assert_eq!(
+        settings.parameters["scene.sanim::optional"],
+        serde_json::Value::Null
+    );
+    assert!(!settings.parameters.contains_key("optional"));
+    let before = settings.parameters.clone();
+    assert!(
+        !reflection::patch(&mut item, &prepared, &before, &[]).unwrap(),
+        "identical overrides must not create undo entries or reload jobs"
+    );
+    assert!(
+        reflection::patch(
+            &mut item,
+            &prepared,
+            &BTreeMap::from([
+                ("count".into(), serde_json::json!(4)),
+                ("optional".into(), serde_json::json!("bad"))
+            ]),
+            &[]
+        )
+        .is_err()
+    );
+    let VideoItemContent::Sanim(settings) = &item.content else {
+        panic!()
+    };
+    assert_eq!(
+        before, settings.parameters,
+        "invalid batch must not partially update controls"
+    );
+    let effective = reflection::effective_inputs(&prepared, &settings.parameters).unwrap();
+    assert!(matches!(
+        effective
+            .iter()
+            .find(|v| v.name == "optional")
+            .unwrap()
+            .value,
+        reflection::Value::None
+    ));
+    assert!(
+        reflection::patch(&mut item, &prepared, &BTreeMap::new(), &["optional".into()]).unwrap()
+    );
+    let VideoItemContent::Sanim(settings) = &item.content else {
+        panic!()
+    };
+    assert!(!settings.parameters.contains_key("scene.sanim::optional"));
+    assert!(reflection::patch(&mut item, &prepared, &BTreeMap::new(), &["count".into()]).unwrap());
+    let VideoItemContent::Sanim(settings) = &item.content else {
+        unreachable!()
+    };
+    let effective = reflection::effective_inputs(&prepared, &settings.parameters).unwrap();
+    let count = effective
+        .iter()
+        .find(|input| input.name == "count")
+        .unwrap();
+    assert!(
+        matches!(count.value,reflection::Value::Number(value) if value.value==1.into()),
+        "reset must show the declaration default before runtime re-preparation, not the last applied override"
+    );
+}
+
+#[test]
+fn native_sanim_reflection_discovery_prepares_off_playhead_and_stops_without_ui_join() {
+    let f = Fixture::new(
+        "reflect color1=Color(\"red\")\nrepeat 100000 {let calculation=1+2}\nwait(1s)",
+    );
+    let item = f.item();
+    let discovery = reflection::Discovery::new(&item, Viewport::default()).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(8);
+    let observation = loop {
+        if let Some(observation) = discovery.observation().unwrap() {
+            break observation;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    };
+    assert!(observation.snapshot().preparing);
+    let started = std::time::Instant::now();
+    drop(discovery);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "inspector teardown joined native preparation"
+    );
+}
+
+#[test]
+#[ignore = "microbenchmark: make sanim-reflection-bench"]
+fn native_sanim_reflection_benchmark() {
+    use std::hint::black_box;
+    let mut script = (0..64)
+        .map(|index| format!("reflect field_{index}={index}\n"))
+        .collect::<String>();
+    script.push_str("add(Circle())\nwait(1s)\n");
+    let fixture = Fixture::new(&script);
+    let mut item = fixture.item();
+    let mut source = Source::new(&item).unwrap();
+    let canvas = CanvasSize {
+        width: 100,
+        height: 100,
+    };
+    ready(&mut source, &item, canvas, true);
+    ready(&mut source, &item, canvas, false);
+    let observation = reflection::observation(item.id, item.file.path()).unwrap();
+    let prepared = observation.snapshot().prepared.unwrap();
+    let samples = 100_000;
+    let started = std::time::Instant::now();
+    for _ in 0..samples {
+        black_box(observation.snapshot());
+    }
+    println!(
+        "reflection observation snapshot: {:.1} ns/op ({samples} iterations)",
+        started.elapsed().as_nanos() as f64 / f64::from(samples)
+    );
+    let started = std::time::Instant::now();
+    for _ in 0..samples {
+        black_box(reflection::observation(item.id, item.file.path()).unwrap());
+    }
+    println!(
+        "reflection published-source lookup: {:.1} ns/op ({samples} iterations)",
+        started.elapsed().as_nanos() as f64 / f64::from(samples)
+    );
+    let samples = 1_000;
+    let started = std::time::Instant::now();
+    for index in 0..samples {
+        black_box(
+            reflection::set(
+                &mut item,
+                &prepared,
+                "field_32",
+                Some(serde_json::json!(index)),
+            )
+            .unwrap(),
+        );
+    }
+    println!(
+        "reflection typed single-input patch / 64 inputs: {:.1} us/op ({samples} iterations)",
+        started.elapsed().as_micros() as f64 / f64::from(samples)
+    );
+    let VideoItemContent::Sanim(settings) = &item.content else {
+        unreachable!()
+    };
+    let started = std::time::Instant::now();
+    for _ in 0..samples {
+        black_box(reflection::effective_inputs(&prepared, &settings.parameters).unwrap());
+    }
+    println!(
+        "reflection effective 64-input schema: {:.1} us/op ({samples} iterations)",
+        started.elapsed().as_micros() as f64 / f64::from(samples)
+    );
+}
+
+#[test]
+fn native_sanim_reflection_inspection_rejects_stale_published_schema() {
+    let fixture = Fixture::new("reflect first=1\nwait(1s)");
+    let item = fixture.item();
+    let mut source = Source::new(&item).unwrap();
+    let canvas = CanvasSize {
+        width: 100,
+        height: 100,
+    };
+    ready(&mut source, &item, canvas, true);
+    ready(&mut source, &item, canvas, false);
+    fixture.write("reflect second=2\nwait(1s)");
+    let state = reflection::inspect(
+        &item,
+        Viewport::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+        reflection::Inspection::Values,
+    )
+    .unwrap();
+    let prepared = state.prepared.expect("fresh reflected metadata");
+    assert_eq!(prepared.reflected[0].name, "second");
+    assert!(prepared.reflected.iter().all(|input| input.name != "first"));
+}
+
+#[test]
+fn native_sanim_reflection_cold_invalid_overrides_can_be_reset() {
+    let fixture = Fixture::new("reflect count=1\nwait(1s)");
+    let mut item = fixture.item();
+    let VideoItemContent::Sanim(settings) = &mut item.content else {
+        unreachable!()
+    };
+    settings
+        .parameters
+        .insert("count".into(), serde_json::json!("invalid count"));
+    assert!(reflection::observation(item.id, item.file.path()).is_none());
+    let state = reflection::inspect(
+        &item,
+        Viewport::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+        reflection::Inspection::Schema,
+    )
+    .unwrap();
+    assert_eq!(
+        state
+            .diagnostic
+            .as_ref()
+            .expect("retain invalid override diagnostic")
+            .code,
+        "S302"
+    );
+    let prepared = state
+        .prepared
+        .expect("default schema must remain available for typed repair");
+    assert_eq!(prepared.reflected[0].name, "count");
+    assert!(reflection::patch(&mut item, &prepared, &BTreeMap::new(), &["count".into()]).unwrap());
+    let VideoItemContent::Sanim(settings) = &item.content else {
+        unreachable!()
+    };
+    assert!(settings.parameters.is_empty());
+    let state = reflection::inspect(
+        &item,
+        Viewport::default(),
+        &std::sync::atomic::AtomicBool::new(false),
+        reflection::Inspection::Values,
+    )
+    .unwrap();
+    assert!(state.diagnostic.is_none());
+}
+
+#[test]
+fn native_sanim_reflection_sets_reuse_source_schema_but_gets_refresh_dependent_defaults() {
+    let fixture = Fixture::new("reflect count=1\nreflect derived=count+1\nwait(1s)");
+    let mut item = fixture.item();
+    let mut source = Source::new(&item).unwrap();
+    let canvas = CanvasSize {
+        width: 100,
+        height: 100,
+    };
+    ready(&mut source, &item, canvas, true);
+    ready(&mut source, &item, canvas, false);
+    let previous = reflection::observation(item.id, item.file.path())
+        .unwrap()
+        .snapshot()
+        .prepared
+        .unwrap();
+    let VideoItemContent::Sanim(settings) = &mut item.content else {
+        unreachable!()
+    };
+    settings
+        .parameters
+        .insert("count".into(), serde_json::json!(9));
+    let viewport = Viewport {
+        width: 100,
+        height: 100,
+        ..Default::default()
+    };
+    let canceled = std::sync::atomic::AtomicBool::new(false);
+    let schema = reflection::inspect(
+        &item,
+        viewport.clone(),
+        &canceled,
+        reflection::Inspection::Schema,
+    )
+    .unwrap()
+    .prepared
+    .unwrap();
+    assert!(
+        Arc::ptr_eq(&previous, &schema),
+        "rapid sets must reuse verified source schema without cold preparation"
+    );
+    let values = reflection::inspect(&item, viewport, &canceled, reflection::Inspection::Values)
+        .unwrap()
+        .prepared
+        .unwrap();
+    let derived = values
+        .reflected
+        .iter()
+        .find(|input| input.name == "derived")
+        .unwrap();
+    assert!(
+        matches!(derived.default,reflection::Value::Number(value) if value.value==10.into()),
+        "get must compute dependent defaults for current input values"
+    );
+}

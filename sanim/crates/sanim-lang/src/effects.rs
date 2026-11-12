@@ -34,13 +34,8 @@ pub(crate) fn analyze(
 
     for statement in &module.statements {
         match &statement.kind {
-            StatementKind::Bind {
-                name,
-                value,
-                reflect,
-                ..
-            } => {
-                if !reflect && let Some(value) = constant(value, &constants) {
+            StatementKind::Bind { name, value, .. } => {
+                if let Some(value) = constant(value, &constants) {
                     constants.insert(name.clone(), value);
                 } else {
                     constants.remove(name);
@@ -258,14 +253,8 @@ impl Analyzer<'_> {
                 self.sum(effect, next, statement.span)?
             };
             may_return |= has_return(std::slice::from_ref(statement));
-            if let StatementKind::Bind {
-                name,
-                value,
-                reflect,
-                ..
-            } = &statement.kind
-            {
-                if !reflect && let Some(value) = constant(value, &self.constants) {
+            if let StatementKind::Bind { name, value, .. } = &statement.kind {
+                if let Some(value) = constant(value, &self.constants) {
                     self.constants.insert(name.clone(), value);
                 } else {
                     self.constants.remove(name);
@@ -500,6 +489,18 @@ impl Analyzer<'_> {
                 }
                 effect
             }
+            ExprKind::Reflect { value, .. } => {
+                let effect = self.expression(value)?;
+                if !effect.is_zero() {
+                    return Err(Diagnostic::new(
+                        "S113",
+                        "a reflected default must have zero timeline duration; schedule animations outside reflect(...) instead",
+                        self.source,
+                        expr.span,
+                    ));
+                }
+                effect
+            }
             ExprKind::Unary(_, value) | ExprKind::Member(value, _) => self.expression(value)?,
             ExprKind::Binary(op, a, b) => {
                 let left = self.expression(a)?;
@@ -553,7 +554,7 @@ impl Analyzer<'_> {
         self.record(expr.span, effect)
     }
 }
-fn lookup<'a>(expr: &Expr, env: &'a Environment) -> Option<&'a Type> {
+pub(crate) fn lookup<'a>(expr: &Expr, env: &'a Environment) -> Option<&'a Type> {
     match &expr.kind {
         ExprKind::Name(name) => env.get(name),
         ExprKind::Member(base, name) => {

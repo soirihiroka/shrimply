@@ -212,6 +212,7 @@ pub struct InspectorController {
     pub(crate) voice_models: Rc<RefCell<crate::voice_models::VoiceModels>>,
     pub(crate) tts_runtime: Rc<RefCell<crate::tts::editor::Runtime>>,
     pub(crate) media_metadata: Rc<RefCell<crate::info::metadata::Metadata>>,
+    pub(crate) sanim_reflection: Rc<RefCell<crate::sanim_parameters::Tracker>>,
 }
 
 pub(crate) struct CachedTransparentFillStatus {
@@ -254,6 +255,7 @@ impl InspectorController {
             voice_models: Rc::new(RefCell::new(Default::default())),
             tts_runtime: Rc::new(RefCell::new(Default::default())),
             media_metadata: Rc::new(RefCell::new(Default::default())),
+            sanim_reflection: Rc::new(RefCell::new(Default::default())),
         }
     }
 
@@ -378,6 +380,9 @@ impl InspectorController {
     ) -> InspectorSnapshot {
         let project = self.project.borrow();
         let target = crate::target::resolve(&project, &self.selection_state);
+        if !matches!(&target, InspectorTarget::Item(ItemAddress::Video { .. })) {
+            self.sanim_reflection.borrow_mut().clear();
+        }
         let track = match &target {
             InspectorTarget::Track(address) => Some(
                 crate::track::presentation(&project, address.clone())
@@ -395,16 +400,21 @@ impl InspectorController {
         let runtime = target_runtime(&project, &self.player_state, &target);
         let video = match &target {
             InspectorTarget::Item(address @ ItemAddress::Video { .. }) => {
-                Some(crate::video::presentation(
+                let item = project
+                    .video_item(address)
+                    .expect("resolved video inspector target must remain available");
+                let mut video = crate::video::presentation(
                     &project,
                     address,
-                    project
-                        .video_item(address)
-                        .expect("resolved video inspector target must remain available"),
+                    item,
                     runtime,
                     camera_models,
                     self.default_text_font.as_ref(),
-                ))
+                );
+                if let Some(card) = self.sanim_card(item) {
+                    video.visual.insert(0, card);
+                }
+                Some(video)
             }
             _ => None,
         };

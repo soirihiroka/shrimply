@@ -18,7 +18,6 @@ pub enum StatementKind {
         name: String,
         annotation: Option<TypeExpr>,
         value: Expr,
-        reflect: bool,
     },
     Alias {
         name: String,
@@ -92,6 +91,10 @@ pub enum ExprKind {
     None,
     Color(String),
     Name(String),
+    Reflect {
+        value: Box<Expr>,
+        options: sanim_core::reflection::Options,
+    },
     List(Vec<Expr>),
     Record(Vec<(String, Expr)>),
     Dict(Vec<(Expr, Expr)>),
@@ -118,7 +121,9 @@ impl Expr {
             return;
         }
         match &self.kind {
-            ExprKind::Unary(_, value) | ExprKind::Member(value, _) => value.visit_while(visitor),
+            ExprKind::Unary(_, value)
+            | ExprKind::Member(value, _)
+            | ExprKind::Reflect { value, .. } => value.visit_while(visitor),
             ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => {
                 a.visit_while(visitor);
                 b.visit_while(visitor);

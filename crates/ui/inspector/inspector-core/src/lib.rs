@@ -27,6 +27,8 @@ pub mod paint;
 pub mod project;
 mod refresh;
 pub mod rhai_editor;
+#[path = "video/sanim_parameters.rs"]
+pub mod sanim_parameters;
 pub mod scene_3d;
 mod section;
 pub mod selector;

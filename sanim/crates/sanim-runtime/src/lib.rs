@@ -51,6 +51,24 @@ pub type Wake = Arc<dyn Fn() + Send + Sync>;
 type Waker = Arc<Mutex<Option<Wake>>>;
 type Shared = Arc<(Mutex<Snapshot>, Condvar)>;
 
+/// Read-only published state with no worker ownership or blocking shutdown on drop.
+#[derive(Clone)]
+pub struct Observation {
+    shared: Shared,
+}
+impl Observation {
+    pub fn snapshot(&self) -> Snapshot {
+        Self::read(&self.shared)
+    }
+    fn read(shared: &Shared) -> Snapshot {
+        shared
+            .0
+            .lock()
+            .expect("Sanim runtime state poisoned")
+            .clone()
+    }
+}
+
 pub struct Runtime {
     commands: mpsc::SyncSender<Command>,
     shared: Shared,
@@ -146,11 +164,12 @@ impl Runtime {
     }
     /// A cheap immutable snapshot: no source reads or preparation on this thread.
     pub fn snapshot(&self) -> Snapshot {
-        self.shared
-            .0
-            .lock()
-            .expect("Sanim runtime state poisoned")
-            .clone()
+        Observation::read(&self.shared)
+    }
+    pub fn observe(&self) -> Observation {
+        Observation {
+            shared: self.shared.clone(),
+        }
     }
     pub fn reload(&self) -> Result<(), String> {
         self.commands

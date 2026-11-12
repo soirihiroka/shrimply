@@ -16,6 +16,18 @@ pub enum Unit {
     Percent,
 }
 
+// Parsing aliases and canonical display spellings share one unit definition.
+const UNIT_SPELLINGS: &[(&str, Unit, u64, u64, bool)] = &[
+    ("", Unit::Number, 1, 1, true),
+    ("pt", Unit::Length, 1, 1, true),
+    ("px", Unit::Length, 3, 4, false),
+    ("s", Unit::Duration, 1, 1, true),
+    ("ms", Unit::Duration, 1, 1000, false),
+    ("deg", Unit::Angle, 1, 1, true),
+    ("fps", Unit::Rate, 1, 1, true),
+    ("%", Unit::Percent, 1, 100, true),
+];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Number {
     pub value: Fraction,
@@ -34,17 +46,11 @@ impl Number {
             .find(|c: char| c.is_ascii_alphabetic() || c == '%')
             .unwrap_or(text.len());
         let (digits, suffix) = text.split_at(split);
-        let (unit, scale) = match suffix {
-            "" => (Unit::Number, Fraction::from(1)),
-            "pt" => (Unit::Length, Fraction::from(1)),
-            "px" => (Unit::Length, Fraction::new(3u64, 4u64)),
-            "%" => (Unit::Percent, Fraction::new(1u64, 100u64)),
-            "s" => (Unit::Duration, Fraction::from(1)),
-            "ms" => (Unit::Duration, Fraction::new(1u64, 1000u64)),
-            "deg" => (Unit::Angle, Fraction::from(1)),
-            "fps" => (Unit::Rate, Fraction::from(1)),
-            _ => return Err(format!("unknown numeric unit '{suffix}'")),
-        };
+        let &(_, unit, numerator, denominator, _) = UNIT_SPELLINGS
+            .iter()
+            .find(|(name, ..)| *name == suffix)
+            .ok_or_else(|| format!("unknown numeric unit '{suffix}'"))?;
+        let scale = Fraction::new(numerator, denominator);
         let value = if let Some((numerator, denominator)) = digits.split_once('/') {
             arithmetic("/", decimal(numerator)?, decimal(denominator)?)?
         } else {
@@ -53,6 +59,20 @@ impl Number {
         .checked_mul(&scale)
         .ok_or("numeric overflow")?;
         Ok(Self { value, unit })
+    }
+    /// Exact visible magnitude and suffix, shared by serialization and editor controls.
+    pub fn display_parts(self) -> Result<(Fraction, &'static str), String> {
+        if !finite(&self.value) {
+            return Err("non-finite values cannot be displayed as numbers".into());
+        }
+        let &(suffix, _, numerator, denominator, _) = UNIT_SPELLINGS
+            .iter()
+            .find(|(_, unit, _, _, canonical)| *unit == self.unit && *canonical)
+            .expect("every Unit has a canonical spelling");
+        Ok((
+            arithmetic("/", self.value, Fraction::new(numerator, denominator))?,
+            suffix,
+        ))
     }
     pub fn binary(self, op: &str, rhs: Self) -> Result<Self, String> {
         let unit = match op {

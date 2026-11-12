@@ -14,7 +14,7 @@ pub struct Checked {
     pub schemas: BTreeMap<String, Type>,
     pub read_types: BTreeMap<usize, Type>,
     pub call_types: BTreeMap<usize, BTreeMap<String, Type>>,
-    pub reflected: BTreeMap<String, Type>,
+    pub reflected: BTreeMap<usize, std::sync::Arc<sanim_core::reflection::Declaration>>,
     pub effects: BTreeSet<String>,
     pub durations: Vec<sanim_core::NodeDuration>,
     pub duration_needed: BTreeSet<String>,
@@ -37,6 +37,7 @@ pub fn check(
         reads: BTreeMap::new(),
         call_types: BTreeMap::new(),
         reflected: BTreeMap::new(),
+        reflection_names: crate::reflection::identities(source, module)?,
         function: None,
         calls: BTreeMap::new(),
         effects: BTreeSet::new(),
@@ -246,7 +247,7 @@ pub fn check(
                 checker.function = Some(name.clone());
                 let variables = generic_variables(&signature.generics);
                 let returns =
-                    checker.block(body, &mut scope, Some(&signature.result), &variables, false)?;
+                    checker.block(body, &mut scope, Some(&signature.result), &variables)?;
                 if *signature.result != Type::Unit && !returns {
                     return Err(checker.error(
                         "S110",
@@ -265,7 +266,6 @@ pub fn check(
                     &mut env,
                     None,
                     &BTreeMap::new(),
-                    true,
                 )?;
             }
         }
@@ -326,19 +326,29 @@ pub fn check(
             break;
         }
     }
+    for statement in &module.statements {
+        let mut invalid = None;
+        statement.visit_expressions(&mut |expr| {
+            if let ExprKind::Reflect { value, .. } = &expr.kind {
+                value.visit(&mut |node| {
+                    if checker.call_schedules(node, &env) {
+                        invalid.get_or_insert(node.span);
+                    }
+                });
+            }
+        });
+        if let Some(span) = invalid {
+            return Err(checker.error("S113","a reflected default must not schedule animations, change the scene, or run assertions; compute a pure default value and schedule it outside reflect(...) instead",span));
+        }
+    }
     if !root {
         let mut invalid = None;
         for statement in &module.statements {
-            statement.visit_expressions(&mut |expr|{
-            if let ExprKind::Call{callee,..}=&expr.kind {
-                let schedules=match &callee.kind {
-                    ExprKind::Name(name)=>prelude::builtin(name).is_some_and(|b|b.schedule)||checker.effects.contains(name),
-                    ExprKind::Member(base,name)=>if let ExprKind::Name(alias)=&base.kind {matches!(env.get(alias),Some(Type::Record(fields)) if matches!(fields.get(name),Some(Type::Function(signature)) if signature.schedules))}else{false},
-                    _=>false,
-                };
-                if schedules {invalid=Some(expr.span);}
-            }
-        });
+            statement.visit_expressions(&mut |expr| {
+                if checker.call_schedules(expr, &env) {
+                    invalid.get_or_insert(expr.span);
+                }
+            });
         }
         if let Some(span) = invalid {
             return Err(checker.error("S115","imported modules cannot schedule or assert while being imported; call a helper from the root script instead",span));
@@ -379,7 +389,8 @@ struct Checker<'a> {
     schemas: BTreeMap<String, Type>,
     reads: BTreeMap<usize, Type>,
     call_types: BTreeMap<usize, BTreeMap<String, Type>>,
-    reflected: BTreeMap<String, Type>,
+    reflected: BTreeMap<usize, std::sync::Arc<sanim_core::reflection::Declaration>>,
+    reflection_names: BTreeMap<usize, String>,
     function: Option<String>,
     calls: BTreeMap<String, BTreeSet<String>>,
     effects: BTreeSet<String>,
@@ -388,6 +399,18 @@ struct Checker<'a> {
 impl Checker<'_> {
     fn error(&self, code: &str, message: impl Into<String>, span: Span) -> Diagnostic {
         Diagnostic::new(code, message, self.source, span)
+    }
+    fn call_schedules(&self, expr: &Expr, env: &Environment) -> bool {
+        let ExprKind::Call { callee, .. } = &expr.kind else {
+            return false;
+        };
+        if let ExprKind::Name(name) = &callee.kind
+            && (prelude::builtin(name).is_some_and(|builtin| builtin.schedule)
+                || self.effects.contains(name))
+        {
+            return true;
+        }
+        matches!(crate::effects::lookup(callee,env),Some(Type::Function(signature)) if signature.schedules)
     }
     fn fresh(&self, name: &str, env: &Environment, span: Span) -> Result<(), Diagnostic> {
         if prelude::protected(name) {
@@ -607,7 +630,6 @@ impl Checker<'_> {
         env: &mut Environment,
         result: Option<&Type>,
         variables: &BTreeMap<String, Type>,
-        top: bool,
     ) -> Result<bool, Diagnostic> {
         let mut returned = false;
         for statement in body {
@@ -623,16 +645,8 @@ impl Checker<'_> {
                     name,
                     annotation,
                     value,
-                    reflect,
                 } => {
                     self.fresh(name, env, statement.span)?;
-                    if *reflect && (!top || self.function.is_some()) {
-                        return Err(self.error(
-                            "S113",
-                            "reflect declarations must be unconditional module-level inputs",
-                            statement.span,
-                        ));
-                    }
                     let expected = annotation
                         .as_ref()
                         .map(|t| self.resolve(t, variables, 0, statement.span))
@@ -647,16 +661,6 @@ impl Checker<'_> {
                     }
                     if ty.contains_function() {
                         return Err(self.error("S111","functions cannot be copied into bindings or containers; call them directly so the compiler can verify the complete call graph is acyclic",statement.span));
-                    }
-                    if *reflect {
-                        if !ty.reflectable() {
-                            return Err(self.error(
-                                "S113",
-                                format!("{ty:?} cannot be exposed as an editable input"),
-                                statement.span,
-                            ));
-                        }
-                        self.reflected.insert(name.clone(), ty.clone());
                     }
                     env.insert(name.clone(), ty);
                 }
@@ -689,14 +693,12 @@ impl Checker<'_> {
                         &mut self.copy_environment(env, statement.span)?,
                         result,
                         variables,
-                        false,
                     )?;
                     let b = self.block(
                         no,
                         &mut self.copy_environment(env, statement.span)?,
                         result,
                         variables,
-                        false,
                     )?;
                     returned = a && b;
                 }
@@ -719,7 +721,7 @@ impl Checker<'_> {
                     };
                     let mut scope = self.copy_environment(env, statement.span)?;
                     scope.insert(name.clone(), inner);
-                    self.block(body, &mut scope, result, variables, false)?;
+                    self.block(body, &mut scope, result, variables)?;
                 }
                 StatementKind::Repeat {
                     count,
@@ -737,7 +739,6 @@ impl Checker<'_> {
                         &mut self.copy_environment(env, statement.span)?,
                         result,
                         variables,
-                        false,
                     )?;
                 }
                 StatementKind::Match { value, cases } => {
@@ -788,7 +789,7 @@ impl Checker<'_> {
                             self.fresh(name, &scope, case.span)?;
                             scope.insert(name.clone(), ty.clone());
                         }
-                        all &= self.block(&case.body, &mut scope, result, variables, false)?;
+                        all &= self.block(&case.body, &mut scope, result, variables)?;
                     }
                     let missing = variants
                         .keys()
@@ -823,6 +824,21 @@ impl Checker<'_> {
         variables: &BTreeMap<String, Type>,
     ) -> Result<Type, Diagnostic> {
         match &expr.kind {
+            ExprKind::Reflect { value, options } => {
+                let ty = self.expression(value, env, expected, variables)?;
+                if !crate::reflection::concrete_schema(&ty) {
+                    return Err(self.error("S113","cannot infer a concrete static type for this reflected default; symbolic generic parameters and untyped empty values cannot be exposed. Add a concrete annotation or explicit generic arguments, for example let optional:Option<Number>=reflect(None)",expr.span));
+                }
+                if !ty.reflectable() {
+                    return Err(self.error("S113",format!("{ty} cannot be exposed as an editable input; reflect a concrete data value such as Color, String, Number, a list, or a record"),expr.span));
+                }
+                let name=self.reflection_names.get(&expr.span.start).ok_or_else(||self.error("S113","reflect(...) must execute exactly once at module scope; bind the input above the function, loop, or branch",expr.span))?;
+                let declaration = options
+                    .resolve(self.source, name, ty.clone(), expr.span)
+                    .map_err(|message| self.error("S113", message, expr.span))?;
+                self.reflected.insert(expr.span.start, declaration);
+                Ok(ty)
+            }
             ExprKind::Number(text) => Ok(Type::Numeric(
                 Number::parse(text)
                     .map_err(|e| self.error("S119", e, expr.span))?
@@ -1494,7 +1510,11 @@ impl Checked {
             .values()
             .chain(self.schemas.values())
             .chain(self.read_types.values())
-            .chain(self.reflected.values())
+            .chain(
+                self.reflected
+                    .values()
+                    .map(|declaration| declaration.ty.as_ref()),
+            )
             .chain(self.call_types.values().flat_map(|values| values.values()))
         {
             sanim_core::type_budget::charge(ty, &mut remaining)?;

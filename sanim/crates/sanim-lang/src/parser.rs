@@ -383,16 +383,170 @@ impl Parser<'_> {
         }
         Ok(names)
     }
+    fn arguments(&mut self) -> Result<Vec<(Option<String>, Expr)>, Diagnostic> {
+        let mut args = vec![];
+        if !self.eat(")") {
+            loop {
+                let candidate = self.expr(0)?;
+                let (named, value) = if self.eat("=") || self.eat(":") {
+                    let ExprKind::Name(name) = candidate.kind else {
+                        return Err(self.error("named argument label must be a name"));
+                    };
+                    (Some(name), self.expr(0)?)
+                } else {
+                    (None, candidate)
+                };
+                args.push((named, value));
+                if !self.eat(",") {
+                    break;
+                }
+                if self.is(")") {
+                    break;
+                }
+            }
+            self.expect(")")?;
+        }
+        Ok(args)
+    }
+    fn reflection_options(
+        &self,
+        args: Vec<(Option<String>, Expr)>,
+        positional_label: bool,
+    ) -> Result<sanim_core::reflection::Options, Diagnostic> {
+        let mut options = sanim_core::reflection::Options::default();
+        let mut named = false;
+        for (name, value) in args {
+            let field = match name.as_deref() {
+                None if positional_label && !named => "label",
+                None => {
+                    return Err(Diagnostic::new(
+                        "S002",
+                        if positional_label {
+                            "reflection display label must precede named options; use label=\"Display Color\", key=\"palette.accent\""
+                        } else {
+                            "reflect takes one positional default value; metadata must use label=\"Display Color\" and key=\"palette.accent\""
+                        },
+                        self.source,
+                        value.span,
+                    ));
+                }
+                Some("key") => {
+                    named = true;
+                    "key"
+                }
+                Some("label") => {
+                    named = true;
+                    "label"
+                }
+                Some(other) => {
+                    return Err(Diagnostic::new(
+                        "S002",
+                        format!(
+                            "unknown reflection option '{other}'; supported options are key and label"
+                        ),
+                        self.source,
+                        value.span,
+                    ));
+                }
+            };
+            let ExprKind::String(text) = value.kind else {
+                return Err(Diagnostic::new(
+                    "S002",
+                    format!(
+                        "reflection {field} must be a string literal, for example reflect(Color(), label=\"Display Color\", key=\"palette.accent\")"
+                    ),
+                    self.source,
+                    value.span,
+                ));
+            };
+            let slot = if field == "key" {
+                &mut options.key
+            } else {
+                &mut options.label
+            };
+            if slot.replace(text).is_some() {
+                return Err(Diagnostic::new(
+                    "S002",
+                    format!("reflection {field} was supplied more than once; provide it only once"),
+                    self.source,
+                    value.span,
+                ));
+            }
+        }
+        Ok(options)
+    }
+    fn reflected_value(
+        &self,
+        args: Vec<(Option<String>, Expr)>,
+        span: Span,
+    ) -> Result<Expr, Diagnostic> {
+        let mut args = args.into_iter();
+        let Some((None, value)) = args.next() else {
+            return Err(Diagnostic::new(
+                "S002",
+                "reflect requires a positional default value, for example reflect(Color(), label=\"Display Color\"); its type is inferred from that value or the surrounding annotation",
+                self.source,
+                span,
+            ));
+        };
+        let options = self.reflection_options(args.collect(), false)?;
+        Ok(Expr {
+            kind: ExprKind::Reflect {
+                value: Box::new(value),
+                options,
+            },
+            span,
+        })
+    }
     fn statement(&mut self) -> Result<Statement, Diagnostic> {
         if self.failure.is_some() {
             return Err(self.error("parser work limit exceeded"));
         }
         let span = self.span();
-        let kind = if self.is(Keyword::Let.text()) || self.is(Keyword::Reflect.text()) {
-            let reflect = self.eat(Keyword::Reflect.text());
-            if !reflect {
-                self.expect(Keyword::Let.text())?;
+        // The old declaration form lowers to the same reflection expression.
+        // Only inspect the token after its arguments; expression statements keep normal parsing.
+        let legacy = if self.eat(Keyword::Reflect.text()) {
+            let parenthesized = self.eat("(");
+            let args = if parenthesized {
+                self.arguments()?
+            } else {
+                vec![]
+            };
+            let after_arguments = self.mark();
+            let binding = if self.name_start() {
+                self.name()?;
+                self.is("=") || self.is(":")
+            } else {
+                false
+            };
+            self.restore(after_arguments);
+            if binding {
+                Some(self.reflection_options(args, true)?)
+            } else {
+                if !parenthesized {
+                    return Err(self.error("reflect requires a default value in parentheses, for example let color = reflect(Color())"));
+                }
+                let value = self.reflected_value(
+                    args,
+                    Span {
+                        end: self.offset,
+                        ..span
+                    },
+                )?;
+                let value = self.expr_tail(value, 0, span)?;
+                self.newline()?;
+                return Ok(Statement {
+                    kind: StatementKind::Expr(value),
+                    span: Span {
+                        end: self.offset,
+                        ..span
+                    },
+                });
             }
+        } else {
+            None
+        };
+        let kind = if legacy.is_some() || self.eat(Keyword::Let.text()) {
             let name = self.name()?;
             let annotation = if self.eat(":") {
                 Some(self.ty()?)
@@ -401,12 +555,25 @@ impl Parser<'_> {
             };
             self.expect("=")?;
             let value = self.expr(0)?;
+            let value = if let Some(options) = legacy {
+                Expr {
+                    kind: ExprKind::Reflect {
+                        value: Box::new(value),
+                        options,
+                    },
+                    span: Span {
+                        end: self.offset,
+                        ..span
+                    },
+                }
+            } else {
+                value
+            };
             self.newline()?;
             StatementKind::Bind {
                 name,
                 annotation,
                 value,
-                reflect,
             }
         } else if self.eat(Keyword::Type.text()) {
             let name = self.name()?;
@@ -631,21 +798,25 @@ impl Parser<'_> {
             return Err(self.error("expression nesting limit exceeded"));
         }
         let span = self.span();
-        let mut left =
-            if self.is("-") || self.is("+") || self.is(Keyword::Not.text()) || self.is("!") {
-                let op = ["-", "+", Keyword::Not.text(), "!"]
-                    .into_iter()
-                    .find(|op| self.is(op))
-                    .expect("unary operator")
-                    .to_owned();
-                self.expect(&op)?;
-                Expr {
-                    kind: ExprKind::Unary(op, Box::new(self.expr(7)?)),
-                    span,
-                }
-            } else {
-                self.atom()?
-            };
+        let left = if self.is("-") || self.is("+") || self.is(Keyword::Not.text()) || self.is("!") {
+            let op = ["-", "+", Keyword::Not.text(), "!"]
+                .into_iter()
+                .find(|op| self.is(op))
+                .expect("unary operator")
+                .to_owned();
+            self.expect(&op)?;
+            Expr {
+                kind: ExprKind::Unary(op, Box::new(self.expr(7)?)),
+                span,
+            }
+        } else {
+            self.atom()?
+        };
+        let result = self.expr_tail(left, min, span);
+        self.depth -= 1;
+        result
+    }
+    fn expr_tail(&mut self, mut left: Expr, min: u8, span: Span) -> Result<Expr, Diagnostic> {
         let mut steps = 0usize;
         loop {
             steps += 1;
@@ -702,28 +873,7 @@ impl Parser<'_> {
                     vec![]
                 };
             if self.eat("(") {
-                let mut args = vec![];
-                if !self.eat(")") {
-                    loop {
-                        let candidate = self.expr(0)?;
-                        let (named, value) = if self.eat("=") || self.eat(":") {
-                            let ExprKind::Name(name) = candidate.kind else {
-                                return Err(self.error("named argument label must be a name"));
-                            };
-                            (Some(name), self.expr(0)?)
-                        } else {
-                            (None, candidate)
-                        };
-                        args.push((named, value));
-                        if !self.eat(",") {
-                            break;
-                        }
-                        if self.is(")") {
-                            break;
-                        }
-                    }
-                    self.expect(")")?;
-                }
+                let args = self.arguments()?;
                 left = Expr {
                     kind: ExprKind::Call {
                         callee: Box::new(left),
@@ -778,7 +928,6 @@ impl Parser<'_> {
                 span,
             };
         }
-        self.depth -= 1;
         left.span.end = self.offset;
         Ok(left)
     }
@@ -824,6 +973,16 @@ impl Parser<'_> {
             self.advance(count);
             self.trivia();
             ExprKind::Color(value)
+        } else if self.eat(Keyword::Reflect.text()) {
+            self.expect("(")?;
+            let args = self.arguments()?;
+            return self.reflected_value(
+                args,
+                Span {
+                    end: self.offset,
+                    ..span
+                },
+            );
         } else if self.name_start() {
             let name = self.name()?;
             match Keyword::from_name(&name) {

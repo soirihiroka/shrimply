@@ -38,9 +38,9 @@ use super::{
 };
 
 mod blender;
-mod manim_parameters;
 mod pdf;
 mod playback;
+mod source_parameters;
 
 const SVG_COLOR_DELIVERY_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -180,8 +180,11 @@ impl Inspectable for VideoItem {
             if let Some((card, reset)) =
                 manim.parameters.clone().zip(manim.parameters_reset.clone())
             {
-                visual_items.push(manim_parameters::item(card, reset));
+                visual_items.push(source_parameters::manim_item(card, reset));
             }
+        }
+        if let Some(card) = context.inspector_core.sanim_card(self) {
+            visual_items.push(source_parameters::sanim_item(card));
         }
         if let VideoItemContent::Blender(blender) = &self.content {
             visual_items.push(blender::item(blender, self.file.clone(), context));

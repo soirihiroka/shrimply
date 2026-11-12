@@ -293,6 +293,33 @@ pub struct GetClipInfoRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct GetSanimClipRequest {
+    pub address: ClipAddress,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetSanimClipRequest {
+    pub address: ClipAddress,
+    /// Patch values by reflected config key. JSON null is a valid Option/Data value.
+    #[serde(default)]
+    pub parameters: BTreeMap<String, Value>,
+    /// Remove these overrides to use their declared defaults.
+    #[serde(default)]
+    pub reset_keys: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SanimClipResponse {
+    pub address: ClipAddress,
+    pub source: String,
+    pub source_revision: u64,
+    pub parameters_ready: bool,
+    pub preparing: bool,
+    pub parameters: Vec<Value>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetManimClipRequest {
     pub address: ClipAddress,
 }

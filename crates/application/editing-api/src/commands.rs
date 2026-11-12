@@ -107,6 +107,20 @@ pub static COMMANDS: &[Command] = &[
         true
     ),
     command!(
+        "get_sanim_clip",
+        "sanim get",
+        "Inspect typed reflected Sanim inputs, config keys, display labels, defaults, values and preparation errors",
+        GetSanimClipRequest,
+        true
+    ),
+    command!(
+        "set_sanim_clip",
+        "sanim set",
+        "Set typed Sanim input overrides or explicitly reset_keys as one validated undoable edit; JSON null remains a value",
+        SetSanimClipRequest,
+        false
+    ),
+    command!(
         "get_manim_clip",
         "manim get",
         "Inspect a Manim clip's discovered scenes, reflected parameter controls and values, and current render error",

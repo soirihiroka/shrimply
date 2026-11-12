@@ -23,15 +23,20 @@ pub fn shape(
         return Err("font size exceeds Pango layout range".into());
     }
     let face = typeface(bytes)?;
-    // Pango's portable asset API takes a filename. Keep the private snapshot alive
-    // through shaping; never register into the process-wide/system font map.
+    // Keep the private asset snapshot alive through shaping. It takes precedence
+    // over installed fonts without registering anything into the system font map.
     let mut file = tempfile::Builder::new()
         .suffix(".ttf")
         .tempfile()
         .map_err(|e| e.to_string())?;
     file.write_all(bytes).map_err(|e| e.to_string())?;
     file.flush().map_err(|e| e.to_string())?;
-    let map = pangocairo::FontMap::new();
+    // macOS defaults to CoreText, which cannot add private font files. Choose a
+    // file-capable backend explicitly; never change Pango's process/thread default.
+    let map = [cairo::FontType::FontTypeFt, cairo::FontType::FontTypeWin32]
+        .into_iter()
+        .find_map(pangocairo::FontMap::for_font_type)
+        .ok_or("Pango has no backend supporting explicit font files; use a Pango build with Fontconfig/FreeType enabled (included in Homebrew's Pango)")?;
     map.add_font_file(file.path())
         .map_err(|e| format!("Pango could not load font asset: {e}"))?;
     let context = map.create_context();
