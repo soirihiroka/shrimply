@@ -65,7 +65,9 @@ pub struct Recording {
     picture: Picture,
 }
 impl Recording {
-    pub fn id(&self) -> u64 { self.id }
+    pub fn id(&self) -> u64 {
+        self.id
+    }
     /// Record native vector commands, including host loading/diagnostic overlays.
     pub fn capture(
         width: u32,
@@ -87,7 +89,8 @@ impl Recording {
             id: {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static NEXT: AtomicU64 = AtomicU64::new(1);
-                NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1)).expect("recording identity overflow")
+                NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                    .expect("recording identity overflow")
             },
             picture: recorder
                 .finish_recording_as_picture(None)

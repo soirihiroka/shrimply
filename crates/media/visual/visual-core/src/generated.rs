@@ -25,7 +25,9 @@ pub fn sampling(
 pub trait GeneratedVisual {
     /// Stable identity for immutable drawing content, independent of evaluation time.
     /// Opt in only when all draw dependencies are represented by this identity or resolved operations.
-    fn cache_key(&self) -> Option<(std::any::TypeId, u64)> { None }
+    fn cache_key(&self) -> Option<(std::any::TypeId, u64)> {
+        None
+    }
     fn take_error(&self) -> Option<String> {
         None
     }

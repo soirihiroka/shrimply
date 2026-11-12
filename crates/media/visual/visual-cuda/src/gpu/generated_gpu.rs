@@ -400,14 +400,21 @@ impl GeneratedGpuRenderer {
         drawing_strategy: SkiaDrawingStrategy,
     ) -> Result<VisualFrame, String> {
         let _measurement = shrimply_profiling::measure("Generated visual / Total");
-        let key = visual.cache_key().map(|source| VectorRenderKey { source, sizes: canvas_sizes, operations: operations.to_vec(), strategy: drawing_strategy });
+        let key = visual.cache_key().map(|source| VectorRenderKey {
+            source,
+            sizes: canvas_sizes,
+            operations: operations.to_vec(),
+            strategy: drawing_strategy,
+        });
         if let Some((previous, frame)) = &self.vector_frame
             && key.as_ref() == Some(previous)
         {
             shrimply_profiling::increment("Generated vector GPU cache / Hit");
             return Ok(frame.clone());
         }
-        if key.is_some() { shrimply_profiling::increment("Generated vector GPU cache / Miss"); }
+        if key.is_some() {
+            shrimply_profiling::increment("Generated vector GPU cache / Miss");
+        }
         self.vector_frame = None;
         let render_size = canvas_sizes.0;
         let width = render_size.width.max(1);
@@ -461,7 +468,12 @@ impl GeneratedGpuRenderer {
         }
         let _measurement = shrimply_profiling::measure("Generated visual / CUDA import");
         self.vector_image = Some((width, height, image));
-        let frame = self.visual_frame_from_imported(width, height, imported, Some(self.interop_frames.clone()))?;
+        let frame = self.visual_frame_from_imported(
+            width,
+            height,
+            imported,
+            Some(self.interop_frames.clone()),
+        )?;
         self.vector_frame = key.map(|key| (key, frame.clone()));
         Ok(frame)
     }

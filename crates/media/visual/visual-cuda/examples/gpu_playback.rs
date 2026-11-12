@@ -73,7 +73,10 @@ fn main() -> Result<(), String> {
                     } if rendered == position => {
                         // Measure completed CUDA work, and never count a loading screen as an animation frame.
                         if let Ok(buffer) = frame.buffer.cuda() {
-                            buffer.context().synchronize().map_err(|error| error.to_string())?;
+                            buffer
+                                .context()
+                                .synchronize()
+                                .map_err(|error| error.to_string())?;
                         }
                         let _measurement = shrimply_profiling::measure("Playback / Release frame");
                         drop(frame);

@@ -1,4 +1,8 @@
-use std::{collections::{BTreeMap, HashMap}, hash::Hash, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    hash::Hash,
+    sync::Arc,
+};
 
 struct Entry<V> {
     value: Arc<V>,
@@ -29,7 +33,10 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
     pub fn get(&mut self, key: &K) -> Option<Arc<V>> {
         let entry = self.entries.get_mut(key)?;
         self.ages.remove(&entry.used);
-        self.clock = self.clock.checked_add(1).expect("render cache access counter overflow");
+        self.clock = self
+            .clock
+            .checked_add(1)
+            .expect("render cache access counter overflow");
         entry.used = self.clock;
         self.ages.insert(entry.used, key.clone());
         Some(entry.value.clone())
@@ -52,7 +59,10 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
                 .expect("cached LRU entry")
                 .bytes;
         }
-        self.clock = self.clock.checked_add(1).expect("render cache access counter overflow");
+        self.clock = self
+            .clock
+            .checked_add(1)
+            .expect("render cache access counter overflow");
         self.ages.insert(self.clock, key.clone());
         self.entries.insert(
             key,
@@ -83,6 +93,10 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
             }
         }
         self.bytes = self.entries.values().map(|entry| entry.bytes).sum();
-        self.ages = self.entries.iter().map(|(key, entry)| (entry.used, key.clone())).collect();
+        self.ages = self
+            .entries
+            .iter()
+            .map(|(key, entry)| (entry.used, key.clone()))
+            .collect();
     }
 }
