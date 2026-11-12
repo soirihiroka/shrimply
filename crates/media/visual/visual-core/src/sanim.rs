@@ -199,7 +199,7 @@ impl Source {
         )?;
         if !strict {
             let state = self.runtime.snapshot();
-            if state.preparing || state.diagnostic.is_some() {
+            if !state.preparing && state.diagnostic.is_some() {
                 return Ok(Status::Ready(self.feedback(canvas, &state, Some(frame))?));
             }
         }

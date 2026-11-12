@@ -1,6 +1,7 @@
 //! Sanim: a bounded, typed animation scripting language, independent of any editor.
 pub mod ast;
 mod cache;
+mod charts;
 mod checker;
 mod effects;
 mod eval;
@@ -429,12 +430,6 @@ impl Engine {
             started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
         if prepared.statistics.prepare_micros > self.limits.warn_prepare_micros {
             prepared.performance.push(PerformanceWarning{code:"P002".into(),message:format!("preparation took {}us (budget {}us); {} expressions evaluated, {} expression cache hits, {} assets decoded; {} statements restored. Inspect the reported source hotspots and cache-key/native/query timings.",prepared.statistics.prepare_micros,self.limits.warn_prepare_micros,prepared.statistics.evaluated_expressions,prepared.statistics.reused_expressions,prepared.statistics.decoded_assets,prepared.statistics.restored_statements),source:entry.into(),span:Span::default(),operations:prepared.statistics.operations});
-        }
-        if self.values.len() > self.limits.max_cache_entries {
-            self.values.clear();
-        }
-        if self.assets.len() > self.limits.max_cache_entries {
-            self.assets.clear();
         }
         if self.parsed.len() > self.limits.max_modules * 2 {
             self.parsed.clear();

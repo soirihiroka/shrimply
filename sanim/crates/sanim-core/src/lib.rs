@@ -1,4 +1,5 @@
 //! Platform-independent values, exact arithmetic, scene tracks and verification.
+pub mod cache;
 pub mod duration;
 pub mod layout;
 pub use duration::{NodeDuration, TimelineEffect};

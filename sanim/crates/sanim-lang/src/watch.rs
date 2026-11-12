@@ -61,6 +61,10 @@ impl Session {
     pub fn last_error(&self) -> Option<&Diagnostic> {
         self.last_error.as_ref()
     }
+    /// Includes failed reads so creating a missing dependency can recover the session.
+    pub fn dependencies(&self) -> impl Iterator<Item = &str> {
+        self.observed.keys().map(String::as_str)
+    }
     pub fn poll(&mut self, sources: &dyn Sources) -> Reload {
         self.poll_inner(sources, None)
     }

@@ -2,9 +2,8 @@
 use sanim_core::{math::to_f64, *};
 use skia_safe::{Canvas, Picture, PictureRecorder, Rect};
 use std::{collections::BTreeMap, sync::Arc};
-mod cache;
 mod draw;
-use cache::Cache;
+use sanim_core::cache::Cache;
 
 #[derive(Clone, Debug)]
 pub struct Options {

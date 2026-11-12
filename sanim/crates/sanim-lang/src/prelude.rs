@@ -224,7 +224,7 @@ fn build_builtins() -> Vec<Builtin> {
     for (name, ty) in [
         ("MoveTo", Vector(2, None)),
         ("Shift", Vector(2, None)),
-        ("RotateTo", angle),
+        ("RotateTo", angle.clone()),
         ("ScaleTo", num.clone()),
         ("FillTo", Color),
     ] {
@@ -497,6 +497,12 @@ fn build_builtins() -> Vec<Builtin> {
             native_types::math,
         );
     }
+    for builtin in &mut out {
+        if builtin.result == Motion {
+            builtin.parameters.push(p("ease", String, false));
+        }
+    }
+    out.extend(crate::charts::builtins(common()));
     out
 }
 

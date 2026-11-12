@@ -85,13 +85,25 @@ fn imported_module_changes_are_watched() {
     assert_eq!(session.current().unwrap().dependencies.len(), 2);
 }
 #[test]
-fn source_changes_with_same_result_do_not_replace_animation() {
+fn source_comments_publish_new_provenance_without_visual_changes() {
     let mut files = MemorySources::default();
     files.insert("main.sanim", "wait(1s)\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
+    let old = session.current().unwrap().clone();
     files.insert("main.sanim", "wait(1s)\n# comment\n");
-    assert!(matches!(session.poll(&files), Reload::Unchanged));
+    let Reload::Updated {
+        prepared,
+        changed_elements,
+        ..
+    } = session.poll(&files)
+    else {
+        panic!("changed source provenance must be published")
+    };
+    assert_ne!(old.fingerprint, prepared.fingerprint);
+    assert!(changed_elements.is_empty());
+    assert_eq!(old.animation, prepared.animation);
+    assert_eq!(old.bindings, prepared.bindings);
 }
 #[test]
 fn reflected_patch_reports_changed_elements() {

@@ -402,3 +402,79 @@ fn last_runtime_owner_can_be_dropped_inside_worker_observer() {
             .expect("observer deadlocked dropping the last runtime owner")
     );
 }
+
+#[test]
+fn idle_and_unrelated_file_events_never_publish_loading_or_new_generations() {
+    let f = Fixture::new();
+    f.write("main.sanim", "wait(1s)\n");
+    let runtime = f.open();
+    let ready = until(&runtime, |s| s.prepared.is_some() && !s.preparing);
+    for index in 0..20 {
+        f.write("unrelated.log", &index.to_string());
+    }
+    // Cross the former five-second recovery-poll interval.
+    let idle = runtime.wait_for_change(ready.generation, Duration::from_millis(5500));
+    assert_eq!(idle.generation, ready.generation);
+    assert!(!idle.preparing);
+    assert_eq!(idle.progress, ready.progress);
+    f.write("main.sanim", "wait(1s)\n");
+    let same = runtime.wait_for_change(idle.generation, Duration::from_millis(250));
+    assert_eq!(
+        same.generation, idle.generation,
+        "same-content writes must not flash loading"
+    );
+}
+
+#[test]
+fn creating_missing_nested_import_recovers_without_polling() {
+    let f = Fixture::new();
+    f.write(
+        "main.sanim",
+        "import \"nested/theme\" as theme\nwait(theme.duration)\n",
+    );
+    let runtime = f.open();
+    until(&runtime, |s| s.diagnostic.is_some() && !s.preparing);
+    std::fs::create_dir(f.0.join("nested")).unwrap();
+    f.write("nested/theme.sanim", "let duration=2s\n");
+    let ready = until(&runtime, |s| {
+        s.prepared.is_some() && !s.preparing && s.diagnostic.is_none()
+    });
+    assert_eq!(
+        ready.prepared.unwrap().animation.duration,
+        sanim_core::Fraction::from(2)
+    );
+    f.write("nested/theme.next", "let duration=3s\n");
+    std::fs::rename(
+        f.0.join("nested/theme.next"),
+        f.0.join("nested/theme.sanim"),
+    )
+    .unwrap();
+    let next = until(&runtime, |s| s.revision > ready.revision && !s.preparing);
+    assert_eq!(
+        next.prepared.unwrap().animation.duration,
+        sanim_core::Fraction::from(3)
+    );
+}
+
+#[test]
+fn replaced_dependency_directory_reinstalls_watches_for_later_edits() {
+    let f = Fixture::new();
+    std::fs::create_dir(f.0.join("sub")).unwrap();
+    f.write(
+        "main.sanim",
+        "import \"sub/theme\" as theme\nwait(theme.duration)\n",
+    );
+    f.write("sub/theme.sanim", "let duration=1s\n");
+    let runtime = f.open();
+    let first = until(&runtime, |s| s.prepared.is_some() && !s.preparing);
+    std::fs::remove_dir_all(f.0.join("sub")).unwrap();
+    std::fs::create_dir(f.0.join("sub")).unwrap();
+    f.write("sub/theme.sanim", "let duration=2s\n");
+    let replaced = until(&runtime, |s| s.revision > first.revision && !s.preparing);
+    f.write("sub/theme.sanim", "let duration=3s\n");
+    let edited = until(&runtime, |s| s.revision > replaced.revision && !s.preparing);
+    assert_eq!(
+        edited.prepared.unwrap().animation.duration,
+        sanim_core::Fraction::from(3)
+    );
+}

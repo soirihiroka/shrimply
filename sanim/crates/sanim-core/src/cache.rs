@@ -11,7 +11,7 @@ struct Entry<V> {
 }
 
 /// Byte- and entry-bounded LRU. Eviction releases only the cache's Arc.
-pub(crate) struct Cache<K, V> {
+pub struct Cache<K, V> {
     entries: HashMap<K, Entry<V>>,
     ages: BTreeMap<u64, K>,
     bytes: usize,
@@ -36,7 +36,7 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
         self.clock = self
             .clock
             .checked_add(1)
-            .expect("render cache access counter overflow");
+            .expect("cache access counter overflow");
         entry.used = self.clock;
         self.ages.insert(entry.used, key.clone());
         Some(entry.value.clone())
@@ -62,7 +62,7 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
         self.clock = self
             .clock
             .checked_add(1)
-            .expect("render cache access counter overflow");
+            .expect("cache access counter overflow");
         self.ages.insert(self.clock, key.clone());
         self.entries.insert(
             key,
@@ -98,5 +98,11 @@ impl<K: Eq + Hash + Clone, V> Cache<K, V> {
             .iter()
             .map(|(key, entry)| (entry.used, key.clone()))
             .collect();
+    }
+}
+
+impl<K: Eq + Hash + Clone, V> Default for Cache<K, V> {
+    fn default() -> Self {
+        Self::new(0, 0)
     }
 }

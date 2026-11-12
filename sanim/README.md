@@ -61,7 +61,7 @@ remain unknown rather than becoming an estimated overall percentage.
 | `sanim-data` | Bounded schema-driven CSV, JSON, TOML, YAML, NPY and NPZ decoding; no filesystem access |
 | `sanim-lang` | Direct-source handwritten AST parser, no lexer/token stream, type checking, preparation, reflection, caching and hot-reload sessions |
 | `sanim-render` | Skia vector recordings, bounded geometry/frame caches, explicit CPU PNG/video output |
-| `sanim-cli` | Headless commands and polling watch loop |
+| `sanim-cli` | Headless commands and event-driven watch sessions |
 | `sanim-runtime` | Background preparation, filesystem dependency watches and immutable published revisions |
 
 ## Language
@@ -151,12 +151,45 @@ horizontal scale. Stretching uses native Skia transforms; continuous bounds
 proofs conservatively report unknown for this transform.
 See [`examples/animations.sanim`](examples/animations.sanim) for the full supported set.
 
-Supported easings are `linear`, `cubic_in`, `cubic_out`, and `smooth`. Tracks hold
+Supported easings are `linear`, `cubic_in`, `cubic_out`, `smooth` (cubic), and
+`smootherstep` (quintic, matching ManimGL's `smooth`), and `overshoot` (ManimGL's title entrance curve for positions/fades). A motion can override its play's easing, for example `MoveTo(title, Vec2(0pt, 0pt), ease="overshoot")`. Tracks hold
 their final value. Duplicate property writers in one `play` are errors. Position
 track endpoints use matching units: both percentages or both pt. A zero offset
 adopts the other endpoint’s units because it has the same meaning in either mode.
 Explicit element IDs are recommended for stable identity across source edits;
 otherwise IDs derive from source locations and bounded invocation paths.
+
+Native chart elements share one explicit coordinate mapping:
+
+```sanim
+let xs = LinearScale(domain=Vec2(0.78, 1.28), range=Vec2(-275pt, 309pt))
+let ys = LinearScale(domain=Vec2(0, 4), range=Vec2(200pt, -200pt))
+let ticks = [0.8, 0.9, 1.0, 1.1, 1.2]
+let grid = Grid(scale=xs, ticks=ticks, spans=[Vec2(-200pt, 200pt)], highlight=[1.0])
+let axis = Axis(scale=xs, ticks=ticks, format="percent", font=read<Font>("font.ttf"))
+type Observation = {x:Number, y:Number}
+let samples = read<Table<Observation>>("samples.csv")
+let points = Scatter(data=samples, x_scale=xs, y_scale=ys, radius=2pt)
+let interval_box = BoxPlot(scale=xs, summary={low=0.8, q1=0.9, middle=1.0, q3=1.1, high=1.2})
+add(grid)
+add(axis)
+play(FadeIn(points), ExpandX(interval_box), duration=400ms, ease="smootherstep")
+```
+
+`Axis`, `Grid`, `Scatter` and `BoxPlot` produce ordinary elements with stable child
+IDs and no separate rendering path. Scales have typed `domain`, `range`, and
+`clamp` fields; `scale_value(scale, value)` returns a local length. Out-of-domain
+values fail unless clamping is explicit. Reversed ranges support y axes.
+Axes provide bounded automatic nice ticks, custom labels, percent formatting,
+vertical orientation and overlap diagnostics. `show_labels=false` retains only
+axis geometry when labels need a separate entrance. Grids support disjoint
+spans and reference ticks. Scatter takes a statically checked `Table<{x:Number,
+y:Number}>`; optional unique `keys` preserve point identities through row reorder,
+and `point_opacity` controls individual overlapping marks. Mark and tick budgets
+apply before allocation. Box plots validate the five-number ordering, preserve
+all whiskers and caps, and give `ExpandX` a median anchor. `BoxSummary(values)`
+uses linear empirical quantiles; quartiles describe sample spread, not confidence
+intervals. Colors default to the shared Adwaita palette.
 
 `for item in collection` traverses finite collections. `range(end, start: 0,
 step: 1)` constructs a bounded nonnegative integer range. `repeat count { ... }`
@@ -266,6 +299,7 @@ before accepting a prepared revision so files changed during preparation cannot
 silently produce a mixed update.
 
 Parsed modules, pure expression results and decoded assets are cached separately.
+Prepared fingerprints identify the complete semantic inputs, including source/data hashes, overrides, limits and viewport. Nonvisual source edits can publish a new revision while frame caches retain equal animation states.
 Keys cover semantic version, expression structure, inputs, invocation identity,
 data schema, content and relevant limits. Expression and asset/query caches each
 have an aggregate byte cap as well as an entry cap. Tables and arrays share
@@ -405,14 +439,13 @@ content, parameters, result schema and limits; data edits invalidate the cache.
 
 `sanim-runtime::Runtime::open(path)` prepares on a worker and watches source,
 module and `read` dependencies through native filesystem notifications. Short
-write bursts are debounced; periodic content polling recovers missed events.
+write bursts are debounced. There is no periodic filesystem polling. Watches are registered before dependency reads and restored when directories are replaced.
 `Runtime::snapshot()` performs no source reads or preparation on the caller's
 thread. It exposes last-good prepared content, the current diagnostic, revision,
 changed element IDs, early planned duration and reflected-input acknowledgement.
 Its progress snapshot distinguishes initial loading, reloading with last-good
 content, failure and readiness, including the current resource and elapsed time.
-Notifications are coalesced; native previews draw that feedback as Skia commands
-on the compositor's GPU canvas. Strict exports return diagnostics instead of
+Notifications are coalesced. Initial loading and failures use Skia feedback on the compositor's GPU canvas; successful reloads retain the last-good frame until atomic replacement, without a loading overlay. Strict exports return diagnostics instead of
 rendering loading/error screens.
 `set_waker` notifies the host without polling; callbacks run outside state locks. `set_inputs` accepts a
 complete JSON override snapshot; values are checked against the newly compiled

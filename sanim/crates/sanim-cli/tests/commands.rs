@@ -92,15 +92,7 @@ fn invalid_override_fails() {
 fn bounded_watch_produces_initial_revision() {
     let (output, png) = run(
         "add(Circle(radius: 2pt))\n",
-        &[
-            "watch",
-            "--output",
-            "OUTPUT",
-            "--cycles",
-            "2",
-            "--poll-ms",
-            "1",
-        ],
+        &["watch", "--output", "OUTPUT", "--cycles", "1"],
     );
     assert!(
         output.status.success(),
@@ -256,4 +248,67 @@ fn progress_is_opt_in_structured_stderr_without_changing_results() {
         .collect();
     assert_eq!(events[events.len() - 2]["progress"]["state"], "failed");
     assert_eq!(events.last().unwrap()["ok"], false);
+}
+
+#[test]
+fn event_watch_reports_repeated_failure_after_recovery_to_same_good_source() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Child, Stdio};
+    use std::sync::mpsc;
+    use std::time::Duration;
+    struct Watch(Child);
+    impl Drop for Watch {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("main.sanim");
+    let good = "add(Circle(radius=2pt))\nwait(1s)\n";
+    std::fs::write(&source, good).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sanim"))
+        .arg("watch")
+        .arg(&source)
+        .args([
+            "--cycles", "4", "--width", "16", "--height", "16", "--output",
+        ])
+        .arg(dir.path().join("watch.png"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let mut child = Watch(child);
+    let (sender, receiver) = mpsc::channel();
+    let output = std::thread::spawn({
+        let sender = sender.clone();
+        move || {
+            for line in BufReader::new(stdout).lines() {
+                sender.send(line.unwrap()).unwrap();
+            }
+        }
+    });
+    let errors = std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            sender.send(line.unwrap()).unwrap();
+        }
+    });
+    let next = || {
+        let line = receiver
+            .recv_timeout(Duration::from_secs(8))
+            .expect("event-driven watch stopped reporting transitions");
+        serde_json::from_str::<serde_json::Value>(&line).unwrap()
+    };
+    assert_eq!(next()["event"], "updated");
+    std::fs::write(&source, "let broken=(\n").unwrap();
+    assert_eq!(next()["event"], "failed");
+    std::fs::write(&source, good).unwrap();
+    assert_eq!(next()["event"], "updated");
+    std::fs::write(&source, "let broken=(\n").unwrap();
+    assert_eq!(next()["event"], "failed");
+    assert!(child.0.wait().unwrap().success());
+    output.join().unwrap();
+    errors.join().unwrap();
 }

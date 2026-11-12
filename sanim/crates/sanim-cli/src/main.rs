@@ -1,5 +1,5 @@
 use sanim_core::{Fraction, Number};
-use sanim_lang::{Engine, FileSources, Prepared, Reload, Session};
+use sanim_lang::{Engine, FileSources, Prepared};
 use sanim_render::{Options, Renderer, Scene};
 use std::{
     collections::BTreeMap,
@@ -9,7 +9,7 @@ use std::{
 
 mod video;
 
-const HELP: &str = "sanim — headless animation language\n\nUsage: sanim <check|inspect|duration|render|video|watch> <file.sanim> [options]\n\n  --json                 Structured results and diagnostics\n  --progress             Observed preparation events as JSON on stderr\n  --set name=JSON         Override a reflected input (repeatable)\n  --output PATH           PNG or MP4 destination (render/video/watch)\n  --ffmpeg PATH          FFmpeg executable for video (default ffmpeg)\n  --frame N               Exact zero-based frame index (default 0)\n  --time DURATION         Exact presentation time, e.g. 125ms\n  --width N --height N    Output pixels\n  --fps RATE             Exact frame rate (default 30)\n  --dpi N                Output DPI (default 96; CSS points)\n  --poll-ms N            Watch interval (default 100)\n  --cycles N             Stop watching after N polls (default unlimited)\n";
+const HELP: &str = "sanim — headless animation language\n\nUsage: sanim <check|inspect|duration|render|video|watch> <file.sanim> [options]\n\n  --json                 Structured results and diagnostics\n  --progress             Observed preparation events as JSON on stderr\n  --set name=JSON         Override a reflected input (repeatable)\n  --output PATH           PNG or MP4 destination (render/video/watch)\n  --ffmpeg PATH          FFmpeg executable for video (default ffmpeg)\n  --frame N               Exact zero-based frame index (default 0)\n  --time DURATION         Exact presentation time, e.g. 125ms\n  --width N --height N    Output pixels\n  --fps RATE             Exact frame rate (default 30)\n  --dpi N                Output DPI (default 96; CSS points)\n  --cycles N             Stop watching after N completed revisions (default unlimited)\n";
 
 #[derive(Default)]
 struct Args {
@@ -26,7 +26,6 @@ struct Args {
     height: Option<u32>,
     fps: Option<Fraction>,
     dpi: Option<u32>,
-    poll_ms: u64,
     cycles: Option<u64>,
 }
 
@@ -61,7 +60,6 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
     let mut args = Args {
         command: argv[0].clone(),
         path: PathBuf::from(&argv[1]),
-        poll_ms: 100,
         ..Args::default()
     };
     if !matches!(
@@ -121,7 +119,6 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
                 }
                 args.fps = Some(rate.value);
             }
-            "--poll-ms" => args.poll_ms = integer()?,
             "--cycles" => args.cycles = Some(integer()?),
             _ => return Err(format!("unknown option '{name}'")),
         }
@@ -130,8 +127,8 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
     if matches!(args.command.as_str(), "render" | "video" | "watch") && args.output.is_none() {
         return Err("render/video/watch requires --output PATH".into());
     }
-    if args.poll_ms == 0 || args.poll_ms > 60_000 {
-        return Err("--poll-ms must be in 1..60000".into());
+    if args.cycles == Some(0) {
+        return Err("--cycles must be positive".into());
     }
     args.viewport().validate()?;
     Ok(args)
@@ -150,43 +147,59 @@ fn run(args: Args) -> Result<(), String> {
         .and_then(|v| v.to_str())
         .ok_or("script filename must be UTF-8")?;
     if args.command == "watch" {
-        let mut session = Session::new(entry);
-        session.engine.viewport = args.viewport();
-        session
-            .engine
-            .set_progress_observer(progress_observer(args.progress));
+        let runtime =
+            sanim_runtime::Runtime::with_viewport(&args.path, args.viewport(), Default::default())?;
+        if !args.sets.is_empty() {
+            runtime.set_inputs(args.sets.clone())?;
+        }
+        let (wake, notifications) = std::sync::mpsc::sync_channel(1);
+        runtime.set_waker(Some(std::sync::Arc::new(move || {
+            let _ = wake.try_send(());
+        })));
         let mut renderer = Renderer::default();
         let mut cycles = 0;
-        session.set_json_inputs(args.sets.clone());
-        loop {
-            match session.poll(&sources) {
-                Reload::Unchanged => {}
-                Reload::Updated {
-                    revision,
-                    prepared,
-                    changed_elements,
-                } => {
-                    let render_micros = render(&prepared, &args, &mut renderer)?;
-                    println!(
-                        "{}",
-                        serde_json::json!({"event":"updated","revision":revision,"changed_elements":changed_elements,"render_micros":render_micros,"statistics":prepared.statistics,"performance":prepared.performance})
-                    );
+        let mut revision = 0;
+        let mut failed_generation = None;
+        let mut progress = None;
+        while notifications.recv().is_ok() {
+            let state = runtime.snapshot();
+            if args.progress && progress.as_ref() != Some(&state.progress) {
+                eprintln!(
+                    "{}",
+                    serde_json::to_string(&state.progress).map_err(|e| e.to_string())?
+                );
+                progress = Some(state.progress.clone());
+            }
+            if state.preparing {
+                continue;
+            }
+            if let Some(error) = &state.diagnostic {
+                if failed_generation == Some(state.generation) {
+                    continue;
                 }
-                Reload::Failed {
-                    diagnostic,
-                    last_good_revision,
-                } => {
-                    eprintln!(
-                        "{}",
-                        serde_json::json!({"event":"failed","diagnostic":diagnostic,"last_good_revision":last_good_revision})
-                    );
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"event":"failed","diagnostic":error,"last_good_revision":state.prepared.as_ref().map(|_|state.revision)})
+                );
+                failed_generation = Some(state.generation);
+            } else if let Some(prepared) = &state.prepared {
+                let recovered = failed_generation.take().is_some();
+                if state.revision == revision && !recovered {
+                    continue;
                 }
+                let render_micros = render(prepared, &args, &mut renderer)?;
+                println!(
+                    "{}",
+                    serde_json::json!({"event":"updated","revision":state.revision,"changed_elements":state.changed_elements,"render_micros":render_micros,"statistics":prepared.statistics,"performance":prepared.performance})
+                );
+                revision = state.revision;
+            } else {
+                continue;
             }
             cycles += 1;
-            if args.cycles.is_some_and(|n| cycles >= n) {
+            if args.cycles.is_some_and(|limit| cycles >= limit) {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(args.poll_ms));
         }
         return Ok(());
     }

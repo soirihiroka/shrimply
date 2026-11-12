@@ -192,11 +192,16 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
             v.contains_key(&Property::Rotation)
                 || v.contains_key(&Property::Scale)
                 || v.contains_key(&Property::StretchX)
+                || v.get(&Property::Position).is_some_and(|tracks| {
+                    tracks
+                        .iter()
+                        .any(|track| track.easing == crate::Easing::Overshoot)
+                })
         }) {
             return result(
                 Evidence::Unknown,
                 format!(
-                    "{describe}; continuous proof supports translations with fixed scale/rotation. Use explicit frame checks for this motion."
+                    "{describe}; continuous proof supports bounded translations with fixed scale/rotation. Use explicit frame checks for this motion."
                 ),
                 None,
             );

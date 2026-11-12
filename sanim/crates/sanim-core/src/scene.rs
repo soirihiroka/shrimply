@@ -158,6 +158,8 @@ pub struct Motion {
     pub reveal: Option<RevealKind>,
     #[serde(default)]
     pub horizontal: Option<HorizontalTransform>,
+    #[serde(default)]
+    pub easing: Option<Easing>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +169,34 @@ pub enum Easing {
     CubicIn,
     CubicOut,
     Smooth,
+    Smootherstep,
+    Overshoot,
+}
+impl Easing {
+    pub fn parse(name: &str) -> Result<Self, String> {
+        const OPTIONS: &[(&str, Easing)] = &[
+            ("linear", Easing::Linear),
+            ("cubic_in", Easing::CubicIn),
+            ("cubic_out", Easing::CubicOut),
+            ("smooth", Easing::Smooth),
+            ("smootherstep", Easing::Smootherstep),
+            ("overshoot", Easing::Overshoot),
+        ];
+        OPTIONS
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| *value)
+            .ok_or_else(|| {
+                format!(
+                    "unknown easing '{name}'; use {}",
+                    OPTIONS
+                        .iter()
+                        .map(|(name, _)| *name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -653,6 +683,12 @@ impl Animation {
                     motion.element.id, motion.property
                 ));
             }
+            let easing = motion.easing.unwrap_or(easing);
+            if easing == Easing::Overshoot
+                && !matches!(motion.property, Property::Position | Property::Opacity)
+            {
+                return Err("overshoot easing supports position and opacity motions; use smootherstep for bounded scale, reveal, rotation or color motions".into());
+            }
             writes.push((
                 motion.element.id.clone(),
                 motion.property,
@@ -739,18 +775,38 @@ impl Track {
                     math::arithmetic("*", Fraction::from(2), p)?,
                 )?,
             )?,
+            Easing::Smootherstep => math::smootherstep(p)?,
+            Easing::Overshoot => math::overshoot(p)?,
         };
         match (&self.from, &self.to) {
             (Value::Number(a), Value::Number(b)) if a.unit == b.unit => {
                 Ok(Value::Number(crate::Number {
-                    value: math::lerp(a.value, b.value, p)?,
+                    value: math::lerp(
+                        a.value,
+                        b.value,
+                        if self.easing == Easing::Overshoot {
+                            p.min(one)
+                        } else {
+                            p
+                        },
+                    )?,
                     unit: a.unit,
                 }))
             }
             (Value::Vec2(a), Value::Vec2(b)) if a.unit == b.unit => Ok(Value::Vec2(Vec2 {
                 values: [
-                    math::float_lerp(a.values[0], b.values[0], p)?,
-                    math::float_lerp(a.values[1], b.values[1], p)?,
+                    math::motion_lerp(
+                        a.values[0],
+                        b.values[0],
+                        p,
+                        self.easing == Easing::Overshoot,
+                    )?,
+                    math::motion_lerp(
+                        a.values[1],
+                        b.values[1],
+                        p,
+                        self.easing == Easing::Overshoot,
+                    )?,
                 ],
                 unit: a.unit,
             })),

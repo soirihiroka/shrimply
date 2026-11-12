@@ -560,18 +560,28 @@ pub(crate) fn motion(
                         args,
                         "origin",
                         if matches!(element.geometry.as_ref(), Geometry::Group { .. }) {
-                            Fraction::new(1u64, 2u64)
+                            if element.horizontal == HorizontalTransform::default() {
+                                Fraction::new(1u64, 2u64)
+                            } else {
+                                element.horizontal.origin.value
+                            }
                         } else {
                             Fraction::from(0)
                         },
                     )?,
                     unit: Unit::Percent,
                 },
-                offset: number(args, "offset", Fraction::from(0))?,
+                offset: number(args, "offset", element.horizontal.offset)?,
             })
         } else {
             None
         },
+        easing: args
+            .get("ease")
+            .map(Value::string)
+            .transpose()?
+            .map(Easing::parse)
+            .transpose()?,
     })))
 }
 
@@ -629,12 +639,16 @@ pub(crate) fn element(
     args: &imbl::OrdMap<String, Value>,
     context: Context<'_>,
 ) -> Result<Value, String> {
-    let Context {
-        module,
-        identity,
-        span,
-        ..
-    } = context;
+    make_element(name, args, context.module, context.identity, context.span)
+}
+
+pub(crate) fn make_element(
+    name: &str,
+    args: &imbl::OrdMap<String, Value>,
+    module: &str,
+    identity: &[String],
+    span: Span,
+) -> Result<Value, String> {
     let required = |name: &str| {
         args.get(name)
             .ok_or_else(|| format!("missing argument '{name}'"))

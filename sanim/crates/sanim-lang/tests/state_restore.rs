@@ -8,6 +8,17 @@ fn prepare(engine: &mut Engine, files: &MemorySources) -> sanim_lang::Prepared {
         .unwrap()
 }
 
+fn semantic_output(prepared: &sanim_lang::Prepared) -> serde_json::Value {
+    serde_json::to_value((
+        &prepared.animation,
+        &prepared.bindings,
+        &prepared.reflected,
+        &prepared.checks,
+        &prepared.contracts,
+    ))
+    .unwrap()
+}
+
 #[test]
 fn suffix_edit_restores_bindings_tracks_cursor_and_skips_prefix_execution() {
     let mut files = MemorySources::default();
@@ -27,6 +38,7 @@ fn suffix_edit_restores_bindings_tracks_cursor_and_skips_prefix_execution() {
     assert!(Arc::ptr_eq(&boundary, &engine.execution_state(3).unwrap()));
     let fresh = prepare(&mut Engine::default(), &files);
     assert_eq!(edited.fingerprint, fresh.fingerprint);
+    assert_eq!(semantic_output(&edited), semantic_output(&fresh));
     assert_eq!(edited.bindings, fresh.bindings);
 }
 
@@ -48,8 +60,8 @@ fn data_changes_resume_before_the_first_resource_read() {
         &engine.execution_state(2).unwrap()
     ));
     assert_eq!(
-        edited.fingerprint,
-        prepare(&mut Engine::default(), &files).fingerprint
+        semantic_output(&edited),
+        semantic_output(&prepare(&mut Engine::default(), &files))
     );
 }
 
@@ -80,8 +92,8 @@ fn changed_hoisted_helper_and_default_resume_before_their_first_call() {
         assert_eq!(edited.statistics.restored_statements, 1);
         assert_eq!(edited.animation.duration, Fraction::from(3));
         assert_eq!(
-            edited.fingerprint,
-            prepare(&mut Engine::default(), &files).fingerprint
+            semantic_output(&edited),
+            semantic_output(&prepare(&mut Engine::default(), &files))
         );
     }
 }
@@ -337,11 +349,12 @@ fn changed_imported_reflection_defaults_refresh_even_when_the_override_is_unchan
         Value::Color(sanim_core::Color::parse("green").unwrap())
     );
     assert_eq!(
-        edited.fingerprint,
-        Engine::default()
-            .prepare_json("main.sanim", &files, &inputs)
-            .unwrap()
-            .fingerprint
+        semantic_output(&edited),
+        semantic_output(
+            &Engine::default()
+                .prepare_json("main.sanim", &files, &inputs)
+                .unwrap()
+        )
     );
 }
 

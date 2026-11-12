@@ -292,17 +292,17 @@ pub(crate) fn evaluate(
         .ok_or_else(|| runtime.error("S301", "no root module", Span::default()))?;
     let bindings = runtime.globals.remove(&root.id).unwrap_or_default();
     let types = root.checked.schemas.clone();
+    // Determinism makes complete semantic inputs a revision identity. Do not serialize
+    // the scene and bindings again: both can reference the same large payloads.
     let fingerprint = digest(
         &serde_json::to_vec(&(
-            &runtime.animation,
-            &runtime.reflected,
-            &runtime.checks,
-            runtime
-                .assertions
-                .iter()
-                .map(|v| (&v.predicate, v.time, v.required, &v.message))
-                .collect::<Vec<_>>(),
-            &bindings,
+            SEMANTICS_VERSION,
+            &root.id,
+            runtime.snapshot.fingerprints(),
+            overrides,
+            limits,
+            viewport,
+            duration_only,
         ))
         .map_err(|e| runtime.error("S301", e.to_string(), Span::default()))?,
     );
@@ -821,10 +821,9 @@ impl Runtime<'_, '_> {
                     .try_into()
                     .unwrap_or(u64::MAX),
             );
-        if let Some(key) = key
-            && self.values.len() < self.limits.max_cache_entries
-        {
-            self.values.insert(key, value.clone());
+        if let Some(key) = key {
+            self.values
+                .insert_measured(key, value.clone(), self.limits.data.max_bytes - bytes);
         }
         Ok(value)
     }
@@ -1414,26 +1413,14 @@ impl Runtime<'_, '_> {
                 .transpose()
                 .map_err(|e| self.error("S305", e, span))?
                 .map_or(Fraction::from(1), |v| v.value);
-            let ease =
-                match args
-                    .get("ease")
+            let ease = Easing::parse(
+                args.get("ease")
                     .map(Value::string)
                     .transpose()
                     .map_err(|e| self.error("S305", e, span))?
-                    .unwrap_or("linear")
-                {
-                    "linear" => Easing::Linear,
-                    "cubic_in" => Easing::CubicIn,
-                    "cubic_out" => Easing::CubicOut,
-                    "smooth" => Easing::Smooth,
-                    other => return Err(self.error(
-                        "S305",
-                        format!(
-                            "unknown easing '{other}'; use linear, cubic_in, cubic_out or smooth"
-                        ),
-                        span,
-                    )),
-                };
+                    .unwrap_or("linear"),
+            )
+            .map_err(|e| self.error("S305", e, span))?;
             let schedule_start = self.cursor;
             self.animation
                 .schedule(&motions, self.cursor, duration, ease)

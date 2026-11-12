@@ -1,6 +1,7 @@
 use fraction::{Fraction, Sign};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
+pub mod chart;
 pub mod functions;
 pub mod linear;
 pub mod operations;
@@ -236,6 +237,53 @@ pub fn float_arithmetic(op: &str, a: f64, b: f64) -> Result<f64, String> {
         return Err("floating arithmetic overflow".into());
     }
     Ok(value)
+}
+
+/// Quintic easing with zero first and second derivatives at both endpoints.
+/// This is the `smooth` curve used by the bundled ManimGL renderer.
+pub fn smootherstep(p: Fraction) -> Result<Fraction, String> {
+    let square = arithmetic("*", p, p)?;
+    let cube = arithmetic("*", square, p)?;
+    let inner = arithmetic(
+        "-",
+        arithmetic("*", Fraction::from(6), p)?,
+        Fraction::from(15),
+    )?;
+    arithmetic(
+        "*",
+        cube,
+        arithmetic("+", arithmetic("*", p, inner)?, Fraction::from(10))?,
+    )
+}
+
+/// ManimGL's degree-five Bezier with controls [0, 0, 1.5, 1.5, 1, 1].
+pub fn overshoot(p: Fraction) -> Result<Fraction, String> {
+    let inner = arithmetic(
+        "-",
+        Fraction::from(20),
+        arithmetic("*", Fraction::from(4), p)?,
+    )?;
+    let inner = arithmetic(
+        "+",
+        Fraction::from(15),
+        arithmetic(
+            "*",
+            p,
+            arithmetic("-", arithmetic("*", p, inner)?, Fraction::from(30))?,
+        )?,
+    )?;
+    arithmetic("*", arithmetic("*", p, p)?, inner)
+}
+
+pub fn motion_lerp(a: f64, b: f64, progress: Fraction, overshooting: bool) -> Result<f64, String> {
+    if !overshooting || progress <= Fraction::from(1) {
+        return float_lerp(a, b, progress);
+    }
+    float_arithmetic(
+        "+",
+        a,
+        float_arithmetic("*", float_arithmetic("-", b, a)?, to_f64(progress)?)?,
+    )
 }
 
 pub fn float_lerp(a: f64, b: f64, t: Fraction) -> Result<f64, String> {

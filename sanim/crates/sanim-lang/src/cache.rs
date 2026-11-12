@@ -1,30 +1,29 @@
-use sanim_core::{Value, value_budget};
-use std::collections::BTreeMap;
+use sanim_core::{Value, cache::Cache, value_budget};
+use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Default)]
 pub(crate) struct ValueCache {
-    values: BTreeMap<String, Value>,
-    bytes: usize,
+    values: Cache<String, Value>,
     max_bytes: usize,
     max_entries: usize,
 }
 impl ValueCache {
     pub fn configure(&mut self, bytes: usize, entries: usize) {
         if (bytes, entries) != (self.max_bytes, self.max_entries) {
-            self.clear();
+            self.values = Cache::new(bytes, entries);
             self.max_bytes = bytes;
             self.max_entries = entries;
         }
     }
-    pub fn get(&self, key: &str) -> Option<&Value> {
-        self.values.get(key)
-    }
-    pub fn len(&self) -> usize {
-        self.values.len()
+    pub fn get(&mut self, key: &String) -> Option<Value> {
+        self.values.get(key).map(|v| v.as_ref().clone())
     }
     pub fn clear(&mut self) {
         self.values.clear();
-        self.bytes = 0;
+    }
+    pub fn insert_measured(&mut self, key: String, value: Value, bytes: usize) {
+        let bytes = bytes.saturating_add(key.len());
+        self.values.insert(key, Arc::new(value), bytes);
     }
     pub fn insert(&mut self, key: String, value: Value) {
         let mut remaining = self.max_bytes;
@@ -34,14 +33,7 @@ impl ValueCache {
         {
             return;
         }
-        let bytes = self.max_bytes - remaining;
-        if self.values.len() >= self.max_entries
-            || self.bytes.saturating_add(bytes) > self.max_bytes
-        {
-            self.clear();
-        }
-        self.bytes += bytes;
-        self.values.insert(key, value);
+        self.insert_measured(key, value, self.max_bytes - remaining);
     }
 }
 

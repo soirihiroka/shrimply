@@ -1,14 +1,15 @@
 //! Background preparation and dependency watching, independent of any editor.
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+mod watcher;
+use watcher::WatchedSources;
 mod notifications;
 use sanim_core::{Diagnostic, Viewport};
 pub use sanim_lang;
 pub use sanim_lang::progress::{Phase, Progress, State};
-use sanim_lang::{FileSources, Limits, Prepared, Reload, Session};
+use sanim_lang::{Limits, Prepared, Reload, Session};
 pub use sanim_render;
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    collections::BTreeMap,
+    path::Path,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -17,8 +18,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-
-const WATCH_RECOVERY_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Default)]
 pub struct Snapshot {
@@ -44,6 +43,7 @@ struct Configuration {
 }
 enum Command {
     Changed,
+    WatchError(String),
     Inputs(u64, Configuration),
     Stop,
 }
@@ -86,7 +86,6 @@ impl Runtime {
             .and_then(|s| s.to_str())
             .ok_or("Sanim filename must be UTF-8")?
             .to_owned();
-        let sources = FileSources::new(&root)?;
         let shared = Arc::new((
             Mutex::new(Snapshot {
                 preparing: true,
@@ -99,6 +98,7 @@ impl Runtime {
             Condvar::new(),
         ));
         let (commands, receiver) = mpsc::sync_channel(32);
+        let sources = WatchedSources::new(root, &entry, commands.clone())?;
         let published = shared.clone();
         let waker = Waker::default();
         let worker_waker = waker.clone();
@@ -111,7 +111,6 @@ impl Runtime {
                 move || notifications::run(shared, waker, progress_receiver)
             })
             .map_err(|error| error.to_string())?;
-        let changed = commands.clone();
         let configuration = Configuration {
             viewport: viewport.clone(),
             ..Configuration::default()
@@ -122,12 +121,10 @@ impl Runtime {
             .name("sanim-runtime".into())
             .spawn(move || {
                 worker(
-                    root,
                     entry,
                     sources,
                     (limits, viewport, worker_stopping),
                     receiver,
-                    changed,
                     (published, worker_waker, progress_changes),
                 )
             })
@@ -241,34 +238,15 @@ fn wake_host(waker: &Waker) {
     }
 }
 fn worker(
-    root: PathBuf,
     entry: String,
-    sources: FileSources,
+    sources: WatchedSources,
     (limits, viewport, stopping): (Limits, Viewport, Arc<AtomicBool>),
     receiver: mpsc::Receiver<Command>,
-    changed: mpsc::SyncSender<Command>,
     (shared, waker, progress_changes): (Shared, Waker, mpsc::SyncSender<()>),
 ) {
     let mut session = Session::new(&entry);
     session.engine.limits = limits;
     session.engine.viewport = viewport.clone();
-    let mut watcher: Option<RecommendedWatcher> =
-        notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            if event
-                .as_ref()
-                .is_ok_and(|e| matches!(e.kind, notify::EventKind::Access(_)))
-            {
-                return;
-            }
-            let _ = changed.try_send(Command::Changed);
-        })
-        .ok();
-    let mut watched = BTreeSet::new();
-    if let Some(watcher) = &mut watcher
-        && watcher.watch(&root, RecursiveMode::NonRecursive).is_ok()
-    {
-        watched.insert(root.clone());
-    }
     let mut raw = Configuration {
         viewport,
         ..Configuration::default()
@@ -276,23 +254,29 @@ fn worker(
     let mut input_serial = 0;
     let mut dirty = true;
     let mut input_dirty = false;
-    let mut last_poll = Instant::now();
+    let mut watch_error = None;
     loop {
         if stopping.load(Ordering::Acquire) {
+            return;
+        }
+        if let Some(error) = watch_error.take() {
+            publish(&shared, &waker, |state| {
+                state.preparing = false;
+                state.progress.state = State::Failed;
+                state.diagnostic = Some(Diagnostic::new(
+                    "S405",
+                    format!("file watcher failed: {error}; reopen the source to restore watching"),
+                    &entry,
+                    Default::default(),
+                ));
+            });
             return;
         }
         if dirty {
             let started = Instant::now();
             let (previous_progress, previous_reloading, previous_generation) = {
-                let mut state = shared.0.lock().expect("Sanim runtime state poisoned");
-                let previous = (state.progress.clone(), state.reloading, state.generation);
-                state.preparing = true;
-                state.reloading = state.prepared.is_some();
-                state.progress = Progress {
-                    resource: Some(entry.clone()),
-                    ..Progress::default()
-                };
-                previous
+                let state = shared.0.lock().expect("Sanim runtime state poisoned");
+                (state.progress.clone(), state.reloading, state.generation)
             };
             let engine_progress = Arc::new(AtomicBool::new(false));
             session.engine.set_progress_observer(Some(Arc::new({
@@ -311,13 +295,13 @@ fn worker(
                         started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
                     {
                         let mut state = shared.0.lock().expect("Sanim runtime state poisoned");
+                        state.preparing = true;
                         state.progress = progress;
                         state.reloading = state.prepared.is_some();
                     }
                     let _ = progress_changes.try_send(());
                 }
             })));
-            let _ = progress_changes.try_send(());
             if input_dirty {
                 session.engine.viewport = raw.viewport.clone();
                 session.set_json_inputs(raw.inputs.clone());
@@ -428,35 +412,14 @@ fn worker(
                     }
                 }
             }
-            if let Some(prepared) = session.current() {
-                let mut directories = BTreeSet::from([root.clone()]);
-                for path in prepared.dependencies.keys() {
-                    let absolute = root.join(path);
-                    if let Some(parent) = absolute.parent() {
-                        let mut directory = parent.to_owned();
-                        while !directory.exists() {
-                            if !directory.pop() {
-                                break;
-                            }
-                        }
-                        directories.insert(directory);
-                    }
-                }
-                if let Some(watcher) = &mut watcher {
-                    for path in directories.difference(&watched) {
-                        let _ = watcher.watch(path, RecursiveMode::NonRecursive);
-                    }
-                    for path in watched.difference(&directories) {
-                        let _ = watcher.unwatch(path);
-                    }
-                    watched = directories;
-                }
-            }
-            last_poll = Instant::now();
+            sources.retain(session.dependencies());
             input_dirty = false;
         }
-        match receiver.recv_timeout(WATCH_RECOVERY_INTERVAL.saturating_sub(last_poll.elapsed())) {
-            Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        match receiver.recv() {
+            Ok(Command::Stop) | Err(_) => break,
+            Ok(Command::WatchError(error)) => {
+                watch_error = Some(error);
+            }
             Ok(Command::Inputs(serial, values)) => {
                 if serial > input_serial {
                     raw = values;
@@ -465,13 +428,16 @@ fn worker(
                 input_dirty = true;
                 dirty = true;
             }
-            Ok(Command::Changed) | Err(mpsc::RecvTimeoutError::Timeout) => dirty = true,
+            Ok(Command::Changed) => dirty = true,
         }
         // Coalesce already-queued writes and parameter updates into one revision.
         while let Ok(command) = receiver.try_recv() {
             match command {
                 Command::Stop => return,
                 Command::Changed => dirty = true,
+                Command::WatchError(error) => {
+                    watch_error = Some(error);
+                }
                 Command::Inputs(serial, values) => {
                     if serial > input_serial {
                         raw = values;
@@ -481,6 +447,9 @@ fn worker(
                     dirty = true;
                 }
             }
+        }
+        if watch_error.is_some() {
+            continue;
         }
         if dirty && !input_dirty {
             // Editors commonly truncate then rewrite or replace a file. Wait
@@ -496,6 +465,10 @@ fn worker(
                 match receiver.recv_timeout(timeout) {
                     Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
                     Ok(Command::Changed) => {}
+                    Ok(Command::WatchError(error)) => {
+                        watch_error = Some(error);
+                        break;
+                    }
                     Ok(Command::Inputs(serial, values)) => {
                         if serial > input_serial {
                             raw = values;

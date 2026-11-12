@@ -55,6 +55,72 @@ fn fade_default_duration() {
     let p = prepare("let marker = Circle()\nplay(FadeIn(marker))\n");
     assert_eq!(p.animation.duration, Fraction::from(1));
 }
+
+#[test]
+fn manim_ranges_expand_from_the_median_with_matching_curve_and_timing() {
+    let p = prepare(
+        r#"
+let before_range = Group(id="before_range",children=[
+    Line(position=Vec2(-30pt,20pt),end=Vec2(40pt,0pt)),
+    Line(position=Vec2(10pt,20pt),end=Vec2(0pt,16pt))
+])
+let after_range = Group(id="after_range",children=[
+    Line(position=Vec2(-30pt,60pt),end=Vec2(40pt,0pt)),
+    Line(position=Vec2(-10pt,60pt),end=Vec2(0pt,16pt))
+])
+wait(300ms)
+play(ExpandX(before_range,origin=50%,offset=10pt),duration=400ms,ease="smootherstep")
+wait(700ms)
+play(ExpandX(after_range,origin=50%,offset=-10pt),duration=300ms,ease="smootherstep")
+"#,
+    );
+    assert_eq!(p.animation.duration, Fraction::new(17u64, 10u64));
+    let quarters = [
+        Fraction::from(0),
+        Fraction::new(53u64, 512u64),
+        Fraction::new(1u64, 2u64),
+        Fraction::new(459u64, 512u64),
+        Fraction::from(1),
+    ];
+    for (id, start, duration, offset) in [
+        (
+            "before_range",
+            Fraction::new(3u64, 10u64),
+            Fraction::new(2u64, 5u64),
+            10i32,
+        ),
+        (
+            "after_range",
+            Fraction::new(7u64, 5u64),
+            Fraction::new(3u64, 10u64),
+            -10i32,
+        ),
+    ] {
+        let full = p
+            .animation
+            .layout(start + duration, Fraction::from(800), Fraction::from(600))
+            .unwrap();
+        let final_range = full.iter().find(|v| v.id == id).unwrap();
+        for (quarter, expected) in quarters.into_iter().enumerate() {
+            let time = start + duration * Fraction::new(quarter as u64, 4u64);
+            let frame = p
+                .animation
+                .layout(time, Fraction::from(800), Fraction::from(600))
+                .unwrap();
+            let range = frame.iter().find(|v| v.id == id).unwrap();
+            assert_eq!(range.horizontal.scale, expected, "{id} at {time}s");
+            assert_eq!(
+                range.horizontal.origin.value,
+                Fraction::from(400i32 + offset)
+            );
+            assert_eq!(
+                range.geometry, final_range.geometry,
+                "expansion must preserve y coordinates and complete geometry"
+            );
+            assert_eq!(range.opacity, Fraction::from(1));
+        }
+    }
+}
 #[test]
 fn not_visible_before_added() {
     let p = prepare("wait(1s)\nlet marker = Circle()\nplay(FadeIn(marker), duration: 1s)\n");
@@ -238,4 +304,35 @@ fn non_flow_groups_apply_padding_to_the_child_viewport() {
         panic!()
     };
     assert_eq!(children[0].position.values, [85., 85.]);
+}
+
+#[test]
+fn manim_title_overshoot_is_per_motion_and_does_not_invalidate_continuous_proofs() {
+    let p = prepare(
+        r#"
+let title=Rect(id="title",width=10pt,height=10pt,position=Vec2(0pt,12pt))
+let labels=Rect(id="labels",width=10pt,height=10pt)
+play(FadeIn(title,ease="overshoot"),MoveTo(title,Vec2(0pt,0pt),ease="overshoot"),FadeIn(labels),duration=300ms,ease="smootherstep")
+check(always(inside_canvas(title)))
+"#,
+    );
+    let frame = p.animation.sample(Fraction::new(9u64, 40u64)).unwrap();
+    let title = frame.iter().find(|e| e.id == "title").unwrap();
+    assert!(
+        title.position.values[1] < 0.,
+        "title must pass its final position before settling"
+    );
+    assert_eq!(title.opacity, Fraction::from(1));
+    let labels = frame.iter().find(|e| e.id == "labels").unwrap();
+    assert_eq!(labels.opacity, Fraction::new(459u64, 512u64));
+    assert_eq!(p.checks[0].evidence, Evidence::Unknown);
+    let end = p.animation.sample(Fraction::new(3u64, 10u64)).unwrap();
+    assert_eq!(
+        end.iter()
+            .find(|e| e.id == "title")
+            .unwrap()
+            .position
+            .values[1],
+        0.
+    );
 }
