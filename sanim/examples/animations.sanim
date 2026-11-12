@@ -1,4 +1,4 @@
-background(Color("window_bg_dark"))
+bg(Color("window_bg_dark"))
 let disk = Circle(id= "disk", radius= 60pt, fill= Color("orange3"), position= Vec2(-20%, 0%))
 let box = Rect(id= "box", width= 160pt, height= 100pt, fill= Color("blue3"), position= Vec2(20%, 0%))
 

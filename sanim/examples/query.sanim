@@ -1,4 +1,4 @@
-background(#121826)
+bg(#121826)
 type Sample = { id: String, rank: Number, value: Number }
 let settings = read<Dict>("query.yaml")
 let samples = read<List<Sample>>("samples.csv")

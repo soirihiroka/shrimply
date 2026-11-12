@@ -5,7 +5,10 @@ use std::{collections::BTreeMap, sync::Arc};
 
 fn animation(source: &str) -> Animation {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert(
+        "main.sanim",
+        format!("bg(Color(\"transparent\"))\n{source}"),
+    );
     Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap()

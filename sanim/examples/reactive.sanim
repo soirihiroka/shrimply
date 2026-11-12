@@ -1,5 +1,3 @@
-background(Color("window_bg_dark"))
-
 let base_size = reflect(64pt, label="Base Size", key="shapes.size")
 let amplitude = reflect(16pt, label="Pulse Amount", key="shapes.pulse")
 mut phase = 0deg

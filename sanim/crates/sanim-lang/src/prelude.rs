@@ -303,11 +303,11 @@ fn build_builtins() -> Vec<Builtin> {
         native_types::fixed,
     );
     add(
-        "background",
+        "bg",
         vec![p("color", Color, true)],
         Unit,
         true,
-        Execution::Native(native::background),
+        Execution::Native(native::bg),
         native_types::fixed,
     );
     add(

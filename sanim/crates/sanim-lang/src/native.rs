@@ -369,13 +369,13 @@ pub(crate) fn wait(
     Ok(Value::Unit)
 }
 
-pub(crate) fn background(
+pub(crate) fn bg(
     _name: &str,
     args: &imbl::OrdMap<String, Value>,
     context: Context<'_>,
 ) -> Result<Value, String> {
     let Some(Value::Color(color)) = args.get("color") else {
-        return Err("background requires a Color".into());
+        return Err("bg requires a Color".into());
     };
     context.animation.background = color.clone();
     Ok(Value::Unit)

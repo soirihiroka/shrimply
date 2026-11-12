@@ -1,6 +1,6 @@
 import "./theme" as theme
 
-background(#121826)
+bg(#121826)
 type Sample = {
     id: String,
     rank: Number,

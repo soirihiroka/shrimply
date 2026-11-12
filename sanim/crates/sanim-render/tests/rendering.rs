@@ -8,7 +8,10 @@ fn scene(source: &str) -> Scene {
 }
 fn scene_in(source: &str, width: u32, height: u32) -> Scene {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert(
+        "main.sanim",
+        format!("bg(Color(\"transparent\"))\n{source}"),
+    );
     Scene::new(
         Engine::new(sanim_core::Viewport {
             width,
@@ -24,6 +27,10 @@ fn scene_in(source: &str, width: u32, height: u32) -> Scene {
 }
 #[test]
 fn renders_actual_circle_pixels_and_png() {
+    assert_eq!(
+        sanim_core::Animation::default().background,
+        sanim_core::Color::parse("window_bg_dark").unwrap()
+    );
     let scene = scene_in("add(Circle(radius: 10pt, fill: Color(\"red\")))\n", 64, 64);
     let frame = Renderer::default()
         .render(
@@ -181,7 +188,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
         "font.ttf",
         include_bytes!("../../../tests/fixtures/DejaVuSansCondensed-subset.ttf").as_slice(),
     );
-    files.insert("main.sanim","let font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font:font,font_size:24pt,fill:Color(\"white\"))\nplay(Write(label),duration:1s)");
+    files.insert("main.sanim","bg(Color(\"transparent\"))\nlet font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font:font,font_size:24pt,fill:Color(\"white\"))\nplay(Write(label),duration:1s)");
     let prepared = Engine::new(sanim_core::Viewport {
         width: 240,
         height: 96,

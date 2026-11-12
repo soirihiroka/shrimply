@@ -499,18 +499,6 @@ impl Parser<'_> {
         } else {
             None
         };
-        let background = if binding.is_none() && self.is(Keyword::Background.text()) {
-            let mark = self.mark();
-            self.expect(Keyword::Background.text())?;
-            if self.is("{") {
-                true
-            } else {
-                self.restore(mark);
-                false
-            }
-        } else {
-            false
-        };
         let kind = if let Some(kind) = binding {
             let name = self.name()?;
             let annotation = if self.eat(":") {
@@ -527,7 +515,12 @@ impl Parser<'_> {
                 annotation,
                 value,
             }
-        } else if background {
+        } else if self.eat(Keyword::Background.text()) {
+            if self.is("(") {
+                return Err(self.error(
+                    "background requires a job block; use bg(color) to set the background color",
+                ));
+            }
             StatementKind::Background {
                 body: self.block()?,
             }

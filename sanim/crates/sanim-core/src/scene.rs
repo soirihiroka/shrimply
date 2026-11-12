@@ -296,7 +296,7 @@ impl Animation {
             height: viewport.height,
             rate: viewport.rate,
             duration: Fraction::zero(),
-            background: Color([Fraction::zero(); 4]),
+            background: Color::parse("window_bg_dark").expect("shared Adwaita background color"),
             layers: Vector::new(),
             tracks: OrdMap::new(),
             reactive: crate::reactive::ReactiveGraph::default(),

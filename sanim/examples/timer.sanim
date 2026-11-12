@@ -1,4 +1,4 @@
-background(#121826)
+bg(#121826)
 let cycles: Number = reflect(4)
 
 let pulse = Circle(id= "pulse", radius= 24pt, fill= #64D8CB)

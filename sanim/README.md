@@ -234,6 +234,8 @@ accent and light/dark semantic colors, case-insensitively with their underscores
 The definitions live once in `shrimply-math-color`; Sanim does not copy the palette.
 `Color()` defaults to Adwaita `red3`. Basic CSS-style names such as `"blue"` keep
 their literal meaning, and `#RRGGBB`/`#RRGGBBAA` remain available for custom colors.
+Animations default to `window_bg_dark`; use `bg(Color("transparent"))`
+for a transparent background or `bg(...)` to choose another color.
 Palette choices are explicit and independent of the desktop theme for portable output.
 
 Arithmetic and decimal literals use checked rational values. Time never uses
@@ -369,7 +371,7 @@ Rotated shapes need explicit placement when their flow extent is unavailable.
 Canvas dimensions, frame rate and DPI belong to the host, never to the script.
 CLI `--width`, `--height`, `--fps` and `--dpi` supply that viewport; logical pt size
 is pixels × 72 / DPI. Browser/CSS reference DPI is 96, so `96px` equals `72pt`.
-Scripts can set `background(color)`. A host can call `Animation::layout` with new
+Scripts can set `bg(color)`. A host can call `Animation::layout` with new
 logical dimensions without reparsing. `Row`/`Column` use Taffy flexbox with padding,
 gaps, wrapping, `Justify` and independent cross-axis `Align`; Taffy layout uses f32
 geometry while timeline arithmetic remains exact.
