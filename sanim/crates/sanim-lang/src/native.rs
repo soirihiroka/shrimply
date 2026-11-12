@@ -194,7 +194,10 @@ pub(crate) fn range(
             })
         })
         .collect();
-    Ok(Value::List(values))
+    Ok(Value::List(List::typed(
+        Type::Numeric(Unit::Number),
+        values,
+    )))
 }
 
 pub(crate) fn get(
@@ -240,11 +243,12 @@ pub(crate) fn keys(
             .collect(),
         _ => return Err("keys requires Dict or object Data".into()),
     };
-    Ok(Value::List(
+    Ok(Value::List(List::typed(
+        Type::String,
         keys.into_iter()
             .map(|key| Value::String(key.into()))
             .collect(),
-    ))
+    )))
 }
 
 pub(crate) fn some(
@@ -657,10 +661,17 @@ pub(crate) fn make_element(
         "Circle" => Geometry::Circle {
             radius: positive(args, "radius", Fraction::from(32))?,
         },
-        "Rectangle" | "Rect" => Geometry::Rectangle {
-            width: positive(args, "width", Fraction::from(64))?,
-            height: positive(args, "height", Fraction::from(64))?,
-        },
+        "Rectangle" | "Rect" => {
+            let radius = number(args, "radius", Fraction::from(0))?;
+            if !math::finite(&radius) || radius < Fraction::from(0) {
+                return Err("Rect radius must be finite and nonnegative".into());
+            }
+            Geometry::Rectangle {
+                width: positive(args, "width", Fraction::from(64))?,
+                height: positive(args, "height", Fraction::from(64))?,
+                radius,
+            }
+        }
         "Group" | "Row" | "Column" => {
             let children = required("children")?
                 .list()?

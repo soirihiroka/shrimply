@@ -11,7 +11,7 @@ macro_rules! keywords {
         }
     };
 }
-keywords! { Let=>"let",Reflect=>"reflect",Fn=>"fn",Type=>"type",Enum=>"enum",Import=>"import",As=>"as",If=>"if",Else=>"else",For=>"for",In=>"in",Return=>"return",Match=>"match",Case=>"case",And=>"and",Or=>"or",Not=>"not",Repeat=>"repeat",Every=>"every",Timer=>"timer",True=>"true",False=>"false",None=>"None" }
+keywords! { Let=>"let",Mut=>"mut",Sig=>"sig",Reflect=>"reflect",Background=>"background",Animate=>"animate",Fn=>"fn",Type=>"type",Enum=>"enum",Import=>"import",As=>"as",If=>"if",Else=>"else",For=>"for",In=>"in",Return=>"return",Match=>"match",Case=>"case",And=>"and",Or=>"or",Not=>"not",Repeat=>"repeat",Every=>"every",Timer=>"timer",True=>"true",False=>"false",None=>"None" }
 
 /// Parse source directly into the AST. No token list or intermediate syntax tree.
 pub fn parse(source: &str, text: &str, max_steps: usize) -> Result<Module, Diagnostic> {
@@ -411,33 +411,20 @@ impl Parser<'_> {
     fn reflection_options(
         &self,
         args: Vec<(Option<String>, Expr)>,
-        positional_label: bool,
     ) -> Result<sanim_core::reflection::Options, Diagnostic> {
         let mut options = sanim_core::reflection::Options::default();
-        let mut named = false;
         for (name, value) in args {
             let field = match name.as_deref() {
-                None if positional_label && !named => "label",
                 None => {
                     return Err(Diagnostic::new(
                         "S002",
-                        if positional_label {
-                            "reflection display label must precede named options; use label=\"Display Color\", key=\"palette.accent\""
-                        } else {
-                            "reflect takes one positional default value; metadata must use label=\"Display Color\" and key=\"palette.accent\""
-                        },
+                        "reflect takes one positional default value; metadata must use label=\"Display Color\" and key=\"palette.accent\"",
                         self.source,
                         value.span,
                     ));
                 }
-                Some("key") => {
-                    named = true;
-                    "key"
-                }
-                Some("label") => {
-                    named = true;
-                    "label"
-                }
+                Some("key") => "key",
+                Some("label") => "label",
                 Some(other) => {
                     return Err(Diagnostic::new(
                         "S002",
@@ -489,7 +476,7 @@ impl Parser<'_> {
                 span,
             ));
         };
-        let options = self.reflection_options(args.collect(), false)?;
+        let options = self.reflection_options(args.collect())?;
         Ok(Expr {
             kind: ExprKind::Reflect {
                 value: Box::new(value),
@@ -503,50 +490,28 @@ impl Parser<'_> {
             return Err(self.error("parser work limit exceeded"));
         }
         let span = self.span();
-        // The old declaration form lowers to the same reflection expression.
-        // Only inspect the token after its arguments; expression statements keep normal parsing.
-        let legacy = if self.eat(Keyword::Reflect.text()) {
-            let parenthesized = self.eat("(");
-            let args = if parenthesized {
-                self.arguments()?
-            } else {
-                vec![]
-            };
-            let after_arguments = self.mark();
-            let binding = if self.name_start() {
-                self.name()?;
-                self.is("=") || self.is(":")
-            } else {
-                false
-            };
-            self.restore(after_arguments);
-            if binding {
-                Some(self.reflection_options(args, true)?)
-            } else {
-                if !parenthesized {
-                    return Err(self.error("reflect requires a default value in parentheses, for example let color = reflect(Color())"));
-                }
-                let value = self.reflected_value(
-                    args,
-                    Span {
-                        end: self.offset,
-                        ..span
-                    },
-                )?;
-                let value = self.expr_tail(value, 0, span)?;
-                self.newline()?;
-                return Ok(Statement {
-                    kind: StatementKind::Expr(value),
-                    span: Span {
-                        end: self.offset,
-                        ..span
-                    },
-                });
-            }
+        let binding = if self.eat(Keyword::Let.text()) {
+            Some(BindingKind::Let)
+        } else if self.eat(Keyword::Mut.text()) {
+            Some(BindingKind::Mut)
+        } else if self.eat(Keyword::Sig.text()) {
+            Some(BindingKind::Sig)
         } else {
             None
         };
-        let kind = if legacy.is_some() || self.eat(Keyword::Let.text()) {
+        let background = if binding.is_none() && self.is(Keyword::Background.text()) {
+            let mark = self.mark();
+            self.expect(Keyword::Background.text())?;
+            if self.is("{") {
+                true
+            } else {
+                self.restore(mark);
+                false
+            }
+        } else {
+            false
+        };
+        let kind = if let Some(kind) = binding {
             let name = self.name()?;
             let annotation = if self.eat(":") {
                 Some(self.ty()?)
@@ -555,25 +520,70 @@ impl Parser<'_> {
             };
             self.expect("=")?;
             let value = self.expr(0)?;
-            let value = if let Some(options) = legacy {
-                Expr {
-                    kind: ExprKind::Reflect {
-                        value: Box::new(value),
-                        options,
-                    },
-                    span: Span {
-                        end: self.offset,
-                        ..span
-                    },
-                }
-            } else {
-                value
-            };
             self.newline()?;
             StatementKind::Bind {
+                kind,
                 name,
                 annotation,
                 value,
+            }
+        } else if background {
+            StatementKind::Background {
+                body: self.block()?,
+            }
+        } else if self.eat(Keyword::Animate.text()) {
+            self.expect("(")?;
+            let mut args = self.arguments()?.into_iter();
+            let Some((
+                None,
+                Expr {
+                    kind: ExprKind::Name(name),
+                    ..
+                },
+            )) = args.next()
+            else {
+                return Err(Diagnostic::new(
+                    "S002",
+                    "animate requires a mutable binding name as its first argument, for example animate(phase, to=360deg, duration=2s)",
+                    self.source,
+                    span,
+                ));
+            };
+            let mut value = None;
+            let mut duration = None;
+            let mut easing = None;
+            for (label, arg) in args {
+                let slot = match label.as_deref() {
+                    Some("to") => &mut value,
+                    Some("duration") => &mut duration,
+                    Some("ease") => &mut easing,
+                    _ => {
+                        return Err(Diagnostic::new(
+                            "S002",
+                            "animate options are to=, duration=, and optional ease=; to and duration are required",
+                            self.source,
+                            arg.span,
+                        ));
+                    }
+                };
+                if slot.replace(arg).is_some() {
+                    return Err(self.error("animate option was supplied more than once"));
+                }
+            }
+            let (Some(value), Some(duration)) = (value, duration) else {
+                return Err(Diagnostic::new(
+                    "S002",
+                    "animate requires both to= and duration=, for example animate(phase, to=360deg, duration=2s)",
+                    self.source,
+                    span,
+                ));
+            };
+            self.newline()?;
+            StatementKind::Animate {
+                name,
+                value,
+                duration,
+                easing,
             }
         } else if self.eat(Keyword::Type.text()) {
             let name = self.name()?;
@@ -739,19 +749,50 @@ impl Parser<'_> {
             StatementKind::Match { value, cases }
         } else {
             let value = self.expr(0)?;
+            if matches!(value.kind, ExprKind::Reflect { .. }) && self.name_start() {
+                return Err(Diagnostic::new(
+                    "S002",
+                    "reflection declarations have been removed; write let name = reflect(default_value, label=\"Display Name\") instead",
+                    self.source,
+                    span,
+                ));
+            }
+            let kind = if self.eat("=") {
+                let ExprKind::Name(name) = value.kind else {
+                    return Err(Diagnostic::new(
+                        "S002",
+                        "assignment requires a mutable binding name; replace the whole value with name = value instead of assigning a field or index",
+                        self.source,
+                        value.span,
+                    ));
+                };
+                StatementKind::Assign {
+                    name,
+                    value: self.expr(0)?,
+                }
+            } else {
+                StatementKind::Expr(value)
+            };
             self.newline()?;
-            StatementKind::Expr(value)
+            kind
         };
         let mut span = span;
         span.end = self.offset;
         Ok(Statement { kind, span })
     }
     fn ty(&mut self) -> Result<TypeExpr, Diagnostic> {
+        self.type_expression(0)
+    }
+    fn type_expression(&mut self, minimum: u8) -> Result<TypeExpr, Diagnostic> {
         self.depth += 1;
         if self.depth > 64 {
             return Err(self.error("type nesting limit exceeded"));
         }
-        let out = if self.eat("{") {
+        let mut out = if self.eat("(") {
+            let value = self.ty()?;
+            self.expect(")")?;
+            value
+        } else if self.eat("{") {
             let mut fields = vec![];
             while !self.eat("}") {
                 self.skip_lines();
@@ -786,6 +827,40 @@ impl Parser<'_> {
             }
             TypeExpr::Named(name, args)
         };
+        loop {
+            let operator = if self.is("|") {
+                "|"
+            } else if self.is("&") {
+                "&"
+            } else if self.is("-") {
+                "-"
+            } else {
+                break;
+            };
+            let precedence = if operator == "|" { 1 } else { 2 };
+            if precedence < minimum {
+                break;
+            }
+            self.expect(operator)?;
+            let right = self.type_expression(precedence + 1)?;
+            out = match operator {
+                "|" => match out {
+                    TypeExpr::Union(mut values) => {
+                        values.push(right);
+                        TypeExpr::Union(values)
+                    }
+                    left => TypeExpr::Union(vec![left, right]),
+                },
+                "&" => match out {
+                    TypeExpr::Intersection(mut values) => {
+                        values.push(right);
+                        TypeExpr::Intersection(values)
+                    }
+                    left => TypeExpr::Intersection(vec![left, right]),
+                },
+                _ => TypeExpr::Difference(Box::new(out), Box::new(right)),
+            };
+        }
         self.depth -= 1;
         Ok(out)
     }
@@ -974,7 +1049,14 @@ impl Parser<'_> {
             self.trivia();
             ExprKind::Color(value)
         } else if self.eat(Keyword::Reflect.text()) {
-            self.expect("(")?;
+            if !self.eat("(") {
+                return Err(Diagnostic::new(
+                    "S002",
+                    "reflection declarations have been removed; write let name = reflect(default_value, label=\"Display Name\") instead",
+                    self.source,
+                    span,
+                ));
+            }
             let args = self.arguments()?;
             return self.reflected_value(
                 args,

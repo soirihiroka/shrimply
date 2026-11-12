@@ -143,7 +143,7 @@ fn matrix_requires_explicit_homogeneous_component() {
 }
 #[test]
 fn native_math_types_are_reflectable() {
-    let p=run("type Parameters = { direction: Vec3, transform: Matrix4, ratio: Fraction }\nreflect parameters: Parameters = { direction: Vec3(1,0,0), transform: Matrix4(), ratio: Fraction(1,3) }\n").unwrap();
+    let p=run("type Parameters = { direction: Vec3, transform: Matrix4, ratio: Fraction }\nlet parameters: Parameters=reflect({ direction: Vec3(1,0,0), transform: Matrix4(), ratio: Fraction(1,3) })\n").unwrap();
     assert!(p.reflected[0].ty.reflectable());
 }
 #[test]

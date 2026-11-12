@@ -234,28 +234,6 @@ pub(super) fn vector3_expression_output(
     with_controller(|controller| controller.vector3_expression_output(target, path, timeline_id))
 }
 
-pub(super) fn set_color_value(
-    target: &InspectorTarget,
-    path: &str,
-    timeline_id: uuid::Uuid,
-    value: shrimply_property_model::Color<u8>,
-    commit_name: &str,
-) -> Result<(), String> {
-    let result = with_controller(|controller| {
-        controller.set_color_value(
-            target,
-            path,
-            timeline_id,
-            value,
-            shrimply_inspector_core::InspectorCommit::Coalesced(commit_name),
-        )
-    });
-    if result.is_ok() {
-        mark_dirty();
-    }
-    result
-}
-
 pub(super) fn set_color_keyframes_enabled(
     target: &InspectorTarget,
     path: &str,

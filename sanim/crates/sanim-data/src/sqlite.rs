@@ -24,8 +24,26 @@ fn sql_type(ty: &Type) -> Result<&'static str, String> {
         Type::String | Type::Fraction => "TEXT",
         Type::Numeric(_) => "ANY",
         Type::Option(inner) => return sql_type(inner),
+        Type::Union(_) => {
+            return Err(format!(
+                "SQL scalar columns need one concrete type, found union {ty}; project alternatives into separate columns or query unstructured Dict rows"
+            ));
+        }
         _ => return Err(format!("SQL columns require scalar data; found {ty}")),
     })
+}
+/// The language checker and SQLite registration use the same supported row schemas.
+pub fn validate_row_type(ty: &Type) -> Result<(), String> {
+    match ty {
+        Type::Record(fields) => {
+            if fields.is_empty() { return Err("SQL record rows require at least one scalar column".into()); }
+            for (name, ty) in fields { sql_type(ty).map_err(|error| format!("SQL column '{name}': {error}"))?; }
+            Ok(())
+        }
+        Type::Dict => Ok(()),
+        Type::Unknown => Err("SQL input needs a known element schema; annotate an empty list as List<Row>, for example let rows:List<Sample>=[]; an empty list still has length zero".into()),
+        _ => sql_type(ty).map(|_| ()),
+    }
 }
 fn input(value: &Value) -> Result<Sql, String> {
     Ok(match value {
@@ -43,26 +61,85 @@ fn input(value: &Value) -> Result<Sql, String> {
             Sql::Real(math::to_f64(value.value)?)
         }
         Value::Fraction(value) => Sql::Text(value.to_string()),
-        Value::Data(value) => match value.as_ref() {
-            serde_json::Value::Null => Sql::Null,
-            serde_json::Value::Bool(v) => Sql::Integer(i64::from(*v)),
-            serde_json::Value::String(v) => Sql::Text(v.clone()),
-            serde_json::Value::Number(v) => {
-                if let Some(i) = v.as_i64() {
-                    Sql::Integer(i)
-                } else {
-                    Sql::Real(
-                        v.as_f64()
-                            .filter(|v| v.is_finite())
-                            .ok_or("SQL numeric parameter must be finite")?,
-                    )
-                }
-            }
-            _ => return Err("SQL parameters must be scalar data".into()),
-        },
+        Value::Data(value) => return json_input(value),
         _ => return Err(format!("{} cannot be bound to SQL", value.ty())),
     })
 }
+fn json_input(value: &serde_json::Value) -> Result<Sql, String> {
+    Ok(match value {
+        serde_json::Value::Null => Sql::Null,
+        serde_json::Value::Bool(value) => Sql::Integer(i64::from(*value)),
+        serde_json::Value::String(value) => Sql::Text(value.clone()),
+        serde_json::Value::Number(value) => {
+            if let Some(integer) = value.as_i64() {
+                Sql::Integer(integer)
+            } else {
+                Sql::Real(value.as_f64().filter(|value| value.is_finite()).ok_or("SQL numeric parameter must be finite")?)
+            }
+        }
+        _ => return Err("SQL values must be scalar data; nested objects and arrays require an explicit scalar projection".into()),
+    })
+}
+
+fn columns(
+    name: &str,
+    items: &sanim_core::List,
+) -> Result<Vec<(String, &'static str, bool)>, String> {
+    validate_row_type(&items.element_type)
+        .map_err(|error| format!("SQL input '{name}': {error}"))?;
+    match items.element_type.as_ref() {
+        Type::Record(fields) => fields.iter().map(|(name, ty)| Ok((name.clone(), sql_type(ty)?, matches!(ty, Type::Option(_))))).collect(),
+        Type::Dict => {
+            let mut names = BTreeSet::new();
+            for (index, row) in items.iter().enumerate() {
+                let Value::Dict(fields) = row else { return Err(format!("SQL input '{name}' row {index}: expected Dict, found {}", row.ty())); };
+                names.extend(fields.keys().cloned());
+            }
+            if names.is_empty() {
+                return Err(format!("SQL input '{name}' has no column schema: an empty List<Dict> or dictionaries without keys cannot declare SQL columns. Use List<Row> with a record type, or provide dictionary rows with scalar fields; len(...) remains valid for an empty list."));
+            }
+            Ok(names.into_iter().map(|name| (name, "ANY", true)).collect())
+        }
+        scalar => Ok(vec![("value".into(), sql_type(scalar).map_err(|_| format!("SQL input '{name}' requires scalar items, record rows or Dict rows; found List<{scalar}>. Project nested values into scalar columns first."))?, matches!(scalar, Type::Option(_)))]),
+    }
+}
+fn row_values(
+    name: &str,
+    index: usize,
+    item: &Value,
+    ty: &Type,
+    columns: &[(String, &'static str, bool)],
+) -> Result<Vec<Sql>, String> {
+    match (ty, item) {
+        (Type::Record(_), Value::Record(fields)) => columns
+            .iter()
+            .map(|(column, _, _)| {
+                input(fields.get(column).ok_or_else(|| {
+                    format!("SQL input '{name}' row {index}: missing column '{column}'")
+                })?)
+            })
+            .collect(),
+        (Type::Dict, Value::Dict(fields)) => columns
+            .iter()
+            .map(|(column, _, _)| {
+                fields
+                    .get(column)
+                    .map_or(Ok(Sql::Null), json_input)
+                    .map_err(|error| {
+                        format!("SQL input '{name}' row {index}, column '{column}': {error}")
+                    })
+            })
+            .collect(),
+        (Type::Record(_) | Type::Dict, _) => Err(format!(
+            "SQL input '{name}' row {index}: expected {ty}, found {}",
+            item.ty()
+        )),
+        _ => Ok(vec![input(item).map_err(|error| {
+            format!("SQL input '{name}' item {index}: {error}")
+        })?]),
+    }
+}
+
 fn output(value: ValueRef<'_>, ty: &Type, limits: Limits) -> Result<Value, String> {
     if let Type::Option(inner) = ty {
         return if value == ValueRef::Null {
@@ -120,12 +197,10 @@ pub fn query(
     result: &Type,
     limits: Limits,
 ) -> Result<Value, String> {
-    let Type::Table(row_type) = result else {
-        return Err("SQL result requires Table<Row> or Table<Dict>".into());
+    let Type::List(row_type) = result else {
+        return Err("SQL result requires List<Row>, List<Dict>, or a list of scalar values".into());
     };
-    if !matches!(row_type.as_ref(), Type::Record(_) | Type::Dict) {
-        return Err("SQL result rows require a record or Dict".into());
-    }
+    validate_row_type(row_type)?;
     let Value::Record(tables) = tables else {
         return Err("SQL tables require named table bindings".into());
     };
@@ -162,30 +237,28 @@ pub fn query(
         if name.to_ascii_lowercase().starts_with("sqlite_") || name.contains('\0') {
             return Err(format!("invalid SQL table name {name:?}"));
         }
-        let Value::Table { row_type, rows } = table else {
-            return Err(format!("'{name}' must be a Table<Row>"));
+        let Value::List(items) = table else {
+            return Err(format!(
+                "SQL input '{name}' must be a List, found {}",
+                table.ty()
+            ));
         };
-        let Type::Record(fields) = row_type.as_ref() else {
-            return Err(format!("'{name}' requires a record row schema"));
-        };
-        if fields.is_empty() {
-            return Err(format!("SQL table '{name}' needs at least one column"));
+        let columns = columns(name, items)?;
+        if columns.is_empty() {
+            return Err(format!(
+                "SQL input '{name}' needs at least one scalar column"
+            ));
         }
-        let definitions = fields
+        let definitions = columns
             .iter()
-            .map(|(name, ty)| {
-                Ok(format!(
-                    "{} {}{}",
+            .map(|(name, storage, nullable)| {
+                format!(
+                    "{} {storage}{}",
                     quote(name),
-                    sql_type(ty)?,
-                    if matches!(ty, Type::Option(_)) {
-                        ""
-                    } else {
-                        " NOT NULL"
-                    }
-                ))
+                    if *nullable { "" } else { " NOT NULL" }
+                )
             })
-            .collect::<Result<Vec<_>, String>>()?;
+            .collect::<Vec<_>>();
         run(transaction.execute_batch(&format!(
             "CREATE TABLE {} ({}) STRICT",
             quote(name),
@@ -194,29 +267,19 @@ pub fn query(
         let insert = format!(
             "INSERT INTO {} VALUES ({})",
             quote(name),
-            vec!["?"; fields.len()].join(",")
+            vec!["?"; columns.len()].join(",")
         );
-        let mut statement = transaction.prepare(&insert).map_err(|e| e.to_string())?;
-        for row in rows.iter() {
+        let mut statement = transaction
+            .prepare(&insert)
+            .map_err(|error| error.to_string())?;
+        for (index, row) in items.iter().enumerate() {
             cells = cells
-                .checked_sub(fields.len() + 1)
+                .checked_sub(columns.len() + 1)
                 .ok_or("SQL input value budget exceeded")?;
-            let Value::Record(values) = row else {
-                return Err(format!("SQL '{name}' row is not a record"));
-            };
-            let values = fields
-                .keys()
-                .map(|key| {
-                    input(
-                        values
-                            .get(key)
-                            .ok_or_else(|| format!("missing SQL input column '{key}'"))?,
-                    )
-                })
-                .collect::<Result<Vec<_>, String>>()?;
+            let values = row_values(name, index, row, &items.element_type, &columns)?;
             statement
                 .execute(rusqlite::params_from_iter(&values))
-                .map_err(|e| format!("SQL input '{name}': {e}"))?;
+                .map_err(|error| format!("SQL input '{name}' row {index}: {error}"))?;
         }
     }
     transaction.commit().map_err(|e| e.to_string())?;
@@ -272,6 +335,12 @@ pub fn query(
                 fields.keys().collect::<Vec<_>>()
             ));
         }
+        if !matches!(row_type.as_ref(), Type::Record(_) | Type::Dict) && columns.len() != 1 {
+            return Err(format!(
+                "SQL result {result} requires exactly one scalar column, found {}; use List<Dict> or a record row type for multiple columns",
+                columns.len()
+            ));
+        }
         let parameters = match parameters {
             Some(Value::Record(fields)) => fields
                 .iter()
@@ -279,7 +348,7 @@ pub fn query(
                 .collect::<Result<BTreeMap<_, _>, String>>()?,
             Some(Value::Dict(fields)) => fields
                 .iter()
-                .map(|(k, v)| Ok((k.clone(), input(&Value::Data(v.clone().into()))?)))
+                .map(|(k, v)| Ok((k.clone(), json_input(v)?)))
                 .collect::<Result<_, String>>()?,
             None => BTreeMap::new(),
             _ => return Err("SQL params require Dict or a named record".into()),
@@ -332,21 +401,34 @@ pub fn query(
                             })?,
                         );
                     }
-                    _ => {
+                    Type::Dict => {
                         unstructured.insert(name.clone(), dynamic(value)?);
+                    }
+                    _ => {
+                        fields.insert(
+                            name.clone(),
+                            output(value, row_type, limits).map_err(|error| {
+                                format!("SQL row {}, column '{name}': {error}", rows.len())
+                            })?,
+                        );
                     }
                 }
             }
             rows.push(if *row_type.as_ref() == Type::Dict {
                 Value::Dict(unstructured.into_iter().collect())
-            } else {
+            } else if matches!(row_type.as_ref(), Type::Record(_)) {
                 Value::Record(fields.into())
+            } else {
+                fields
+                    .pop_first()
+                    .expect("validated scalar SQL result column")
+                    .1
             });
         }
-        Ok(Value::Table {
-            row_type: row_type.clone().into(),
-            rows: rows.into(),
-        })
+        Ok(Value::List(sanim_core::List::typed(
+            row_type.as_ref().clone(),
+            rows,
+        )))
     })();
     prepared.map_err(|error|if steps.load(Ordering::Relaxed)>limits.max_sql_steps{format!("SQL instruction budget {} exceeded; simplify the query, add a filter, or increase max_sql_steps",limits.max_sql_steps)}else{error})
 }

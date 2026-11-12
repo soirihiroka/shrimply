@@ -107,7 +107,7 @@ pub fn charge(
                     json(value, bytes, items, depth - 1)?;
                 }
             }
-            Value::List(_) | Value::Table { .. } | Value::Array { .. } => {
+            Value::List(_) | Value::Array { .. } => {
                 for value in value.list()? {
                     visit(value, bytes, items, depth - 1)?;
                 }

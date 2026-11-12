@@ -10,9 +10,39 @@ pub(crate) fn identities(
     let mut identities = BTreeMap::new();
     for statement in &module.statements {
         match &statement.kind {
+            StatementKind::Bind {
+                kind: BindingKind::Sig,
+                value,
+                ..
+            } => {
+                reject(
+                    source,
+                    value,
+                    "reflect(...) cannot be declared inside a lazy sig; bind the editable input with let/mut first, then derive the sig from it",
+                )?;
+            }
             StatementKind::Bind { name, value, .. } => {
                 collect(source, value, name, &mut identities, false)?
             }
+            StatementKind::Assign { value, .. } => reject(
+                source,
+                value,
+                "reflection inputs are declared once with let/mut; assignments cannot create reflect(...) inputs",
+            )?,
+            StatementKind::Animate {
+                value,
+                duration,
+                easing,
+                ..
+            } => {
+                for expr in std::iter::once(value)
+                    .chain(std::iter::once(duration))
+                    .chain(easing)
+                {
+                    reject(source, expr, PLACEMENT)?;
+                }
+            }
+            StatementKind::Background { body } => reject_block(source, body)?,
             StatementKind::Expr(value) => {
                 let name = semantic_name(value).unwrap_or_else(|| "input".into());
                 collect(source, value, &name, &mut identities, true)?;
@@ -265,10 +295,9 @@ pub(crate) fn concrete_schema(ty: &Type) -> bool {
         Type::Unknown | Type::Variable(_) | Type::BoundedVariable(..) | Type::Vector(_, None) => {
             false
         }
-        Type::List(inner) | Type::Option(inner) | Type::Table(inner) | Type::Array(inner) => {
-            concrete_schema(inner)
-        }
+        Type::List(inner) | Type::Option(inner) | Type::Array(inner) => concrete_schema(inner),
         Type::Record(fields) => fields.values().all(concrete_schema),
+        Type::Union(values) => values.iter().all(concrete_schema),
         Type::Enum { variants, .. } => variants.values().flatten().all(concrete_schema),
         _ => true,
     }

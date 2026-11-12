@@ -9,7 +9,7 @@ fn number() -> Type {
     Type::Numeric(Unit::Number)
 }
 fn table() -> Type {
-    Type::Table(Box::new(Type::Record(BTreeMap::from([
+    Type::List(Box::new(Type::Record(BTreeMap::from([
         ("id".into(), Type::String),
         ("value".into(), number()),
     ]))))
@@ -388,7 +388,7 @@ fn json_and_npy_vectors_retain_f64_range() {
 #[test]
 fn sql_instruction_budget_interrupts_recursive_queries() {
     let tables = Value::Record(Default::default());
-    let ty = Type::Table(Box::new(Type::Dict));
+    let ty = Type::List(Box::new(Type::Dict));
     let limits = Limits {
         max_sql_steps: 1000,
         ..Limits::default()
@@ -402,7 +402,7 @@ fn sql_rejects_multiple_statements() {
         "SELECT 1 AS value; SELECT 2 AS value",
         &Value::Record(Default::default()),
         None,
-        &Type::Table(Box::new(Type::Dict)),
+        &Type::List(Box::new(Type::Dict)),
         Limits::default(),
     )
     .unwrap_err();

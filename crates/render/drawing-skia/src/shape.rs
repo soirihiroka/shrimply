@@ -30,19 +30,7 @@ pub struct ShapeDraw {
 
 pub fn shape_path(shape: &ShapeDraw, rect: Rect) -> Path {
     match shape.shape {
-        ShapeKind::Rect => match shape.rounding_strategy {
-            ShapeRoundingStrategy::Circular => Path::rrect(
-                skia_safe::RRect::new_rect_xy(
-                    rect,
-                    shape.corner_radius.max(0.0),
-                    shape.corner_radius.max(0.0),
-                ),
-                None,
-            ),
-            ShapeRoundingStrategy::Continuous | ShapeRoundingStrategy::Chamfer => {
-                rect_path(rect, shape.corner_radius, shape.rounding_strategy)
-            }
-        },
+        ShapeKind::Rect => rect_path(rect, shape.corner_radius, shape.rounding_strategy),
         ShapeKind::Ellipse => ellipse_path(
             shape.size,
             shape.ellipse_inner_radius,
@@ -434,9 +422,11 @@ pub fn heart_path(rect: Rect) -> Path {
 pub fn rect_path(rect: Rect, corner_radius: f32, strategy: ShapeRoundingStrategy) -> Path {
     match strategy {
         ShapeRoundingStrategy::Chamfer => chamfer_rect_path(rect, corner_radius),
-        ShapeRoundingStrategy::Continuous | ShapeRoundingStrategy::Circular => {
-            continuous_rect_path(rect, corner_radius)
-        }
+        ShapeRoundingStrategy::Circular => Path::rrect(
+            skia_safe::RRect::new_rect_xy(rect, corner_radius.max(0.0), corner_radius.max(0.0)),
+            None,
+        ),
+        ShapeRoundingStrategy::Continuous => continuous_rect_path(rect, corner_radius),
     }
 }
 

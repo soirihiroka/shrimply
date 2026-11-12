@@ -13,6 +13,8 @@ pub enum Geometry {
     Rectangle {
         width: Fraction,
         height: Fraction,
+        #[serde(default)]
+        radius: Fraction,
     },
     Line {
         end: Vec2,
@@ -146,6 +148,9 @@ pub enum Property {
     Opacity,
     Fill,
     Reveal,
+    Radius,
+    Width,
+    Height,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -271,6 +276,8 @@ pub struct Animation {
     pub layers: Vector<Layer>,
     /// Each property has its own sorted track index; sampling uses binary search.
     pub tracks: OrdMap<String, OrdMap<Property, Vector<Track>>>,
+    #[serde(default)]
+    pub reactive: crate::reactive::ReactiveGraph,
     element_index: OrdMap<String, Vector<usize>>,
     #[serde(default)]
     flow_controlled: OrdSet<String>,
@@ -292,6 +299,7 @@ impl Animation {
             background: Color([Fraction::zero(); 4]),
             layers: Vector::new(),
             tracks: OrdMap::new(),
+            reactive: crate::reactive::ReactiveGraph::default(),
             element_index: OrdMap::new(),
             flow_controlled: OrdSet::new(),
         }
@@ -299,8 +307,8 @@ impl Animation {
 }
 
 impl Element {
-    pub fn property(&self, property: Property) -> Value {
-        match property {
+    pub fn property(&self, property: Property) -> Result<Value, String> {
+        Ok(match property {
             Property::Position => Value::Vec2(self.position),
             Property::Rotation => Value::Number(crate::Number {
                 value: self.rotation,
@@ -323,13 +331,48 @@ impl Element {
                 unit: crate::Unit::Number,
             }),
             Property::Fill => Value::Color(self.fill.clone()),
-        }
+            Property::Radius | Property::Width | Property::Height => {
+                let value = match (property, self.geometry.as_ref()) {
+                    (Property::Radius, Geometry::Circle { radius } | Geometry::Rectangle { radius, .. }) => *radius,
+                    (Property::Width, Geometry::Rectangle { width, .. }) => *width,
+                    (Property::Width, Geometry::Line { width, .. }) => *width,
+                    (Property::Height, Geometry::Rectangle { height, .. }) => *height,
+                    (Property::Width, Geometry::Group { .. }) => self.layout.width.ok_or_else(|| format!("{}.width is automatic; provide an explicit width before reading it",self.id))?,
+                    (Property::Height, Geometry::Group { .. }) => self.layout.height.ok_or_else(|| format!("{}.height is automatic; provide an explicit height before reading it",self.id))?,
+                    _ => {
+                        return Err(format!(
+                            "{} does not have a {property:?} geometry property",
+                            self.id
+                        ));
+                    }
+                };
+                Value::Number(crate::Number {
+                    value,
+                    unit: crate::Unit::Length,
+                })
+            }
+        })
     }
     pub fn set(&mut self, property: Property, value: Value) -> Result<(), String> {
         match property {
             Property::Position => self.position = value.vec2()?,
-            Property::Rotation => self.rotation = value.number()?.value,
-            Property::Scale => self.scale = value.number()?.value,
+            Property::Rotation => {
+                let number = value.number()?;
+                if number.unit != crate::Unit::Angle || !math::finite(&number.value) {
+                    return Err("rotation requires a finite Angle".into());
+                }
+                self.rotation = number.value;
+            }
+            Property::Scale => {
+                let number = value.number()?;
+                if number.unit != crate::Unit::Number
+                    || !math::finite(&number.value)
+                    || number.value < Fraction::from(0)
+                {
+                    return Err("scale requires a finite nonnegative Number".into());
+                }
+                self.scale = number.value;
+            }
             Property::StretchX => {
                 let n = value.number()?;
                 if n.unit != crate::Unit::Number
@@ -340,7 +383,17 @@ impl Element {
                 }
                 self.horizontal.scale = n.value;
             }
-            Property::Opacity => self.opacity = value.number()?.value,
+            Property::Opacity => {
+                let number = value.number()?;
+                if number.unit != crate::Unit::Number
+                    || !math::finite(&number.value)
+                    || number.value < Fraction::from(0)
+                    || number.value > Fraction::from(1)
+                {
+                    return Err("opacity requires a finite Number in [0,1]".into());
+                }
+                self.opacity = number.value;
+            }
             Property::Reveal => {
                 let number = value.number()?;
                 if number.unit != crate::Unit::Number
@@ -357,6 +410,53 @@ impl Element {
                     self.fill = color
                 } else {
                     return Err("expected Color".into());
+                }
+            }
+            Property::Radius | Property::Width | Property::Height => {
+                let number = value.number()?;
+                let positive = property != Property::Radius
+                    || matches!(self.geometry.as_ref(), Geometry::Circle { .. });
+                if number.unit != crate::Unit::Length
+                    || !math::finite(&number.value)
+                    || number.value < Fraction::from(0)
+                    || positive && number.value == Fraction::from(0)
+                {
+                    let requirement = if positive { "positive" } else { "nonnegative" };
+                    return Err(format!(
+                        "{property:?} requires a finite {requirement} Length"
+                    ));
+                }
+                match (property, self.geometry.as_ref()) {
+                    (Property::Radius, Geometry::Circle { .. } | Geometry::Rectangle { .. })
+                    | (Property::Width | Property::Height, Geometry::Rectangle { .. }) => {}
+                    (Property::Width | Property::Height, Geometry::Group { .. }) => {}
+                    (Property::Width, Geometry::Line { .. }) => {}
+                    _ => {
+                        return Err(format!(
+                            "{} does not have a {property:?} geometry property",
+                            self.id
+                        ));
+                    }
+                }
+                if matches!(self.geometry.as_ref(), Geometry::Group { .. }) {
+                    match property {
+                        Property::Width => self.layout.width = Some(number.value),
+                        Property::Height => self.layout.height = Some(number.value),
+                        _ => unreachable!("validated group layout property"),
+                    }
+                    return Ok(());
+                }
+                match (property, Arc::make_mut(&mut self.geometry)) {
+                    (
+                        Property::Radius,
+                        Geometry::Circle { radius } | Geometry::Rectangle { radius, .. },
+                    ) => *radius = number.value,
+                    (Property::Width, Geometry::Rectangle { width, .. }) => *width = number.value,
+                    (Property::Width, Geometry::Line { width, .. }) => *width = number.value,
+                    (Property::Height, Geometry::Rectangle { height, .. }) => {
+                        *height = number.value
+                    }
+                    _ => unreachable!("validated geometry property"),
                 }
             }
         }
@@ -396,15 +496,21 @@ impl Animation {
         if !math::finite(&time) || time < Fraction::zero() {
             return Err("sample time must be finite and nonnegative".into());
         }
+        let mut sampler = self.reactive.sampler(time)?;
         self.layers
             .iter()
             .filter(|v| v.birth <= time)
-            .map(|v| self.sample_element(&v.element, time))
+            .map(|v| {
+                let mut out = v.element.clone();
+                self.sample_in_place(&mut out, time, &mut sampler)?;
+                Ok(out)
+            })
             .collect()
     }
     pub fn sample_element(&self, element: &Element, time: Fraction) -> Result<Element, String> {
         let mut out = element.clone();
-        self.sample_in_place(&mut out, time)?;
+        let mut sampler = self.reactive.sampler(time)?;
+        self.sample_in_place(&mut out, time, &mut sampler)?;
         Ok(out)
     }
     pub fn sample_property(
@@ -413,16 +519,58 @@ impl Animation {
         property: Property,
         time: Fraction,
     ) -> Result<Value, String> {
+        if let Some(node) = self.reactive.binding(&element.id, property) {
+            if property == Property::Position && self.flow_controlled.contains(&element.id) {
+                return Err(format!(
+                    "flow layout controls '{}.position'; animate a containing Group or use a free Group instead",
+                    element.id
+                ));
+            }
+            if self
+                .tracks
+                .get(&element.id)
+                .is_some_and(|tracks| tracks.contains_key(&property))
+            {
+                return Err(format!(
+                    "retained property {}.{property:?} also has a motion writer",
+                    element.id
+                ));
+            }
+            return self.reactive.sampler(time)?.value(node);
+        }
         self.tracks
             .get(&element.id)
             .and_then(|properties| properties.get(&property))
             .and_then(|tracks| Track::at(tracks, time))
-            .map_or_else(
-                || Ok(element.property(property)),
-                |track| track.sample(time),
-            )
+            .map_or_else(|| element.property(property), |track| track.sample(time))
     }
-    fn sample_in_place(&self, out: &mut Element, time: Fraction) -> Result<(), String> {
+    fn sample_in_place(
+        &self,
+        out: &mut Element,
+        time: Fraction,
+        sampler: &mut crate::reactive::Sampler<'_>,
+    ) -> Result<(), String> {
+        if let Some(properties) = self.reactive.properties(&out.id) {
+            for (property, node) in properties {
+                if *property == Property::Position && self.flow_controlled.contains(&out.id) {
+                    return Err(format!(
+                        "flow layout controls '{}.position'; animate a containing Group or use a free Group instead",
+                        out.id
+                    ));
+                }
+                if self
+                    .tracks
+                    .get(&out.id)
+                    .is_some_and(|tracks| tracks.contains_key(property))
+                {
+                    return Err(format!(
+                        "retained property {}.{property:?} also has a motion writer",
+                        out.id
+                    ));
+                }
+                out.set(*property, sampler.value(*node)?)?;
+            }
+        }
         if let Some(properties) = self.tracks.get(&out.id) {
             for (property, tracks) in properties {
                 if let Some(track) = Track::at(tracks, time) {
@@ -441,7 +589,7 @@ impl Animation {
             && let Geometry::Group { children } = Arc::make_mut(&mut out.geometry)
         {
             for child in children {
-                self.sample_in_place(child, time)?;
+                self.sample_in_place(child, time, sampler)?;
             }
         }
         Ok(())
@@ -461,6 +609,15 @@ impl Animation {
         self.element_index.len()
     }
     pub fn add(&mut self, element: Element, birth: Fraction) -> Result<(), String> {
+        let mut flow = OrdSet::new();
+        collect_flow_positions(&element, &mut flow);
+        for id in &flow {
+            if self.reactive.binding(id, Property::Position).is_some() {
+                return Err(format!(
+                    "flow layout controls '{id}.position'; animate a containing Group or use a free Group instead"
+                ));
+            }
+        }
         let mut ids = vec![];
         element.ids(&mut ids);
         let mut unique = std::collections::BTreeSet::new();
@@ -480,7 +637,7 @@ impl Animation {
             }
         }
         index(&element, vec![self.layers.len()], &mut self.element_index);
-        collect_flow_positions(&element, &mut self.flow_controlled);
+        self.flow_controlled.extend(flow);
         self.layers.push_back(Layer { birth, element });
         Ok(())
     }
@@ -532,7 +689,24 @@ impl Animation {
             }
             additions.push(motion.element.clone());
         }
+        for id in &pending_flow {
+            if self.reactive.binding(id, Property::Position).is_some() {
+                return Err(format!(
+                    "flow layout controls '{id}.position'; animate a containing Group or use a free Group instead"
+                ));
+            }
+        }
         for motion in motions {
+            if self
+                .reactive
+                .binding(&motion.element.id, motion.property)
+                .is_some()
+            {
+                return Err(format!(
+                    "{}.{:?} is controlled by a retained signal; animate its mutable input instead",
+                    motion.element.id, motion.property
+                ));
+            }
             let flow_controlled = self.flow_controlled.contains(&motion.element.id)
                 || pending_flow.contains(&motion.element.id);
             if motion.property == Property::Position && flow_controlled {
@@ -750,6 +924,9 @@ impl Track {
         count.checked_sub(1).map(|index| &tracks[index])
     }
     pub fn sample(&self, time: Fraction) -> Result<Value, String> {
+        if time >= self.end {
+            return Ok(self.to.clone());
+        }
         let p = math::progress(time, self.start, self.end)?;
         let one = Fraction::from(1);
         let p = match self.easing {

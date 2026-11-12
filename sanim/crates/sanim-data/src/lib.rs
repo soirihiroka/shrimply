@@ -97,6 +97,31 @@ fn convert(
         .ok_or("decoded value limit exceeded")?;
     let bad = || format!("{path}: expected {ty}, got {}", preview(value));
     match ty {
+        Type::Union(alternatives) => {
+            let mut reasons = vec![];
+            for alternative in alternatives {
+                match convert(value, alternative, path, depth, max_depth, budget) {
+                    Ok(value) => return Ok(value),
+                    Err(error) => {
+                        if reasons.len() < 4 {
+                            reasons.push(error);
+                        }
+                    }
+                }
+            }
+            Err(format!(
+                "{path}: value does not match union {ty}; alternative errors: {}{}",
+                reasons.join("; "),
+                if alternatives.len() > reasons.len() {
+                    format!(
+                        "; {} more alternatives failed",
+                        alternatives.len() - reasons.len()
+                    )
+                } else {
+                    String::new()
+                }
+            ))
+        }
         Type::Data | Type::Dict => {
             validate_dynamic(value, depth, max_depth, budget)?;
             if *ty == Type::Dict {
@@ -298,7 +323,7 @@ fn convert(
             }
             Ok(Value::Record(out.into_iter().collect()))
         }
-        Type::List(inner) | Type::Table(inner) | Type::Array(inner) => {
+        Type::List(inner) | Type::Array(inner) => {
             let rows = value.as_array().ok_or_else(bad)?;
             let values = rows
                 .iter()
@@ -315,16 +340,12 @@ fn convert(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(match ty {
-                Type::Table(_) => Value::Table {
-                    row_type: inner.clone().into(),
-                    rows: values.into(),
-                },
                 Type::Array(_) => Value::Array {
                     element_type: inner.clone().into(),
                     shape: vec![values.len()],
                     values: values.into(),
                 },
-                _ => Value::List(values.into()),
+                _ => Value::List(sanim_core::List::typed(inner.as_ref().clone(), values)),
             })
         }
         _ => Err(format!("{path}: {ty:?} cannot be decoded from this format")),
@@ -434,7 +455,7 @@ pub fn to_json(value: &Value) -> Result<Json, String> {
             )
         }
         Value::Matrix4(matrix) => serde_json::to_value(matrix).map_err(|e| e.to_string())?,
-        Value::List(_) | Value::Table { .. } | Value::Array { .. } => Json::Array(
+        Value::List(_) | Value::Array { .. } => Json::Array(
             value
                 .list()?
                 .iter()

@@ -12,12 +12,34 @@ pub struct Statement {
     pub span: Span,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BindingKind {
+    #[default]
+    Let,
+    Mut,
+    Sig,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum StatementKind {
     Bind {
+        kind: BindingKind,
         name: String,
         annotation: Option<TypeExpr>,
         value: Expr,
+    },
+    Assign {
+        name: String,
+        value: Expr,
+    },
+    Animate {
+        name: String,
+        value: Expr,
+        duration: Expr,
+        easing: Option<Expr>,
+    },
+    Background {
+        body: Vec<Statement>,
     },
     Alias {
         name: String,
@@ -75,6 +97,9 @@ pub struct Case {
 pub enum TypeExpr {
     Named(String, Vec<TypeExpr>),
     Record(Vec<(String, TypeExpr)>),
+    Intersection(Vec<TypeExpr>),
+    Union(Vec<TypeExpr>),
+    Difference(Box<TypeExpr>, Box<TypeExpr>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -185,8 +210,26 @@ impl Statement {
     pub fn visit_expressions(&self, visitor: &mut impl FnMut(&Expr)) {
         match &self.kind {
             StatementKind::Bind { value, .. }
+            | StatementKind::Assign { value, .. }
             | StatementKind::Expr(value)
             | StatementKind::Return(value) => value.visit(visitor),
+            StatementKind::Animate {
+                value,
+                duration,
+                easing,
+                ..
+            } => {
+                value.visit(visitor);
+                duration.visit(visitor);
+                if let Some(easing) = easing {
+                    easing.visit(visitor);
+                }
+            }
+            StatementKind::Background { body } => {
+                for statement in body {
+                    statement.visit_expressions(visitor);
+                }
+            }
             StatementKind::If { condition, yes, no } => {
                 condition.visit(visitor);
                 for statement in yes.iter().chain(no) {

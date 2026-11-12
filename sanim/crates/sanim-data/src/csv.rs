@@ -3,8 +3,8 @@ use sanim_core::{Type, Value};
 use serde_json::Value as Json;
 
 pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> {
-    let Type::Table(row) = ty else {
-        return Err("CSV requires Table<Row>".into());
+    let Type::List(row) = ty else {
+        return Err("CSV requires List<Row>".into());
     };
     let Type::Record(fields) = row.as_ref() else {
         return Err("CSV row type must be a record".into());

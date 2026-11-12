@@ -21,8 +21,8 @@ pub enum Type {
     Data,
     Dict,
     List(Box<Type>),
+    Union(Vec<Type>),
     Option(Box<Type>),
-    Table(Box<Type>),
     Array(Box<Type>),
     Record(BTreeMap<String, Type>),
     Enum {
@@ -55,6 +55,9 @@ impl TypeBound {
         }
     }
     pub fn accepts(&self, ty: &Type) -> bool {
+        if let Type::Union(alternatives) = ty {
+            return !alternatives.is_empty() && alternatives.iter().all(|ty| self.accepts(ty));
+        }
         if let Type::BoundedVariable(_, bound) = ty {
             return self == bound.as_ref()
                 || match (self, bound.as_ref()) {
@@ -82,6 +85,8 @@ impl TypeBound {
 pub struct Signature {
     pub duration: crate::TimelineEffect,
     pub schedules: bool,
+    #[serde(default)]
+    pub mutates: bool,
     pub duration_parameters: std::collections::BTreeSet<usize>,
     pub generics: Vec<GenericParameter<Type, TypeBound>>,
     pub default_count: usize,
@@ -90,25 +95,57 @@ pub struct Signature {
 }
 
 impl Type {
+    /// Flatten and order alternatives once so equivalent unions share one schema.
+    pub fn union(types: impl IntoIterator<Item = Type>) -> Result<Self, String> {
+        fn append(ty: Type, output: &mut Vec<Type>) {
+            if let Type::Union(alternatives) = ty {
+                for alternative in alternatives {
+                    append(alternative, output);
+                }
+            } else {
+                output.push(ty);
+            }
+        }
+        let mut alternatives = vec![];
+        for ty in types {
+            append(ty, &mut alternatives);
+        }
+        alternatives
+            .sort_by_cached_key(|ty| serde_json::to_vec(ty).expect("serializable semantic type"));
+        alternatives.dedup();
+        match alternatives.len() {
+            0 => Err("a union type requires at least one alternative".into()),
+            1 => Ok(alternatives
+                .pop()
+                .expect("one normalized union alternative")),
+            _ => Ok(Self::Union(alternatives)),
+        }
+    }
     pub fn unresolved(&self) -> bool {
         match self {
             Self::Unknown | Self::Vector(_, None) => true,
-            Self::List(t) | Self::Option(t) | Self::Table(t) | Self::Array(t) => t.unresolved(),
+            Self::List(t) | Self::Option(t) | Self::Array(t) => t.unresolved(),
             Self::Record(fields) => fields.values().any(Self::unresolved),
+            Self::Union(alternatives) => alternatives.iter().any(Self::unresolved),
             _ => false,
         }
     }
     pub fn contains_function(&self) -> bool {
         match self {
             Self::Function(_) => true,
-            Self::List(t) | Self::Option(t) | Self::Table(t) | Self::Array(t) => {
-                t.contains_function()
-            }
+            Self::List(t) | Self::Option(t) | Self::Array(t) => t.contains_function(),
             Self::Record(fields) => fields.values().any(Self::contains_function),
+            Self::Union(alternatives) => alternatives.iter().any(Self::contains_function),
             _ => false,
         }
     }
     pub fn accepts(&self, actual: &Type) -> bool {
+        if let Self::Union(alternatives) = actual {
+            return !alternatives.is_empty() && alternatives.iter().all(|ty| self.accepts(ty));
+        }
+        if let Self::Union(alternatives) = self {
+            return alternatives.iter().any(|ty| ty.accepts(actual));
+        }
         self == actual
             || matches!(actual,Self::BoundedVariable(_,bound) if matches!(bound.as_ref(),TypeBound::Type(ty) if self.accepts(ty)))
             || matches!(self, Type::Unknown)
@@ -116,7 +153,6 @@ impl Type {
                 (Self::Vector(n, None), Self::Vector(m, _)) => n == m,
                 (Self::List(a), Self::List(b))
                 | (Self::Option(a), Self::Option(b))
-                | (Self::Table(a), Self::Table(b))
                 | (Self::Array(a), Self::Array(b)) => **b == Self::Unknown || a.accepts(b),
                 (Self::Record(a), Self::Record(b)) => {
                     a.len() == b.len()
@@ -143,8 +179,11 @@ impl Type {
             Self::Data => true,
             Self::Dict => true,
             Self::Enum { variants, .. } => variants.values().flatten().all(Self::readable),
-            Self::List(t) | Self::Table(t) | Self::Array(t) | Self::Option(t) => t.readable(),
+            Self::List(t) | Self::Array(t) | Self::Option(t) => t.readable(),
             Self::Record(fields) => fields.values().all(Self::readable),
+            Self::Union(alternatives) => {
+                !alternatives.is_empty() && alternatives.iter().all(Self::readable)
+            }
             _ => false,
         }
     }
@@ -156,11 +195,12 @@ impl Type {
                 TypeBound::Type(ty) => ty.data_convertible(),
                 TypeBound::Readable => false,
             },
-            Self::List(t) | Self::Table(t) | Self::Array(t) | Self::Option(t) => {
-                t.data_convertible()
-            }
+            Self::List(t) | Self::Array(t) | Self::Option(t) => t.data_convertible(),
             Self::Record(fields) => fields.values().all(Self::data_convertible),
             Self::Enum { variants, .. } => variants.values().flatten().all(Self::data_convertible),
+            Self::Union(alternatives) => {
+                !alternatives.is_empty() && alternatives.iter().all(Self::data_convertible)
+            }
             _ => self.readable(),
         }
     }
@@ -173,8 +213,11 @@ impl Type {
                 _ => false,
             },
             Self::Enum { variants, .. } => variants.values().flatten().all(Self::reflectable),
-            Self::List(t) | Self::Table(t) | Self::Array(t) | Self::Option(t) => t.reflectable(),
+            Self::List(t) | Self::Array(t) | Self::Option(t) => t.reflectable(),
             Self::Record(fields) => fields.values().all(Self::reflectable),
+            Self::Union(alternatives) => {
+                !alternatives.is_empty() && alternatives.iter().all(Self::reflectable)
+            }
             _ => self.readable(),
         }
     }
@@ -188,8 +231,11 @@ impl Type {
             }
             Self::List(t) => Self::List(Box::new(t.substitute(bindings))),
             Self::Option(t) => Self::Option(Box::new(t.substitute(bindings))),
-            Self::Table(t) => Self::Table(Box::new(t.substitute(bindings))),
             Self::Array(t) => Self::Array(Box::new(t.substitute(bindings))),
+            Self::Union(alternatives) => {
+                Self::union(alternatives.iter().map(|ty| ty.substitute(bindings)))
+                    .expect("nonempty checked union")
+            }
             Self::Record(fields) => Self::Record(
                 fields
                     .iter()
@@ -232,8 +278,16 @@ impl std::fmt::Display for Type {
             Self::Data => write!(f, "Data"),
             Self::Dict => write!(f, "Dict"),
             Self::List(t) => write!(f, "List<{t}>"),
+            Self::Union(alternatives) => {
+                for (index, ty) in alternatives.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{ty}")?;
+                }
+                Ok(())
+            }
             Self::Option(t) => write!(f, "Option<{t}>"),
-            Self::Table(t) => write!(f, "Table<{t}>"),
             Self::Array(t) => write!(f, "Array<{t}>"),
             Self::Record(fields) => {
                 write!(f, "{{ ")?;
@@ -331,6 +385,51 @@ pub type Vec2 = Vector<2>;
 pub type Vec3 = Vector<3>;
 pub type Vec4 = Vector<4>;
 
+/// One homogeneous collection representation. The schema survives even when empty.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct List {
+    pub element_type: Arc<Type>,
+    pub values: Arc<[Value]>,
+}
+impl PartialEq for List {
+    fn eq(&self, other: &Self) -> bool {
+        self.values == other.values
+    }
+}
+impl List {
+    pub fn from_values(element_type: Arc<Type>, values: Arc<[Value]>) -> Self {
+        Self {
+            element_type,
+            values,
+        }
+    }
+    pub fn typed(element_type: Type, values: Vec<Value>) -> Self {
+        Self::from_values(Arc::new(element_type), values.into())
+    }
+}
+impl std::ops::Deref for List {
+    type Target = [Value];
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+impl AsRef<[Value]> for List {
+    fn as_ref(&self) -> &[Value] {
+        &self.values
+    }
+}
+impl From<Vec<Value>> for List {
+    fn from(values: Vec<Value>) -> Self {
+        let element_type = values.first().map_or(Type::Unknown, Value::ty);
+        Self::typed(element_type, values)
+    }
+}
+impl FromIterator<Value> for List {
+    fn from_iter<T: IntoIterator<Item = Value>>(values: T) -> Self {
+        values.into_iter().collect::<Vec<_>>().into()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Unit,
@@ -343,11 +442,7 @@ pub enum Value {
     Vec4(Vec4),
     Matrix4(Box<crate::math::linear::Matrix4>),
     Color(Color),
-    List(Arc<[Value]>),
-    Table {
-        row_type: Arc<Type>,
-        rows: std::sync::Arc<Vec<Value>>,
-    },
+    List(List),
     Array {
         element_type: Arc<Type>,
         shape: Vec<usize>,
@@ -383,8 +478,7 @@ impl Value {
             Self::Vec4(v) => Type::Vector(4, Some(v.unit)),
             Self::Matrix4(_) => Type::Matrix4,
             Self::Color(_) => Type::Color,
-            Self::List(v) => Type::List(Box::new(v.first().map_or(Type::Unknown, Self::ty))),
-            Self::Table { row_type, .. } => Type::Table(Box::new(row_type.as_ref().clone())),
+            Self::List(v) => Type::List(Box::new(v.element_type.as_ref().clone())),
             Self::Array { element_type, .. } => {
                 Type::Array(Box::new(element_type.as_ref().clone()))
             }
@@ -400,6 +494,71 @@ impl Value {
             Self::Data(_) => Type::Data,
             Self::Dict(_) => Type::Dict,
         }
+    }
+    /// Refine contextual collection schemas without changing shared source payloads.
+    /// This does not introduce implicit scalar conversions.
+    pub fn with_type(&self, expected: &Type) -> Result<Self, String> {
+        match (expected, self) {
+            (Type::List(inner), Self::List(list))
+                if inner.as_ref() == list.element_type.as_ref() =>
+            {
+                return Ok(self.clone());
+            }
+            (Type::Array(inner), Self::Array { element_type, .. })
+                if inner.as_ref() == element_type.as_ref() =>
+            {
+                return Ok(self.clone());
+            }
+            _ => {}
+        }
+        let actual = self.ty();
+        if !expected.accepts(&actual) {
+            return Err(format!("expected {expected}, found {actual}"));
+        }
+        if let Type::Union(alternatives) = expected {
+            let alternative = alternatives
+                .iter()
+                .find(|ty| ty.accepts(&actual))
+                .expect("accepted union alternative");
+            return self.with_type(alternative);
+        }
+        if expected == &actual || expected.unresolved() {
+            return Ok(self.clone());
+        }
+        Ok(match (expected, self) {
+            (Type::List(inner), Self::List(list)) => Self::List(List::from_values(
+                Arc::new(inner.as_ref().clone()),
+                if list.is_empty() {
+                    list.values.clone()
+                } else {
+                    list.values
+                        .iter()
+                        .map(|value| value.with_type(inner))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into()
+                },
+            )),
+            (Type::Array(inner), Self::Array { shape, values, .. }) => Self::Array {
+                element_type: Arc::new(inner.as_ref().clone()),
+                shape: shape.clone(),
+                values: Arc::new(
+                    values
+                        .iter()
+                        .map(|value| value.with_type(inner))
+                        .collect::<Result<_, _>>()?,
+                ),
+            },
+            (Type::Record(fields), Self::Record(values)) => Self::Record(
+                fields
+                    .iter()
+                    .map(|(name, ty)| Ok((name.clone(), values[name].with_type(ty)?)))
+                    .collect::<Result<_, String>>()?,
+            ),
+            (Type::Option(inner), Self::Some(value)) => {
+                Self::Some(Arc::new(value.with_type(inner)?))
+            }
+            _ => self.clone(),
+        })
     }
     pub fn number(&self) -> Result<Number, String> {
         match self {
@@ -463,7 +622,7 @@ impl Value {
     pub fn list(&self) -> Result<&[Value], String> {
         match self {
             Self::List(v) => Ok(v),
-            Self::Table { rows: v, .. } | Self::Array { values: v, .. } => Ok(v.as_ref()),
+            Self::Array { values: v, .. } => Ok(v.as_ref()),
             _ => Err("expected a collection".into()),
         }
     }

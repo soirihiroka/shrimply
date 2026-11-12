@@ -36,7 +36,9 @@ impl Runtime<'_, '_> {
     }
     pub(super) fn duration_effects(&mut self, expr: &Expr, env: &Env) -> Result<(), Diagnostic> {
         self.work(expr.span)?;
-        if let TimelineEffect::Fixed(duration) = self.timeline_effect(expr.span) {
+        if !self.expression_mutates(expr)
+            && let TimelineEffect::Fixed(duration) = self.timeline_effect(expr.span)
+        {
             return self.advance_duration(duration, expr.span);
         }
         match &expr.kind {
@@ -103,6 +105,7 @@ impl Runtime<'_, '_> {
                     }
                     return Err(self.error("S305", format!("unknown function '{key}'"), expr.span));
                 };
+                let mutates = self.function_mutates(&function);
                 let needed = self
                     .duration_needed
                     .get(&function.module)
@@ -110,7 +113,7 @@ impl Runtime<'_, '_> {
                 let parameters = function
                     .parameters
                     .iter()
-                    .map(|(name, _, _)| (name.clone(), needed.contains(name)))
+                    .map(|(name, _, _)| (name.clone(), mutates || needed.contains(name)))
                     .collect::<Vec<_>>();
                 let mut evaluated = vec![];
                 let mut provided = BTreeSet::new();
@@ -146,7 +149,8 @@ impl Runtime<'_, '_> {
             | ExprKind::Reflect { value, .. } => self.duration_effects(value, env)?,
             ExprKind::Binary(op, left, right)
                 if matches!(op.as_str(), "and" | "or")
-                    && !self.timeline_effect(right.span).is_zero() =>
+                    && (!self.timeline_effect(right.span).is_zero()
+                        || self.expression_mutates(right)) =>
             {
                 let value = self
                     .expression(left, env)?
@@ -181,7 +185,11 @@ impl Runtime<'_, '_> {
         Ok(())
     }
     pub(super) fn fixed_block_duration(&self, body: &[Statement]) -> Option<Fraction> {
-        if crate::effects::has_return(body) {
+        if body
+            .iter()
+            .any(|statement| self.statement_stateful(statement))
+            || crate::effects::has_return(body)
+        {
             return None;
         }
         body.iter().try_fold(Fraction::from(0), |sum, s| {

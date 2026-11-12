@@ -15,6 +15,7 @@ pub struct Checked {
     pub read_types: BTreeMap<usize, Type>,
     pub call_types: BTreeMap<usize, BTreeMap<String, Type>>,
     pub reflected: BTreeMap<usize, std::sync::Arc<sanim_core::reflection::Declaration>>,
+    pub binding_types: BTreeMap<usize, Type>,
     pub effects: BTreeSet<String>,
     pub durations: Vec<sanim_core::NodeDuration>,
     pub duration_needed: BTreeSet<String>,
@@ -37,6 +38,9 @@ pub fn check(
         reads: BTreeMap::new(),
         call_types: BTreeMap::new(),
         reflected: BTreeMap::new(),
+        binding_types: BTreeMap::new(),
+        binding_scopes: vec![BTreeMap::new()],
+        mutations: BTreeSet::new(),
         reflection_names: crate::reflection::identities(source, module)?,
         function: None,
         calls: BTreeMap::new(),
@@ -51,7 +55,12 @@ pub fn check(
                 checker.fresh(name, &env, statement.span)?;
                 let resolved = checker.generic_parameters(generics, &env, statement.span)?;
                 let parameters = generic_variables(&resolved);
-                let resolved_type = checker.resolve(ty, &parameters, 0, statement.span)?;
+                let resolved_type = if generics.is_empty() {
+                    Some(checker.resolve(ty, &parameters, 0, statement.span)?)
+                } else {
+                    checker.validate_template(ty, &parameters, 0, statement.span)?;
+                    None
+                };
                 checker.aliases.insert(
                     name.clone(),
                     Alias {
@@ -59,7 +68,7 @@ pub fn check(
                         body: ty.clone(),
                     },
                 );
-                if generics.is_empty() {
+                if let Some(resolved_type) = resolved_type {
                     checker.schemas.insert(name.clone(), resolved_type);
                 }
             }
@@ -99,6 +108,7 @@ pub fn check(
                         Type::Function(Signature {
                             duration: sanim_core::TimelineEffect::default(),
                             schedules: false,
+                            mutates: false,
                             duration_parameters: BTreeSet::new(),
                             generics: vec![],
                             default_count: 0,
@@ -145,6 +155,7 @@ pub fn check(
                     Type::Function(Signature {
                         duration: sanim_core::TimelineEffect::default(),
                         schedules: false,
+                        mutates: false,
                         duration_parameters: BTreeSet::new(),
                         generics: vec![],
                         default_count: 0,
@@ -189,6 +200,7 @@ pub fn check(
                 Type::Function(Signature {
                     duration: sanim_core::TimelineEffect::default(),
                     schedules: false,
+                    mutates: false,
                     duration_parameters: BTreeSet::new(),
                     generics: resolved,
                     default_count: parameters.iter().filter(|(_, _, d)| d.is_some()).count(),
@@ -246,8 +258,13 @@ pub fn check(
                 }
                 checker.function = Some(name.clone());
                 let variables = generic_variables(&signature.generics);
+                checker.binding_scopes.push(BTreeMap::new());
+                for (parameter, _) in &signature.parameters {
+                    checker.bind_kind(parameter, BindingKind::Let);
+                }
                 let returns =
                     checker.block(body, &mut scope, Some(&signature.result), &variables)?;
+                checker.binding_scopes.pop();
                 if *signature.result != Type::Unit && !returns {
                     return Err(checker.error(
                         "S110",
@@ -316,14 +333,23 @@ pub fn check(
         }
     }
     loop {
-        let before = checker.effects.len();
+        let before = (checker.effects.len(), checker.mutations.len());
         for (name, calls) in &checker.calls {
             if calls.iter().any(|v| checker.effects.contains(v)) {
                 checker.effects.insert(name.clone());
             }
+            if calls.iter().any(|v| checker.mutations.contains(v)) {
+                checker.mutations.insert(name.clone());
+            }
         }
-        if before == checker.effects.len() {
+        if before == (checker.effects.len(), checker.mutations.len()) {
             break;
+        }
+    }
+    for (name, ty) in &mut env {
+        if let Type::Function(signature) = ty {
+            signature.schedules = checker.effects.contains(name);
+            signature.mutates = checker.mutations.contains(name);
         }
     }
     for statement in &module.statements {
@@ -331,21 +357,24 @@ pub fn check(
         statement.visit_expressions(&mut |expr| {
             if let ExprKind::Reflect { value, .. } = &expr.kind {
                 value.visit(&mut |node| {
-                    if checker.call_schedules(node, &env) {
+                    if checker.call_state_effect(node, &env) {
                         invalid.get_or_insert(node.span);
                     }
                 });
             }
         });
         if let Some(span) = invalid {
-            return Err(checker.error("S113","a reflected default must not schedule animations, change the scene, or run assertions; compute a pure default value and schedule it outside reflect(...) instead",span));
+            return Err(checker.error("S113","a reflected default must not mutate captured cells, schedule animations, change the scene, or run assertions; compute a pure default value and schedule it outside reflect(...) instead",span));
         }
+    }
+    for statement in &module.statements {
+        check_signal_purity(&checker, statement, &env)?;
     }
     if !root {
         let mut invalid = None;
         for statement in &module.statements {
             statement.visit_expressions(&mut |expr| {
-                if checker.call_schedules(expr, &env) {
+                if checker.call_state_effect(expr, &env) {
                     invalid.get_or_insert(expr.span);
                 }
             });
@@ -360,6 +389,7 @@ pub fn check(
         if let Some(Type::Function(signature)) = env.get_mut(name) {
             signature.duration = *effect;
             signature.schedules = checker.effects.contains(name);
+            signature.mutates = checker.mutations.contains(name);
             signature.duration_parameters = signature
                 .parameters
                 .iter()
@@ -378,10 +408,16 @@ pub fn check(
         read_types: checker.reads,
         call_types: checker.call_types,
         reflected: checker.reflected,
+        binding_types: checker.binding_types,
         effects: checker.effects,
     })
 }
 
+#[derive(Clone)]
+struct BindingInfo {
+    kind: BindingKind,
+    function: Option<String>,
+}
 struct Checker<'a> {
     source: &'a str,
     type_budget: &'a std::cell::Cell<usize>,
@@ -391,6 +427,9 @@ struct Checker<'a> {
     call_types: BTreeMap<usize, BTreeMap<String, Type>>,
     reflected: BTreeMap<usize, std::sync::Arc<sanim_core::reflection::Declaration>>,
     reflection_names: BTreeMap<usize, String>,
+    binding_types: BTreeMap<usize, Type>,
+    binding_scopes: Vec<BTreeMap<String, BindingInfo>>,
+    mutations: BTreeSet<String>,
     function: Option<String>,
     calls: BTreeMap<String, BTreeSet<String>>,
     effects: BTreeSet<String>,
@@ -411,6 +450,66 @@ impl Checker<'_> {
             return true;
         }
         matches!(crate::effects::lookup(callee,env),Some(Type::Function(signature)) if signature.schedules)
+    }
+    fn call_mutates(&self, expr: &Expr, env: &Environment) -> bool {
+        let ExprKind::Call { callee, .. } = &expr.kind else {
+            return false;
+        };
+        matches!(&callee.kind, ExprKind::Name(name) if self.mutations.contains(name))
+            || matches!(crate::effects::lookup(callee, env), Some(Type::Function(signature)) if signature.mutates)
+    }
+    fn call_state_effect(&self, expr: &Expr, env: &Environment) -> bool {
+        self.call_schedules(expr, env) || self.call_mutates(expr, env)
+    }
+    fn bind_kind(&mut self, name: &str, kind: BindingKind) {
+        self.binding_scopes
+            .last_mut()
+            .expect("binding scope")
+            .insert(
+                name.into(),
+                BindingInfo {
+                    kind,
+                    function: self.function.clone(),
+                },
+            );
+    }
+    fn writable(&mut self, name: &str, env: &Environment, span: Span) -> Result<Type, Diagnostic> {
+        if prelude::protected(name) {
+            return Err(self.error(
+                "S101",
+                format!("'{name}' is a protected Sanim name and cannot be assigned"),
+                span,
+            ));
+        }
+        let ty = env.get(name).ok_or_else(|| self.error("S120", format!("cannot assign unknown binding '{name}'; declare it first with mut {name} = value"), span))?;
+        let binding = self
+            .binding_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name));
+        match binding.map(|binding| binding.kind) {
+            Some(BindingKind::Mut) => {}
+            Some(BindingKind::Sig) => return Err(self.error("S130", format!("signal '{name}' is read-only; assign one of its mut dependencies instead"), span)),
+            _ => return Err(self.error("S130", format!("binding '{name}' is immutable; declare it with mut {name} = value if it needs reassignment. let bindings and function parameters are snapshots."), span)),
+        }
+        if let Some(function) = &self.function
+            && binding.is_some_and(|binding| binding.function.as_ref() != Some(function))
+        {
+            self.mutations.insert(function.clone());
+        }
+        self.copy_type(ty, span)
+    }
+    fn scoped_block(
+        &mut self,
+        body: &[Statement],
+        env: &mut Environment,
+        result: Option<&Type>,
+        variables: &BTreeMap<String, Type>,
+    ) -> Result<bool, Diagnostic> {
+        self.binding_scopes.push(BTreeMap::new());
+        let checked = self.block(body, env, result, variables);
+        self.binding_scopes.pop();
+        checked
     }
     fn fresh(&self, name: &str, env: &Environment, span: Span) -> Result<(), Diagnostic> {
         if prelude::protected(name) {
@@ -523,6 +622,77 @@ impl Checker<'_> {
         self.type_budget.set(remaining);
         Ok(ty.clone())
     }
+    // Generic aliases retain their source type expression until concrete arguments
+    // are supplied. Validate names now; resolve field algebra once the fields exist.
+    fn validate_template(
+        &self,
+        expr: &TypeExpr,
+        variables: &BTreeMap<String, Type>,
+        depth: usize,
+        span: Span,
+    ) -> Result<bool, Diagnostic> {
+        if depth > 64 {
+            return Err(self.error("S105", "generic type nesting limit exceeded", span));
+        }
+        self.type_budget.set(
+            self.type_budget
+                .get()
+                .checked_sub(std::mem::size_of::<TypeExpr>())
+                .ok_or_else(|| self.error("S105", "generic type budget exceeded", span))?,
+        );
+        let depends = match expr {
+            TypeExpr::Named(name, args) => {
+                if variables.contains_key(name) {
+                    if !args.is_empty() {
+                        return Err(self.error(
+                            "S105",
+                            format!("type parameter '{name}' takes no arguments"),
+                            span,
+                        ));
+                    }
+                    true
+                } else {
+                    if !prelude::types().contains_key(name.as_str())
+                        && !self.aliases.contains_key(name)
+                        && !self.schemas.contains_key(name)
+                    {
+                        return Err(self.error("S105", format!("unknown type '{name}'"), span));
+                    }
+                    let mut dependent = false;
+                    for arg in args {
+                        dependent |= self.validate_template(arg, variables, depth + 1, span)?;
+                    }
+                    dependent
+                }
+            }
+            TypeExpr::Record(fields) => {
+                let mut seen = BTreeSet::new();
+                let mut dependent = false;
+                for (name, value) in fields {
+                    if !seen.insert(name) {
+                        return Err(self.error("S103", format!("duplicate field '{name}'"), span));
+                    }
+                    dependent |= self.validate_template(value, variables, depth + 1, span)?;
+                }
+                dependent
+            }
+            TypeExpr::Intersection(values) | TypeExpr::Union(values) => {
+                let mut dependent = false;
+                for value in values {
+                    dependent |= self.validate_template(value, variables, depth + 1, span)?;
+                }
+                dependent
+            }
+            TypeExpr::Difference(left, right) => {
+                self.validate_template(left, variables, depth + 1, span)?
+                    | self.validate_template(right, variables, depth + 1, span)?
+            }
+        };
+        if !depends {
+            self.resolve(expr, variables, depth + 1, span)?;
+        }
+        Ok(depends)
+    }
     fn resolve(
         &self,
         expr: &TypeExpr,
@@ -540,6 +710,32 @@ impl Checker<'_> {
                 .ok_or_else(|| self.error("S105", "resolved type budget exceeded", span))?,
         );
         match expr {
+            TypeExpr::Intersection(values) => {
+                let mut values = values.iter();
+                let first = values.next().ok_or_else(|| {
+                    self.error("S105", "record composition needs at least one type", span)
+                })?;
+                let mut result = self.resolve(first, variables, depth + 1, span)?;
+                for value in values {
+                    let right = self.resolve(value, variables, depth + 1, span)?;
+                    result = crate::type_algebra::intersection(result, right, self.type_budget)
+                        .map_err(|message| self.error("S105", message, span))?;
+                }
+                Ok(result)
+            }
+            TypeExpr::Union(values) => Type::union(
+                values
+                    .iter()
+                    .map(|value| self.resolve(value, variables, depth + 1, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+            .map_err(|message| self.error("S105", message, span)),
+            TypeExpr::Difference(left, right) => {
+                let left = self.resolve(left, variables, depth + 1, span)?;
+                let right = self.resolve(right, variables, depth + 1, span)?;
+                crate::type_algebra::difference(left, right, self.type_budget)
+                    .map_err(|message| self.error("S105", message, span))
+            }
             TypeExpr::Record(fields) => {
                 let mut out = BTreeMap::new();
                 for (name, ty) in fields {
@@ -642,6 +838,7 @@ impl Checker<'_> {
             }
             match &statement.kind {
                 StatementKind::Bind {
+                    kind,
                     name,
                     annotation,
                     value,
@@ -662,7 +859,71 @@ impl Checker<'_> {
                     if ty.contains_function() {
                         return Err(self.error("S111","functions cannot be copied into bindings or containers; call them directly so the compiler can verify the complete call graph is acyclic",statement.span));
                     }
+                    self.binding_types
+                        .insert(statement.span.start, self.copy_type(&ty, statement.span)?);
+                    self.bind_kind(name, *kind);
                     env.insert(name.clone(), ty);
+                }
+                StatementKind::Assign { name, value } => {
+                    let expected = self.writable(name, env, statement.span)?;
+                    let actual = self.expression(value, env, Some(&expected), variables)?;
+                    self.expect(&expected, &actual, value.span)?;
+                    if !self.root && self.function.is_none() {
+                        return Err(self.error("S115", "imported modules may initialize mutable cells but cannot reassign them while importing; perform the edit in a helper called from the root script", statement.span));
+                    }
+                }
+                StatementKind::Animate {
+                    name,
+                    value,
+                    duration,
+                    easing,
+                } => {
+                    let expected = self.writable(name, env, statement.span)?;
+                    if !matches!(
+                        expected,
+                        Type::Numeric(_) | Type::Vector(2, Some(_)) | Type::Color
+                    ) {
+                        return Err(self.error("S131", format!("animate requires a numeric, Vec2, or Color mut binding, found {expected}"), statement.span));
+                    }
+                    let actual = self.expression(value, env, Some(&expected), variables)?;
+                    self.expect(&expected, &actual, value.span)?;
+                    let duration_type = self.expression(
+                        duration,
+                        env,
+                        Some(&Type::Numeric(Unit::Duration)),
+                        variables,
+                    )?;
+                    self.expect(
+                        &Type::Numeric(Unit::Duration),
+                        &duration_type,
+                        duration.span,
+                    )?;
+                    if let Some(easing) = easing {
+                        let easing_type =
+                            self.expression(easing, env, Some(&Type::String), variables)?;
+                        self.expect(&Type::String, &easing_type, easing.span)?;
+                        if let ExprKind::String(name) = &easing.kind {
+                            sanim_core::Easing::parse(name)
+                                .map_err(|message| self.error("S131", message, easing.span))?;
+                        }
+                    }
+                    if let Some(function) = &self.function {
+                        self.effects.insert(function.clone());
+                    }
+                    if !self.root && self.function.is_none() {
+                        return Err(self.error("S115", "imported modules cannot animate cells during import; call a helper from the root script", statement.span));
+                    }
+                }
+                StatementKind::Background { body } => {
+                    if crate::effects::has_return(body) {
+                        return Err(self.error("S132", "background jobs cannot return from their enclosing function; finish the bounded job body, then return on the main timeline", statement.span));
+                    }
+                    self.scoped_block(
+                        body,
+                        &mut self.copy_environment(env, statement.span)?,
+                        result,
+                        variables,
+                    )?;
                 }
                 StatementKind::Expr(expr) => {
                     let ty = self.expression(expr, env, None, variables)?;
@@ -688,13 +949,13 @@ impl Checker<'_> {
                 StatementKind::If { condition, yes, no } => {
                     let ty = self.expression(condition, env, Some(&Type::Bool), variables)?;
                     self.expect(&Type::Bool, &ty, condition.span)?;
-                    let a = self.block(
+                    let a = self.scoped_block(
                         yes,
                         &mut self.copy_environment(env, statement.span)?,
                         result,
                         variables,
                     )?;
-                    let b = self.block(
+                    let b = self.scoped_block(
                         no,
                         &mut self.copy_environment(env, statement.span)?,
                         result,
@@ -710,18 +971,18 @@ impl Checker<'_> {
                     self.fresh(name, env, statement.span)?;
                     let ty = self.expression(iterable, env, None, variables)?;
                     let inner = match ty {
-                        Type::List(t) | Type::Table(t) | Type::Array(t) => *t,
+                        Type::List(t) | Type::Array(t) => *t,
                         _ => {
                             return Err(self.error(
                                 "S116",
-                                "for requires a finite List, Table or Array",
+                                "for requires a finite List or Array",
                                 iterable.span,
                             ));
                         }
                     };
                     let mut scope = self.copy_environment(env, statement.span)?;
                     scope.insert(name.clone(), inner);
-                    self.block(body, &mut scope, result, variables)?;
+                    self.scoped_block(body, &mut scope, result, variables)?;
                 }
                 StatementKind::Repeat {
                     count,
@@ -734,7 +995,7 @@ impl Checker<'_> {
                         let ty = self.expression(period, env, None, variables)?;
                         self.expect(&Type::Numeric(Unit::Duration), &ty, period.span)?;
                     }
-                    self.block(
+                    self.scoped_block(
                         body,
                         &mut self.copy_environment(env, statement.span)?,
                         result,
@@ -789,7 +1050,7 @@ impl Checker<'_> {
                             self.fresh(name, &scope, case.span)?;
                             scope.insert(name.clone(), ty.clone());
                         }
-                        all &= self.block(&case.body, &mut scope, result, variables)?;
+                        all &= self.scoped_block(&case.body, &mut scope, result, variables)?;
                     }
                     let missing = variants
                         .keys()
@@ -825,7 +1086,11 @@ impl Checker<'_> {
     ) -> Result<Type, Diagnostic> {
         match &expr.kind {
             ExprKind::Reflect { value, options } => {
-                let ty = self.expression(value, env, expected, variables)?;
+                let actual = self.expression(value, env, expected, variables)?;
+                let ty = expected
+                    .filter(|ty| crate::reflection::concrete_schema(ty) && ty.accepts(&actual))
+                    .cloned()
+                    .unwrap_or(actual);
                 if !crate::reflection::concrete_schema(&ty) {
                     return Err(self.error("S113","cannot infer a concrete static type for this reflected default; symbolic generic parameters and untyped empty values cannot be exposed. Add a concrete annotation or explicit generic arguments, for example let optional:Option<Number>=reflect(None)",expr.span));
                 }
@@ -920,59 +1185,8 @@ impl Checker<'_> {
             }
             ExprKind::Member(base, name) => {
                 let ty = self.expression(base, env, None, variables)?;
-                let ty = match ty {
-                    Type::BoundedVariable(_, bound) => match *bound {
-                        TypeBound::Type(ty) => *ty,
-                        _ => {
-                            return Err(self.error(
-                                "S121",
-                                "this generic constraint exposes no fields",
-                                expr.span,
-                            ));
-                        }
-                    },
-                    other => other,
-                };
-                match ty {
-                    Type::Dict | Type::Data => Err(self.error("S121", format!("dictionary values use brackets: write value[\"{name}\"] instead of value.{name}"), expr.span)),
-                    Type::Record(fields) => fields.get(name).cloned().ok_or_else(|| {
-                        self.error(
-                            "S121",
-                            format!(
-                                "unknown field '{name}'; available fields: {}",
-                                fields.keys().cloned().collect::<Vec<_>>().join(", ")
-                            ),
-                            expr.span,
-                        )
-                    }),
-                    Type::Vector(n, Some(unit))
-                        if ["x", "y", "z", "w"].iter().take(n).any(|v| *v == name) =>
-                    {
-                        Ok(Type::Numeric(unit))
-                    }
-                    Type::Fraction if matches!(name.as_str(), "numerator" | "denominator") => {
-                        Ok(Type::Numeric(Unit::Number))
-                    }
-                    Type::Matrix4 if name == "rows" => Ok(Type::List(Box::new(Type::List(
-                        Box::new(Type::Numeric(Unit::Number)),
-                    )))),
-                    Type::Element => match name.as_str() {
-                        "position" => Ok(Type::Vector(2, None)),
-                        "opacity" | "scale" => Ok(Type::Numeric(Unit::Number)),
-                        "rotation" => Ok(Type::Numeric(Unit::Angle)),
-                        "fill" => Ok(Type::Color),
-                        "id" => Ok(Type::String),
-                        _ => Err(self.error(
-                            "S121",
-                            format!("unknown element property '{name}'"),
-                            expr.span,
-                        )),
-                    },
-                    Type::Array(_) if name == "shape" => {
-                        Ok(Type::List(Box::new(Type::Numeric(Unit::Number))))
-                    }
-                    _ => Err(self.error("S121", format!("{ty} has no field '{name}'"), expr.span)),
-                }
+                crate::type_algebra::member(ty, name)
+                    .map_err(|message| self.error("S121", message, expr.span))
             }
             ExprKind::Index(base, index) => {
                 let ty = self.expression(base, env, None, variables)?;
@@ -991,7 +1205,7 @@ impl Checker<'_> {
                 }
                 self.expect(&Type::Numeric(Unit::Number), &idx, index.span)?;
                 let inner = match ty {
-                    Type::List(t) | Type::Array(t) | Type::Table(t) => t,
+                    Type::List(t) | Type::Array(t) => t,
                     _ => {
                         return Err(self.error(
                             "S122",
@@ -1050,10 +1264,13 @@ impl Checker<'_> {
         let Type::Function(signature) = ty else {
             return Err(self.error("S123", format!("cannot call {ty:?}"), callee.span));
         };
-        if signature.schedules
-            && let Some(function) = &self.function
-        {
-            self.effects.insert(function.clone());
+        if let Some(function) = &self.function {
+            if signature.schedules {
+                self.effects.insert(function.clone());
+            }
+            if signature.mutates {
+                self.mutations.insert(function.clone());
+            }
         }
         if let (Some(function), ExprKind::Name(name)) = (&self.function, &callee.kind) {
             self.calls
@@ -1296,10 +1513,10 @@ impl Checker<'_> {
             } else if types.is_empty() {
                 let expected = expected
                     .cloned()
-                    .unwrap_or(Type::Table(Box::new(Type::Dict)));
+                    .unwrap_or(Type::List(Box::new(Type::Dict)));
                 if matches!(builtin.execute, prelude::Execution::Query) {
-                    let Type::Table(row) = expected else {
-                        return Err(self.error("S125", "query produces Table<Row>", expr.span));
+                    let Type::List(row) = expected else {
+                        return Err(self.error("S125", "query produces List<Row>", expr.span));
                     };
                     *row
                 } else {
@@ -1342,29 +1559,26 @@ impl Checker<'_> {
                 self.reads.insert(expr.span.start, result.clone());
                 return Ok(result);
             }
-            if !matches!(result, Type::Record(_) | Type::Dict) {
-                return Err(self.error(
-                    "S125",
-                    "query<Row> requires a record or Dict row schema, not Table<Row>",
-                    expr.span,
-                ));
-            }
+            sanim_data::sqlite::validate_row_type(&result)
+                .map_err(|message| self.error("S125", message, expr.span))?;
             let Type::Record(tables) = &actuals[1] else {
                 return Err(self.error(
                     "S106",
-                    "query tables must be named Table<Row> bindings: tables: { samples: samples }",
+                    "query inputs must be named lists, for example tables={samples=samples}",
                     expr.span,
                 ));
             };
-            if tables
-                .values()
-                .any(|t| !matches!(t,Type::Table(row) if matches!(row.as_ref(),Type::Record(_))))
-            {
-                return Err(self.error(
-                    "S106",
-                    "each SQL table binding must be a Table<Record>",
-                    expr.span,
-                ));
+            for (name, table) in tables {
+                let Type::List(row) = table else {
+                    return Err(self.error(
+                        "S106",
+                        format!("SQL input '{name}' must be a List<T>, found {table}"),
+                        expr.span,
+                    ));
+                };
+                sanim_data::sqlite::validate_row_type(row).map_err(|message| {
+                    self.error("S125", format!("SQL input '{name}': {message}"), expr.span)
+                })?;
             }
             if !matches!(actuals[2], Type::Unit | Type::Dict | Type::Record(_)) {
                 return Err(self.error(
@@ -1373,7 +1587,7 @@ impl Checker<'_> {
                     expr.span,
                 ));
             }
-            let result = Type::Table(Box::new(result));
+            let result = Type::List(Box::new(result));
             self.reads.insert(expr.span.start, result.clone());
             return Ok(result);
         }
@@ -1381,7 +1595,7 @@ impl Checker<'_> {
             let ty = if types.len() == 1 {
                 self.resolve(&types[0], variables, 0, expr.span)?
             } else if types.is_empty() {
-                expected.cloned().ok_or_else(||self.error("S125","cannot infer read result. Write read<Table<Row>>(\"file.csv\") or annotate the binding.",expr.span))?
+                expected.cloned().ok_or_else(||self.error("S125","cannot infer read result. Write read<List<Row>>(\"file.csv\") or annotate the binding.",expr.span))?
             } else {
                 return Err(self.error("S125", "read requires one type argument", expr.span));
             };
@@ -1451,6 +1665,18 @@ fn infer(
     budget: &std::cell::Cell<usize>,
 ) -> Result<(), String> {
     match (parameter, actual) {
+        (Type::Union(patterns), actual) => {
+            for pattern in patterns {
+                let mut candidate = bindings.clone();
+                if infer(pattern, actual, &mut candidate, budget).is_ok()
+                    && pattern.substitute(&candidate).accepts(actual)
+                {
+                    *bindings = candidate;
+                    return Ok(());
+                }
+            }
+        }
+
         (Type::Variable(name) | Type::BoundedVariable(name, _), actual) => {
             if let Some(previous) = bindings.get(name) {
                 if !previous.accepts(actual) {
@@ -1467,7 +1693,6 @@ fn infer(
         }
         (Type::List(a), Type::List(b))
         | (Type::Option(a), Type::Option(b))
-        | (Type::Table(a), Type::Table(b))
         | (Type::Array(a), Type::Array(b)) => infer(a, b, bindings, budget)?,
         (Type::Record(a), Type::Record(b)) => {
             for (name, ty) in a {
@@ -1510,6 +1735,7 @@ impl Checked {
             .values()
             .chain(self.schemas.values())
             .chain(self.read_types.values())
+            .chain(self.binding_types.values())
             .chain(
                 self.reflected
                     .values()
@@ -1522,4 +1748,50 @@ impl Checked {
         budget.set(remaining);
         Ok(())
     }
+}
+
+fn check_signal_purity(
+    checker: &Checker<'_>,
+    statement: &Statement,
+    env: &Environment,
+) -> Result<(), Diagnostic> {
+    match &statement.kind {
+        StatementKind::Bind {
+            kind: BindingKind::Sig,
+            value,
+            ..
+        } => {
+            let mut invalid = None;
+            value.visit(&mut |expr| {
+                if matches!(expr.kind, ExprKind::Reflect { .. })
+                    || checker.call_state_effect(expr, env)
+                {
+                    invalid.get_or_insert(expr.span);
+                }
+            });
+            if let Some(span) = invalid {
+                return Err(checker.error("S131", "sig expressions must be pure: they cannot mutate captured cells, schedule animations, assert, or declare reflected inputs. Bind reflection with let/mut first, then derive a sig from that value.", span));
+            }
+        }
+        StatementKind::Function { body, .. }
+        | StatementKind::Background { body }
+        | StatementKind::For { body, .. }
+        | StatementKind::Repeat { body, .. } => {
+            for child in body {
+                check_signal_purity(checker, child, env)?;
+            }
+        }
+        StatementKind::If { yes, no, .. } => {
+            for child in yes.iter().chain(no) {
+                check_signal_purity(checker, child, env)?;
+            }
+        }
+        StatementKind::Match { cases, .. } => {
+            for child in cases.iter().flat_map(|case| &case.body) {
+                check_signal_purity(checker, child, env)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

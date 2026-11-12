@@ -34,8 +34,12 @@ pub(crate) fn analyze(
 
     for statement in &module.statements {
         match &statement.kind {
-            StatementKind::Bind { name, value, .. } => {
-                if let Some(value) = constant(value, &constants) {
+            StatementKind::Bind {
+                kind, name, value, ..
+            } => {
+                if *kind == BindingKind::Let
+                    && let Some(value) = constant(value, &constants)
+                {
                     constants.insert(name.clone(), value);
                 } else {
                     constants.remove(name);
@@ -161,7 +165,19 @@ impl Analyzer<'_> {
     fn collect_bindings(&mut self, body: &[Statement], function: Option<&str>) {
         for statement in body {
             match &statement.kind {
-                StatementKind::Bind { name, value, .. } => self.edge(name, value),
+                StatementKind::Bind { name, value, .. } | StatementKind::Assign { name, value } => {
+                    self.edge(name, value)
+                }
+                StatementKind::Animate {
+                    name,
+                    value,
+                    duration,
+                    ..
+                } => {
+                    self.edge(name, value);
+                    self.edge(name, duration);
+                }
+                StatementKind::Background { body } => self.collect_bindings(body, function),
                 StatementKind::Function {
                     name,
                     body,
@@ -236,6 +252,9 @@ impl Analyzer<'_> {
                 effect = Effect::Dependent;
             }
         }
+        if matches!(self.env.get(name), Some(Type::Function(signature)) if !signature.schedules) {
+            effect = Effect::default();
+        }
         self.constants = previous;
         self.active.remove(name);
         self.done.insert(name.into(), effect);
@@ -253,8 +272,13 @@ impl Analyzer<'_> {
                 self.sum(effect, next, statement.span)?
             };
             may_return |= has_return(std::slice::from_ref(statement));
-            if let StatementKind::Bind { name, value, .. } = &statement.kind {
-                if let Some(value) = constant(value, &self.constants) {
+            if let StatementKind::Bind {
+                kind, name, value, ..
+            } = &statement.kind
+            {
+                if *kind == BindingKind::Let
+                    && let Some(value) = constant(value, &self.constants)
+                {
                     self.constants.insert(name.clone(), value);
                 } else {
                     self.constants.remove(name);
@@ -266,9 +290,49 @@ impl Analyzer<'_> {
     }
     fn statement(&mut self, statement: &Statement) -> Result<Effect, Diagnostic> {
         let effect = match &statement.kind {
+            StatementKind::Bind {
+                kind: BindingKind::Sig,
+                value,
+                ..
+            } => {
+                self.expression(value)?;
+                Effect::default()
+            }
             StatementKind::Bind { value, .. }
+            | StatementKind::Assign { value, .. }
             | StatementKind::Expr(value)
             | StatementKind::Return(value) => self.expression(value)?,
+            StatementKind::Background { body } => {
+                self.block(body)?;
+                Effect::Dependent
+            }
+            StatementKind::Animate {
+                name,
+                value,
+                duration,
+                easing,
+            } => {
+                self.needed.insert(name.clone());
+                let mut input = self.expression(value)?;
+                let duration_effect = self.expression(duration)?;
+                input = self.sum(input, duration_effect, statement.span)?;
+                if let Some(easing) = easing {
+                    let easing_effect = self.expression(easing)?;
+                    input = self.sum(input, easing_effect, statement.span)?;
+                }
+                let timing = if let Some(value) =
+                    constant(duration, &self.constants).and_then(|v| v.number().ok())
+                {
+                    if value.value <= Fraction::from(0) {
+                        return Err(self.fail("animate duration must be positive", duration.span));
+                    }
+                    Effect::Fixed(value.value)
+                } else {
+                    self.need(duration);
+                    Effect::Dependent
+                };
+                self.sum(input, timing, statement.span)?
+            }
             StatementKind::If { condition, yes, no } => {
                 let input = self.expression(condition)?;
                 let yes_effect = self.block(yes)?;
@@ -477,13 +541,15 @@ impl Analyzer<'_> {
                     } else if self.functions.contains_key(name) {
                         let called = self.function(name)?;
                         effect = self.sum(effect, called, expr.span)?;
-                        if called == Effect::Dependent {
+                        if called == Effect::Dependent
+                            || matches!(lookup(callee,self.env),Some(Type::Function(signature)) if signature.mutates)
+                        {
                             self.call_dependencies(callee, args);
                         }
                     }
                 } else if let Some(Type::Function(signature)) = lookup(callee, self.env) {
                     effect = self.sum(effect, signature.duration, expr.span)?;
-                    if signature.duration == Effect::Dependent {
+                    if signature.duration == Effect::Dependent || signature.mutates {
                         self.call_dependencies(callee, args);
                     }
                 }

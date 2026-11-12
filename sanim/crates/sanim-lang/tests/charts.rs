@@ -27,7 +27,7 @@ fn scales_grid_axis_scatter_and_boxplot_share_the_same_coordinates() {
         r#"{SCALES}
 let font=read<Font>("font.ttf")
 type Sample={{x:Number,y:Number}}
-let data=read<Table<Sample>>("points.csv")
+let data=read<List<Sample>>("points.csv")
 let dots=Scatter(id="dots",data=data,x_scale=xs,y_scale=ys,keys=["a","b","c"])
 let grid=Grid(id="grid",scale=xs,ticks=[0.8,1.0,1.2],spans=[Vec2(-100pt,100pt)],highlight=[1.0])
 let axis=Axis(id="axis",scale=xs,ticks=[0.8,1.0,1.2],format="percent",font=font)
@@ -120,7 +120,7 @@ fn scatter_schema_and_constructor_protection_are_static() {
     for script in [
         "let Grid=1",
         r#"type Wrong={x:String,y:Number}
-let rows=read<Table<Wrong>>("points.csv")
+let rows=read<List<Wrong>>("points.csv")
 let dots=Scatter(data=rows,x_scale=xs,y_scale=ys)"#,
     ] {
         assert!(

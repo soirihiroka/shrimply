@@ -110,7 +110,7 @@ fn native_sanim_frames_reflow_with_editor_viewport() {
 #[test]
 fn native_sanim_reflected_inputs_are_applied_before_export() {
     let f = Fixture::new(
-        "reflect tint=Color(\"red\")\nadd(Circle(radius: 10pt,fill: tint))\nwait(1s)\n",
+        "let tint=reflect(Color(\"red\"))\nadd(Circle(radius: 10pt,fill: tint))\nwait(1s)\n",
     );
     let mut item = f.item();
     let VideoItemContent::Sanim(settings) = &mut item.content else {
@@ -201,7 +201,7 @@ fn native_sanim_reuses_same_frame_without_encoding_png() {
 #[test]
 fn native_sanim_reflection_observations_do_not_publish_strict_export_sessions() {
     let f = Fixture::new(
-        "reflect(\"Display Color\",key=\"theme.accent\") color1=Color(\"red\")\nadd(Circle(fill=color1))\nwait(1s)",
+        "let color1=reflect(Color(\"red\"),label=\"Display Color\",key=\"theme.accent\")\nadd(Circle(fill=color1))\nwait(1s)",
     );
     let item = f.item();
     let canvas = CanvasSize {
@@ -232,7 +232,9 @@ fn native_sanim_reflection_observations_do_not_publish_strict_export_sessions() 
 
 #[test]
 fn native_sanim_reflection_patches_validate_aliases_and_distinguish_null_from_reset() {
-    let f = Fixture::new("reflect optional:Option<Number>=Some(2)\nreflect count=1\nwait(1s)");
+    let f = Fixture::new(
+        "let optional:Option<Number>=reflect(Some(2))\nlet count=reflect(1)\nwait(1s)",
+    );
     let mut item = f.item();
     let VideoItemContent::Sanim(settings) = &mut item.content else {
         unreachable!()
@@ -326,7 +328,7 @@ fn native_sanim_reflection_patches_validate_aliases_and_distinguish_null_from_re
 #[test]
 fn native_sanim_reflection_discovery_prepares_off_playhead_and_stops_without_ui_join() {
     let f = Fixture::new(
-        "reflect color1=Color(\"red\")\nrepeat 100000 {let calculation=1+2}\nwait(1s)",
+        "let color1=reflect(Color(\"red\"))\nrepeat 100000 {let calculation=1+2}\nwait(1s)",
     );
     let item = f.item();
     let discovery = reflection::Discovery::new(&item, Viewport::default()).unwrap();
@@ -352,7 +354,7 @@ fn native_sanim_reflection_discovery_prepares_off_playhead_and_stops_without_ui_
 fn native_sanim_reflection_benchmark() {
     use std::hint::black_box;
     let mut script = (0..64)
-        .map(|index| format!("reflect field_{index}={index}\n"))
+        .map(|index| format!("let field_{index}=reflect({index})\n"))
         .collect::<String>();
     script.push_str("add(Circle())\nwait(1s)\n");
     let fixture = Fixture::new(&script);
@@ -415,7 +417,7 @@ fn native_sanim_reflection_benchmark() {
 
 #[test]
 fn native_sanim_reflection_inspection_rejects_stale_published_schema() {
-    let fixture = Fixture::new("reflect first=1\nwait(1s)");
+    let fixture = Fixture::new("let first=reflect(1)\nwait(1s)");
     let item = fixture.item();
     let mut source = Source::new(&item).unwrap();
     let canvas = CanvasSize {
@@ -424,7 +426,7 @@ fn native_sanim_reflection_inspection_rejects_stale_published_schema() {
     };
     ready(&mut source, &item, canvas, true);
     ready(&mut source, &item, canvas, false);
-    fixture.write("reflect second=2\nwait(1s)");
+    fixture.write("let second=reflect(2)\nwait(1s)");
     let state = reflection::inspect(
         &item,
         Viewport::default(),
@@ -439,7 +441,7 @@ fn native_sanim_reflection_inspection_rejects_stale_published_schema() {
 
 #[test]
 fn native_sanim_reflection_cold_invalid_overrides_can_be_reset() {
-    let fixture = Fixture::new("reflect count=1\nwait(1s)");
+    let fixture = Fixture::new("let count=reflect(1)\nwait(1s)");
     let mut item = fixture.item();
     let VideoItemContent::Sanim(settings) = &mut item.content else {
         unreachable!()
@@ -484,7 +486,7 @@ fn native_sanim_reflection_cold_invalid_overrides_can_be_reset() {
 
 #[test]
 fn native_sanim_reflection_sets_reuse_source_schema_but_gets_refresh_dependent_defaults() {
-    let fixture = Fixture::new("reflect count=1\nreflect derived=count+1\nwait(1s)");
+    let fixture = Fixture::new("let count=reflect(1)\nlet derived=reflect(count+1)\nwait(1s)");
     let mut item = fixture.item();
     let mut source = Source::new(&item).unwrap();
     let canvas = CanvasSize {

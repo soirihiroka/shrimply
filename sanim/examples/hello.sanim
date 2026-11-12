@@ -4,11 +4,11 @@ type DotStyle = {
     radius: Length,
 }
 
-reflect dot_style: DotStyle = {
+let dot_style: DotStyle = reflect({
     fill= Color("orange"),
     radius= 24pt,
-}
-reflect repetitions: Number = 2
+})
+let repetitions: Number = reflect(2)
 
 fn make_dot(identity: String, appearance: DotStyle): Element {
     return Circle(

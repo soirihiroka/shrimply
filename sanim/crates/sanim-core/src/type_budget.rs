@@ -41,8 +41,16 @@ pub fn charge_substitution(
         }
         take(remaining, std::mem::size_of::<Type>())?;
         match ty {
-            Type::List(t) | Type::Option(t) | Type::Table(t) | Type::Array(t) => {
+            Type::List(t) | Type::Option(t) | Type::Array(t) => {
                 walk(t, remaining, bindings, depth - 1)?
+            }
+            Type::Union(alternatives) => {
+                if alternatives.is_empty() {
+                    return Err("a union type requires at least one alternative".into());
+                }
+                for ty in alternatives {
+                    walk(ty, remaining, bindings, depth - 1)?;
+                }
             }
             Type::Record(fields) => {
                 for (name, ty) in fields {

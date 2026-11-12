@@ -108,7 +108,7 @@ fn source_comments_publish_new_provenance_without_visual_changes() {
 #[test]
 fn reflected_patch_reports_changed_elements() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","reflect tint: Color = Color(\"red\")\nlet marker = Circle(id: \"marker\", fill: tint)\nadd(marker)\n");
+    files.insert("main.sanim","let tint: Color=reflect(Color(\"red\"))\nlet marker = Circle(id: \"marker\", fill: tint)\nadd(marker)\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(
@@ -153,7 +153,7 @@ fn invalid_override_is_transactional() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "reflect count = 1\nrepeat count { wait(1s) }\n",
+        "let count=reflect(1)\nrepeat count { wait(1s) }\n",
     );
     let mut session = Session::new("main.sanim");
     session.poll(&files);
@@ -227,7 +227,7 @@ fn viewport_changes_report_all_affected_elements() {
 #[test]
 fn parent_changes_report_descendant_dependencies() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","reflect offset: Length = 0pt\nlet child = Circle(id: \"child\")\nadd(Group(id: \"parent\", children: [child], position: Vec2(offset, 0pt)))\n");
+    files.insert("main.sanim","let offset: Length=reflect(0pt)\nlet child = Circle(id: \"child\")\nadd(Group(id: \"parent\", children: [child], position: Vec2(offset, 0pt)))\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(

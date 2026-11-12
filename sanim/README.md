@@ -8,7 +8,7 @@ editor, GPU kernels, Python, or GUI dependencies.
 let tint = reflect(Color("orange3"))
 
 fn make_marker(identity: String, radius: Length = 24pt): Element {
-    return Circle(id= identity, radius= radius, fill= tint)
+    return Circle(id= identity, radius= radius, fill= tint, position=Vec2(0%, 0%))
 }
 
 let marker = make_marker("marker")
@@ -74,7 +74,81 @@ Colons declare types (`name: Type`) and separate Python-style dictionary entries
 (`{"key": value}`). Older colon-style call/record value syntax remains readable
 for source compatibility, but new source uses `=`.
 
-Bindings are immutable. `reflect(value)` is an expression that exposes a typed
+`let` stores an immutable value snapshot. `mut` declares a writable binding, and
+`sig` declares a read-only derived value:
+
+```sanim
+mut a = 1
+sig b = a * 2
+let saved = b
+a = 2
+assert(b == 4)
+assert(saved == 2)
+```
+
+Only `mut` bindings accept assignment, and their inferred or declared type stays
+fixed. Use an annotation for defaults such as `mut maybe:Option<Number> = None`.
+Assignments evaluate their right side against the current state before replacing
+the value. `let`, mutable initializers, function arguments and return values take
+snapshots; they do not become references to another reactive binding.
+
+Signals evaluate lazily and reuse their value until a mutable dependency changes.
+Dependencies include reads through other signals and pure helper functions, and
+follow the branch actually evaluated. Helpers may assign captured mutable bindings;
+function-local bindings are fresh on each invocation. Signal expressions must be
+pure: helpers may use bounded local mutation, but cannot assign captured
+bindings, schedule animation, or run assertions. Dependency cycles produce diagnostics.
+
+Imported module members read the module's current values. A helper that updates
+its module's mutable binding is visible through the next member read, while a
+previous `let saved = module.value` keeps its snapshot. Mutations run during
+bounded script preparation; signals do not install arbitrary per-frame callbacks.
+Hot-reload checkpoints preserve the reactive state
+along with the animation timeline, and inspection reports resolved values.
+
+Supported constructor properties retain expressions that depend on mutable cells
+or signals, including reads through pure helpers. Fixed values remain fixed;
+unsupported live arguments fail explicitly. A bounded
+background job animates a mutable input without advancing the main script cursor:
+
+```sanim
+mut phase = 0deg
+sig size = 100pt + sin(phase) * 25pt
+let rectangle = Rect(width=size, height=size, radius=size / 6)
+let circle = Circle(radius=size / 2)
+add(rectangle)
+add(circle)
+background {
+    animate(phase, to=1800deg, duration=10s)
+}
+wait(10s)
+```
+
+Directly bound constructors infer their ID from the variable name (`rectangle`
+and `circle` here). Repeated function/loop instances receive a stable instance
+suffix, imported module globals are qualified, and an explicit `id=` overrides
+inference. Copying an existing element preserves its identity.
+
+This scene lasts ten seconds. Both shapes sample the same retained formula once
+per frame. Playback uses a bounded native expression graph and exact cell tracks,
+without evaluating source syntax or calling user functions. Scale, dimensions,
+position, rotation, fill and opacity use the scene's property sampler. `Rect` also
+accepts an animated corner `radius`, defaulting to zero; drawing clamps it to half
+the shorter edge. Circle radii remain strictly positive. A `let`
+snapshot of `size` passed instead would keep its fixed value. Overlapping cell
+writers and a property controlled by both a signal and a motion are errors.
+Continuous geometric proofs conservatively report unknown for retained formulas;
+explicit frame checks evaluate their actual sampled geometry.
+Background assignments support finite scalar, boolean, color and vector cells;
+unsupported structured-data writes fail explicitly instead of becoming visible
+before their scheduled time. Fixed child lists can contain shapes with reactive
+properties; changing a signal's entire geometry/topology requires an explicit
+snapshot and is rejected as a retained argument.
+
+Flow layouts recompute child extents for animated dimensions. They own child
+positions, so retained position writers on those children are rejected.
+
+`reflect(value)` is an expression that exposes a typed
 runtime input with a checked default, a config key, and a display label:
 
 ```sanim
@@ -120,18 +194,27 @@ Resetting an input removes its override; JSON null remains a valid Option/Data
 value. Reflected inputs and ordinary bindings are both known during preparation.
 Inputs can control bounded loops and exact duration planning. Reflection must be
 evaluated once at module scope: it cannot appear inside helpers, loops, branches,
-short-circuited operands or another reflection. Defaults cannot schedule animation
+short-circuited operands, signal initializers or another reflection. Defaults cannot schedule animation
 or run assertions; bind the input first, then use it in the animation script.
-
-Older declaration syntax remains readable and desugars to the same expression:
-`reflect("Display Color", key="palette.accent") color = Color()` means
-`let color = reflect(Color(), label="Display Color", key="palette.accent")`.
-In this older declaration form, the positional string is a label. In an expression,
-`reflect("Display Color")` exposes that string as the default value.
 
 Standard names are already available and cannot be redefined in any scope.
 Shadowing enclosing bindings is also an error. Case matters: `color` is valid;
 `Color` is protected. Records use structural checking with exact field sets.
+Record types compose with `&` and subtract fields with `-`:
+
+```sanim
+type RunInfo = {run:String, n:Number}
+type Measurements = {x:Number, y:Number}
+type Sample = RunInfo & Measurements
+type Pair = RunInfo & {left:Sample, right:Sample}
+type Coordinates = Sample - RunInfo
+```
+
+Composition produces one flat record schema. Equal overlapping fields merge;
+conflicting field types fail with the field name and both types. Subtraction
+removes named fields and rejects names absent from the left side. Parentheses
+make grouping explicit. The resulting schemas work with generic aliases and
+typed data loading; there is no runtime class hierarchy.
 Generic functions and record aliases use `<T>`, support defaults such as `<T = Data>`,
 and constraints such as `<T: Numeric>` or `<T: Readable = Data>`.
 `Unknown` is internal inference state and cannot be declared as a source type. Enums support payloads and
@@ -139,7 +222,7 @@ exhaustive `match` with `case Variant(binding) { ... }` arms.
 
 Values include `Number`, `Bool`, `String`, `Color`, `Length`, `Duration`, `Angle`,
 `Rate`, `Percent`, `Fraction`, `Vec2`, `Vec3`, `Vec4`, `Matrix4`, `Element`, `Motion`, `Font`, `List<T>`, `Option<T>`,
-`Table<T>`, `Array<T>`, `Dict`, `Data`, records, and enums. Vector component units can be made
+`Array<T>`, `Dict`, `Data`, records, and enums. Vector component units can be made
 explicit with `Vec2<Length>` or `Vec2<Percent>`. A vector inferred from
 `Vec2(25%, 50%)` retains its percentage units. Accessing `.x`/`.y` requires known
 component units. List/array indexing and `get` return `Option<T>`; `unwrap(value, fallback)`
@@ -156,6 +239,9 @@ Palette choices are explicit and independent of the desktop theme for portable o
 Arithmetic and decimal literals use checked rational values. Time never uses
 floating point. Units must agree; `96px` is explicitly converted to `72pt`.
 Numeric overflow and division by zero are preparation errors.
+Explicit approximate math functions bound their rational result denominator to
+one billion, retaining headroom for follow-up arithmetic and suppressing tiny
+trigonometric roundoff. Source literals, explicit fractions and time remain exact.
 
 `Fraction(numerator, denominator)` is an explicit exact rational value with
 `.numerator` and `.denominator` inspection. Vectors support component access,
@@ -217,7 +303,7 @@ let ticks = [0.8, 0.9, 1.0, 1.1, 1.2]
 let grid = Grid(scale=xs, ticks=ticks, spans=[Vec2(-200pt, 200pt)], highlight=[1.0])
 let axis = Axis(scale=xs, ticks=ticks, format="percent", font=read<Font>("font.ttf"))
 type Observation = {x:Number, y:Number}
-let samples = read<Table<Observation>>("samples.csv")
+let samples = read<List<Observation>>("samples.csv")
 let points = Scatter(data=samples, x_scale=xs, y_scale=ys, radius=2pt)
 let interval_box = BoxPlot(scale=xs, summary={low=0.8, q1=0.9, middle=1.0, q3=1.1, high=1.2})
 add(grid)
@@ -232,7 +318,7 @@ values fail unless clamping is explicit. Reversed ranges support y axes.
 Axes provide bounded automatic nice ticks, custom labels, percent formatting,
 vertical orientation and overlap diagnostics. `show_labels=false` retains only
 axis geometry when labels need a separate entrance. Grids support disjoint
-spans and reference ticks. Scatter takes a statically checked `Table<{x:Number,
+spans and reference ticks. Scatter takes a statically checked `List<{x:Number,
 y:Number}>`; optional unique `keys` preserve point identities through row reorder,
 and `point_opacity` controls individual overlapping marks. Mark and tick budgets
 apply before allocation. Box plots validate the five-number ordering, preserve
@@ -293,9 +379,9 @@ geometry while timeline arithmetic remains exact.
 ```text
 import "./theme" as theme
 type Sample = { id: String, value: Number }
-let samples = read<Table<Sample>>("samples.csv")
+let samples = read<List<Sample>>("samples.csv")
 // Equivalent contextual inference:
-let other: Table<Sample> = read("samples.csv")
+let other: List<Sample> = read("samples.csv")
 ```
 
 Module imports are relative, qualified and cycle-checked. They cannot execute
@@ -351,7 +437,7 @@ Parsed modules, pure expression results and decoded assets are cached separately
 Prepared fingerprints identify the complete semantic inputs, including source/data hashes, overrides, limits and viewport. Nonvisual source edits can publish a new revision while frame caches retain equal animation states.
 Keys cover semantic version, expression structure, inputs, invocation identity,
 data schema, content and relevant limits. Expression and asset/query caches each
-have an aggregate byte cap as well as an entry cap. Tables and arrays share
+have an aggregate byte cap as well as an entry cap. Lists and arrays share
 immutable storage across bindings and warm preparations. Unchanged dependencies are reused;
 source/schema/input changes invalidate affected expression results. Scheduling
 effects and user calls before a valid execution checkpoint are skipped entirely.
@@ -457,12 +543,12 @@ roundtrip through Data using exact integer/rational encodings, without f64 coerc
 ## SQLite queries
 
 Queries use actual bundled SQLite, with an in-memory database populated from the
-explicit table bindings. SQLite parses the SQL. Plain queries return `Table<Dict>`;
+explicit table bindings. SQLite parses the SQL. Plain queries return `List<Dict>`;
 an explicit row type opts into result-column and value validation.
 
 ```text
 type Sample = { category: String, amount: Number }
-let samples = read<Table<Sample>>("samples.csv")
+let samples = read<List<Sample>>("samples.csv")
 let totals = query(
     "SELECT category, SUM(amount) AS total FROM samples WHERE amount >= :minimum GROUP BY category ORDER BY category",
     tables= {samples= samples},
@@ -473,7 +559,7 @@ for row in totals {
 }
 ```
 
-`query<Summary>(...)` returns `Table<Summary>` and checks exact column names,
+`query<Summary>(...)` returns `List<Summary>` and checks exact column names,
 including empty results, and every returned cell. Nullable columns need
 `Option<T>`. SQLite uses its own INTEGER/REAL numeric semantics; explicit Fraction
 columns are exact rational text for roundtrips; SQLite numeric operators do

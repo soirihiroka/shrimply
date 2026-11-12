@@ -12,6 +12,7 @@ pub mod prelude;
 pub mod progress;
 mod reflection;
 pub mod source;
+mod type_algebra;
 pub mod watch;
 
 pub use eval::state::ExecutionState;
@@ -67,6 +68,11 @@ pub struct Statistics {
     pub reused_modules: u64,
     pub evaluated_expressions: u64,
     pub reused_expressions: u64,
+    pub signal_evaluations: u64,
+    pub signal_cache_hits: u64,
+    pub signal_invalidations: u64,
+    pub mutable_writes: u64,
+    pub unchanged_writes: u64,
     pub decoded_assets: u64,
     pub reused_assets: u64,
     pub operations: u64,

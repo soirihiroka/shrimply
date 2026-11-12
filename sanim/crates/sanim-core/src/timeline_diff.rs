@@ -34,6 +34,9 @@ impl TimelineDiff {
         let old_layers = layers(old);
         let new_layers = layers(new);
         let mut dirty_from = global.then_some(Fraction::from(0));
+        if let Some(time) = old.reactive.changed_from(&new.reactive) {
+            dirty_from = Some(dirty_from.map_or(time, |previous| previous.min(time)));
+        }
         for id in old_layers
             .keys()
             .chain(new_layers.keys())
@@ -146,6 +149,9 @@ impl TimelineDiff {
 }
 
 pub(crate) fn events(animation: &Animation) -> BTreeSet<Fraction> {
+    let cells = animation
+        .reactive
+        .bound_cells(|id| animation.find(id).is_some());
     std::iter::once(Fraction::from(0))
         .chain(animation.layers.iter().map(|layer| layer.birth))
         .chain(
@@ -154,6 +160,13 @@ pub(crate) fn events(animation: &Animation) -> BTreeSet<Fraction> {
                 .values()
                 .flat_map(|properties| properties.values())
                 .flatten()
+                .flat_map(|track| [track.start, track.end]),
+        )
+        .chain(
+            cells
+                .iter()
+                .filter_map(|id| animation.reactive.cells.get(id))
+                .flat_map(|cell| &cell.tracks)
                 .flat_map(|track| [track.start, track.end]),
         )
         .collect()
@@ -166,11 +179,20 @@ pub struct SampleTimes {
 }
 impl SampleTimes {
     pub fn new(animation: &Animation) -> Self {
+        let cells = animation
+            .reactive
+            .bound_cells(|id| animation.find(id).is_some());
         let mut moving: Vec<_> = animation
             .tracks
             .values()
             .flat_map(|properties| properties.values())
             .flatten()
+            .chain(
+                cells
+                    .iter()
+                    .filter_map(|id| animation.reactive.cells.get(id))
+                    .flat_map(|cell| &cell.tracks),
+            )
             .filter(|track| track.from != track.to)
             .map(|track| TimeRange {
                 start: track.start,
@@ -248,7 +270,7 @@ fn equivalent_track(
                 track.horizontal.unwrap_or(element.horizontal),
             ),
             None => (
-                element.property(property),
+                element.property(property).ok()?,
                 element.reveal.kind,
                 element.horizontal,
             ),

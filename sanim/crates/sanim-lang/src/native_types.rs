@@ -39,9 +39,9 @@ pub(crate) fn dot(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> 
 pub(crate) fn len(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
     if !matches!(
         &actuals[0],
-        Type::Dict | Type::Data | Type::List(_) | Type::Table(_) | Type::Array(_)
+        Type::Dict | Type::Data | Type::List(_) | Type::Array(_)
     ) {
-        return Err("len requires Dict, Data, List, Table or Array".into());
+        return Err("len requires Dict, Data, List or Array".into());
     }
     Ok(Type::Numeric(Unit::Number))
 }
@@ -57,11 +57,11 @@ pub(crate) fn get(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> 
             }
             Type::Data
         }
-        Type::List(t) | Type::Table(t) | Type::Array(t) => {
+        Type::List(t) | Type::Array(t) => {
             expect(&Type::Numeric(Unit::Number), &actuals[1])?;
             *t.clone()
         }
-        _ => return Err("get requires Dict, Data, List, Table or Array".into()),
+        _ => return Err("get requires Dict, Data, List or Array".into()),
     };
     Ok(Type::Option(Box::new(inner)))
 }

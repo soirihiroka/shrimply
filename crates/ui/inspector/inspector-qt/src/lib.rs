@@ -274,6 +274,13 @@ fn take_document() -> Option<InspectorDocument> {
     if shrimply_inspector_core::manim_parameters::poll_scenes() {
         mark_dirty();
     }
+    if CONTROLLER.with_borrow(|controller| {
+        controller
+            .as_ref()
+            .is_some_and(InspectorController::poll_sanim_parameters)
+    }) {
+        mark_dirty();
+    }
     receive_voice_models();
     receive_camera_models();
     receive_cache_statuses();
@@ -1080,18 +1087,6 @@ fn set_transition_field(
     })
 }
 
-fn set_transition_components(
-    target: &InspectorTarget,
-    path: &str,
-    values: &[(usize, String)],
-    commit_name: &str,
-    commit_immediately: bool,
-) -> Result<(), String> {
-    with_controller(|controller| {
-        controller.set_transition_components(target, path, values, commit_name, commit_immediately)
-    })
-}
-
 fn commit_transition_field(target: &InspectorTarget, commit_name: &str) -> Result<(), String> {
     with_controller(|controller| controller.commit_transition_field(target, commit_name))
 }
@@ -1361,20 +1356,6 @@ fn set_manim_text_field(
             .as_ref()
             .expect("Qt Manim edit requested before installation")
             .set_manim_text_field(target, path, value, commit_name)
-    })
-}
-
-fn set_manim_color(
-    target: &InspectorTarget,
-    path: &str,
-    value: shrimply_property_model::Color<u8>,
-    commit_name: &str,
-) -> Option<Result<(), String>> {
-    CONTROLLER.with_borrow(|controller| {
-        controller
-            .as_ref()
-            .expect("Qt Manim edit requested before installation")
-            .set_manim_color(target, path, value, commit_name)
     })
 }
 

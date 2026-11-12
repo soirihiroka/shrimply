@@ -304,3 +304,31 @@ fn transparent_and_opaque_exports_cache_distinct_pixels_and_reuse_holds() {
     ));
     assert_eq!(renderer.states_computed, 1);
 }
+
+#[test]
+fn unused_animated_cells_and_unadded_bindings_do_not_destroy_static_frame_holds() {
+    for declarations in [
+        "",
+        "sig fixed_scale=1\nlet decorated=Circle(id=\"decorated\",scale=fixed_scale)\nadd(decorated)\n",
+        "sig ghost_scale=unused+1\nlet ghost=Circle(id=\"ghost\",scale=ghost_scale)\n",
+    ] {
+        let mut renderer = Renderer::default();
+        let scene=renderer.prepare(animation(&format!("mut unused=0\n{declarations}add(Rect(id=\"still\"))\nbackground {{animate(unused,to=1,duration=10s)}}\nwait(10s)"))).unwrap();
+        let options = Options::for_animation(scene.animation());
+        let first = renderer
+            .frame_state(&scene, Fraction::from(0), &options)
+            .unwrap();
+        let later = renderer
+            .frame_state(&scene, Fraction::from(5), &options)
+            .unwrap();
+        assert!(Arc::ptr_eq(&first, &later), "{declarations}");
+        let record = renderer
+            .record(&scene, Fraction::from(0), &options)
+            .unwrap();
+        let later = renderer
+            .record(&scene, Fraction::from(5), &options)
+            .unwrap();
+        assert!(Arc::ptr_eq(&record, &later), "{declarations}");
+        assert_eq!(renderer.states_computed, 1);
+    }
+}

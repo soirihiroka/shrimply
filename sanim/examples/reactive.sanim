@@ -1,0 +1,16 @@
+background(Color("window_bg_dark"))
+
+let base_size = reflect(64pt, label="Base Size", key="shapes.size")
+let amplitude = reflect(16pt, label="Pulse Amount", key="shapes.pulse")
+mut phase = 0deg
+sig size = base_size + amplitude * sin(phase)
+
+let circle = Circle(radius=size / 2, fill=Color("blue3"), position=Vec2(-20%, 0%))
+let rectangle = Rect(width=size, height=size, radius=size / 6, fill=Color("orange3"), position=Vec2(20%, 0%))
+add(circle)
+add(rectangle)
+
+background {
+    animate(phase, to=1800deg, duration=10s)
+}
+wait(10s)

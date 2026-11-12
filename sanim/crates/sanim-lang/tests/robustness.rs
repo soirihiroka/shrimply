@@ -157,7 +157,7 @@ fn changed_read_schema_is_not_cached_as_old_type() {
 #[test]
 fn reflected_nonfinite_coordinates_are_rejected() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "reflect location = Vec2(10pt, 20pt)\n");
+    files.insert("main.sanim", "let location=reflect(Vec2(10pt, 20pt))\n");
     let input = BTreeMap::from([(
         "location".into(),
         Value::Vec2(sanim_core::Vec2 {
@@ -215,7 +215,7 @@ fn all_shipped_examples_prepare() {
 #[test]
 fn unknown_override_does_not_change_cache_validity() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "reflect count = 1\nwait(count * 1s)\n");
+    files.insert("main.sanim", "let count=reflect(1)\nwait(count * 1s)\n");
     let mut engine = Engine::default();
     let good = engine
         .prepare("main.sanim", &files, &BTreeMap::new())

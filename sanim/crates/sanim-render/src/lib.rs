@@ -35,6 +35,7 @@ pub struct Scene {
     key: String,
     times: SampleTimes,
     paths: BTreeMap<String, shrimply_drawing_skia::path::PreparedPath>,
+    dynamic_geometry: std::collections::BTreeSet<String>,
 }
 impl Scene {
     pub fn animation(&self) -> &Animation {
@@ -250,6 +251,34 @@ impl Renderer {
             draw::prepare_paths(&layer.element, &mut paths, self)?;
         }
         let times = SampleTimes::new(&animation);
+        let dynamic_geometry = animation
+            .reactive
+            .element_bindings()
+            .iter()
+            .filter(|(_, properties)| {
+                properties.keys().any(|property| {
+                    matches!(
+                        property,
+                        Property::Radius | Property::Width | Property::Height
+                    )
+                })
+            })
+            .map(|(id, _)| id.clone())
+            .chain(
+                animation
+                    .tracks
+                    .iter()
+                    .filter(|(_, properties)| {
+                        properties.keys().any(|property| {
+                            matches!(
+                                property,
+                                Property::Radius | Property::Width | Property::Height
+                            )
+                        })
+                    })
+                    .map(|(id, _)| id.clone()),
+            )
+            .collect();
         if let Some((old_key, old)) = &self.previous
             && old_key != &key
         {
@@ -281,6 +310,7 @@ impl Renderer {
             key,
             times,
             paths,
+            dynamic_geometry,
         })
     }
     pub fn clear_cache(&mut self) {
@@ -338,6 +368,17 @@ impl Renderer {
             return Ok(recording);
         }
         let state = self.frame_state(scene, time, options)?;
+        let mut dynamic_paths = BTreeMap::new();
+        if !scene.dynamic_geometry.is_empty() {
+            for element in &state.elements {
+                draw::prepare_dynamic_paths(
+                    element,
+                    &scene.dynamic_geometry,
+                    &mut dynamic_paths,
+                    self,
+                )?;
+            }
+        }
         let mut recording = Recording::capture(options.width, options.height, |canvas| {
             let logical_width = to_f64(options.logical_width)? as f32;
             let logical_height = to_f64(options.logical_height)? as f32;
@@ -349,6 +390,7 @@ impl Renderer {
             canvas.draw_rect(Rect::from_wh(logical_width, logical_height), &background);
             let mut drawing = draw::Drawing {
                 paths: &scene.paths,
+                dynamic_paths: &dynamic_paths,
                 pixels,
                 work: options.max_work,
             };

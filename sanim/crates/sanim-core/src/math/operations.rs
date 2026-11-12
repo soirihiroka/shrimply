@@ -74,8 +74,8 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
         return Ok(Type::String);
     }
     if op == "+"
-        && let (Type::List(x), Type::List(y)) = (a, b)
-        && x.accepts(y)
+        && let (Type::List(x), Type::List(_)) = (a, b)
+        && a.accepts(b)
     {
         return Ok(if **x == Type::Unknown {
             b.clone()
@@ -160,7 +160,13 @@ pub fn unary(op: &str, value: Value) -> Result<Value, String> {
 }
 
 pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
-    let ty = binary_type(op, &a.ty(), &b.ty())?;
+    let ty = match binary_type(op, &a.ty(), &b.ty()) {
+        Ok(ty) => ty,
+        // The checker proves union comparability. Different concrete alternatives
+        // compare unequal rather than losing that proof during value evaluation.
+        Err(_) if matches!(op, "==" | "!=") => return Ok(Value::Bool(op == "!=")),
+        Err(message) => return Err(message),
+    };
     if matches!(op, "==" | "!=" | "<" | ">" | "<=" | ">=") {
         if let (Ok(x), Ok(y)) = (a.number(), b.number()) {
             let ordering = x.value.cmp(&y.value);
@@ -198,7 +204,13 @@ pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
     match (a, b) {
         (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}").into())),
         (Value::List(a), Value::List(b)) => {
-            Ok(Value::List(a.iter().chain(b.iter()).cloned().collect()))
+            let Type::List(element_type) = ty else {
+                unreachable!("checked list concatenation type")
+            };
+            Ok(Value::List(crate::List::typed(
+                *element_type,
+                a.iter().chain(b.iter()).cloned().collect(),
+            )))
         }
         (Value::Matrix4(a), Value::Matrix4(b)) => {
             if op == "*" {

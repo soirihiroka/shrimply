@@ -76,19 +76,24 @@ fn approximate(value: f64) -> Result<Fraction, String> {
     if !value.is_finite() {
         return Err("math result is not finite (domain error or overflow)".into());
     }
-    if let Ok(exact) = from_f64(value) {
+    // Transcendental output is approximate already. Bound its denominator so
+    // ordinary follow-up operations retain arithmetic headroom (sin(x)*0.25+1).
+    // This does not quantize source literals, explicit fractions, or timeline time.
+    const MAX_APPROXIMATE_DENOMINATOR: u64 = 1_000_000_000;
+    if let Ok(exact) = from_f64(value)
+        && let Fraction::Rational(_, ratio) = exact
+        && *ratio.denom() <= MAX_APPROXIMATE_DENOMINATOR
+    {
         return Ok(exact);
     }
     // Quantize only explicit approximate math results. Time and ordinary scalar
     // arithmetic never use this conversion. Leave headroom for float rounding.
-    let denominator = (u64::MAX as f64 / (value.abs().max(1.) * 2.)).floor() as u64;
+    let denominator = ((u64::MAX as f64 / (value.abs().max(1.) * 2.)).floor() as u64)
+        .min(MAX_APPROXIMATE_DENOMINATOR);
     if denominator == 0 {
         return Err("math result exceeds scalar numeric range".into());
     }
     let numerator = (value.abs() * denominator as f64).round() as u64;
-    if numerator == 0 && value != 0. {
-        return Err("math result is below scalar numeric precision".into());
-    }
     Ok(Fraction::new_generic(
         if value < 0. { Sign::Minus } else { Sign::Plus },
         numerator,

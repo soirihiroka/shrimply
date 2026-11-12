@@ -3,6 +3,13 @@ RUST_TOOLCHAIN ?= nightly-2026-04-03
 CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
 
+.PHONY: core-data-check list-bench
+core-data-check:
+	$(CARGO) clippy -p sanim-core -p sanim-data --all-targets -- -D warnings
+	$(CARGO) test -p sanim-core -p sanim-data --no-fail-fast
+list-bench:
+	$(CARGO) test -p sanim-core -p sanim-data list_benchmark -- --ignored --nocapture
+
 .PHONY: check test fmt fmt-check bench frame-cache-bench state-cache-bench runtime-hot-bench reflection-bench run build
 check: fmt
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
@@ -27,3 +34,11 @@ run:
 	$(CARGO) run -p sanim-cli -- $(ARGS)
 build:
 	$(CARGO) build --workspace --release
+
+.PHONY: reactive-bench
+reactive-bench:
+	$(CARGO) test -p sanim-core retained_frame_benchmark -- --ignored --nocapture
+
+.PHONY: state-reactive-bench
+state-reactive-bench:
+	$(CARGO) run -p sanim-lang --example reactive_state -- $(ARGS)

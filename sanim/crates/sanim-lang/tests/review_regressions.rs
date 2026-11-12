@@ -36,7 +36,7 @@ fn empty_list_concatenation_preserves_concrete_types() {
 #[test]
 fn hot_reload_birth_time_marks_layer_and_children_changed() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","reflect delay: Duration = 1s\nwait(delay)\nadd(Group(id: \"parent\", children: [Circle(id: \"child\")]))\n");
+    files.insert("main.sanim","let delay: Duration=reflect(1s)\nwait(delay)\nadd(Group(id: \"parent\", children: [Circle(id: \"child\")]))\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(
@@ -134,7 +134,7 @@ fn flow_position_conflicts_in_same_play_fail_before_scheduling() {
 #[test]
 fn changed_flow_child_tracks_invalidate_sibling_layout() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","reflect factor=2\nlet a=Rect(id: \"a\")\nlet b=Rect(id: \"b\")\nadd(Row(id: \"row\", children: [a,b]))\nplay(ScaleTo(a, factor), duration: 1s)\n");
+    files.insert("main.sanim","let factor=reflect(2)\nlet a=Rect(id: \"a\")\nlet b=Rect(id: \"b\")\nadd(Row(id: \"row\", children: [a,b]))\nplay(ScaleTo(a, factor), duration: 1s)\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set("factor", Value::Number(sanim_core::Number::scalar(3)));

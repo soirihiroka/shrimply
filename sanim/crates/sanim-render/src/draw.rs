@@ -39,12 +39,16 @@ pub(crate) fn prepare_paths(
             )
             .with_transform(&skia_safe::Matrix::translate((-radius, -radius)))
         }
-        Geometry::Rectangle { width, height } => {
+        Geometry::Rectangle {
+            width,
+            height,
+            radius,
+        } => {
             let w = to_f64(*width)? as f32;
             let h = to_f64(*height)? as f32;
             shape::rect_path(
                 Rect::from_xywh(-w / 2., -h / 2., w, h),
-                0.,
+                to_f64(*radius)? as f32,
                 ShapeRoundingStrategy::Circular,
             )
         }
@@ -114,8 +118,28 @@ pub(crate) fn prepare_paths(
 
 pub(crate) struct Drawing<'a> {
     pub paths: &'a BTreeMap<String, PreparedPath>,
+    pub dynamic_paths: &'a BTreeMap<String, PreparedPath>,
     pub pixels: usize,
     pub work: usize,
+}
+
+/// Only changed primitive dimensions need new paths. Stable geometry keeps its prepared contours.
+pub(crate) fn prepare_dynamic_paths(
+    element: &Element,
+    dynamic: &std::collections::BTreeSet<String>,
+    paths: &mut BTreeMap<String, PreparedPath>,
+    renderer: &mut crate::Renderer,
+) -> Result<(), String> {
+    if let Geometry::Group { children } = element.geometry.as_ref() {
+        for child in children {
+            prepare_dynamic_paths(child, dynamic, paths, renderer)?;
+        }
+    } else if dynamic.contains(&element.id)
+        && !matches!(element.geometry.as_ref(), Geometry::Line { .. })
+    {
+        prepare_paths(element, paths, renderer)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn element_draw(
@@ -173,8 +197,9 @@ pub(crate) fn element_draw(
             return Ok(());
         }
         let prepared = drawing
-            .paths
+            .dynamic_paths
             .get(&element.id)
+            .or_else(|| drawing.paths.get(&element.id))
             .ok_or_else(|| format!("missing prepared path for '{}'", element.id))?;
         drawing.work = drawing
             .work

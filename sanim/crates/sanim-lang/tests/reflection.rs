@@ -12,9 +12,9 @@ fn run(source: &str) -> Prepared {
 #[test]
 fn declarations_expose_config_key_display_label_type_and_source_location() {
     let p = run(r#"
-reflect("Display Color") color1 = Color()
-reflect(key="palette.accent",label="Accent Color") accent:Color=Color("blue3")
-reflect() grid_lineWidth2:Length=2pt
+let color1=reflect(Color(), label="Display Color")
+let accent:Color=reflect(Color("blue3"), key="palette.accent", label="Accent Color")
+let grid_lineWidth2:Length=reflect(2pt)
 "#);
     let color = &p.reflected[0];
     assert_eq!(p.source, "main.sanim");
@@ -41,9 +41,9 @@ fn default_keys_use_normalized_relative_paths_for_root_and_imports() {
     let mut files = MemorySources::default();
     files.insert(
         "nested/main.sanim",
-        "import \"../theme.sanim\" as theme\nreflect primaryColor1=theme.tint\n",
+        "import \"../theme.sanim\" as theme\nlet primaryColor1=reflect(theme.tint)\n",
     );
-    files.insert("theme.sanim", "reflect tint=Color(\"blue3\")\n");
+    files.insert("theme.sanim", "let tint=reflect(Color(\"blue3\"))\n");
     let p = Engine::default()
         .prepare("./nested/main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -54,7 +54,10 @@ fn default_keys_use_normalized_relative_paths_for_root_and_imports() {
 #[test]
 fn canonical_and_legacy_root_overrides_have_identical_semantics() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "reflect count=2\nrepeat count {wait(1s)}\n");
+    files.insert(
+        "main.sanim",
+        "let count=reflect(2)\nrepeat count {wait(1s)}\n",
+    );
     let mut engine = Engine::default();
     let legacy = engine
         .prepare_json(
@@ -91,12 +94,12 @@ fn explicit_key_survives_variable_rename_and_key_defaults_do_not_depend_on_label
     let inputs = BTreeMap::from([("theme.accent".into(), serde_json::json!("green3"))]);
     files.insert(
         "main.sanim",
-        "reflect(\"Old Label\",key=\"theme.accent\") old_color=Color(\"red3\")\n",
+        "let old_color=reflect(Color(\"red3\"), label=\"Old Label\", key=\"theme.accent\")\n",
     );
     let old = engine.prepare_json("main.sanim", &files, &inputs).unwrap();
     files.insert(
         "main.sanim",
-        "reflect(\"New Label\",key=\"theme.accent\") new_color=Color(\"red3\")\n",
+        "let new_color=reflect(Color(\"red3\"), label=\"New Label\", key=\"theme.accent\")\n",
     );
     let new = engine.prepare_json("main.sanim", &files, &inputs).unwrap();
     assert_eq!(old.reflected[0].key, new.reflected[0].key);
@@ -111,7 +114,7 @@ fn metadata_changes_restore_before_binding_and_refresh_the_reflection_without_vi
     let mut engine = Engine::default();
     let script = |label: &str| {
         format!(
-            "wait(1s)\nreflect(\"{label}\",key=\"accent\") tint=Color(\"red3\")\nlet marker=Circle(id=\"dot\",fill=tint)\nadd(marker)\nwait(2s)\n"
+            "wait(1s)\nlet tint=reflect(Color(\"red3\"), label=\"{label}\", key=\"accent\")\nlet marker=Circle(id=\"dot\",fill=tint)\nadd(marker)\nwait(2s)\n"
         )
     };
     let inputs = BTreeMap::from([("accent".into(), serde_json::json!("blue3"))]);
@@ -143,8 +146,8 @@ fn metadata_changes_restore_before_binding_and_refresh_the_reflection_without_vi
 #[test]
 fn duplicate_keys_are_rejected_across_files_before_loading_defaults() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","import \"theme\" as theme\nreflect(key=\"accent\") tint:Color=read<Color>(\"missing.json\")\n");
-    files.insert("theme.sanim", "reflect(key=\"accent\") tint=Color()\n");
+    files.insert("main.sanim","import \"theme\" as theme\nlet tint:Color=reflect(read<Color>(\"missing.json\"), key=\"accent\")\n");
+    files.insert("theme.sanim", "let tint=reflect(Color(), key=\"accent\")\n");
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
@@ -160,27 +163,33 @@ fn duplicate_keys_are_rejected_across_files_before_loading_defaults() {
 #[test]
 fn metadata_and_override_errors_explain_how_to_fix_the_declaration() {
     for (source, expected) in [
-        ("reflect(label=12) tint=Color()", "must be a string literal"),
         (
-            "reflect(\"First\",label=\"Again\") tint=Color()",
+            "let tint=reflect(Color(), label=12)",
+            "must be a string literal",
+        ),
+        (
+            "let tint=reflect(Color(), label=\"First\", label=\"Again\")",
             "supplied more than once",
         ),
         (
-            "reflect(name=\"Label\") tint=Color()",
+            "let tint=reflect(Color(), name=\"Label\")",
             "supported options are key and label",
         ),
-        ("reflect(key=\"\") tint=Color()", "key must be nonempty"),
         (
-            "reflect(key=\" accent \") tint=Color()",
+            "let tint=reflect(Color(), key=\"\")",
+            "key must be nonempty",
+        ),
+        (
+            "let tint=reflect(Color(), key=\" accent \")",
             "surrounding whitespace",
         ),
         (
-            "reflect(label=\"  \") tint=Color()",
+            "let tint=reflect(Color(), label=\"  \")",
             "label must contain visible text",
         ),
         (
-            "reflect(key=\"accent\",\"Label\") tint=Color()",
-            "must precede named options",
+            "let tint=reflect(Color(), key=\"accent\", \"Label\")",
+            "metadata must use",
         ),
     ] {
         let mut files = MemorySources::default();
@@ -193,7 +202,7 @@ fn metadata_and_override_errors_explain_how_to_fix_the_declaration() {
         assert!(error.span.column > 0);
     }
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "reflect count=1\n");
+    files.insert("main.sanim", "let count=reflect(1)\n");
     let duplicate = BTreeMap::from([
         ("count".into(), serde_json::json!(2)),
         ("main.sanim::count".into(), serde_json::json!(3)),
@@ -215,7 +224,7 @@ fn metadata_and_override_errors_explain_how_to_fix_the_declaration() {
 #[test]
 fn compound_types_keep_full_schema_and_validate_all_nested_values() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","type Settings={palette:List<Color>,offset:Vec2<Length>}\nreflect(\"Plot Style\",key=\"plot.style\") settings:Settings={palette=[Color()],offset=Vec2(0pt,0pt)}\n");
+    files.insert("main.sanim","type Settings={palette:List<Color>,offset:Vec2<Length>}\nlet settings:Settings=reflect({palette=[Color()],offset=Vec2(0pt,0pt)}, label=\"Plot Style\", key=\"plot.style\")\n");
     let inputs = BTreeMap::from([(
         "plot.style".into(),
         serde_json::json!({"palette":["red3","blue3"],"offset":["2pt","4pt"]}),
@@ -242,11 +251,11 @@ fn explicit_keys_cannot_redirect_existing_legacy_root_overrides_to_another_input
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "import \"theme\" as theme\nreflect tint=Color(\"red3\")\n",
+        "import \"theme\" as theme\nlet tint=reflect(Color(\"red3\"))\n",
     );
     files.insert(
         "theme.sanim",
-        "reflect(key=\"tint\") accent=Color(\"blue3\")\n",
+        "let accent=reflect(Color(\"blue3\"), key=\"tint\")\n",
     );
     let error = Engine::default()
         .prepare_json(
@@ -265,7 +274,7 @@ fn explicit_keys_cannot_redirect_existing_legacy_root_overrides_to_another_input
     assert!(error.message.contains("main.sanim::tint"));
     assert_eq!(error.source, "theme.sanim");
     // An explicit key matching its own variable name is safe and remains supported.
-    run("reflect(key=\"tint\") tint=Color()\n");
+    run("let tint=reflect(Color(), key=\"tint\")\n");
 }
 
 #[test]
@@ -273,7 +282,7 @@ fn null_is_an_optional_value_and_omission_resets_to_the_default() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "reflect(\"Optional Count\") maybe_value:Option<Number>=None\n",
+        "let maybe_value:Option<Number>=reflect(None, label=\"Optional Count\")\n",
     );
     let mut engine = Engine::default();
     let null = BTreeMap::from([("main.sanim::maybe_value".into(), serde_json::Value::Null)]);
@@ -293,7 +302,7 @@ fn null_is_an_optional_value_and_omission_resets_to_the_default() {
         .prepare_json("main.sanim", &files, &BTreeMap::new())
         .unwrap();
     assert_eq!(reset.reflected[0].value, Value::None);
-    files.insert("main.sanim", "reflect count:Number=1\n");
+    files.insert("main.sanim", "let count:Number=reflect(1)\n");
     let error = engine
         .prepare_json(
             "main.sanim",
@@ -309,7 +318,7 @@ fn metadata_freshness_checks_cover_imports_and_default_data_without_repreparing(
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "import \"theme\" as theme\nreflect tint:Color=read<Color>(\"tint.json\")\n",
+        "import \"theme\" as theme\nlet tint:Color=reflect(read<Color>(\"tint.json\"))\n",
     );
     files.insert("theme.sanim", "let size=1pt\n");
     files.insert("tint.json", "\"red3\"");
@@ -390,17 +399,22 @@ fn expression_reflection_accepts_native_values_and_stable_explicit_keys() {
 }
 
 #[test]
-fn declaration_sugar_and_expression_reflection_share_input_semantics() {
-    let declaration = run("reflect(\"Accent\",key=\"theme.accent\") color=Color(\"blue3\")\n");
-    let expression =
-        run("let color=reflect(Color(\"blue3\"),label=\"Accent\",key=\"theme.accent\")\n");
-    assert_eq!(declaration.bindings, expression.bindings);
-    let a = &declaration.reflected[0];
-    let b = &expression.reflected[0];
-    assert_eq!(
-        (&a.key, &a.name, &a.label, &a.ty, &a.default, &a.value),
-        (&b.key, &b.name, &b.label, &b.ty, &b.default, &b.value)
-    );
+fn removed_reflection_declaration_syntax_is_rejected() {
+    for source in [
+        "reflect color=Color()",
+        "reflect(\"Display Color\") color=Color()",
+        "reflect(key=\"theme.accent\") color=Color()",
+        "reflect() color=Color()",
+    ] {
+        let mut files = MemorySources::default();
+        files.insert("main.sanim", source);
+        let error = Engine::default()
+            .prepare("main.sanim", &files, &BTreeMap::new())
+            .unwrap_err();
+        assert_eq!(error.code, "S002", "{error}");
+        assert_eq!(error.source, "main.sanim");
+        assert!(error.span.column > 0);
+    }
 }
 
 #[test]
@@ -664,14 +678,14 @@ fn multiple_operator_inputs_and_anonymous_constructor_fields_have_semantic_keys(
 }
 
 #[test]
-fn legacy_declarations_desugar_into_the_same_reflection_expression_ast() {
+fn expression_reflection_has_one_canonical_ast_node() {
     use sanim_lang::{
         ast::{ExprKind, StatementKind},
         parser,
     };
     for source in [
-        "reflect(\"Accent\",key=\"theme.accent\") color=Color()",
         "let color=reflect(Color(),label=\"Accent\",key=\"theme.accent\")",
+        "let color=reflect(Color(),key=\"theme.accent\",label=\"Accent\")",
     ] {
         let module = parser::parse("main.sanim", source, 200_000).unwrap();
         let StatementKind::Bind { name, value, .. } = &module.statements[0].kind else {
@@ -786,4 +800,22 @@ fn generic_optional_defaults_require_a_concrete_inner_type_before_reflection() {
         &Type::Option(Box::new(Type::Numeric(Unit::Number)))
     );
     assert_eq!(explicit.bindings["result"], Value::None);
+}
+
+#[test]
+fn read_color_defaults_infer_reflection_schema_without_annotations() {
+    let mut files = MemorySources::default();
+    files.insert(
+        "main.sanim",
+        "let accent=reflect(read<Color>(\"accent.json\"))",
+    );
+    files.insert("accent.json", "\"red3\"");
+    let prepared = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(prepared.reflected[0].ty.as_ref(), &sanim_core::Type::Color);
+    assert_eq!(
+        prepared.bindings["accent"],
+        Value::Color(Color::parse("red3").unwrap())
+    );
 }

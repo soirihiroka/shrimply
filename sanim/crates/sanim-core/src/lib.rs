@@ -4,6 +4,7 @@ pub mod duration;
 pub mod layout;
 pub use duration::{NodeDuration, TimelineEffect};
 pub mod math;
+pub mod reactive;
 pub mod reflection;
 pub mod scene;
 pub mod time_map;

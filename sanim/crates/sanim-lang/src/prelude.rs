@@ -148,6 +148,7 @@ fn build_builtins() -> Vec<Builtin> {
         params.extend([
             p("width", length.clone(), false),
             p("height", length.clone(), false),
+            p("radius", length.clone(), false),
         ]);
         add(
             name,
@@ -570,7 +571,6 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
             }
         }
         out.insert("List", Container(Type::List));
-        out.insert("Table", Container(Type::Table));
         out.insert("Array", Container(Type::Array));
         out.insert("Option", Container(Type::Option));
         for (name, bound) in [

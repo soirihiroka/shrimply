@@ -76,5 +76,8 @@ impl InspectorListState {
 }
 
 fn default_expanded(key: &str) -> bool {
-    matches!(key, "transform" | "text" | "caption-text" | "tts")
+    matches!(
+        key,
+        "transform" | "text" | "caption-text" | "tts" | "sanim-parameters"
+    )
 }

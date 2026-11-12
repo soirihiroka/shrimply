@@ -185,6 +185,19 @@ impl Inspectable for VideoItem {
         }
         if let Some(card) = context.inspector_core.sanim_card(self) {
             visual_items.push(source_parameters::sanim_item(card));
+            let controller = context.inspector_core.clone();
+            let listener_scope = Rc::downgrade(&context.listener_scope);
+            let refresh = context.refresh.clone();
+            const REFLECTION_REFRESH_INTERVAL: Duration = Duration::from_millis(50);
+            glib::timeout_add_local(REFLECTION_REFRESH_INTERVAL, move || {
+                if listener_scope.upgrade().is_none() {
+                    return glib::ControlFlow::Break;
+                }
+                if controller.poll_sanim_parameters() {
+                    refresh();
+                }
+                glib::ControlFlow::Continue
+            });
         }
         if let VideoItemContent::Blender(blender) = &self.content {
             visual_items.push(blender::item(blender, self.file.clone(), context));

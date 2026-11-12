@@ -371,6 +371,7 @@ fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
     geometry_edit.layers[0].element.geometry = sanim_core::Geometry::Rectangle {
         width: Fraction::from(16),
         height: Fraction::from(24),
+        radius: Fraction::from(0),
     }
     .into();
     renderer.prepare(geometry_edit).unwrap();
@@ -444,4 +445,56 @@ fn cached_multicontour_reveals_preserve_gaps_and_reverse_order() {
     assert!(measure.next_contour());
     assert_eq!(measure.length(), 10.0);
     assert!(!measure.next_contour());
+}
+
+#[test]
+fn retained_dimension_samples_draw_their_current_paths_and_allow_reverse_seeks() {
+    let scene = scene_in(
+        "mut extent=10pt\nsig breadth=extent\nadd(Rect(id=\"box\",width=breadth,height=10pt,fill=Color(\"red\")))\nbackground {animate(extent,to=20pt,duration=2s)}\nwait(2s)",
+        64,
+        64,
+    );
+    let mut renderer = Renderer::default();
+    let options = Options::for_animation(scene.animation());
+    let expanded = renderer
+        .render(&scene, Fraction::from(2), &options)
+        .unwrap();
+    let original = renderer
+        .render(&scene, Fraction::from(0), &options)
+        .unwrap();
+    let pixel = (32 * 64 + 40) * 4;
+    assert_eq!(&expanded.rgba[pixel..pixel + 4], &[255, 0, 0, 255]);
+    assert_eq!(original.rgba[pixel + 3], 0);
+    let repeated = renderer
+        .render(&scene, Fraction::from(2), &options)
+        .unwrap();
+    assert!(std::sync::Arc::ptr_eq(&expanded, &repeated));
+}
+
+#[test]
+fn animated_rectangle_corner_radius_changes_real_corner_pixels_and_reverse_seeks() {
+    let scene = scene_in(
+        "mut corner=0pt\nsig rounding=corner\nadd(Rect(id=\"box\",width=20pt,height=20pt,radius=rounding,fill=Color(\"red\")))\nbackground {animate(corner,to=10pt,duration=2s)}\nwait(2s)",
+        64,
+        64,
+    );
+    let mut renderer = Renderer::default();
+    let options = Options::for_animation(scene.animation());
+    let rounded = renderer
+        .render(&scene, Fraction::from(2), &options)
+        .unwrap();
+    let sharp = renderer
+        .render(&scene, Fraction::from(0), &options)
+        .unwrap();
+    let corner = (23 * 64 + 23) * 4;
+    let center = (32 * 64 + 32) * 4;
+    assert_eq!(&sharp.rgba[corner..corner + 4], &[255, 0, 0, 255]);
+    assert_eq!(rounded.rgba[corner + 3], 0);
+    assert_eq!(&rounded.rgba[center..center + 4], &[255, 0, 0, 255]);
+    assert!(std::sync::Arc::ptr_eq(
+        &rounded,
+        &renderer
+            .render(&scene, Fraction::from(2), &options)
+            .unwrap()
+    ));
 }

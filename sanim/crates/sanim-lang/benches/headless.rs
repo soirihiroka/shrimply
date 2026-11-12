@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, hint::black_box, time::Instant};
 
 fn main() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim","reflect tint: Color = Color(\"red\")\nfor i in range(1000) {\nlet marker = Circle(id: str(i), radius: 2pt, position: Vec2(0%, 0%), fill: tint)\nplay(FadeIn(marker), duration: 1ms)\n}\n");
+    sources.insert("main.sanim","let tint: Color = reflect(Color(\"red\"))\nfor i in range(1000) {\nlet marker = Circle(id: str(i), radius: 2pt, position: Vec2(0%, 0%), fill: tint)\nplay(FadeIn(marker), duration: 1ms)\n}\n");
     let mut engine = Engine::default();
     let start = Instant::now();
     let prepared = engine
@@ -40,7 +40,7 @@ fn main() {
         csv.push_str(&format!("g{},{}\n", i % 10, i));
     }
     sources.insert("data.csv", csv);
-    sources.insert("data.sanim","type Sample = { group: String, value: Number }\nlet samples=read<Table<Sample>>(\"data.csv\")\nlet totals=query(\"SELECT SUM(value) AS total FROM samples GROUP BY \\\"group\\\" ORDER BY \\\"group\\\"\", tables: {samples: samples})\n");
+    sources.insert("data.sanim","type Sample = { group: String, value: Number }\nlet samples=read<List<Sample>>(\"data.csv\")\nlet totals=query(\"SELECT SUM(value) AS total FROM samples GROUP BY \\\"group\\\" ORDER BY \\\"group\\\"\", tables: {samples: samples})\n");
     let start = Instant::now();
     let data = engine
         .prepare("data.sanim", &sources, &BTreeMap::new())

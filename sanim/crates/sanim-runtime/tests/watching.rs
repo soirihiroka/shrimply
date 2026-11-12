@@ -46,7 +46,7 @@ fn until(runtime: &Runtime, predicate: impl Fn(&Snapshot) -> bool) -> Snapshot {
 #[test]
 fn csv_edits_trigger_reload_without_source_edits() {
     let f = Fixture::new();
-    f.write("main.sanim","type Sample = {value: Number}\nlet samples=read<Table<Sample>>(\"data.csv\")\nwait(len(samples)*1s)\n");
+    f.write("main.sanim","type Sample = {value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nwait(len(samples)*1s)\n");
     f.write("data.csv", "value\n1\n");
     let runtime = f.open();
     let first = until(&runtime, |s| s.prepared.is_some());
@@ -118,7 +118,7 @@ fn yaml_and_toml_changes_trigger_reload() {
 #[test]
 fn initial_inputs_and_resets_are_acknowledged_atomically() {
     let f = Fixture::new();
-    f.write("main.sanim", "reflect count = 1\nwait(count*1s)\n");
+    f.write("main.sanim", "let count=reflect(1)\nwait(count*1s)\n");
     let runtime = f.open();
     runtime
         .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(3))]))
@@ -140,7 +140,7 @@ fn initial_inputs_and_resets_are_acknowledged_atomically() {
 #[test]
 fn failed_input_keeps_last_good_until_corrected() {
     let f = Fixture::new();
-    f.write("main.sanim", "reflect count = 1\nwait(count*1s)\n");
+    f.write("main.sanim", "let count=reflect(1)\nwait(count*1s)\n");
     let runtime = f.open();
     let first = until(&runtime, |s| s.prepared.is_some());
     runtime
@@ -184,14 +184,14 @@ fn failed_revision_error_persists_on_unchanged_polls() {
 #[test]
 fn reflected_schema_changes_can_recover_with_matching_inputs() {
     let f = Fixture::new();
-    f.write("main.sanim", "reflect amount = 1\nwait(1s)\n");
+    f.write("main.sanim", "let amount=reflect(1)\nwait(1s)\n");
     let runtime = f.open();
     until(&runtime, |s| s.prepared.is_some());
     runtime
         .set_inputs(BTreeMap::from([("amount".into(), serde_json::json!(2))]))
         .unwrap();
     until(&runtime, |s| s.applied_inputs == 1 && !s.preparing);
-    f.write("main.sanim", "reflect amount = \"new\"\nwait(1s)\n");
+    f.write("main.sanim", "let amount=reflect(\"new\")\nwait(1s)\n");
     until(&runtime, |s| s.diagnostic.is_some());
     runtime
         .set_inputs(BTreeMap::from([(
@@ -335,7 +335,7 @@ fn wake_observer_can_read_and_request_another_revision() {
         atomic::{AtomicBool, Ordering},
     };
     let f = Fixture::new();
-    f.write("main.sanim", "reflect count = 1\nwait(count*1s)");
+    f.write("main.sanim", "let count=reflect(1)\nwait(count*1s)");
     let runtime = Arc::new(f.open());
     until(&runtime, |s| !s.preparing && s.prepared.is_some());
     let weak = Arc::downgrade(&runtime);
@@ -369,7 +369,7 @@ fn wake_observer_can_read_and_request_another_revision() {
 fn last_runtime_owner_can_be_dropped_inside_worker_observer() {
     use std::sync::{Arc, Barrier, mpsc};
     let f = Fixture::new();
-    f.write("main.sanim", "reflect count = 1\nwait(count*1s)");
+    f.write("main.sanim", "let count=reflect(1)\nwait(count*1s)");
     let runtime = Arc::new(f.open());
     until(&runtime, |s| !s.preparing && s.prepared.is_some());
     let weak = Arc::downgrade(&runtime);
@@ -484,7 +484,7 @@ fn observation_retains_published_state_without_keeping_runtime_workers_alive() {
     let f = Fixture::new();
     f.write(
         "main.sanim",
-        "reflect(\"Display Color\") tint=Color()\nwait(1s)\n",
+        "let tint=reflect(Color(), label=\"Display Color\")\nwait(1s)\n",
     );
     let runtime = std::sync::Arc::new(f.open());
     let ready = until(&runtime, |s| s.prepared.is_some() && !s.preparing);

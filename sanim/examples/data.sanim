@@ -7,8 +7,8 @@ type Sample = {
     value: Number,
 }
 
-let samples = read<Table<Sample>>("samples.csv")
-reflect bar_color: Color = theme.accent
+let samples = read<List<Sample>>("samples.csv")
+let bar_color: Color = reflect(theme.accent)
 
 for sample in samples {
     let bar = Rect(

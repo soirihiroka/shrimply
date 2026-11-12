@@ -730,7 +730,8 @@ mod tests {
             let VideoItemContent::Text(text) = &video_item.content else {
                 panic!("expected text item");
             };
-            let text_cards = cards(text, p.canvas_size, InspectorRuntime::default(), None);
+            let runtime = crate::model::target_runtime(&p, &controller.player_state, &target);
+            let text_cards = cards(text, p.canvas_size, runtime, None);
             text_cards[1]
                 .reset
                 .clone()

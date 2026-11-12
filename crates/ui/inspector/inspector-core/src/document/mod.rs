@@ -71,7 +71,7 @@ impl InspectorToggleAction {
 
 impl crate::InspectorController {
     pub fn poll_document_dependencies(&self) -> bool {
-        let sanim = self.sanim_reflection.borrow_mut().poll();
+        let sanim = self.poll_sanim_parameters();
         let blender = crate::video::blender::poll_metadata();
         let manim_scenes = crate::manim_parameters::poll_scenes();
         let media = self.media_metadata.borrow_mut().poll();

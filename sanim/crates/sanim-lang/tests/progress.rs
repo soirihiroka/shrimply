@@ -19,7 +19,7 @@ fn observed() -> (Engine, Arc<Mutex<Vec<Progress>>>) {
 #[test]
 fn actual_work_counts_are_monotonic_and_finish_once() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "import \"values\" as values\nlet rows = read<Table<Sample>>(\"rows.csv\")\ntype Sample = {value: Number}\nlet result = query(\"SELECT value FROM rows\", tables = {rows = rows})\nrepeat 400 { wait(1ms) }\nassert(len(result) == values.count)\n");
+    files.insert("main.sanim", "import \"values\" as values\nlet rows = read<List<Sample>>(\"rows.csv\")\ntype Sample = {value: Number}\nlet result = query(\"SELECT value FROM rows\", tables = {rows = rows})\nrepeat 400 { wait(1ms) }\nassert(len(result) == values.count)\n");
     files.insert("values.sanim", "let count = 2\n");
     const CSV: &str = "value\n1\n2\n";
     files.insert("rows.csv", CSV);

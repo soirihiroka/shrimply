@@ -223,7 +223,7 @@ fn session_publishes_time_before_scene_validation() {
 #[test]
 fn unused_reflected_defaults_do_not_load_irrelevant_timing_assets() {
     let files = sources(
-        "reflect unused:Color=read<Color>(\"absent.json\")\nwait(1s)",
+        "let unused:Color=reflect(read<Color>(\"absent.json\"))\nwait(1s)",
         &[],
     );
     let report = Engine::default()
@@ -268,7 +268,7 @@ fn qualified_imports_propagate_value_and_timing_demands() {
 #[test]
 fn unused_reflected_overrides_are_validated_without_loading_defaults() {
     let files = sources(
-        "reflect tint:Color=read<Color>(\"absent.json\")\nwait(1s)",
+        "let tint:Color=reflect(read<Color>(\"absent.json\"))\nwait(1s)",
         &[],
     );
     let report = Engine::default()

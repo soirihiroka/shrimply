@@ -399,54 +399,13 @@ impl qobject::InspectorBackend {
         let alpha = if control.with_alpha { alpha } else { 1.0 };
         let channels =
             [red, green, blue, alpha].map(|value| (value.clamp(0.0, 1.0) * 255.0).round() as u8);
-        if control.kind == ControlKind::LayeredColor {
-            let result = control
-                .timeline_id
-                .ok_or_else(|| "timeline color ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_color_value(
-                        &target,
-                        &control.path,
-                        timeline_id,
-                        shrimply_property_model::Color::new(
-                            channels[0],
-                            channels[1],
-                            channels[2],
-                            channels[3],
-                        ),
-                        &control.commit_name,
-                    )
-                });
-            self.as_mut().finish(result);
-            return;
+        let values = channels.map(f64::from);
+        let result = crate::with_controller(|controller| {
+            controller.set_basic_control_components(&target, &control, &values)
+        });
+        if result.is_ok() {
+            crate::mark_dirty();
         }
-        if let Some(result) = crate::set_manim_color(
-            &target,
-            &control.path,
-            shrimply_property_model::Color::new(channels[0], channels[1], channels[2], channels[3]),
-            &control.commit_name,
-        ) {
-            self.as_mut().finish(result);
-            return;
-        }
-        let values = channels
-            .into_iter()
-            .enumerate()
-            .map(|(component, value)| (component, value.to_string()))
-            .collect::<Vec<_>>();
-        let result = if matches!(target, InspectorTarget::Transition { .. })
-            && !control.commit_name.is_empty()
-        {
-            crate::set_transition_components(
-                &target,
-                &control.path,
-                &values,
-                &control.commit_name,
-                control.commit_immediately,
-            )
-        } else {
-            crate::set_components(&target, &control.path, &values)
-        };
         self.as_mut().finish(result);
     }
 

@@ -1,5 +1,5 @@
 background(#121826)
-reflect cycles: Number = 4
+let cycles: Number = reflect(4)
 
 let pulse = Circle(id= "pulse", radius= 24pt, fill= #64D8CB)
 timer cycles every 500ms {

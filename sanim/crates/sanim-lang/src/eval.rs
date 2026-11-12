@@ -1,4 +1,8 @@
 mod duration;
+mod plans;
+mod reactive;
+mod reactive_animation;
+use reactive::Binding;
 pub(crate) mod state;
 use crate::ast::referenced_names as dependencies;
 use crate::{
@@ -19,7 +23,8 @@ use std::{
 };
 
 // Arithmetic is centralized in sanim-core::math; the evaluator only dispatches operators.
-type Env = imbl::OrdMap<String, Value>;
+type Values = imbl::OrdMap<String, Value>;
+type Env = imbl::OrdMap<String, Binding>;
 
 #[derive(serde::Serialize)]
 enum CacheDependency<'a> {
@@ -70,11 +75,23 @@ pub(crate) fn evaluate(
         values,
         assets,
         font_keys: crate::cache::FontCache::new(limits.max_cache_bytes, limits.max_cache_entries),
+        expression_plans: sanim_core::cache::Cache::new(
+            limits.max_cache_bytes,
+            limits.max_cache_entries,
+        ),
         statistics,
         progress,
         completed_statements: 0,
         total_statements,
         globals: imbl::OrdMap::new(),
+        reactive: reactive::Store::default(),
+        signal_frames: Vec::new(),
+        named_constructor: None,
+        background_depth: 0,
+        instance_paths: loaded
+            .iter()
+            .map(|module| (module.id.clone(), reactive::instance_paths(&module.ast)))
+            .collect(),
         functions: BTreeMap::new(),
         constructors: BTreeMap::new(),
         reflected: imbl::Vector::new(),
@@ -117,12 +134,14 @@ pub(crate) fn evaluate(
         runtime.report_evaluation(None);
         let mut env = Env::new();
         for (alias, id) in &module.imports {
-            env.insert(
-                alias.clone(),
-                Value::Record(runtime.globals.get(id).cloned().ok_or_else(|| {
-                    runtime.error("S301", "imported module has no values", Span::default())
-                })?),
-            );
+            if !runtime.globals.contains_key(id) {
+                return Err(runtime.error(
+                    "S301",
+                    "imported module has no values",
+                    Span::default(),
+                ));
+            }
+            env.insert(alias.clone(), Binding::Module(id.clone()));
         }
         for (name, ty) in &module.checked.schemas {
             if name.contains('.') {
@@ -132,10 +151,10 @@ pub(crate) fn evaluate(
                 Type::Record(_) => {
                     let key = format!("{}::{name}", module.id);
                     runtime.constructors.insert(key.clone(), ty.clone());
-                    env.insert(name.clone(), Value::Function(key));
+                    env.insert(name.clone(), Value::Function(key).into());
                 }
                 Type::Enum { variants, .. } => {
-                    let mut fields = Env::new();
+                    let mut fields = Values::new();
                     for (tag, types) in variants {
                         if types.is_empty() {
                             fields.insert(
@@ -152,7 +171,7 @@ pub(crate) fn evaluate(
                             fields.insert(tag.clone(), Value::Function(key));
                         }
                     }
-                    env.insert(name.clone(), Value::Record(fields));
+                    env.insert(name.clone(), Value::Record(fields).into());
                 }
                 _ => {}
             }
@@ -179,7 +198,7 @@ pub(crate) fn evaluate(
                         ),
                     }),
                 );
-                env.insert(name.clone(), Value::Function(key));
+                env.insert(name.clone(), Value::Function(key).into());
             }
         }
         runtime.globals.insert(module.id.clone(), env.clone());
@@ -278,7 +297,24 @@ pub(crate) fn evaluate(
     let root = loaded
         .last()
         .ok_or_else(|| runtime.error("S301", "no root module", Span::default()))?;
-    let bindings = runtime.globals.remove(&root.id).unwrap_or_default();
+    let scope = runtime.globals.get(&root.id).cloned().unwrap_or_default();
+    let reactive_revision = runtime.reactive.revision;
+    let bindings = if duration_only {
+        Values::new()
+    } else {
+        runtime.materialize(&scope, Span::default())?
+    };
+    if !duration_only && runtime.reactive.revision != reactive_revision {
+        states.save(
+            &runtime,
+            &scope,
+            root.ast
+                .statements
+                .iter()
+                .filter(|statement| state::executable(statement))
+                .count(),
+        );
+    }
     let types = root.checked.schemas.clone();
     // Determinism makes complete semantic inputs a revision identity. Do not serialize
     // the scene and bindings again: both can reference the same large payloads.
@@ -332,7 +368,13 @@ pub(crate) struct Runtime<'a, 's> {
     completed_statements: u64,
     total_statements: u64,
     font_keys: crate::cache::FontCache,
+    expression_plans: sanim_core::cache::Cache<(String, usize, usize), plans::Plan>,
     globals: imbl::OrdMap<String, Env>,
+    reactive: reactive::Store,
+    signal_frames: Vec<reactive::Frame>,
+    named_constructor: Option<(usize, String)>,
+    background_depth: usize,
+    instance_paths: BTreeMap<String, BTreeMap<usize, String>>,
     functions: BTreeMap<String, Arc<Function>>,
     constructors: BTreeMap<String, Type>,
     reflected: imbl::Vector<ReflectedInput>,
@@ -429,12 +471,15 @@ impl Runtime<'_, '_> {
         for statement in body {
             if self.duration_only {
                 let binding_needed = match &statement.kind {
-                    StatementKind::Bind { name, .. } => {
-                        self.result_needed || self.duration_binding_needed(name)
+                    StatementKind::Bind { kind, name, .. } => {
+                        *kind != BindingKind::Let
+                            || self.result_needed
+                            || self.duration_binding_needed(name)
                     }
                     _ => false,
                 };
-                if !binding_needed
+                if !self.statement_stateful(statement)
+                    && !binding_needed
                     && !matches!(
                         statement.kind,
                         StatementKind::Repeat { .. } | StatementKind::For { .. }
@@ -446,9 +491,11 @@ impl Runtime<'_, '_> {
                     continue;
                 }
                 match &statement.kind {
-                    StatementKind::Bind { name, .. }
-                        if !self.result_needed && !self.duration_binding_needed(name) =>
-                    {
+                    StatementKind::Bind {
+                        kind: BindingKind::Let,
+                        name,
+                        ..
+                    } if !self.result_needed && !self.duration_binding_needed(name) => {
                         if let StatementKind::Bind { value, .. } = &statement.kind {
                             self.duration_effects(value, env)?;
                             continue;
@@ -469,22 +516,57 @@ impl Runtime<'_, '_> {
             self.work(statement.span)?;
             let before = self.statistics.operations;
             match &statement.kind {
-                StatementKind::Bind { name, value, .. } => {
-                    let value = self.expression(value, env)?;
-                    sanim_core::value_budget::charge(
-                        &value,
-                        &mut self.retained_bytes,
-                        &mut self.retained_items,
-                        self.limits.data.max_depth,
-                    )
-                    .map_err(|e| {
-                        self.error(
-                            "S303",
-                            format!("preparation binding budget: {e}"),
-                            statement.span,
-                        )
-                    })?;
-                    env.insert(name.clone(), value);
+                StatementKind::Bind {
+                    kind, name, value, ..
+                } => {
+                    let previous_name = self
+                        .named_constructor
+                        .replace((value.span.start, name.clone()));
+                    let binding = if *kind == BindingKind::Let {
+                        self.expression(value, env).and_then(|value| {
+                            let value = value
+                                .with_type(&self.binding_type(statement.span)?)
+                                .map_err(|e| self.error("S140", e, statement.span))?;
+                            self.retain_binding_value(&value, statement.span)?;
+                            Ok(Binding::Value(value))
+                        })
+                    } else {
+                        self.declare_reactive(name, *kind, value, env, statement.span)
+                    };
+                    self.named_constructor = previous_name;
+                    env.insert(name.clone(), binding?);
+                }
+                StatementKind::Assign { name, value } => {
+                    self.assign(name, value, env, statement.span)?
+                }
+                StatementKind::Animate {
+                    name,
+                    value,
+                    duration,
+                    easing,
+                } => self.animate_binding(
+                    name,
+                    value,
+                    duration,
+                    easing.as_ref(),
+                    env,
+                    statement.span,
+                )?,
+                StatementKind::Background { body } => {
+                    let start = self.cursor;
+                    self.background_depth += 1;
+                    let result = self.scoped_block(body, &mut env.clone());
+                    self.background_depth -= 1;
+                    let mapped = if result.is_ok() {
+                        self.map_time(start, statement.span, TimeMapKind::Statement)
+                    } else {
+                        Ok(())
+                    };
+                    self.cursor = start;
+                    mapped?;
+                    if let Some(value) = result? {
+                        return Ok(Some(value));
+                    }
                 }
                 StatementKind::Expr(expr) => {
                     self.expression(expr, env)?;
@@ -500,7 +582,7 @@ impl Runtime<'_, '_> {
                     } else {
                         no
                     };
-                    if let Some(value) = self.block(selected, &mut env.clone())? {
+                    if let Some(value) = self.scoped_block(selected, &mut env.clone())? {
                         return Ok(Some(value));
                     }
                 }
@@ -534,10 +616,10 @@ impl Runtime<'_, '_> {
                     }
                     for (index, value) in values.iter().enumerate() {
                         let mut scope = env.clone();
-                        scope.insert(name.clone(), value.clone());
+                        scope.insert(name.clone(), value.clone().into());
                         self.identity
-                            .push(format!("for{}:{index}", statement.span.start));
-                        let result = self.block(body, &mut scope);
+                            .push(format!("for{}:{index}", self.instance_site(statement.span)));
+                        let result = self.scoped_block(body, &mut scope);
                         self.identity.pop();
                         if let Some(value) = result? {
                             return Ok(Some(value));
@@ -607,9 +689,11 @@ impl Runtime<'_, '_> {
                     }
                     let start = self.cursor;
                     for index in 0..count {
-                        self.identity
-                            .push(format!("repeat{}:{index}", statement.span.start));
-                        let result = self.block(body, &mut env.clone());
+                        self.identity.push(format!(
+                            "repeat{}:{index}",
+                            self.instance_site(statement.span)
+                        ));
+                        let result = self.scoped_block(body, &mut env.clone());
                         self.identity.pop();
                         if let Some(value) = result? {
                             return Ok(Some(value));
@@ -656,9 +740,9 @@ impl Runtime<'_, '_> {
                         .ok_or_else(|| self.error("S301", "missing enum case", value.span))?;
                     let mut scope = env.clone();
                     for (name, value) in case.bindings.iter().zip(fields.iter()) {
-                        scope.insert(name.clone(), value.clone());
+                        scope.insert(name.clone(), value.clone().into());
                     }
-                    if let Some(value) = self.block(&case.body, &mut scope)? {
+                    if let Some(value) = self.scoped_block(&case.body, &mut scope)? {
                         return Ok(Some(value));
                     }
                 }
@@ -690,39 +774,48 @@ impl Runtime<'_, '_> {
             return self.expression_inner(expr, env);
         }
         let cache_started = Instant::now();
-        let key = if cacheable(expr) {
-            let mut names = BTreeSet::new();
-            dependencies(expr, &mut names);
-            let identity = names
-                .iter()
-                .any(|name| prelude::builtin(name).is_some_and(|b| b.result == Type::Element))
-                .then_some(&self.identity);
-            let limits = names
-                .contains("range")
-                .then_some(self.limits.max_iterations);
-            let mut deps = BTreeMap::new();
-            for name in names {
-                if let Some(value) = env.get(&name) {
-                    let key = match value {
-                        Value::Font(font) => CacheDependency::Font(self.font_keys.key(font)),
-                        _ => CacheDependency::Value(value),
-                    };
-                    deps.insert(name, key);
+        let key = if self.limits.max_cache_entries > 0 && self.limits.max_cache_bytes > 0 {
+            let plan = self.expression_plan(expr)?;
+            // Resolving reactive reads remains execution work; never hide them behind a value hit.
+            if let Some(fingerprint) = &plan.fingerprint
+                && !plan.names.iter().any(|name| {
+                    matches!(
+                        env.get(name),
+                        Some(Binding::Reactive(_) | Binding::Module(_))
+                    )
+                })
+            {
+                let identity = plan.element_identity.then_some(&self.identity);
+                let limits = plan.iteration_limit.then_some(self.limits.max_iterations);
+                let mut deps = BTreeMap::new();
+                for name in &plan.names {
+                    if let Some(Binding::Value(value)) = env.get(name) {
+                        let value = match value {
+                            Value::Font(font) => CacheDependency::Font(self.font_keys.key(font)),
+                            _ => CacheDependency::Value(value),
+                        };
+                        deps.insert(name, value);
+                    }
                 }
-            }
-            Some(digest(
-                &serde_json::to_vec(&(
-                    SEMANTICS_VERSION,
-                    &self.type_bindings,
-                    limits,
-                    self.limits.data,
-                    &self.module,
-                    identity,
-                    &expr.kind,
-                    deps,
+                Some(digest(
+                    &serde_json::to_vec(&(
+                        SEMANTICS_VERSION,
+                        &self.type_bindings,
+                        limits,
+                        self.limits.data,
+                        &self.module,
+                        identity,
+                        self.named_constructor
+                            .as_ref()
+                            .filter(|_| identity.is_some()),
+                        fingerprint,
+                        deps,
+                    ))
+                    .map_err(|error| self.error("S301", error.to_string(), expr.span))?,
                 ))
-                .map_err(|e| self.error("S301", e.to_string(), expr.span))?,
-            ))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -794,6 +887,9 @@ impl Runtime<'_, '_> {
                             expr.span,
                         )
                     })?;
+                let default = default
+                    .with_type(&declaration.ty)
+                    .map_err(|e| self.error("S140", e, value.span))?;
                 let key = &declaration.key;
                 let supplied = self.overrides.get(key);
                 let current = supplied.unwrap_or(&default).clone();
@@ -829,11 +925,16 @@ impl Runtime<'_, '_> {
             ExprKind::Name(name) if prelude::values().contains_key(name.as_str()) => {
                 Ok(prelude::values()[name.as_str()].clone())
             }
-            ExprKind::Name(name) => env.get(name).cloned().ok_or_else(|| {
-                bad(format!(
-                    "name '{name}' is not available in this preparation scope"
-                ))
-            }),
+            ExprKind::Name(name) => {
+                let binding = env.get(name).cloned().ok_or_else(|| {
+                    self.error(
+                        "S120",
+                        format!("name '{name}' is not available in this preparation scope"),
+                        expr.span,
+                    )
+                })?;
+                self.binding_value(&binding, expr.span)
+            }
             ExprKind::List(items) => Ok(Value::List(
                 items
                     .iter()
@@ -908,6 +1009,23 @@ impl Runtime<'_, '_> {
                     .map_err(|e| self.error("S305", e, expr.span))
             }
             ExprKind::Member(base, name) => {
+                if let ExprKind::Name(alias) = &base.kind
+                    && let Some(Binding::Module(module)) = env.get(alias)
+                {
+                    let binding = self
+                        .globals
+                        .get(module)
+                        .and_then(|scope| scope.get(name))
+                        .cloned()
+                        .ok_or_else(|| {
+                            self.error(
+                                "S120",
+                                format!("module '{alias}' has no export '{name}'"),
+                                expr.span,
+                            )
+                        })?;
+                    return self.binding_value(&binding, expr.span);
+                }
                 let value = self.expression(base, env)?;
                 match value {
                     Value::Record(fields) => fields.get(name).cloned().ok_or_else(|| {
@@ -973,14 +1091,33 @@ impl Runtime<'_, '_> {
                         if name == "id" {
                             return Ok(Value::String(element.id.clone().into()));
                         }
-                        let property = match name.as_str() {
-                            "position" => Property::Position,
-                            "rotation" => Property::Rotation,
-                            "scale" => Property::Scale,
-                            "opacity" => Property::Opacity,
-                            _ => Property::Fill,
-                        };
-                        Ok(element.property(property))
+                        let property =
+                            reactive_animation::property_name(name).ok_or_else(|| {
+                                self.error(
+                                    "S305",
+                                    format!("unknown element property '{name}'"),
+                                    expr.span,
+                                )
+                            })?;
+                        if let Some(node) = self.animation.reactive.binding(&element.id, property) {
+                            let cells = self
+                                .animation
+                                .reactive
+                                .cell_dependencies(node)
+                                .map_err(|error| self.error("S140", error, expr.span))?;
+                            for cell in &cells {
+                                self.refresh_cell(*cell, expr.span)?;
+                            }
+                            if let Some(frame) = self.signal_frames.last_mut() {
+                                frame.dependencies.extend(cells);
+                            }
+                        }
+                        if let Some(frame) = self.signal_frames.last_mut() {
+                            frame.temporal = true;
+                        }
+                        self.animation
+                            .sample_property(&element, property, self.cursor)
+                            .map_err(|error| self.error("S305", error, expr.span))
                     }
                     Value::Array { shape, .. } if name == "shape" => Ok(Value::List(
                         shape
@@ -1072,11 +1209,15 @@ impl Runtime<'_, '_> {
                     for (name, value) in args {
                         evaluated.push((name.clone(), self.expression(value, env)?));
                     }
-                    return self.native(&name, evaluated, expr.span);
+                    self.infer_constructor_id(&name, args, &mut evaluated, expr.span);
+                    let value = self.native(&name, evaluated, expr.span)?;
+                    self.retain_constructor_signals(&name, &value, args, env, expr.span)?;
+                    return Ok(value);
                 }
                 let Value::Function(key) = self.expression(callee, env)? else {
                     return Err(self.error("S305", "expected callable function", expr.span));
                 };
+                self.check_shape_helper_inputs(&key, args, env, expr.span)?;
                 let mut evaluated = vec![];
                 for (name, value) in args {
                     evaluated.push((name.clone(), self.expression(value, env)?));
@@ -1089,16 +1230,21 @@ impl Runtime<'_, '_> {
                                 &fields.keys().cloned().collect::<Vec<_>>(),
                             );
                             let mut out = BTreeMap::new();
-                            for (name, _) in fields {
+                            for (name, ty) in fields {
                                 out.insert(
                                     name.clone(),
-                                    ordered.get(&name).cloned().ok_or_else(|| {
-                                        self.error(
-                                            "S305",
-                                            format!("missing field '{name}'"),
-                                            expr.span,
-                                        )
-                                    })?,
+                                    ordered
+                                        .get(&name)
+                                        .cloned()
+                                        .ok_or_else(|| {
+                                            self.error(
+                                                "S305",
+                                                format!("missing field '{name}'"),
+                                                expr.span,
+                                            )
+                                        })?
+                                        .with_type(&ty)
+                                        .map_err(|e| self.error("S140", e, expr.span))?,
                                 );
                             }
                             Ok(Value::Record(out.into()))
@@ -1124,10 +1270,16 @@ impl Runtime<'_, '_> {
                                     let mut ordered = order_values(&evaluated, &names);
                                     names
                                         .iter()
-                                        .map(|name| {
-                                            ordered.remove(name).expect("checked enum argument")
+                                        .zip(&variants[&tag])
+                                        .map(|(name, ty)| {
+                                            ordered
+                                                .remove(name)
+                                                .expect("checked enum argument")
+                                                .with_type(ty)
+                                                .map_err(|e| self.error("S140", e, expr.span))
                                         })
-                                        .collect()
+                                        .collect::<Result<Vec<_>, _>>()?
+                                        .into()
                                 },
                             })
                         }
@@ -1166,6 +1318,8 @@ impl Runtime<'_, '_> {
                     .collect()
             })
             .unwrap_or_default();
+        let call_site = self.instance_site(span);
+        let mutates = self.function_mutates(&function);
         let previous_types = std::mem::replace(&mut self.type_bindings, bindings);
         let previous = std::mem::replace(&mut self.module, function.module.clone());
         let mut scope = self
@@ -1182,9 +1336,10 @@ impl Runtime<'_, '_> {
                 .collect::<Vec<_>>(),
         );
         self.identity
-            .push(format!("{}@{}", function.name, span.start));
+            .push(format!("{}@{}", function.name, call_site));
         for (name, _, default) in &function.parameters {
-            if self.duration_only && !need_result && !self.duration_binding_needed(name) {
+            if self.duration_only && !need_result && !mutates && !self.duration_binding_needed(name)
+            {
                 if !ordered.contains_key(name)
                     && !provided.is_some_and(|names| names.contains(name))
                     && let Some(default) = default
@@ -1200,7 +1355,30 @@ impl Runtime<'_, '_> {
             } else {
                 return Err(self.error("S305", format!("missing argument '{name}'"), span));
             };
-            scope.insert(name.clone(), value.clone());
+            let parameter_type = self
+                .loaded
+                .iter()
+                .find(|module| module.id == function.module)
+                .and_then(|module| module.checked.exports.get(&function.name))
+                .and_then(|ty| {
+                    if let Type::Function(signature) = ty {
+                        signature
+                            .parameters
+                            .iter()
+                            .find(|(parameter, _)| parameter == name)
+                            .map(|(_, ty)| ty.substitute(&self.type_bindings))
+                    } else {
+                        None
+                    }
+                });
+            let value = if let Some(ty) = parameter_type {
+                value
+                    .with_type(&ty)
+                    .map_err(|e| self.error("S140", e, span))?
+            } else {
+                value
+            };
+            scope.insert(name.clone(), value.into());
         }
         let previous_result = self.result_needed;
         self.result_needed = need_result;
@@ -1209,8 +1387,34 @@ impl Runtime<'_, '_> {
         let result = if self.depth > self.limits.max_call_depth {
             Err(self.error("S303", "bounded function call depth exceeded", span))
         } else {
-            self.block(&function.body, &mut scope)
+            self.scoped_block(&function.body, &mut scope)
         };
+        let result = result.and_then(|value| {
+            if self.duration_only && !need_result {
+                return Ok(value);
+            }
+            let ty = self
+                .loaded
+                .iter()
+                .find(|module| module.id == function.module)
+                .and_then(|module| module.checked.exports.get(&function.name))
+                .and_then(|ty| {
+                    if let Type::Function(signature) = ty {
+                        Some(signature.result.substitute(&self.type_bindings))
+                    } else {
+                        None
+                    }
+                });
+            value
+                .map(|value| {
+                    if let Some(ty) = &ty {
+                        value.with_type(ty).map_err(|e| self.error("S140", e, span))
+                    } else {
+                        Ok(value)
+                    }
+                })
+                .transpose()
+        });
         if result.is_ok() {
             self.map_time(function_start, function.span, TimeMapKind::Function)?;
         }
@@ -1535,8 +1739,8 @@ impl Runtime<'_, '_> {
     }
 }
 
-fn order_values(args: &[(Option<String>, Value)], parameters: &[String]) -> Env {
-    let mut out = Env::new();
+fn order_values(args: &[(Option<String>, Value)], parameters: &[String]) -> Values {
+    let mut out = Values::new();
     let mut positional = 0;
     for (name, value) in args {
         if let Some(name) = name {
@@ -1586,6 +1790,19 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
         return Err(format!("expected {ty}, found {}", value.ty()));
     }
     match (ty, value) {
+        (Type::Union(alternatives), value) => {
+            let mut reasons = Vec::new();
+            for alternative in alternatives {
+                match validate_value(alternative, value) {
+                    Ok(()) => return Ok(()),
+                    Err(reason) => reasons.push(reason),
+                }
+            }
+            return Err(format!(
+                "value matches no alternative of {ty}: {}",
+                reasons.join("; ")
+            ));
+        }
         (Type::Fraction, Value::Fraction(value)) if !math::finite(value) => {
             return Err("fraction must be finite".into());
         }
@@ -1615,7 +1832,7 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
         {
             return Err("array shape does not match its value count".into());
         }
-        (Type::List(inner) | Type::Table(inner) | Type::Array(inner), values) => {
+        (Type::List(inner) | Type::Array(inner), values) => {
             for value in values.list()? {
                 validate_value(inner, value)?;
             }

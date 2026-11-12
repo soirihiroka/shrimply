@@ -396,6 +396,13 @@ sanim-integration-check: native-deps
 sanim-reflection-bench: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import native_sanim_reflection_benchmark --lib -- --ignored --nocapture
 
+.PHONY: sanim-inspector-check sanim-inspector-bench
+check: sanim-inspector-check
+sanim-inspector-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-inspector-core sanim_inspector --lib
+sanim-inspector-bench: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-inspector-core sanim_inspector_snapshot_poll_benchmark --lib -- --ignored --nocapture
+
 check: editing-api-check
 
 ifneq ($(HOST_OS),Windows_NT)

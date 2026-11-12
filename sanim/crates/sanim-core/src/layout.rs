@@ -155,7 +155,7 @@ pub fn extent(element: &Element) -> Result<(f64, f64), String> {
             calc("*", to_f64(*radius)?, 2.0)?,
             calc("*", to_f64(*radius)?, 2.0)?,
         ),
-        Geometry::Rectangle { width, height } => (to_f64(*width)?, to_f64(*height)?),
+        Geometry::Rectangle { width, height, .. } => (to_f64(*width)?, to_f64(*height)?),
         Geometry::Group { .. } => (
             to_f64(
                 element

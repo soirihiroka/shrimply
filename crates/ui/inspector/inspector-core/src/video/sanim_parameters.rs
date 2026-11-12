@@ -14,6 +14,10 @@ use std::{
 pub const PARAMETER_PATH_PREFIX: &str = "/sanim/parameters/";
 const COMMIT: &str = "sanim-parameter";
 
+#[cfg(test)]
+#[path = "sanim_parameters/tests.rs"]
+mod tests;
+
 #[derive(Default)]
 pub(crate) struct Tracker {
     selected: Option<(uuid::Uuid, PathBuf)>,
@@ -118,6 +122,11 @@ pub fn parameter_key(path: &str) -> Option<&str> {
         .filter(|key| !key.is_empty())
 }
 impl InspectorController {
+    /// Poll published preparation state only; dependency watching belongs to the runtime.
+    pub fn poll_sanim_parameters(&self) -> bool {
+        self.sanim_reflection.borrow_mut().poll()
+    }
+
     pub fn sanim_card(&self, item: &VideoItem) -> Option<VideoCard> {
         if !matches!(item.content, VideoItemContent::Sanim(_)) {
             self.sanim_reflection.borrow_mut().clear();
@@ -342,6 +351,12 @@ fn control(input: &source::ReflectedInput) -> Result<InspectorControl, String> {
             ))
             .immediate_commit(COMMIT)
     };
+    if matches!(input.ty.as_ref(), source::Type::Union(_)) {
+        return Ok(base(ControlKind::Text).value(
+            serde_json::to_string(&source::to_json(&input.value)?)
+                .map_err(|error| error.to_string())?,
+        ));
+    }
     Ok(match &input.value {
         source::Value::Color(color) => base(ControlKind::Color).components(
             color

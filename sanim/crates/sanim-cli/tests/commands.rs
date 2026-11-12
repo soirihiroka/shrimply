@@ -71,7 +71,7 @@ fn render_writes_actual_png() {
 #[test]
 fn reflected_override_is_validated() {
     let (output, _) = run(
-        "reflect duration: Duration = 1s\nwait(duration)\n",
+        "let duration: Duration=reflect(1s)\nwait(duration)\n",
         &["check", "--set", "duration=\"2s\"", "--json"],
     );
     assert!(
@@ -83,7 +83,7 @@ fn reflected_override_is_validated() {
 #[test]
 fn invalid_override_fails() {
     let (output, _) = run(
-        "reflect count: Number = 1\n",
+        "let count: Number=reflect(1)\n",
         &["check", "--set", "count=\"bad\""],
     );
     assert!(!output.status.success());

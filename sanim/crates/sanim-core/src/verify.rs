@@ -187,6 +187,15 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
             ),
         };
     }
+    if animation.reactive.has_bindings() {
+        return result(
+            Evidence::Unknown,
+            format!(
+                "{describe}; continuous proof of retained reactive properties is not supported; use explicit frame checks"
+            ),
+            None,
+        );
+    }
     for element in std::iter::once(&predicate.left).chain(predicate.right.iter()) {
         if animation.tracks.get(&element.id).is_some_and(|v| {
             v.contains_key(&Property::Rotation)
@@ -355,7 +364,7 @@ pub(crate) fn bounds_at(
                 unit: crate::Unit::Length,
             },
         ),
-        Geometry::Rectangle { width, height } => (
+        Geometry::Rectangle { width, height, .. } => (
             Vec2 {
                 values: [
                     -calc("/", to_f64(*width)?, 2.0)?,

@@ -124,7 +124,10 @@ fn current_hoisted_declarations_replace_obsolete_saved_bindings() {
 #[test]
 fn changed_reflection_restores_before_its_binding_and_failure_keeps_valid_prefix() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "wait(1s)\nreflect delay=1s\nwait(delay)\n");
+    files.insert(
+        "main.sanim",
+        "wait(1s)\nlet delay=reflect(1s)\nwait(delay)\n",
+    );
     let mut engine = Engine::default();
     prepare(&mut engine, &files);
     let edited = engine
@@ -187,11 +190,13 @@ fn snapshots_share_large_data_geometry_and_unchanged_timeline_nodes() {
     let prepared = prepare(&mut engine, &files);
     let first = engine.execution_state(3).unwrap();
     let last = engine.execution_state(5).unwrap();
-    let (Value::List(a), Value::List(b)) = (&first.bindings["large"], &last.bindings["large"])
-    else {
+    let (Value::List(a), Value::List(b)) = (
+        first.binding("large").unwrap(),
+        last.binding("large").unwrap(),
+    ) else {
         panic!("list snapshots")
     };
-    assert!(Arc::ptr_eq(a, b));
+    assert!(Arc::ptr_eq(&a.values, &b.values));
     assert!(first.animation.layers.ptr_eq(&last.animation.layers));
     assert!(Arc::ptr_eq(
         &first.animation.layers[0].element.geometry,
@@ -279,7 +284,7 @@ fn rejected_candidates_do_not_retain_dependencies_from_an_obsolete_branch() {
     for reflected in [false, true] {
         let mut files = MemorySources::default();
         let flag = if reflected {
-            "reflect use_extra=true"
+            "let use_extra=reflect(true)"
         } else {
             "let use_extra=read<Bool>(\"flag.json\")"
         };
@@ -333,12 +338,12 @@ fn bounded_checkpoint_eviction_keeps_suffix_restoration_available() {
 #[test]
 fn changed_imported_reflection_defaults_refresh_even_when_the_override_is_unchanged() {
     let mut files = MemorySources::default();
-    files.insert("theme.sanim", "reflect tint=Color(\"red\")\n");
+    files.insert("theme.sanim", "let tint=reflect(Color(\"red\"))\n");
     files.insert("main.sanim", "import \"theme.sanim\" as theme\nwait(1s)\n");
     let inputs = BTreeMap::from([("theme.sanim::tint".into(), serde_json::json!("green"))]);
     let mut engine = Engine::default();
     engine.prepare_json("main.sanim", &files, &inputs).unwrap();
-    files.insert("theme.sanim", "reflect tint=Color(\"blue\")\n");
+    files.insert("theme.sanim", "let tint=reflect(Color(\"blue\"))\n");
     let edited = engine.prepare_json("main.sanim", &files, &inputs).unwrap();
     assert_eq!(
         edited.reflected[0].default,

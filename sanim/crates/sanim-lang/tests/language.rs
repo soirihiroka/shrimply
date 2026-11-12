@@ -113,14 +113,14 @@ fn scheduling_helpers_work() {
 }
 #[test]
 fn reflected_values_are_known_loop_bounds() {
-    let p = prepare("reflect count: Number = 4\nrepeat count { wait(100ms) }\n");
+    let p = prepare("let count: Number=reflect(4)\nrepeat count { wait(100ms) }\n");
     assert_eq!(p.animation.duration, Fraction::new(2u64, 5u64));
     assert_eq!(p.reflected[0].name, "count");
 }
 #[test]
 fn reflection_describes_nested_types() {
     let p = prepare(
-        "type Style = { fill: Color, width: Length, outline: Option<Color> }\nreflect style: Style = { fill: Color(\"red\"), width: 16pt, outline: None }\n",
+        "type Style = { fill: Color, width: Length, outline: Option<Color> }\nlet style: Style=reflect({ fill: Color(\"red\"), width: 16pt, outline: None })\n",
     );
     assert!(matches!(p.reflected[0].ty.as_ref(), Type::Record(_)));
     assert_eq!(p.reflected[0].default, p.reflected[0].value);
@@ -130,7 +130,7 @@ fn reflection_overrides_validate_before_use() {
     let mut sources = MemorySources::default();
     sources.insert(
         "main.sanim",
-        "reflect count: Number = 2\nrepeat count { wait(1s) }\n",
+        "let count: Number=reflect(2)\nrepeat count { wait(1s) }\n",
     );
     let overrides = BTreeMap::from([("count".into(), Value::Number(Number::scalar(3)))]);
     let p = Engine::default()
@@ -195,7 +195,7 @@ reject!(
     "let item = 1\nif true { let item = 2 }\n",
     "S102"
 );
-reject!(no_mutation, "let item = 1\nitem = 2\n", "S002");
+reject!(immutable_assignment, "let item = 1\nitem = 2\n", "S130");
 reject!(wrong_units, "let value = 1pt + 1s\n", "S106");
 reject!(
     wrong_field_type,
@@ -246,7 +246,7 @@ reject!(
 );
 reject!(
     reflect_in_branch,
-    "if true { reflect amount = 1 }\n",
+    "if true { let amount=reflect(1) }\n",
     "S113"
 );
 reject!(read_needs_type, "let data = read(\"data.csv\")\n", "S125");
@@ -312,7 +312,7 @@ fn operation_budget_stops_nested_bounded_work() {
 #[test]
 fn reflection_rejects_unknown_override() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "reflect count = 1\n");
+    sources.insert("main.sanim", "let count=reflect(1)\n");
     let input = BTreeMap::from([("missing".into(), Value::Number(Number::scalar(2)))]);
     assert_eq!(
         Engine::default()
@@ -325,7 +325,7 @@ fn reflection_rejects_unknown_override() {
 #[test]
 fn reflection_checks_every_list_item() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "reflect values: List<Number> = [1]\n");
+    sources.insert("main.sanim", "let values: List<Number>=reflect([1])\n");
     let input = BTreeMap::from([(
         "values".into(),
         Value::List(
@@ -431,7 +431,7 @@ fn math_helpers_preserve_angle_units_and_fraction_values() {
 #[test]
 fn adwaita_colors_work_in_reflection_and_typed_data_loading() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "reflect tint:Color=Color(\"BLUE3\")\nlet loaded=read<Color>(\"color.json\")\nlet default_color=Color()\nadd(Circle(fill:tint))");
+    files.insert("main.sanim", "let tint:Color=reflect(Color(\"BLUE3\"))\nlet loaded=read<Color>(\"color.json\")\nlet default_color=Color()\nadd(Circle(fill:tint))");
     files.insert("color.json", "\"orange3\"");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())

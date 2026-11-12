@@ -73,7 +73,7 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
             params.extend([
                 p(
                     "data",
-                    Type::Table(Box::new(record([
+                    Type::List(Box::new(record([
                         ("x", number.clone()),
                         ("y", number.clone()),
                     ]))),

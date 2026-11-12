@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct ExecutionState {
-    pub bindings: Env,
+    scope: Env,
+    reactive: reactive::Store,
     pub animation: Animation,
     pub cursor: Fraction,
     pub time_map: TimeMap,
@@ -23,6 +24,20 @@ pub struct ExecutionState {
     overhead: usize,
     payload: usize,
     age: u64,
+}
+
+impl ExecutionState {
+    /// Snapshot value without executing code: dirty or unread signals have no cached value.
+    pub fn binding(&self, name: &str) -> Option<&Value> {
+        match self.scope.get(name)? {
+            Binding::Value(value) => Some(value),
+            Binding::Reactive(id) => {
+                self.reactive
+                    .cached(*id, self.cursor, &self.animation.reactive)
+            }
+            Binding::Module(_) => None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -48,7 +63,12 @@ impl Store {
     pub fn len(&self) -> usize {
         self.active.len()
     }
-    pub fn begin(&mut self, runtime: &mut Runtime<'_, '_>, env: &mut Env, root: &Loaded) -> usize {
+    pub(super) fn begin(
+        &mut self,
+        runtime: &mut Runtime<'_, '_>,
+        env: &mut Env,
+        root: &Loaded,
+    ) -> usize {
         let index_bytes = root.ast.statements.len().saturating_add(1).saturating_mul(
             std::mem::size_of::<[u8; 32]>() + std::mem::size_of::<Option<Arc<ExecutionState>>>(),
         );
@@ -86,6 +106,7 @@ impl Store {
                     .filter(|(id, _)| *id != &root.id)
                     .collect::<Vec<_>>(),
                 &runtime.reflected,
+                &runtime.reactive,
                 runtime.limits,
                 runtime.animation.dpi,
                 runtime.animation.width,
@@ -207,7 +228,8 @@ impl Store {
                 }
             }
             let declarations = env.clone();
-            *env = saved.bindings.clone();
+            *env = saved.scope.clone();
+            runtime.reactive = saved.reactive.clone();
             for name in &saved.declarations {
                 env.remove(name);
             }
@@ -244,7 +266,7 @@ impl Store {
         self.clear_states();
         0
     }
-    pub fn save(&mut self, runtime: &Runtime<'_, '_>, env: &Env, statements: usize) {
+    pub(super) fn save(&mut self, runtime: &Runtime<'_, '_>, env: &Env, statements: usize) {
         if self.states.is_empty() {
             return;
         }
@@ -252,6 +274,8 @@ impl Store {
         // Charge an upper estimate of each root's metadata, plus shared retained payload once.
         // This deliberately overcounts shared tree nodes rather than silently growing without a bound.
         let overhead = std::mem::size_of::<ExecutionState>()
+            + runtime.reactive.overhead()
+            + runtime.animation.reactive.metadata_bytes()
             + env.len() * (std::mem::size_of::<Value>() + std::mem::size_of::<String>() * 2)
             + runtime.animation.element_count()
                 * (std::mem::size_of::<String>() + std::mem::size_of::<Vec<usize>>())
@@ -287,7 +311,8 @@ impl Store {
         }
         self.age = self.age.saturating_add(1);
         let saved = Arc::new(ExecutionState {
-            bindings: env.clone(),
+            scope: env.clone(),
+            reactive: runtime.reactive.clone(),
             animation: runtime.animation.clone(),
             cursor: runtime.cursor,
             time_map: runtime.time_map.clone(),
