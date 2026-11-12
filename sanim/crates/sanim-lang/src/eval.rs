@@ -10,10 +10,19 @@ use sanim_core::{
     verify::{Contract as Assertion, Verification},
     *,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Instant,
+};
 
 // Arithmetic is centralized in sanim-core::math; the evaluator only dispatches operators.
 type Env = BTreeMap<String, Value>;
+
+#[derive(serde::Serialize)]
+enum CacheDependency<'a> {
+    Value(&'a Value),
+    Font(String),
+}
 
 #[derive(Clone)]
 struct Function {
@@ -39,6 +48,7 @@ pub(crate) fn evaluate(
         limits,
         values,
         assets,
+        font_keys: crate::cache::FontCache::new(limits.max_cache_bytes, limits.max_cache_entries),
         statistics,
         globals: BTreeMap::new(),
         functions: BTreeMap::new(),
@@ -253,6 +263,7 @@ pub(crate) struct Runtime<'a, 's> {
     values: &'a mut crate::cache::ValueCache,
     assets: &'a mut crate::cache::ValueCache,
     statistics: &'a mut Statistics,
+    font_keys: crate::cache::FontCache,
     globals: BTreeMap<String, Env>,
     functions: BTreeMap<String, Function>,
     constructors: BTreeMap<String, Type>,
@@ -592,6 +603,7 @@ impl Runtime<'_, '_> {
             self.statistics.evaluated_expressions += 1;
             return self.expression_inner(expr, env);
         }
+        let cache_started = Instant::now();
         let key = if cacheable(expr) {
             let mut names = BTreeSet::new();
             dependencies(expr, &mut names);
@@ -602,10 +614,16 @@ impl Runtime<'_, '_> {
             let limits = names
                 .contains("range")
                 .then_some(self.limits.max_iterations);
-            let deps = names
-                .into_iter()
-                .filter_map(|name| env.get(&name).map(|v| (name, v)))
-                .collect::<BTreeMap<_, _>>();
+            let mut deps = BTreeMap::new();
+            for name in names {
+                if let Some(value) = env.get(&name) {
+                    let key = match value {
+                        Value::Font(font) => CacheDependency::Font(self.font_keys.key(font)),
+                        _ => CacheDependency::Value(value),
+                    };
+                    deps.insert(name, key);
+                }
+            }
             Some(digest(
                 &serde_json::to_vec(&(
                     SEMANTICS_VERSION,
@@ -622,6 +640,13 @@ impl Runtime<'_, '_> {
         } else {
             None
         };
+        self.statistics.cache_key_micros = self.statistics.cache_key_micros.saturating_add(
+            cache_started
+                .elapsed()
+                .as_micros()
+                .try_into()
+                .unwrap_or(u64::MAX),
+        );
         if let Some(key) = &key
             && let Some(value) = self.values.get(key)
         {
@@ -638,6 +663,7 @@ impl Runtime<'_, '_> {
         let value = result?;
         let mut bytes = self.limits.data.max_bytes;
         let mut items = self.limits.data.max_values;
+        let validation_started = Instant::now();
         sanim_core::value_budget::charge(
             &value,
             &mut bytes,
@@ -645,6 +671,14 @@ impl Runtime<'_, '_> {
             self.limits.data.max_depth,
         )
         .map_err(|e| self.error("S303", e, expr.span))?;
+        self.statistics.value_validation_micros =
+            self.statistics.value_validation_micros.saturating_add(
+                validation_started
+                    .elapsed()
+                    .as_micros()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            );
         if let Some(key) = key
             && self.values.len() < self.limits.max_cache_entries
         {
@@ -1298,12 +1332,14 @@ impl Runtime<'_, '_> {
             }
             return Ok(Value::Unit);
         }
-        let (prelude::Execution::Native(evaluate) | prelude::Execution::Wait(evaluate)) =
-            builtin.execute
+        let (prelude::Execution::Native(evaluate)
+        | prelude::Execution::Access(evaluate)
+        | prelude::Execution::Wait(evaluate)) = builtin.execute
         else {
             unreachable!("registered host operation was handled above")
         };
-        evaluate(
+        let native_started = Instant::now();
+        let result = evaluate(
             name,
             &args,
             crate::native::Context {
@@ -1315,7 +1351,15 @@ impl Runtime<'_, '_> {
                 limits: self.limits,
             },
         )
-        .map_err(|e| self.error("S305", e, span))
+        .map_err(|e| self.error("S305", e, span));
+        self.statistics.native_micros = self.statistics.native_micros.saturating_add(
+            native_started
+                .elapsed()
+                .as_micros()
+                .try_into()
+                .unwrap_or(u64::MAX),
+        );
+        result
     }
     fn check_elements(&self, span: Span) -> Result<(), Diagnostic> {
         let count = self.animation.element_count();
@@ -1354,8 +1398,9 @@ fn cacheable(expr: &Expr) -> bool {
             matches!(&callee.kind,ExprKind::Name(name)if prelude::builtin(name).is_some_and(|v|!v.schedule&&v.result!=Type::Motion&&matches!(v.execute,prelude::Execution::Native(_))))
                 && args.iter().all(|(_, v)| cacheable(v))
         }
-        ExprKind::Member(a, _) | ExprKind::Unary(_, a) => cacheable(a),
-        ExprKind::Binary(_, a, b) | ExprKind::Index(a, b) => cacheable(a) && cacheable(b),
+        ExprKind::Member(_, _) | ExprKind::Index(_, _) => false,
+        ExprKind::Unary(_, a) => cacheable(a),
+        ExprKind::Binary(_, a, b) => cacheable(a) && cacheable(b),
         ExprKind::List(values) => values.iter().all(cacheable),
         ExprKind::Record(values) => values.iter().all(|(_, v)| cacheable(v)),
         ExprKind::Dict(values) => values.iter().all(|(k, v)| cacheable(k) && cacheable(v)),

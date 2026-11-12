@@ -188,11 +188,33 @@ pub fn to_f64(value: Fraction) -> Result<f64, String> {
 }
 
 pub fn from_f64(value: f64) -> Result<Fraction, String> {
-    let rational = Fraction::from(value);
-    if !value.is_finite() || !finite(&rational) || to_f64(rational).ok() != Some(value) {
-        return Err("floating value cannot be represented as a scalar Fraction".into());
+    let bad = || {
+        "floating value cannot be represented exactly as a scalar Fraction; its magnitude or binary precision exceeds a 64-bit numerator/denominator".to_string()
+    };
+    if !value.is_finite() {
+        return Err(bad());
     }
-    Ok(rational)
+    if value == 0.0 {
+        return Ok(Fraction::zero());
+    }
+    let (mut numerator, exponent, sign) = num_traits::Float::integer_decode(value);
+    let denominator = if exponent < 0 {
+        let power = u32::from(exponent.unsigned_abs());
+        let reduction = numerator.trailing_zeros().min(power);
+        numerator >>= reduction;
+        1u64.checked_shl(power - reduction).ok_or_else(bad)?
+    } else {
+        numerator = numerator
+            .checked_mul(1u64.checked_shl(exponent as u32).ok_or_else(bad)?)
+            .ok_or_else(bad)?;
+        1
+    };
+    Fraction::new_generic(
+        if sign < 0 { Sign::Minus } else { Sign::Plus },
+        numerator,
+        denominator,
+    )
+    .ok_or_else(bad)
 }
 
 /// Floating geometry and linear algebra reject non-finite inputs and results.

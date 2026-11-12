@@ -1,3 +1,5 @@
+mod replace_source;
+
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -143,6 +145,12 @@ pub fn prepare(
                 import,
                 anchor,
                 &script_scope,
+                default_visual_duration,
+                project_path,
+            ),
+            EditOperation::ReplaceClipSource(request) => replace_source::apply(
+                &mut prepared,
+                request,
                 default_visual_duration,
                 project_path,
             ),
@@ -461,19 +469,7 @@ fn apply_import(
             }
             let kind = native::file_kind(&source.inspect)
                 .ok_or_else(|| format!("unsupported file type: {}", source.inspect.display()))?;
-            if matches!(kind, native::FileKind::Mkv | native::FileKind::WebM) {
-                if request.link {
-                    return Err(
-                        "MKV/WebM requires an MP4 derivative and cannot be linked".to_string()
-                    );
-                }
-                source.inspect = native::remux_mkv_to_mp4(&source.inspect)?;
-                let name = source
-                    .inspect
-                    .file_name()
-                    .ok_or_else(|| "remux output has no file name".to_string())?;
-                source.stored.set_file_name(name);
-            }
+            remux_source(&mut source, kind, request.link)?;
             let frame = shrimply_editing_api::edit::frame_with_offset(anchor, entry.offset_frames)
                 .map_err(|error| format!("import {error}"))?;
             let projected_start = time_from_frame(frame, project.fps)
@@ -547,6 +543,25 @@ fn apply_import(
             &created_track_ids,
         )?,
     })
+}
+
+fn remux_source(
+    source: &mut SourcePaths,
+    kind: native::FileKind,
+    link: bool,
+) -> Result<(), String> {
+    if matches!(kind, native::FileKind::Mkv | native::FileKind::WebM) {
+        if link {
+            return Err("MKV/WebM requires an MP4 derivative and cannot be linked".into());
+        }
+        source.inspect = native::remux_mkv_to_mp4(&source.inspect)?;
+        let name = source
+            .inspect
+            .file_name()
+            .ok_or("remux output has no file name")?;
+        source.stored.set_file_name(name);
+    }
+    Ok(())
 }
 
 fn apply_media(
@@ -1408,6 +1423,7 @@ fn operation_name(operation: &EditOperation) -> &'static str {
         EditOperation::ReorderTrack(_) => "reorder_track",
         EditOperation::ReplaceText(_) => "replace_text",
         EditOperation::InsertFiles(_) => "insert_files",
+        EditOperation::ReplaceClipSource(_) => "replace_clip_source",
         EditOperation::InsertCaptions(_) => "insert_captions",
         EditOperation::InsertTts(_) => "insert_tts",
         EditOperation::InsertText(_) => "insert_text",

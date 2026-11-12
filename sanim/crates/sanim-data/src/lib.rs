@@ -35,7 +35,7 @@ pub fn decode(path: &str, bytes: &[u8], ty: &Type, limits: Limits) -> Result<Val
     }
     if *ty == Type::Font {
         font::validate(bytes)?;
-        return Ok(Value::Font(bytes.to_vec()));
+        return Ok(Value::Font(std::sync::Arc::new(bytes.to_vec())));
     }
     let extension = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match extension.as_str() {

@@ -1323,6 +1323,7 @@ impl VideoItem {
     pub fn source_visual_kind(&self) -> shrimply_visual_modifiers::VisualKind {
         match self.content {
             VideoItemContent::Svg
+            | VideoItemContent::Sanim(_)
             | VideoItemContent::Text(_)
             | VideoItemContent::Shape(_)
             | VideoItemContent::Paint(_) => shrimply_visual_modifiers::VisualKind::Vector,
@@ -1332,7 +1333,6 @@ impl VideoItem {
             | VideoItemContent::Image
             | VideoItemContent::Gif
             | VideoItemContent::Pdf(_)
-            | VideoItemContent::Sanim(_)
             | VideoItemContent::Blender(_)
             | VideoItemContent::LayeredImage(_)
             | VideoItemContent::FoldedSequence(_) => shrimply_visual_modifiers::VisualKind::Raster,
@@ -1356,6 +1356,18 @@ impl VideoItem {
         &self,
         modifiers: &[VisualModifier],
     ) -> Result<shrimply_visual_modifiers::ModifierState, String> {
+        if matches!(self.content, VideoItemContent::Sanim(_))
+            && modifiers.iter().any(|modifier| {
+                modifier.enabled
+                    && matches!(
+                        &modifier.effect,
+                        shrimply_visual_modifiers::ModifierEffect::Vector(effect)
+                            if matches!(**effect, shrimply_visual_modifiers::VectorModifierEffect::ShakyPath(_))
+                    )
+            })
+        {
+            return Err("Shaky Path cannot deform recorded Sanim drawing commands; remove this modifier".into());
+        }
         let source = match self.content {
             VideoItemContent::Image => shrimply_visual_modifiers::ModifierSource::Image,
             VideoItemContent::Paint(_) => shrimply_visual_modifiers::ModifierSource::Paint,

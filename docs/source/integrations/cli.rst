@@ -105,6 +105,30 @@ validated, and committed as one undoable edit. For example:
      ]
    }
 
+Replacing an animation source
+-----------------------------
+
+Use ``clips replace-source`` to change the source of an existing video clip
+without deleting it. The clip keeps its UUID, timeline bounds, source offsets,
+grouping, transforms, effects, compositing and transitions. Source-specific
+settings reset to the new source, and source dimensions/duration are inspected
+again. Audio tracks are not added or changed.
+
+.. code-block:: console
+
+   $ shrimply clips replace-source --project movie.shrimp --item-id UUID --source scene.sanim --link --dry-run
+   $ shrimply clips replace-source --project movie.shrimp --item-id UUID --source scene.sanim --link --if-revision REVISION
+
+The default copies the source into project media; ``--copy-root DIRECTORY``
+includes sibling imports, data and fonts. ``--link`` retains the external source
+and conflicts with ``--copy-root``. The source must have one video/visual stream;
+audio-only and multi-stream replacements fail explicitly. OBJ files require
+new scene modifiers and should be inserted as new clips.
+
+The corresponding atomic edit operation is ``replace_clip_source`` with
+``address``, ``source``, optional ``link`` and optional ``copy_root`` arguments.
+Dry-run validates the target/path and defers source inspection and execution.
+
 Preview before editing
 ----------------------
 
@@ -232,6 +256,8 @@ All former tools and resource queries are available through named commands:
      - tracks get / tracks create / tracks delete
    * - insert_files / insert_captions / insert_text / insert_tts
      - clips insert-files / insert-captions / insert-text / insert-tts
+   * - replace_clip_source
+     - clips replace-source
    * - move_clip / trim_clip / delete_clips / set_clip_properties
      - clips move / trim / delete / set
    * - set_video_transform / set_clip_transitions

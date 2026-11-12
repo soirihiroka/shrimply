@@ -179,3 +179,13 @@ fn warm_query_cache_reuses_results_but_data_changes_invalidate() {
     assert_eq!(changed.statistics.executed_queries, 1);
     assert_ne!(warm.bindings["result"], changed.bindings["result"]);
 }
+
+#[test]
+fn typed_sql_real_results_accept_normalized_measurements_without_rounding() {
+    let prepared=run("type Sample={name:String,value:Number}\ntype Ratio={ratio:Number}\nlet samples=read<Table<Sample>>(\"rows.csv\")\nlet ratios=query<Ratio>(\"SELECT 0.9644630372551779 AS ratio FROM samples LIMIT 1\",tables:{samples:samples})\nlet result=unwrap(get(ratios,0),{ratio:0})\nlet actual=result.ratio").unwrap();
+    let actual = prepared.bindings["actual"].number().unwrap().value;
+    assert_eq!(
+        sanim_core::math::to_f64(actual).unwrap(),
+        0.9644630372551779
+    );
+}

@@ -449,6 +449,20 @@ pub struct InsertFilesRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ReplaceClipSourceRequest {
+    /// Existing video clip; all timeline placement and effect properties are retained.
+    pub address: ClipAddress,
+    /// New local source file, such as a .sanim, image or video, with exactly one visual stream.
+    pub source: String,
+    /// Retain an external source path instead of copying it into project media.
+    #[serde(default)]
+    pub link: bool,
+    /// Copy this directory with the source to retain sibling assets/imports. Conflicts with link.
+    pub copy_root: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CaptionCueInput {
     pub start_frame: u64,
     pub end_frame: u64,
@@ -793,6 +807,7 @@ pub enum EditOperation {
     ReorderTrack(ReorderTrackRequest),
     ReplaceText(TextReplaceRequest),
     InsertFiles(InsertFilesRequest),
+    ReplaceClipSource(ReplaceClipSourceRequest),
     InsertCaptions(InsertCaptionsRequest),
     InsertTts(InsertTtsRequest),
     InsertText(InsertTextOperation),

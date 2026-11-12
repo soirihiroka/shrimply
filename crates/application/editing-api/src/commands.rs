@@ -163,6 +163,13 @@ pub static COMMANDS: &[Command] = &[
         false
     ),
     command!(
+        "replace_clip_source",
+        "clips replace-source",
+        "Replace a video clip's source file in place, preserving identity, timeline range, offsets, grouping, transforms, modifiers and transitions. Resets source-specific settings; does not add audio. Copying into project media is the default; link=true retains external paths",
+        ReplaceClipSourceRequest,
+        false
+    ),
+    command!(
         "insert_captions",
         "clips insert-captions",
         "Bulk-insert captions into an existing root caption track or create a new one, with exact frame ranges, optional language, collision handling, and source style copying",

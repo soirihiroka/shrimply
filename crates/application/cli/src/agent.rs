@@ -392,14 +392,19 @@ fn read_json(value: &str) -> Result<Value, String> {
 }
 
 fn normalize_media_paths(name: &str, arguments: &mut Value) -> Result<(), String> {
-    if name == "insert_files" {
-        if let Some(files) = arguments.get_mut("files").and_then(Value::as_array_mut) {
-            for file in files {
-                if let Some(source) = file.get("source").and_then(Value::as_str) {
-                    file["source"] =
-                        json!(std::path::absolute(source).map_err(|error| error.to_string())?);
+    if matches!(name, "insert_files" | "replace_clip_source") {
+        if name == "insert_files" {
+            if let Some(files) = arguments.get_mut("files").and_then(Value::as_array_mut) {
+                for file in files {
+                    if let Some(source) = file.get("source").and_then(Value::as_str) {
+                        file["source"] =
+                            json!(std::path::absolute(source).map_err(|error| error.to_string())?);
+                    }
                 }
             }
+        } else if let Some(source) = arguments.get("source").and_then(Value::as_str) {
+            arguments["source"] =
+                json!(std::path::absolute(source).map_err(|error| error.to_string())?);
         }
         if let Some(root) = arguments.get("copy_root").and_then(Value::as_str) {
             arguments["copy_root"] =
@@ -411,8 +416,13 @@ fn normalize_media_paths(name: &str, arguments: &mut Value) -> Result<(), String
             .and_then(Value::as_array_mut)
         {
             for operation in operations {
-                if operation.get("type").and_then(Value::as_str) == Some("insert_files") {
-                    normalize_media_paths("insert_files", &mut operation["args"])?;
+                if let Some(name @ ("insert_files" | "replace_clip_source")) = operation
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .as_deref()
+                {
+                    normalize_media_paths(name, &mut operation["args"])?;
                 }
             }
         }
@@ -590,5 +600,53 @@ fn output(value: &Value) {
         );
     } else {
         println!("{value}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_clip_source_is_discoverable_with_named_flags() {
+        let matches = catalog::cli()
+            .try_get_matches_from([
+                "shrimply",
+                "clips",
+                "replace-source",
+                "--item-id",
+                "clip",
+                "--source",
+                "scene.sanim",
+                "--link",
+                "--dry-run",
+            ])
+            .unwrap();
+        let (path, _) = leaf(&matches);
+        let definition = commands::get(&path).unwrap();
+        assert_eq!(definition.name, "replace_clip_source");
+        assert!(!definition.read_only);
+        assert!((definition.schema)().as_value()["properties"]["source"].is_object());
+    }
+
+    #[test]
+    fn replace_clip_source_normalizes_paths_inside_atomic_scripts() {
+        let mut arguments = json!({"operations":[
+            {"type":"replace_clip_source","args":{"source":"sanim/scene.sanim","copy_root":"sanim"}},
+            {"type":"insert_files","args":{"files":[{"source":"sanim/other.sanim"}]}}
+        ]});
+        normalize_media_paths("run_edit_script", &mut arguments).unwrap();
+        assert_eq!(
+            arguments["operations"][0]["args"]["source"],
+            json!(std::path::absolute("sanim/scene.sanim").unwrap())
+        );
+        assert_eq!(
+            arguments["operations"][0]["args"]["copy_root"],
+            json!(std::path::absolute("sanim").unwrap())
+        );
+        assert_eq!(
+            arguments["operations"][1]["args"]["files"][0]["source"],
+            json!(std::path::absolute("sanim/other.sanim").unwrap())
+        );
     }
 }

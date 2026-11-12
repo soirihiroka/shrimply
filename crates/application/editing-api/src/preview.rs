@@ -158,6 +158,9 @@ pub fn edit_request(name: &str, arguments: Value) -> Result<Option<EditRequest>,
             })
         }
         "insert_files" => EditOperation::InsertFiles(decode!(InsertFilesRequest)),
+        "replace_clip_source" => {
+            EditOperation::ReplaceClipSource(decode!(ReplaceClipSourceRequest))
+        }
         "insert_captions" => EditOperation::InsertCaptions(decode!(InsertCaptionsRequest)),
         "insert_tts" => EditOperation::InsertTts(decode!(InsertTtsRequest)),
         "move_clip" => EditOperation::MoveClip(decode!(MoveClipRequest)),
@@ -254,10 +257,19 @@ pub fn dry_run(call: &ApiCall, snapshot: &LiveSnapshot) -> Result<Value, String>
     let mut deferred = Vec::new();
     let mut details = Vec::new();
     for (index, operation) in request.operations.iter().enumerate() {
+        if !deferred.is_empty() {
+            deferred.push(json!({"index":index,"operation":operation,"reason":"depends on deferred operations"}));
+            continue;
+        }
         if matches!(
             operation,
-            EditOperation::InsertFiles(_) | EditOperation::InsertTts(_)
+            EditOperation::InsertFiles(_)
+                | EditOperation::ReplaceClipSource(_)
+                | EditOperation::InsertTts(_)
         ) {
+            if let EditOperation::ReplaceClipSource(request) = operation {
+                edit::source_replacement_target(&project, request)?;
+            }
             if let EditOperation::InsertFiles(request) = operation {
                 if request.files.is_empty() {
                     return Err("insert_files requires at least one source file".into());
@@ -276,10 +288,6 @@ pub fn dry_run(call: &ApiCall, snapshot: &LiveSnapshot) -> Result<Value, String>
             deferred.push(json!({"index":index,"operation":operation,"reason":"media inspection, conversion, or generation requires execution"}));
             continue;
         }
-        if !deferred.is_empty() {
-            deferred.push(json!({"index":index,"operation":operation,"reason":"depends on deferred operations"}));
-            continue;
-        }
         let result = edit::apply_non_import(&mut project, operation, anchor, &scope)?;
         if let Some(detail) = result.details {
             details.push(detail);
@@ -294,7 +302,7 @@ pub fn dry_run(call: &ApiCall, snapshot: &LiveSnapshot) -> Result<Value, String>
         &mut changes,
     );
     Ok(
-        json!({"dry_run":true,"base_revision":base_revision,"validation":if deferred.is_empty(){"complete"}else{"partial"},"changes":changes,"details":details,"deferred":deferred,"generated_ids":"provisional; execution allocates fresh IDs"}),
+        json!({"dry_run":true,"base_revision":base_revision,"validation":if deferred.is_empty(){"complete"}else{"partial"},"changes":changes,"details":details,"deferred":deferred,"generated_ids":"IDs for newly created items are provisional"}),
     )
 }
 

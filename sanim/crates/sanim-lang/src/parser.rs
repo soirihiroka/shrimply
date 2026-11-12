@@ -706,7 +706,7 @@ impl Parser<'_> {
                 if !self.eat(")") {
                     loop {
                         let candidate = self.expr(0)?;
-                        let (named, value) = if self.eat(":") {
+                        let (named, value) = if self.eat("=") || self.eat(":") {
                             let ExprKind::Name(name) = candidate.kind else {
                                 return Err(self.error("named argument label must be a name"));
                             };
@@ -877,7 +877,9 @@ impl Parser<'_> {
                     break;
                 }
                 let name = self.name()?;
-                self.expect(":")?;
+                if !self.eat("=") && !self.eat(":") {
+                    return Err(self.error("expected '=' between a record field name and its value; type annotations use ':'"));
+                }
                 fields.push((name, self.expr(0)?));
                 if !self.eat(",") {
                     self.skip_lines();

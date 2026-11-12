@@ -392,6 +392,15 @@ sanim-check:
 sanim-integration-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import sanim --lib
 
+check: editing-api-check
+
+.PHONY: editing-api-check editing-api-fmt
+editing-api-fmt:
+	$(BUILD_ENV) $(CARGO) fmt -p shrimply-editing-api -p shrimply-editing-runtime -p shrimply-cli -p shrimply-project-document
+
+editing-api-check: native-deps cuda-artifacts editing-api-fmt
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-editing-api -p shrimply-editing-runtime -p shrimply-cli --lib
+
 source-size-check:
 	@oversized="$$(rg --files -g '!external/**' -g '!target/**' -g '!vcpkg_installed/**' | while IFS= read -r source_file; do \
 		case "$$source_file" in \

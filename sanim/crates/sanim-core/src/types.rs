@@ -365,7 +365,7 @@ pub enum Value {
     Motion(Box<Motion>),
     Predicate(Box<crate::verify::Predicate>),
     Function(String),
-    Font(Vec<u8>),
+    Font(std::sync::Arc<Vec<u8>>),
     Data(serde_json::Value),
     Dict(BTreeMap<String, serde_json::Value>),
 }

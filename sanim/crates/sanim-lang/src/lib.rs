@@ -68,6 +68,9 @@ pub struct Statistics {
     pub executed_queries: u64,
     pub reused_queries: u64,
     pub query_micros: u64,
+    pub cache_key_micros: u64,
+    pub native_micros: u64,
+    pub value_validation_micros: u64,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct PerformanceWarning {

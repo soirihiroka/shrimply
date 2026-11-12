@@ -16,6 +16,8 @@ pub(crate) type TypeRule = fn(&Builtin, &[Type]) -> Result<Type, String>;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Execution {
     Native(Evaluator),
+    /// Cheap accessors must not serialize/hash their entire input just to cache a lookup.
+    Access(Evaluator),
     Wait(Evaluator),
     Read,
     Decode,
@@ -330,7 +332,7 @@ fn build_builtins() -> Vec<Builtin> {
         vec![p("value", Unknown, true)],
         List(Box::new(String)),
         false,
-        Execution::Native(native::keys),
+        Execution::Access(native::keys),
         native_types::keys,
     );
     add(
@@ -338,7 +340,7 @@ fn build_builtins() -> Vec<Builtin> {
         vec![p("items", Unknown, true)],
         num.clone(),
         false,
-        Execution::Native(native::len),
+        Execution::Access(native::len),
         native_types::len,
     );
     add(
@@ -358,7 +360,7 @@ fn build_builtins() -> Vec<Builtin> {
         vec![p("items", Unknown, true), p("index", Unknown, true)],
         Unknown,
         false,
-        Execution::Native(native::get),
+        Execution::Access(native::get),
         native_types::get,
     );
     add(
@@ -366,7 +368,7 @@ fn build_builtins() -> Vec<Builtin> {
         vec![p("value", Unknown, true)],
         Unknown,
         false,
-        Execution::Native(native::some),
+        Execution::Access(native::some),
         native_types::some,
     );
     add(
@@ -374,7 +376,7 @@ fn build_builtins() -> Vec<Builtin> {
         vec![p("option", Unknown, true), p("default", Unknown, true)],
         Unknown,
         false,
-        Execution::Native(native::unwrap),
+        Execution::Access(native::unwrap),
         native_types::unwrap,
     );
     for name in ["min", "max"] {

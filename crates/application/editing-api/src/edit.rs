@@ -2,9 +2,9 @@ use std::collections::HashSet;
 
 use shrimply_math_core::{Fraction, Time, fraction_new, time_from_frame};
 use shrimply_project_document::project::{
-    AudioTransition, CaptionItem, ItemKind, ItemMut, Project, ProjectItem, RepeatStrategy,
-    SequenceScopeId, Time as ProjectTime, TrackAddress as ModelTrackAddress, TrackRef, Transform,
-    TransitionSide, VideoItemContent, VisualTransition, caption_languages,
+    AudioTransition, CaptionItem, ItemAddress, ItemKind, ItemMut, Project, ProjectItem,
+    RepeatStrategy, SequenceScopeId, Time as ProjectTime, TrackAddress as ModelTrackAddress,
+    TrackRef, Transform, TransitionSide, VideoItemContent, VisualTransition, caption_languages,
 };
 use shrimply_property_model::timeline_value::{TimelineBase, TimelineValue};
 use shrimply_timeline_edit::edit::{self, CollisionBehavior as ModelCollision};
@@ -17,8 +17,8 @@ use uuid::Uuid;
 use crate::protocol::{
     ClipAddress, ClipSummary, ClipTransitionInput, CollisionBehavior, CropEdges, CropMode,
     EditOperation, ExactFraction, InsertCaptionsRequest, InsertTextOperation,
-    SetClipPropertiesRequest, SetClipTransitionsRequest, SetVideoTransformRequest, TrackAddress,
-    VideoFitMode,
+    ReplaceClipSourceRequest, SetClipPropertiesRequest, SetClipTransitionsRequest,
+    SetVideoTransformRequest, TrackAddress, VideoFitMode,
 };
 use crate::query::{model_item_address, model_kind, model_track_address};
 
@@ -29,6 +29,26 @@ pub struct MutationResult {
     pub deleted_addresses: Vec<ClipAddress>,
     pub deleted_presentations: Vec<ClipSummary>,
     pub changed_tracks: Vec<TrackAddress>,
+}
+
+pub fn source_replacement_target(
+    project: &Project,
+    request: &ReplaceClipSourceRequest,
+) -> Result<ItemAddress, String> {
+    if request.address.kind != crate::protocol::ClipKind::Video {
+        return Err("replace_clip_source requires a video clip address".into());
+    }
+    let address = model_item_address(&request.address)?;
+    if project.video_item(&address).is_none() {
+        return Err("replacement target video clip was not found".into());
+    }
+    if request.link && request.copy_root.is_some() {
+        return Err("link mode forbids copy_root".into());
+    }
+    if !std::path::Path::new(&request.source).is_file() {
+        return Err(format!("source file does not exist: {}", request.source));
+    }
+    Ok(address)
 }
 
 pub fn apply_non_import(
@@ -45,6 +65,9 @@ pub fn apply_non_import(
         EditOperation::ReplaceText(request) => crate::text::apply(project, request),
         EditOperation::InsertFiles(_) => {
             Err("insert_files must be handled by the native importer".to_string())
+        }
+        EditOperation::ReplaceClipSource(_) => {
+            Err("replace_clip_source must be handled by the native importer".into())
         }
         EditOperation::InsertTts(_) => {
             Err("insert_tts must be handled by the native editor".to_string())
