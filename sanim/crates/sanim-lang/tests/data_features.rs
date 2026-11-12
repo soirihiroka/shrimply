@@ -189,3 +189,12 @@ fn typed_sql_real_results_accept_normalized_measurements_without_rounding() {
         0.9644630372551779
     );
 }
+
+#[test]
+fn sql_dictionary_results_can_be_validated_without_binary_scalar_coercion() {
+    let p=run("type Sample={name:String,value:Number}\ntype Ratio={ratio:Number}\nlet samples=read<Table<Sample>>(\"rows.csv\")\nlet rows=decode<Table<Ratio>>(Data(query(\"SELECT 0.9644630372551779 AS ratio FROM samples LIMIT 1\",tables={samples=samples})))\nlet row=unwrap(get(rows,0),{ratio=0})\nlet result=row.ratio").unwrap();
+    assert_eq!(
+        p.bindings["result"].number().unwrap().value,
+        sanim_core::math::decimal("0.9644630372551779").unwrap()
+    );
+}

@@ -446,3 +446,43 @@ fn adwaita_colors_work_in_reflection_and_typed_data_loading() {
         Value::Color(sanim_core::Color::parse("red3").unwrap())
     );
 }
+
+#[test]
+fn equals_names_arguments_and_record_values_while_colons_declare_types() {
+    let p = prepare(
+        "type Style={radius:Length,color:Color}\nfn marker(style:Style,offset:Vec2<Length>=Vec2(0pt,0pt)):Element{return Circle(radius=style.radius,fill=style.color,position=offset)}\nlet style:Style={radius=12pt,color=Color(\"blue3\")}\nlet created=marker(style=style,offset=Vec2(10pt,20pt))\nadd(created)",
+    );
+    let element = &p.animation.layers[0].element;
+    assert_eq!(element.position.values, [10.0, 20.0]);
+    assert_eq!(element.fill, sanim_core::Color::parse("blue3").unwrap());
+}
+
+#[test]
+fn equals_named_arguments_do_not_consume_comparison_operators() {
+    let p = prepare(
+        "fn choose(flag:Bool,count:Number=3):Number{if flag{return count};return 0}\nlet a=choose(1==1,count=7)\nlet b=choose(flag=2>=1,count=9)\nlet c={same=1==1,greater=2>=1}\nassert(c.same and c.greater)",
+    );
+    assert_eq!(number(&p, "a"), Fraction::from(7));
+    assert_eq!(number(&p, "b"), Fraction::from(9));
+}
+
+#[test]
+fn dictionary_entries_keep_python_colons_with_equals_call_arguments() {
+    let p = prepare(
+        "let d:Dict={\"paint\":\"blue3\",\"nested\":{\"count\":2}}\nlet count=decode<Number>(d[\"nested\"][\"count\"])\nlet marker=Circle(fill=decode<Color>(d[\"paint\"]))\nadd(marker)",
+    );
+    assert_eq!(number(&p, "count"), Fraction::from(2));
+    assert!(
+        Engine::default()
+            .prepare(
+                "main.sanim",
+                &{
+                    let mut files = MemorySources::default();
+                    files.insert("main.sanim", "let d={\"key\"=1}");
+                    files
+                },
+                &BTreeMap::new()
+            )
+            .is_err()
+    );
+}

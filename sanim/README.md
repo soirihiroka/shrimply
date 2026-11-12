@@ -8,14 +8,14 @@ editor, GPU kernels, Python, or GUI dependencies.
 reflect tint: Color = Color("orange3")
 
 fn make_marker(identity: String, radius: Length = 24pt): Element {
-    return Circle(id: identity, radius: radius, fill: tint)
+    return Circle(id= identity, radius= radius, fill= tint)
 }
 
 let marker = make_marker("marker")
-play(FadeIn(marker), duration: 250ms)
+play(FadeIn(marker), duration= 250ms)
 repeat 2 {
-    play(MoveTo(marker, Vec2(30%, 0%)), duration: 1s)
-    play(MoveTo(marker, Vec2(-30%, 0%)), duration: 1s)
+    play(MoveTo(marker, Vec2(30%, 0%)), duration= 1s)
+    play(MoveTo(marker, Vec2(-30%, 0%)), duration= 1s)
 }
 assert(always(inside_canvas(marker)))
 ```
@@ -66,7 +66,10 @@ scheduling effects, verification evidence, and performance measurements as JSON.
 The root file is the entry point. Blocks use braces; indentation is cosmetic.
 Statements end with a newline or semicolon. Functions use
 `fn name(argument: Type = default): ReturnType { ... }`. Defaulted parameters
-follow required parameters. Arguments can be named using `name: value`.
+follow required parameters. Arguments use `name = value`; record values use `{ field = value }`.
+Colons declare types (`name: Type`) and separate Python-style dictionary entries
+(`{"key": value}`). Older colon-style call/record value syntax remains readable
+for source compatibility, but new source uses `=`.
 
 Bindings are immutable. `reflect` adds a runtime input with an inferred or
 explicit type, a checked default, and a stable key. Root keys are binding names;
@@ -170,11 +173,11 @@ Alignment matches the corresponding element and parent edges, then adds the offs
 
 ```text
 Rect(
-    width: 100pt,
-    height: 40pt,
-    x_align: Align.End,
-    y_align: Align.Center,
-    position: Vec2(-12pt, 0pt),
+    width= 100pt,
+    height= 40pt,
+    x_align= Align.End,
+    y_align= Align.Center,
+    position= Vec2(-12pt, 0pt),
 )
 ```
 
@@ -223,7 +226,7 @@ cover decoded values, nesting, bytes, cumulative binding storage and NPZ expansi
 
 ```text
 assert(circle.above(rect))
-check(circle.disjoint(rect), message: "Objects should not overlap")
+check(circle.disjoint(rect), message= "Objects should not overlap")
 assert(always(inside_canvas(circle)))
 ```
 
@@ -347,8 +350,8 @@ type Sample = { category: String, amount: Number }
 let samples = read<Table<Sample>>("samples.csv")
 let totals = query(
     "SELECT category, SUM(amount) AS total FROM samples WHERE amount >= :minimum GROUP BY category ORDER BY category",
-    tables: {samples: samples},
-    params: {"minimum": 10},
+    tables= {samples= samples},
+    params= {"minimum": 10},
 )
 for row in totals {
     let total = decode<Number>(row["total"])

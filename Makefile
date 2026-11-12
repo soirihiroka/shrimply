@@ -478,11 +478,18 @@ transparent-fill-e2e-fixture: native-deps
 transparent-fill-e2e-test: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-cuda modifiers::transparent_fill::tests::transparent_fill_analyzes_and_renders_a_real_project_end_to_end -- --exact --ignored --test-threads=1 --nocapture
 
-fmt:
-	$(BUILD_ENV) $(CARGO) fmt
+check: fmt-tool-check
 
-fmt-check:
-	$(BUILD_ENV) $(CARGO) fmt --check
+.PHONY: fmt-tool-check
+fmt-tool-check:
+	uv run --no-project python -m unittest discover -s packaging/tests -p 'test_format_workspace.py'
+
+# Never run unscoped cargo fmt: it can rewrite excluded dependency workspaces.
+fmt: fmt-tool-check
+	$(BUILD_ENV) uv run --no-project python packaging/format_workspace.py --manifest Cargo.toml -- $(CARGO)
+
+fmt-check: fmt-tool-check
+	$(BUILD_ENV) uv run --no-project python packaging/format_workspace.py --manifest Cargo.toml --check -- $(CARGO)
 
 lint: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins -- -D warnings
