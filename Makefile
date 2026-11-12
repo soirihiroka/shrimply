@@ -394,6 +394,15 @@ sanim-integration-check: native-deps
 
 check: editing-api-check
 
+ifneq ($(HOST_OS),Windows_NT)
+.PHONY: cli-install-check
+check: cli-install-check
+cli-install-check:
+	mkdir -p "$(CARGO_TARGET_DIR)/cli-install-check"
+	$(RUSTC) --edition=2024 --test crates/application/preferences-core/src/cli.rs -o "$(CARGO_TARGET_DIR)/cli-install-check/tests"
+	"$(CARGO_TARGET_DIR)/cli-install-check/tests"
+endif
+
 .PHONY: editing-api-check editing-api-fmt
 editing-api-fmt:
 	$(BUILD_ENV) $(CARGO) fmt -p shrimply-editing-api -p shrimply-editing-runtime -p shrimply-cli -p shrimply-project-document

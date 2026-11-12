@@ -91,6 +91,17 @@ fn quote(value: &str) -> String {
 }
 
 #[cfg(unix)]
+fn flatpak_launcher(scope: &str, reference: &str) -> String {
+    // Resolve the installed reference on every invocation, including after an update.
+    // A deployment path, commit, process ID or runtime socket must never be installed here.
+    format!(
+        "shrimply_cli_filesystem=\"$PWD:rw\"\n[ \"$PWD\" != / ] || shrimply_cli_filesystem=host\nexec flatpak run {} --command=shrimply --cwd=\"$PWD\" --filesystem=/tmp --filesystem=\"$shrimply_cli_filesystem\" {} \"$@\"",
+        quote(scope),
+        quote(reference),
+    )
+}
+
+#[cfg(unix)]
 fn launcher_command() -> Result<(String, String), String> {
     if let Some(id) = std::env::var_os("FLATPAK_ID") {
         let metadata = std::fs::read_to_string("/.flatpak-info")
@@ -141,14 +152,7 @@ fn launcher_command() -> Result<(String, String), String> {
             if let Ok(location) = output(location)
                 && Path::new(&location).parent() == Some(deployment)
             {
-                return Ok((
-                    format!(
-                        "shrimply_cli_filesystem=\"$PWD:rw\"\n[ \"$PWD\" != / ] || shrimply_cli_filesystem=host\nexec flatpak run {} --command=shrimply --cwd=\"$PWD\" --filesystem=/tmp --filesystem=\"$shrimply_cli_filesystem\" {} \"$@\"",
-                        quote(&scope),
-                        quote(&reference),
-                    ),
-                    String::new(),
-                ));
+                return Ok((flatpak_launcher(&scope, &reference), String::new()));
             }
         }
         return Err("The running Flatpak installation could not be found on the host".into());
@@ -174,3 +178,7 @@ fn launcher_command() -> Result<(String, String), String> {
     let path = launcher.to_str().ok_or("Shrimply path is not UTF-8")?;
     Ok((format!("exec {} \"$@\"", quote(path)), path.to_owned()))
 }
+
+#[cfg(all(test, unix))]
+#[path = "cli/tests.rs"]
+mod tests;
