@@ -1,3 +1,5 @@
+mod shapes;
+pub use shapes::{ShapeKind, ShapeRoundingStrategy};
 use std::{collections::BTreeMap, fmt::Debug};
 
 use glam::{Vec2, Vec3};

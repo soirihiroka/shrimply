@@ -1,0 +1,67 @@
+//! Platform-independent values, exact arithmetic, scene tracks and verification.
+pub mod duration;
+pub mod layout;
+pub use duration::{NodeDuration, TimelineEffect};
+pub mod math;
+pub mod scene;
+pub mod type_budget;
+pub mod types;
+pub mod value_budget;
+pub mod verify;
+
+pub use fraction::Fraction;
+pub use math::{Number, Unit};
+pub use scene::*;
+pub use types::*;
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+pub const SEMANTICS_VERSION: &str = "sanim-0.1";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Diagnostic {
+    pub code: String,
+    pub message: String,
+    pub source: String,
+    pub span: Span,
+}
+
+impl Diagnostic {
+    pub fn new(code: &str, message: impl Into<String>, source: &str, span: Span) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            source: source.into(),
+            span,
+        }
+    }
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}:{}: {}: {}",
+            self.source, self.span.line, self.span.column, self.code, self.message
+        )
+    }
+}
+impl std::error::Error for Diagnostic {}
+
+pub fn digest(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut result = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        write!(result, "{byte:02x}").expect("writing to String");
+    }
+    result
+}

@@ -49,7 +49,7 @@ pub use generated::VisualSource as VideoItemContent;
 pub use generated::{
     BlenderItem, BlenderPreviewDownsample, BlenderRenderMethod, DEFAULT_TEXT_FONT_FAMILY,
     FontFamily, FontVariation, LayerVisibility, LayeredImageItem, ManimItem, ManimParameter,
-    ManimParameterControl, ManimParameterValue, PdfItem, ShapeItem, ShapeKind,
+    ManimParameterControl, ManimParameterValue, PdfItem, SanimItem, ShapeItem, ShapeKind,
     ShapeRoundingStrategy, TextDirection, TextFontStyle, TextHorizontalAlign, TextItem,
     VisualSource,
 };
@@ -1332,6 +1332,7 @@ impl VideoItem {
             | VideoItemContent::Image
             | VideoItemContent::Gif
             | VideoItemContent::Pdf(_)
+            | VideoItemContent::Sanim(_)
             | VideoItemContent::Blender(_)
             | VideoItemContent::LayeredImage(_)
             | VideoItemContent::FoldedSequence(_) => shrimply_visual_modifiers::VisualKind::Raster,
@@ -1574,6 +1575,7 @@ fn ensure_video_property_ids(item: &mut VideoItem, seen: &mut HashSet<Uuid>) {
         | VideoItemContent::Svg
         | VideoItemContent::Pdf(_)
         | VideoItemContent::Manim(_)
+        | VideoItemContent::Sanim(_)
         | VideoItemContent::Blender(_)
         | VideoItemContent::FoldedSequence(_) => {}
         VideoItemContent::Background(background) => background.generator.ensure_ids(seen),

@@ -59,12 +59,20 @@ pub fn video_source_time_at(item: &VideoItem, position: Time) -> Option<Time> {
 }
 
 pub fn generated_source_time_at(item: &VideoItem, position: Time) -> Option<Time> {
+    generated_source_time_with_duration(item, position, item.source_duration)
+}
+
+pub fn generated_source_time_with_duration(
+    item: &VideoItem,
+    position: Time,
+    duration: Time,
+) -> Option<Time> {
     if playback_speed_is_zero(item.playback_speed) {
         return None;
     }
     repeat_source_time(
         Time::ZERO,
-        item.source_duration,
+        duration,
         item.animation_time_offset.saturating_add(scaled_time_delta(
             position.signed_sub(item.start),
             item.playback_speed,
@@ -184,6 +192,7 @@ pub fn generated_item_keyframe_span(item: &VideoItem) -> Option<(Time, Time)> {
         | VideoItemContent::Svg
         | VideoItemContent::Pdf(_)
         | VideoItemContent::Manim(_)
+        | VideoItemContent::Sanim(_)
         | VideoItemContent::Blender(_)
         | VideoItemContent::FoldedSequence(_) => None,
         VideoItemContent::Background(background) => background.generator.keyframe_span(),

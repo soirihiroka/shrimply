@@ -1582,6 +1582,8 @@ checksum = "e246562084dde8ebbcc943b261c406ce4f68e5032ec28029a251a47d6a295500"
 dependencies = [
  "num",
  "num-bigint",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]
@@ -3505,6 +3507,7 @@ checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
 dependencies = [
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -3556,6 +3559,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -5159,6 +5163,70 @@ dependencies = [
 ]
 
 [[package]]
+name = "sanim-core"
+version = "0.1.0"
+dependencies = [
+ "fraction",
+ "num-traits",
+ "serde",
+ "serde_json",
+ "sha2",
+ "taffy",
+]
+
+[[package]]
+name = "sanim-data"
+version = "0.1.0"
+dependencies = [
+ "cairo-rs",
+ "num-traits",
+ "pango",
+ "pangocairo",
+ "rusqlite",
+ "sanim-core",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "skia-safe",
+ "tempfile",
+ "toml 0.8.23",
+ "zip",
+]
+
+[[package]]
+name = "sanim-lang"
+version = "0.1.0"
+dependencies = [
+ "sanim-core",
+ "sanim-data",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "sanim-render"
+version = "0.1.0"
+dependencies = [
+ "glam 0.34.1",
+ "sanim-core",
+ "serde_json",
+ "shrimply-drawing-skia",
+ "skia-safe",
+]
+
+[[package]]
+name = "sanim-runtime"
+version = "0.1.0"
+dependencies = [
+ "notify",
+ "sanim-core",
+ "sanim-data",
+ "sanim-lang",
+ "sanim-render",
+ "serde_json",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5358,6 +5426,19 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap 2.14.2",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
 ]
 
 [[package]]
@@ -6716,6 +6797,7 @@ dependencies = [
  "glam 0.34.1",
  "hashbrown 0.17.1",
  "imagesize",
+ "sanim-lang",
  "shrimply-3dgs-core",
  "shrimply-blender-core",
  "shrimply-layered-image-loader",
@@ -7809,6 +7891,8 @@ dependencies = [
  "pangocairo",
  "png",
  "rusqlite",
+ "sanim-core",
+ "sanim-runtime",
  "serde",
  "serde_json",
  "shrimply-3dgs-core",
@@ -7862,6 +7946,7 @@ dependencies = [
  "png",
  "rayon",
  "rusqlite",
+ "sanim-runtime",
  "serde",
  "serde_json",
  "shrimply-3dgs-core",
@@ -8291,6 +8376,16 @@ dependencies = [
  "pkg-config",
  "toml 1.1.8+spec-1.1.0",
  "version-compare",
+]
+
+[[package]]
+name = "taffy"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31f7bd2d97198df05186f93a3a3c306845f40e8b3c22bf9279cdd7e5cf5fea7d"
+dependencies = [
+ "serde",
+ "slotmap",
 ]
 
 [[package]]
@@ -8975,6 +9070,12 @@ name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+
+[[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"

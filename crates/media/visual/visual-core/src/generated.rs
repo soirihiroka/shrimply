@@ -7,6 +7,9 @@ use shrimply_visual_modifiers::text_mask::{TextMaskDirection, TextMaskPartialMod
 use skia_safe::{Canvas, Color, PictureRecorder};
 use std::rc::Rc;
 
+/// Notification that a prepared visual source revision is available.
+pub type SourceWake = std::sync::Arc<dyn Fn() + Send + Sync>;
+
 pub fn sampling(
     configured: shrimply_render_core::VideoSampleMethod,
     content_accurate: bool,

@@ -156,6 +156,11 @@ pub struct Scene {
         std::rc::Rc<shrimply_visual_core::vector_morph::PreparedVectorMorph>,
     >,
     manim: std::collections::HashMap<uuid::Uuid, shrimply_manim_wgpu::Source>,
+    sanim: std::collections::HashMap<uuid::Uuid, shrimply_visual_core::sanim::Source>,
+    sanim_errors: Vec<String>,
+    sanim_active: std::collections::HashSet<uuid::Uuid>,
+    strict_sources: bool,
+    source_waker: Option<shrimply_visual_core::generated::SourceWake>,
     manim_updates: Vec<shrimply_manim_state::Update>,
     manim_loading: bool,
     manim_pending: bool,
@@ -172,6 +177,21 @@ pub struct Scene {
 }
 
 impl Scene {
+    pub fn take_sanim_errors(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.sanim_errors)
+    }
+    pub fn set_source_waker(&mut self, wake: Option<shrimply_visual_core::generated::SourceWake>) {
+        for source in self.sanim.values_mut() {
+            source.set_waker(wake.clone());
+        }
+        self.source_waker = wake;
+    }
+    pub fn set_strict_sources(&mut self, value: bool) {
+        if self.strict_sources != value {
+            self.strict_sources = value;
+            self.prepared = None;
+        }
+    }
     pub fn set_decoder_limit(&mut self, maximum: usize) {
         self.media.set_decoder_limit(maximum);
     }
@@ -198,6 +218,10 @@ impl Scene {
 
     pub fn needs_update(&self) -> bool {
         self.media.needs_update()
+            || self
+                .sanim
+                .iter()
+                .any(|(id, source)| self.sanim_active.contains(id) && source.needs_update())
             || self.audio_pending
             || self.manim_loading
             || self.manim_pending
@@ -239,6 +263,11 @@ impl Scene {
     }
 
     pub fn prepare(&mut self, project: &Project, time: Time) -> Result<Option<FramePlan>, String> {
+        self.sanim.retain(|item_id, _| {
+            project
+                .video_item_by_id(*item_id)
+                .is_some_and(|item| matches!(item.content, VideoItemContent::Sanim(_)))
+        });
         self.manim.retain(|item_id, _| {
             project
                 .video_item_by_id(*item_id)
@@ -338,6 +367,10 @@ impl Scene {
             && !self.audio_pending
             && !self.manim_loading
             && !self.blender_loading
+            && !self
+                .sanim
+                .iter()
+                .any(|(id, source)| self.sanim_active.contains(id) && source.needs_update())
         {
             return Ok(None);
         }
@@ -345,6 +378,7 @@ impl Scene {
         self.manim_pending = false;
         self.blender_loading = false;
         self.stabilization_pending = false;
+        self.sanim_active.clear();
         let mut external_layers = Vec::with_capacity(dependency_records.len());
         for dependency in dependency_records {
             external_layers.push(ExternalLayers {

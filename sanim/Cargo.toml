@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["crates/sanim-core", "crates/sanim-data", "crates/sanim-lang", "crates/sanim-render", "crates/sanim-runtime", "crates/sanim-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+shrimply-drawing-skia = { path = "../crates/render/drawing-skia" }
+glam = "0.34"
+sanim-core = { path = "crates/sanim-core" }
+sanim-data = { path = "crates/sanim-data" }
+sanim-lang = { path = "crates/sanim-lang" }
+sanim-render = { path = "crates/sanim-render" }
+sanim-runtime = { path = "crates/sanim-runtime" }
+fraction = { version = "0.17", features = ["with-serde-support"] }
+num-traits = "0.2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.11"
+toml = "0.8"
+skia-safe = "=0.153.3"
+pango = { version = "0.22", features = ["v1_57"] }
+pangocairo = "0.22"
+cairo-rs = "0.22"
+tempfile = "3"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+rusqlite = { version = "0.40", features = ["bundled", "hooks", "limits", "column_decltype"] }
+serde_yaml_ng = "0.10"
+notify = "8"
+taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
+
+[profile.release]
+lto = "thin"
+

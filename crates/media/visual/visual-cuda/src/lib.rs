@@ -18,6 +18,7 @@ mod obj_render;
 mod paint_render;
 mod pdf_render;
 pub mod preview;
+mod sanim_render;
 pub use shrimply_visual_core::sam2::analysis as sam2_analysis;
 pub mod shape_render;
 pub use shrimply_project_document::svg_color;

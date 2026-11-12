@@ -1,3 +1,4 @@
+pub mod shape;
 use std::rc::Rc;
 
 use glam::Vec2;

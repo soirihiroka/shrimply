@@ -1,0 +1,15 @@
+[package]
+name = "sanim-lang"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sanim-core.workspace = true
+sanim-data.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[[bench]]
+name = "headless"
+harness = false

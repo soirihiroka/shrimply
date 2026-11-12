@@ -195,6 +195,7 @@ impl VideoCommandSender {
         };
         self.sender.send(worker_command).map_err(|error| {
             mpsc::SendError(Box::new(match error.0 {
+                WorkerCommand::SourcesChanged => unreachable!("source notifications are internal"),
                 WorkerCommand::SetProject => {
                     unreachable!("project notifications return before common send handling")
                 }
@@ -217,6 +218,7 @@ impl VideoCommandSender {
 }
 
 enum WorkerCommand {
+    SourcesChanged,
     SetProject,
     SetPreviewExclusion(Option<Uuid>),
     ConfigureResources(RenderResourceConfig),
@@ -291,6 +293,8 @@ pub struct VideoExportRenderer {
 
 struct RenderSessions {
     elements: HashMap<VisualElementKey, Box<dyn VisualElement>>,
+    active_elements: std::collections::HashSet<VisualElementKey>,
+    source_waker: Option<shrimply_visual_core::generated::SourceWake>,
     decoders: crate::decode::VideoDecoderPool,
     sources: VisualSourceCache,
     volume: shrimply_audio_engine::streaming::FrameVolumeSampler,
@@ -379,6 +383,8 @@ impl RenderSessions {
         ));
         Self {
             elements: HashMap::new(),
+            active_elements: std::collections::HashSet::new(),
+            source_waker: None,
             decoders: crate::decode::VideoDecoderPool::new(
                 resource_config.maximum_temporal_decoders,
             ),
@@ -475,7 +481,9 @@ impl RenderSessions {
             item.content,
             shrimply_project_document::project::VideoItemContent::Media
         ) {
-            return crate::visual_source::create_renderer(item, canvas_size);
+            let mut element = crate::visual_source::create_renderer(item, canvas_size)?;
+            element.set_waker(self.source_waker.clone());
+            return Ok(element);
         }
         let owner = self
             .decoders
@@ -905,6 +913,12 @@ pub fn spawn_worker_with_resources_and_observer(
             let _ = command_tx.send(WorkerCommand::ScheduleSam2Analysis);
         }
     });
+    let source_waker: shrimply_visual_core::generated::SourceWake = Arc::new({
+        let command_tx = command_tx.clone();
+        move || {
+            let _ = command_tx.send(WorkerCommand::SourcesChanged);
+        }
+    });
     let worker_cancel_generation = cancel_generation.clone();
     let worker_project_generation = latest_project_generation.clone();
     let worker_project = pending_project.clone();
@@ -915,6 +929,7 @@ pub fn spawn_worker_with_resources_and_observer(
             project,
             resource_config,
             VideoWorkerChannels {
+                source_waker,
                 command_rx,
                 sam2_scheduler,
                 event_tx,
@@ -942,6 +957,7 @@ pub fn spawn_worker_with_resources_and_observer(
 }
 
 struct VideoWorkerChannels {
+    source_waker: shrimply_visual_core::generated::SourceWake,
     command_rx: Receiver<WorkerCommand>,
     sam2_scheduler: crate::sam2_analysis::Scheduler,
     event_tx: SyncSender<VideoEvent>,
@@ -963,6 +979,7 @@ fn video_compositor_worker(
         return;
     }
     let VideoWorkerChannels {
+        source_waker,
         command_rx,
         mut sam2_scheduler,
         event_tx,
@@ -982,16 +999,36 @@ fn video_compositor_worker(
         false,
         resource_config,
     );
+    sessions.source_waker = Some(source_waker);
     let mut render_cache = RenderCache::default();
     let mut last_errors = Vec::new();
     let mut project_revision = 0;
     let mut project_generation = 0;
     let mut preview_exclusion = None;
+    let mut last_request = None;
     loop {
-        let Ok(command) = command_rx.recv() else {
-            return;
+        let command = match command_rx.recv() {
+            Ok(WorkerCommand::SourcesChanged) => {
+                if !sessions.elements.iter().any(|(key, source)| {
+                    sessions.active_elements.contains(key) && source.needs_update()
+                }) {
+                    continue;
+                }
+                let Some((position, accuracy, request_id, cancel_generation)) = last_request else {
+                    continue;
+                };
+                WorkerCommand::Render {
+                    position,
+                    accuracy,
+                    request_id,
+                    cancel_generation,
+                }
+            }
+            Ok(command) => command,
+            Err(_) => return,
         };
         match command {
+            WorkerCommand::SourcesChanged => unreachable!("handled before dispatch"),
             WorkerCommand::SetProject => {
                 let _span = tracing::debug_span!("video_compositor.set_project").entered();
                 let _measurement = shrimply_profiling::measure("Video / Project update");
@@ -1042,6 +1079,7 @@ fn video_compositor_worker(
                 let Some((position, accuracy, request_id, render_generation)) = coalesced else {
                     return;
                 };
+                last_request = Some((position, accuracy, request_id, render_generation));
                 schedule_sam2_analysis(&project, &mut sam2_scheduler, &event_tx);
                 let render_project_generation = project_generation;
                 let decode_control =
@@ -1295,6 +1333,7 @@ fn coalesce_pending_commands(
 ) -> Option<(Time, CompositeAccuracy, u64, u64)> {
     while let Ok(next) = command_rx.try_recv() {
         match next {
+            WorkerCommand::SourcesChanged => {}
             WorkerCommand::SetProject => {
                 if let Some((next_project, next_revision, next_generation)) =
                     take_pending_project(pending_project, project_notification_pending)

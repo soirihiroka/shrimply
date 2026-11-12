@@ -153,9 +153,13 @@ members = [
     "crates/media/visual/3d/transform-3d",
 ]
 default-members = ["crates/binaries/editor-gtk", "crates/binaries/launcher-gtk"]
-exclude = ["external/vtracer"]
+exclude = ["external/vtracer", "sanim"]
 
 [workspace.dependencies]
+sanim-core = { path = "sanim/crates/sanim-core" }
+sanim-data = { path = "sanim/crates/sanim-data" }
+sanim-lang = { path = "sanim/crates/sanim-lang" }
+sanim-runtime = { path = "sanim/crates/sanim-runtime" }
 shrimply-editing-runtime = { path = "crates/application/editing-runtime" }
 shrimply-media-import = { path = "crates/media/media-import" }
 clap = { version = "4.6", default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "string"] }

@@ -94,7 +94,9 @@ struct Slots {
     completed: Option<(Target, Result<compositor::Presented, String>)>,
     manim_updates: Vec<shrimply_manim_state::Update>,
     sam2_errors: Vec<String>,
+    sanim_error: Option<String>,
     schedule_sam2: bool,
+    sources_changed: bool,
     stop: bool,
     warmup: Option<Result<(), String>>,
 }
@@ -371,6 +373,9 @@ impl Renderer {
                 Err(_) => {}
             }
         }
+        if let Some(error) = slots.sanim_error.take() {
+            self.error = Some(error);
+        }
         if self.requested != Some(target) {
             self.next_request_id = self.next_request_id.wrapping_add(1);
             let request_id = self.next_request_id;
@@ -465,6 +470,19 @@ fn worker(
     mut sam2_scheduler: shrimply_visual_core::sam2::analysis::Scheduler,
 ) {
     let mut renderer = compositor::Compositor::default();
+    renderer.set_source_waker(Some(Arc::new({
+        let shared = Arc::downgrade(&shared);
+        move || {
+            if let Some(shared) = shared.upgrade() {
+                shared
+                    .slots
+                    .lock()
+                    .expect("Metal preview slots poisoned")
+                    .sources_changed = true;
+                shared.wake.notify_one();
+            }
+        }
+    })));
     let warmup = objc2::rc::autoreleasepool(|_| renderer.warmup());
     let failed = warmup.is_err();
     shared
@@ -487,12 +505,16 @@ fn worker(
             && slots.request.is_none()
             && slots.decoder_limit.is_none()
             && !slots.schedule_sam2
+            && !slots.sources_changed
             && !active
         {
             slots = shared
                 .wake
                 .wait(slots)
                 .expect("Metal preview slots poisoned");
+        }
+        if std::mem::take(&mut slots.sources_changed) {
+            active |= renderer.needs_update();
         }
         if slots.stop {
             return;
@@ -552,6 +574,7 @@ fn worker(
             renderer.update(&request.project, request.target.time, request.request_id)
         });
         let manim_updates = renderer.take_manim_updates();
+        let sanim_errors = renderer.take_sanim_errors();
         active = result.is_ok() && renderer.needs_update();
         let completed = match result {
             Ok(()) => renderer.take_presented().map(Ok),
@@ -571,6 +594,9 @@ fn worker(
         }
         let mut slots = shared.slots.lock().expect("Metal preview slots poisoned");
         slots.manim_updates.extend(manim_updates);
+        if let Some(error) = sanim_errors.into_iter().last() {
+            slots.sanim_error = Some(error);
+        }
         if let Some(completed) = completed {
             let completed_request_id = completed
                 .as_ref()

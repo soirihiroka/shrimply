@@ -1,3 +1,4 @@
+pub use shrimply_timeline_value::{ShapeKind, ShapeRoundingStrategy};
 pub mod modifier_model;
 pub mod timeline_value;
 

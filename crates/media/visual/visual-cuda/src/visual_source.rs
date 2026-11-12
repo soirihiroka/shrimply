@@ -102,6 +102,10 @@ impl VisualSourceCache {
 /// A stateful renderer for one visual source. Source selection belongs exclusively to
 /// `create_renderer`; the compositor only retains and invokes this interface.
 pub trait VisualElement {
+    fn set_waker(&mut self, _wake: Option<shrimply_visual_core::generated::SourceWake>) {}
+    fn needs_update(&self) -> bool {
+        false
+    }
     fn matches(&self, item: &VideoItem, canvas_size: CanvasSize) -> bool;
 
     fn prepare(
@@ -142,6 +146,7 @@ pub fn create_renderer(
         VideoItemContent::Svg => Ok(Box::new(SvgRenderSession::new(item, canvas_size)?)),
         VideoItemContent::Pdf(_) => Ok(Box::new(PdfRenderSession::new(item)?)),
         VideoItemContent::Manim(_) => Ok(Box::new(ManimElement::new(item, canvas_size)?)),
+        VideoItemContent::Sanim(_) => Ok(Box::new(crate::sanim_render::SanimElement::new(item)?)),
         VideoItemContent::Blender(_) => Ok(Box::new(BlenderElement::new(item, canvas_size)?)),
         VideoItemContent::LayeredImage(_) => Ok(Box::new(LayeredImageRenderSession::new(item)?)),
         VideoItemContent::Text(_) => Ok(Box::new(TextElement::new(canvas_size))),

@@ -192,6 +192,7 @@ impl Scene {
                     import::FileKind::Svg => (Some(import::VisualMediaKind::Svg), 1, 0),
                     import::FileKind::Pdf => (Some(import::VisualMediaKind::Pdf), 1, 0),
                     import::FileKind::Python => (Some(import::VisualMediaKind::Manim), 1, 0),
+                    import::FileKind::Sanim => (Some(import::VisualMediaKind::Sanim), 1, 0),
                     import::FileKind::Blender => (Some(import::VisualMediaKind::Blender), 1, 0),
                     import::FileKind::LayeredImage => {
                         (Some(import::VisualMediaKind::LayeredImage), 1, 0)

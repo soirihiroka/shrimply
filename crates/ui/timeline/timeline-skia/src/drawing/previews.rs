@@ -37,6 +37,7 @@ pub fn draw_import_preview(
                 import::VisualMediaKind::Svg => Icon("boxy-svg-symbolic"),
                 import::VisualMediaKind::Pdf => Icon("rich-text-symbolic"),
                 import::VisualMediaKind::Manim => Icon("manim-symbolic"),
+                import::VisualMediaKind::Sanim => Icon("code-symbolic"),
                 import::VisualMediaKind::Blender => Icon("blender-symbolic"),
                 import::VisualMediaKind::LayeredImage => Icon("image-symbolic"),
                 import::VisualMediaKind::Obj | import::VisualMediaKind::Gaussian => {

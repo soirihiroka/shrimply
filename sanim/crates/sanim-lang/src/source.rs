@@ -1,0 +1,123 @@
+use sanim_core::digest;
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path, PathBuf},
+    sync::Arc,
+};
+
+/// Hosts supply bytes; Sanim itself has no network or ambient filesystem access.
+pub trait Sources {
+    fn read(&self, path: &str) -> Result<Vec<u8>, String>;
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MemorySources {
+    pub files: BTreeMap<String, Vec<u8>>,
+}
+impl MemorySources {
+    pub fn insert(&mut self, path: impl Into<String>, bytes: impl AsRef<[u8]>) {
+        self.files.insert(path.into(), bytes.as_ref().to_vec());
+    }
+}
+impl Sources for MemorySources {
+    fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        self.files
+            .get(path)
+            .cloned()
+            .ok_or_else(|| format!("resource '{path}' does not exist"))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FileSources {
+    root: PathBuf,
+    pub max_bytes: usize,
+}
+impl FileSources {
+    pub fn new(root: impl AsRef<Path>) -> Result<Self, String> {
+        Ok(Self {
+            root: root.as_ref().canonicalize().map_err(|e| e.to_string())?,
+            max_bytes: 64 * 1024 * 1024,
+        })
+    }
+}
+impl Sources for FileSources {
+    fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let resolved = self
+            .root
+            .join(path)
+            .canonicalize()
+            .map_err(|e| format!("cannot read '{path}': {e}"))?;
+        if !resolved.starts_with(&self.root) {
+            return Err(format!(
+                "resource '{path}' escapes the source root (including symlinks)"
+            ));
+        }
+        let mut bytes = vec![];
+        std::fs::File::open(resolved)
+            .map_err(|e| e.to_string())?
+            .take(self.max_bytes as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() > self.max_bytes {
+            return Err(format!(
+                "resource '{path}' exceeds {} bytes",
+                self.max_bytes
+            ));
+        }
+        Ok(bytes)
+    }
+}
+
+pub fn resolve(module: &str, path: &str) -> Result<String, String> {
+    if Path::new(path).is_absolute() {
+        return Err("resource paths must be relative to the source root".into());
+    }
+    let base = Path::new(module).parent().unwrap_or(Path::new(""));
+    let joined = base.join(path);
+    let mut out = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::Normal(p) => out.push(p),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return Err("resource path escapes the source root".into());
+                }
+            }
+            _ => return Err("invalid resource path".into()),
+        }
+    }
+    out.to_str()
+        .map(|v| v.replace('\\', "/"))
+        .ok_or("resource path must be UTF-8".into())
+}
+
+pub(crate) struct Snapshot<'a> {
+    pub provider: &'a dyn Sources,
+    pub reads: BTreeMap<String, Result<Arc<Vec<u8>>, String>>,
+}
+impl Snapshot<'_> {
+    pub fn read(&mut self, path: &str) -> Result<Arc<Vec<u8>>, String> {
+        if !self.reads.contains_key(path) {
+            self.reads
+                .insert(path.into(), self.provider.read(path).map(Arc::new));
+        }
+        self.reads[path].clone()
+    }
+    pub fn fingerprints(&self) -> BTreeMap<String, String> {
+        self.reads
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    match v {
+                        Ok(bytes) => digest(bytes),
+                        Err(e) => format!("error:{e}"),
+                    },
+                )
+            })
+            .collect()
+    }
+}

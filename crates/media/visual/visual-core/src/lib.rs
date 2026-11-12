@@ -17,6 +17,7 @@ pub mod path_transition;
 pub mod raster_modifiers;
 pub mod raster_morph;
 pub mod sam2;
+pub mod sanim;
 pub mod sequence;
 pub mod shaky_path;
 pub mod shape;

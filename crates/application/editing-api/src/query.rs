@@ -961,6 +961,7 @@ fn video_source_kind(content: &VideoItemContent) -> &'static str {
         VideoItemContent::Svg => "svg",
         VideoItemContent::Pdf(_) => "pdf",
         VideoItemContent::Manim(_) => "manim",
+        VideoItemContent::Sanim(_) => "sanim",
         VideoItemContent::Blender(_) => "blender",
         VideoItemContent::LayeredImage(_) => "layered_image",
         VideoItemContent::Text(_) => "text",

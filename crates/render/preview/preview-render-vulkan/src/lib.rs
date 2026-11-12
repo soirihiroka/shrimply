@@ -146,6 +146,12 @@ impl Compositor {
     pub fn needs_update(&self) -> bool {
         self.scene.needs_update()
     }
+    pub fn set_source_waker(&mut self, wake: Option<shrimply_visual_core::generated::SourceWake>) {
+        self.scene.set_source_waker(wake);
+    }
+    pub fn take_sanim_errors(&mut self) -> Vec<String> {
+        self.scene.take_sanim_errors()
+    }
     pub fn prepare(
         &mut self,
         project: &Project,
@@ -216,8 +222,9 @@ impl Compositor {
         position: Time,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> Result<FramePlan, String> {
+        self.scene.set_strict_sources(true);
         self.scene.request_frame();
-        loop {
+        let result = (|| loop {
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 return Err("Export cancelled".into());
             }
@@ -234,7 +241,9 @@ impl Compositor {
                 return Ok(plan);
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
-        }
+        })();
+        self.scene.set_strict_sources(false);
+        result
     }
 
     pub fn render_gpu(&mut self, plan: FramePlan, background: u32) -> Result<Rendered, String> {

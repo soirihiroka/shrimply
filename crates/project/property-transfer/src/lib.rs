@@ -239,6 +239,7 @@ fn supports_speed(item: &VideoItem) -> bool {
             | VideoItemContent::Svg
             | VideoItemContent::Pdf(_)
             | VideoItemContent::Manim(_)
+            | VideoItemContent::Sanim(_)
             | VideoItemContent::Blender(_)
             | VideoItemContent::LayeredImage(_)
             | VideoItemContent::FoldedSequence(_)

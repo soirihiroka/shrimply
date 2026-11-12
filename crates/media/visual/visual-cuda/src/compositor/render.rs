@@ -17,6 +17,7 @@ pub(super) fn render_project_frame(
     decode_control: Option<&DecodeControl>,
 ) -> RenderedFrame {
     let _measurement = shrimply_profiling::measure("Video / Render frame");
+    sessions.active_elements.clear();
     compositor.set_render_control(None);
     if decode_control.is_some_and(DecodeControl::superseded) {
         return RenderedFrame {
@@ -234,6 +235,7 @@ pub(super) fn render_project_frame(
             shrimply_project_document::project::VideoItemContent::Svg => "Video item / SVG",
             shrimply_project_document::project::VideoItemContent::Pdf(_) => "Video item / PDF",
             shrimply_project_document::project::VideoItemContent::Manim(_) => "Video item / Manim",
+            shrimply_project_document::project::VideoItemContent::Sanim(_) => "Video item / Sanim",
             shrimply_project_document::project::VideoItemContent::Blender(_) => {
                 "Video item / Blender"
             }
@@ -1056,6 +1058,7 @@ impl FrameItemRenderer<'_> {
             self.render_folded_sequence(item, reference, request.state)?
         } else {
             let _measurement = shrimply_profiling::measure("Video item / Draw source");
+            self.sessions.active_elements.insert(key.clone());
             let element = self
                 .sessions
                 .elements

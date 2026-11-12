@@ -1,5 +1,7 @@
+mod shapes;
 pub use glam::{DVec2, IVec2, Mat3, USizeVec2, UVec2, Vec2, Vec3, vec2, vec3};
 use serde::{Deserialize, Serialize};
+pub use shapes::*;
 
 mod camera_reconstruction;
 mod ellipse;

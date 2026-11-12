@@ -1,0 +1,13 @@
+[package]
+name = "sanim-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sanim-core.workspace = true
+sanim-lang.workspace = true
+sanim-data.workspace = true
+sanim-render.workspace = true
+serde_json.workspace = true
+notify.workspace = true

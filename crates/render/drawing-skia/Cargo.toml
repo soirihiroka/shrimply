@@ -7,4 +7,4 @@ edition = "2024"
 glam.workspace = true
 skia-safe.workspace = true
 shrimply-math-color = { workspace = true, features = ["skia"] }
-shrimply-math-geometry = { workspace = true }
+shrimply-math-geometry = { workspace = true, features = ["skia"] }

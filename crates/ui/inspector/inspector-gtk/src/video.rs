@@ -84,6 +84,7 @@ impl Inspectable for VideoItem {
             shrimply_project_document::project::VideoItemContent::Svg => "SVG",
             shrimply_project_document::project::VideoItemContent::Pdf(_) => "PDF",
             shrimply_project_document::project::VideoItemContent::Manim(_) => "Manim",
+            shrimply_project_document::project::VideoItemContent::Sanim(_) => "Sanim",
             shrimply_project_document::project::VideoItemContent::Blender(_) => "Blender",
             shrimply_project_document::project::VideoItemContent::LayeredImage(_) => {
                 "Layered Image"
@@ -212,6 +213,7 @@ impl Inspectable for VideoItem {
                 | shrimply_project_document::project::VideoItemContent::Svg
                 | shrimply_project_document::project::VideoItemContent::Pdf(_)
                 | shrimply_project_document::project::VideoItemContent::Manim(_)
+                | shrimply_project_document::project::VideoItemContent::Sanim(_)
                 | shrimply_project_document::project::VideoItemContent::Blender(_)
                 | shrimply_project_document::project::VideoItemContent::LayeredImage(_)
                 | shrimply_project_document::project::VideoItemContent::FoldedSequence(_) => {
@@ -337,6 +339,7 @@ impl Inspectable for VideoItem {
             shrimply_project_document::project::VideoItemContent::Obj(_)
                 | shrimply_project_document::project::VideoItemContent::Gaussian(_)
                 | shrimply_project_document::project::VideoItemContent::Manim(_)
+                | shrimply_project_document::project::VideoItemContent::Sanim(_)
                 | shrimply_project_document::project::VideoItemContent::Background(_)
         ) {
             visual_items.push(

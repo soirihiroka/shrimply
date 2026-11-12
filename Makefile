@@ -382,6 +382,16 @@ gtk-components-showcase: native-deps
 qt-components-showcase: qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) run -p $(QT_COMPONENTS_DEMO_PACKAGE)
 
+check: sanim-check sanim-integration-check
+
+.PHONY: sanim-check
+sanim-check:
+	$(MAKE) -C sanim check
+
+.PHONY: sanim-integration-check
+sanim-integration-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import sanim --lib
+
 source-size-check:
 	@oversized="$$(rg --files -g '!external/**' -g '!target/**' -g '!vcpkg_installed/**' | while IFS= read -r source_file; do \
 		case "$$source_file" in \

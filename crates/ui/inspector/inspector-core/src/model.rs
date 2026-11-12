@@ -1320,6 +1320,7 @@ pub(crate) fn video_title(item: &shrimply_project_document::project::VideoItem) 
         VideoItemContent::Svg => "SVG",
         VideoItemContent::Pdf(_) => "PDF",
         VideoItemContent::Manim(_) => "Manim",
+        VideoItemContent::Sanim(_) => "Sanim",
         VideoItemContent::Blender(_) => "Blender",
         VideoItemContent::LayeredImage(_) => "Layered Image",
         VideoItemContent::Obj(_) => "OBJ",

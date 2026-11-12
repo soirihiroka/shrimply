@@ -131,6 +131,7 @@ impl Scene {
                 || matches!(
                     item.content,
                     VideoItemContent::Background(_)
+                        | VideoItemContent::Sanim(_)
                         | VideoItemContent::Gaussian(_)
                         | VideoItemContent::Obj(_)
                 ) {
@@ -286,6 +287,60 @@ impl Scene {
                         project.canvas_size.width,
                         project.canvas_size.height,
                     )
+                }
+                VideoItemContent::Sanim(_) => {
+                    self.sanim_active.insert(item.id);
+                    if let std::collections::hash_map::Entry::Vacant(entry) =
+                        self.sanim.entry(item.id)
+                    {
+                        let mut source = shrimply_visual_core::sanim::Source::new(item)?;
+                        source.set_waker(self.source_waker.clone());
+                        entry.insert(source);
+                    }
+                    let source = self
+                        .sanim
+                        .get_mut(&item.id)
+                        .expect("initialized Sanim source");
+                    let status = source.poll(
+                        item,
+                        time,
+                        project.canvas_size,
+                        project.fps,
+                        self.strict_sources,
+                    )?;
+                    if let Some(error) = source.take_error() {
+                        self.sanim_errors.push(error);
+                    }
+                    match status {
+                        shrimply_visual_core::sanim::Status::Empty => continue,
+                        shrimply_visual_core::sanim::Status::Loading => {
+                            self.manim_loading = true;
+                            self.manim_pending = true;
+                            return Ok(Vec::new());
+                        }
+                        shrimply_visual_core::sanim::Status::Ready(frame) => {
+                            let width = frame.width;
+                            let height = frame.height;
+                            let operations = if capture_host {
+                                Vec::new()
+                            } else {
+                                vec![shrimply_visual_core::generated::VectorOperation::Transform(
+                                    transform.composed(),
+                                )]
+                            };
+                            let generated = shrimply_visual_core::generated::GeneratedFrame {
+                                visual: Box::new(shrimply_visual_core::sanim::RecordedVisual(
+                                    frame,
+                                )),
+                                evaluation: evaluation.clone(),
+                                operations,
+                                render_size: render_canvas,
+                                canvas_size: project.canvas_size,
+                                drawing_strategy: item.skia_drawing_strategy,
+                            };
+                            (Source::Generated(Box::new(generated)), width, height)
+                        }
+                    }
                 }
                 VideoItemContent::Manim(_) => {
                     let fps = shrimply_manim_wgpu::effective_fps(item, project.fps);

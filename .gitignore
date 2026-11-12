@@ -30,6 +30,7 @@ __pycache__/
 *.o
 *.lock
 !/Cargo.lock
+!/sanim/Cargo.lock
 !/flake.lock
 !/server/uv.lock
 !/docs/uv.lock

@@ -1,4 +1,6 @@
 use hashbrown::HashMap;
+#[cfg(test)]
+mod sanim_tests;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -62,7 +64,10 @@ impl Processor<InspectionKey> for MediaInspector {
             .lock()
             .expect("media inspection cache lock poisoned")
             .get(&key)
-            .filter(|info| info.snapshot.ensure_current().is_ok())
+            .filter(|info| {
+                file_kind(&key.path) != Some(FileKind::Sanim)
+                    && info.snapshot.ensure_current().is_ok()
+            })
             .cloned()
         {
             return Ok(info);
@@ -95,6 +100,7 @@ pub enum FileKind {
     Svg,
     Pdf,
     Python,
+    Sanim,
     Blender,
     LayeredImage,
     Obj,
@@ -111,6 +117,7 @@ pub enum VisualMediaKind {
     Svg,
     Pdf,
     Manim,
+    Sanim,
     Blender,
     LayeredImage,
     Obj,
@@ -211,6 +218,8 @@ pub fn file_kind(path: &Path) -> Option<FileKind> {
         Some(FileKind::Pdf)
     } else if extension.eq_ignore_ascii_case("py") {
         Some(FileKind::Python)
+    } else if extension.eq_ignore_ascii_case("sanim") {
+        Some(FileKind::Sanim)
     } else if extension.eq_ignore_ascii_case("blend") {
         Some(FileKind::Blender)
     } else if extension.eq_ignore_ascii_case("psd") || extension.eq_ignore_ascii_case("kra") {
@@ -238,6 +247,7 @@ pub fn direct_media_kind(kind: FileKind) -> bool {
             | FileKind::Svg
             | FileKind::Pdf
             | FileKind::Python
+            | FileKind::Sanim
             | FileKind::Blender
             | FileKind::LayeredImage
             | FileKind::Obj
@@ -255,6 +265,39 @@ pub fn inspect(
     let snapshot = source.snapshot()?;
     let path = snapshot.path();
     let file_kind = file_kind(path).ok_or_else(|| "unsupported file type".to_string())?;
+    if file_kind == FileKind::Sanim {
+        let parent = path.parent().unwrap_or(Path::new("."));
+        let entry = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .ok_or("Sanim filename must be UTF-8")?;
+        let sources = sanim_lang::FileSources::new(parent)?;
+        let mut engine=sanim_lang::Engine::default();
+        engine.viewport.width=canvas_size.width.max(1);engine.viewport.height=canvas_size.height.max(1);
+        let report=engine.duration(entry,&sources,&std::collections::BTreeMap::new()).map_err(|e|e.to_string())?;
+        snapshot.verify_current()?;
+        return Ok(MediaInfo {
+            source,
+            snapshot,
+            duration: Time {
+                seconds: if report.duration > Fraction::from(0) {
+                    report.duration
+                } else {
+                    default_visual_duration.seconds
+                },
+            },
+            visual_kind: Some(VisualMediaKind::Sanim),
+            video_streams: 1,
+            video_sizes: vec![UVec2::new(
+                canvas_size.width.max(1),
+                canvas_size.height.max(1),
+            )],
+            video_fps: Some(report.viewport.rate),
+            audio_streams: 0,
+            layered_image_layers: Vec::new(),
+            caption_cues: Vec::new(),
+        });
+    }
     if file_kind == FileKind::Vtt {
         let caption_cues = parse_vtt_contents(&snapshot.read_to_string()?);
         let duration = caption_cues
@@ -949,6 +992,7 @@ pub fn video_content_for_import(info: &MediaInfo) -> VideoItemContent {
         VisualMediaKind::Svg => VideoItemContent::Svg,
         VisualMediaKind::Pdf => VideoItemContent::Pdf(Box::default()),
         VisualMediaKind::Manim => VideoItemContent::Manim(Box::default()),
+        VisualMediaKind::Sanim => VideoItemContent::Sanim(Box::default()),
         VisualMediaKind::Blender => VideoItemContent::Blender(Box::default()),
         VisualMediaKind::LayeredImage => {
             VideoItemContent::LayeredImage(Box::new(LayeredImageItem {

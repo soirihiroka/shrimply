@@ -1,0 +1,17 @@
+[package]
+name = "sanim-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sanim"
+path = "src/main.rs"
+
+[dependencies]
+sanim-core.workspace = true
+sanim-lang.workspace = true
+sanim-render.workspace = true
+serde_json.workspace = true
+sanim-data.workspace = true
+tempfile.workspace = true

@@ -1,0 +1,24 @@
+import "./theme" as theme
+
+background(#121826)
+type Sample = {
+    id: String,
+    rank: Number,
+    value: Number,
+}
+
+let samples = read<Table<Sample>>("samples.csv")
+reflect bar_color: Color = theme.accent
+
+for sample in samples {
+    let bar = Rect(
+        id: sample.id,
+        width: sample.value * 1pt,
+        height: 32pt,
+        fill: bar_color,
+        position: Vec2(0%, (sample.rank * 20 - 30) * 1%),
+    )
+    play(FadeIn(bar), duration: 200ms)
+    assert(always(inside_canvas(bar)))
+}
+wait(1s)

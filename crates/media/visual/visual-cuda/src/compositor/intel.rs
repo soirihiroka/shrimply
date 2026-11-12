@@ -37,11 +37,13 @@ pub(super) fn worker(
             return;
         }
     };
+    compositor.set_source_waker(Some(channels.source_waker.clone()));
     compositor.set_decoder_limit(config.maximum_temporal_decoders);
     let mut revision = 0;
     let mut project_generation = 0;
     let mut exclusion = None;
     let mut request = None;
+    let mut last_request = None;
     let mut pending: Option<Pending> = None;
     let mut serial = 0_u64;
     loop {
@@ -64,6 +66,11 @@ pub(super) fn worker(
         for command in commands {
             match command {
                 WorkerCommand::Stop => return,
+                WorkerCommand::SourcesChanged => {
+                    if request.is_none() && compositor.needs_update() {
+                        request = last_request;
+                    }
+                }
                 WorkerCommand::SetProject => {
                     if let Some((next, next_revision, next_generation)) = take_pending_project(
                         &channels.pending_project,
@@ -100,7 +107,8 @@ pub(super) fn worker(
                         accuracy,
                         id: request_id,
                         generation: cancel_generation,
-                    })
+                    });
+                    last_request = request;
                 }
             }
         }
@@ -172,7 +180,9 @@ pub(super) fn worker(
                         },
                         current.accuracy,
                     );
-                } else if request.is_some_and(|request| request.id == current.id) {
+                } else if request.is_some_and(|request| request.id == current.id)
+                    && !compositor.needs_update()
+                {
                     request = None;
                 }
             }
@@ -189,6 +199,9 @@ pub(super) fn worker(
             let _measurement = shrimply_profiling::measure("Intel compositor / Prepare scene");
             compositor.prepare(&project, current.position, current.accuracy)
         };
+        for error in compositor.take_sanim_errors() {
+            let _ = channels.event_tx.try_send(VideoEvent::Error(error));
+        }
         for update in compositor.take_manim_updates() {
             if channels.event_tx.send(VideoEvent::Manim(update)).is_err() {
                 return;

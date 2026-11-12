@@ -167,6 +167,7 @@ impl Compositor {
         project: &Project,
         time: Time,
     ) -> Result<Option<Image>, String> {
+        self.scene.set_strict_sources(true);
         self.update(project, time, 0)?;
         shrimply_manim_state::validate_render_updates(self.take_manim_updates())?;
         self.take_presented()
@@ -237,6 +238,12 @@ impl Compositor {
 
     pub fn needs_update(&self) -> bool {
         self.pending.is_some() || self.queued.is_some() || self.scene.needs_update()
+    }
+    pub fn set_source_waker(&mut self, wake: Option<shrimply_visual_core::generated::SourceWake>) {
+        self.scene.set_source_waker(wake);
+    }
+    pub fn take_sanim_errors(&mut self) -> Vec<String> {
+        self.scene.take_sanim_errors()
     }
 
     pub fn update(&mut self, project: &Project, time: Time, request_id: u64) -> Result<(), String> {

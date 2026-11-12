@@ -25,6 +25,7 @@ pub enum VisualSource {
     Svg,
     Pdf(Box<PdfItem>),
     Manim(Box<ManimItem>),
+    Sanim(Box<SanimItem>),
     Blender(Box<BlenderItem>),
     #[serde(alias = "psd")]
     LayeredImage(Box<LayeredImageItem>),
@@ -49,6 +50,12 @@ pub struct ManimItem {
     pub scene: String,
     #[serde(default)]
     pub parameters: HashMap<String, ManimParameterValue>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SanimItem {
+    #[serde(default)]
+    pub parameters: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -214,128 +221,7 @@ pub struct ShapeItem {
     pub shadow_blur: TimelineValue<f32>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeKind {
-    #[default]
-    Rect,
-    Ellipse,
-    Triangle,
-    Star,
-    Arrow,
-    Diamond,
-    Pentagon,
-    Hexagon,
-    Heart,
-    Octagon,
-    Cross,
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShapeRoundingStrategy {
-    #[default]
-    Continuous,
-    Circular,
-    Chamfer,
-}
-
-shrimply_property_model::timeline_value::timeline_step_type!(
-    ShapeKind,
-    ShapeKind::Rect,
-    &[
-        TimelineStepVariant {
-            value: ShapeKind::Rect,
-            key: "rect",
-            label: "Rect",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Ellipse,
-            key: "ellipse",
-            label: "Ellipse",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Triangle,
-            key: "triangle",
-            label: "Triangle",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Star,
-            key: "star",
-            label: "Star",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Arrow,
-            key: "arrow",
-            label: "Arrow",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Diamond,
-            key: "diamond",
-            label: "Diamond",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Pentagon,
-            key: "pentagon",
-            label: "Pentagon",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Hexagon,
-            key: "hexagon",
-            label: "Hexagon",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Heart,
-            key: "heart",
-            label: "Heart",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Octagon,
-            key: "octagon",
-            label: "Octagon",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeKind::Cross,
-            key: "cross",
-            label: "Cross",
-            icon: None
-        },
-    ]
-);
-shrimply_property_model::timeline_value::timeline_step_type!(
-    ShapeRoundingStrategy,
-    ShapeRoundingStrategy::Continuous,
-    &[
-        TimelineStepVariant {
-            value: ShapeRoundingStrategy::Continuous,
-            key: "continuous",
-            label: "Continuous",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeRoundingStrategy::Circular,
-            key: "circular",
-            label: "Circular",
-            icon: None
-        },
-        TimelineStepVariant {
-            value: ShapeRoundingStrategy::Chamfer,
-            key: "chamfer",
-            label: "Chamfer",
-            icon: None
-        },
-    ]
-);
+pub use shrimply_property_model::{ShapeKind, ShapeRoundingStrategy};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TextItem {
@@ -637,6 +523,7 @@ impl VisualItem {
                 | VisualSource::Svg
                 | VisualSource::Pdf(_)
                 | VisualSource::Manim(_)
+                | VisualSource::Sanim(_)
                 | VisualSource::Blender(_)
                 | VisualSource::LayeredImage(_)
                 | VisualSource::Obj(_)

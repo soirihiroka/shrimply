@@ -52,3 +52,5 @@ Avoid editing .shrimp project files directly. Use the Shrimply binary editing AP
 Start with `shrimply cli search "describe the task"`, inspect command help or
 `shrimply schema`, and use `--dry-run` to preview edits.
 Inform the user when the binary API is missing features that are needed.
+
+Before adding dependency or going with popular options, ask user their opinion on the dependency. Always prefer skia for 2D rendering.
