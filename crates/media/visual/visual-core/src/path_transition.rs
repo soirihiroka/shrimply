@@ -7,47 +7,7 @@ use skia_safe::{
 use crate::generated::GeneratedTransition;
 use shrimply_project_document::project::{TransitionSide, VisualTransitionKind, WriteOrdering};
 
-pub fn partial_path(path: &Path, progress: f32, reverse: bool) -> Path {
-    if progress <= 0.0 {
-        return Path::default();
-    }
-    if progress >= 1.0 {
-        return path.clone();
-    }
-    let contours = contours(path);
-    let lengths = contours
-        .iter()
-        .map(|contour| PathMeasure::new(contour, false, None).length())
-        .collect::<Vec<_>>();
-    let mut remaining = lengths.iter().sum::<f32>() * progress.clamp(0.0, 1.0);
-    let mut output = PathBuilder::new();
-    let indices: Box<dyn Iterator<Item = usize>> = if reverse {
-        Box::new((0..contours.len()).rev())
-    } else {
-        Box::new(0..contours.len())
-    };
-    for index in indices {
-        let length = lengths[index];
-        let visible = remaining.clamp(0.0, length);
-        remaining -= visible;
-        if visible <= 0.0 {
-            continue;
-        }
-        let mut measure = PathMeasure::new(&contours[index], false, None);
-        let (start, end) = if reverse {
-            (length - visible, length)
-        } else {
-            (0.0, visible)
-        };
-        measure.get_segment(start, end, &mut output, true);
-        if visible >= length && measure.is_closed() {
-            output.close();
-        }
-    }
-    output.detach()
-}
-
-pub use crate::path::contours;
+pub use crate::path::{contours, partial_path};
 
 pub fn morphed_path(from: &Path, to: &Path, progress: f32) -> Path {
     const MIN_CONTOUR_KEYPOINTS: usize = 4;

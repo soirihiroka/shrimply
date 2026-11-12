@@ -99,8 +99,8 @@ impl Session {
             return Reload::Unchanged;
         }
         self.previous_overrides = overrides;
-        let mut planning_performance=vec![];
-        let mut planning_micros=0;
+        let mut planning_performance = vec![];
+        let mut planning_micros = 0;
         if let Some(publish) = probe {
             let duration = if let Some(json) = &self.json_overrides {
                 self.engine.duration_json(&self.entry, sources, json)
@@ -108,8 +108,16 @@ impl Session {
                 self.engine.duration(&self.entry, sources, &self.overrides)
             };
             if let Ok(report) = duration {
-                publish(report.duration);planning_micros=report.statistics.prepare_micros;
-                planning_performance=report.performance.into_iter().map(|mut warning|{warning.message=format!("duration planning: {}",warning.message);warning}).collect();
+                publish(report.duration);
+                planning_micros = report.statistics.prepare_micros;
+                planning_performance = report
+                    .performance
+                    .into_iter()
+                    .map(|mut warning| {
+                        warning.message = format!("duration planning: {}", warning.message);
+                        warning
+                    })
+                    .collect();
             }
         }
 
@@ -117,7 +125,15 @@ impl Session {
             self.engine.prepare_json(&self.entry, sources, json)
         } else {
             self.engine.prepare(&self.entry, sources, &self.overrides)
-        }.map(|mut prepared|{prepared.statistics.prepare_micros=prepared.statistics.prepare_micros.saturating_add(planning_micros);prepared.performance.extend(planning_performance);prepared});
+        }
+        .map(|mut prepared| {
+            prepared.statistics.prepare_micros = prepared
+                .statistics
+                .prepare_micros
+                .saturating_add(planning_micros);
+            prepared.performance.extend(planning_performance);
+            prepared
+        });
         match prepared {
             Ok(prepared) => {
                 self.last_error = None;

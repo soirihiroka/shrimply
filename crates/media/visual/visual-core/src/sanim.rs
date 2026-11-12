@@ -26,7 +26,7 @@ pub struct Source {
     renderer: Renderer,
     scene: Option<(String, Scene)>,
     generation: u64,
-    warned_revision:u64,
+    warned_revision: u64,
     error: Option<String>,
     export: Option<Arc<sanim_runtime::sanim_lang::Prepared>>,
 }
@@ -48,7 +48,7 @@ impl Source {
             renderer: Renderer::default(),
             scene: None,
             generation: 0,
-            warned_revision:0,
+            warned_revision: 0,
             error: None,
             export: None,
         })
@@ -118,9 +118,13 @@ impl Source {
                     return Err("Sanim preparation did not finish within 30 seconds".into());
                 }
             }
-            if state.revision!=self.warned_revision && let Some(prepared)=&state.prepared {
-                for warning in &prepared.performance {tracing::warn!(code=%warning.code,source=%warning.source,line=warning.span.line,message=%warning.message,"Sanim preparation performance");}
-                self.warned_revision=state.revision;
+            if state.revision != self.warned_revision
+                && let Some(prepared) = &state.prepared
+            {
+                for warning in &prepared.performance {
+                    tracing::warn!(code=%warning.code,source=%warning.source,line=warning.span.line,message=%warning.message,"Sanim preparation performance");
+                }
+                self.warned_revision = state.revision;
             }
             if state.generation != self.generation {
                 self.generation = state.generation;
@@ -161,7 +165,7 @@ impl Source {
         {
             self.scene = Some((
                 key,
-                Scene::new(
+                self.renderer.prepare(
                     prepared
                         .animation_for_viewport(canvas.width, canvas.height)
                         .map_err(|e| e.to_string())?,

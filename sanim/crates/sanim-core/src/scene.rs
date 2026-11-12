@@ -49,7 +49,29 @@ pub struct Element {
     pub scale: Fraction,
     pub opacity: Fraction,
     pub fill: Color,
+    #[serde(default)]
+    pub reveal: Reveal,
     pub layout: Layout,
+}
+
+/// Vector reveal state; independent of opacity, geometry and layout.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Reveal {
+    pub progress: Fraction,
+    pub kind: RevealKind,
+}
+impl Default for Reveal {
+    fn default() -> Self {
+        Self {
+            progress: Fraction::from(1),
+            kind: RevealKind::Create,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RevealKind {
+    Create,
+    Write,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -99,6 +121,7 @@ pub enum Property {
     Scale,
     Opacity,
     Fill,
+    Reveal,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -107,6 +130,8 @@ pub struct Motion {
     pub property: Property,
     pub to: Value,
     pub from: Option<Value>,
+    #[serde(default)]
+    pub reveal: Option<RevealKind>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +150,8 @@ pub struct Track {
     pub from: Value,
     pub to: Value,
     pub easing: Easing,
+    #[serde(default)]
+    pub reveal: Option<RevealKind>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -229,6 +256,10 @@ impl Element {
                 value: self.opacity,
                 unit: crate::Unit::Number,
             }),
+            Property::Reveal => Value::Number(crate::Number {
+                value: self.reveal.progress,
+                unit: crate::Unit::Number,
+            }),
             Property::Fill => Value::Color(self.fill.clone()),
         }
     }
@@ -238,6 +269,17 @@ impl Element {
             Property::Rotation => self.rotation = value.number()?.value,
             Property::Scale => self.scale = value.number()?.value,
             Property::Opacity => self.opacity = value.number()?.value,
+            Property::Reveal => {
+                let number = value.number()?;
+                if number.unit != crate::Unit::Number
+                    || !math::finite(&number.value)
+                    || number.value < Fraction::from(0)
+                    || number.value > Fraction::from(1)
+                {
+                    return Err("reveal progress must be a finite Number in [0,1]".into());
+                }
+                self.reveal.progress = number.value;
+            }
             Property::Fill => {
                 if let Value::Color(color) = value {
                     self.fill = color
@@ -294,7 +336,11 @@ impl Animation {
             for (property, tracks) in properties {
                 let count = tracks.partition_point(|v| v.start <= time);
                 if count > 0 {
-                    out.set(*property, tracks[count - 1].sample(time)?)?;
+                    let track = &tracks[count - 1];
+                    out.set(*property, track.sample(time)?)?;
+                    if let Some(kind) = track.reveal {
+                        out.reveal.kind = kind;
+                    }
                 }
             }
         }
@@ -363,16 +409,55 @@ impl Animation {
         let mut targets = std::collections::BTreeSet::new();
         let mut new_ids = std::collections::BTreeSet::new();
         let mut pending_flow = std::collections::BTreeSet::new();
+        let mut descendants = std::collections::BTreeSet::new();
         for motion in motions {
             collect_flow_positions(&motion.element, &mut pending_flow);
+            if let Geometry::Group { children } = &motion.element.geometry {
+                let mut ids = vec![];
+                for child in children {
+                    child.ids(&mut ids);
+                }
+                descendants.extend(ids);
+            }
+        }
+        // Insert only ancestor roots, regardless of argument order. Child writers
+        // then resolve against the same pending tree as their parent writers.
+        for motion in motions {
+            if descendants.contains(&motion.element.id)
+                || self.find(&motion.element.id).is_some()
+                || additions
+                    .iter()
+                    .any(|element| element.id == motion.element.id)
+            {
+                continue;
+            }
+            let mut ids = vec![];
+            motion.element.ids(&mut ids);
+            for id in ids {
+                if self.find(&id).is_some() || !new_ids.insert(id.clone()) {
+                    return Err(format!("duplicate element identity '{id}'"));
+                }
+            }
+            additions.push(motion.element.clone());
         }
         for motion in motions {
-            if motion.property == Property::Position
-                && (self.flow_controlled.contains(&motion.element.id)
-                    || pending_flow.contains(&motion.element.id))
-            {
+            let flow_controlled = self.flow_controlled.contains(&motion.element.id)
+                || pending_flow.contains(&motion.element.id);
+            if motion.property == Property::Position && flow_controlled {
                 return Err(format!(
                     "flow layout controls '{}.position'; animate a containing Group or use a free Group instead",
+                    motion.element.id
+                ));
+            }
+            let centered_growth = motion.property == Property::Scale
+                && (motion.to.number()?.value == Fraction::from(0)
+                    || motion
+                        .from
+                        .as_ref()
+                        .is_some_and(|v| v.number().is_ok_and(|n| n.value == Fraction::from(0))));
+            if centered_growth && flow_controlled {
+                return Err(format!(
+                    "flow layout controls the size of '{}'; grow or shrink the containing Row, Column or Group instead",
                     motion.element.id
                 ));
             }
@@ -387,14 +472,10 @@ impl Animation {
                     ));
                 }
             } else {
-                let mut ids = vec![];
-                motion.element.ids(&mut ids);
-                for id in ids {
-                    if self.find(&id).is_some() || !new_ids.insert(id.clone()) {
-                        return Err(format!("duplicate element identity '{id}'"));
-                    }
-                }
-                additions.push(motion.element.clone());
+                return Err(format!(
+                    "duplicate or cyclic element identity '{}' in pending groups",
+                    motion.element.id
+                ));
             }
             if !targets.insert((motion.element.id.clone(), motion.property)) {
                 return Err(format!(
@@ -402,10 +483,62 @@ impl Animation {
                     motion.element.id, motion.property
                 ));
             }
+            if motion.property == Property::Reveal {
+                let related = |other: &Element| {
+                    other.id != motion.element.id
+                        && (motion.element.find(&other.id).is_some()
+                            || other.find(&motion.element.id).is_some())
+                };
+                let pending = motions
+                    .iter()
+                    .any(|other| other.property == Property::Reveal && related(&other.element));
+                let existing = self.tracks.iter().any(|(id, properties)| {
+                    self.find(id).is_some_and(related)
+                        && properties.get(&Property::Reveal).is_some_and(|tracks| {
+                            tracks
+                                .iter()
+                                .any(|track| track.start < end && track.end > start)
+                        })
+                });
+                if pending || existing {
+                    return Err(format!(
+                        "overlapping ancestor/descendant reveals for '{}'; reveal the containing group, or animate parent and child in separate plays",
+                        motion.element.id
+                    ));
+                }
+                for value in std::iter::once(&motion.to).chain(motion.from.iter()) {
+                    let n = value.number()?;
+                    if n.unit != crate::Unit::Number
+                        || !math::finite(&n.value)
+                        || n.value < Fraction::from(0)
+                        || n.value > Fraction::from(1)
+                    {
+                        return Err("reveal endpoints must be finite Numbers in [0,1]".into());
+                    }
+                }
+            }
             let current = self.sample_element(
                 self.find(&motion.element.id).unwrap_or(&motion.element),
                 start,
             )?;
+            if centered_growth
+                && (current.rotation != Fraction::from(0)
+                    || motions.iter().any(|other| {
+                        other.element.id == motion.element.id
+                            && other.property == Property::Rotation
+                    })
+                    || self
+                        .tracks
+                        .get(&motion.element.id)
+                        .and_then(|properties| properties.get(&Property::Rotation))
+                        .is_some_and(|tracks| {
+                            tracks
+                                .iter()
+                                .any(|track| track.start < end && track.end > start)
+                        }))
+            {
+                return Err("GrowFromCenter/ShrinkToCenter require zero rotation throughout the motion; use ScaleTo for rotated geometry, or reset rotation in an earlier play".into());
+            }
             let mut from = motion
                 .from
                 .clone()
@@ -446,6 +579,7 @@ impl Animation {
                     from,
                     to,
                     easing,
+                    reveal: motion.reveal,
                 },
             ));
         }

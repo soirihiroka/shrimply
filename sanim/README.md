@@ -5,7 +5,7 @@ has its own Rust workspace so language development and tests do not build the
 editor, GPU kernels, Python, or GUI dependencies.
 
 ```text
-reflect tint: Color = Color("orange")
+reflect tint: Color = Color("orange3")
 
 fn make_marker(identity: String, radius: Length = 24pt): Element {
     return Circle(id: identity, radius: radius, fill: tint)
@@ -32,6 +32,8 @@ make -C sanim run ARGS='inspect examples/data.sanim'
 make -C sanim run ARGS='render examples/query.sanim --time 600ms --output /tmp/query.png'
 make -C sanim run ARGS='render examples/hello.sanim --frame 60 --output /tmp/sanim.png'
 make -C sanim run ARGS='watch examples/hello.sanim --output /tmp/sanim.png'
+make -C sanim run ARGS='duration examples/animations.sanim --json'
+make -C sanim run ARGS='video examples/animations.sanim --output /tmp/animations.mp4'
 ```
 
 Reflected inputs accept typed JSON overrides. For example:
@@ -41,7 +43,9 @@ make -C sanim run ARGS='check examples/hello.sanim --set repetitions=4'
 make -C sanim run ARGS='check examples/data.sanim --set bar_color="\"#FF8800\""'
 ```
 
-The CLI has `check`, `inspect`, `render`, and `watch` commands. `--help` describes
+The CLI has `check`, `inspect`, `duration`, `render`, `video`, and `watch` commands.
+Standalone output defaults to 1920×1080, 30 FPS and 96 DPI. Video streams
+headless Skia frames to an external FFmpeg encoder for H.264 MP4 output. `--help` describes
 frame/time selection, output sizing, and bounded watch sessions. `inspect`
 exports source dependencies, reflected values, resolved types and symbols,
 scheduling effects, verification evidence, and performance measurements as JSON.
@@ -52,8 +56,8 @@ scheduling effects, verification evidence, and performance measurements as JSON.
 | --- | --- |
 | `sanim-core` | Shared type/value model, checked rational arithmetic, scene tracks, relative layout, geometric verification |
 | `sanim-data` | Bounded schema-driven CSV, JSON, TOML, YAML, NPY and NPZ decoding; no filesystem access |
-| `sanim-lang` | Handwritten lexer/parser, one AST, type checking, preparation, reflection, caching and hot-reload sessions |
-| `sanim-render` | CPU rasterization and PNG output; no SVG or GUI toolkit |
+| `sanim-lang` | Direct-source handwritten AST parser, no lexer/token stream, type checking, preparation, reflection, caching and hot-reload sessions |
+| `sanim-render` | Skia vector recordings, bounded geometry/frame caches, explicit CPU PNG/video output |
 | `sanim-cli` | Headless commands and polling watch loop |
 | `sanim-runtime` | Background preparation, filesystem dependency watches and immutable published revisions |
 
@@ -73,7 +77,9 @@ Inputs cannot be declared conditionally or inside helpers.
 Standard names are already available and cannot be redefined in any scope.
 Shadowing enclosing bindings is also an error. Case matters: `color` is valid;
 `Color` is protected. Records use structural checking with exact field sets.
-Generic functions and record aliases use `<T>`. Enums support payloads and
+Generic functions and record aliases use `<T>`, support defaults such as `<T = Data>`,
+and constraints such as `<T: Numeric>` or `<T: Readable = Data>`.
+`Unknown` is internal inference state and cannot be declared as a source type. Enums support payloads and
 exhaustive `match` with `case Variant(binding) { ... }` arms.
 
 Values include `Number`, `Bool`, `String`, `Color`, `Length`, `Duration`, `Angle`,
@@ -83,6 +89,14 @@ explicit with `Vec2<Length>` or `Vec2<Percent>`. A vector inferred from
 `Vec2(25%, 50%)` retains its percentage units. Accessing `.x`/`.y` requires known
 component units. List/array indexing and `get` return `Option<T>`; `unwrap(value, fallback)`
 handles missing items without unchecked indexing.
+
+`Color("blue3")`, `Color("orange3")` and `Color("window_bg_dark")` use the existing
+shared Shrimply Adwaita palette. All shared palette names are available, including
+accent and light/dark semantic colors, case-insensitively with their underscores.
+The definitions live once in `shrimply-math-color`; Sanim does not copy the palette.
+`Color()` defaults to Adwaita `red3`. Basic CSS-style names such as `"blue"` keep
+their literal meaning, and `#RRGGBB`/`#RRGGBBAA` remain available for custom colors.
+Palette choices are explicit and independent of the desktop theme for portable output.
 
 Arithmetic and decimal literals use checked rational values. Time never uses
 floating point. Units must agree; `96px` is explicitly converted to `72pt`.
@@ -103,10 +117,26 @@ retain their schemas in reflection and typed JSON/TOML/NPY data loading.
 
 `Circle`, `Rect`/`Rectangle`, `Line`, `Polygon`, `Text`, `Group`, `Row` and `Column`
 construct immutable elements. `MoveTo`, `Shift`, `FadeIn`, `FadeOut`, `RotateTo`,
-`ScaleTo`, and `FillTo` construct motions. `play` schedules one or more motions
+`ScaleTo`, `FillTo`, `Create`, `Write`, `Uncreate`, `Unwrite`, `GrowFromCenter`,
+and `ShrinkToCenter` construct motions. `play` schedules one or more motions
 in parallel, then advances the script cursor; `wait` advances it without motion.
 `add` inserts a still element. Functions may schedule animation. There is no
 per-frame script execution.
+
+`Create` exposes vector path segments with a trace and progressively filled path.
+`Write` traces the outline during the first half, then fills it during the second.
+`Uncreate` and `Unwrite` reverse those progressions from the current reveal state.
+These use the actual Skia paths, including prepared Pango glyph outlines; they are
+independent of opacity. A group reveals its children in parallel without changing
+layout. Overlapping reveals on an ancestor and descendant are rejected: reveal
+the group or use separate plays. Reveal traces remain inside the original bounds.
+
+`GrowFromCenter` scales from zero to the element's declared scale;
+`ShrinkToCenter` scales the current state to zero. They require center alignment,
+zero rotation throughout the motion, and a target whose size is not controlled
+by a parent flow layout. Errors suggest `ScaleTo` or animating the containing
+group. `ScaleTo` remains a positive-scale animation using the existing anchor.
+See [`examples/animations.sanim`](examples/animations.sanim) for the full supported set.
 
 Supported easings are `linear`, `cubic_in`, `cubic_out`, and `smooth`. Tracks hold
 their final value. Duplicate property writers in one `play` are errors. Position
@@ -121,6 +151,13 @@ executes sequentially. `timer count every period { ... }` starts iterations at
 fixed intervals and pads the remaining time; an overrun is an error. Counts,
 nesting, total preparation operations, source size, and scene size are bounded.
 Recursive call graphs and copying functions into values/containers are rejected.
+Every expression, statement and function carries a timeline effect. `Engine::duration`
+and CLI `duration` resolve exact total length without building unrelated geometry.
+Timing-dependent reads are evaluated; unrelated data and visual validation can be
+skipped, so a duration report does not replace full preparation before rendering.
+State-observing timing can fall back to full preparation with a `P004` warning.
+All animations are finite: resolved duration above two hours is an error;
+exactly two hours is valid. Overflow uses structured diagnostics, never an unbounded loop.
 
 ## Relative layout
 
@@ -148,10 +185,13 @@ start/start alignment. Percentage offsets resolve against parent dimensions.
 motions fail explicitly. Groups used as flow children need explicit dimensions.
 Rotated shapes need explicit placement when their flow extent is unavailable.
 
-Output pixels and logical viewport dimensions are independent. `--width` and
-`--height` change raster resolution; `--logical-width` and `--logical-height`
-recompute layout for a different container. A host can call `Animation::layout`
-with new logical dimensions without recompiling the script.
+Canvas dimensions, frame rate and DPI belong to the host, never to the script.
+CLI `--width`, `--height`, `--fps` and `--dpi` supply that viewport; logical pt size
+is pixels × 72 / DPI. Browser/CSS reference DPI is 96, so `96px` equals `72pt`.
+Scripts can set `background(color)`. A host can call `Animation::layout` with new
+logical dimensions without reparsing. `Row`/`Column` use Taffy flexbox with padding,
+gaps, wrapping, `Justify` and independent cross-axis `Align`; Taffy layout uses f32
+geometry while timeline arithmetic remains exact.
 
 ## Data and modules
 
@@ -222,7 +262,12 @@ effects and user calls are replayed conservatively while their pure subexpressio
 can reuse cached results. This is incremental preparation, not an in-place AST
 patcher. Scene changes identify affected element IDs. Renderer frame caching is
 separate and keyed by immutable scene identity, time and viewport.
-Renderer surfaces, compositing and glyph work have independent budgets. Render
+Renderer surfaces, compositing and path work have independent budgets.
+`Renderer::prepare` caches paths and contour lengths by immutable geometry content,
+so color, opacity, timing and viewport edits reuse geometry. This cache is bounded
+by entries and estimated path bytes. Completed contours are appended without
+remeasurement; a partial contour is measured when sampled. `Scene::new` is the
+convenience API for a standalone scene; retain a Renderer for hot-edit reuse. Render
 results expose measured rasterization time; CLI render/watch events also report
 the complete render-and-write time.
 
@@ -258,13 +303,15 @@ match session.poll(&sources) {
 
 ## Current boundaries
 
-This implementation is a language/runtime foundation, not complete Manim feature
-parity. There is no native Sanim GPU rasterizer, audio, physics, arbitrary
-per-frame callbacks, automatic layout constraint solver, LaTeX typesetting, or
-path morphing. Text rasterization uses explicit fonts and glyph order; it does
-not implement complex-script shaping. Timeline evaluation remains exact; layout and rasterization use
-floating geometry; bit-identical output across all platforms is
-not promised. Unsupported verification is explicitly reported as unknown.
+This implementation does not have complete Manim feature parity. It has no audio,
+physics, arbitrary per-frame callbacks, LaTeX typesetting, or general path morphing
+(`Transform`/`ReplacementTransform`). Pango shapes explicit font assets into vector
+outlines, including complex scripts; bitmap/color glyphs fail explicitly.
+Skia records vector commands and replays them directly on native GPU canvases.
+CPU rasterization is explicit for headless PNG/FFmpeg output. Timeline evaluation
+remains exact; layout and rasterization use floating geometry. Bit-identical output
+across platforms is not promised. Unsupported verification returns `Unknown`;
+groups/hierarchical relations currently require additional evidence.
 
 
 ## Unstructured data and dictionaries
@@ -326,7 +373,8 @@ module and `read` dependencies through native filesystem notifications. Short
 write bursts are debounced; periodic content polling recovers missed events.
 `Runtime::snapshot()` performs no source reads or preparation on the caller's
 thread. It exposes last-good prepared content, the current diagnostic, revision,
-changed element IDs and reflected-input acknowledgement. `set_inputs` accepts a
+changed element IDs, early planned duration and reflected-input acknowledgement.
+`set_waker` notifies the host without polling; callbacks run outside state locks. `set_inputs` accepts a
 complete JSON override snapshot; values are checked against the newly compiled
 source schema, so a type change can be repaired with matching input values.
 
@@ -334,11 +382,11 @@ The editor accepts `.sanim` files through timeline drag/import. The editor canva
 is the logical viewport, overriding standalone canvas dimensions for layout.
 Required visual contracts are revalidated for that viewport. Native Sanim
 clips persist their source path and reflected overrides. Shared Vulkan/Metal
-preview and CUDA export use the same runtime and rasterizer; paused previews
-poll inexpensive runtime state so data-only edits refresh. Exports reject initial preparation errors and pin one prepared source/data
+preview and CUDA export use the same runtime and Skia recordings; the runtime
+wakes paused previews when source or data dependencies change. Exports reject initial preparation errors and pin one prepared source/data
 revision per clip for the export session; later file edits do not mix revisions
 within that clip. The timeline clip envelope remains an editor setting after
 reload; extending source content does not automatically move neighboring clips.
-The editor's source bridge exports straight RGBA and skips PNG encoding. No Python process or
-intermediate video is required. Reflected values are available through the
+The editor replays vector recordings onto its existing GPU canvas, avoiding a
+CPU→GPU→CPU→GPU pixel round trip. No Python process or intermediate video is required. Reflected values are available through the
 headless schema API; dedicated Sanim inspector controls are not implemented yet.

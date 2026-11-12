@@ -249,7 +249,7 @@ fn diagnostic(error: &sanim_core::Diagnostic, json: bool) -> String {
 }
 fn render(prepared: &Prepared, args: &Args, renderer: &mut Renderer) -> Result<u64, String> {
     let started = std::time::Instant::now();
-    let (scene, options) = render_scene(prepared, args)?;
+    let (scene, options) = render_scene(prepared, args, renderer)?;
     let time = if let Some(time) = args.time {
         time
     } else {
@@ -269,8 +269,12 @@ fn render(prepared: &Prepared, args: &Args, renderer: &mut Renderer) -> Result<u
     Ok(started.elapsed().as_micros().try_into().unwrap_or(u64::MAX))
 }
 
-fn render_scene(prepared: &Prepared, _args: &Args) -> Result<(Scene, Options), String> {
-    let scene = Scene::new(prepared.animation.clone())?;
+fn render_scene(
+    prepared: &Prepared,
+    _args: &Args,
+    renderer: &mut Renderer,
+) -> Result<(Scene, Options), String> {
+    let scene = renderer.prepare(prepared.animation.clone())?;
     let options = Options::for_animation(scene.animation());
     Ok((scene, options))
 }

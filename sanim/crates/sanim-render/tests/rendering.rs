@@ -181,7 +181,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
         "font.ttf",
         include_bytes!("../../../tests/fixtures/DejaVuSansCondensed-subset.ttf").as_slice(),
     );
-    files.insert("main.sanim","let font=read<Font>(\"font.ttf\")\nadd(Text(\"AV ffi السلام\",font:font,font_size:24pt,fill:Color(\"white\")))");
+    files.insert("main.sanim","let font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font:font,font_size:24pt,fill:Color(\"white\"))\nplay(Write(label),duration:1s)");
     let prepared = Engine::new(sanim_core::Viewport {
         width: 240,
         height: 96,
@@ -196,12 +196,249 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
     };
     assert!(!outline.is_empty());
     let scene = Scene::new(prepared.animation).unwrap();
-    let frame = Renderer::default()
+    let mut renderer = Renderer::default();
+    let options = Options::for_animation(scene.animation());
+    let start = renderer
+        .render(&scene, Fraction::from(0), &options)
+        .unwrap();
+    let trace = renderer
+        .render(&scene, Fraction::new(1u64, 4u64), &options)
+        .unwrap();
+    let frame = renderer
+        .render(&scene, Fraction::from(1), &options)
+        .unwrap();
+    assert!(start.rgba.chunks_exact(4).all(|p| p[3] == 0));
+    assert!(trace.rgba.chunks_exact(4).any(|p| p[3] > 0));
+    assert!(frame.rgba.chunks_exact(4).any(|p| p[3] > 0));
+    assert_ne!(trace.rgba, frame.rgba);
+}
+
+#[test]
+fn create_draws_a_line_segment_instead_of_fading_the_whole_line() {
+    let scene = scene_in(
+        "let line=Line(end:Vec2(40pt,0pt),width:4pt,fill:Color(\"red\"))\nplay(Create(line),duration:1s)",
+        64,
+        64,
+    );
+    let mut renderer = Renderer::default();
+    let options = Options::for_animation(scene.animation());
+    let start = renderer
+        .render(&scene, Fraction::from(0), &options)
+        .unwrap();
+    assert!(start.rgba.chunks_exact(4).all(|p| p[3] == 0));
+    let middle = renderer
+        .render(&scene, Fraction::new(1u64, 2u64), &options)
+        .unwrap();
+    assert_eq!(
+        &middle.rgba[(32 * 64 + 16) * 4..(32 * 64 + 16) * 4 + 4],
+        &[255, 0, 0, 255]
+    );
+    assert_eq!(middle.rgba[(32 * 64 + 48) * 4 + 3], 0);
+    let end = renderer
+        .render(&scene, Fraction::from(1), &options)
+        .unwrap();
+    assert_eq!(end.rgba[(32 * 64 + 48) * 4 + 3], 255);
+}
+
+#[test]
+fn write_traces_then_fills_and_inverse_returns_to_empty() {
+    let mut renderer = Renderer::default();
+    for (forward, reverse) in [("Create", "Uncreate"), ("Write", "Unwrite")] {
+        let scene = scene_in(
+            &format!(
+                "let shape=Rect(width:32pt,height:32pt,fill:Color(\"red\"))\nplay({forward}(shape),duration:1s)\nplay({reverse}(shape),duration:1s)"
+            ),
+            64,
+            64,
+        );
+        let options = Options::for_animation(scene.animation());
+        let frame =
+            |renderer: &mut Renderer, time| renderer.render(&scene, time, &options).unwrap();
+        let first = frame(&mut renderer, Fraction::from(0));
+        let quarter = frame(&mut renderer, Fraction::new(1u64, 4u64));
+        assert!(quarter.rgba.chunks_exact(4).any(|p| p[3] > 0));
+        assert!(
+            quarter.rgba.chunks_exact(4).any(|p| p[3] >= 127),
+            "a reveal must expose solid pixels, not fade everything"
+        );
+        if forward == "Write" {
+            assert_eq!(
+                quarter.rgba[(32 * 64 + 32) * 4 + 3],
+                0,
+                "Write leaves the interior empty during its tracing phase"
+            );
+            let filling = frame(&mut renderer, Fraction::new(3u64, 4u64));
+            assert!((127..=128).contains(&filling.rgba[(32 * 64 + 32) * 4 + 3]));
+        }
+        let whole = frame(&mut renderer, Fraction::from(1));
+        assert_eq!(
+            &whole.rgba[(32 * 64 + 32) * 4..(32 * 64 + 32) * 4 + 4],
+            &[255, 0, 0, 255]
+        );
+        assert_eq!(
+            quarter.rgba,
+            frame(&mut renderer, Fraction::new(7u64, 4u64)).rgba
+        );
+        assert_eq!(first.rgba, frame(&mut renderer, Fraction::from(2)).rgba);
+    }
+}
+
+#[test]
+fn group_write_reveals_children_without_changing_their_layout() {
+    let scene = scene_in(
+        "let group=Row(children:[Rect(width:16pt,height:16pt),Circle(radius:8pt)],gap:8pt)\nplay(Write(group),duration:1s)",
+        64,
+        64,
+    );
+    let options = Options::for_animation(scene.animation());
+    let mut renderer = Renderer::default();
+    let start = renderer
+        .render(&scene, Fraction::from(0), &options)
+        .unwrap();
+    let middle = renderer
+        .render(&scene, Fraction::new(1u64, 4u64), &options)
+        .unwrap();
+    let end = renderer
+        .render(&scene, Fraction::from(1), &options)
+        .unwrap();
+    assert!(start.rgba.chunks_exact(4).all(|p| p[3] == 0));
+    assert!(middle.rgba.chunks_exact(4).any(|p| p[3] > 0));
+    assert!(
+        end.rgba.chunks_exact(4).filter(|p| p[3] > 0).count()
+            > middle.rgba.chunks_exact(4).filter(|p| p[3] > 0).count()
+    );
+}
+
+#[test]
+fn grow_and_shrink_render_centered_without_zero_scale_artifacts() {
+    let scene = scene_in(
+        "let shape=Rect(width:32pt,height:32pt)\nplay(GrowFromCenter(shape),duration:1s)\nplay(ShrinkToCenter(shape),duration:1s)",
+        64,
+        64,
+    );
+    let options = Options::for_animation(scene.animation());
+    let mut renderer = Renderer::default();
+    let start = renderer
+        .render(&scene, Fraction::from(0), &options)
+        .unwrap();
+    let middle = renderer
+        .render(&scene, Fraction::new(1u64, 2u64), &options)
+        .unwrap();
+    let end = renderer
+        .render(&scene, Fraction::from(2), &options)
+        .unwrap();
+    assert!(start.rgba.chunks_exact(4).all(|p| p[3] == 0));
+    assert_eq!(middle.rgba[(32 * 64 + 32) * 4 + 3], 255);
+    assert_eq!(middle.rgba[(32 * 64 + 20) * 4 + 3], 0);
+    assert_eq!(start.rgba, end.rgba);
+}
+
+#[test]
+fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
+    let original = scene_in("add(Rect(width:32pt,height:24pt))", 64, 64);
+    let mut renderer = Renderer::default();
+    let animation = original.animation().clone();
+    let first = renderer.prepare(animation.clone()).unwrap();
+    assert_eq!(renderer.geometry_cache_hits, 0);
+    let mut edited = animation.clone();
+    edited.width = 128;
+    edited.layers[0].element.fill = sanim_core::Color([
+        Fraction::from(1),
+        Fraction::from(0),
+        Fraction::from(0),
+        Fraction::from(1),
+    ]);
+    edited.duration = Fraction::from(2);
+    let second = renderer.prepare(edited).unwrap();
+    assert_eq!(renderer.geometry_cache_hits, 1);
+    let a = renderer
         .render(
-            &scene,
+            &first,
             Fraction::from(0),
-            &Options::for_animation(scene.animation()),
+            &Options::for_animation(first.animation()),
         )
         .unwrap();
-    assert!(frame.rgba.chunks_exact(4).any(|p| p[3] > 0));
+    let b = renderer
+        .render(
+            &second,
+            Fraction::from(0),
+            &Options::for_animation(second.animation()),
+        )
+        .unwrap();
+    assert_ne!(a.rgba, b.rgba);
+    let mut geometry_edit = animation;
+    geometry_edit.layers[0].element.geometry = sanim_core::Geometry::Rectangle {
+        width: Fraction::from(16),
+        height: Fraction::from(24),
+    };
+    renderer.prepare(geometry_edit).unwrap();
+    assert_eq!(renderer.geometry_cache_hits, 1);
+    renderer.clear_cache();
+    renderer.prepare(first.animation().clone()).unwrap();
+    assert_eq!(renderer.geometry_cache_hits, 1);
+}
+
+#[test]
+fn nonfinite_path_measurements_fail_before_recording() {
+    let mut animation = scene_in("add(Line(end:Vec2(1pt,1pt)))", 64, 64)
+        .animation()
+        .clone();
+    animation.layers[0].element.geometry = sanim_core::Geometry::Line {
+        end: sanim_core::Vec2 {
+            values: [3e38, 3e38],
+            unit: sanim_core::Unit::Length,
+        },
+        width: Fraction::from(1),
+    };
+    let error = match Scene::new(animation) {
+        Ok(_) => panic!("overflowing length accepted"),
+        Err(error) => error,
+    };
+    assert!(error.contains("path contour length"), "{error}");
+}
+
+#[test]
+fn overlapping_trace_and_fill_preserve_element_opacity() {
+    for kind in ["Create", "Write"] {
+        let scene = scene_in(
+            &format!(
+                "let shape=Rect(width:32pt,height:32pt,opacity:0.5)\nplay({kind}(shape),duration:1s)"
+            ),
+            64,
+            64,
+        );
+        let frame = Renderer::default()
+            .render(
+                &scene,
+                Fraction::new(3u64, 4u64),
+                &Options::for_animation(scene.animation()),
+            )
+            .unwrap();
+        let max = frame.rgba.chunks_exact(4).map(|p| p[3]).max().unwrap();
+        assert!(
+            max <= 128,
+            "{kind}: trace and fill accumulated opacity to {max}"
+        );
+        assert!(max > 0);
+    }
+}
+
+#[test]
+fn cached_multicontour_reveals_preserve_gaps_and_reverse_order() {
+    let mut path = skia_safe::PathBuilder::new();
+    path.move_to((0., 0.))
+        .line_to((10., 0.))
+        .move_to((100., 0.))
+        .line_to((130., 0.));
+    let path = shrimply_drawing_skia::path::PreparedPath::new(path.detach()).unwrap();
+    let forward = path.partial(0.5, false);
+    assert_eq!(forward.bounds().right, 110.0);
+    let reverse = path.partial(0.5, true);
+    assert_eq!(reverse.bounds().left, 110.0);
+    assert_eq!(reverse.bounds().right, 130.0);
+    let mut measure = skia_safe::PathMeasure::new(&forward, false, None);
+    assert_eq!(measure.length(), 10.0);
+    assert!(measure.next_contour());
+    assert_eq!(measure.length(), 10.0);
+    assert!(!measure.next_contour());
 }

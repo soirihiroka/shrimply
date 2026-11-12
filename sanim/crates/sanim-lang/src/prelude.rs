@@ -235,7 +235,16 @@ fn build_builtins() -> Vec<Builtin> {
             native_types::fixed,
         );
     }
-    for name in ["FadeIn", "FadeOut"] {
+    for name in [
+        "FadeIn",
+        "FadeOut",
+        "Create",
+        "Uncreate",
+        "Write",
+        "Unwrite",
+        "GrowFromCenter",
+        "ShrinkToCenter",
+    ] {
         add(
             name,
             vec![p("element", Element, true)],

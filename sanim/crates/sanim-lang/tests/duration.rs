@@ -319,6 +319,22 @@ fn bounded_control_combinations_match_full_preparation() {
 }
 
 #[test]
-fn value_helpers_can_return_whole_imported_records(){
-    compare("import \"base\" as base\nif str(base)==\"unused\"{wait(1s)}else{wait(2s)}",&[("base.sanim","let delay=read<Duration>(\"delay.json\")"),("delay.json","\"250ms\"")],Fraction::from(2));
+fn value_helpers_can_return_whole_imported_records() {
+    compare(
+        "import \"base\" as base\nif str(base)==\"unused\"{wait(1s)}else{wait(2s)}",
+        &[
+            ("base.sanim", "let delay=read<Duration>(\"delay.json\")"),
+            ("delay.json", "\"250ms\""),
+        ],
+        Fraction::from(2),
+    );
+}
+
+#[test]
+fn reveals_and_growth_have_the_same_bounded_duration_in_both_passes() {
+    compare(
+        "let shape=Circle()\nplay(Create(shape),duration:100ms)\nplay(Uncreate(shape),duration:200ms)\nplay(Write(shape),duration:300ms)\nplay(Unwrite(shape),duration:400ms)\nplay(GrowFromCenter(shape),duration:500ms)\nplay(ShrinkToCenter(shape),duration:600ms)",
+        &[],
+        Fraction::new(21u64, 10u64),
+    );
 }

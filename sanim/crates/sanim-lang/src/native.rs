@@ -23,7 +23,7 @@ pub(crate) fn color(
         args.get("value")
             .map(Value::string)
             .transpose()?
-            .unwrap_or("red"),
+            .unwrap_or("red3"),
     )?))
 }
 
@@ -481,6 +481,31 @@ pub(crate) fn motion(
             Some(Value::Number(Number::scalar(0))),
         ),
         "FadeOut" => (Property::Opacity, Value::Number(Number::scalar(0)), None),
+        "Create" | "Write" => (
+            Property::Reveal,
+            Value::Number(Number::scalar(1)),
+            Some(Value::Number(Number::scalar(0))),
+        ),
+        "Uncreate" | "Unwrite" => (Property::Reveal, Value::Number(Number::scalar(0)), None),
+        "GrowFromCenter" | "ShrinkToCenter" => {
+            if element.layout.x_align != Align::Center || element.layout.y_align != Align::Center {
+                return Err(format!(
+                    "{name} requires x_align: Align.Center and y_align: Align.Center; use ScaleTo for an edge-anchored element"
+                ));
+            }
+            if name == "GrowFromCenter" {
+                (
+                    Property::Scale,
+                    Value::Number(Number {
+                        value: element.scale,
+                        unit: Unit::Number,
+                    }),
+                    Some(Value::Number(Number::scalar(0))),
+                )
+            } else {
+                (Property::Scale, Value::Number(Number::scalar(0)), None)
+            }
+        }
         "RotateTo" => (Property::Rotation, required("to")?.clone(), None),
         "ScaleTo" => {
             if required("to")?.number()?.value <= Fraction::from(0) {
@@ -495,6 +520,11 @@ pub(crate) fn motion(
         property,
         to,
         from,
+        reveal: match name {
+            "Create" | "Uncreate" => Some(RevealKind::Create),
+            "Write" | "Unwrite" => Some(RevealKind::Write),
+            _ => None,
+        },
     })))
 }
 
@@ -644,7 +674,7 @@ pub(crate) fn element(
     }
     let fill = match args.get("fill") {
         Some(Value::Color(color)) => color.clone(),
-        None => Color::parse("white")?,
+        None => Color::parse("light1")?,
         _ => return Err("fill must be Color".into()),
     };
     let opacity = number(args, "opacity", Fraction::from(1))?;
@@ -717,6 +747,7 @@ pub(crate) fn element(
         scale: positive(args, "scale", Fraction::from(1))?,
         opacity,
         fill,
+        reveal: Reveal::default(),
         layout,
     })))
 }

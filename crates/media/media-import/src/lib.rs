@@ -272,9 +272,12 @@ pub fn inspect(
             .and_then(|v| v.to_str())
             .ok_or("Sanim filename must be UTF-8")?;
         let sources = sanim_lang::FileSources::new(parent)?;
-        let mut engine=sanim_lang::Engine::default();
-        engine.viewport.width=canvas_size.width.max(1);engine.viewport.height=canvas_size.height.max(1);
-        let report=engine.duration(entry,&sources,&std::collections::BTreeMap::new()).map_err(|e|e.to_string())?;
+        let mut engine = sanim_lang::Engine::default();
+        engine.viewport.width = canvas_size.width.max(1);
+        engine.viewport.height = canvas_size.height.max(1);
+        let report = engine
+            .duration(entry, &sources, &std::collections::BTreeMap::new())
+            .map_err(|e| e.to_string())?;
         snapshot.verify_current()?;
         return Ok(MediaInfo {
             source,

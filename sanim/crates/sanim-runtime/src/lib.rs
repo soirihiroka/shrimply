@@ -286,13 +286,22 @@ fn worker(
                 Reload::Unchanged => {
                     let mut state = shared.0.lock().expect("Sanim runtime state poisoned");
                     let diagnostic = session.last_error().cloned();
-                    let changed =
-                        state.diagnostic != diagnostic || state.applied_inputs != input_serial;
+                    let duration = if diagnostic.is_none() {
+                        session
+                            .current()
+                            .map(|prepared| prepared.animation.duration)
+                    } else {
+                        state.planned_duration
+                    };
+                    let changed = state.diagnostic != diagnostic
+                        || state.applied_inputs != input_serial
+                        || state.planned_duration != duration;
                     if changed {
                         state.generation += 1;
                         shared.1.notify_all();
                     }
                     state.diagnostic = diagnostic;
+                    state.planned_duration = duration;
                     if state.diagnostic.is_none() {
                         state.prepared = session.current().cloned();
                     }

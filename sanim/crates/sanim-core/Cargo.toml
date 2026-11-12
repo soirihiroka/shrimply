@@ -11,3 +11,4 @@ serde.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
 taffy.workspace = true
+shrimply-math-color.workspace = true

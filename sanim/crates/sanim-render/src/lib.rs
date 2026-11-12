@@ -32,14 +32,14 @@ impl Options {
 pub struct Scene {
     animation: Animation,
     key: String,
+    paths: BTreeMap<String, shrimply_drawing_skia::path::PreparedPath>,
 }
 impl Scene {
     pub fn animation(&self) -> &Animation {
         &self.animation
     }
     pub fn new(animation: Animation) -> Result<Self, String> {
-        let key = digest(&serde_json::to_vec(&animation).map_err(|e| e.to_string())?);
-        Ok(Self { animation, key })
+        Renderer::default().prepare(animation)
     }
 }
 
@@ -127,11 +127,29 @@ pub struct Renderer {
     recordings: BTreeMap<String, Arc<Recording>>,
     frames: BTreeMap<String, Arc<Frame>>,
     pub cache_hits: u64,
+    pub geometry_cache_hits: u64,
+    geometry_cache: BTreeMap<String, shrimply_drawing_skia::path::PreparedPath>,
+    geometry_cache_bytes: usize,
 }
 impl Renderer {
+    /// Preserve immutable path geometry across source, style, timing and viewport edits.
+    pub fn prepare(&mut self, animation: Animation) -> Result<Scene, String> {
+        let key = digest(&serde_json::to_vec(&animation).map_err(|error| error.to_string())?);
+        let mut paths = BTreeMap::new();
+        for layer in &animation.layers {
+            draw::prepare_paths(&layer.element, &mut paths, self)?;
+        }
+        Ok(Scene {
+            animation,
+            key,
+            paths,
+        })
+    }
     pub fn clear_cache(&mut self) {
         self.recordings.clear();
         self.frames.clear();
+        self.geometry_cache.clear();
+        self.geometry_cache_bytes = 0;
     }
     pub fn record(
         &mut self,
@@ -179,9 +197,13 @@ impl Renderer {
         ));
         let background = draw::paint(&scene.animation.background, Fraction::from(1))?;
         canvas.draw_rect(Rect::from_wh(logical_width, logical_height), &background);
-        let mut work = options.max_work;
+        let mut drawing = draw::Drawing {
+            paths: &scene.paths,
+            pixels,
+            work: options.max_work,
+        };
         for element in &elements {
-            draw::element_draw(canvas, element, pixels, &mut work)?;
+            draw::element_draw(canvas, element, Reveal::default(), &mut drawing)?;
         }
         let picture = recorder
             .finish_recording_as_picture(None)

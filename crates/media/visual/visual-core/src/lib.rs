@@ -12,7 +12,7 @@ pub mod modifiers;
 pub mod motion_blur;
 pub mod obj;
 pub mod paint;
-pub mod path;
+pub use shrimply_drawing_skia::path;
 pub mod path_transition;
 pub mod raster_modifiers;
 pub mod raster_morph;

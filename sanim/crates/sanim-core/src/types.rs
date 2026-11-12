@@ -267,6 +267,15 @@ pub struct Color(pub [Fraction; 4]);
 
 impl Color {
     pub fn parse(text: &str) -> Result<Self, String> {
+        if let Some((_, color)) = shrimply_math_color::Color::ADWAITA.iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(text)) {
+            // Shared palette RGB values originate as bytes. Recover those exact
+            // values; preserve decimal alpha rather than quantizing it to a byte.
+            let mut channels = shrimply_math_color::Color::<u8>::from_srgba(color.to_array())
+                .to_array().map(|channel| Fraction::new(u64::from(channel), 255u64));
+            channels[3] = crate::math::decimal(&color.a.to_string())?;
+            return Ok(Self(channels));
+        }
         let hex = match text {
             "red" => "ff0000",
             "green" => "008000",
@@ -279,7 +288,7 @@ impl Color {
             "transparent" => "00000000",
             _ => text
                 .strip_prefix('#')
-                .ok_or_else(|| format!("unknown color '{text}'"))?,
+                .ok_or_else(|| format!("unknown color '{text}'; use an Adwaita name such as 'blue3' or 'window_bg_dark', a basic color name, or #RRGGBB/#RRGGBBAA"))?,
         };
         if !hex.is_ascii() || !matches!(hex.len(), 6 | 8) {
             return Err("expected #RRGGBB or #RRGGBBAA".into());

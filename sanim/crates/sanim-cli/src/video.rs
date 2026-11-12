@@ -25,7 +25,8 @@ pub(super) fn render(prepared: &Prepared, args: &Args) -> Result<(), String> {
     if output.extension().and_then(|s| s.to_str()) != Some("mp4") {
         return Err("video currently supports H.264 MP4; use an .mp4 output path".into());
     }
-    let (scene, mut options) = render_scene(prepared, args)?;
+    let mut renderer = Renderer::default();
+    let (scene, mut options) = render_scene(prepared, args, &mut renderer)?;
     if options.width < 2
         || options.height < 2
         || !options.width.is_multiple_of(2)
@@ -43,7 +44,6 @@ pub(super) fn render(prepared: &Prepared, args: &Args) -> Result<(), String> {
         ));
     }
     // Validate output size/work limits before starting the encoder.
-    let mut renderer = Renderer::default();
     renderer.record(&scene, scene.animation().frame_time(0)?, &options)?;
     let directory = output
         .parent()
