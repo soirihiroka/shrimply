@@ -12,11 +12,12 @@ mod morph;
 mod sam2;
 pub use sam2::Sam2ProxyFrameSource;
 
-use gpu::{Buffer, Renderer, Submission, VideoFrame};
+use gpu::{Buffer, ImportedFrame, Renderer, Submission};
 use shrimply_math_core::Time;
 use shrimply_preview_render_core::{DecodedImage, FramePlan, Layer, Scene, Source};
 use shrimply_project_document::project::Project;
 use shrimply_render_core::{Nv12LayerParams, effects::SpatialState};
+use shrimply_visual_frame::{GpuFrame, VideoFrame};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -74,7 +75,7 @@ pub struct Compositor {
     images: HashMap<u32, Buffer>,
     layered_sources: HashMap<(String, usize), Buffer>,
     used_layered_sources: HashSet<(String, usize)>,
-    videos: HashMap<usize, (Arc<VideoFrame>, Buffer)>,
+    videos: HashMap<usize, ImportedFrame>,
     used_images: HashSet<u32>,
     used_videos: HashSet<usize>,
     sam2_proxy: Option<Buffer>,
@@ -332,30 +333,22 @@ impl Compositor {
         self.images.insert(key, buffer.clone());
         Ok(buffer)
     }
-    fn video(
-        &mut self,
-        video: &Arc<VideoFrame>,
-        submissions: &mut Vec<Submission>,
-    ) -> Result<Buffer, String> {
+    fn video(&mut self, video: &Arc<VideoFrame>) -> Result<Buffer, String> {
         let key = Arc::as_ptr(video) as usize;
         self.used_videos.insert(key);
-        if let Some((_, buffer)) = self.videos.get(&key) {
-            return Ok(buffer.clone());
+        if let Some(imported) = self.videos.get(&key) {
+            return Ok(imported.output.clone());
         }
         let _measurement = shrimply_profiling::measure("Intel rendering / Import video");
-        let (buffer, submission) = self.renderer.video(video)?;
-        submissions.push(submission);
-        self.videos.insert(key, (video.clone(), buffer.clone()));
+        let imported = ImportedFrame::import(&mut self.renderer, video.clone())?;
+        let buffer = imported.output.clone();
+        self.videos.insert(key, imported);
         Ok(buffer)
     }
-    fn decoded(
-        &mut self,
-        image: &DecodedImage,
-        submissions: &mut Vec<Submission>,
-    ) -> Result<Buffer, String> {
+    fn decoded(&mut self, image: &DecodedImage) -> Result<Buffer, String> {
         match image {
             DecodedImage::Raster(image) => self.image(image),
-            DecodedImage::Video(video) => self.video(video, submissions),
+            DecodedImage::Video(video) => self.video(video),
         }
     }
     fn layers(
@@ -374,7 +367,7 @@ impl Compositor {
             }
             let mut buffer = match &layer.source {
                 Source::Image(image) => self.image(image)?,
-                Source::Video(video) => self.video(video, submissions)?,
+                Source::Video(video) => self.video(video)?,
                 Source::Generated(frame) => {
                     let (buffer, submission) =
                         self.renderer.draw_vector(layer.render_size, |canvas| {
@@ -447,7 +440,7 @@ impl Compositor {
                 )?;
             }
             if let Some(mask) = &layer.video_mask {
-                let mask_buffer = self.decoded(&mask.image, submissions)?;
+                let mask_buffer = self.decoded(&mask.image)?;
                 let (mut parameters, _) = shrimply_render_core::effects::materialization(
                     layer.parameters,
                     mask.size.0,

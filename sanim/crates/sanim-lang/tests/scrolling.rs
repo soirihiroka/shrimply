@@ -181,10 +181,6 @@ fn overflow_errors_explain_required_container_and_dimensions() {
             "scroll requires overflow",
         ),
         (
-            r#"let x=Box(children=[],width=20pt,height=20pt,overflow="overlay")"#,
-            "use visible, hidden, auto or scroll",
-        ),
-        (
             r#"let x=ScrollView(children=[],width=20pt,height=20pt)"#,
             "ScrollView",
         ),
@@ -192,6 +188,16 @@ fn overflow_errors_explain_required_container_and_dimensions() {
         let error = prepare(source).unwrap_err();
         assert!(error.message.contains(reason), "{source}: {error}");
     }
+    let error =
+        prepare(r#"let x=Box(children=[],width=20pt,height=20pt,overflow="overlay")"#).unwrap_err();
+    assert_eq!(error.code, "S106");
+    assert!(
+        error
+            .message
+            .contains(&format!("expected {}", sanim_core::Overflow::ty())),
+        "{error}"
+    );
+    assert!(error.message.contains("found \"overlay\""), "{error}");
 }
 
 #[test]

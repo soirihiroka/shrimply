@@ -158,7 +158,11 @@ impl Bridge {
     }
 
     /// Interactive clients can bound how long an active owner may take to reply.
-    pub fn request_with_timeout(mut self, command: BridgeCommand, timeout: Duration) -> Result<serde_json::Value, BridgeError> {
+    pub fn request_with_timeout(
+        mut self,
+        command: BridgeCommand,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, BridgeError> {
         let transport = |error: std::io::Error| {
             BridgeError::Transport(format!(
                 "project session at {}: {error}; inspect state before retrying",
@@ -169,9 +173,7 @@ impl Bridge {
         stream
             .set_write_timeout(Some(WRITE_TIMEOUT.min(timeout)))
             .map_err(transport)?;
-        stream
-            .set_read_timeout(Some(timeout))
-            .map_err(transport)?;
+        stream.set_read_timeout(Some(timeout)).map_err(transport)?;
         let request = BridgeRequest {
             project_path: self.project_path.clone(),
             command,

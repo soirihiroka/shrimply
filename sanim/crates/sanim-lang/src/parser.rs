@@ -126,7 +126,9 @@ fn parse_recovering_highlighted(
     let mut pending_calls = parser.pending_calls.take().unwrap_or_default();
     for call in &mut pending_calls {
         call.span.end = parser.offset;
-        if let Some(span) = &mut call.argument_span { span.end = parser.offset; }
+        if let Some(span) = &mut call.argument_span {
+            span.end = parser.offset;
+        }
     }
     let mut markup = parser.markup.take().unwrap_or_default();
     for opening in &mut markup {
@@ -134,7 +136,11 @@ fn parse_recovering_highlighted(
             opening.span.end = parser.offset;
         }
         for attribute in &mut opening.attributes {
-            if let Some(value) = &mut attribute.value && value.end == usize::MAX { value.end = parser.offset; }
+            if let Some(value) = &mut attribute.value
+                && value.end == usize::MAX
+            {
+                value.end = parser.offset;
+            }
         }
     }
     let prefix_end = module
@@ -777,7 +783,10 @@ impl Parser<'_> {
                 if let (Some(frame), Some(calls)) = (frame, &mut self.pending_calls) {
                     calls[frame].argument = args.len();
                     calls[frame].argument_name = None;
-                    calls[frame].argument_span = Some(Span {end:argument_span.start,..argument_span});
+                    calls[frame].argument_span = Some(Span {
+                        end: argument_span.start,
+                        ..argument_span
+                    });
                 }
                 let candidate = self.expr(0)?;
                 if self.is(":") {
@@ -790,7 +799,10 @@ impl Parser<'_> {
                     let argument_span = self.span();
                     if let (Some(frame), Some(calls)) = (frame, &mut self.pending_calls) {
                         calls[frame].argument_name = Some(name.clone());
-                        calls[frame].argument_span = Some(Span {end:argument_span.start,..argument_span});
+                        calls[frame].argument_span = Some(Span {
+                            end: argument_span.start,
+                            ..argument_span
+                        });
                     }
                     (Some(name), self.expr(0)?)
                 } else {
@@ -1220,10 +1232,17 @@ impl Parser<'_> {
         let mut out = if self.eat(Keyword::Sig.text()) {
             TypeExpr::Signal(Box::new(self.type_expression(3)?))
         } else if self.quoted() {
-            let expression=self.string_expression()?;
+            let expression = self.string_expression()?;
             match expression.kind {
                 ExprKind::String(value) => TypeExpr::StringLiteral(value),
-                _ => return Err(Diagnostic::new("S002","a string literal type must contain a fixed string; interpolation is not allowed in types",self.source,expression.span)),
+                _ => {
+                    return Err(Diagnostic::new(
+                        "S002",
+                        "a string literal type must contain a fixed string; interpolation is not allowed in types",
+                        self.source,
+                        expression.span,
+                    ));
+                }
             }
         } else if self.eat("(") {
             let value = self.ty()?;

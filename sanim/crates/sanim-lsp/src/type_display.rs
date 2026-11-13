@@ -27,6 +27,24 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
         return name.to_owned();
     }
     match ty {
+        Type::StringLiteral(value) => {
+            const MAX_LITERAL_LABEL: usize = 80;
+            let mut characters = value.chars();
+            let prefix: String = characters.by_ref().take(MAX_LITERAL_LABEL).collect();
+            let truncated = characters.next().is_some();
+            let quoted = format!("{prefix:?}");
+            if truncated || quoted.chars().count() > MAX_LITERAL_LABEL {
+                format!(
+                    "{}…\"",
+                    quoted
+                        .chars()
+                        .take(MAX_LITERAL_LABEL - 2)
+                        .collect::<String>()
+                )
+            } else {
+                quoted
+            }
+        }
         Type::Record(_) => "{…}".into(),
         Type::List(inner) => format!("List<{}>", compact(module, inner)),
         Type::Option(inner) => format!("Option<{}>", compact(module, inner)),
@@ -48,6 +66,7 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
 
 fn expanded(module: &AnalyzedModule, ty: &Type, depth: usize) -> String {
     match ty {
+        Type::StringLiteral(_) => ty.to_string(),
         Type::Record(fields) => {
             let indent = "    ".repeat(depth);
             let child_indent = "    ".repeat(depth + 1);
@@ -89,5 +108,30 @@ pub(crate) fn tooltip(module: &AnalyzedModule, ty: &Type) -> String {
         format!("```sanim\n{full}\n```")
     } else {
         format!("**{label}**\n\n```sanim\n{full}\n```")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn long_literal_inlay_is_bounded_but_hover_keeps_the_complete_literal() {
+        let module = AnalyzedModule {
+            ast: std::sync::Arc::new(sanim_lang::ast::Module {
+                statements: vec![],
+                comments: vec![],
+            }),
+            checked: Default::default(),
+        };
+        let value = "SELECT name FROM users WHERE active = true; ".repeat(20);
+        let ty = Type::StringLiteral(value.clone().into());
+        let label = compact(&module, &ty);
+        assert!(label.chars().count() <= 80);
+        assert!(label.ends_with("…\""));
+        assert!(tooltip(&module, &ty).contains(&value));
+        assert_eq!(
+            compact(&module, &Type::StringLiteral("left".into())),
+            "\"left\""
+        );
     }
 }

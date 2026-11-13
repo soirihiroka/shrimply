@@ -39,12 +39,15 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
         return Ok(Type::Bool);
     }
     if matches!(op, "==" | "!=")
-        && (a.accepts(b) || scalar_unit(a).is_some() && scalar_unit(a) == scalar_unit(b))
+        && (a.accepts(b)
+            || b.accepts(a)
+            || Type::String.accepts(a) && Type::String.accepts(b)
+            || scalar_unit(a).is_some() && scalar_unit(a) == scalar_unit(b))
     {
         return Ok(Type::Bool);
     }
     if matches!(op, "<" | ">" | "<=" | ">=")
-        && ((*a == Type::String && a == b)
+        && ((Type::String.accepts(a) && Type::String.accepts(b))
             || scalar_unit(a).is_some() && scalar_unit(a) == scalar_unit(b))
     {
         return Ok(Type::Bool);
@@ -89,7 +92,7 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
             },
         );
     }
-    if op == "+" && *a == Type::String && a == b {
+    if op == "+" && Type::String.accepts(a) && Type::String.accepts(b) {
         return Ok(Type::String);
     }
     if op == "+"

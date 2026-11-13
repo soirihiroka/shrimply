@@ -128,10 +128,16 @@ impl<'de> Deserialize<'de> for Frame {
 }
 
 pub fn scalar_type(ty: &Type) -> bool {
+    if Type::String.accepts(ty) {
+        return true;
+    }
     match ty {
-        Type::Bool | Type::String | Type::Numeric(_) => true,
+        Type::Bool | Type::String | Type::StringLiteral(_) | Type::Numeric(_) => true,
         Type::Option(inner) => {
-            matches!(inner.as_ref(), Type::Bool | Type::String | Type::Numeric(_))
+            matches!(
+                inner.as_ref(),
+                Type::Bool | Type::String | Type::StringLiteral(_) | Type::Numeric(_)
+            )
         }
         _ => false,
     }
@@ -688,7 +694,7 @@ impl Series {
         let (left, a) = frame.expression(&left)?;
         let (right, b) = frame.expression(&right)?;
         let ty = binary_type(op, &a, &b)?;
-        let op = if op == "+" && matches!(nonnullable(&a), Type::String) {
+        let op = if op == "+" && Type::String.accepts(nonnullable(&a)) {
             "concat"
         } else {
             op

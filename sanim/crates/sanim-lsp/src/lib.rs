@@ -25,8 +25,15 @@ pub fn run(input: impl BufRead, output: impl Write) -> Result<u8, String> {
 }
 
 /// Run an LSP session; the host owns discovery and read-only runtime access.
-pub fn run_with_runtime(mut input: impl BufRead, mut output: impl Write, runtime: Option<RuntimeQuery<'_>>) -> Result<u8, String> {
-    let mut server = Server { runtime, ..Default::default() };
+pub fn run_with_runtime(
+    mut input: impl BufRead,
+    mut output: impl Write,
+    runtime: Option<RuntimeQuery<'_>>,
+) -> Result<u8, String> {
+    let mut server = Server {
+        runtime,
+        ..Default::default()
+    };
     while let Some(message) = transport::read(&mut input)? {
         if message.get("method").and_then(Value::as_str) == Some("exit") {
             return Ok(u8::from(!server.shutdown));
@@ -123,10 +130,21 @@ impl Server<'_> {
             "sanim/runtime" => {
                 let Some(id) = id else { return Vec::new() };
                 let Some(query) = self.runtime.as_mut() else {
-                    return vec![error(id, -32601, "Runtime queries require shrimply sanim lsp")];
+                    return vec![error(
+                        id,
+                        -32601,
+                        "Runtime queries require shrimply sanim lsp",
+                    )];
                 };
-                let result = params["textDocument"]["uri"].as_str().ok_or("request requires textDocument.uri".into())
-                    .and_then(|uri| self.workspace.documents.get(uri).ok_or("document is not open".into()))
+                let result = params["textDocument"]["uri"]
+                    .as_str()
+                    .ok_or("request requires textDocument.uri".into())
+                    .and_then(|uri| {
+                        self.workspace
+                            .documents
+                            .get(uri)
+                            .ok_or("document is not open".into())
+                    })
                     .and_then(|document| query(&document.path));
                 vec![match result {
                     Ok(value) => response(id, value),
@@ -233,9 +251,16 @@ impl Server<'_> {
                             features::completion(&self.workspace, uri, &params["position"])
                         }
                         "textDocument/hover" => {
-                            let mut hover = features::hover(&self.workspace, uri, &params["position"])?;
+                            let mut hover =
+                                features::hover(&self.workspace, uri, &params["position"])?;
                             if let Some(query) = self.runtime.as_mut() {
-                                runtime::hover(&self.workspace, uri, &params["position"], &mut hover, &mut **query)?;
+                                runtime::hover(
+                                    &self.workspace,
+                                    uri,
+                                    &params["position"],
+                                    &mut hover,
+                                    &mut **query,
+                                );
                             }
                             Ok(hover)
                         }

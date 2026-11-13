@@ -845,7 +845,7 @@ fn typed_vector_nodes_and_components_share_cells_and_validate_serialized_indices
 }
 
 #[test]
-fn group_dimensions_are_layout_properties_with_clear_automatic_value_errors() {
+fn box_dimensions_and_radius_are_properties_with_clear_automatic_value_errors() {
     let mut group = element(
         "group",
         Geometry::Box {
@@ -875,9 +875,94 @@ fn group_dimensions_are_layout_properties_with_clear_automatic_value_errors() {
         numeric(40, Unit::Length)
     );
     assert!(Arc::ptr_eq(&geometry, &group.geometry));
+    group
+        .set(Property::Radius, numeric(1, Unit::Length))
+        .unwrap();
+    assert_eq!(
+        group.property(Property::Radius).unwrap(),
+        numeric(1, Unit::Length)
+    );
     assert!(
         group
-            .set(Property::Radius, numeric(1, Unit::Length))
-            .is_err()
+            .set(Property::Width, numeric(-1, Unit::Length))
+            .unwrap_err()
+            .contains("nonnegative")
+    );
+}
+
+#[test]
+fn changed_binding_visitor_uses_shared_dag_diff_and_birth_clamps() {
+    let (old, node) = oscillator();
+    let mut old = old;
+    old.bind("visible".into(), Property::Scale, node).unwrap();
+    old.bind("future".into(), Property::Scale, node).unwrap();
+    old.bind("unmounted".into(), Property::Scale, node).unwrap();
+    let mut new = old.clone();
+    new.animate_cell(
+        1,
+        10.into(),
+        11.into(),
+        numeric(1900, Unit::Angle),
+        Easing::Linear,
+    )
+    .unwrap();
+    let mut changed = std::collections::BTreeMap::new();
+    old.visit_changed_bindings(
+        &new,
+        |id| match id {
+            "visible" => Some(0.into()),
+            "future" => Some(20.into()),
+            _ => None,
+        },
+        |id, property, time| {
+            changed.insert(id.to_owned(), (property, time));
+        },
+    );
+    assert_eq!(
+        changed,
+        std::collections::BTreeMap::from([
+            ("visible".into(), (Property::Scale, 10.into())),
+            ("future".into(), (Property::Scale, 20.into()))
+        ])
+    );
+}
+
+#[test]
+#[ignore = "manual shared reactive DAG diff benchmark"]
+fn reactive_binding_diff_benchmark() {
+    let (mut old, node) = oscillator();
+    const BINDINGS: usize = 5000;
+    const PATCHES: usize = 200;
+    for index in 0..BINDINGS {
+        old.bind(format!("shape_{index}"), Property::Scale, node)
+            .unwrap();
+    }
+    let mut new = old.clone();
+    new.animate_cell(
+        1,
+        10.into(),
+        11.into(),
+        numeric(1900, Unit::Angle),
+        Easing::Linear,
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
+    for _ in 0..PATCHES {
+        let mut changed = 0;
+        old.visit_changed_bindings(
+            &new,
+            |_| Some(0.into()),
+            |_, _, time| {
+                assert_eq!(time, 10.into());
+                changed += 1;
+            },
+        );
+        assert_eq!(changed, BINDINGS);
+    }
+    let elapsed = started.elapsed();
+    println!(
+        "shared reactive DAG diff: {BINDINGS} bindings, {} expression nodes, {PATCHES} patches in {elapsed:?}; {:.3} ms/patch",
+        old.node_count(),
+        elapsed.as_secs_f64() * 1000.0 / PATCHES as f64
     );
 }

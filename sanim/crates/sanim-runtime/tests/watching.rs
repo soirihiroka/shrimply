@@ -764,10 +764,10 @@ fn exercise_literal_edits(edits: usize) -> (Option<usize>, Option<usize>) {
             warmed = resident_bytes();
             peak = warmed;
         }
-        if index >= 255 {
-            if let Some(rss) = resident_bytes() {
-                peak = Some(peak.map_or(rss, |previous: usize| previous.max(rss)));
-            }
+        if index >= 255
+            && let Some(rss) = resident_bytes()
+        {
+            peak = Some(peak.map_or(rss, |previous: usize| previous.max(rss)));
         }
     }
     let good = Arc::downgrade(&current);

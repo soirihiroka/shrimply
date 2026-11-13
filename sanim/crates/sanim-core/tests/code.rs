@@ -307,7 +307,13 @@ fn unresolved_code_bounds_fail_closed_and_native_evidence_uses_the_new_source() 
     );
     // A fixed clipped viewport has content-independent bounds, even while its
     // contents still require native shaping.
-    code.layout.scroll = Some(Vec2::zero(Unit::Length));
+    code.layout
+        .configure_overflow(
+            sanim_core::Overflow::Hidden,
+            sanim_core::Overflow::Hidden,
+            Some(Vec2::zero(Unit::Length)),
+        )
+        .unwrap();
     code.layout.width = Some(Number {
         value: 20.into(),
         unit: Unit::Length,

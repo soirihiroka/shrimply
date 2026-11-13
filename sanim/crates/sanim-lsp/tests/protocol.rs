@@ -919,28 +919,57 @@ fn markup_utility_completion_replaces_full_hyphenated_tokens_and_hover_resolves_
     };
     let mut messages = vec![
         initialize(dir.path()),
-        notification("textDocument/didOpen", json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}})),
-        request(2,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":position("w-180.5",2)})),
-        request(3,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":position("items-center",6)})),
-        request(4,"textDocument/hover",json!({"textDocument":{"uri":uri},"position":position("h-50%",3)})),
-        notification("textDocument/didChange",json!({"textDocument":{"uri":uri,"version":2},"contentChanges":[{"text":"let panel=<Box w-"}]})),
-        request(5,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":{"line":0,"character":17}})),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+        request(
+            2,
+            "textDocument/completion",
+            json!({"textDocument":{"uri":uri},"position":position("w-180.5",2)}),
+        ),
+        request(
+            3,
+            "textDocument/completion",
+            json!({"textDocument":{"uri":uri},"position":position("items-center",6)}),
+        ),
+        request(
+            4,
+            "textDocument/hover",
+            json!({"textDocument":{"uri":uri},"position":position("h-50%",3)}),
+        ),
+        notification(
+            "textDocument/didChange",
+            json!({"textDocument":{"uri":uri,"version":2},"contentChanges":[{"text":"let panel=<Box w-"}]}),
+        ),
+        request(
+            5,
+            "textDocument/completion",
+            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":17}}),
+        ),
     ];
     finish(&mut messages);
     let (_, replies) = session(&messages);
-    assert!(reply(&replies,1)["result"]["capabilities"]["completionProvider"]["triggerCharacters"].as_array().unwrap().contains(&json!("-")));
-    let items = reply(&replies,2)["result"]["items"].as_array().unwrap();
+    assert!(
+        reply(&replies, 1)["result"]["capabilities"]["completionProvider"]["triggerCharacters"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("-"))
+    );
+    let items = reply(&replies, 2)["result"]["items"].as_array().unwrap();
     let width = items.iter().find(|item| item["label"] == "w-180").unwrap();
-    assert_eq!(width["detail"],"width=180pt");
-    assert_eq!(width["textEdit"]["range"]["start"],position("w-180.5",0));
-    assert_eq!(width["textEdit"]["range"]["end"],position("w-180.5",7));
-    let align = reply(&replies,3)["result"]["items"].as_array().unwrap();
+    assert_eq!(width["detail"], "width=180pt");
+    assert_eq!(width["textEdit"]["range"]["start"], position("w-180.5", 0));
+    assert_eq!(width["textEdit"]["range"]["end"], position("w-180.5", 7));
+    let align = reply(&replies, 3)["result"]["items"].as_array().unwrap();
     assert!(align.iter().any(|item| item["label"] == "items-end"));
     assert!(!align.iter().any(|item| item["label"] == "Circle"));
-    let hover=reply(&replies,4)["result"]["contents"]["value"].as_str().unwrap();
-    assert!(hover.contains("height=50%"),"{hover}");
-    assert!(hover.contains("parent layout box"),"{hover}");
-    let incomplete=reply(&replies,5)["result"]["items"].as_array().unwrap();
+    let hover = reply(&replies, 4)["result"]["contents"]["value"]
+        .as_str()
+        .unwrap();
+    assert!(hover.contains("height=50%"), "{hover}");
+    assert!(hover.contains("parent layout box"), "{hover}");
+    let incomplete = reply(&replies, 5)["result"]["items"].as_array().unwrap();
     assert!(incomplete.iter().any(|item| item["label"] == "w-full"));
 }
 
@@ -949,23 +978,48 @@ fn markup_utility_diagnostics_are_specific_and_explicit_properties_are_intention
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
     let cases = [
-        ("let panel=<Box widht-20 />", "unknown native utility 'widht-20'"),
-        ("let panel=<Box w-20px />", "nonnegative logical point value"),
+        (
+            "let panel=<Box widht-20 />",
+            "unknown native utility 'widht-20'",
+        ),
+        (
+            "let panel=<Box w-20px />",
+            "nonnegative logical point value",
+        ),
         ("let panel=<Line rounded-8 />", "does not support"),
         ("let panel=<Box w-100 w-180 />", "overridden"),
         ("let panel=<Box w-100 w-100 />", "repeated"),
         ("let panel=<Box w-100 w-180 width={220pt} />", ""),
     ];
-    for (index,(source,expected)) in cases.iter().enumerate() {
-        let mut messages=vec![initialize(dir.path()),notification("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":"sanim","version":index+1,"text":source}}))];
+    for (index, (source, expected)) in cases.iter().enumerate() {
+        let mut messages = vec![
+            initialize(dir.path()),
+            notification(
+                "textDocument/didOpen",
+                json!({"textDocument":{"uri":uri,"languageId":"sanim","version":index+1,"text":source}}),
+            ),
+        ];
         finish(&mut messages);
-        let (_,replies)=session(&messages);
-        let diagnostics=replies.iter().filter(|reply| reply["method"]=="textDocument/publishDiagnostics").flat_map(|reply| reply["params"]["diagnostics"].as_array().unwrap());
-        let messages=diagnostics.map(|diagnostic| diagnostic["message"].as_str().unwrap()).collect::<Vec<_>>();
+        let (_, replies) = session(&messages);
+        let diagnostics = replies
+            .iter()
+            .filter(|reply| reply["method"] == "textDocument/publishDiagnostics")
+            .flat_map(|reply| reply["params"]["diagnostics"].as_array().unwrap());
+        let messages = diagnostics
+            .map(|diagnostic| diagnostic["message"].as_str().unwrap())
+            .collect::<Vec<_>>();
         if expected.is_empty() {
-            assert!(!messages.iter().any(|message| message.contains("overridden") || message.contains("repeated")),"{messages:?}");
+            assert!(
+                !messages
+                    .iter()
+                    .any(|message| message.contains("overridden") || message.contains("repeated")),
+                "{messages:?}"
+            );
         } else {
-            assert!(messages.iter().any(|message| message.contains(expected)),"{source}: {messages:?}");
+            assert!(
+                messages.iter().any(|message| message.contains(expected)),
+                "{source}: {messages:?}"
+            );
         }
     }
 }
@@ -974,33 +1028,153 @@ fn markup_utility_diagnostics_are_specific_and_explicit_properties_are_intention
 fn utility_completion_never_treats_strings_comments_or_attribute_values_as_attributes() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    for source in ["let value=\"<Box w-\"", "# <Box w-", "let panel=<Box id=\"w-\" />", "let view=<CodeView lang=\"python\">\n<Box w-\n</CodeView>"] {
-        let offset=source.find("w-").unwrap()+2;
-        let prefix=&source[..offset];
-        let line=prefix.bytes().filter(|byte| *byte==b'\n').count();
-        let character=prefix.rsplit('\n').next().unwrap().encode_utf16().count();
-        let mut messages=vec![initialize(dir.path()),notification("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}})),request(2,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":{"line":line,"character":character}}))];
+    for source in [
+        "let value=\"<Box w-\"",
+        "# <Box w-",
+        "let panel=<Box id=\"w-\" />",
+        "let view=<CodeView lang=\"python\">\n<Box w-\n</CodeView>",
+    ] {
+        let offset = source.find("w-").unwrap() + 2;
+        let prefix = &source[..offset];
+        let line = prefix.bytes().filter(|byte| *byte == b'\n').count();
+        let character = prefix.rsplit('\n').next().unwrap().encode_utf16().count();
+        let mut messages = vec![
+            initialize(dir.path()),
+            notification(
+                "textDocument/didOpen",
+                json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+            ),
+            request(
+                2,
+                "textDocument/completion",
+                json!({"textDocument":{"uri":uri},"position":{"line":line,"character":character}}),
+            ),
+        ];
         finish(&mut messages);
-        let (_,replies)=session(&messages);
-        assert!(!reply(&replies,2)["result"]["items"].as_array().unwrap().iter().any(|item| item["label"]=="w-full"),"{source}");
+        let (_, replies) = session(&messages);
+        assert!(
+            !reply(&replies, 2)["result"]["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["label"] == "w-full"),
+            "{source}"
+        );
     }
 }
 
 #[test]
 #[ignore = "manual editor latency benchmark"]
 fn markup_utility_completion_benchmark() {
-    let dir=tempfile::tempdir().unwrap();
-    let uri=format!("file://{}",dir.path().join("main.sanim").display());
-    let source="let panel=<Box w-180 items-center h-50% />\nwait(1s)";
-    let mut messages=vec![initialize(dir.path()),notification("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}))];
-    const REQUESTS:u64=500;
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = "let panel=<Box w-180 items-center h-50% />\nwait(1s)";
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+    ];
+    const REQUESTS: u64 = 500;
     for index in 0..REQUESTS {
-        messages.push(request(index+2,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":{"line":0,"character":17}})));
+        messages.push(request(
+            index + 2,
+            "textDocument/completion",
+            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":17}}),
+        ));
     }
     finish(&mut messages);
-    let started=std::time::Instant::now();
-    let (_,replies)=session(&messages);
-    let elapsed=started.elapsed();
-    assert!(reply(&replies,2)["result"]["items"].as_array().unwrap().iter().any(|item|item["label"]=="w-full"));
-    println!("native utility completion: {REQUESTS} requests in {elapsed:?}, {:.3} ms/request including framing, initial analysis and JSON",elapsed.as_secs_f64()*1000.0/REQUESTS as f64);
+    let started = std::time::Instant::now();
+    let (_, replies) = session(&messages);
+    let elapsed = started.elapsed();
+    assert!(
+        reply(&replies, 2)["result"]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["label"] == "w-full")
+    );
+    println!(
+        "native utility completion: {REQUESTS} requests in {elapsed:?}, {:.3} ms/request including framing, initial analysis and JSON",
+        elapsed.as_secs_f64() * 1000.0 / REQUESTS as f64
+    );
+}
+
+#[test]
+fn closed_string_union_arguments_complete_from_checked_signatures_in_complete_and_partial_calls() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let declaration = "type Edge = \"left\" | \"center\" | \"right\"\nfn choose(edge:Edge):String {return edge}\n";
+    for call in ["choose(\"left\")", "choose(edge=\"le", "choose("] {
+        let source = format!("{declaration}{call}");
+        let character = if call.ends_with(')') {
+            call.len() - 2
+        } else {
+            call.len()
+        };
+        let mut messages = vec![
+            initialize(dir.path()),
+            notification(
+                "textDocument/didOpen",
+                json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+            ),
+            request(
+                2,
+                "textDocument/completion",
+                json!({"textDocument":{"uri":uri},"position":{"line":2,"character":character}}),
+            ),
+        ];
+        finish(&mut messages);
+        let (_, replies) = session(&messages);
+        let items = reply(&replies, 2)["result"]["items"].as_array().unwrap();
+        let center = items
+            .iter()
+            .find(|item| item["label"] == "\"center\"")
+            .unwrap_or_else(|| panic!("{call}: {items:?}"));
+        assert_eq!(center["textEdit"]["newText"], "\"center\"");
+        assert!(!items.iter().any(|item| item["label"] == "Circle"));
+    }
+}
+
+#[test]
+fn literal_completion_edits_round_trip_sanim_braces_and_control_characters() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let value = "{before}\u{8}\u{c}\0";
+    let declaration = format!("type Tag=r\"{value}\"\nfn choose(tag:Tag):Tag {{return tag}}\n");
+    let call = format!("let selected=choose(r\"{value}\")");
+    let mut source = format!("{declaration}{call}");
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+        request(
+            2,
+            "textDocument/completion",
+            json!({"textDocument":{"uri":uri},"position":{"line":2,"character":call.len()-2}}),
+        ),
+    ];
+    finish(&mut messages);
+    let (status, replies) = session(&messages);
+    assert_eq!(status, 0);
+    let items = reply(&replies, 2)["result"]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{items:?}");
+    let edit = &items[0]["textEdit"];
+    assert_eq!(edit["range"]["start"]["line"], 2);
+    assert_eq!(edit["range"]["end"]["line"], 2);
+    let start = edit["range"]["start"]["character"].as_u64().unwrap() as usize;
+    let end = edit["range"]["end"]["character"].as_u64().unwrap() as usize;
+    let text = edit["newText"].as_str().unwrap();
+    assert!(text.contains("{{before}}"));
+    assert!(!text.contains("\\b") && !text.contains("\\u"));
+    source.replace_range(declaration.len() + start..declaration.len() + end, text);
+    let mut files = sanim_lang::MemorySources::default();
+    files.insert("main.sanim", &source);
+    let prepared = sanim_lang::Engine::default()
+        .prepare("main.sanim", &files, &Default::default())
+        .unwrap_or_else(|error| panic!("{error}; source={source:?}"));
+    assert_eq!(prepared.bindings["selected"].string().unwrap(), value);
 }

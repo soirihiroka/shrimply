@@ -68,9 +68,6 @@ impl Engine {
                 reads: BTreeMap::new(),
                 hashes: Default::default(),
             };
-            if engine.parsed.len() > engine.limits.max_modules * 2 {
-                engine.parsed.clear();
-            }
             let mut modules = Vec::new();
             let mut statistics = Statistics::default();
             engine.load(
@@ -102,9 +99,6 @@ impl Engine {
                 .as_micros()
                 .try_into()
                 .unwrap_or(u64::MAX);
-            if engine.parsed.len() > engine.limits.max_modules * 2 {
-                engine.parsed.clear();
-            }
             Ok(LintReport {
                 source: entry,
                 diagnostics,

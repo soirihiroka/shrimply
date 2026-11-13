@@ -99,7 +99,10 @@ add(markers)
     for (point, marker) in points.iter().zip(markers) {
         for axis in 0..2 {
             assert!(
-                (curve[0].position.values[axis] + point.values[axis]
+                (elements[0].position.values[axis]
+                    + curve[0].position.values[axis]
+                    + point.values[axis]
+                    - elements[1].position.values[axis]
                     - marker.position.values[axis])
                     .abs()
                     < 1e-9

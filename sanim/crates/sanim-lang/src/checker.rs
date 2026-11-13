@@ -779,7 +779,15 @@ impl Checker<'_> {
                 .ok_or_else(|| self.error("S105", "resolved type budget exceeded", span))?,
         );
         match expr {
-            TypeExpr::StringLiteral(value) => Ok(Type::StringLiteral(value.clone())),
+            TypeExpr::StringLiteral(value) => {
+                self.type_budget.set(
+                    self.type_budget
+                        .get()
+                        .checked_sub(value.len())
+                        .ok_or_else(|| self.error("S105", "resolved type budget exceeded", span))?,
+                );
+                Ok(Type::StringLiteral(value.clone().into()))
+            }
             TypeExpr::Signal(inner) => Ok(Type::Signal(Box::new(self.resolve(
                 inner,
                 variables,
@@ -896,6 +904,54 @@ impl Checker<'_> {
             Err(self.error("S106",format!("type mismatch: expected {expected}, found {actual}. Units and record fields must match; no lossy conversion is applied."),span))
         }
     }
+    fn narrow_branch(
+        &self,
+        condition: &Expr,
+        truth: bool,
+        env: &mut Environment,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        let ExprKind::Binary(operator, left, right) = &condition.kind else {
+            return Ok(());
+        };
+        if !matches!(operator.as_str(), "==" | "!=") {
+            return Ok(());
+        }
+        let (target, literal) = match (&left.kind, &right.kind) {
+            (_, ExprKind::String(value)) => (left, value),
+            (ExprKind::String(value), _) => (right, value),
+            _ => return Ok(()),
+        };
+        let Some(qualified) = target.qualified_name() else {
+            return Ok(());
+        };
+        let mut names = qualified.split('.');
+        let name = names.next().expect("qualified name");
+        let binding = self
+            .binding_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name));
+        if binding.is_none_or(|binding| binding.kind != BindingKind::Let) {
+            return Ok(());
+        }
+        let Some(ty) = env.get(name) else {
+            return Ok(());
+        };
+        if let Some(narrowed) = crate::type_algebra::narrow_string(
+            ty,
+            &names.collect::<Vec<_>>(),
+            literal,
+            truth == (operator == "=="),
+        ) {
+            let mut remaining = self.type_budget.get();
+            sanim_core::type_budget::charge(&narrowed, &mut remaining)
+                .map_err(|message| self.error("S105", message, span))?;
+            self.type_budget.set(remaining);
+            env.insert(name.into(), narrowed);
+        }
+        Ok(())
+    }
     fn block(
         &mut self,
         body: &[Statement],
@@ -955,9 +1011,15 @@ impl Checker<'_> {
                         }
                     }
                     let ty = expected.unwrap_or_else(|| {
-                        if *kind==BindingKind::Let && let ExprKind::String(value)=&value.kind {
-                            Type::StringLiteral(value.clone())
-                        } else {ty}
+                        if *kind == BindingKind::Let
+                            && let ExprKind::String(value) = &value.kind
+                        {
+                            Type::StringLiteral(value.clone().into())
+                        } else if *kind != BindingKind::Let {
+                            ty.widen_literals()
+                        } else {
+                            ty
+                        }
                     });
                     if ty.contains_signal() && !matches!(ty, Type::Signal(_)) {
                         return Err(self.error("S106","containers hold value snapshots; put sig around the entire value type instead, for example sig List<Number>",statement.span));
@@ -1063,18 +1125,12 @@ impl Checker<'_> {
                 StatementKind::If { condition, yes, no } => {
                     let ty = self.expression(condition, env, Some(&Type::Bool), variables)?;
                     self.expect(&Type::Bool, &ty, condition.span)?;
-                    let a = self.scoped_block(
-                        yes,
-                        &mut self.copy_environment(env, statement.span)?,
-                        result,
-                        variables,
-                    )?;
-                    let b = self.scoped_block(
-                        no,
-                        &mut self.copy_environment(env, statement.span)?,
-                        result,
-                        variables,
-                    )?;
+                    let mut yes_scope = self.copy_environment(env, statement.span)?;
+                    let mut no_scope = self.copy_environment(env, statement.span)?;
+                    self.narrow_branch(condition, true, &mut yes_scope, statement.span)?;
+                    self.narrow_branch(condition, false, &mut no_scope, statement.span)?;
+                    let a = self.scoped_block(yes, &mut yes_scope, result, variables)?;
+                    let b = self.scoped_block(no, &mut no_scope, result, variables)?;
                     returned = a && b;
                 }
                 StatementKind::For {
@@ -1225,7 +1281,7 @@ impl Checker<'_> {
                 let ty = expected
                     .filter(|ty| crate::reflection::concrete_schema(ty) && ty.accepts(&actual))
                     .cloned()
-                    .unwrap_or(actual);
+                    .unwrap_or_else(|| actual.widen_literals());
                 if !crate::reflection::concrete_schema(&ty) {
                     return Err(self.error("S113","cannot infer a concrete static type for this reflected default; symbolic generic parameters and untyped empty values cannot be exposed. Add a concrete annotation or explicit generic arguments, for example let optional:Option<Number>=reflect(None)",expr.span));
                 }
@@ -1245,8 +1301,8 @@ impl Checker<'_> {
                     .unit,
             )),
             ExprKind::String(value) => {
-                if expected.is_some_and(|ty|ty.string_literals().is_some()) {
-                    Ok(Type::StringLiteral(value.clone()))
+                if expected.is_some_and(|ty| ty.string_literals().is_some()) {
+                    Ok(Type::StringLiteral(value.clone().into()))
                 } else if crate::templates::expected(expected) {
                     self.template_expressions
                         .insert((expr.span.start, expr.span.end), Type::Template);
@@ -1297,14 +1353,21 @@ impl Checker<'_> {
                             value.span,
                         ));
                     }
-                    let wanted = if let Some(Type::Record(fields)) = expected {
-                        fields.get(name)
-                    } else {
-                        None
+                    let wanted = match expected {
+                        Some(Type::Record(fields)) => fields.get(name).cloned(),
+                        Some(Type::Union(types)) => Type::union(types.iter().filter_map(|ty| {
+                            if let Type::Record(fields) = ty {
+                                fields.get(name).cloned()
+                            } else {
+                                None
+                            }
+                        }))
+                        .ok(),
+                        _ => None,
                     };
                     out.insert(
                         name.clone(),
-                        self.expression(value, env, wanted, variables)?,
+                        self.expression(value, env, wanted.as_ref(), variables)?,
                     );
                 }
                 Ok(Type::Record(out))
@@ -1342,7 +1405,7 @@ impl Checker<'_> {
                 if matches!(ty, Type::Dict | Type::Data) {
                     if ty == Type::Dict {
                         self.expect(&Type::String, &idx, index.span)?;
-                    } else if idx != Type::String && idx != Type::Numeric(Unit::Number) {
+                    } else if !Type::String.accepts(&idx) && idx != Type::Numeric(Unit::Number) {
                         return Err(self.error(
                             "S122",
                             "Data keys must be String or array indices must be Number",

@@ -473,6 +473,8 @@ impl ReactiveGraph {
                         | Type::Fraction
                         | Type::Bool
                         | Type::String
+                        | Type::StringLiteral(_)
+                        | Type::Union(_)
                         | Type::Color
                         | Type::Font
                         | Type::Code(_)
@@ -548,7 +550,7 @@ impl ReactiveGraph {
                         depth = depth.max(child(*value)?.depth);
                         if let Some(format) = format {
                             let format = child(*format)?;
-                            if format.ty != Type::String {
+                            if !Type::String.accepts(&format.ty) {
                                 return Err("retained template format requires a String".into());
                             }
                             depth = depth.max(format.depth);
@@ -726,40 +728,81 @@ impl ReactiveGraph {
         }
         Ok((tracks, bindings, bytes))
     }
+    /// Visit changed property bindings reachable from the supplied scene roots.
+    /// Shared expression pairs are compared once, with bounded diff metadata.
+    /// Times are clamped to the element's birth, including future live-list items.
+    pub fn visit_changed_bindings(
+        &self,
+        next: &Self,
+        mut birth: impl FnMut(&str) -> Option<Fraction>,
+        mut visit: impl FnMut(&str, Property, Fraction),
+    ) {
+        let mut memo = std::collections::HashMap::new();
+        let mut compare = |id: &str,
+                           a: Option<&OrdMap<Property, NodeId>>,
+                           b: Option<&OrdMap<Property, NodeId>>| {
+            let Some(birth) = birth(id) else { return };
+            for property in a
+                .into_iter()
+                .flat_map(|properties| properties.keys())
+                .chain(
+                    b.into_iter()
+                        .flat_map(|properties| properties.keys())
+                        .filter(|property| {
+                            a.is_none_or(|properties| !properties.contains_key(*property))
+                        }),
+                )
+            {
+                let changed = match (
+                    a.and_then(|properties| properties.get(property)),
+                    b.and_then(|properties| properties.get(property)),
+                ) {
+                    (Some(&a), Some(&b)) => self.node_changed_from(next, a, b, &mut memo),
+                    _ => Some(Fraction::from(0)),
+                };
+                if let Some(time) = changed {
+                    visit(id, *property, time.max(birth));
+                }
+            }
+        };
+        // Both maps are ordered: merge once rather than looking up every
+        // binding in the opposite tree (and visiting shared IDs twice).
+        let mut old = self.bindings.iter().peekable();
+        let mut new = next.bindings.iter().peekable();
+        loop {
+            match (old.peek(), new.peek()) {
+                (Some((a, _)), Some((b, _))) if a == b => {
+                    let (id, a) = old.next().expect("peeked binding");
+                    let (_, b) = new.next().expect("peeked binding");
+                    compare(id, Some(a), Some(b));
+                }
+                (Some((a, _)), Some((b, _))) if a < b => {
+                    let (id, properties) = old.next().expect("peeked binding");
+                    compare(id, Some(properties), None);
+                }
+                (Some(_), None) => {
+                    let (id, properties) = old.next().expect("peeked binding");
+                    compare(id, Some(properties), None);
+                }
+                (_, Some(_)) => {
+                    let (id, properties) = new.next().expect("peeked binding");
+                    compare(id, None, Some(properties));
+                }
+                (None, None) => break,
+            }
+        }
+    }
     /// Compare only expression trees reachable from visible properties. A changed
     /// value cannot invalidate a frame before the element using it exists.
     pub(crate) fn changed_from(
         &self,
         next: &Self,
-        mut birth: impl FnMut(&str) -> Option<Fraction>,
+        birth: impl FnMut(&str) -> Option<Fraction>,
     ) -> Option<Fraction> {
-        let mut memo = std::collections::HashMap::new();
         let mut earliest = None;
-        for id in self
-            .bindings
-            .keys()
-            .chain(next.bindings.keys())
-            .collect::<std::collections::BTreeSet<_>>()
-        {
-            let Some(birth) = birth(id) else { continue };
-            let a = self.bindings.get(id);
-            let b = next.bindings.get(id);
-            for property in a
-                .into_iter()
-                .chain(b)
-                .flat_map(|properties| properties.keys())
-                .collect::<std::collections::BTreeSet<_>>()
-            {
-                let changed = match (
-                    a.and_then(|p| p.get(property)),
-                    b.and_then(|p| p.get(property)),
-                ) {
-                    (Some(&a), Some(&b)) => self.node_changed_from(next, a, b, &mut memo),
-                    _ => Some(Fraction::from(0)),
-                };
-                earliest = earlier(earliest, changed.map(|time| time.max(birth)));
-            }
-        }
+        self.visit_changed_bindings(next, birth, |_, _, time| {
+            earliest = earlier(earliest, Some(time))
+        });
         earliest
     }
     fn node_changed_from(
@@ -1146,7 +1189,10 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
         | Property::CodeLineHeight
         | Property::CodeTabSize
         | Property::CodeLineNumbers => unreachable!("CodeView properties validated above"),
-        Property::Text => *ty == Type::String,
+        Property::Overflow | Property::OverflowX | Property::OverflowY => {
+            crate::Overflow::ty().accepts(ty)
+        }
+        Property::Text => Type::String.accepts(ty),
         Property::Font => *ty == Type::Font,
         Property::FontSize => math::operations::scalar_unit(ty) == Some(Unit::Length),
         Property::XAlign | Property::YAlign => {

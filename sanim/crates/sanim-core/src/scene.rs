@@ -5,6 +5,12 @@ use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+pub(crate) fn flow_position_error(id: &str) -> String {
+    format!(
+        "flow layout controls '{id}.position'; animate the containing Box or change its layout properties instead"
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Geometry {
     Media {
@@ -214,6 +220,21 @@ impl Overflow {
         ("auto", Self::Auto),
         ("scroll", Self::Scroll),
     ];
+    pub fn ty() -> crate::Type {
+        crate::Type::union(
+            Self::VALUES
+                .iter()
+                .map(|(name, _)| crate::Type::StringLiteral((*name).into())),
+        )
+        .expect("registered overflow choices")
+    }
+    pub fn name(self) -> &'static str {
+        Self::VALUES
+            .iter()
+            .find(|(_, value)| *value == self)
+            .expect("registered overflow value")
+            .0
+    }
     pub fn parse(value: &str) -> Result<Self, String> {
         Self::VALUES
             .iter()
@@ -295,6 +316,9 @@ pub enum Direction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Property {
     Position,
+    Overflow,
+    OverflowX,
+    OverflowY,
     Scroll,
     Rotation,
     Scale,
@@ -522,6 +546,24 @@ impl Element {
         }
         Ok(match property {
             Property::Position => Value::Vec2(self.position),
+            Property::Overflow | Property::OverflowX | Property::OverflowY => {
+                if property == Property::Overflow
+                    && self.layout.overflow_x != self.layout.overflow_y
+                {
+                    return Err(
+                        "overflow axes differ; read overflow_x or overflow_y separately".into(),
+                    );
+                }
+                Value::String(
+                    if property == Property::OverflowY {
+                        self.layout.overflow_y
+                    } else {
+                        self.layout.overflow_x
+                    }
+                    .name()
+                    .into(),
+                )
+            }
             Property::Scroll => Value::Vec2(
                 self.layout
                     .scroll
@@ -703,6 +745,37 @@ impl Element {
                 if *size != number.value {
                     *size = number.value;
                     *pending = true;
+                }
+            }
+            Property::Overflow | Property::OverflowX | Property::OverflowY => {
+                let mode = Overflow::parse(value.string()?)?;
+                let x = if property == Property::OverflowY {
+                    self.layout.overflow_x
+                } else {
+                    mode
+                };
+                let y = if property == Property::OverflowX {
+                    self.layout.overflow_y
+                } else {
+                    mode
+                };
+                let scroll =
+                    self.layout
+                        .scroll
+                        .filter(|_| x.clips() || y.clips())
+                        .map(|mut offset| {
+                            for (axis, mode) in [x, y].into_iter().enumerate() {
+                                if !mode.clips() {
+                                    offset.values[axis] = 0.;
+                                }
+                            }
+                            offset
+                        });
+                self.layout.configure_overflow(x, y, scroll)?;
+                for (axis, mode) in [x, y].into_iter().enumerate() {
+                    if !mode.clips() {
+                        self.layout.scroll_range[axis] = 0.;
+                    }
                 }
             }
             Property::Scroll => {
@@ -939,10 +1012,7 @@ impl Animation {
     ) -> Result<Value, String> {
         if let Some(node) = self.reactive.binding(&element.id, property) {
             if property == Property::Position && self.flow_controlled.contains(&element.id) {
-                return Err(format!(
-                    "flow layout controls '{}.position'; animate a containing Group or use a free Group instead",
-                    element.id
-                ));
+                return Err(flow_position_error(&element.id));
             }
             if self
                 .tracks
@@ -986,10 +1056,7 @@ impl Animation {
         if let Some(properties) = self.reactive.properties(&out.id) {
             for (property, node) in properties {
                 if *property == Property::Position && self.flow_controlled.contains(&out.id) {
-                    return Err(format!(
-                        "flow layout controls '{}.position'; animate a containing Group or use a free Group instead",
-                        out.id
-                    ));
+                    return Err(flow_position_error(&out.id));
                 }
                 if self
                     .tracks
@@ -1062,9 +1129,7 @@ impl Animation {
         collect_flow_positions(&element, &mut flow);
         for id in &flow {
             if self.reactive.binding(id, Property::Position).is_some() {
-                return Err(format!(
-                    "flow layout controls '{id}.position'; animate a containing Group or use a free Group instead"
-                ));
+                return Err(flow_position_error(id));
             }
         }
         let mut ids = vec![];
@@ -1150,9 +1215,7 @@ impl Animation {
         }
         for id in &pending_flow {
             if self.reactive.binding(id, Property::Position).is_some() {
-                return Err(format!(
-                    "flow layout controls '{id}.position'; animate a containing Group or use a free Group instead"
-                ));
+                return Err(flow_position_error(id));
             }
         }
         for motion in motions {
@@ -1169,10 +1232,7 @@ impl Animation {
             let flow_controlled = self.flow_controlled.contains(&motion.element.id)
                 || pending_flow.contains(&motion.element.id);
             if motion.property == Property::Position && flow_controlled {
-                return Err(format!(
-                    "flow layout controls '{}.position'; animate a containing Group or use a free Group instead",
-                    motion.element.id
-                ));
+                return Err(flow_position_error(&motion.element.id));
             }
             let centered_growth = motion.property == Property::Scale
                 && (motion.to.number()?.value == Fraction::from(0)
@@ -1182,7 +1242,7 @@ impl Animation {
                         .is_some_and(|v| v.number().is_ok_and(|n| n.value == Fraction::from(0))));
             if centered_growth && flow_controlled {
                 return Err(format!(
-                    "flow layout controls the size of '{}'; grow or shrink the containing Row, Column or Group instead",
+                    "flow layout controls the size of '{}'; grow or shrink the containing Box instead",
                     motion.element.id
                 ));
             }

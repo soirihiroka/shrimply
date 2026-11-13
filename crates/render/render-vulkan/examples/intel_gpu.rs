@@ -1,8 +1,10 @@
 #[cfg(target_os = "linux")]
 fn main() -> Result<(), String> {
-    use ffmpeg_next::{self as ffmpeg, media};
+    use shrimply_asset::Asset;
     use shrimply_render_core::{LayerKind, Nv12LayerParams, TextureAddressMode, VideoSampleMethod};
-    use shrimply_render_vulkan::{Renderer, VideoFrame};
+    use shrimply_render_vulkan::{ImportedFrame, Renderer};
+    use shrimply_video_decoder::{NextFrame, VideoDecoderSession};
+    use shrimply_visual_frame::{GpuFrame, VideoFrame};
     use std::{sync::Arc, time::Instant};
 
     let mut arguments = std::env::args().skip(1);
@@ -17,23 +19,21 @@ fn main() -> Result<(), String> {
     if limit == 0 {
         return Err("Frame limit must be positive".into());
     }
-    ffmpeg::init().map_err(|e| e.to_string())?;
-    let mut input = ffmpeg::format::input(&path).map_err(|e| e.to_string())?;
-    let stream = input
-        .streams()
-        .best(media::Type::Video)
-        .ok_or("No video stream")?;
-    let index = stream.index();
-    let mut decoder = shrimply_render_vulkan::decoder(&stream.parameters(), stream.time_base())?;
+    let mut decoder = VideoDecoderSession::open(
+        &Asset::new(path).snapshot()?,
+        0,
+        |_| shrimply_render_vulkan::decoder_backend(),
+        None,
+    )?;
     let mut renderer = Renderer::new()?;
     renderer.warmup()?;
     let started = Instant::now();
     let mut count = 0;
-    let mut render = |frame: ffmpeg::frame::Video, count: &mut usize| -> Result<(), String> {
-        let width = frame.width();
-        let height = frame.height();
-        let source = Arc::new(VideoFrame { frame });
-        let (rgba, decoded) = renderer.video(&source)?;
+    let mut render = |source: Arc<VideoFrame>, count: &mut usize| -> Result<(), String> {
+        let width = source.native().width();
+        let height = source.native().height();
+        let imported = ImportedFrame::import(&mut renderer, source)?;
+        let rgba = imported.output.clone();
         let parameters = Nv12LayerParams {
             crop: [0.0; 4],
             padding: [0.0; 4],
@@ -72,36 +72,15 @@ fn main() -> Result<(), String> {
             );
             drop(submission);
         }
-        drop(decoded);
+        drop(imported);
         *count += 1;
         Ok(())
     };
-    'packets: for (stream, packet) in input.packets() {
-        if stream.index() != index {
-            continue;
-        }
-        decoder.send_packet(&packet).map_err(|e| e.to_string())?;
-        loop {
-            let mut frame = ffmpeg::frame::Video::empty();
-            match decoder.receive_frame(&mut frame) {
-                Ok(()) => render(frame, &mut count)?,
-                Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => break,
-                Err(error) => return Err(error.to_string()),
-            }
-            if count >= limit {
-                break 'packets;
-            }
-        }
-    }
-    if count < limit {
-        decoder.send_eof().map_err(|e| e.to_string())?;
-        while count < limit {
-            let mut frame = ffmpeg::frame::Video::empty();
-            match decoder.receive_frame(&mut frame) {
-                Ok(()) => render(frame, &mut count)?,
-                Err(ffmpeg::Error::Eof) => break,
-                Err(error) => return Err(error.to_string()),
-            }
+    while count < limit {
+        match decoder.next_frame([None, None])? {
+            NextFrame::Frame((_, frame)) => render(frame, &mut count)?,
+            NextFrame::EndOfStream => break,
+            NextFrame::Superseded => return Err("benchmark decode superseded".into()),
         }
     }
     if count == 0 {

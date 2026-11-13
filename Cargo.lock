@@ -7274,7 +7274,9 @@ dependencies = [
  "shrimply-render-core",
  "shrimply-render-vulkan",
  "shrimply-scene-3d",
+ "shrimply-video-decoder",
  "shrimply-visual-core",
+ "shrimply-visual-frame",
  "shrimply-visual-modifiers",
  "skia-safe",
  "tracing",
@@ -7327,6 +7329,7 @@ dependencies = [
  "shrimply-render-core",
  "shrimply-render-vulkan",
  "shrimply-visual-core",
+ "shrimply-visual-frame",
  "skia-safe",
  "uuid",
 ]
@@ -7592,6 +7595,8 @@ dependencies = [
  "shrimply-render-core",
  "shrimply-scene-3d",
  "shrimply-slang-build",
+ "shrimply-video-decoder",
+ "shrimply-visual-frame",
  "skia-safe",
  "tracing",
 ]

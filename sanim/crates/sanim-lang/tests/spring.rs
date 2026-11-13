@@ -47,14 +47,25 @@ fn explicit_bouncy_spring_retains_spatial_overshoot_and_exact_endpoint() {
 }
 
 #[test]
-fn continuous_proofs_do_not_ignore_bouncy_motion_on_group_children() {
-    let mut files = MemorySources::default();
-    files.insert("main.sanim","let marker=Circle(radius=5pt)\nlet group=Box(children=[marker])\nadd(group)\nMoveTo(marker,Vec2(1pt,0pt),duration=1s,ease=\"spring_bouncy\")\ncheck(always(inside_canvas(group)))");
-    let prepared = Engine::default()
-        .prepare("main.sanim", &files, &BTreeMap::new())
-        .unwrap();
-    assert_eq!(
-        prepared.checks[0].evidence,
-        sanim_core::verify::Evidence::Unknown
-    );
+fn continuous_proofs_preserve_bouncy_motion_conservatism_for_a_box() {
+    use sanim_core::verify::Evidence;
+    for (ease, expected) in [
+        ("spring_bouncy", Evidence::Unknown),
+        ("linear", Evidence::Proved),
+    ] {
+        let mut files = MemorySources::default();
+        files.insert("main.sanim",format!("let marker=Circle(radius=5pt)\nlet panel=Box(children=[marker],width=10pt,height=10pt)\nadd(panel)\nMoveTo(panel,Vec2(1pt,0pt),duration=1s,ease=\"{ease}\")\ncheck(always(inside_canvas(panel)))"));
+        let prepared = Engine::default()
+            .prepare("main.sanim", &files, &BTreeMap::new())
+            .unwrap();
+        let proof = &prepared.checks[0];
+        assert_eq!(proof.evidence, expected, "{}", proof.message);
+        if expected == Evidence::Unknown {
+            assert!(
+                proof.message.contains("bounded translations"),
+                "{}",
+                proof.message
+            );
+        }
+    }
 }

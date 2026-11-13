@@ -498,6 +498,10 @@ gpu-export-benchmark: native-deps cuda-artifacts
 gpu-playback-benchmark: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)" "$(or $(ACCURACY),playback)"
 
+.PHONY: video-decode-benchmark
+video-decode-benchmark:
+	$(BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),release) -p shrimply-video-decoder --features cuda-frames --example video_decode -- "$(VIDEO)" "$(or $(RUNS),5)" "$(or $(FRAMES),240)" "$(or $(SEEKS),40)"
+
 frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost
 
@@ -511,7 +515,16 @@ transparent-fill-cache-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-cuda modifiers::transparent_fill::tests::cache_round_trips_evicted_project_frame_masks -- --exact --test-threads=1
 
 transparent-fill-decoder-test: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-decoder tests::accurate_out_of_order_requests_map_30fps_positions_to_24fps_frames -- --exact --test-threads=1 --nocapture
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-video-decoder --features cuda tests::accurate_out_of_order_requests_map_30fps_positions_to_24fps_frames -- --exact --test-threads=1 --nocapture
+
+.PHONY: video-decoder-check
+video-decoder-check:
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-visual-frame -p shrimply-video-decoder --all-targets -- -D warnings
+ifneq ($(filter Linux Windows_NT,$(HOST_OS)),)
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-video-decoder --features cuda-frames --all-targets -- -D warnings
+endif
+
+check: video-decoder-check
 
 transparent-fill-kernel-test: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-cuda modifiers::transparent_fill::tests::cached_mask_applies_with_the_cuda_kernel -- --exact --test-threads=1

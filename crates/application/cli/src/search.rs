@@ -47,10 +47,13 @@ pub fn search(query: &str) -> Value {
             .sum::<usize>();
         (score > 0).then_some((score, path, command.summary.to_owned()))
     }));
-    let score = terms.iter().map(|term| {
-        usize::from(terms_for("sanim lsp language server").contains(term)) * PATH_WEIGHT
-            + usize::from(terms_for(crate::lsp::SUMMARY).contains(term)) * SUMMARY_WEIGHT
-    }).sum::<usize>();
+    let score = terms
+        .iter()
+        .map(|term| {
+            usize::from(terms_for("sanim lsp language server").contains(term)) * PATH_WEIGHT
+                + usize::from(terms_for(crate::lsp::SUMMARY).contains(term)) * SUMMARY_WEIGHT
+        })
+        .sum::<usize>();
     if score > 0 {
         matches.push((score, "sanim lsp".into(), crate::lsp::SUMMARY.into()));
     }

@@ -140,7 +140,7 @@ struct Shared {
     slots: Mutex<Slots>,
     wake: Condvar,
     epoch: Arc<AtomicU64>,
-    generation: AtomicU64,
+    generation: Arc<AtomicU64>,
 }
 
 /// One decoder worker, one replaceable request, and one replaceable completion.

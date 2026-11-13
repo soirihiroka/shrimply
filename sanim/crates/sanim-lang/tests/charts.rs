@@ -38,30 +38,35 @@ add(axis)
 ExpandX(interval_box,duration=400ms,ease="smootherstep")
 "#
     ));
-    let dots = p.animation.find("dots").unwrap();
+    let full = p
+        .animation
+        .layout(Fraction::new(2u64, 5u64), 800.into(), 600.into())
+        .unwrap();
+    let dots = full.iter().find(|element| element.id == "dots").unwrap();
     let Geometry::Box { children, .. } = dots.geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children.len(), 3);
     assert_eq!(children[1].id, "dots/point/b");
     assert_eq!(children[1].position.unit, Unit::Length);
-    assert_eq!(children[1].position.values[1], 0.);
-    let median = p.animation.find("box/median").unwrap();
-    assert_eq!(children[1].position.values[0], median.position.values[0]);
+    assert!((dots.position.values[1] + children[1].position.values[1] - 300.).abs() < 1e-9);
+    let interval = full.iter().find(|element| element.id == "box").unwrap();
+    let median = interval.find("box/median").unwrap();
+    let median_x = interval.position.values[0] + median.position.values[0];
+    assert!((dots.position.values[0] + children[1].position.values[0] - median_x).abs() < 1e-9);
+    let grid = full.iter().find(|element| element.id == "grid").unwrap();
+    let tick = grid.find("grid/tick/1/span/0").unwrap();
+    assert!((grid.position.values[0] + tick.position.values[0] - median_x).abs() < 1e-9);
     let frame = p
         .animation
-        .layout(
-            Fraction::new(1u64, 5u64),
-            Fraction::from(800),
-            Fraction::from(600),
-        )
+        .layout(Fraction::new(1u64, 5u64), 800.into(), 600.into())
         .unwrap();
-    let range = frame.iter().find(|e| e.id == "box").unwrap();
+    let range = frame.iter().find(|element| element.id == "box").unwrap();
     assert_eq!(range.horizontal.scale, Fraction::new(1u64, 2u64));
     assert!(
-        (sanim_core::math::to_f64(range.horizontal.origin.value).unwrap()
-            - 400.
-            - median.position.values[0])
+        (range.position.values[0]
+            + sanim_core::math::to_f64(range.horizontal.origin.value).unwrap()
+            - median_x)
             .abs()
             < 1e-9
     );
@@ -132,5 +137,61 @@ let dots=Scatter(data=rows,x_scale=xs,y_scale=ys)"#,
                 )
                 .is_err()
         );
+    }
+}
+
+#[test]
+fn asymmetric_chart_medians_keep_world_coordinates_and_pivots_for_every_anchor() {
+    for (anchor, fraction) in [("Start", 0.), ("Center", 0.5), ("End", 1.)] {
+        let prepared = prepare(&format!(
+            r#"{SCALES}
+let mapped=scale_value(xs,0.95)
+let markers=Scatter(data=[{{x=0.95,y=2}}],x_scale=xs,y_scale=ys,x_align=Align.{anchor},y_align=Align.{anchor},position=Vec2(7pt,11pt))
+let interval=BoxPlot(summary={{low=0.8,q1=0.9,middle=0.95,q3=1.1,high=1.2}},scale=xs,x_align=Align.{anchor},y_align=Align.{anchor},position=Vec2(7pt,11pt))
+add(markers)
+ExpandX(interval,duration=400ms,ease="linear")
+"#
+        ));
+        let mapped =
+            sanim_core::math::to_f64(prepared.bindings["mapped"].number().unwrap().value).unwrap();
+        for width in [400, 800] {
+            let full = prepared
+                .animation
+                .layout(Fraction::new(2u64, 5u64), width.into(), 300.into())
+                .unwrap();
+            let interval = full
+                .iter()
+                .find(|element| element.id == "interval")
+                .unwrap();
+            let median = interval.find("interval/median").unwrap();
+            let median_x = interval.position.values[0] + median.position.values[0];
+            let markers = full.iter().find(|element| element.id == "markers").unwrap();
+            let Geometry::Box { children, .. } = markers.geometry.as_ref() else {
+                panic!()
+            };
+            assert!(
+                (median_x - f64::from(width) * fraction - 7. - mapped).abs() < 1e-9,
+                "{anchor} at {width}"
+            );
+            assert!(
+                (markers.position.values[0] + children[0].position.values[0] - median_x).abs()
+                    < 1e-9
+            );
+            let half = prepared
+                .animation
+                .layout(Fraction::new(1u64, 5u64), width.into(), 300.into())
+                .unwrap();
+            let interval = half
+                .iter()
+                .find(|element| element.id == "interval")
+                .unwrap();
+            assert!(
+                (interval.position.values[0]
+                    + sanim_core::math::to_f64(interval.horizontal.origin.value).unwrap()
+                    - median_x)
+                    .abs()
+                    < 1e-9
+            );
+        }
     }
 }

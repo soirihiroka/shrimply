@@ -34,16 +34,20 @@ impl OpenDocument {
     }
     fn parse_syntax(&self) -> sanim_lang::parser::Recovery {
         let (recovery, highlights) = sanim_lang::parser::parse_highlighted(
-            "editor", &self.document.text, sanim_lang::Limits::default().max_parse_steps,
+            "editor",
+            &self.document.text,
+            sanim_lang::Limits::default().max_parse_steps,
         );
         *self.syntax.borrow_mut() = Some(Syntax {
             version: self.document.version,
             markup: recovery.markup.clone(),
-            highlights: sanim_lang::core::code::normalize_highlights(&highlights, &self.document.text),
+            highlights: sanim_lang::core::code::normalize_highlights(
+                &highlights,
+                &self.document.text,
+            ),
         });
         recovery
     }
-
 }
 
 pub(crate) struct Analysis {
@@ -344,25 +348,53 @@ impl Workspace {
         // Superseded utilities remain source metadata even though the parser
         // correctly removes them from the executable argument list.
         for opening in &document.syntax().markup {
-            let explicit = opening.attributes.iter().filter(|attribute| !attribute.utility).map(|attribute| attribute.name.as_str()).collect::<BTreeSet<_>>();
+            let explicit = opening
+                .attributes
+                .iter()
+                .filter(|attribute| !attribute.utility)
+                .map(|attribute| attribute.name.as_str())
+                .collect::<BTreeSet<_>>();
             struct Override<'a> {
                 previous: &'a sanim_lang::parser::MarkupAttribute,
                 keys: Vec<String>,
                 redundant: bool,
             }
-            let mut properties = BTreeMap::<String, (&sanim_lang::parser::MarkupAttribute, String)>::new();
-            for attribute in opening.attributes.iter().filter(|attribute| attribute.utility) {
-                let Ok(utility) = sanim_lang::utilities::describe(&opening.name, &attribute.name) else { continue };
+            let mut properties =
+                BTreeMap::<String, (&sanim_lang::parser::MarkupAttribute, String)>::new();
+            for attribute in opening
+                .attributes
+                .iter()
+                .filter(|attribute| attribute.utility)
+            {
+                let Ok(utility) = sanim_lang::utilities::describe(&opening.name, &attribute.name)
+                else {
+                    continue;
+                };
                 let mut replaced = BTreeMap::<(usize, usize), Override<'_>>::new();
                 for (key, value) in utility.properties {
-                    if explicit.contains(key.as_str()) { continue; }
-                    if let Some((previous, old_value)) = properties.insert(key.clone(), (attribute, value.clone())) {
-                        let entry = replaced.entry((previous.span.start, previous.span.end)).or_insert(Override {previous, keys:vec![], redundant:true});
+                    if explicit.contains(key.as_str()) {
+                        continue;
+                    }
+                    if let Some((previous, old_value)) =
+                        properties.insert(key.clone(), (attribute, value.clone()))
+                    {
+                        let entry = replaced
+                            .entry((previous.span.start, previous.span.end))
+                            .or_insert(Override {
+                                previous,
+                                keys: vec![],
+                                redundant: true,
+                            });
                         entry.keys.push(key);
                         entry.redundant &= old_value == value;
                     }
                 }
-                for Override {previous, keys, redundant} in replaced.into_values() {
+                for Override {
+                    previous,
+                    keys,
+                    redundant,
+                } in replaced.into_values()
+                {
                     analysis.diagnostics.entry(uri.into()).or_default().push(json!({
                         "range":document.document.range(previous.span),"severity":2,"source":"sanim","code":"U001",
                         "message":format!("utility '{}' is {} by later '{}' for {}; remove the unnecessary setting", previous.name, if redundant {"repeated"} else {"overridden"}, attribute.name, keys.join(", ")),

@@ -10,12 +10,12 @@ fn unmodified_video(
     let Some(video) = shrimply_preview_render_core::math::unmodified_video(plan) else {
         return Ok(None);
     };
-    if video.frame.color_range() == ffmpeg::color::Range::JPEG
-        || shrimply_render_vulkan::video_color_space(&video.frame)? != ffmpeg::color::Space::BT709
+    if video.native().color_range() == ffmpeg::color::Range::JPEG
+        || shrimply_render_vulkan::video_color_space(video.native())? != ffmpeg::color::Space::BT709
     {
         return Ok(None);
     }
-    let native = unsafe { &*video.frame.as_ptr() };
+    let native = unsafe { &*video.native().as_ptr() };
     if native.hw_frames_ctx.is_null()
         || native.crop_left != 0
         || native.crop_right != 0
@@ -42,7 +42,7 @@ fn unmodified_video(
     // instead, preserving its decoder context until the encoder releases it.
     let mut frame = ffmpeg::frame::Video::empty();
     ffmpeg_check(
-        unsafe { sys::av_frame_ref(frame.as_mut_ptr(), video.frame.as_ptr()) },
+        unsafe { sys::av_frame_ref(frame.as_mut_ptr(), video.native().as_ptr()) },
         "Retain Intel decoder surface for export",
     )?;
     Ok(Some(frame))

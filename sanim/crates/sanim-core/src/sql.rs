@@ -14,8 +14,16 @@ pub fn identifier(name: &str) -> Result<Arc<str>, String> {
     Ok(name.into())
 }
 pub fn parameter_type(ty: &Type) -> bool {
+    if Type::String.accepts(ty) {
+        return true;
+    }
     match ty {
-        Type::Bool | Type::String | Type::Numeric(_) | Type::Fraction | Type::Data => true,
+        Type::Bool
+        | Type::String
+        | Type::StringLiteral(_)
+        | Type::Numeric(_)
+        | Type::Fraction
+        | Type::Data => true,
         Type::Option(inner) => **inner == Type::Unknown || parameter_type(inner),
         _ => false,
     }

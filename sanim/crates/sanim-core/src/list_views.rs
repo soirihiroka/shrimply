@@ -62,7 +62,7 @@ pub(crate) struct Selection<'a> {
 pub(crate) fn elements(items: &List) -> Result<impl Iterator<Item = &Element>, String> {
     if items.element_type.as_ref() != &Type::Element {
         return Err(format!(
-            "live Row/Column children require List<Element>, found List<{}>",
+            "live Box children require List<Element>, found List<{}>",
             items.element_type
         ));
     }
@@ -122,6 +122,14 @@ impl Channel {
         }
     }
 }
+/// A mounted element or a future item of a mounted live view.
+#[derive(Clone, Copy)]
+pub struct ReachableElement<'a> {
+    pub element: &'a Element,
+    pub birth: Fraction,
+    pub root: usize,
+    pub parent: Option<&'a Element>,
+}
 impl ListViews {
     fn snapshot_ids(&self, items: &List) -> Result<OrdSet<String>, String> {
         fn visit(element: &Element, views: &OrdMap<String, u64>, ids: &mut OrdSet<String>) {
@@ -150,9 +158,9 @@ impl ListViews {
         let mut views = BTreeSet::new();
         self.visit_reachable(
             roots.map(|element| (element, Fraction::from(0))),
-            |element, _| {
-                if self.views.contains_key(&element.id) {
-                    views.insert(element.id.as_str());
+            |reachable| {
+                if self.views.contains_key(&reachable.element.id) {
+                    views.insert(reachable.element.id.as_str());
                 }
             },
         );
@@ -160,10 +168,11 @@ impl ListViews {
     }
     /// Visit static and future catalog children once, at the earliest birth of
     /// any mounted view which can expose them. Catalog-only items stay absent.
-    pub(crate) fn visit_reachable<'a>(
+    /// The callback also receives the input root index, preserving paint order.
+    pub fn visit_reachable<'a>(
         &'a self,
         roots: impl Iterator<Item = (&'a Element, Fraction)>,
-        mut visit: impl FnMut(&'a Element, Fraction),
+        mut visit: impl FnMut(ReachableElement<'a>),
     ) {
         let mut owned = std::collections::BTreeMap::<u64, Vec<&Element>>::new();
         for (id, element) in &self.catalog {
@@ -171,21 +180,45 @@ impl ListViews {
                 owned.entry(*cell).or_default().push(element);
             }
         }
-        let mut pending: Vec<_> = roots.collect();
-        pending.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        let mut pending: Vec<_> = roots
+            .enumerate()
+            .map(|(root, (element, birth))| ReachableElement {
+                element,
+                birth,
+                root,
+                parent: None,
+            })
+            .collect();
+        pending.sort_unstable_by_key(|entry| std::cmp::Reverse(entry.birth));
         let mut seen = BTreeSet::new();
-        while let Some((element, birth)) = pending.pop() {
+        while let Some(reachable) = pending.pop() {
+            let ReachableElement {
+                element,
+                birth,
+                root,
+                ..
+            } = reachable;
             if !seen.insert(element.id.as_str()) {
                 continue;
             }
-            visit(element, birth);
+            visit(reachable);
             if let Some(cell) = self.views.get(&element.id)
                 && let Some(children) = owned.get(cell)
             {
-                pending.extend(children.iter().map(|element| (*element, birth)));
+                pending.extend(children.iter().map(|child| ReachableElement {
+                    element: child,
+                    birth,
+                    root,
+                    parent: Some(element),
+                }));
             }
             if let Some(children) = element.geometry.children() {
-                pending.extend(children.iter().map(|element| (element, birth)));
+                pending.extend(children.iter().map(|child| ReachableElement {
+                    element: child,
+                    birth,
+                    root,
+                    parent: Some(element),
+                }));
             }
         }
     }
@@ -411,7 +444,7 @@ impl Animation {
         if !(view.layout.direction.is_some()
             && matches!(view.geometry.as_ref(), Geometry::Box { .. }))
         {
-            return Err("live list children require a Row or Column".into());
+            return Err("live list children require a Box with flow layout".into());
         }
         if self.list_views.views.contains_key(&view.id) {
             return Err(format!("list view '{}' is already bound", view.id));
@@ -450,9 +483,7 @@ impl Animation {
                 .binding(id, crate::Property::Position)
                 .is_some()
             {
-                return Err(format!(
-                    "flow layout controls '{id}.position'; animate its containing Row or Column instead"
-                ));
+                return Err(crate::scene::flow_position_error(id));
             }
         }
         if !self.list_views.channels.contains_key(&cell) {
@@ -596,9 +627,7 @@ impl Animation {
                 .binding(id, crate::Property::Position)
                 .is_some()
             {
-                return Err(format!(
-                    "flow layout controls '{id}.position'; animate its containing Row or Column instead"
-                ));
+                return Err(crate::scene::flow_position_error(id));
             }
         }
         for (id, element) in &additions {

@@ -58,7 +58,7 @@ fn generic_defaults_constraints_and_parameter_order_fail_cleanly() {
 }
 #[test]
 fn type_aliases_support_defaults_and_constraints() {
-    let p=run("type Box<T:Readable=Number> ={value:T}\nlet a:Box={value=3}\nlet b:Box<String> ={value=\"ok\"}").unwrap();
+    let p=run("type Envelope<T:Readable=Number> ={value:T}\nlet a:Envelope={value=3}\nlet b:Envelope<String> ={value=\"ok\"}").unwrap();
     assert!(matches!(p.bindings["a"], Value::Record(_)));
     assert!(matches!(p.bindings["b"], Value::Record(_)));
 }

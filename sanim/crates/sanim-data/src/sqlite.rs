@@ -18,6 +18,9 @@ use std::{
 pub(crate) use sanim_core::sql::quote_identifier as quote;
 
 fn sql_type(ty: &Type) -> Result<&'static str, String> {
+    if Type::String.accepts(ty) {
+        return Ok("TEXT");
+    }
     Ok(match ty {
         Type::Bool => "INTEGER",
         Type::String | Type::Fraction => "TEXT",
@@ -152,9 +155,11 @@ fn output(value: ValueRef<'_>, ty: &Type, limits: Limits) -> Result<Value, Strin
             "SQL returned NULL for {ty}; use Option<{ty}> for nullable columns"
         )),
         (Type::Bool, ValueRef::Integer(v)) if matches!(v, 0 | 1) => Ok(Value::Bool(v == 1)),
-        (Type::String, ValueRef::Text(v)) => Ok(Value::String(
-            std::str::from_utf8(v).map_err(|e| e.to_string())?.into(),
-        )),
+        (ty, ValueRef::Text(v)) if Type::String.accepts(ty) => {
+            let value = Value::String(std::str::from_utf8(v).map_err(|e| e.to_string())?.into());
+            sanim_core::validate_value(ty, &value)?;
+            Ok(value)
+        }
         (Type::Numeric(unit), ValueRef::Integer(v)) => Ok(Value::Number(Number {
             value: Fraction::from(v),
             unit: *unit,

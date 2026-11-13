@@ -201,9 +201,9 @@ pub fn layout(
         h_align: text.h_align.value_at(time),
         v_align: text.v_align.value_at(time),
         direction: text.direction.value_at(time),
-        font_families: text.font_families.clone(),
+        font_families: text.font_families.clone().into(),
         font_style: text.font_style.value_at(time),
-        font_variations: normalized_variations(text),
+        font_variations: normalized_variations(text).into(),
         font_size: font_size.to_bits(),
         font_weight: font_weight.round().clamp(1.0, 1000.0) as i32,
         tracking: tracking.to_bits(),
@@ -213,19 +213,23 @@ pub fn layout(
         return layout;
     }
 
-    let layout = Rc::new(build(
-        text,
-        content,
-        font_size,
-        font_weight,
-        tracking,
-        line_height,
-        time,
-    ));
+    let layout = Rc::new(build(&key));
     key.font_epoch = fonts::system_font_epoch().expect("load shared native font map");
     LAYOUTS.with(|layouts| {
         let bytes = std::mem::size_of::<TextLayout>()
-            + std::mem::size_of::<Key>()
+            + 2 * std::mem::size_of::<Key>()
+            + std::mem::size_of_val(key.font_variations.as_ref())
+            + key
+                .font_variations
+                .iter()
+                .map(|(axis, _)| axis.capacity())
+                .sum::<usize>()
+            + std::mem::size_of_val(key.font_families.as_ref())
+            + key
+                .font_families
+                .iter()
+                .map(|family| family.name().len())
+                .sum::<usize>()
             + key.text.len()
             + layout.path.approximate_bytes_used()
             + layout
@@ -255,46 +259,42 @@ struct Key {
     h_align: TextHorizontalAlign,
     v_align: VerticalAlign,
     direction: TextDirection,
-    font_families: Vec<FontFamily>,
+    font_families: Arc<[FontFamily]>,
     font_style: TextFontStyle,
-    font_variations: Vec<(String, u32)>,
+    font_variations: Arc<[(String, u32)]>,
     font_size: u32,
     font_weight: i32,
     tracking: u32,
     line_height: u32,
 }
 
-fn build(
-    text: &TextItem,
-    content: &str,
-    font_size: f32,
-    font_weight: f32,
-    tracking: f32,
-    line_height: f32,
-    time: shrimply_project_document::project::Time,
-) -> TextLayout {
-    let direction = text.direction.value_at(time);
-    let h_align = text.h_align.value_at(time);
-    let v_align = text.v_align.value_at(time);
-    let font_style = text.font_style.value_at(time);
+fn build(key: &Key) -> TextLayout {
+    let content = key.text.as_ref();
+    let direction = key.direction;
+    let h_align = key.h_align;
+    let v_align = key.v_align;
+    let font_style = key.font_style;
+    let font_size = f32::from_bits(key.font_size);
+    let tracking = f32::from_bits(key.tracking);
+    let line_height = f32::from_bits(key.line_height);
     let native = fonts::shaping::layout(
-        &text
-            .font_families
+        &key.font_families
             .iter()
             .map(|font| font.name().to_owned())
             .collect::<Vec<_>>()
             .into(),
         if content.is_empty() { " " } else { content },
         &fonts::shaping::Options {
-            weight: font_weight.round().clamp(1.0, 1000.0) as i32,
+            weight: key.font_weight,
             style: match font_style {
                 TextFontStyle::Normal => pango::Style::Normal,
                 TextFontStyle::Italic => pango::Style::Italic,
                 TextFontStyle::Oblique => pango::Style::Oblique,
             },
-            variations: normalized_variations(text)
-                .into_iter()
-                .map(|(axis, value)| (axis, f32::from_bits(value)))
+            variations: key
+                .font_variations
+                .iter()
+                .map(|(axis, value)| (axis.clone(), f32::from_bits(*value)))
                 .collect(),
             vertical: direction == TextDirection::Vertical,
             alignment: match direction {

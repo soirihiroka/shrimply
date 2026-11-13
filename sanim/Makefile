@@ -240,3 +240,36 @@ scrolling-test:
 	$(CARGO) test -p sanim-lang -p sanim-render --test scrolling
 scrolling-bench:
 	$(CARGO) test --release -p sanim-render --test scrolling scroll_benchmark -- --ignored --nocapture
+
+.PHONY: literal-type-check
+literal-type-check:
+	$(CARGO) test -p sanim-lang --test literal_types
+	$(CARGO) clippy -p sanim-core -p sanim-data -p sanim-lang --all-targets -- -D warnings
+
+.PHONY: literal-validation-bench
+literal-validation-bench:
+	$(CARGO) test --release -p sanim-core --test literal_validation_benchmark -- --ignored --nocapture
+
+.PHONY: parsed-cache-check
+parsed-cache-check:
+	$(CARGO) test -p sanim-lang --lib cache::parsed::tests
+
+.PHONY: reactive-watch-check reactive-diff-bench
+reactive-watch-check:
+	$(CARGO) test -p sanim-core --test reactive changed_binding_visitor
+	$(CARGO) test -p sanim-core --test list_views changed_signals_on_future
+	$(CARGO) test -p sanim-lang --test reload
+reactive-diff-bench:
+	$(CARGO) test $(ARGS) -p sanim-core --test reactive reactive_binding_diff_benchmark -- --ignored --nocapture
+
+.PHONY: integration-fixtures-check
+integration-fixtures-check:
+	$(CARGO) test -p sanim-core --test timed_values generic_state_never_weakens_property_expression_types_or_validation
+	$(CARGO) test -p sanim-lang --test generics type_aliases_support_defaults_and_constraints
+	$(CARGO) test -p sanim-lang --test scrolling overflow_errors_explain_required_container_and_dimensions
+
+.PHONY: box-migration-check
+box-migration-check:
+	$(CARGO) test -p sanim-core --test reactive box_dimensions
+	$(CARGO) test -p sanim-lang --test animation --test charts --test plots --test spring --no-fail-fast
+	$(CARGO) test -p sanim-render --test frame_cache --test list_views --test picking --test plots --test rendering --no-fail-fast

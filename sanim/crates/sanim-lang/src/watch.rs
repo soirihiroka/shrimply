@@ -6,6 +6,52 @@ use std::{
     sync::Arc,
 };
 
+struct Elements<'a> {
+    by_id: BTreeMap<&'a str, sanim_core::list_views::ReachableElement<'a>>,
+    order: Vec<&'a str>,
+}
+impl<'a> Elements<'a> {
+    fn collect(animation: &'a sanim_core::Animation) -> Self {
+        let mut result = Self {
+            by_id: BTreeMap::new(),
+            order: vec![],
+        };
+        animation.list_views.visit_reachable(
+            animation
+                .layers
+                .iter()
+                .map(|layer| (&layer.element, layer.birth)),
+            |reachable| {
+                result.order.push(reachable.element.id.as_str());
+                result
+                    .by_id
+                    .insert(reachable.element.id.as_str(), reachable);
+            },
+        );
+        result
+    }
+    fn propagate(&self, dirty: &mut BTreeSet<String>) {
+        // Canonical reachability emits parents before children, including future
+        // live-list items. A changed item can move its layout parent and siblings.
+        for id in self.order.iter().rev() {
+            if dirty.contains(*id)
+                && let Some(parent) = self.by_id[id].parent
+                && parent.layout.direction.is_some()
+            {
+                dirty.insert(parent.id.clone());
+            }
+        }
+        for id in &self.order {
+            if self.by_id[id]
+                .parent
+                .is_some_and(|parent| dirty.contains(&parent.id))
+            {
+                dirty.insert((*id).to_owned());
+            }
+        }
+    }
+}
+
 pub enum Reload {
     Unchanged,
     Updated {
@@ -183,34 +229,13 @@ impl Session {
                     self.current = Some(prepared);
                     return Reload::Unchanged;
                 }
-                let mut ids = BTreeSet::new();
-                for layer in &prepared.animation.layers {
-                    let mut nested = vec![];
-                    layer.element.ids(&mut nested);
-                    ids.extend(nested);
-                }
-                if let Some(old) = &self.current {
-                    for layer in &old.animation.layers {
-                        let mut nested = vec![];
-                        layer.element.ids(&mut nested);
-                        ids.extend(nested);
-                    }
-                }
-                // Birth times and paint order are visual dependencies too, even
-                // when an element's definition and property tracks are unchanged.
-                let layer_state = |animation: &sanim_core::Animation| {
-                    let mut states = BTreeMap::new();
-                    for (index, layer) in animation.layers.iter().enumerate() {
-                        let mut nested = vec![];
-                        layer.element.ids(&mut nested);
-                        for id in nested {
-                            states.insert(id, (index, layer.birth));
-                        }
-                    }
-                    states
-                };
-                let old_layers = self.current.as_ref().map(|old| layer_state(&old.animation));
-                let new_layers = layer_state(&prepared.animation);
+                // One canonical traversal includes future children of mounted
+                // list views while excluding unmounted catalog entries.
+                let old_elements = self
+                    .current
+                    .as_ref()
+                    .map(|old| Elements::collect(&old.animation));
+                let new_elements = Elements::collect(&prepared.animation);
                 let global_change = self.current.as_ref().is_none_or(|old| {
                     old.animation.dpi != prepared.animation.dpi
                         || old.animation.rate != prepared.animation.rate
@@ -218,47 +243,63 @@ impl Session {
                         || old.animation.height != prepared.animation.height
                         || old.animation.background != prepared.animation.background
                 });
-                let mut changed_elements: BTreeSet<String> = ids
-                    .iter()
-                    .filter(|&id| {
-                        let old = self.current.as_ref().and_then(|v| v.animation.find(id));
-                        let new = prepared.animation.find(id);
-                        let old_tracks = self
+                let mut changed_elements = BTreeSet::new();
+                let mut compare = |id: &str| {
+                    let old = old_elements.as_ref().and_then(|old| old.by_id.get(id));
+                    let new = new_elements.by_id.get(id);
+                    let element_changed = match (old, new) {
+                        (Some(old), Some(new)) => {
+                            old.element != new.element
+                                || old.root != new.root
+                                || old.birth != new.birth
+                                || old.parent.map(|parent| &parent.id)
+                                    != new.parent.map(|parent| &parent.id)
+                        }
+                        _ => old.is_some() != new.is_some(),
+                    };
+                    if global_change
+                        || element_changed
+                        || self
                             .current
                             .as_ref()
-                            .and_then(|v| v.animation.tracks.get(id));
-                        global_change
-                            || old != new
-                            || old_tracks != prepared.animation.tracks.get(id)
-                            || old_layers.as_ref().and_then(|layers| layers.get(id))
-                                != new_layers.get(id)
-                    })
-                    .cloned()
-                    .collect();
-                fn expand(element: &sanim_core::Element, dirty: &mut BTreeSet<String>) -> bool {
-                    let mut dependent = false;
-                    if let Some(children) = element.geometry.children() {
-                        for child in children {
-                            dependent |= expand(child, dirty);
-                        }
-                        if element.layout.direction.is_some() && dependent {
-                            dirty.insert(element.id.clone());
-                        }
+                            .and_then(|old| old.animation.tracks.get(id))
+                            != prepared.animation.tracks.get(id)
+                    {
+                        changed_elements.insert(id.to_owned());
                     }
-                    if dirty.contains(&element.id) {
-                        let mut ids = vec![];
-                        element.ids(&mut ids);
-                        dirty.extend(ids);
+                };
+                if let Some(old) = &old_elements {
+                    for id in old.by_id.keys() {
+                        compare(id);
                     }
-                    dependent || dirty.contains(&element.id)
                 }
-                for layer in &prepared.animation.layers {
-                    expand(&layer.element, &mut changed_elements);
+                for id in new_elements.by_id.keys().filter(|id| {
+                    old_elements
+                        .as_ref()
+                        .is_none_or(|old| !old.by_id.contains_key(*id))
+                }) {
+                    compare(id);
                 }
                 if let Some(old) = &self.current {
-                    for layer in &old.animation.layers {
-                        expand(&layer.element, &mut changed_elements);
-                    }
+                    old.animation.reactive.visit_changed_bindings(
+                        &prepared.animation.reactive,
+                        |id| {
+                            old_elements
+                                .as_ref()
+                                .and_then(|old| old.by_id.get(id))
+                                .into_iter()
+                                .chain(new_elements.by_id.get(id))
+                                .map(|element| element.birth)
+                                .min()
+                        },
+                        |id, _, _| {
+                            changed_elements.insert(id.to_owned());
+                        },
+                    );
+                }
+                new_elements.propagate(&mut changed_elements);
+                if let Some(old) = &old_elements {
+                    old.propagate(&mut changed_elements);
                 }
                 self.revision += 1;
                 self.current = Some(prepared.clone());

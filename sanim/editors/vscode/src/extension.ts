@@ -1,7 +1,7 @@
 import { commands, ExtensionContext, workspace } from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
 import { constants } from 'node:fs';
-import { access } from 'node:fs/promises';
+import { access, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import * as path from 'node:path';
 
@@ -17,12 +17,13 @@ export async function activate(context: ExtensionContext): Promise<void> {
         installed.push('/Applications/Shrimply.app/Contents/MacOS/shrimply', path.join(homedir(), 'Applications/Shrimply.app/Contents/MacOS/shrimply'));
     }
     const candidates = configured
-        ? path.isAbsolute(configured) || configured.includes('/') || configured.includes('\\') ? [configured] : directories.map(directory => path.join(directory, configured))
+        ? path.isAbsolute(configured) || configured.includes('/') || configured.includes('\\') ? [configured] : directories.map(directory => path.join(directory, process.platform === 'win32' && !path.extname(configured) ? `${configured}.exe` : configured))
         : [...directories.map(directory => path.join(directory, `shrimply${suffix}`)), ...installed, ...directories.map(directory => path.join(directory, `sanim-lsp${suffix}`))];
     let command: string | undefined;
     for (const candidate of candidates) {
         try {
             await access(candidate, constants.X_OK);
+            if (!(await stat(candidate)).isFile()) continue;
             command = candidate;
             break;
         } catch (error) {

@@ -69,7 +69,7 @@ impl Checker<'_> {
             _ => return Err(self.error("S122", "DataFrame column access requires a known record schema or a record constraint", span)),
         };
         let result = match idx {
-            Type::String => {
+            Type::String | Type::StringLiteral(_) => {
                 let names =
                     names(index).map_err(|message| self.error("S122", message, index.span))?;
                 schema
@@ -78,7 +78,7 @@ impl Checker<'_> {
                     .map(|ty| Type::Series(Box::new(ty)))
                     .ok_or_else(|| frame::unknown_column(schema, &names[0]))
             }
-            Type::List(inner) if **inner == Type::String => names(index)
+            Type::List(inner) if Type::String.accepts(inner) => names(index)
                 .and_then(|names| frame::selected_schema(schema, &names))
                 .map(|schema| frame_type(schema, Vec::new())),
             Type::Series(inner) if **inner == Type::Bool => Ok(Type::DataFrame {

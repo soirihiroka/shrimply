@@ -21,7 +21,9 @@ impl zed::Extension for Sanim {
         let mut installed = Vec::new();
         if let Some((_, home)) = worktree.shell_env().iter().find(|(key, _)| key == "HOME") {
             installed.push(format!("{home}/.local/bin/shrimply"));
-            installed.push(format!("{home}/Applications/Shrimply.app/Contents/MacOS/shrimply"));
+            installed.push(format!(
+                "{home}/Applications/Shrimply.app/Contents/MacOS/shrimply"
+            ));
         }
         installed.push("/Applications/Shrimply.app/Contents/MacOS/shrimply".into());
         let command = configured
@@ -30,16 +32,20 @@ impl zed::Extension for Sanim {
             .or_else(|| worktree.which("sanim-lsp"))
             .ok_or("Sanim language server not found. Install Shrimply and enable its CLI, or set lsp.sanim-lsp.binary.path to Shrimply or a standalone sanim-lsp executable.")?;
         let name = command.rsplit(['/', '\\']).next().unwrap_or(&command);
-        let default_args = if name.eq_ignore_ascii_case("shrimply") || name.eq_ignore_ascii_case("shrimply.exe") {
-            vec!["sanim".into(), "lsp".into()]
-        } else {
-            Vec::new()
-        };
+        let default_args =
+            if name.eq_ignore_ascii_case("shrimply") || name.eq_ignore_ascii_case("shrimply.exe") {
+                vec!["sanim".into(), "lsp".into()]
+            } else {
+                Vec::new()
+            };
         let (args, env) = binary.map_or_else(
             || (default_args.clone(), Vec::new()),
             |binary| {
                 (
-                    binary.arguments.clone().unwrap_or_else(|| default_args.clone()),
+                    binary
+                        .arguments
+                        .clone()
+                        .unwrap_or_else(|| default_args.clone()),
                     binary.env.unwrap_or_default().into_iter().collect(),
                 )
             },

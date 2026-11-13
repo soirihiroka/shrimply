@@ -246,7 +246,32 @@ impl Runtime<'_, '_> {
             if !self.signal_in(expr, env) && observed.is_empty() {
                 continue;
             }
-            let property=property_name(label).ok_or_else(||self.error("S140",format!("'{label}' is not a retained animation property; snapshot dynamic topology/metadata with let, and retain scalar properties such as radius, width, position or fill"),expr.span))?;
+            // Constructor shorthand supplies only axes without an explicit
+            // override. Both axis bindings share the same expression node.
+            let properties = if label == "overflow" {
+                [
+                    ("overflow_x", Property::OverflowX),
+                    ("overflow_y", Property::OverflowY),
+                ]
+                .into_iter()
+                .filter(|(axis, _)| {
+                    !args.iter().enumerate().any(|(index, (name, _))| {
+                        name.as_deref().or_else(|| {
+                            builtin
+                                .parameters
+                                .get(index)
+                                .map(|parameter| parameter.name)
+                        }) == Some(*axis)
+                    })
+                })
+                .map(|(_, property)| property)
+                .collect::<Vec<_>>()
+            } else {
+                vec![property_name(label).ok_or_else(||self.error("S140",format!("'{label}' is not a retained animation property; snapshot dynamic topology/metadata with let, and retain scalar properties such as radius, width, position or fill"),expr.span))?]
+            };
+            if properties.is_empty() {
+                continue;
+            }
             self.signal_observations.push((false, observed.clone()));
             let result = if self.expression_mutates(expr) || self.expression_schedules(expr) {
                 Err(self.error("S140","retained properties require pure expressions; snapshot scheduling or mutating helper results with let first",expr.span))
@@ -257,10 +282,12 @@ impl Runtime<'_, '_> {
                 .pop()
                 .expect("active retained argument observations");
             let node = result?;
-            self.animation
-                .reactive
-                .bind(element.id.clone(), property, node)
-                .map_err(|e| self.error("S140", e, span))?;
+            for property in properties {
+                self.animation
+                    .reactive
+                    .bind(element.id.clone(), property, node)
+                    .map_err(|error| self.error("S140", error, span))?;
+            }
         }
         Ok(())
     }
@@ -470,6 +497,9 @@ pub(super) fn property_name(name: &str) -> Option<Property> {
     Some(match name {
         "position" => Property::Position,
         "scroll" => Property::Scroll,
+        "overflow" => Property::Overflow,
+        "overflow_x" => Property::OverflowX,
+        "overflow_y" => Property::OverflowY,
         "rotation" => Property::Rotation,
         "scale" => Property::Scale,
         "opacity" => Property::Opacity,

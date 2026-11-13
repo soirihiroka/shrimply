@@ -56,12 +56,34 @@ struct Key {
     size: u64,
     weight: i32,
     style: pango::Style,
-    variations: Vec<(String, u32)>,
+    variations: Arc<[(String, u32)]>,
     vertical: bool,
     alignment: pango::Alignment,
     justify: bool,
     tracking: u64,
     line_spacing: u64,
+}
+
+impl Key {
+    fn retained_bytes(&self) -> usize {
+        let families = match &self.font {
+            FontKey::Family(names) => {
+                std::mem::size_of_val(names.as_ref())
+                    + names.iter().map(String::capacity).sum::<usize>()
+            }
+            FontKey::Asset(_) => 0,
+        };
+        // LRU index keys share these immutable payloads with the primary key.
+        2 * std::mem::size_of::<Self>()
+            + self.text.len()
+            + families
+            + std::mem::size_of_val(self.variations.as_ref())
+            + self
+                .variations
+                .iter()
+                .map(|(axis, _)| axis.capacity())
+                .sum::<usize>()
+    }
 }
 
 pub struct ShapedText {
@@ -141,7 +163,7 @@ fn key(font: &Font, text: &str, options: &Options) -> Result<Key, String> {
         size: options.size.to_bits(),
         weight: options.weight.clamp(1, 1000),
         style: options.style,
-        variations,
+        variations: variations.into(),
         vertical: options.vertical,
         alignment: options.alignment,
         justify: options.justify,
@@ -305,17 +327,13 @@ fn layout_with_key(
     });
     let font_bytes = match font {
         Font::Asset(bytes) => bytes.len(),
-        Font::Family(names) => names.iter().map(String::len).sum(),
-    };
-    let family_bytes = if matches!(font, Font::Family(_)) {
-        font_bytes
-    } else {
-        0
+        Font::Family(names) => {
+            std::mem::size_of_val(names.as_ref())
+                + names.iter().map(String::capacity).sum::<usize>()
+        }
     };
     let bytes = std::mem::size_of::<ShapedText>()
-        + std::mem::size_of::<Key>()
-        + key.text.len()
-        + family_bytes
+        + key.retained_bytes()
         + shaped.outline.len() * std::mem::size_of::<TextSegment>();
     if bytes > MAX_SHAPED_BYTES {
         return Err("shaped text exceeds the native outline byte budget".into());
@@ -341,4 +359,26 @@ fn layout_with_key(
         .saturating_add(key.text.len().saturating_mul(128));
     LAYOUTS.with(|cache| cache.borrow_mut().insert(key, native.clone(), retained));
     Ok(native)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn variation_key_clones_share_and_charge_their_immutable_payload() {
+        let font = Font::default();
+        let plain = key(&font, "same text", &Options::new(18.)).unwrap();
+        let mut options = Options::new(18.);
+        options.variations = vec![("wdth".into(), 90.), ("opsz".into(), 24.)];
+        let varied = key(&font, "same text", &options).unwrap();
+        let indexed = varied.clone();
+        assert!(Arc::ptr_eq(&varied.variations, &indexed.variations));
+        let payload = std::mem::size_of_val(varied.variations.as_ref())
+            + varied
+                .variations
+                .iter()
+                .map(|(axis, _)| axis.len())
+                .sum::<usize>();
+        assert!(varied.retained_bytes() >= plain.retained_bytes() + payload);
+    }
 }

@@ -2,7 +2,7 @@
 use hashbrown::HashMap;
 use shrimply_gpu_cuda::{CudaContext, sys};
 use shrimply_manim_wgpu::vulkan;
-use shrimply_visual_frame::VisualFrame;
+use shrimply_visual_frame::cuda::VisualFrame;
 use std::{
     ptr,
     sync::{

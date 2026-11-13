@@ -102,7 +102,7 @@ pub(super) fn prepare(
         let param_index = params.len();
         match layer {
             VideoLayer::Nv12 { frame, .. } => {
-                if frame.format() != shrimply_visual_frame::VisualFormat::Nv12 {
+                if frame.format() != shrimply_visual_frame::cuda::VisualFormat::Nv12 {
                     return Err(format!(
                         "visual frame format {:?} is not supported by the CUDA compositor",
                         frame.format()

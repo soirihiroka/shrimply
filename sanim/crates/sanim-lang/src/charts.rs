@@ -490,7 +490,28 @@ pub(crate) fn evaluate(
                     value: Fraction::new(1u64, 2u64),
                     unit: Unit::Percent,
                 };
-                element.horizontal.offset = math::from_f64(middle)?;
+                // Composition normalizes children into a Box-local viewport.
+                // Preserve the median as the pivot in that coordinate system,
+                // including explicit parent alignment and asymmetric scale bounds.
+                let width = element
+                    .layout
+                    .width
+                    .expect("measured chart composition")
+                    .value;
+                let center = math::arithmetic(
+                    "+",
+                    math::from_f64(element.layout.position_offset[0])?,
+                    math::arithmetic(
+                        "*",
+                        width,
+                        math::arithmetic(
+                            "-",
+                            Fraction::new(1u64, 2u64),
+                            element.layout.x_align.fraction(),
+                        )?,
+                    )?,
+                )?;
+                element.horizontal.offset = math::arithmetic("-", math::from_f64(middle)?, center)?;
             }
             return Ok(value);
         }

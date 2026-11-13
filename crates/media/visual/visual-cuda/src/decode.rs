@@ -1,10 +1,12 @@
+use shrimply_visual_frame::{GpuFrame, cuda::ImportedFrame};
+
 use shrimply_project_document::project::{Time, VideoItem};
 pub use shrimply_video_decoder::{
     DEFAULT_VIDEO_DECODER_POOL_SIZE, DecodeControl, VideoDecoderOwner, VideoDecoderPool,
     VideoPlane, is_decoder_startup_pressure, take_decoder_pressure,
 };
 use shrimply_video_decoder::{
-    DecodeOutcome, DecodeRequest, DecodedVisual, PendingDecode, VideoDecoderHandle,
+    DecodeMode, DecodeOutcome, DecodeRequest, DecodedVisual, PendingDecode, VideoDecoderHandle,
 };
 
 use crate::gpu::CudaVideoCompositor;
@@ -16,56 +18,26 @@ pub struct VideoElement {
     decoder: VideoDecoderHandle,
     handoff_from: Option<VideoDecoderOwner>,
     prepared: Option<PreparedVideoFrame>,
+    imported: Option<ImportedFrame>,
 }
 
 struct PreparedVideoFrame {
     timeline_position: Time,
     source_position: Time,
-    mode: MediaDecodeMode,
+    mode: DecodeMode,
     generation: Option<u64>,
     decode: PendingDecode,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum MediaDecodeMode {
-    BestEffort,
-    Accurate,
-    Continuous,
-    LocalScrub,
-}
-
-impl MediaDecodeMode {
-    const fn for_accuracy(accuracy: CompositeAccuracy) -> Self {
-        if accuracy.continuous_playback() {
-            Self::Continuous
-        } else if accuracy.local_scrub() {
-            Self::LocalScrub
-        } else if accuracy.time_accurate() {
-            Self::Accurate
-        } else {
-            Self::BestEffort
-        }
-    }
-
-    const fn time_accurate(self) -> bool {
-        !matches!(self, Self::BestEffort)
-    }
-
-    const fn realtime(self) -> bool {
-        matches!(self, Self::Continuous | Self::LocalScrub)
-    }
-
-    const fn continuous(self) -> bool {
-        matches!(self, Self::Continuous)
-    }
-
-    fn request(self, position: Time) -> DecodeRequest {
-        match self {
-            Self::BestEffort => DecodeRequest::best_effort(position),
-            Self::Accurate => DecodeRequest::accurate(position),
-            Self::Continuous => DecodeRequest::continuous(position),
-            Self::LocalScrub => DecodeRequest::local_scrub(position),
-        }
+fn decode_mode(accuracy: CompositeAccuracy) -> DecodeMode {
+    if accuracy.continuous_playback() {
+        DecodeMode::Continuous
+    } else if accuracy.local_scrub() {
+        DecodeMode::LocalScrub
+    } else if accuracy.time_accurate() {
+        DecodeMode::Accurate
+    } else {
+        DecodeMode::BestEffort
     }
 }
 
@@ -82,6 +54,7 @@ impl VideoElement {
             decoder,
             handoff_from,
             prepared: None,
+            imported: None,
         }
     }
 }
@@ -113,7 +86,7 @@ impl VisualElement for VideoElement {
         };
         let source_position =
             decodable_source_position(request.item, source_position, self.decoder.frame_duration());
-        let mode = MediaDecodeMode::for_accuracy(request.accuracy);
+        let mode = decode_mode(request.accuracy);
         let foreground = !request.prefetch;
         if foreground {
             self.decoder.touch_foreground();
@@ -131,8 +104,7 @@ impl VisualElement for VideoElement {
             return Ok(());
         }
         let handoff_from = foreground.then(|| self.handoff_from.clone()).flatten();
-        let decode_request = mode
-            .request(source_position)
+        let decode_request = DecodeRequest::new(source_position, mode)
             .handoff_from(handoff_from)
             .control(
                 request
@@ -183,7 +155,7 @@ impl VisualElement for VideoElement {
     fn draw(
         &mut self,
         request: VisualRenderRequest<'_>,
-        _compositor: &mut CudaVideoCompositor,
+        compositor: &mut CudaVideoCompositor,
         _track_id: uuid::Uuid,
         _cache: &mut crate::visual_source::VisualSourceCache,
     ) -> Result<VisualRender, String> {
@@ -195,7 +167,7 @@ impl VisualElement for VideoElement {
         };
         let source_position =
             decodable_source_position(request.item, source_position, self.decoder.frame_duration());
-        let mode = MediaDecodeMode::for_accuracy(request.accuracy);
+        let mode = decode_mode(request.accuracy);
         self.decoder.touch_foreground();
         let current = self.decoder.current();
         if let Some(frame) = usable_cached_frame(
@@ -206,13 +178,13 @@ impl VisualElement for VideoElement {
         ) {
             self.prepared = None;
             shrimply_profiling::increment("Temporal decoder state / Current hit");
-            return Ok(stabilized_frame(frame, request.item, request.state));
+            return self.stabilized_frame(frame, &request, compositor);
         }
         shrimply_profiling::increment("Temporal decoder state / Current miss");
         if mode.realtime() {
             self.prepared = None;
             let _ = self.decoder.try_latest(
-                mode.request(source_position)
+                DecodeRequest::new(source_position, mode)
                     .handoff_from(self.handoff_from.clone())
                     .control(
                         request
@@ -223,10 +195,10 @@ impl VisualElement for VideoElement {
                 true,
             )?;
             shrimply_profiling::increment("Temporal decoder state / Dropped target");
-            return current.map_or_else(
-                || Ok(VisualRender::Loading(self.decoder.frame_size())),
-                |frame| Ok(stabilized_frame(frame, request.item, request.state)),
-            );
+            return match current {
+                Some(frame) => self.stabilized_frame(frame, &request, compositor),
+                None => Ok(VisualRender::Loading(self.decoder.frame_size())),
+            };
         }
         let generation = request.decode_control.map(DecodeControl::generation);
         let prepared = self.prepared.take().filter(|prepared| {
@@ -241,7 +213,7 @@ impl VisualElement for VideoElement {
         } else {
             self.decoder
                 .request(
-                    mode.request(source_position)
+                    DecodeRequest::new(source_position, mode)
                         .handoff_from(self.handoff_from.clone())
                         .control(request.decode_control.cloned()),
                 )?
@@ -272,7 +244,7 @@ impl VisualElement for VideoElement {
             return Ok(VisualRender::Superseded);
         }
         match frame {
-            Some(frame) => Ok(stabilized_frame(frame, request.item, request.state)),
+            Some(frame) => self.stabilized_frame(frame, &request, compositor),
             None => Ok(VisualRender::Loading(self.decoder.frame_size())),
         }
     }
@@ -282,7 +254,7 @@ fn usable_cached_frame(
     cached: Option<&DecodedVisual>,
     position: Time,
     frame_duration: Time,
-    mode: MediaDecodeMode,
+    mode: DecodeMode,
 ) -> Option<DecodedVisual> {
     if mode.time_accurate() {
         cached.filter(|frame| frame.0 == position).cloned()
@@ -295,25 +267,42 @@ fn usable_cached_frame(
     }
 }
 
-fn stabilized_frame(
-    frame: DecodedVisual,
-    item: &VideoItem,
-    state: crate::layer::VisualState,
-) -> VisualRender {
-    let (source_position, frame) = frame;
-    let mut visual =
-        crate::layer::RasterVisual::materialized(crate::layer::GpuFrame::Nv12(frame), state);
-    if let Some(warp) = crate::video_stabilization::source_warp(item, source_position) {
-        match warp {
-            crate::video_stabilization::StabilizationWarp::Affine(source_transform) => {
-                visual.push_preserving_pixel(crate::modifiers::stabilization_warp(source_transform))
-            }
-            crate::video_stabilization::StabilizationWarp::Mesh {
-                grid_width,
-                grid_height,
-                source_offsets,
-            } => visual.push_mesh_flow(grid_width, grid_height, source_offsets),
+impl VideoElement {
+    fn stabilized_frame(
+        &mut self,
+        frame: DecodedVisual,
+        request: &VisualRenderRequest<'_>,
+        compositor: &mut CudaVideoCompositor,
+    ) -> Result<VisualRender, String> {
+        let item = request.item;
+        let state = request.state;
+        let (source_position, source) = frame;
+        if self
+            .imported
+            .as_ref()
+            .is_none_or(|imported| !std::sync::Arc::ptr_eq(imported.source(), &source))
+        {
+            self.imported = Some(ImportedFrame::import(&mut compositor.context, source)?);
         }
+        let frame = self
+            .imported
+            .as_ref()
+            .expect("imported CUDA video frame")
+            .frame
+            .clone();
+        let mut visual =
+            crate::layer::RasterVisual::materialized(crate::layer::GpuFrame::Nv12(frame), state);
+        if let Some(warp) = crate::video_stabilization::source_warp(item, source_position) {
+            match warp {
+                crate::video_stabilization::StabilizationWarp::Affine(source_transform) => visual
+                    .push_preserving_pixel(crate::modifiers::stabilization_warp(source_transform)),
+                crate::video_stabilization::StabilizationWarp::Mesh {
+                    grid_width,
+                    grid_height,
+                    source_offsets,
+                } => visual.push_mesh_flow(grid_width, grid_height, source_offsets),
+            }
+        }
+        Ok(VisualRender::Ready(crate::layer::Visual::Raster(visual)))
     }
-    VisualRender::Ready(crate::layer::Visual::Raster(visual))
 }

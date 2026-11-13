@@ -13,8 +13,8 @@ use shrimply_gpu_cuda::{CudaContext, CudaEvent, CudaStream, DeviceCopy, LaunchCo
 use shrimply_gpu_cuda_memory::GpuBuffer as DeviceBuffer;
 use shrimply_project_document::project::{CanvasSize, Color};
 use shrimply_render_core::{LayerCompositeParams, math};
-pub use shrimply_visual_frame::VisualFrame;
-use shrimply_visual_frame::{
+pub use shrimply_visual_frame::cuda::VisualFrame;
+use shrimply_visual_frame::cuda::{
     Device, GPU_FRAME_ALLOCATION_EXHAUSTED, gpu_allocation_stats, gpu_oom_generation,
 };
 
@@ -125,7 +125,7 @@ pub struct CudaVideoCompositor {
     module: kernels::PreviewModule,
     export_module: Option<kernels::ExportModule>,
     stream: Arc<CudaStream>,
-    context: Arc<CudaContext>,
+    pub(crate) context: Arc<CudaContext>,
     next_serial: u64,
     render_control: Option<DecodeControl>,
     observed_gpu_oom_generation: u64,
@@ -206,8 +206,8 @@ impl CudaVideoCompositor {
         reference: &VisualFrame,
     ) -> Result<shrimply_visual_core::raster_morph::OpticalFlowField, String> {
         self.release_after_reported_gpu_oom()?;
-        if input.format() != shrimply_visual_frame::VisualFormat::Rgba8
-            || reference.format() != shrimply_visual_frame::VisualFormat::Rgba8
+        if input.format() != shrimply_visual_frame::cuda::VisualFormat::Rgba8
+            || reference.format() != shrimply_visual_frame::cuda::VisualFormat::Rgba8
             || input.width() != reference.width()
             || input.height() != reference.height()
         {
@@ -1065,7 +1065,7 @@ impl CudaVideoCompositor {
         let allocate = || {
             VisualFrame::allocate(
                 context.clone(),
-                shrimply_visual_frame::VisualFormat::Rgba8,
+                shrimply_visual_frame::cuda::VisualFormat::Rgba8,
                 width,
                 height,
             )
@@ -1099,7 +1099,7 @@ impl CudaVideoCompositor {
         let allocate = || {
             VisualFrame::allocate_cached(
                 context.clone(),
-                shrimply_visual_frame::VisualFormat::Rgba8,
+                shrimply_visual_frame::cuda::VisualFormat::Rgba8,
                 width,
                 height,
                 description,

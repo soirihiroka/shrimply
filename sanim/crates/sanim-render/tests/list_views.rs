@@ -45,8 +45,11 @@ fn animation() -> Animation {
         radius: Default::default(),
         children: Default::default(),
     });
+    view.fill = Color::parse("transparent").unwrap().into();
     view.layout = Layout {
         direction: Some(Direction::Row),
+        x_align: sanim_core::Align::Start,
+        y_align: sanim_core::Align::Start,
         width: Some(sanim_core::Number {
             value: 80.into(),
             unit: sanim_core::Unit::Length,

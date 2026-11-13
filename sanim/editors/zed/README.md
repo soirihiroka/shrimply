@@ -1,11 +1,14 @@
 # Sanim for Zed
 
-The adapter launches the standalone `sanim-lsp` over stdio. Diagnostics,
+The adapter prefers `shrimply sanim lsp` over stdio and falls back to a standalone
+`sanim-lsp`. Diagnostics,
 completions, hover information, navigation, semantic highlighting, and duration
 hints use Sanim's handwritten parser and compiler. No Tree-sitter grammar or
 animation runtime is built into this extension.
 
-Put `sanim-lsp` on the project environment's `PATH`, or configure a binary path:
+Install Shrimply and enable its CLI in Preferences. The adapter checks PATH,
+`~/.local/bin/shrimply` and standard macOS application locations before looking
+for `sanim-lsp` on PATH. For a custom installation, configure the executable:
 
 ```jsonc
 {
@@ -18,14 +21,23 @@ Put `sanim-lsp` on the project environment's `PATH`, or configure a binary path:
   },
   "lsp": {
     "sanim-lsp": {
-      "binary": { "path": "/absolute/path/to/sanim-lsp" }
+      "binary": { "path": "/absolute/path/to/shrimply" }
     }
   }
 }
 ```
 
-The adapter respects optional `binary.arguments` and `binary.env` as well. It
-does not download or start any other server.
+Shrimply gets `["sanim", "lsp"]` arguments automatically; standalone `sanim-lsp`
+gets no arguments. The adapter respects optional `binary.arguments` and
+`binary.env`. It does not download a server or open Shrimply's GUI.
+
+The Shrimply server adds resolved reflected input values to hovers using active
+project sessions. It discovers projects in source-file ancestor directories, or
+you can set `binary.arguments` to
+`["sanim", "lsp", "--project", "/path/to/project.shrimp"]`. Values identify each
+matching clip and are withheld for unsaved source. Static language features
+remain available without an active project. The standalone server has no project
+runtime connection.
 
 Build and install from this directory:
 
@@ -39,7 +51,7 @@ make install
 `make install` stages the complete prebuilt adapter, then installs it in Zed's
 standard user extension directory. Zed watches this directory and rebuilds its
 own index. Existing settings and other extensions are preserved. Run it again
-after changing the adapter; update `sanim-lsp` separately after compiler changes.
+after changing the adapter; update Shrimply to update its compiler and server.
 
 This package is a separate workspace with only the official Zed extension SDK.
 `make check` checks Rust and metadata; `make build` checks the emitted WebAssembly

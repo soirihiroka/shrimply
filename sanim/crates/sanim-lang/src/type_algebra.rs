@@ -141,9 +141,38 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
             "width" | "height" => Ok(sanim_core::Layout::dimension_type()),
             "fill" => Ok(sanim_core::Paint::ty()),
             "id" => Ok(Type::String),
+            "overflow" | "overflow_x" | "overflow_y" => Ok(sanim_core::Overflow::ty()),
             _ => Err(format!("unknown element property '{name}'")),
         },
         Type::Array(_) if name == "shape" => Ok(Type::List(Box::new(Type::Numeric(Unit::Number)))),
         other => Err(format!("{other} has no field '{name}'")),
+    }
+}
+
+/// A branch can refine an immutable snapshot through a string equality proof.
+/// Unknown String exclusions remain String; finite unions can exclude a choice.
+pub(crate) fn narrow_string(ty: &Type, path: &[&str], literal: &str, equal: bool) -> Option<Type> {
+    if let Type::Union(types) = ty {
+        return Type::union(
+            types
+                .iter()
+                .filter_map(|ty| narrow_string(ty, path, literal, equal)),
+        )
+        .ok();
+    }
+    if let Some((name, path)) = path.split_first() {
+        let Type::Record(fields) = ty else {
+            return None;
+        };
+        let narrowed = narrow_string(fields.get(*name)?, path, literal, equal)?;
+        let mut fields = fields.clone();
+        fields.insert((*name).into(), narrowed);
+        return Some(Type::Record(fields));
+    }
+    match ty {
+        Type::StringLiteral(value) if (value.as_ref() == literal) == equal => Some(ty.clone()),
+        Type::String if equal => Some(Type::StringLiteral(literal.into())),
+        Type::String => Some(Type::String),
+        _ => None,
     }
 }

@@ -61,15 +61,18 @@ pub fn decode(path: &str, bytes: &[u8], ty: &Type, limits: Limits) -> Result<Val
             .and_then(code::parse)
             .map(|document| Value::Code(std::sync::Arc::new(document)));
     }
-    // An explicit String request reads the UTF-8 source verbatim, independently
+    // A string schema reads the UTF-8 source verbatim, independently
     // of extension. Structured JSON strings remain available via read<Data>/decode.
-    if *ty == Type::String {
+    if Type::String.accepts(ty) {
         if limits.max_values == 0 {
             return Err("text asset exceeds value limit".into());
         }
-        return std::str::from_utf8(bytes)
+        let value = std::str::from_utf8(bytes)
             .map(|text| Value::String(text.into()))
-            .map_err(|error| format!("text resource '{path}' is not valid UTF-8: {error}"));
+            .map_err(|error| format!("text resource '{path}' is not valid UTF-8: {error}"))?;
+        sanim_core::validate_value(ty, &value)
+            .map_err(|error| format!("text resource '{path}': {error}"))?;
+        return Ok(value);
     }
     let extension = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match extension.as_str() {
@@ -172,6 +175,14 @@ fn convert(
             }
         }
         Type::Bool => value.as_bool().map(Value::Bool).ok_or_else(bad),
+        Type::StringLiteral(_) => {
+            let decoded = value
+                .as_str()
+                .map(|value| Value::String(value.into()))
+                .ok_or_else(bad)?;
+            sanim_core::validate_value(ty, &decoded).map_err(|error| format!("{path}: {error}"))?;
+            Ok(decoded)
+        }
         Type::String => value
             .as_str()
             .map(|v| Value::String(v.into()))

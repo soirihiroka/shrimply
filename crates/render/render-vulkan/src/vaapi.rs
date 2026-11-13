@@ -1,6 +1,7 @@
 use crate::{Buffer, Renderer, Submission, device::Device};
 use ash::{vk, vk::Handle};
 use ffmpeg_next::{self as ffmpeg, sys};
+use shrimply_visual_frame::{GpuFrame, VideoFrame};
 use std::{ptr, rc::Rc, sync::Arc};
 
 const HD_MINIMUM_HEIGHT: u32 = 720;
@@ -19,9 +20,28 @@ pub fn video_color_space(frame: &ffmpeg::frame::Video) -> Result<ffmpeg::color::
     }
 }
 
-/// Keeps the decoder surface alive until the final GPU read completes.
-pub struct VideoFrame {
-    pub frame: ffmpeg::frame::Video,
+pub struct ImportedFrame {
+    // Wait for GPU readers before releasing the native decoder surface.
+    pub submission: Submission,
+    pub output: Buffer,
+    source: Arc<VideoFrame>,
+}
+
+impl GpuFrame for ImportedFrame {
+    type Context = Renderer;
+
+    fn import(renderer: &mut Renderer, source: Arc<VideoFrame>) -> Result<Self, String> {
+        let (output, submission) = renderer.import_video(&source)?;
+        Ok(Self {
+            source,
+            output,
+            submission,
+        })
+    }
+
+    fn source(&self) -> &Arc<VideoFrame> {
+        &self.source
+    }
 }
 
 struct FrameLock {
@@ -40,59 +60,10 @@ impl Drop for FrameLock {
     }
 }
 
-pub fn decoder(
-    parameters: &ffmpeg::codec::Parameters,
-    time_base: ffmpeg::Rational,
-) -> Result<ffmpeg::decoder::Video, String> {
+pub fn decoder_backend() -> Result<shrimply_video_decoder::DecoderBackend, String> {
     let device = Device::get()?;
-    let codec = ffmpeg::codec::decoder::find(parameters.id()).ok_or("Video decoder not found")?;
-    let mut supported = false;
-    for index in 0.. {
-        let config = unsafe { sys::avcodec_get_hw_config(codec.as_ptr(), index) };
-        if config.is_null() {
-            break;
-        }
-        if unsafe { (*config).device_type == sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI } {
-            supported = true;
-            break;
-        }
-    }
-    if !supported {
-        return Err(format!(
-            "Codec {:?} does not expose VA-API decoding",
-            parameters.id()
-        ));
-    }
-    let mut context = ffmpeg::codec::context::Context::from_parameters(parameters.clone())
-        .map_err(|e| e.to_string())?
-        .decoder();
-    context.set_packet_time_base(time_base);
-    let reference = unsafe { sys::av_buffer_ref(device.va) };
-    if reference.is_null() {
-        return Err("Could not retain Intel VA-API context".into());
-    }
-    unsafe {
-        (*context.as_mut_ptr()).hw_device_ctx = reference;
-        (*context.as_mut_ptr()).get_format = Some(format);
-    }
-    context
-        .open_as(codec)
-        .and_then(|context| context.video())
-        .map_err(|e| format!("Open Intel video decoder: {e}"))
-}
-
-unsafe extern "C" fn format(
-    _: *mut sys::AVCodecContext,
-    formats: *const sys::AVPixelFormat,
-) -> sys::AVPixelFormat {
-    let mut format = formats;
-    while !format.is_null() && unsafe { *format } != sys::AVPixelFormat::AV_PIX_FMT_NONE {
-        if unsafe { *format } == sys::AVPixelFormat::AV_PIX_FMT_VAAPI {
-            return unsafe { *format };
-        }
-        format = unsafe { format.add(1) };
-    }
-    sys::AVPixelFormat::AV_PIX_FMT_NONE
+    let retained = unsafe { shrimply_video_decoder::HardwareDevice::retain(device.va) }?;
+    Ok(shrimply_video_decoder::DecoderBackend::Hardware(retained))
 }
 
 #[derive(Clone, Copy)]
@@ -462,9 +433,9 @@ impl Renderer {
     }
 
     /// Import the VA-API surface through DRM PRIME; pixels stay on the GPU.
-    pub fn video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
+    fn import_video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
         use ffmpeg::color::Range;
-        let colorspace = video_color_space(&source.frame)?;
+        let colorspace = video_color_space(source.native())?;
         let coefficients = unsafe {
             std::slice::from_raw_parts(
                 sys::sws_getCoefficients(sys::AVColorSpace::from(colorspace) as i32),
@@ -477,7 +448,7 @@ impl Renderer {
             .collect::<Vec<_>>();
         let mut chroma_x = 0;
         let mut chroma_y = 0;
-        let location = unsafe { (*source.frame.as_ptr()).chroma_location };
+        let location = unsafe { (*source.native().as_ptr()).chroma_location };
         let location = if location == sys::AVChromaLocation::AVCHROMA_LOC_UNSPECIFIED {
             sys::AVChromaLocation::AVCHROMA_LOC_LEFT
         } else {
@@ -494,7 +465,7 @@ impl Renderer {
         const CHROMA_POSITION_SCALE: f32 = 256.0;
         let chroma_offset = [chroma_x, chroma_y]
             .map(|position| (position as f32 / CHROMA_POSITION_SCALE).to_ne_bytes());
-        let layout = frame_layout(&source.frame)?;
+        let layout = frame_layout(source.native())?;
         let Layout {
             width,
             height,
@@ -507,7 +478,7 @@ impl Renderer {
             ..
         } = layout;
         let planes = self.allocate(layout.length)?;
-        let submission = self.transfer_video(&source.frame, planes.clone(), layout, false)?;
+        let submission = self.transfer_video(source.native(), planes.clone(), layout, false)?;
         let (planes, pitch, uv_pitch, y_size, prior) = if bytes_per_component == 2 {
             let output = self.allocate((y_bytes + uv_size) / bytes_per_component)?;
             let mut arguments = self.arguments("p010_to_nv12")?;
@@ -556,7 +527,7 @@ impl Renderer {
             .set("chroma_offset", chroma_offset.as_flattened())?
             .set(
                 "full_range",
-                &[u8::from(source.frame.color_range() == Range::JPEG)],
+                &[u8::from(source.native().color_range() == Range::JPEG)],
             )?;
         let mut converted =
             unsafe { self.dispatch(arguments, vec![planes, output.clone()], [count, 1, 1]) }?;

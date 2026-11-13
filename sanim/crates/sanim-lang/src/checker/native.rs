@@ -112,7 +112,7 @@ impl Checker<'_> {
                 }
                 if let Some(arg) = arg {
                     let actual = self.expression(arg, env, Some(&param.ty), variables)?;
-                    if param.name == "sql" && actual == Type::String {
+                    if param.name == "sql" && Type::String.accepts(&actual) {
                         return Err(self.error("S125","query accepts structured Template or Sql, not an already rendered String. Pass the literal directly, use let statement:Template=\"...\", or construct Sql(\"...\"); string concatenation is not a safe SQL template",arg.span));
                     }
                     self.expect(&param.ty, &actual, arg.span)?;

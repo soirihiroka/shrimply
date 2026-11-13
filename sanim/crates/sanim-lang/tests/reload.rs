@@ -245,3 +245,69 @@ fn parent_changes_report_descendant_dependencies() {
     };
     assert_eq!(changed_elements, vec!["child", "parent"]);
 }
+
+#[test]
+fn reactive_cell_track_edits_report_bound_elements_but_not_unbound_cells() {
+    for bound in [true, false] {
+        let program = |turns| {
+            format!(
+                "mut phase=0deg\nsig size=32pt+8pt*sin(phase)\nlet shape=Rect(width={},height=32pt)\nadd(shape)\nanimate(phase,to={turns}deg,duration=1s)",
+                if bound { "size" } else { "32pt" }
+            )
+        };
+        let mut files = MemorySources::default();
+        files.insert("main.sanim", program(360));
+        let mut session = Session::new("main.sanim");
+        assert!(matches!(session.poll(&files), Reload::Updated { .. }));
+        let old = session.current().unwrap().clone();
+        files.insert("main.sanim", program(720));
+        let Reload::Updated {
+            prepared,
+            changed_elements,
+            ..
+        } = session.poll(&files)
+        else {
+            panic!("reactive edit must prepare successfully")
+        };
+        assert_eq!(
+            old.animation.layers, prepared.animation.layers,
+            "initial elements must remain unchanged"
+        );
+        assert_eq!(
+            old.animation.tracks, prepared.animation.tracks,
+            "only retained cell tracks change"
+        );
+        assert_eq!(changed_elements, if bound { vec!["shape"] } else { vec![] });
+    }
+}
+
+#[test]
+fn reactive_edits_report_future_mounted_list_items_and_exclude_unmounted_catalogs() {
+    let program = |turns| {
+        format!(
+            "mut phase=0deg\nsig size=32pt+8pt*sin(phase)\nlet future=Rect(width=size,height=32pt)\nlet hidden_item=Rect(width=size,height=32pt)\nmut items:List<Element>=[]\nmut hidden_items:List<Element>=[]\nlet view=Box(children=items,width=100pt,height=100pt)\nlet hidden_view=Box(children=hidden_items,width=100pt,height=100pt)\nadd(view)\nwait(1s)\nitems=append(items,future)\nhidden_items=append(hidden_items,hidden_item)\nanimate(phase,to={turns}deg,duration=1s)"
+        )
+    };
+    let mut files = MemorySources::default();
+    files.insert("main.sanim", program(360));
+    let mut session = Session::new("main.sanim");
+    assert!(matches!(session.poll(&files), Reload::Updated { .. }));
+    let old = session.current().unwrap().clone();
+    assert!(old.animation.find("future").is_some());
+    assert!(
+        old.animation.layers[0].element.find("future").is_none(),
+        "item must be absent from the static initial tree"
+    );
+    files.insert("main.sanim", program(720));
+    let Reload::Updated {
+        changed_elements, ..
+    } = session.poll(&files)
+    else {
+        panic!("reactive list edit must prepare successfully")
+    };
+    assert_eq!(
+        changed_elements,
+        vec!["future", "view"],
+        "only reachable item and its layout parent are affected"
+    );
+}

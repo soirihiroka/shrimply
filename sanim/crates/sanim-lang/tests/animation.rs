@@ -150,7 +150,7 @@ fn parent_relative_positions_resize() {
 #[test]
 fn row_layout_wraps_when_parent_shrinks() {
     let p = prepare(
-        "let a = Rect(id= \"a\", width= 60pt, height= 20pt)\nlet b = Rect(id= \"b\", width= 60pt, height= 20pt)\nadd(Box(flex_direction=\"row\",children= [a, b], gap= 10pt))\n",
+        "let a = Rect(id= \"a\", width= 60pt, height= 20pt, flex_shrink=0)\nlet b = Rect(id= \"b\", width= 60pt, height= 20pt, flex_shrink=0)\nadd(Box(flex_direction=\"row\",children= [a, b], gap= 10pt, wrap=true))\n",
     );
     let rows = p
         .animation
@@ -162,9 +162,9 @@ fn row_layout_wraps_when_parent_shrinks() {
     assert_eq!(children[1].position.values[1], 40.0);
 }
 #[test]
-fn nested_group_positions_remain_local() {
+fn nested_box_flow_positions_remain_local() {
     let p = prepare(
-        "let marker = Circle(id= \"marker\", position= Vec2(0%, 0%))\nadd(Box(children= [marker], width= 200pt, height= 100pt, position= Vec2(20pt, 30pt)))\n",
+        "let marker = Circle(id= \"marker\", position= Vec2(0%, 0%))\nadd(Box(children= [marker], width= 200pt, height= 100pt, align=Align.Center, position= Vec2(20pt, 30pt)))\n",
     );
     let group = p
         .animation
@@ -293,9 +293,9 @@ fn column_layout_supports_spacing_and_cross_axis_alignment() {
     assert_eq!(children[1].position.values, [50., 130.]);
 }
 #[test]
-fn non_flow_groups_apply_padding_to_the_child_viewport() {
+fn box_flow_respects_padding_and_end_alignment() {
     let p = prepare(
-        "let marker=Circle(radius=5pt,position=Vec2(0%,0%),x_align=Align.End,y_align=Align.End)\nadd(Box(children=[marker],width=100pt,height=100pt,padding=10pt))",
+        "let marker=Circle(radius=5pt)\nadd(Box(flex_direction=\"column\",children=[marker],width=100pt,height=100pt,padding=10pt,align=Align.End,justify=Justify.End))",
     );
     let layout = p
         .animation

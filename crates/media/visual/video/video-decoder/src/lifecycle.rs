@@ -1,7 +1,8 @@
 use std::sync::{Arc, Condvar, Mutex};
 
 use crate::DECODER_FREE_MEMORY_RESERVE_DIVISOR;
-use crate::session::{DecodeControl, DecodeControls, cuda_memory_info};
+use crate::cuda::cuda_memory_info;
+use crate::session::{DecodeControl, DecodeControls};
 use crate::track::VideoSource;
 
 pub(crate) const DECODER_STARTUP_MEMORY_EXHAUSTED: &str =
@@ -174,7 +175,7 @@ impl DecoderStartupMeasurement {
         let pressure_failure = error.is_some_and(|error| {
             error.contains("out of memory")
                 || error.contains("OUT_OF_MEMORY")
-                || (error.starts_with("NVDEC") && error.contains("external library"))
+                || error.contains("external library")
         }) || memory_after.is_some_and(|(free, total)| {
             error.is_some() && free < total / DECODER_FREE_MEMORY_RESERVE_DIVISOR as u64
         });

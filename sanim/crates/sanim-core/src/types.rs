@@ -9,7 +9,7 @@ pub enum Type {
     Unit,
     Bool,
     String,
-    StringLiteral(String),
+    StringLiteral(Arc<str>),
     Code(crate::code::Language),
     Template,
     Signal(Box<Type>),
@@ -143,7 +143,7 @@ impl Type {
             .sort_by_cached_key(|ty| serde_json::to_vec(ty).expect("serializable semantic type"));
         alternatives.dedup();
         if alternatives.contains(&Self::String) {
-            alternatives.retain(|ty| !matches!(ty,Self::StringLiteral(_)));
+            alternatives.retain(|ty| !matches!(ty, Self::StringLiteral(_)));
         }
         match alternatives.len() {
             0 => Err("a union type requires at least one alternative".into()),
@@ -157,12 +157,32 @@ impl Type {
     /// An unrestricted String or a mixed non-string union has no finite choices.
     pub fn string_literals(&self) -> Option<Vec<&str>> {
         match self {
-            Self::StringLiteral(value) => Some(vec![value.as_str()]),
-            Self::Union(types) => types.iter().try_fold(Vec::new(), |mut values,ty| {
+            Self::StringLiteral(value) => Some(vec![value.as_ref()]),
+            Self::Union(types) => types.iter().try_fold(Vec::new(), |mut values, ty| {
                 values.extend(ty.string_literals()?);
                 Some(values)
             }),
             _ => None,
+        }
+    }
+    /// Editable values infer primitive string schemas; explicit annotations can
+    /// retain a finite choice. Runtime strings themselves remain ordinary strings.
+    pub fn widen_literals(self) -> Self {
+        match self {
+            Self::StringLiteral(_) => Self::String,
+            Self::Union(types) => Self::union(types.into_iter().map(Self::widen_literals))
+                .expect("nonempty checked union"),
+            Self::List(inner) => Self::List(Box::new(inner.widen_literals())),
+            Self::Option(inner) => Self::Option(Box::new(inner.widen_literals())),
+            Self::Array(inner) => Self::Array(Box::new(inner.widen_literals())),
+            Self::Signal(inner) => Self::Signal(Box::new(inner.widen_literals())),
+            Self::Record(fields) => Self::Record(
+                fields
+                    .into_iter()
+                    .map(|(name, ty)| (name, ty.widen_literals()))
+                    .collect(),
+            ),
+            ty => ty,
         }
     }
     pub fn unresolved(&self) -> bool {
@@ -362,7 +382,7 @@ impl std::fmt::Display for Type {
             Self::Unit => write!(f, "Unit"),
             Self::Bool => write!(f, "Bool"),
             Self::String => write!(f, "String"),
-            Self::StringLiteral(value) => write!(f, "{}",serde_json::to_string(&value.replace('{',"{{").replace('}',"}}" )).expect("string literal serializes")),
+            Self::StringLiteral(value) => f.write_str(&crate::template::quote_string(value)),
             Self::Code(language) => write!(f, "Code<{}>", language.name()),
             Self::Template => write!(f, "Template"),
             Self::Signal(t) => write!(f, "sig {t}"),
@@ -619,15 +639,22 @@ impl Value {
             _ => {}
         }
         let actual = self.ty();
-        if !expected.accepts(&actual) {
-            return Err(format!("expected {expected}, found {actual}"));
-        }
         if let Type::Union(alternatives) = expected {
-            let alternative = alternatives
-                .iter()
-                .find(|ty| ty.accepts(&actual))
-                .expect("accepted union alternative");
-            return self.with_type(alternative);
+            for alternative in alternatives {
+                if alternative.accepts(&actual) && crate::validate_value(alternative, self).is_err()
+                {
+                    continue;
+                }
+                if let Ok(value) = self.with_type(alternative) {
+                    return Ok(value);
+                }
+            }
+            // Only the diagnostic path needs all alternative failure reasons.
+            return Err(crate::validate_value(expected, self)
+                .expect_err("each union alternative failed validation"));
+        }
+        if !expected.accepts(&actual) {
+            crate::validate_value(expected, self)?;
         }
         if expected == &actual || expected.unresolved() {
             return Ok(self.clone());
@@ -799,4 +826,36 @@ pub fn enum_namespace(ty: &Type) -> Value {
             })
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn union_normalization_rejects_invalid_values_even_when_primitive_types_match() {
+        let invalid = [
+            (Type::Color, Value::Color(Color([Fraction::from(2); 4]))),
+            (
+                Type::Numeric(Unit::Number),
+                Value::Number(Number {
+                    value: Fraction::nan(),
+                    unit: Unit::Number,
+                }),
+            ),
+            (
+                Type::List(Box::new(Type::Color)),
+                Value::List(List::typed(
+                    Type::Color,
+                    vec![Value::Color(Color([Fraction::from(2); 4]))],
+                )),
+            ),
+        ];
+        for (ty, value) in invalid {
+            let union = Type::union([ty, Type::String]).unwrap();
+            assert!(
+                value.with_type(&union).is_err(),
+                "invalid runtime contents must not pass a union by their broad type alone"
+            );
+        }
+    }
 }

@@ -265,6 +265,21 @@ and constraints such as `<T: Numeric>` or `<T: Readable = Data>`.
 `Unknown` is internal inference state and cannot be declared as a source type. Enums support payloads and
 exhaustive `match` with `case Variant(binding) { ... }` arms.
 
+String literal types describe closed choices:
+
+```sanim
+type Variant = "before" | "after"
+fn select_variant(variant:Variant):Variant { return variant }
+let selected = select_variant("before")
+```
+
+These schemas work in parameters, record fields, signals, reflection and typed
+reads. Immutable discriminants narrow inside equality branches. Mutable and
+reflected string defaults infer `String`; annotate a closed union to restrict
+their values. An unresolved `before` in this argument suggests `"before"`.
+Editor completion inserts correctly escaped choices. `read<Variant>("mode.txt")`
+validates verbatim UTF-8, including any newline; it does not trim the input.
+
 Values include `Number`, `Bool`, `String`, `Color`, `Length`, `Duration`, `Angle`,
 `Rate`, `Percent`, `Fraction`, `Vec2`, `Vec3`, `Vec4`, `Matrix4`, `Element`, `Font`, `List<T>`, `Option<T>`,
 `Array<T>`, `Dict`, `Data`, records, and enums. Vector component units can be made
@@ -880,6 +895,18 @@ replaces an existing `.sanim` file and preserves its permissions; the default
 prints to standard output. Use `-` as the source path to format standard input.
 `--indent-width`, `--line-width`, and `--tabs` control layout. The standalone
 LSP offers the same formatter through the editor's Format Document action.
+
+`shrimply sanim lsp` serves these language features over stdio without opening
+the GUI. The Zed and VS Code extensions prefer this installed command and fall
+back to standalone `sanim-lsp`. The Shrimply server can also read reflected input
+values from active project sessions through the same IPC bridge as the CLI.
+Hover a reflected input in saved source to see each matching clip's resolved
+value. Active projects in source-file ancestor directories are discovered
+automatically; `shrimply sanim lsp --project /path/to/project.shrimp` selects one
+explicitly. The optional `sanim/runtime` LSP request takes `textDocument.uri` for
+an open document and returns matching project/clip contexts and their reflection
+metadata. This reads saved runtime state, never evaluates unsaved buffers, and
+does not open an editor or start a headless project owner.
 
 Comments begin with `#` outside strings and continue to the end of the line.
 Hexadecimal colors use `Color("#3584e4")`; `#abcdef` is a comment.

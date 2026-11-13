@@ -3,7 +3,10 @@ name = "shrimply-visual-frame"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+cuda = ["dep:shrimply-gpu-cuda", "dep:shrimply-gpu-cuda-memory"]
+
 [dependencies]
-shrimply-gpu-cuda.workspace = true
-shrimply-gpu-cuda-memory = { workspace = true }
+shrimply-gpu-cuda = { workspace = true, optional = true }
+shrimply-gpu-cuda-memory = { workspace = true, optional = true }
 ffmpeg-next.workspace = true

@@ -40,8 +40,8 @@ impl TimelineDiff {
                     .layers
                     .iter()
                     .map(|layer| (&layer.element, layer.birth)),
-                |element, birth| {
-                    result.insert(element.id.clone(), birth);
+                |reachable| {
+                    result.insert(reachable.element.id.clone(), reachable.birth);
                 },
             );
             result

@@ -174,7 +174,37 @@ fn generic_state_never_weakens_property_expression_types_or_validation() {
             number(1),
         )
         .unwrap();
-    assert!(graph.insert_node(Node::Cell(1), 100).is_err());
+    let union = graph.insert_node(Node::Cell(1), 100).unwrap();
+    assert!(
+        graph
+            .bind("shape".into(), sanim_core::Property::Scale, union)
+            .is_err(),
+        "a mixed union must not become a numeric property merely because its current value is numeric"
+    );
+    let one = graph.insert_node(Node::Constant(number(1)), 100).unwrap();
+    assert!(
+        graph
+            .insert_node(
+                Node::Binary {
+                    op: "+".into(),
+                    left: union,
+                    right: one
+                },
+                100
+            )
+            .is_err()
+    );
+    graph
+        .set_typed_cell(
+            3,
+            Type::Data,
+            Value::Data(Arc::new(serde_json::json!({"value":1}))),
+        )
+        .unwrap();
+    assert!(
+        graph.insert_node(Node::Cell(3), 100).is_err(),
+        "generic state can retain Data without admitting unstructured native property expressions"
+    );
     assert!(
         graph
             .write_cell(1, Fraction::from(1), Value::Bool(true))

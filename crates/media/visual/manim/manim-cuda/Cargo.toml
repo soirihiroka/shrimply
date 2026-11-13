@@ -9,7 +9,7 @@ hashbrown.workspace = true
 shrimply-gpu-cuda.workspace = true
 shrimply-profiling = { workspace = true }
 shrimply-gpu-cuda-memory = { workspace = true }
-shrimply-visual-frame = { workspace = true }
+shrimply-visual-frame = { workspace = true, features = ["cuda"] }
 shrimply-manim-wgpu = { workspace = true, features = ["vulkan"] }
 tracing.workspace = true
 wgpu = { workspace = true, features = ["vulkan"] }

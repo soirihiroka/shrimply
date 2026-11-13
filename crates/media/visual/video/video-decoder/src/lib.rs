@@ -1,17 +1,34 @@
+#[cfg(feature = "cuda")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod backend;
+#[cfg(feature = "cuda")]
+mod cuda;
+#[cfg(feature = "cuda")]
 mod lifecycle;
+mod math;
+#[cfg(feature = "cuda")]
 mod pool;
 mod session;
+#[cfg(feature = "cuda")]
 mod track;
 
+pub use backend::{DecoderBackend, HardwareDevice};
+#[cfg(feature = "cuda")]
 pub use lifecycle::is_decoder_startup_pressure;
+#[cfg(feature = "cuda")]
 pub use pool::{DecodeRequest, PendingDecode, VideoDecoderHandle, VideoDecoderPool};
-pub use session::{DecodeControl, DecodeOutcome, DecodedVisual};
+pub use session::{
+    DecodeControl, DecodeControls, DecodeMode, DecodeOutcome, DecodedVisual, NextFrame,
+    VideoDecoderSession,
+};
+#[cfg(feature = "cuda")]
 pub use track::{VideoDecoderOwner, VideoPlane};
 
+#[cfg(feature = "cuda")]
 pub const DEFAULT_VIDEO_DECODER_POOL_SIZE: usize = 16;
 
+#[cfg(feature = "cuda")]
 pub fn take_decoder_pressure() -> Option<u64> {
     match DECODER_PRESSURE_BYTES.swap(0, Ordering::AcqRel) {
         0 => None,
@@ -20,23 +37,32 @@ pub fn take_decoder_pressure() -> Option<u64> {
     }
 }
 
+#[cfg(feature = "cuda")]
 fn report_decoder_pressure(startup_bytes: u64) {
     DECODER_PRESSURE_BYTES.fetch_max(startup_bytes.saturating_add(1), Ordering::Release);
 }
 
 const LOCAL_FORWARD_DECODE_SECONDS: i64 = 1;
+#[cfg(feature = "cuda")]
 const MAX_LATEST_REQUEST_DISTANCE_FRAMES: i64 = 4;
+#[cfg(feature = "cuda")]
 const MAX_HANDOFF_FORWARD_FRAMES: i64 = 120;
 const MAX_NONADVANCING_FRAMES: usize = 32;
+#[cfg(feature = "cuda")]
 const DECODER_FREE_MEMORY_RESERVE_DIVISOR: usize = 16;
 
+#[cfg(feature = "cuda")]
 static NEXT_DECODER_WORKER_ID: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "cuda")]
 static NEXT_TEMPORAL_CONSUMER_ID: AtomicU64 = AtomicU64::new(1);
+#[cfg(feature = "cuda")]
 static TEMPORAL_CURRENT_BYTES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "cuda")]
 static TEMPORAL_CURRENT_FRAMES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "cuda")]
 static DECODER_PRESSURE_BYTES: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(test)]
+#[cfg(all(test, feature = "cuda"))]
 mod tests {
     use std::process::Command;
 
@@ -99,7 +125,7 @@ mod tests {
                 shrimply_project_document::project::video_source_time_at(&item, project_position)
                     .expect("map project frame to source time");
             let DecodeOutcome::Frame(Some((decoded, _))) = decoder
-                .request(DecodeRequest::accurate(requested))
+                .request(DecodeRequest::new(requested, DecodeMode::Accurate))
                 .expect("request exact decoded frame")
                 .receive()
                 .expect("receive exact decoded frame")

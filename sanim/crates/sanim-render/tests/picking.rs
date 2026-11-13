@@ -16,14 +16,14 @@ fn point(x: f32, y: f32) -> [f32; 2] {
 #[test]
 fn topmost_visible_native_path_wins_and_keeps_ancestry() {
     let mut renderer = Renderer::default();
-    let scene = renderer.prepare(animation("let base=Rect(width=60pt,height=60pt)\nlet circle=Circle(radius=20pt)\nlet hidden=Rect(width=60pt,height=60pt,opacity=0)\nlet transparent=Circle(radius=30pt,fill=Color(\"transparent\"))\nlet gradient=Rect(width=60pt,height=60pt,fill=LinearGradient(from=Color(\"transparent\"),to=Color(\"transparent\")))\nlet group=Box(children=[circle,hidden,transparent,gradient])\nadd(base)\nadd(group)\nwait(1s)")).unwrap();
+    let scene = renderer.prepare(animation("let base=Rect(width=60pt,height=60pt)\nlet circle=Circle(radius=20pt)\nlet hidden=Rect(width=60pt,height=60pt,opacity=0)\nlet transparent=Circle(radius=30pt,fill=Color(\"transparent\"))\nlet gradient=Rect(width=60pt,height=60pt,fill=LinearGradient(from=Color(\"transparent\"),to=Color(\"transparent\")))\nlet panel=Box(children=[circle],width=40pt,height=40pt,x_align=Align.Center,y_align=Align.Center)\nadd(base)\nadd(panel)\nadd(hidden)\nadd(transparent)\nadd(gradient)\nwait(1s)")).unwrap();
     let options = Options::for_animation(scene.animation());
     let center = renderer
         .pick(&scene, 0.into(), &options, point(0., 0.), 0.)
         .unwrap()
         .unwrap();
     assert_eq!(center.id, "circle");
-    assert_eq!(center.ancestors, ["group"]);
+    assert_eq!(center.ancestors, ["panel"]);
     assert_eq!(
         renderer
             .pick(&scene, 0.into(), &options, point(19., 19.), 0.)

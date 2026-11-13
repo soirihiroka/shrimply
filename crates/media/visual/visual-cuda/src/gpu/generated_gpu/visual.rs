@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use shrimply_gpu_cuda::CudaContext;
-use shrimply_visual_frame::{VisualFormat, VisualFrame, VisualPlane};
+use shrimply_visual_frame::cuda::{VisualFormat, VisualFrame, VisualPlane};
 
 use super::super::CompositedVideoFrame;
 

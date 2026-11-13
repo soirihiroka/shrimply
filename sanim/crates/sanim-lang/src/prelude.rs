@@ -71,6 +71,7 @@ pub(crate) fn element_parameters() -> Vec<Parameter> {
         ty,
         required: false,
     };
+    let overflow = sanim_core::Overflow::ty();
     vec![
         p("id", String),
         p("position", Vector(2, None)),
@@ -93,9 +94,9 @@ pub(crate) fn element_parameters() -> Vec<Parameter> {
         p("flex_basis", sanim_core::Layout::dimension_type()),
         p("border_color", Color),
         p("border_width", Numeric(Dimension::Length)),
-        p("overflow", String),
-        p("overflow_x", String),
-        p("overflow_y", String),
+        p("overflow", overflow.clone()),
+        p("overflow_x", overflow.clone()),
+        p("overflow_y", overflow),
         p(
             "scroll",
             Type::union([

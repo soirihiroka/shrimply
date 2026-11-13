@@ -76,6 +76,7 @@ pub fn charge_substitution(
                 }
             }
             Type::Variable(name) => take(remaining, name.len())?,
+            Type::StringLiteral(value) => take(remaining, value.len())?,
             Type::BoundedVariable(name, b) => {
                 take(remaining, name.len())?;
                 bound(b, remaining, bindings, depth - 1)?;

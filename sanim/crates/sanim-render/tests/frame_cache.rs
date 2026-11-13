@@ -224,7 +224,7 @@ fn birth_paint_order_background_and_geometry_changes_invalidate_cached_frames() 
 #[test]
 fn horizontal_ranges_expand_about_their_anchor_without_changing_vertical_extent() {
     let mut renderer = Renderer::default();
-    let scene = renderer.prepare(animation("let interval_box=Box(id=\"range\",children=[Rect(width=4pt,height=20pt,position=Vec2(-40pt,0pt)),Rect(width=4pt,height=20pt,position=Vec2(40pt,0pt))])\nExpandX(interval_box, origin=50%, offset=10pt, duration=1s, ease=\"linear\")")).unwrap();
+    let scene = renderer.prepare(animation("let interval_box=Box(id=\"range\",flex_direction=\"row\",width=84pt,height=20pt,x_align=Align.Center,y_align=Align.Center,justify=Justify.SpaceBetween,children=[Rect(width=4pt,height=20pt,flex_shrink=0),Rect(width=4pt,height=20pt,flex_shrink=0)])\nExpandX(interval_box, origin=50%, offset=10pt, duration=1s, ease=\"linear\")")).unwrap();
     let mut options = Options::for_animation(scene.animation());
     options.width = 128;
     options.height = 128;

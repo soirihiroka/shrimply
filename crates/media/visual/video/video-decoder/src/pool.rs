@@ -10,11 +10,12 @@ use shrimply_project_document::project::{
     CanvasSize, Time, VideoItem, playback_speed_is_negative, playback_speed_is_zero,
     video_source_time_at,
 };
-use shrimply_visual_frame::GPU_FRAME_ALLOCATION_EXHAUSTED;
 use uuid::Uuid;
 
 use crate::lifecycle::{DECODER_STARTUP_MEMORY_EXHAUSTED, DecoderPriority, VideoDecoderContext};
-use crate::session::{DecodeControl, DecodeOutcome, DecodedVisual, VideoDecoderSession};
+use crate::session::{
+    DecodeControl, DecodeMode, DecodeOutcome, DecodedVisual, VideoDecoderSession,
+};
 use crate::track::{VideoDecoderOwner, VideoPlane, VideoSource};
 use crate::{
     DEFAULT_VIDEO_DECODER_POOL_SIZE, MAX_HANDOFF_FORWARD_FRAMES,
@@ -66,24 +67,6 @@ impl LatestTarget {
             && self.mode == other.mode
             && (self.mode.continuous()
                 || self.position.abs_diff(other.position) <= maximum_distance)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DecodeMode {
-    BestEffort,
-    Accurate,
-    Continuous,
-    LocalScrub,
-}
-
-impl DecodeMode {
-    const fn time_accurate(self) -> bool {
-        !matches!(self, Self::BestEffort)
-    }
-
-    const fn continuous(self) -> bool {
-        matches!(self, Self::Continuous)
     }
 }
 
@@ -265,23 +248,11 @@ impl PooledVideoDecoder {
                     let controls = [control.as_ref(), latest_control.as_ref()];
                     let decode = |decoder: &mut VideoDecoderSession, cached| {
                         if force_seek {
-                            decoder.seek(position).and_then(|()| {
-                                decoder.frame(
-                                    position,
-                                    cached,
-                                    controls,
-                                    mode.time_accurate(),
-                                    mode.continuous(),
-                                )
-                            })
+                            decoder
+                                .seek(position)
+                                .and_then(|()| decoder.frame(position, cached, controls, mode))
                         } else {
-                            decoder.frame(
-                                position,
-                                cached,
-                                controls,
-                                mode.time_accurate(),
-                                mode.continuous(),
-                            )
+                            decoder.frame(position, cached, controls, mode)
                         }
                     };
                     let mut startup_pressure_failure = false;
@@ -310,7 +281,12 @@ impl PooledVideoDecoder {
                                 return Ok(DecodeOutcome::Superseded(cached));
                             }
                             if decoder.is_none() {
-                                match VideoDecoderSession::open(&worker_source) {
+                                match VideoDecoderSession::open(
+                                    &worker_source.asset,
+                                    worker_source.media_track_id,
+                                    |_| crate::DecoderBackend::cuda(),
+                                    None,
+                                ) {
                                     Ok(opened) => {
                                         shrimply_profiling::increment(
                                             "Temporal decoder / Sessions opened",
@@ -395,10 +371,10 @@ impl PooledVideoDecoder {
                         replace_current_frame(current.as_ref(), Some(frame));
                         *current = Some(frame.clone());
                     }
-                    let recoverable_oom = result.as_ref().err().is_some_and(|error| {
-                        error.starts_with(GPU_FRAME_ALLOCATION_EXHAUSTED)
-                            || error.starts_with(DECODER_STARTUP_MEMORY_EXHAUSTED)
-                    });
+                    let recoverable_oom = result
+                        .as_ref()
+                        .err()
+                        .is_some_and(|error| error.starts_with(DECODER_STARTUP_MEMORY_EXHAUSTED));
                     if let Err(error) = &result {
                         if startup_pressure_failure {
                             tracing::warn!(
@@ -872,23 +848,7 @@ pub struct DecodeRequest {
 }
 
 impl DecodeRequest {
-    pub fn best_effort(position: Time) -> Self {
-        Self::new(position, DecodeMode::BestEffort)
-    }
-
-    pub fn accurate(position: Time) -> Self {
-        Self::new(position, DecodeMode::Accurate)
-    }
-
-    pub fn continuous(position: Time) -> Self {
-        Self::new(position, DecodeMode::Continuous)
-    }
-
-    pub fn local_scrub(position: Time) -> Self {
-        Self::new(position, DecodeMode::LocalScrub)
-    }
-
-    fn new(position: Time, mode: DecodeMode) -> Self {
+    pub fn new(position: Time, mode: DecodeMode) -> Self {
         Self {
             handoff_from: None,
             position,

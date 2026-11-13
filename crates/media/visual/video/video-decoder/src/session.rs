@@ -1,18 +1,18 @@
-use std::ffi::{CStr, CString};
 use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use crate::backend::DecoderBackend;
+use crate::math::{frame_time, source_time_to_stream_timestamp};
 use ffmpeg::sys;
 use ffmpeg_next as ffmpeg;
-use shrimply_gpu_cuda::sys as cuda_sys;
-use shrimply_math_core::{Fraction, fraction_ratio_i128};
-use shrimply_project_document::project::Time;
-use shrimply_visual_frame::{GPU_FRAME_ALLOCATION_EXHAUSTED, VisualFrame, ffmpeg_cuda_context};
+use shrimply_asset::AssetSnapshot;
+use shrimply_math_core::Time;
+use shrimply_visual_frame::VideoFrame;
 
+#[cfg(feature = "cuda")]
 use crate::lifecycle::DecoderStartupMeasurement;
-use crate::track::VideoSource;
 use crate::{LOCAL_FORWARD_DECODE_SECONDS, MAX_NONADVANCING_FRAMES};
 
 #[derive(Clone)]
@@ -42,8 +42,31 @@ impl DecodeControl {
     }
 }
 
-pub type DecodedVisual = (Time, VisualFrame);
-pub(crate) type DecodeControls<'a> = [Option<&'a DecodeControl>; 2];
+pub type DecodedVisual = (Time, Arc<VideoFrame>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecodeMode {
+    BestEffort,
+    Accurate,
+    Continuous,
+    LocalScrub,
+}
+
+impl DecodeMode {
+    pub const fn time_accurate(self) -> bool {
+        !matches!(self, Self::BestEffort)
+    }
+
+    pub const fn continuous(self) -> bool {
+        matches!(self, Self::Continuous)
+    }
+
+    pub const fn realtime(self) -> bool {
+        matches!(self, Self::Continuous | Self::LocalScrub)
+    }
+}
+
+pub type DecodeControls<'a> = [Option<&'a DecodeControl>; 2];
 
 pub enum DecodeOutcome {
     Frame(Option<DecodedVisual>),
@@ -55,8 +78,9 @@ struct DecodeRequestState {
     best_before: Option<DecodedVisual>,
 }
 
-pub(crate) struct VideoDecoderSession {
-    source: VideoSource,
+pub struct VideoDecoderSession {
+    source: AssetSnapshot,
+    media_track_id: u32,
     input: ffmpeg::format::context::Input,
     stream_index: usize,
     stream_time_base: ffmpeg::Rational,
@@ -73,7 +97,9 @@ pub(crate) struct VideoDecoderSession {
     eof_sent: bool,
     decoder_eof: bool,
     pub(crate) initialized: bool,
+    #[cfg(feature = "cuda")]
     pub(crate) startup: Option<DecoderStartupMeasurement>,
+    #[cfg(feature = "cuda")]
     pub(crate) startup_bytes: u64,
     opened_at: Option<Instant>,
     seek_started_at: Option<Instant>,
@@ -84,11 +110,22 @@ pub(crate) struct VideoDecoderSession {
 }
 
 impl VideoDecoderSession {
-    pub(crate) fn open(source: &VideoSource) -> Result<Self, String> {
-        source.asset.verify_current()?;
+    pub fn next_frame_time(&self) -> Option<Time> {
+        self.lookahead.as_ref().map(|frame| frame.0)
+    }
+
+    pub fn open(
+        source: &AssetSnapshot,
+        media_track_id: u32,
+        backend: impl FnOnce(ffmpeg::codec::Id) -> Result<DecoderBackend, String>,
+        cancellation: Option<DecodeControl>,
+    ) -> Result<Self, String> {
+        source.verify_current()?;
         ffmpeg::init().map_err(|error| error.to_string())?;
-        let input =
-            ffmpeg::format::input(source.asset.path()).map_err(|error| error.to_string())?;
+        let input = ffmpeg::format::input_with_interrupt(&source.path(), move || {
+            cancellation.as_ref().is_some_and(DecodeControl::superseded)
+        })
+        .map_err(|error| error.to_string())?;
         let (stream_index, stream_time_base, stream_start_time, frame_rate, parameters) = {
             let stream = input
                 .streams()
@@ -98,8 +135,8 @@ impl VideoDecoderSession {
                         .disposition()
                         .contains(ffmpeg::format::stream::Disposition::ATTACHED_PIC)
                 })
-                .nth(source.media_track_id as usize)
-                .ok_or_else(|| format!("video stream {} not found", source.media_track_id))?;
+                .nth(media_track_id as usize)
+                .ok_or_else(|| format!("video stream {} not found", media_track_id))?;
             let mut frame_rate = stream.avg_frame_rate();
             if frame_rate.numerator() <= 0 || frame_rate.denominator() <= 0 {
                 frame_rate = stream.rate();
@@ -125,16 +162,22 @@ impl VideoDecoderSession {
         };
 
         let decoder_open_started = Instant::now();
-        let opened = open_nvidia_decoder(&parameters)?;
+        let decoder = backend(parameters.id())?.open(&parameters, stream_time_base)?;
+        let decoder_name = decoder
+            .codec()
+            .ok_or("opened video decoder has no codec")?
+            .name()
+            .to_owned();
         Ok(Self {
             source: source.clone(),
+            media_track_id,
             input,
             stream_index,
             stream_time_base,
             stream_start_time,
             frame_duration,
-            decoder: opened.decoder,
-            decoder_name: opened.decoder_name,
+            decoder,
+            decoder_name,
             frame_index: 0,
             last_decoded_position: None,
             previous_decoded_position: None,
@@ -144,7 +187,9 @@ impl VideoDecoderSession {
             eof_sent: false,
             decoder_eof: false,
             initialized: false,
+            #[cfg(feature = "cuda")]
             startup: None,
+            #[cfg(feature = "cuda")]
             startup_bytes: 0,
             opened_at: Some(decoder_open_started),
             seek_started_at: None,
@@ -155,16 +200,15 @@ impl VideoDecoderSession {
         })
     }
 
-    pub(crate) fn frame(
+    pub fn frame(
         &mut self,
         position: Time,
         cached: Option<DecodedVisual>,
         controls: DecodeControls<'_>,
-        time_accurate: bool,
-        continuous: bool,
+        mode: DecodeMode,
     ) -> Result<DecodeOutcome, String> {
-        if time_accurate {
-            self.frame_at_exact(position, cached, controls, continuous)
+        if mode.time_accurate() {
+            self.frame_at_exact(position, cached, controls, mode.continuous())
         } else {
             self.frame_at(position, cached, controls)
         }
@@ -362,7 +406,10 @@ impl VideoDecoderSession {
             )
         };
         if result < 0 {
-            return Err(format!("seek video demuxer: {}", ffmpeg_error(result)));
+            return Err(format!(
+                "seek video demuxer: {}",
+                ffmpeg::Error::from(result)
+            ));
         }
         self.decoder.flush();
         shrimply_profiling::increment("Video decode / Decoder flush");
@@ -408,7 +455,7 @@ impl VideoDecoderSession {
         position >= last_decoded_position
     }
 
-    fn next_frame(&mut self, controls: DecodeControls<'_>) -> Result<NextFrame, String> {
+    pub fn next_frame(&mut self, controls: DecodeControls<'_>) -> Result<NextFrame, String> {
         let result = self.next_frame_inner(controls);
         if result.is_err() {
             self.active_request = None;
@@ -439,7 +486,8 @@ impl VideoDecoderSession {
                 ReceiveState::NeedInput if send_was_blocked => {
                     shrimply_profiling::increment("Video decode / Fatal send errors");
                     return Err(
-                        "NVDEC made no progress: send and receive both returned EAGAIN".to_string(),
+                        "video decoder made no progress: send and receive both returned EAGAIN"
+                            .to_string(),
                     );
                 }
                 ReceiveState::NeedInput => {}
@@ -449,7 +497,7 @@ impl VideoDecoderSession {
                 if self.cancel_if_superseded(controls) {
                     return Ok(NextFrame::Superseded);
                 }
-                self.pending_packet = self.read_video_packet();
+                self.pending_packet = self.read_video_packet()?;
                 self.input_eof = self.pending_packet.is_none();
             }
 
@@ -469,16 +517,7 @@ impl VideoDecoderSession {
                     }
                     Err(error) => {
                         shrimply_profiling::increment("Video decode / Fatal send errors");
-                        let memory = cuda_memory_info()
-                            .map(|(free, total)| {
-                                format!(
-                                    "; CUDA memory: {} MiB free of {} MiB",
-                                    free / (1024 * 1024),
-                                    total / (1024 * 1024),
-                                )
-                            })
-                            .unwrap_or_default();
-                        return Err(format!("NVDEC send packet: {error}{memory}"));
+                        return Err(format!("{} send packet: {error}", self.decoder_name));
                     }
                 }
                 continue;
@@ -486,7 +525,9 @@ impl VideoDecoderSession {
 
             if self.eof_sent {
                 shrimply_profiling::increment("Video decode / Fatal receive errors");
-                return Err("NVDEC requested input after end-of-stream was sent".to_string());
+                return Err(
+                    "video decoder requested input after end-of-stream was sent".to_string()
+                );
             }
             match self.decoder.send_eof() {
                 Ok(()) => self.eof_sent = true,
@@ -502,7 +543,7 @@ impl VideoDecoderSession {
                 }
                 Err(error) => {
                     shrimply_profiling::increment("Video decode / Fatal send errors");
-                    return Err(format!("NVDEC send EOF: {error}"));
+                    return Err(format!("video decoder send EOF: {error}"));
                 }
             }
         }
@@ -544,29 +585,9 @@ impl VideoDecoderSession {
                 self.previous_decoded_position = self.last_decoded_position;
                 self.last_decoded_position = Some(position);
                 self.frame_index += 1;
-                let frame = {
-                    let _measurement =
-                        shrimply_profiling::measure("Video decode / Retain CUDA frame");
-                    VisualFrame::try_from(&decoded).map(|frame| (position, frame))
-                };
-                match frame {
-                    Ok(frame) => {
-                        self.record_first_frame(&decoded);
-                        Ok(ReceiveState::Frame(frame))
-                    }
-                    Err(error) => {
-                        if error.starts_with(GPU_FRAME_ALLOCATION_EXHAUSTED) {
-                            self.last_decoded_position = None;
-                            self.previous_decoded_position = None;
-                            shrimply_profiling::increment(
-                                "Video decode / Recoverable GPU allocation errors",
-                            );
-                        } else {
-                            shrimply_profiling::increment("Video decode / Fatal receive errors");
-                        }
-                        Err(error)
-                    }
-                }
+                self.record_first_frame(&decoded);
+                let frame = Arc::new(VideoFrame::new(decoded)?);
+                Ok(ReceiveState::Frame((position, frame)))
             }
             Err(ffmpeg::Error::Other { errno }) if errno == libc::EAGAIN => {
                 shrimply_profiling::increment("Video decode / Receive frame EAGAIN");
@@ -579,20 +600,20 @@ impl VideoDecoderSession {
             }
             Err(error) => {
                 shrimply_profiling::increment("Video decode / Fatal receive errors");
-                Err(format!("NVDEC receive frame: {error}"))
+                Err(format!("video decoder receive frame: {error}"))
             }
         }
     }
 
-    fn read_video_packet(&mut self) -> Option<ffmpeg::Packet> {
+    fn read_video_packet(&mut self) -> Result<Option<ffmpeg::Packet>, String> {
         loop {
-            let next = {
-                let mut packets = self.input.packets();
-                packets
-                    .next()
-                    .map(|(stream, packet)| (stream.index(), packet))
-            };
-            let (stream_index, packet) = next?;
+            let mut packet = ffmpeg::Packet::empty();
+            match packet.read(&mut self.input) {
+                Ok(()) => {}
+                Err(ffmpeg::Error::Eof) => return Ok(None),
+                Err(error) => return Err(format!("read video packet: {error}")),
+            }
+            let stream_index = packet.stream();
             shrimply_profiling::increment("Video decode / Demux packets read");
             if stream_index == self.stream_index {
                 if packet.duration() > 0 {
@@ -603,7 +624,7 @@ impl VideoDecoderSession {
                         i64::from(self.stream_time_base.denominator()),
                     );
                 }
-                return Some(packet);
+                return Ok(Some(packet));
             }
         }
     }
@@ -611,8 +632,8 @@ impl VideoDecoderSession {
     fn missing_frame_error(&self, position: Time, stage: &str) -> String {
         format!(
             "{stage} without a usable frame: file={}, media_track_id={}, requested={}, last_decoded={}, seek_target={}, decoder_eof={}",
-            self.source.asset.path().display(),
-            self.source.media_track_id,
+            self.source.path().display(),
+            self.media_track_id,
             position.as_label(),
             self.last_decoded_position
                 .map_or_else(|| "none".to_string(), |time| time.as_label()),
@@ -641,10 +662,10 @@ impl VideoDecoderSession {
         if self.initialized {
             return;
         }
-        self.startup
-            .take()
-            .expect("first CUDA frame arrived without a startup reservation")
-            .record(None, &mut self.startup_bytes);
+        #[cfg(feature = "cuda")]
+        if let Some(startup) = self.startup.take() {
+            startup.record(None, &mut self.startup_bytes);
+        }
         self.initialized = true;
 
         unsafe {
@@ -663,7 +684,6 @@ impl VideoDecoderSession {
                     (*frames_context).initial_pool_size,
                 )
             };
-            let cuda_context_identity = ffmpeg_cuda_context(frame).unwrap_or(ptr::null_mut());
             tracing::info!(
                 codec = self.decoder_name,
                 codec_id = ?self.decoder.id(),
@@ -680,9 +700,7 @@ impl VideoDecoderSession {
                 color_range = ?(*raw_frame).color_range,
                 color_primaries = ?(*raw_frame).color_primaries,
                 color_transfer = ?(*raw_frame).color_trc,
-                cuda_device = 0,
-                cuda_context = ?cuda_context_identity,
-                "received first NVIDIA CUDA video frame",
+                "received first decoded video frame",
             );
         }
     }
@@ -724,7 +742,7 @@ impl VideoDecoderSession {
     }
 }
 
-enum NextFrame {
+pub enum NextFrame {
     Frame(DecodedVisual),
     EndOfStream,
     Superseded,
@@ -734,99 +752,6 @@ enum ReceiveState {
     Frame(DecodedVisual),
     NeedInput,
     EndOfStream,
-}
-
-struct OpenedNvidiaDecoder {
-    decoder: ffmpeg::decoder::Video,
-    decoder_name: String,
-}
-
-fn open_nvidia_decoder(
-    parameters: &ffmpeg::codec::Parameters,
-) -> Result<OpenedNvidiaDecoder, String> {
-    let codec_id = parameters.id();
-    let mut opaque = ptr::null_mut();
-    let codec = loop {
-        let codec = unsafe { sys::av_codec_iterate(&mut opaque) };
-        if codec.is_null() {
-            return Err(format!(
-                "no NVIDIA CUDA video decoder available for {codec_id:?}"
-            ));
-        }
-        if unsafe { sys::av_codec_is_decoder(codec) } != 0
-            && unsafe { (*codec).id } == codec_id.into()
-            && exposes_cuda_frames(codec)
-        {
-            break unsafe { ffmpeg::Codec::wrap(codec) };
-        }
-    };
-    let decoder_name = codec.name().to_owned();
-
-    let hw_device_ctx = create_cuda_device_context()?;
-    let mut context = ffmpeg::codec::context::Context::from_parameters(parameters.clone())
-        .map_err(|error| error.to_string())?;
-    let flags_before_open = unsafe {
-        let raw_context = context.as_mut_ptr();
-        (*raw_context).hw_device_ctx = hw_device_ctx;
-        (*raw_context).get_format = Some(cuda_get_format);
-        (*raw_context).flags
-    };
-    tracing::debug!(
-        flags = flags_before_open,
-        "configured NVIDIA video decoder before open"
-    );
-
-    let decoder = context
-        .decoder()
-        .open_as(codec)
-        .and_then(|opened| opened.video())
-        .map_err(|error| format!("could not open {decoder_name} with CUDA: {error}"))?;
-    let live_flags = unsafe { (*decoder.as_ptr()).flags };
-    tracing::info!(
-        flags = live_flags,
-        low_delay = live_flags & sys::AV_CODEC_FLAG_LOW_DELAY as i32 != 0,
-        "Using NVIDIA CUDA video decoder {decoder_name}"
-    );
-    Ok(OpenedNvidiaDecoder {
-        decoder,
-        decoder_name,
-    })
-}
-
-fn exposes_cuda_frames(codec: *const sys::AVCodec) -> bool {
-    let mut index = 0;
-    loop {
-        let config = unsafe { sys::avcodec_get_hw_config(codec, index) };
-        if config.is_null() {
-            return false;
-        }
-        let config = unsafe { &*config };
-        if config.device_type == sys::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA
-            && config.pix_fmt == sys::AVPixelFormat::AV_PIX_FMT_CUDA
-            && config.methods & sys::AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX as i32 != 0
-        {
-            return true;
-        }
-        index += 1;
-    }
-}
-
-unsafe extern "C" fn cuda_get_format(
-    _context: *mut sys::AVCodecContext,
-    formats: *const sys::AVPixelFormat,
-) -> sys::AVPixelFormat {
-    let mut cursor = formats;
-    while !cursor.is_null() {
-        let format = unsafe { *cursor };
-        if format == sys::AVPixelFormat::AV_PIX_FMT_NONE {
-            break;
-        }
-        if format == sys::AVPixelFormat::AV_PIX_FMT_CUDA {
-            return format;
-        }
-        cursor = unsafe { cursor.add(1) };
-    }
-    sys::AVPixelFormat::AV_PIX_FMT_NONE
 }
 
 fn cached_frame(
@@ -852,154 +777,6 @@ fn candidate_precedes_retained_lookahead(
             && lookahead
                 .is_some_and(|lookahead| requested < lookahead && last_decoded == Some(lookahead))
     })
-}
-
-fn frame_time(
-    frame: &ffmpeg::frame::Video,
-    time_base: ffmpeg::Rational,
-    stream_start_time: i64,
-    frame_index: usize,
-    last_position: Option<Time>,
-    frame_duration: Time,
-    timestamp_required: bool,
-) -> Result<Time, String> {
-    let Some(timestamp) = frame.timestamp() else {
-        if let Some(last_position) = last_position {
-            return Ok(last_position.saturating_add(frame_duration));
-        }
-        if timestamp_required {
-            return Err(
-                "NVDEC returned a frame without a timestamp after random access".to_string(),
-            );
-        }
-        return Ok(Time {
-            seconds: frame_duration.seconds
-                * Fraction::from(
-                    u64::try_from(frame_index).expect("decoded frame index exceeds u64"),
-                ),
-        });
-    };
-    let start_time = if stream_start_time == sys::AV_NOPTS_VALUE {
-        0
-    } else {
-        stream_start_time
-    };
-    Ok(Time::from_fraction(
-        timestamp
-            .saturating_sub(start_time)
-            .saturating_mul(i64::from(time_base.numerator())),
-        i64::from(time_base.denominator()),
-    ))
-}
-
-fn source_time_to_stream_timestamp(
-    position: Time,
-    time_base: ffmpeg::Rational,
-    stream_start_time: i64,
-) -> i64 {
-    let (position_numerator, position_denominator) =
-        fraction_ratio_i128(position.seconds).expect("decoder position must be finite");
-    let numerator = position_numerator.saturating_mul(i128::from(time_base.denominator()));
-    let denominator = position_denominator.saturating_mul(i128::from(time_base.numerator()));
-    let timestamp = if denominator == 0 {
-        0
-    } else {
-        numerator / denominator
-    };
-    let timestamp = if stream_start_time == sys::AV_NOPTS_VALUE {
-        timestamp
-    } else {
-        timestamp.saturating_add(i128::from(stream_start_time))
-    };
-    timestamp.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
-}
-
-fn ffmpeg_error(result: i32) -> String {
-    unsafe {
-        let mut buffer = [0i8; 256];
-        if sys::av_strerror(result, buffer.as_mut_ptr(), buffer.len()) == 0 {
-            CStr::from_ptr(buffer.as_ptr())
-                .to_string_lossy()
-                .into_owned()
-        } else {
-            format!("FFmpeg error {result}")
-        }
-    }
-}
-
-pub(crate) fn create_cuda_device_context() -> Result<*mut sys::AVBufferRef, String> {
-    unsafe {
-        let mut hw_device_ctx = ptr::null_mut();
-        let device = CString::new(shrimply_gpu_cuda::selected_device().to_string())
-            .map_err(|error| error.to_string())?;
-        let mut options = ptr::null_mut();
-        let option_key = CString::new("primary_ctx").map_err(|error| error.to_string())?;
-        let option_value = CString::new("1").map_err(|error| error.to_string())?;
-        let option_result =
-            sys::av_dict_set(&mut options, option_key.as_ptr(), option_value.as_ptr(), 0);
-        if option_result < 0 {
-            return Err(format!(
-                "could not configure FFmpeg CUDA primary context: {}",
-                ffmpeg_error(option_result),
-            ));
-        }
-        let result = sys::av_hwdevice_ctx_create(
-            &mut hw_device_ctx,
-            sys::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA,
-            device.as_ptr(),
-            options,
-            0,
-        );
-        sys::av_dict_free(&mut options);
-        if result < 0 {
-            return Err(format!(
-                "could not create FFmpeg CUDA device context: {}",
-                ffmpeg_error(result),
-            ));
-        }
-        Ok(hw_device_ctx)
-    }
-}
-
-pub(crate) fn cuda_memory_info() -> Result<(usize, usize), String> {
-    unsafe {
-        if cuda_sys::cuInit(0) != cuda_sys::cudaError_enum_CUDA_SUCCESS {
-            return Err("could not initialize CUDA while checking decoder memory".to_string());
-        }
-        let mut device = 0;
-        if cuda_sys::cuDeviceGet(&mut device, shrimply_gpu_cuda::selected_device() as i32)
-            != cuda_sys::cudaError_enum_CUDA_SUCCESS
-        {
-            return Err(
-                "could not select the CUDA device while checking decoder memory".to_string(),
-            );
-        }
-        let mut context = ptr::null_mut();
-        if cuda_sys::cuDevicePrimaryCtxRetain(&mut context, device)
-            != cuda_sys::cudaError_enum_CUDA_SUCCESS
-        {
-            return Err("could not retain CUDA primary context while checking memory".to_string());
-        }
-        if cuda_sys::cuCtxPushCurrent_v2(context) != cuda_sys::cudaError_enum_CUDA_SUCCESS {
-            let _ = cuda_sys::cuDevicePrimaryCtxRelease_v2(device);
-            return Err(
-                "could not activate CUDA primary context while checking memory".to_string(),
-            );
-        }
-        let mut free = 0;
-        let mut total = 0;
-        let result = cuda_sys::cuMemGetInfo_v2(&mut free, &mut total);
-        let mut popped = ptr::null_mut();
-        let pop = cuda_sys::cuCtxPopCurrent_v2(&mut popped);
-        let release = cuda_sys::cuDevicePrimaryCtxRelease_v2(device);
-        if result != cuda_sys::cudaError_enum_CUDA_SUCCESS
-            || pop != cuda_sys::cudaError_enum_CUDA_SUCCESS
-            || release != cuda_sys::cudaError_enum_CUDA_SUCCESS
-        {
-            return Err("could not query or restore CUDA memory context".to_string());
-        }
-        Ok((free, total))
-    }
 }
 
 #[cfg(test)]

@@ -110,7 +110,7 @@ pub fn evaluate_with(
     };
     let mut sample = |element: &Element, time: Fraction| -> Result<Bounds, String> {
         if animation.list_views.owner(&element.id).is_some() {
-            return Err("list-child assertions require composed layout evidence; assert on the containing Row or Column instead".into());
+            return Err("list-child assertions require composed layout evidence; assert on the containing Box instead".into());
         }
         if animation
             .layers

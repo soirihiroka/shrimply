@@ -47,7 +47,7 @@ pub enum Source {
     Group(Vec<Layer>),
     Image(Image),
     #[cfg(target_os = "linux")]
-    Video(std::sync::Arc<shrimply_render_vulkan::VideoFrame>),
+    Video(std::sync::Arc<shrimply_visual_frame::VideoFrame>),
     Background(Box<shrimply_render_core::background_spirv::BackgroundUniforms>),
     Manim(ManimFrame),
     RasterMorph(Box<RasterMorph>),

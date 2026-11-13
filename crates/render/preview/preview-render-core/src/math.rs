@@ -1,24 +1,8 @@
-use shrimply_math_core::{Fraction, Time, fraction_floor_i64};
-
-pub fn timestamp(time: Time, base: ffmpeg_next::Rational) -> i64 {
-    fraction_floor_i64(
-        time.seconds * Fraction::from(base.denominator()) / Fraction::from(base.numerator()),
-    )
-    .expect("media timestamp exceeds i64")
-}
-
-pub fn frame_time(timestamp: i64, base: ffmpeg_next::Rational) -> Time {
-    Time {
-        seconds: Fraction::from(timestamp) * Fraction::from(base.numerator())
-            / Fraction::from(base.denominator()),
-    }
-}
-
 /// An opaque native video already covers the canvas without compositing changes.
 #[cfg(target_os = "linux")]
 pub fn unmodified_video(
     plan: &crate::FramePlan,
-) -> Option<&std::sync::Arc<shrimply_render_vulkan::VideoFrame>> {
+) -> Option<&std::sync::Arc<shrimply_visual_frame::VideoFrame>> {
     use shrimply_render_core::{LayerBlendMode, VideoSampleMethod, math::Mat3};
     let [layer] = plan.layers.as_slice() else {
         return None;
@@ -52,7 +36,7 @@ pub fn unmodified_video(
             parameters.sample_method,
             VideoSampleMethod::Nearest | VideoSampleMethod::Bilinear | VideoSampleMethod::Bicubic
         )
-        || (video.frame.width(), video.frame.height()) != (plan.width, plan.height)
+        || (video.native().width(), video.native().height()) != (plan.width, plan.height)
     {
         None
     } else {

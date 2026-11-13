@@ -10,6 +10,8 @@ shrimply-paint-skia = { workspace = true }
 shrimply-audio-engine = { workspace = true }
 shrimply-render-core = { workspace = true }
 ffmpeg-next.workspace = true
+shrimply-video-decoder.workspace = true
+shrimply-visual-frame.workspace = true
 skia-safe = { workspace = true, features = ["svg", "textlayout"] }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-manim-state = { workspace = true }

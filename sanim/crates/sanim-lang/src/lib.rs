@@ -258,7 +258,7 @@ pub struct Engine {
     pub limits: Limits,
     pub preparation: Preparation,
     pub viewport: sanim_core::Viewport,
-    parsed: BTreeMap<String, Arc<ast::Module>>,
+    parsed: sanim_core::cache::Cache<String, ast::Module>,
     values: cache::ValueCache,
     assets: cache::ValueCache,
     databases: sanim_data::sqlite::Databases,
@@ -291,6 +291,12 @@ impl Engine {
         entry: &str,
         prepare: impl FnOnce(&mut Self, &progress::Reporter) -> Result<T, Diagnostic>,
     ) -> Result<T, Diagnostic> {
+        self.parsed.configure(
+            self.limits.max_cache_bytes,
+            self.limits
+                .max_cache_entries
+                .min(self.limits.max_modules.saturating_mul(2)),
+        );
         let reporter = progress::Reporter::new(self.progress_observer.clone(), entry);
         let result = prepare(self, &reporter);
         reporter.finish(result.as_ref().err());
@@ -529,9 +535,6 @@ impl Engine {
         if prepared.statistics.prepare_micros > self.limits.warn_prepare_micros {
             prepared.performance.push(PerformanceWarning{code:"P002".into(),message:format!("preparation took {}us (budget {}us); {} expressions evaluated, {} expression cache hits, {} assets decoded; {} statements restored. Inspect the reported source hotspots and cache-key/native/query timings.",prepared.statistics.prepare_micros,self.limits.warn_prepare_micros,prepared.statistics.evaluated_expressions,prepared.statistics.reused_expressions,prepared.statistics.decoded_assets,prepared.statistics.restored_statements),source:entry.into(),span:Span::default(),operations:prepared.statistics.operations});
         }
-        if self.parsed.len() > self.limits.max_modules * 2 {
-            self.parsed.clear();
-        }
         Ok(prepared)
     }
     fn load(
@@ -583,7 +586,7 @@ impl Engine {
             ));
         }
         let hash = digest(
-            &serde_json::to_vec(&(digest(&bytes), self.limits.max_parse_steps))
+            &serde_json::to_vec(&(snapshot.fingerprint(id), self.limits.max_parse_steps))
                 .map_err(|e| Diagnostic::new("S201", e.to_string(), id, Span::default()))?,
         );
         let module = if let Some(module) = self.parsed.get(&hash) {
@@ -593,7 +596,16 @@ impl Engine {
             let text = std::str::from_utf8(&bytes)
                 .map_err(|e| Diagnostic::new("S201", e.to_string(), id, Span::default()))?;
             let module = Arc::new(parser::parse(id, text, self.limits.max_parse_steps)?);
-            self.parsed.insert(hash, module.clone());
+            if self.limits.max_cache_entries > 0
+                && let Some(retained) = cache::parsed::retained_bytes(
+                    &module,
+                    bytes.len(),
+                    hash.len(),
+                    self.limits.max_cache_bytes,
+                )
+            {
+                self.parsed.insert(hash, module.clone(), retained);
+            }
             statistics.parsed_modules += 1;
             module
         };

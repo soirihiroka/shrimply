@@ -3,18 +3,26 @@ name = "shrimply-video-decoder"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+cuda = ["dep:shrimply-gpu-cuda", "dep:shrimply-decoder-pool", "dep:shrimply-project-document", "dep:uuid"]
+cuda-frames = ["cuda", "shrimply-visual-frame/cuda"]
+
+[[example]]
+name = "video_decode"
+required-features = ["cuda-frames"]
+
 [dependencies]
-shrimply-gpu-cuda.workspace = true
+shrimply-gpu-cuda = { workspace = true, optional = true }
 ffmpeg-next.workspace = true
 libc.workspace = true
 shrimply-asset = { workspace = true }
 shrimply-profiling = { workspace = true }
-shrimply-decoder-pool = { workspace = true }
+shrimply-decoder-pool = { workspace = true, optional = true }
 shrimply-math-core = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
+shrimply-project-document = { workspace = true, default-features = true, optional = true }
 shrimply-visual-frame = { workspace = true }
 tracing.workspace = true
-uuid = { workspace = true, features = ["v4"] }
+uuid = { workspace = true, features = ["v4"], optional = true }
 
 [dev-dependencies]
 shrimply-math-media = { workspace = true }

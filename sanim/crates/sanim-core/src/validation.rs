@@ -2,11 +2,16 @@
 use crate::{Fraction, Type, Value, math};
 
 pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
-    if !ty.accepts(&value.ty()) {
-        return Err(format!("expected {ty}, found {}", value.ty()));
-    }
+    // Values retain broad primitive representations; literal constraints are
+    // schema proofs, not one runtime datatype for every distinct string.
     match (ty, value) {
-        (Type::Font, Value::Font(font)) => font.validate()?,
+        (Type::StringLiteral(expected), Value::String(actual)) => {
+            return if expected == actual {
+                Ok(())
+            } else {
+                Err(format!("expected {ty}, found {actual:?}"))
+            };
+        }
         (Type::Union(alternatives), value) => {
             let mut reasons = Vec::new();
             for alternative in alternatives {
@@ -20,6 +25,39 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
                 reasons.join("; ")
             ));
         }
+        (Type::Record(fields), Value::Record(values)) => {
+            if !fields.keys().eq(values.keys()) {
+                return Err(format!("expected fields of {ty}, found {}", value.ty()));
+            }
+            for (name, ty) in fields {
+                validate_value(ty, &values[name])
+                    .map_err(|error| format!("field '{name}': {error}"))?;
+            }
+            return Ok(());
+        }
+        (Type::List(inner), Value::List(values)) => {
+            for value in &values.values {
+                validate_value(inner, value)?;
+            }
+            return Ok(());
+        }
+        (Type::Array(inner), Value::Array { shape, values, .. }) => {
+            if shape.iter().try_fold(1usize, |n, d| n.checked_mul(*d)) != Some(values.len()) {
+                return Err("array shape does not match its value count".into());
+            }
+            for value in values {
+                validate_value(inner, value)?;
+            }
+            return Ok(());
+        }
+        (Type::Option(inner), Value::Some(value)) => return validate_value(inner, value),
+        _ => {}
+    }
+    if !ty.accepts(&value.ty()) {
+        return Err(format!("expected {ty}, found {}", value.ty()));
+    }
+    match (ty, value) {
+        (Type::Font, Value::Font(font)) => font.validate()?,
         (Type::Fraction, Value::Fraction(value)) if !math::finite(value) => {
             return Err("fraction must be finite".into());
         }
@@ -43,22 +81,6 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
             if vector.vector()?.0.iter().any(|v| !v.is_finite()) =>
         {
             return Err("vector components must be finite".into());
-        }
-        (Type::Array(_), Value::Array { shape, values, .. })
-            if shape.iter().try_fold(1usize, |n, d| n.checked_mul(*d)) != Some(values.len()) =>
-        {
-            return Err("array shape does not match its value count".into());
-        }
-        (Type::List(inner) | Type::Array(inner), values) => {
-            for value in values.list()? {
-                validate_value(inner, value)?;
-            }
-        }
-        (Type::Option(inner), Value::Some(value)) => validate_value(inner, value)?,
-        (Type::Record(fields), Value::Record(values)) => {
-            for (name, ty) in fields {
-                validate_value(ty, &values[name]).map_err(|e| format!("field '{name}': {e}"))?;
-            }
         }
         (Type::Enum { variants, .. }, Value::Variant { tag, fields, .. }) => {
             let types = variants.get(tag).ok_or("unknown enum variant")?;

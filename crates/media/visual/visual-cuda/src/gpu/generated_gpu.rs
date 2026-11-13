@@ -14,7 +14,7 @@ use shrimply_gpu_cuda::{CudaContext, sys};
 use shrimply_project_document::project::{CanvasSize, SkiaDrawingStrategy};
 use shrimply_project_evaluation::{TransformEvaluation, TransformExpressionCache};
 use shrimply_visual_core::generated::draw_visual;
-use shrimply_visual_frame::{VisualFormat, VisualFrame, VisualPlane};
+use shrimply_visual_frame::cuda::{VisualFormat, VisualFrame, VisualPlane};
 use skia_safe::ColorType;
 use skia_safe::gpu::{self, backend_render_targets, direct_contexts, surfaces, vk as skia_vk};
 

@@ -37,7 +37,7 @@ shrimply-background = { workspace = true }
 shrimply-project-evaluation = { workspace = true }
 shrimply-gpu-cuda-memory = { workspace = true }
 shrimply-i18n = { workspace = true }
-shrimply-visual-frame = { workspace = true }
+shrimply-visual-frame = { workspace = true, features = ["cuda"] }
 shrimply-layered-image-loader = { workspace = true }
 shrimply-loading-screen-skia = { workspace = true }
 shrimply-math-media = { workspace = true }
@@ -65,7 +65,7 @@ shrimply-scene-3d = { workspace = true }
 shrimply-shape-3d = { workspace = true }
 shrimply-text-3d = { workspace = true }
 shrimply-visual-modifiers = { workspace = true }
-shrimply-video-decoder = { workspace = true }
+shrimply-video-decoder = { workspace = true, features = ["cuda"] }
 shrimply-compute-client = { workspace = true }
 skia-safe = { workspace = true, features = ["gl", "vulkan", "textlayout", "svg"] }
 tempfile.workspace = true

@@ -111,9 +111,9 @@ fn cached_frames_respect_changed_work_limits() {
     );
 }
 #[test]
-fn group_opacity_applies_after_children_composite() {
+fn box_opacity_applies_after_overlapping_descendants_composite() {
     let scene = scene_in(
-        "let a = Rect(width= 16pt, height= 16pt, fill= Color(\"red\"))\nlet b = Rect(width= 16pt, height= 16pt, fill= Color(\"blue\"))\nadd(Box(children= [a,b], opacity= 0.5))\n",
+        "let a = Rect(width= 16pt, height= 16pt, fill= Color(\"red\"))\nlet b = Rect(width= 16pt, height= 16pt, fill= Color(\"blue\"))\nlet overlay=Rect(width=16pt,height=16pt,fill=Color(\"transparent\"),children=[a,b])\nadd(Box(children=[overlay],width=16pt,height=16pt,opacity=0.5))\n",
         16,
         16,
     );

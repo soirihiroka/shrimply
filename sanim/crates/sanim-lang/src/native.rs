@@ -682,7 +682,7 @@ pub(crate) fn make_element(
             .map(Value::boolean)
             .transpose()?
             .unwrap_or(false),
-        width: if name == "Line" {
+        width: if matches!(name, "Line" | "Polyline") {
             None
         } else {
             args.get("width").map(Value::number).transpose()?
@@ -813,10 +813,20 @@ pub(crate) fn composition(
             child.layout.y_align = Align::Start;
         }
         for axis in 0..2 {
-            if !args.contains_key(if axis == 0 { "x_align" } else { "y_align" }) {
-                element.layout.position_offset[axis] =
-                    math::float_arithmetic("+", low[axis] / 2., high[axis] / 2.)?;
-            }
+            let anchor = if axis == 0 {
+                element.layout.x_align
+            } else {
+                element.layout.y_align
+            };
+            element.layout.position_offset[axis] = math::float_arithmetic(
+                "+",
+                low[axis],
+                math::float_arithmetic(
+                    "*",
+                    math::float_arithmetic("-", high[axis], low[axis])?,
+                    math::to_f64(anchor.fraction())?,
+                )?,
+            )?;
         }
         for (axis, field) in [&mut element.layout.width, &mut element.layout.height]
             .into_iter()

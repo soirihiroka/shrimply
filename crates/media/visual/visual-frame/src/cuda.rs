@@ -7,6 +7,7 @@ use shrimply_gpu_cuda_memory::AllocationClass;
 use shrimply_gpu_cuda_memory::GpuBuffer;
 pub use shrimply_gpu_cuda_memory::MemoryKind;
 
+#[path = "cuda_ffmpeg.rs"]
 mod ffmpeg;
 
 pub const GPU_FRAME_ALLOCATION_EXHAUSTED: &str =
@@ -16,7 +17,7 @@ static GPU_FRAME_COUNT: AtomicU64 = AtomicU64::new(0);
 static GPU_FRAME_BYTES: AtomicU64 = AtomicU64::new(0);
 static GPU_OOM_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-pub use ffmpeg::ffmpeg_cuda_context;
+pub use ffmpeg::ImportedFrame;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VisualFormat {

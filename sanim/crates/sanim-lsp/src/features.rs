@@ -335,15 +335,124 @@ fn markup_position(
     syntax: &crate::workspace::Syntax,
     offset: usize,
 ) -> Option<(&sanim_lang::parser::MarkupOpening, Span)> {
-    if syntax.highlights.iter().any(|span| span.kind.as_ref() == "comment" && span.start <= offset && offset < span.end) {
+    if syntax
+        .highlights
+        .iter()
+        .any(|span| span.kind.as_ref() == "comment" && span.start <= offset && offset < span.end)
+    {
         return None;
     }
-    let opening = syntax.markup.iter().rev().find(|opening| opening.span.start <= offset && offset <= opening.span.end)?;
-    if opening.attributes.iter().any(|attribute| attribute.value.is_some_and(|value| value.start <= offset && offset <= value.end)) {
+    let opening = syntax
+        .markup
+        .iter()
+        .rev()
+        .find(|opening| opening.span.start <= offset && offset <= opening.span.end)?;
+    if opening.attributes.iter().any(|attribute| {
+        attribute
+            .value
+            .is_some_and(|value| value.start <= offset && offset <= value.end)
+    }) {
         return None;
     }
-    let span = opening.attributes.iter().find(|attribute| attribute.span.start <= offset && offset <= attribute.span.end).map_or(Span {start:offset,end:offset,..Default::default()}, |attribute| attribute.span);
+    let span = opening
+        .attributes
+        .iter()
+        .find(|attribute| attribute.span.start <= offset && offset <= attribute.span.end)
+        .map_or(
+            Span {
+                start: offset,
+                end: offset,
+                ..Default::default()
+            },
+            |attribute| attribute.span,
+        );
     Some((opening, span))
+}
+
+fn literal_completion(
+    workspace: &Workspace,
+    uri: &str,
+    offset: usize,
+    syntax: &crate::workspace::Syntax,
+) -> Option<Value> {
+    if syntax
+        .highlights
+        .iter()
+        .any(|span| span.kind.as_ref() == "comment" && span.start <= offset && offset < span.end)
+    {
+        return None;
+    }
+    let document = &workspace.documents.get(uri)?.document;
+    let expected = syntax
+        .markup
+        .iter()
+        .rev()
+        .find_map(|opening| {
+            let attribute = opening.attributes.iter().find(|attribute| {
+                attribute
+                    .value
+                    .is_some_and(|span| span.start <= offset && offset <= span.end)
+            })?;
+            let parameter = prelude::builtin(&opening.name)?
+                .parameters
+                .iter()
+                .find(|parameter| parameter.name == attribute.name)?;
+            Some((parameter.ty.clone(), attribute.value?))
+        })
+        .or_else(|| {
+            let (analysis, module) = workspace.module(uri)?;
+            let call = call_position(analysis, module, offset)?;
+            let native = match &call.callee.kind {
+                ExprKind::Name(name) => prelude::builtin(name).map(|native| (native, false)),
+                _ => native_method(module, document.text.len(), &call.callee, offset)
+                    .map(|native| (native, true)),
+            };
+            let expected = if let Some((native, receiver)) = native {
+                let mut parameters = native.parameters.iter().skip(usize::from(receiver));
+                match call.named {
+                    Some(name) => parameters.find(|parameter| parameter.name == name),
+                    None => parameters.nth(call.index),
+                }?
+                .ty
+                .clone()
+            } else {
+                let signature = match &call.callee.kind {
+                    ExprKind::Name(name) => ty(module, document.text.len(), name, offset)?,
+                    _ => return None,
+                };
+                let Type::Function(signature) = signature else {
+                    return None;
+                };
+                match call.named {
+                    Some(name) => signature
+                        .parameters
+                        .iter()
+                        .find(|parameter| parameter.name == name),
+                    None => signature.parameters.get(call.index),
+                }?
+                .ty
+                .clone()
+            };
+            Some((
+                expected,
+                call.value.unwrap_or(Span {
+                    start: offset,
+                    end: offset,
+                    ..Default::default()
+                }),
+            ))
+        })?;
+    let (expected, span) = expected;
+    if offset < span.start || offset > span.end {
+        return None;
+    }
+    let values = expected.string_literals()?;
+    Some(
+        json!({"isIncomplete":false,"items":values.into_iter().map(|value| {
+        let quoted=sanim_lang::core::template::quote_string(value);
+        json!({"label":quoted,"kind":20,"detail":expected.to_string(),"textEdit":{"range":document.range(span),"newText":quoted}})
+    }).collect::<Vec<_>>()}),
+    )
 }
 
 pub(crate) fn completion(
@@ -358,18 +467,34 @@ pub(crate) fn completion(
         .document;
     let offset = document.offset(position)?;
     let syntax = workspace.documents[uri].syntax();
+    if let Some(items) = literal_completion(workspace, uri, offset, &syntax) {
+        return Ok(items);
+    }
     if let Some((opening, span)) = markup_position(&syntax, offset) {
         let prefix = &document.text[span.start..offset];
-        let mut items = sanim_lang::utilities::completions(&opening.name, prefix).into_iter().map(|utility| json!({
-            "label":utility.token,"kind":20,"detail":utility.detail(),
-            "documentation":{"kind":"markdown","value":utility.markdown()},
-            "textEdit":{"range":document.range(span),"newText":utility.token},
-        })).collect::<Vec<_>>();
+        let mut items = sanim_lang::utilities::completions(&opening.name, prefix)
+            .into_iter()
+            .map(|utility| {
+                json!({
+                    "label":utility.token,"kind":20,"detail":utility.detail(),
+                    "documentation":{"kind":"markdown","value":utility.markdown()},
+                    "textEdit":{"range":document.range(span),"newText":utility.token},
+                })
+            })
+            .collect::<Vec<_>>();
         if let Some(builtin) = prelude::builtin(&opening.name) {
-            items.extend(builtin.parameters.iter().filter(|parameter| parameter.name.starts_with(prefix)).map(|parameter| json!({
-                "label":parameter.name,"kind":10,"detail":parameter.ty.to_string(),
-                "textEdit":{"range":document.range(span),"newText":parameter.name},
-            })));
+            items.extend(
+                builtin
+                    .parameters
+                    .iter()
+                    .filter(|parameter| parameter.name.starts_with(prefix))
+                    .map(|parameter| {
+                        json!({
+                            "label":parameter.name,"kind":10,"detail":parameter.ty.to_string(),
+                            "textEdit":{"range":document.range(span),"newText":parameter.name},
+                        })
+                    }),
+            );
         }
         return Ok(json!({"isIncomplete":false,"items":items}));
     }
@@ -424,21 +549,37 @@ pub(crate) fn completion(
     Ok(json!({"isIncomplete":false,"items":items.into_values().collect::<Vec<_>>()}))
 }
 
-pub(crate) fn reflected_at(workspace: &Workspace, uri: &str, position: &Value) -> Option<std::sync::Arc<sanim_lang::core::reflection::Declaration>> {
+pub(crate) fn reflected_at(
+    workspace: &Workspace,
+    uri: &str,
+    position: &Value,
+) -> Option<std::sync::Arc<sanim_lang::core::reflection::Declaration>> {
     let document = &workspace.documents.get(uri)?.document;
     let offset = document.offset(position).ok()?;
     let (_, module) = workspace.module(uri)?;
-    let symbol = symbols(module, document.text.len()).into_iter().find(|symbol| {
-        symbol.selection.start <= offset && offset < symbol.selection.end
-    }).or_else(|| {
-        let expression = expression_at(&module.ast, offset)?;
-        let ExprKind::Name(name) = expression.kind else { return None };
-        find_symbol(module, document.text.len(), &name, offset)
-    });
-    module.checked.reflected.values().find(|input| {
-        input.span.start <= offset && offset < input.span.end
-            || symbol.as_ref().is_some_and(|symbol| symbol.name == input.name && symbol.span.start <= input.span.start && input.span.end <= symbol.span.end)
-    }).cloned()
+    let symbol = symbols(module, document.text.len())
+        .into_iter()
+        .find(|symbol| symbol.selection.start <= offset && offset < symbol.selection.end)
+        .or_else(|| {
+            let expression = expression_at(&module.ast, offset)?;
+            let ExprKind::Name(name) = expression.kind else {
+                return None;
+            };
+            find_symbol(module, document.text.len(), &name, offset)
+        });
+    module
+        .checked
+        .reflected
+        .values()
+        .find(|input| {
+            input.span.start <= offset && offset < input.span.end
+                || symbol.as_ref().is_some_and(|symbol| {
+                    symbol.name == input.name
+                        && symbol.span.start <= input.span.start
+                        && input.span.end <= symbol.span.end
+                })
+        })
+        .cloned()
 }
 
 pub(crate) fn hover(workspace: &Workspace, uri: &str, position: &Value) -> Result<Value, String> {
@@ -450,10 +591,17 @@ pub(crate) fn hover(workspace: &Workspace, uri: &str, position: &Value) -> Resul
     let offset = document.offset(position)?;
     let syntax = workspace.documents[uri].syntax();
     if let Some((opening, span)) = markup_position(&syntax, offset)
-        && let Some(attribute) = opening.attributes.iter().find(|attribute| attribute.utility && attribute.span == span)
+        && let Some(attribute) = opening
+            .attributes
+            .iter()
+            .find(|attribute| attribute.utility && attribute.span == span)
     {
-        let value = sanim_lang::utilities::describe(&opening.name, &attribute.name).map(|utility| utility.markdown()).unwrap_or_else(std::convert::identity);
-        return Ok(json!({"contents":{"kind":"markdown","value":value},"range":document.range(span)}));
+        let value = sanim_lang::utilities::describe(&opening.name, &attribute.name)
+            .map(|utility| utility.markdown())
+            .unwrap_or_else(std::convert::identity);
+        return Ok(
+            json!({"contents":{"kind":"markdown","value":value},"range":document.range(span)}),
+        );
     }
     let Some((_, module)) = workspace.module(uri) else {
         return Ok(Value::Null);
@@ -609,7 +757,11 @@ struct CallPosition {
     named: Option<String>,
     value: Option<Span>,
 }
-fn call_position(analysis: &crate::workspace::Analysis, module: &AnalyzedModule, offset: usize) -> Option<CallPosition> {
+fn call_position(
+    analysis: &crate::workspace::Analysis,
+    module: &AnalyzedModule,
+    offset: usize,
+) -> Option<CallPosition> {
     let mut call: Option<Expr> = None;
     expressions(&module.ast, &mut |expression| {
         if matches!(&expression.kind,ExprKind::Call {callee,..} if callee.span.end>callee.span.start)
@@ -631,18 +783,25 @@ fn call_position(analysis: &crate::workspace::Analysis, module: &AnalyzedModule,
             .iter()
             .position(|(_, value)| offset <= value.span.end)
             .unwrap_or(args.len());
-        Some(CallPosition { callee:*callee, index, named:args.get(index).and_then(|(name, _)| name.clone()), value:args.get(index).map(|(_, value)| value.span) })
-    } else if let Some(pending) = analysis
-        .pending_calls
-        .iter()
-        .filter(|pending| pending.span.start <= offset && offset <= pending.span.end)
-        .min_by_key(|pending| pending.span.end - pending.span.start)
-    {
-        Some(CallPosition {callee:pending.callee.clone(),index:pending.argument,named:pending.argument_name.clone(),value:pending.argument_span})
+        Some(CallPosition {
+            callee: *callee,
+            index,
+            named: args.get(index).and_then(|(name, _)| name.clone()),
+            value: args.get(index).map(|(_, value)| value.span),
+        })
     } else {
-        None
+        analysis
+            .pending_calls
+            .iter()
+            .filter(|pending| pending.span.start <= offset && offset <= pending.span.end)
+            .min_by_key(|pending| pending.span.end - pending.span.start)
+            .map(|pending| CallPosition {
+                callee: pending.callee.clone(),
+                index: pending.argument,
+                named: pending.argument_name.clone(),
+                value: pending.argument_span,
+            })
     }
-
 }
 
 pub(crate) fn signature(
@@ -659,7 +818,13 @@ pub(crate) fn signature(
     let Some((analysis, module)) = workspace.module(uri) else {
         return Ok(Value::Null);
     };
-    let Some(CallPosition {callee,index,named,..}) = call_position(analysis, module, offset) else {
+    let Some(CallPosition {
+        callee,
+        index,
+        named,
+        ..
+    }) = call_position(analysis, module, offset)
+    else {
         return Ok(Value::Null);
     };
     let native = if let ExprKind::Name(name) = &callee.kind {

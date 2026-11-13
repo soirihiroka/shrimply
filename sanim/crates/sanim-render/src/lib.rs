@@ -1,4 +1,4 @@
-//! Skia command recording and explicit headless raster output. No SVG or GUI toolkit.
+//! Skia command recording, native bitmap/SVG assets and explicit headless raster output.
 use sanim_core::{math::to_f64, *};
 use skia_safe::{Canvas, Picture, PictureRecorder, Rect};
 use std::{collections::BTreeMap, rc::Rc, sync::Arc};

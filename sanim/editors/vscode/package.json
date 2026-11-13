@@ -1,7 +1,7 @@
 {
   "name": "sanim",
   "displayName": "Sanim",
-  "description": "Sanim syntax highlighting and the native static Sanim language server.",
+  "description": "Sanim syntax highlighting and Shrimply's native language server.",
   "version": "0.1.0",
   "publisher": "shrimply",
   "license": "GPL-3.0-or-later",

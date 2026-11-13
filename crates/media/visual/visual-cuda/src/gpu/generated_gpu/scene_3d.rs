@@ -7,7 +7,7 @@ use std::sync::Arc;
 use ash::vk;
 use shrimply_gpu_cuda::{CudaContext, CudaStream, LaunchConfig, sys};
 use shrimply_math_color::Color;
-use shrimply_visual_frame::{VisualFormat, VisualFrame, VisualPlane};
+use shrimply_visual_frame::cuda::{VisualFormat, VisualFrame, VisualPlane};
 
 use crate::gpu::kernels::PreviewModule;
 

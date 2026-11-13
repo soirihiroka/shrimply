@@ -33,6 +33,25 @@ impl<K: Eq + Hash + Clone, V, R: Clone> Cache<K, V, R> {
             max_entries,
         }
     }
+    /// Apply host limits before admitting new values, including failed work.
+    pub fn configure(&mut self, max_bytes: usize, max_entries: usize) {
+        self.max_bytes = max_bytes;
+        self.max_entries = max_entries;
+        self.trim(max_bytes, max_entries);
+    }
+    pub fn usage(&self) -> (usize, usize) {
+        (self.bytes, self.entries.len())
+    }
+    fn trim(&mut self, max_bytes: usize, max_entries: usize) {
+        while self.entries.len() > max_entries || self.bytes > max_bytes {
+            let (_, oldest) = self.ages.pop_first().expect("cached LRU age");
+            self.bytes -= self
+                .entries
+                .remove(&oldest)
+                .expect("cached LRU entry")
+                .bytes;
+        }
+    }
     pub fn get(&mut self, key: &K) -> Option<R> {
         let entry = self.entries.get_mut(key)?;
         self.ages.remove(&entry.used);
@@ -52,16 +71,7 @@ impl<K: Eq + Hash + Clone, V, R: Clone> Cache<K, V, R> {
         if bytes > self.max_bytes || self.max_entries == 0 {
             return;
         }
-        while self.entries.len() >= self.max_entries || self.bytes > self.max_bytes - bytes {
-            let Some((_, oldest)) = self.ages.pop_first() else {
-                break;
-            };
-            self.bytes -= self
-                .entries
-                .remove(&oldest)
-                .expect("cached LRU entry")
-                .bytes;
-        }
+        self.trim(self.max_bytes - bytes, self.max_entries - 1);
         self.clock = self
             .clock
             .checked_add(1)

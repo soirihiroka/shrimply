@@ -4,6 +4,27 @@ use crate::Value;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Emit a plain value as Sanim source, escaping interpolation braces as well
+/// as the escapes understood by the language's direct string parser.
+pub fn quote_string(value: &str) -> String {
+    let mut source = String::with_capacity(value.len().saturating_add(2));
+    source.push('"');
+    for character in value.chars() {
+        match character {
+            '\n' => source.push_str("\\n"),
+            '\r' => source.push_str("\\r"),
+            '\t' => source.push_str("\\t"),
+            '"' => source.push_str("\\\""),
+            '\\' => source.push_str("\\\\"),
+            '{' => source.push_str("{{"),
+            '}' => source.push_str("}}"),
+            character => source.push(character),
+        }
+    }
+    source.push('"');
+    source
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum TemplatePart<T> {
     Text(Arc<str>),
