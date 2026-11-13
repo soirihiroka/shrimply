@@ -1,0 +1,86 @@
+name: Sanim editor extensions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/sanim-extensions.yml"
+      - "sanim/editors/**"
+  pull_request:
+    paths:
+      - ".github/workflows/sanim-extensions.yml"
+      - "sanim/editors/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sanim-extensions-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TZ: UTC
+
+jobs:
+  zed:
+    name: Zed
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: sanim/editors/zed
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain and WebAssembly target
+        run: |
+          toolchain=$(sed -n 's/^RUST_TOOLCHAIN ?= //p' Makefile)
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          make target
+
+      - name: Check, build, and verify installation
+        run: make check install-check
+
+      - name: Upload prebuilt extension
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanim-zed
+          path: |
+            sanim/editors/zed/extension.toml
+            sanim/editors/zed/extension.wasm
+            sanim/editors/zed/languages/
+            sanim/editors/zed/install.py
+            sanim/editors/zed/README.md
+          if-no-files-found: error
+
+  vscode:
+    name: VS Code
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: sanim/editors/vscode
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check types and grammar
+        run: |
+          npm run check
+          npm test
+
+      - name: Package extension
+        run: npm run package
+
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v6
+        with:
+          name: sanim-vscode
+          path: sanim/editors/vscode/*.vsix
+          if-no-files-found: error
