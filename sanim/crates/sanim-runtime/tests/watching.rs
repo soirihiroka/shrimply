@@ -499,3 +499,30 @@ fn observation_retains_published_state_without_keeping_runtime_workers_alive() {
     assert_eq!(last.generation, ready.generation);
     assert_eq!(last.prepared.unwrap().reflected[0].label, "Display Color");
 }
+
+#[test]
+fn editor_font_activation_reloads_text_without_source_edits_or_polling() {
+    let text = Fixture::new();
+    text.write(
+        "main.sanim",
+        "let label=Text(\"Shared native fonts\")\nadd(label)\nwait(1s)",
+    );
+    let text_runtime = text.open();
+    let first = until(&text_runtime, |s| !s.preparing && s.prepared.is_some());
+    let data = Fixture::new();
+    data.write("main.sanim", "wait(1s)");
+    let data_runtime = data.open();
+    let unchanged = until(&data_runtime, |s| !s.preparing && s.prepared.is_some());
+    let font = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/assets/DejaVuSansCondensed-subset.ttf");
+    sanim_data::font::register_application_font(font).unwrap();
+    let next = until(&text_runtime, |s| {
+        !s.preparing && s.revision > first.revision
+    });
+    let prepared = next.prepared.unwrap();
+    assert_eq!(prepared.statistics.restored_statements, 0);
+    assert_ne!(prepared.fingerprint, first.prepared.unwrap().fingerprint);
+    let idle = data_runtime.wait_for_change(unchanged.generation, Duration::from_millis(200));
+    assert_eq!(idle.generation, unchanged.generation);
+    assert!(!idle.preparing);
+}

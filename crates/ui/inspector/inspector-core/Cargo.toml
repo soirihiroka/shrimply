@@ -8,6 +8,7 @@ default = ["cuda-backend"]
 cuda-backend = ["dep:shrimply-visual-cuda"]
 
 [dependencies]
+shrimply-fonts = { workspace = true, features = ["native"] }
 shrimply-trust-core.workspace = true
 async-channel.workspace = true
 ffmpeg-next.workspace = true

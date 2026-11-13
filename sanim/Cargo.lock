@@ -1127,6 +1127,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shrimply-fonts",
  "shrimply-math-color",
  "taffy",
 ]
@@ -1144,8 +1145,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
- "skia-safe",
- "tempfile",
+ "shrimply-fonts",
  "toml 0.8.23",
  "zip",
 ]
@@ -1290,6 +1290,18 @@ dependencies = [
  "shrimply-math-color",
  "shrimply-math-geometry",
  "skia-safe",
+]
+
+[[package]]
+name = "shrimply-fonts"
+version = "0.1.0"
+dependencies = [
+ "cairo-rs",
+ "pango",
+ "pangocairo",
+ "serde",
+ "skia-safe",
+ "tempfile",
 ]
 
 [[package]]

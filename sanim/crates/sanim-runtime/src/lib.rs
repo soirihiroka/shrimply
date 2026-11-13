@@ -43,6 +43,7 @@ struct Configuration {
 }
 enum Command {
     Changed,
+    FontsChanged,
     WatchError(String),
     Inputs(u64, Configuration),
     Stop,
@@ -77,6 +78,7 @@ pub struct Runtime {
     waker: Waker,
     configuration: Mutex<Configuration>,
     stopping: Arc<AtomicBool>,
+    _font_changes: sanim_data::font::FontChange,
 }
 impl Runtime {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, String> {
@@ -116,6 +118,14 @@ impl Runtime {
             Condvar::new(),
         ));
         let (commands, receiver) = mpsc::sync_channel(32);
+        let font_changes = sanim_data::font::subscribe(Arc::new({
+            let commands = commands.clone();
+            move || {
+                // A full queue already guarantees another preparation. The
+                // session checks the latest font epoch after coalescing it.
+                let _ = commands.try_send(Command::FontsChanged);
+            }
+        }));
         let sources = WatchedSources::new(root, &entry, commands.clone())?;
         let published = shared.clone();
         let waker = Waker::default();
@@ -155,6 +165,7 @@ impl Runtime {
             waker,
             configuration: Mutex::new(configuration),
             stopping,
+            _font_changes: font_changes,
         })
     }
     /// Register a host notification. Called without runtime locks, including once on registration.
@@ -433,6 +444,7 @@ fn worker(
             }
             sources.retain(session.dependencies());
             input_dirty = false;
+            dirty = false;
         }
         match receiver.recv() {
             Ok(Command::Stop) | Err(_) => break,
@@ -448,12 +460,14 @@ fn worker(
                 dirty = true;
             }
             Ok(Command::Changed) => dirty = true,
+            Ok(Command::FontsChanged) => dirty |= session.font_environment_changed(),
         }
         // Coalesce already-queued writes and parameter updates into one revision.
         while let Ok(command) = receiver.try_recv() {
             match command {
                 Command::Stop => return,
                 Command::Changed => dirty = true,
+                Command::FontsChanged => dirty |= session.font_environment_changed(),
                 Command::WatchError(error) => {
                     watch_error = Some(error);
                 }
@@ -484,6 +498,7 @@ fn worker(
                 match receiver.recv_timeout(timeout) {
                     Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
                     Ok(Command::Changed) => {}
+                    Ok(Command::FontsChanged) => dirty |= session.font_environment_changed(),
                     Ok(Command::WatchError(error)) => {
                         watch_error = Some(error);
                         break;

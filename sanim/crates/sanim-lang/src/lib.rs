@@ -225,7 +225,7 @@ pub struct Engine {
     pub(crate) attempted: BTreeMap<String, String>,
     progress_observer: Option<progress::Observer>,
     states: eval::state::Store,
-    font_environment: Option<u32>,
+    font_environment: Option<sanim_data::font::FontEpoch>,
 }
 
 #[derive(Clone)]
@@ -439,7 +439,20 @@ impl Engine {
                 });
             }
             if family_fonts {
-                self.font_environment = sanim_data::font::system_font_epoch();
+                let after = sanim_data::font::system_font_epoch();
+                // Lazy native face loading may change the map serial during
+                // shaping. Preserve the starting registry revision so an app
+                // font activated mid-prepare forces the next reload to rebuild.
+                self.font_environment = after.map(|after| sanim_data::font::FontEpoch {
+                    revision: self
+                        .font_environment
+                        .map_or(after.revision, |before| before.revision),
+                    ..after
+                });
+                prepared.fingerprint = digest(
+                    &serde_json::to_vec(&(&prepared.fingerprint, self.font_environment))
+                        .expect("native font environment serializes"),
+                );
             }
             prepared.dependencies = snapshot.fingerprints();
             prepared.statistics = statistics.clone();

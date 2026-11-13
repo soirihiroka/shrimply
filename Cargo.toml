@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/media/fonts",
     "crates/application/cli",
     "crates/application/local-ipc",
     "crates/gpu/vulkan/gpu-vulkan",
@@ -156,6 +157,7 @@ default-members = ["crates/binaries/editor-gtk", "crates/binaries/launcher-gtk"]
 exclude = ["external/vtracer", "sanim"]
 
 [workspace.dependencies]
+shrimply-fonts = { path = "crates/media/fonts" }
 sanim-core = { path = "sanim/crates/sanim-core" }
 sanim-data = { path = "sanim/crates/sanim-data" }
 sanim-lang = { path = "sanim/crates/sanim-lang" }

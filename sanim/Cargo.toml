@@ -8,6 +8,7 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
+shrimply-fonts = { path = "../crates/media/fonts" }
 shrimply-math-color = { path = "../crates/math/color" }
 shrimply-drawing-skia = { path = "../crates/render/drawing-skia" }
 glam = "0.34"

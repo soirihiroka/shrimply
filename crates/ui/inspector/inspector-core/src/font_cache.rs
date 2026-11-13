@@ -727,17 +727,13 @@ pub fn activate_family(family: MaterializedFamily) -> Result<(), String> {
     if active.contains_key(&family.name) {
         return Ok(());
     }
-    let paths = family.paths.clone();
+    shrimply_fonts::native::register_application_fonts(&family.paths)?;
     active.insert(
         family.name,
         ActiveFamily {
             _directory: family.directory,
         },
     );
-    drop(active);
-    for path in paths {
-        shrimply_visual_core::text_layout::register_application_font(path)?;
-    }
     Ok(())
 }
 

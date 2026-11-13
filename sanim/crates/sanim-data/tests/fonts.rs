@@ -79,8 +79,8 @@ fn font_family_descriptors_reject_ambiguous_or_unsafe_names() {
     for (family, fallback) in [
         ("", "sans-serif"),
         ("sans-serif", ""),
-        (" Arial", "sans-serif"),
-        ("Arial,serif", "sans-serif"),
+        ("Arial,", "sans-serif"),
+        ("\"Arial", "sans-serif"),
         ("Arial\0", "serif"),
     ] {
         assert!(
@@ -91,6 +91,15 @@ fn font_family_descriptors_reject_ambiguous_or_unsafe_names() {
     let forged = Font::Family(vec!["broken\0font".into()].into());
     let error = sanim_data::font::shape(&forged, "hello", 24.into()).unwrap_err();
     assert!(error.contains("control characters"), "{error}");
+}
+
+#[test]
+fn css_family_lists_preserve_order_and_normalize_quotes_and_duplicates() {
+    let font = Font::family(" 'Google Sans', Arial, sans-serif ", "SANS-SERIF").unwrap();
+    assert_eq!(
+        font,
+        Font::Family(vec!["Google Sans".into(), "Arial".into(), "sans-serif".into()].into())
+    );
 }
 
 #[test]

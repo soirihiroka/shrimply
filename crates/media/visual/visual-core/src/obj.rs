@@ -186,6 +186,7 @@ impl State {
                     {
                         let mesh = shrimply_text_3d::generate_mesh(&geometry)
                             .map_err(|error| error.to_string())?;
+                        let key = text_geometry_key(&geometry);
                         self.text_sessions.insert(
                             modifier.id,
                             TextSession {
@@ -563,6 +564,9 @@ impl State {
 
 fn text_geometry_key(geometry: &shrimply_text_3d::Geometry<'_>) -> u64 {
     let mut key = DefaultHasher::new();
+    shrimply_fonts::native::system_font_epoch()
+        .expect("load shared native font map")
+        .hash(&mut key);
     geometry.text.hash(&mut key);
     geometry.font_families.hash(&mut key);
     geometry.font_style.hash(&mut key);

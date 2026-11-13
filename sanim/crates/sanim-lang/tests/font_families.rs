@@ -48,7 +48,7 @@ fn font_defaults_fallback_types_and_diagnostics_are_explicit() {
         "Font(12)",
         "Font(\"sans-serif\",false)",
         "Font(\"\")",
-        "Font(\"Arial,serif\")",
+        "Font(\"Arial,\")",
     ] {
         let mut files = MemorySources::default();
         files.insert("main.sanim", format!("let typeface={expression}"));
@@ -59,6 +59,24 @@ fn font_defaults_fallback_types_and_diagnostics_are_explicit() {
             "{expression}"
         );
     }
+}
+
+#[test]
+fn css_family_fallback_lists_are_native_font_values() {
+    let mut files = MemorySources::default();
+    files.insert(
+        "main.sanim",
+        "let typeface=Font(\"'Google Sans', Arial, sans-serif\")",
+    );
+    let prepared = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(
+        prepared.bindings["typeface"],
+        Value::Font(Font::Family(
+            vec!["Google Sans".into(), "Arial".into(), "sans-serif".into()].into()
+        ))
+    );
 }
 
 #[test]

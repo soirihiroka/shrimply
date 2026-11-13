@@ -5224,6 +5224,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "shrimply-fonts",
  "shrimply-math-color",
  "taffy",
 ]
@@ -5241,8 +5242,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
- "skia-safe",
- "tempfile",
+ "shrimply-fonts",
  "toml 0.8.23",
  "zip",
 ]
@@ -6303,6 +6303,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-fonts"
+version = "0.1.0"
+dependencies = [
+ "cairo-rs",
+ "pango",
+ "pangocairo",
+ "serde",
+ "skia-safe",
+ "tempfile",
+]
+
+[[package]]
 name = "shrimply-framegraph-appkit"
 version = "0.1.0"
 dependencies = [
@@ -6425,6 +6437,7 @@ dependencies = [
  "shrimply-blender-core",
  "shrimply-compute-client",
  "shrimply-editor-state",
+ "shrimply-fonts",
  "shrimply-i18n",
  "shrimply-keyframe-graph-skia",
  "shrimply-manim-bridge",
@@ -7405,6 +7418,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "num-traits",
  "serde",
+ "shrimply-fonts",
  "shrimply-math-color",
  "shrimply-render-core",
  "shrimply-timeline-value",
@@ -7638,6 +7652,7 @@ dependencies = [
  "pango",
  "pangocairo",
  "serde",
+ "shrimply-fonts",
  "shrimply-property-model",
  "shrimply-scene-3d",
  "tracing",
@@ -7958,6 +7973,7 @@ dependencies = [
  "shrimply-blender-core",
  "shrimply-compute-client",
  "shrimply-drawing-skia",
+ "shrimply-fonts",
  "shrimply-layered-image-loader",
  "shrimply-math-color",
  "shrimply-math-core",

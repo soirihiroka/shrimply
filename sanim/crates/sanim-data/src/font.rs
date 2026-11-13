@@ -1,92 +1,17 @@
 //! Native font family fallback and explicit assets share one Pango outline pipeline.
-use pango::prelude::*;
 use sanim_core::{Font, Fraction, TextSegment, Unit, Vec2, math::to_f64, verify::Bounds};
-use skia_safe::{Data, FontMgr, Typeface};
-use std::io::Write;
-
-fn typeface(bytes: &[u8]) -> Result<Typeface, String> {
-    FontMgr::new()
-        .new_from_data(Data::new_copy(bytes), None)
-        .ok_or_else(|| "invalid font resource: Skia could not parse this font".into())
-}
-pub fn validate(bytes: &[u8]) -> Result<(), String> {
-    typeface(bytes).map(|_| ())
-}
-
-thread_local! {
-    // Match the host's native backend without mutating Pango's global default.
-    static SYSTEM_MAP: Option<pango::FontMap> = [
-        cairo::FontType::FontTypeQuartz,
-        cairo::FontType::FontTypeWin32,
-        cairo::FontType::FontTypeFt,
-    ].into_iter().find_map(pangocairo::FontMap::for_font_type);
-}
-
-fn system_map() -> Result<pango::FontMap, String> {
-    SYSTEM_MAP.with(|map| map.clone().ok_or_else(|| "Pango has no native font backend; install a Pango build with CoreText, Win32, or Fontconfig/FreeType support".into()))
-}
-
-/// The map serial changes when native font selection is invalidated. Text cache
-/// keys include it, including inline Font(...) and descriptors stored in records.
-pub fn system_font_epoch() -> Option<u32> {
-    system_map().ok().map(|map| map.serial())
-}
+pub use shrimply_fonts::native::{
+    FontChange, FontEpoch, register_application_font, subscribe, system_font_epoch,
+    validate_asset as validate,
+};
 
 pub fn shape(
     font: &Font,
     text: &str,
     size: Fraction,
 ) -> Result<(Bounds, Vec<TextSegment>), String> {
-    font.validate()?;
-    let size = to_f64(size)?;
-    if size <= 0. || size * f64::from(pango::SCALE) > f64::from(i32::MAX) {
-        return Err("font size exceeds Pango layout range".into());
-    }
-    let mut description = pango::FontDescription::new();
-    description.set_absolute_size(size * f64::from(pango::SCALE));
-    // Keep an explicit asset's private snapshot alive until outlining finishes.
-    let mut asset = None;
-    let (map, fallback) = match font {
-        Font::Asset(bytes) => {
-            let face = typeface(bytes)?;
-            let mut file = tempfile::Builder::new()
-                .suffix(".ttf")
-                .tempfile()
-                .map_err(|error| error.to_string())?;
-            file.write_all(bytes).map_err(|error| error.to_string())?;
-            file.flush().map_err(|error| error.to_string())?;
-            // CoreText cannot add private files. Asset selection remains isolated
-            // and file-capable on macOS, regardless of the ambient backend.
-            let map=[cairo::FontType::FontTypeFt,cairo::FontType::FontTypeWin32]
-                .into_iter().find_map(pangocairo::FontMap::for_font_type)
-                .ok_or("Pango has no backend supporting explicit font files; use a Pango build with Fontconfig/FreeType enabled (included in Homebrew's Pango)")?;
-            map.add_font_file(file.path())
-                .map_err(|error| format!("Pango could not load font asset: {error}"))?;
-            description.set_family(&face.family_name());
-            let style = face.font_style();
-            description.set_stretch(pango::Stretch::__Unknown((*style.width() - 1).clamp(0, 8)));
-            description.set_weight(pango::Weight::__Unknown(*style.weight()));
-            description.set_style(match style.slant() {
-                skia_safe::font_style::Slant::Upright => pango::Style::Normal,
-                skia_safe::font_style::Slant::Italic => pango::Style::Italic,
-                skia_safe::font_style::Slant::Oblique => pango::Style::Oblique,
-            });
-            asset = Some(file);
-            (map, false)
-        }
-        Font::Family(families) => {
-            description.set_family(&families.join(","));
-            (system_map()?, true)
-        }
-    };
-    let context = map.create_context();
-    context.set_round_glyph_positions(false);
-    context.set_language(Some(&pango::Language::from_string("und")));
-    let layout = pango::Layout::new(&context);
-    layout.set_font_description(Some(&description));
-    let attributes = pango::AttrList::new();
-    attributes.insert(pango::AttrInt::new_fallback(fallback));
-    layout.set_attributes(Some(&attributes));
+    let prepared = shrimply_fonts::native::prepare(font, to_f64(size)?)?;
+    let layout = &prepared.layout;
     layout.set_text(text);
     if layout.unknown_glyphs_count() != 0 {
         return Err(format!(
@@ -96,14 +21,14 @@ pub fn shape(
     }
     let mut runs = layout.iter();
     loop {
-        if let Some(run) = runs.run_readonly() {
-            const COLOR_GLYPH_BIT: u32 = 1 << 1;
-            // pango-rs exposes this C bitfield storage, as in the editor text renderer.
-            if run.glyph_string().glyph_info().iter().any(|glyph| unsafe {
-                (*glyph.as_ptr()).attr.is_cluster_start & COLOR_GLYPH_BIT != 0
-            }) {
-                return Err("color/bitmap font glyphs require a color-text renderer; provide an outline font for Sanim Text".into());
-            }
+        if let Some(run) = runs.run_readonly()
+            && run
+                .glyph_string()
+                .glyph_info()
+                .iter()
+                .any(shrimply_fonts::native::glyph_is_color)
+        {
+            return Err("color/bitmap font glyphs require a color-text renderer; provide an outline font for Sanim Text".into());
         }
         if !runs.next_run() {
             break;
@@ -115,7 +40,7 @@ pub fn shape(
     // Keep the existing first-baseline origin for element positions.
     let baseline = f64::from(layout.baseline()) / f64::from(pango::SCALE);
     canvas.move_to(0., -baseline);
-    pangocairo::functions::layout_path(&canvas, &layout);
+    pangocairo::functions::layout_path(&canvas, layout);
     let path = canvas.copy_path().map_err(|e| e.to_string())?;
     let outline = path
         .iter()
@@ -151,7 +76,6 @@ pub fn shape(
     if min.iter().chain(&max).any(|v| !v.is_finite()) {
         return Err("Pango text bounds overflow".into());
     }
-    drop(asset);
     Ok((
         Bounds {
             min: Vec2 {

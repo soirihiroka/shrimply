@@ -61,6 +61,12 @@ impl Session {
     pub fn last_error(&self) -> Option<&Diagnostic> {
         self.last_error.as_ref()
     }
+    /// Native font activation matters only to sessions that prepared family text.
+    pub fn font_environment_changed(&self) -> bool {
+        self.engine
+            .font_environment
+            .is_some_and(|epoch| Some(epoch) != sanim_data::font::system_font_epoch())
+    }
     /// Includes failed reads so creating a missing dependency can recover the session.
     pub fn dependencies(&self) -> impl Iterator<Item = &str> {
         self.observed.keys().map(String::as_str)
@@ -98,7 +104,10 @@ impl Session {
             };
             observed.insert(path.clone(), value);
         }
-        if !observed.is_empty() && observed == self.observed && overrides == self.previous_overrides
+        if !self.font_environment_changed()
+            && !observed.is_empty()
+            && observed == self.observed
+            && overrides == self.previous_overrides
         {
             return Reload::Unchanged;
         }

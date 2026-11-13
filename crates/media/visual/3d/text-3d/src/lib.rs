@@ -1,12 +1,4 @@
-use std::{
-    cell::Cell,
-    fmt,
-    path::{Path, PathBuf},
-    sync::{
-        OnceLock, RwLock,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::fmt;
 
 use cairo::PathSegment;
 use glam::{Vec2, Vec3};
@@ -18,9 +10,10 @@ use lyon_tessellation::{
     math::{Point, point},
     path::Path as LyonPath,
 };
-use pango::prelude::FontMapExt;
 use pango::{Alignment, FontDescription, Gravity, GravityHint};
 use serde::{Deserialize, Deserializer, Serialize};
+use shrimply_fonts::native as fonts;
+pub use shrimply_fonts::native::register_application_font;
 use shrimply_property_model::{
     DEFAULT_TEXT_FONT_FAMILY, FontFamily, FontVariation, TextDirection, TextFontStyle,
     TextHorizontalAlign, VerticalAlign,
@@ -44,13 +37,6 @@ pub const DEFAULT_ROUNDNESS: f32 = 0.03;
 
 const OUTLINE_TOLERANCE_EM: f32 = 0.01;
 const LAYOUT_EM_SIZE: f64 = 1024.0;
-
-static APPLICATION_FONT_REVISION: AtomicU64 = AtomicU64::new(0);
-static APPLICATION_FONT_FILES: OnceLock<RwLock<Vec<PathBuf>>> = OnceLock::new();
-
-thread_local! {
-    static REGISTERED_FONT_REVISION: Cell<u64> = const { Cell::new(0) };
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Text3dModifier {
@@ -278,24 +264,6 @@ impl fmt::Display for Text3dError {
 
 impl std::error::Error for Text3dError {}
 
-pub fn register_application_font(path: impl AsRef<Path>) -> Result<(), String> {
-    let path = path.as_ref();
-    pangocairo::FontMap::default()
-        .add_font_file(path)
-        .map_err(|error| format!("could not register font {}: {error}", path.display()))?;
-    let fonts = APPLICATION_FONT_FILES.get_or_init(|| RwLock::new(Vec::new()));
-    let mut fonts = fonts
-        .write()
-        .unwrap_or_else(|_| panic!("application font registry lock died"));
-    if fonts.iter().any(|registered| registered == path) {
-        return Ok(());
-    }
-    fonts.push(path.to_path_buf());
-    let revision = APPLICATION_FONT_REVISION.fetch_add(1, Ordering::AcqRel) + 1;
-    REGISTERED_FONT_REVISION.set(revision);
-    Ok(())
-}
-
 pub fn generate_mesh(geometry: &Geometry<'_>) -> Result<ObjMesh, Text3dError> {
     if geometry.text.trim().is_empty() {
         return Ok(empty_mesh());
@@ -347,27 +315,7 @@ pub fn generate_mesh(geometry: &Geometry<'_>) -> Result<ObjMesh, Text3dError> {
     mesh.finish()
 }
 
-fn register_pending_application_fonts() {
-    let revision = APPLICATION_FONT_REVISION.load(Ordering::Acquire);
-    if REGISTERED_FONT_REVISION.get() == revision {
-        return;
-    }
-    if let Some(fonts) = APPLICATION_FONT_FILES.get() {
-        let fonts = fonts
-            .read()
-            .unwrap_or_else(|_| panic!("application font registry lock died"));
-        let font_map = pangocairo::FontMap::default();
-        for path in fonts.iter() {
-            if let Err(error) = font_map.add_font_file(path) {
-                tracing::warn!(path = %path.display(), "Could not register application font: {error}");
-            }
-        }
-    }
-    REGISTERED_FONT_REVISION.set(revision);
-}
-
 fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
-    register_pending_application_fonts();
     let surface = cairo::RecordingSurface::create(cairo::Content::Alpha, None)
         .map_err(|error| Text3dError(format!("create 3D text path surface: {error}")))?;
     let cairo = cairo::Context::new(&surface)
@@ -375,23 +323,12 @@ fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
     if geometry.direction == TextDirection::Vertical {
         cairo.rotate(std::f64::consts::FRAC_PI_2);
     }
-    let layout = pangocairo::functions::create_layout(&cairo);
-    let context = layout.context();
-    context.set_base_gravity(match geometry.direction {
-        TextDirection::Horizontal => Gravity::South,
-        TextDirection::Vertical => Gravity::East,
-    });
-    context.set_gravity_hint(GravityHint::Natural);
-
     let mut font = FontDescription::new();
-    let families = geometry
-        .font_families
-        .iter()
-        .map(FontFamily::name)
-        .collect::<Vec<_>>();
-    if !families.is_empty() {
-        font.set_family(&families.join(", "));
-    }
+    fonts::set_families(
+        &mut font,
+        geometry.font_families.iter().map(FontFamily::name),
+    )
+    .map_err(Text3dError)?;
     font.set_style(match geometry.font_style {
         TextFontStyle::Normal => pango::Style::Normal,
         TextFontStyle::Italic => pango::Style::Italic,
@@ -417,7 +354,15 @@ fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
         variations.push("ital=1".to_string());
     }
     font.set_variations(Some(&variations.join(",")));
-    layout.set_font_description(Some(&font));
+    let layout = fonts::layout(&font).map_err(Text3dError)?;
+    let context = layout.context();
+    pangocairo::functions::update_context(&cairo, &context);
+    context.set_base_gravity(match geometry.direction {
+        TextDirection::Horizontal => Gravity::South,
+        TextDirection::Vertical => Gravity::East,
+    });
+    context.set_gravity_hint(GravityHint::Natural);
+    layout.context_changed();
     layout.set_text(geometry.text);
     let (_, natural) = layout.extents();
     layout.set_width(natural.width().max(1));

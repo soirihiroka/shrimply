@@ -13,20 +13,7 @@ pub use shrimply_timeline_value::{
 
 pub const DEFAULT_TEXT_FONT_FAMILY: &str = "Geomini";
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, Hash, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum FontFamily {
-    Local { name: String },
-    GoogleFonts { name: String },
-}
-
-impl FontFamily {
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Local { name } | Self::GoogleFonts { name } => name,
-        }
-    }
-}
+pub use shrimply_fonts::FontFamily;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, Eq, Hash, PartialEq)]
 #[serde(rename_all = "snake_case")]

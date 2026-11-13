@@ -473,13 +473,17 @@ numeric/boolean arrays and retains shape; NPZ maps named arrays to record fields
 Object/pickle arrays, structured dtypes, Fortran order and unsupported formats
 fail explicitly. NPY floating data must be finite and representable. Limits
 cover decoded values, nesting, bytes, cumulative binding storage and NPZ expansion.
-Fonts are first-class values: `Font("Google Sans", "sans-serif")` tries the preferred
-native family then its fallback. `Font()` and `Font("sans-serif")` use the generic
+Fonts are first-class values: `Font("Google Sans, Arial, sans-serif")` uses an ordered
+CSS-style family list. `Font("Google Sans", "sans-serif")` also accepts a separate
+fallback. `Font()` and `Font("sans-serif")` use the generic
 sans family. `Text("Hello")` and chart axis labels use this default automatically.
 An explicit `font=` accepts either a family descriptor or `read<Font>("font.ttf")`
 for an exact bundled asset. Family selection depends on installed host fonts; the
 prepared Pango outlines are portable. Asset fonts remain isolated and report missing
 glyphs instead of silently substituting a different installed font.
+Sanim, editor text, and 3D text share `shrimply-fonts`: the same native family
+resolver, application font registry, and cache invalidation epochs. Fonts activated
+by the editor's font picker become available to Sanim on its render thread as well.
 
 ## Verification and diagnostics
 

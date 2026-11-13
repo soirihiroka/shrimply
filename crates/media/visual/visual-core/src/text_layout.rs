@@ -1,19 +1,11 @@
-use std::{
-    cell::{Cell, RefCell},
-    ops::Range,
-    path::{Path as FsPath, PathBuf},
-    rc::Rc,
-    sync::{
-        OnceLock, RwLock,
-        atomic::{AtomicU64, Ordering},
-    },
-};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use cached::{Cached, stores::LruCache};
 use cairo::PathSegment;
 use glib::translate::from_glib;
-use pango::prelude::FontMapExt;
 use pango::{Alignment, FontColor, FontDescription, Gravity, GravityHint};
+pub use shrimply_fonts::native::register_application_font;
+use shrimply_fonts::native::{self as fonts, FontEpoch};
 use skia_safe::{
     AlphaType, ColorType, Data, IRect, Image, ImageInfo, Matrix, Path, PathBuilder, Rect, Region,
 };
@@ -37,7 +29,6 @@ pub struct TextMaskUnit {
 
 const MAX_LAYOUT_CACHE_ENTRIES: usize = 1024;
 const MAX_COLOR_GLYPH_CACHE_ENTRIES: usize = 8;
-const PANGO_GLYPH_IS_COLOR_BIT: u32 = 1 << 1;
 
 struct ColorGlyphLayout {
     layout: pango::Layout,
@@ -186,9 +177,6 @@ impl ColorGlyphLayout {
     }
 }
 
-static APPLICATION_FONT_REVISION: AtomicU64 = AtomicU64::new(0);
-static APPLICATION_FONT_FILES: OnceLock<RwLock<Vec<PathBuf>>> = OnceLock::new();
-
 thread_local! {
     static LAYOUTS: RefCell<LruCache<Key, Rc<TextLayout>>> = RefCell::new(
         LruCache::builder()
@@ -196,27 +184,6 @@ thread_local! {
             .build()
             .expect("valid Pango text layout cache size"),
     );
-    static REGISTERED_FONT_REVISION: Cell<u64> = const { Cell::new(0) };
-}
-
-pub fn register_application_font(path: impl AsRef<FsPath>) -> Result<(), String> {
-    let path = path.as_ref();
-    shrimply_text_3d::register_application_font(path)?;
-    pangocairo::FontMap::default()
-        .add_font_file(path)
-        .map_err(|error| format!("could not register font {}: {error}", path.display()))?;
-    let fonts = APPLICATION_FONT_FILES.get_or_init(|| RwLock::new(Vec::new()));
-    let mut fonts = fonts
-        .write()
-        .unwrap_or_else(|_| panic!("application font registry lock died"));
-    if fonts.iter().any(|registered| registered == path) {
-        return Ok(());
-    }
-    fonts.push(path.to_path_buf());
-    let revision = APPLICATION_FONT_REVISION.fetch_add(1, Ordering::AcqRel) + 1;
-    REGISTERED_FONT_REVISION.set(revision);
-    LAYOUTS.with(|layouts| layouts.borrow_mut().cache_clear());
-    Ok(())
 }
 
 pub fn layout(
@@ -228,8 +195,8 @@ pub fn layout(
     line_height: f32,
     time: shrimply_project_document::project::Time,
 ) -> Rc<TextLayout> {
-    register_pending_application_fonts();
-    let key = Key {
+    let mut key = Key {
+        font_epoch: fonts::system_font_epoch().expect("load shared native font map"),
         text: content.to_string(),
         h_align: text.h_align.value_at(time),
         v_align: text.v_align.value_at(time),
@@ -257,36 +224,16 @@ pub fn layout(
         line_height,
         time,
     ));
+    key.font_epoch = fonts::system_font_epoch().expect("load shared native font map");
     LAYOUTS.with(|layouts| {
         layouts.borrow_mut().cache_set(key, Rc::clone(&layout));
     });
     layout
 }
 
-fn register_pending_application_fonts() {
-    let revision = APPLICATION_FONT_REVISION.load(Ordering::Acquire);
-    if REGISTERED_FONT_REVISION.get() == revision {
-        return;
-    }
-    let Some(fonts) = APPLICATION_FONT_FILES.get() else {
-        REGISTERED_FONT_REVISION.set(revision);
-        return;
-    };
-    let fonts = fonts
-        .read()
-        .unwrap_or_else(|_| panic!("application font registry lock died"));
-    let font_map = pangocairo::FontMap::default();
-    for path in fonts.iter() {
-        if let Err(error) = font_map.add_font_file(path) {
-            tracing::warn!(path = %path.display(), "Could not register application font: {error}");
-        }
-    }
-    REGISTERED_FONT_REVISION.set(revision);
-    LAYOUTS.with(|layouts| layouts.borrow_mut().cache_clear());
-}
-
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct Key {
+    font_epoch: FontEpoch,
     text: String,
     h_align: TextHorizontalAlign,
     v_align: VerticalAlign,
@@ -320,23 +267,9 @@ fn build(
         cairo.rotate(std::f64::consts::FRAC_PI_2);
     }
 
-    let layout = pangocairo::functions::create_layout(&cairo);
-    let context = layout.context();
-    context.set_base_gravity(match direction {
-        TextDirection::Horizontal => Gravity::South,
-        TextDirection::Vertical => Gravity::East,
-    });
-    context.set_gravity_hint(GravityHint::Natural);
-
     let mut font = FontDescription::new();
-    let font_families = text
-        .font_families
-        .iter()
-        .map(FontFamily::name)
-        .collect::<Vec<_>>();
-    if !font_families.is_empty() {
-        font.set_family(&font_families.join(", "));
-    }
+    fonts::set_families(&mut font, text.font_families.iter().map(FontFamily::name))
+        .expect("valid text font family fallback list");
     font.set_color(FontColor::DontCare);
     font.set_style(match font_style {
         TextFontStyle::Normal => pango::Style::Normal,
@@ -358,10 +291,18 @@ fn build(
         variations.push("ital=1".to_string());
     }
     font.set_variations(Some(&variations.join(",")));
-    layout.set_font_description(Some(&font));
+    let layout = fonts::layout(&font).expect("create shared native text layout");
+    let context = layout.context();
+    pangocairo::functions::update_context(&cairo, &context);
+    context.set_base_gravity(match direction {
+        TextDirection::Horizontal => Gravity::South,
+        TextDirection::Vertical => Gravity::East,
+    });
+    context.set_gravity_hint(GravityHint::Natural);
+    layout.context_changed();
     layout.set_text(if content.is_empty() { " " } else { content });
     if tracking != 0.0 {
-        let attrs = pango::AttrList::new();
+        let attrs = layout.attributes().unwrap_or_default();
         attrs.insert(pango::AttrInt::new_letter_spacing(
             (tracking * pango::SCALE as f32).round() as i32,
         ));
@@ -606,9 +547,9 @@ fn color_glyph_ranges(layout: &pango::Layout) -> Vec<Range<usize>> {
             for (cluster, glyph) in glyphs.log_clusters().iter().zip(glyphs.glyph_info()) {
                 if let Some((_, color)) = clusters.iter_mut().find(|(offset, _)| offset == cluster)
                 {
-                    *color |= glyph_is_color(glyph);
+                    *color |= fonts::glyph_is_color(glyph);
                 } else {
-                    clusters.push((*cluster, glyph_is_color(glyph)));
+                    clusters.push((*cluster, fonts::glyph_is_color(glyph)));
                 }
             }
             clusters.sort_unstable_by_key(|(offset, _)| *offset);
@@ -642,11 +583,6 @@ fn color_glyph_ranges(layout: &pango::Layout) -> Vec<Range<usize>> {
         }
     }
     merged
-}
-
-fn glyph_is_color(glyph: &pango::GlyphInfo) -> bool {
-    // pango-rs exposes the storage for PangoGlyphVisAttr's C bitfield but not its is_color bit.
-    unsafe { (*glyph.as_ptr()).attr.is_cluster_start & PANGO_GLYPH_IS_COLOR_BIT != 0 }
 }
 
 fn pango_rect_bounds(rect: &pango::Rectangle, direction: TextDirection) -> (f64, f64, f64, f64) {

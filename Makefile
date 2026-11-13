@@ -384,6 +384,14 @@ qt-components-showcase: qt-native-deps
 
 check: sanim-check sanim-integration-check
 
+.PHONY: font-system-check font-system-bench
+check: font-system-check
+font-system-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-fonts --features native --all-targets -- -D warnings
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-fonts --features native
+font-system-bench: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-fonts --features native shared_font_epoch_warm_lookup_benchmark -- --ignored --nocapture
+
 .PHONY: sanim-check
 sanim-check:
 	$(MAKE) -C sanim check

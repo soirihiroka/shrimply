@@ -17,7 +17,10 @@ fn changing_native_font_epoch_invalidates_retained_text_prefixes() {
             .unwrap();
         assert!(warm.statistics.restored_statements > 0);
         let actual = engine.font_environment.expect("native font epoch");
-        engine.font_environment = Some(actual.wrapping_add(1));
+        engine.font_environment = Some(sanim_data::font::FontEpoch {
+            revision: actual.revision.wrapping_add(1),
+            ..actual
+        });
         let refreshed = engine
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap();

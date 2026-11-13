@@ -7,6 +7,7 @@ edition = "2024"
 cuda-stabilization = ["dep:shrimply-affine-l1-stabilization"]
 
 [dependencies]
+shrimply-fonts = { workspace = true, features = ["native"] }
 sanim-runtime.workspace = true
 sanim-core.workspace = true
 sanim-data.workspace = true
