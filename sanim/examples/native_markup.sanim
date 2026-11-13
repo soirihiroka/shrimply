@@ -3,7 +3,7 @@ let heading=<Label font_size={28pt} position={Vec2(0%,-37%)}>Native by design.</
 let subtitle=<Label font_size={14pt} fill="light4" position={Vec2(0%,-27%)}>Typed elements · Adwaita palette · shared Taffy layout</Label>
 let card=<Rect design="w-62% h-38% rounded-xl bg-card_bg_dark border border-dark2 col items-center justify-center gap-16 p-20">
     <Label font_size={24pt}>A small, native component.</Label>
-    <Rect design="w-220 h-48 pill bg-gradient-to-r from-blue3 to-purple3">
+    <Rect design="w-220 h-48 pill" fill={LinearGradient(from=Color("blue3"),to=Color("purple3"))}>
         <Label font_size={16pt}>A real Skia gradient</Label>
     </Rect>
 </Rect>

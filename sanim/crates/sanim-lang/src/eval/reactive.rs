@@ -42,6 +42,8 @@ pub(super) struct Signal {
     pub ty: Arc<Type>,
     pub types: BTreeMap<String, Type>,
     pub identity: Vec<String>,
+    #[serde(skip)]
+    pub source_calls: imbl::Vector<crate::SourceLocation>,
     pub cached: Option<Value>,
     pub dependencies: imbl::OrdSet<Id>,
     pub dirty: bool,
@@ -268,6 +270,8 @@ impl Runtime<'_, '_> {
                     std::mem::replace(&mut self.type_bindings, signal.types.clone());
                 let previous_identity =
                     std::mem::replace(&mut self.identity, signal.identity.clone());
+                let previous_calls =
+                    std::mem::replace(&mut self.source_calls, signal.source_calls.clone());
                 let previous_name = self
                     .named_constructor
                     .replace((signal.expression.span.start, signal.name.clone()));
@@ -280,6 +284,7 @@ impl Runtime<'_, '_> {
                 self.module = previous_module;
                 self.type_bindings = previous_types;
                 self.identity = previous_identity;
+                self.source_calls = previous_calls;
                 self.named_constructor = previous_name;
                 let mut frame = self.signal_frames.pop().expect("active signal frame");
                 let value = result?
@@ -372,6 +377,7 @@ impl Runtime<'_, '_> {
                 ty: Arc::new(ty),
                 types: self.type_bindings.clone(),
                 identity: self.identity.clone(),
+                source_calls: self.source_calls.clone(),
                 cached: None,
                 dependencies: Default::default(),
                 dirty: true,
@@ -609,11 +615,12 @@ impl Runtime<'_, '_> {
             }
             _ => {}
         }
-        sanim_core::value_budget::charge(
+        sanim_core::value_budget::charge_with_fonts(
             value,
             &mut self.retained_bytes,
             &mut self.retained_items,
             self.limits.data.max_depth,
+            &mut self.retained_fonts,
         )
         .map_err(|e| self.error("S303", format!("preparation binding budget: {e}"), span))
     }

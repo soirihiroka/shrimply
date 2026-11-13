@@ -25,6 +25,10 @@ impl SanimElement {
     }
 }
 impl VisualElement for SanimElement {
+    fn sanim_source(&self) -> Option<Arc<shrimply_visual_core::sanim::inspection::FrameSource>> {
+        self.source.inspection()
+    }
+
     fn set_waker(&mut self, wake: Option<shrimply_visual_core::generated::SourceWake>) {
         self.source.set_waker(wake);
     }

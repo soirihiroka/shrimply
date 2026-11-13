@@ -1,0 +1,19 @@
+# One signal drives both native shapes.
+fn twice(sig size: Length): sig Length {
+    return size * 2
+}
+
+mut phase = 0deg
+sig size = 16pt + 4pt * sin(phase)
+let diameter = twice(size)
+
+let circle = <Circle radius={size} />
+let rect = <Rect width={diameter}
+    height={diameter} radius={4pt} />
+add(circle)
+add(rect)
+
+background {
+    animate(phase, to=720deg, duration=4s)
+}
+wait(4s)

@@ -40,6 +40,7 @@ impl Runtime<'_, '_> {
                     .sum::<usize>(),
             )
             .saturating_add(name.len() + self.module.len())
+            .saturating_add(self.source_calls.len() * std::mem::size_of::<crate::SourceLocation>())
             .saturating_add(std::mem::size_of::<Signal>());
         self.retained_bytes = remaining.checked_sub(metadata).ok_or_else(|| {
             self.error(
@@ -258,6 +259,7 @@ impl Runtime<'_, '_> {
                 ty: Arc::new(ty.clone()),
                 types: self.type_bindings.clone(),
                 identity: self.identity.clone(),
+                source_calls: self.source_calls.clone(),
                 cached: None,
                 dependencies: Default::default(),
                 dirty: true,

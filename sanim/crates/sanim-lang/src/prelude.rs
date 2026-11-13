@@ -17,12 +17,23 @@ pub(crate) type TypeRule = fn(&Builtin, &[Type]) -> Result<Type, String>;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Execution {
     Native(Evaluator),
+    /// Watched asset reads must execute even when their argument values are unchanged.
+    Source(Evaluator),
     /// Cheap accessors must not serialize/hash their entire input just to cache a lookup.
     Access(Evaluator),
     Read,
     Decode,
     Query,
     Assertion,
+}
+#[derive(Clone, Copy, Debug, Default)]
+pub enum MarkupContent {
+    #[default]
+    Standard,
+    Literal {
+        parameter: &'static str,
+        dedent: bool,
+    },
 }
 #[derive(Clone, Debug)]
 pub struct Builtin {
@@ -32,6 +43,7 @@ pub struct Builtin {
     /// Scene/assertion effects remain impure even when they consume zero timeline time.
     pub schedule: bool,
     pub timing: Timing,
+    pub content: MarkupContent,
     pub(crate) execute: Execution,
     pub(crate) check: TypeRule,
 }
@@ -67,26 +79,28 @@ fn build_builtins() -> Vec<Builtin> {
             result,
             schedule,
             timing: Default::default(),
+            content: Default::default(),
             execute,
             check,
         })
     };
-    add(
-        "Color",
-        vec![p("value", String, false)],
-        Color,
-        false,
-        Execution::Native(native::color),
-        native_types::fixed,
-    );
-    add(
-        "Font",
-        vec![p("family", String, false), p("fallback", String, false)],
-        Font,
-        false,
-        Execution::Native(native::font),
-        native_types::fixed,
-    );
+    for operation in [
+        sanim_core::code::values::Native::Color,
+        sanim_core::code::values::Native::Font,
+    ] {
+        let (parameters, result) = operation.signature();
+        add(
+            operation.name(),
+            parameters
+                .into_iter()
+                .map(|(name, ty, required)| p(name, ty, required))
+                .collect(),
+            result,
+            false,
+            Execution::Native(native::configuration),
+            native_types::fixed,
+        );
+    }
     add(
         "Fraction",
         vec![
@@ -177,6 +191,15 @@ fn build_builtins() -> Vec<Builtin> {
             p("justify", sanim_core::Justify::ty(), false),
             p("align", sanim_core::Align::ty(), false),
             p("wrap", Bool, false),
+            p(
+                "scroll",
+                Type::union([
+                    Vector(2, Some(Dimension::Length)),
+                    Vector(2, Some(Dimension::Percent)),
+                ])
+                .expect("scroll units"),
+                false,
+            ),
         ]);
         add(
             name,
@@ -187,15 +210,24 @@ fn build_builtins() -> Vec<Builtin> {
             native_types::fixed,
         );
     }
-    for name in ["Group", "Row", "Column"] {
+    for name in ["Group", "Row", "Column", "ScrollView"] {
         let mut params = common();
         params.extend([
             p("children", List(Box::new(Element)), true),
             p("padding", length.clone(), false),
             p("width", sanim_core::Layout::dimension_type(), false),
             p("height", sanim_core::Layout::dimension_type(), false),
+            p(
+                "scroll",
+                Type::union([
+                    Vector(2, Some(Dimension::Length)),
+                    Vector(2, Some(Dimension::Percent)),
+                ])
+                .expect("scroll units"),
+                false,
+            ),
         ]);
-        if name != "Group" {
+        if !matches!(name, "Group" | "ScrollView") {
             params.extend([
                 p("gap", length.clone(), false),
                 p("justify", sanim_core::Justify::ty(), false),
@@ -442,6 +474,7 @@ fn build_builtins() -> Vec<Builtin> {
         );
     }
     out.extend(crate::charts::builtins(common()));
+    crate::code_view::register(&mut out, common());
     out.extend(crate::design::builtins());
     crate::lists::register(&mut out);
     crate::animations::register(&mut out);
@@ -478,6 +511,16 @@ pub fn builtin(name: &str) -> Option<&'static Builtin> {
         .iter()
         .find(|v| v.name == name)
         .or_else(|| crate::dataframe::builtin(name))
+        .or_else(|| crate::code_view::builtin(name))
+        .or_else(|| crate::scrolling::builtin(name))
+        .or_else(|| crate::scrolling::builtin(name))
+}
+
+pub fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
+    crate::dataframe::methods_for(receiver)
+        .chain(crate::code_view::methods_for(receiver))
+        .chain(crate::scrolling::methods_for(receiver))
+        .chain(crate::scrolling::methods_for(receiver))
 }
 
 #[derive(Clone)]

@@ -161,3 +161,64 @@ markup-check:
 	$(CARGO) test -p sanim-render --test markup
 markup-bench:
 	$(CARGO) run --release -p sanim-render --example markup
+
+.PHONY: picking-check picking-bench
+.PHONY: provenance-check provenance-bench
+provenance-check:
+	$(CARGO) test -p sanim-lang --test provenance
+.PHONY: code-view-render-check
+code-view-render-check:
+	$(CARGO) test -p sanim-render --test code_view
+provenance-bench:
+	$(CARGO) test --release -p sanim-lang --test provenance provenance_lookup_and_reload_benchmark -- --ignored --nocapture
+picking-check:
+	$(CARGO) test -p sanim-render --test picking
+picking-bench:
+	$(CARGO) test --release -p sanim-render --test picking picking_benchmark -- --ignored --nocapture
+
+.PHONY: code-view-check code-view-test code-view-bench
+code-view-check:
+	$(CARGO) clippy -p sanim-data -p sanim-lang -p sanim-render -p sanim-lsp --all-targets -- -D warnings
+	$(MAKE) code-view-test
+code-view-test:
+	$(CARGO) test -p sanim-core -p sanim-data -p sanim-lang -p sanim-render --test code
+code-view-bench:
+	$(CARGO) test --release -p sanim-data -p sanim-lang -p sanim-render --test code code_view_benchmark -- --ignored --nocapture
+
+.PHONY: runtime-watch-check
+.PHONY: native-cache-check native-cache-bench
+native-cache-check:
+	$(CARGO) test -p sanim-render --test native_cache
+native-cache-bench:
+	$(CARGO) test --release -p sanim-render --test native_cache native_endpoint_benchmark -- --ignored --nocapture
+.PHONY: reactive-label-check reactive-label-bench
+.PHONY: code-transition-check code-transition-bench
+.PHONY: font-budget-check
+font-budget-check:
+	$(CARGO) test -p sanim-core --test reactive font_
+	$(CARGO) test -p sanim-lang --test font_budget
+.PHONY: code-patch-check
+code-patch-check:
+	$(CARGO) test -p sanim-render --test code_patches
+code-transition-check:
+	$(CARGO) test -p sanim-data --test code_transitions
+	$(CARGO) test -p sanim-data cursor_boundaries_keep_zwj_flags_and_combining_sequences_whole --lib
+	$(CARGO) test -p sanim-data ordered_paths_ --lib
+code-transition-bench:
+	$(CARGO) test --release -p sanim-data --test code_transitions transition_benchmark -- --ignored --nocapture
+reactive-label-check:
+	$(CARGO) test -p sanim-lang --test reactive_labels
+	$(CARGO) test -p sanim-render --test reactive_labels
+reactive-label-bench:
+	$(CARGO) test --release -p sanim-render --test reactive_labels reactive_label_benchmark -- --ignored --nocapture
+runtime-watch-check:
+	$(CARGO) test -p sanim-runtime --test watching
+
+.PHONY: scrolling-check scrolling-test scrolling-bench
+scrolling-check:
+	$(CARGO) clippy -p sanim-core -p sanim-lang -p sanim-render --all-targets -- -D warnings
+	$(MAKE) scrolling-test
+scrolling-test:
+	$(CARGO) test -p sanim-lang -p sanim-render --test scrolling
+scrolling-bench:
+	$(CARGO) test --release -p sanim-render --test scrolling scroll_benchmark -- --ignored --nocapture

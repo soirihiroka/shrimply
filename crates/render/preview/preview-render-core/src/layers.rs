@@ -319,6 +319,9 @@ impl Scene {
                     if let Some(error) = source.take_error() {
                         self.sanim_errors.push(error);
                     }
+                    if let Some(token) = source.inspection() {
+                        self.sanim_sources.insert(address.clone(), token);
+                    }
                     let frame = match status {
                         shrimply_visual_core::sanim::Status::Empty => continue,
                         shrimply_visual_core::sanim::Status::Loading(frame) => {

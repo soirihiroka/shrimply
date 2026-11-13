@@ -1394,16 +1394,20 @@ impl Checker<'_> {
         }
         if let ExprKind::Member(base, name) = &callee.kind {
             let receiver = self.expression(base, env, None, variables)?;
-            if matches!(receiver, Type::DataFrame { .. } | Type::Series(_)) {
-                let builtin = crate::dataframe::method(name).ok_or_else(|| self.error("S123", format!("unknown DataFrame/Series method {name:?}; use select, groupby, agg, sort_values, head, merge, or to_list"), callee.span))?;
+            if let Some(builtin) = crate::prelude::methods_for(&receiver)
+                .find(|builtin| builtin.name.rsplit('.').next() == Some(name.as_str()))
+            {
                 self.native_methods.insert(
                     (callee.span.start, callee.span.end),
                     NativeMethod {
                         name: builtin.name.into(),
-                        materializes: crate::dataframe::definition(builtin.name)
-                            .expect("registered DataFrame method")
-                            .materialization
-                            .applies(matches!(receiver, Type::Series(_))),
+                        materializes: crate::dataframe::definition(builtin.name).is_some_and(
+                            |definition| {
+                                definition
+                                    .materialization
+                                    .applies(matches!(receiver, Type::Series(_)))
+                            },
+                        ),
                     },
                 );
                 let mut all = vec![(None, *base.clone())];

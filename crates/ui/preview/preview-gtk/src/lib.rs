@@ -1053,12 +1053,19 @@ fn attach_frame_pump(
                     position,
                     revision,
                     excluded_item_id,
-                    settled: _,
+                    settled,
                     render_elapsed: _,
                     render_generation: _,
                 } => {
                     displayed_position.set(Some(position));
-                    video_surface.set_frame(frame, audio_analysis, revision, excluded_item_id);
+                    video_surface.set_frame(
+                        frame,
+                        audio_analysis,
+                        position,
+                        revision,
+                        excluded_item_id,
+                        settled,
+                    );
                 }
                 VideoEvent::Clear {
                     audio_analysis,

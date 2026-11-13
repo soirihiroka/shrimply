@@ -102,6 +102,12 @@ impl VisualSourceCache {
 /// A stateful renderer for one visual source. Source selection belongs exclusively to
 /// `create_renderer`; the compositor only retains and invokes this interface.
 pub trait VisualElement {
+    fn sanim_source(
+        &self,
+    ) -> Option<std::sync::Arc<shrimply_visual_core::sanim::inspection::FrameSource>> {
+        None
+    }
+
     fn set_waker(&mut self, _wake: Option<shrimply_visual_core::generated::SourceWake>) {}
     fn needs_update(&self) -> bool {
         false

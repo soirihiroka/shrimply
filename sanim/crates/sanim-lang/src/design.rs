@@ -24,6 +24,7 @@ pub(crate) fn builtins() -> Vec<Builtin> {
         result: Paint::gradient_type(),
         schedule: false,
         timing: Timing::default(),
+        content: Default::default(),
         execute: Execution::Native(gradient),
         check: native_types::fixed,
     }]
@@ -182,9 +183,6 @@ pub(crate) fn resolve(name: &str, args: &OrdMap<String, Value>) -> Result<Design
         pill: false,
         stroke: None,
     };
-    let mut gradient_from = None;
-    let mut gradient_to = None;
-    let mut gradient_angle = None;
     let mut border_width = None;
     let mut border_color = None;
     if let Some(design) = args.get("design") {
@@ -251,31 +249,13 @@ pub(crate) fn resolve(name: &str, args: &OrdMap<String, Value>) -> Result<Design
                 }
                 continue;
             }
-            if let Some(value) = token.strip_prefix("bg-gradient-to-") {
-                gradient_angle = Some(match value {
-                    "r" => 0,
-                    "br" => 45,
-                    "b" => 90,
-                    "bl" => 135,
-                    "l" => 180,
-                    "tl" => 225,
-                    "t" => 270,
-                    "tr" => 315,
-                    _ => {
-                        return Err(format!(
-                            "unknown gradient direction '{value}'; use r, br, b, bl, l, tl, t, or tr"
-                        ));
-                    }
-                });
-                continue;
-            }
-            if let Some(value) = token.strip_prefix("from-") {
-                gradient_from = Some(Color::parse(value)?);
-                continue;
-            }
-            if let Some(value) = token.strip_prefix("to-") {
-                gradient_to = Some(Color::parse(value)?);
-                continue;
+            if ["bg-gradient-", "from-", "via-", "to-"]
+                .iter()
+                .any(|prefix| token.starts_with(prefix))
+            {
+                return Err(format!(
+                    "gradient utility '{token}' is not supported; set fill={{LinearGradient(...)}} instead"
+                ));
             }
             if let Some(value) = token.strip_prefix("bg-") {
                 result
@@ -319,28 +299,6 @@ pub(crate) fn resolve(name: &str, args: &OrdMap<String, Value>) -> Result<Design
             }
             return Err(unknown(token));
         }
-    }
-    if gradient_angle.is_some() || gradient_from.is_some() || gradient_to.is_some() {
-        let from = gradient_from.ok_or("gradient utilities require from-COLOR")?;
-        let to = gradient_to.ok_or("gradient utilities require to-COLOR")?;
-        result.args.insert(
-            "fill".into(),
-            Paint::LinearGradient {
-                angle: Fraction::from(gradient_angle.unwrap_or(0u32)),
-                stops: vec![
-                    GradientStop {
-                        offset: Fraction::from(0),
-                        color: from,
-                    },
-                    GradientStop {
-                        offset: Fraction::from(1),
-                        color: to,
-                    },
-                ]
-                .into(),
-            }
-            .value(),
-        );
     }
     if (border_width.is_some() || border_color.is_some()) && border_width != Some(Fraction::from(0))
     {
@@ -410,7 +368,7 @@ fn nonnegative(value: &str, token: &str) -> Result<Fraction, String> {
 }
 fn unknown(token: &str) -> String {
     format!(
-        "unknown native design utility '{token}'; use card, raised, pill, suggested, destructive, row/col, items-center, justify-center, gap-N, p-N, w-N, h-N, rounded-N, bg-COLOR, text-COLOR, border[-N], or bg-gradient-to-r from-COLOR to-COLOR. Numbers are pt; these are native utilities, not browser CSS."
+        "unknown native design utility '{token}'; use card, raised, pill, suggested, destructive, row/col, items-center, justify-center, gap-N, p-N, w-N, h-N, rounded-N, bg-COLOR, text-COLOR, border[-N]. Numbers are pt; these are native utilities, not browser CSS."
     )
 }
 

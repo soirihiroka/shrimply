@@ -193,6 +193,7 @@ fn registry() -> &'static [Builtin] {
                     result: Type::Unknown,
                     schedule: false,
                     timing: Default::default(),
+                    content: Default::default(),
                     execute: Execution::Access(execute),
                     check: native_types::fixed,
                 };
@@ -228,9 +229,7 @@ pub fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
             (definition.receivers & receiver != 0).then_some(builtin)
         })
 }
-pub(crate) fn method(name: &str) -> Option<&'static Builtin> {
-    methods().find(|builtin| builtin.name.strip_prefix("DataFrame.") == Some(name))
-}
+
 pub(crate) fn definition(name: &str) -> Option<&'static Definition> {
     DEFINITIONS
         .iter()

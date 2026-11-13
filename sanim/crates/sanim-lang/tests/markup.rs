@@ -9,7 +9,7 @@ fn prepare(source: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic>
 fn native_markup_lowers_into_the_same_typed_shapes_and_formats_text() {
     let prepared=prepare(r#"let count=7
 let label=<Label fill="blue3">hello {{literal}} {count:04d} &amp; more</Label>
-let card=<Rect design="pill bg-gradient-to-r from-blue3 to-purple3 border-2 border-light1"><Label>native</Label></Rect>
+let card=<Rect design="pill border-2 border-light1" fill={LinearGradient(from=Color("blue3"),to=Color("purple3"))}><Label>native</Label></Rect>
 add(label)
 add(card)
 wait(1s)"#).unwrap();
@@ -44,7 +44,19 @@ fn markup_diagnostics_explain_syntax_types_and_design_mistakes() {
         ("let x=<Rect fill=\"not-a-color\"/>", "unknown color"),
         ("let x=<Rect design=\"nonesuch\"/>", "unknown native design"),
         ("let x=<Label design=\"card\">x</Label>", "does not support"),
-        ("let x=<Rect design=\"from-blue3\"/>", "require to-COLOR"),
+        (
+            "let x=<Rect design=\"from-blue3\"/>",
+            "fill={LinearGradient",
+        ),
+        (
+            "let x=<Rect design=\"bg-gradient-to-r\"/>",
+            "fill={LinearGradient",
+        ),
+        ("let x=<Rect design=\"via-blue3\"/>", "fill={LinearGradient"),
+        (
+            "let x=<Rect design=\"to-purple3\"/>",
+            "fill={LinearGradient",
+        ),
         ("let x=<Rect fill=\"blue3\" fill=\"red3\"/>", "duplicate"),
     ] {
         let error = prepare(source).unwrap_err().to_string();

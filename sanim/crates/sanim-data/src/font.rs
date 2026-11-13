@@ -1,4 +1,6 @@
 //! Native font family fallback and explicit assets share one Pango outline pipeline.
+mod cache;
+pub use cache::{ShapedText, cached_shape, resolve_pending};
 use sanim_core::{Font, Fraction, TextSegment, Unit, Vec2, math::to_f64, verify::Bounds};
 pub use shrimply_fonts::native::{
     FontChange, FontEpoch, register_application_font, subscribe, system_font_epoch,
@@ -10,8 +12,33 @@ pub fn shape(
     text: &str,
     size: Fraction,
 ) -> Result<(Bounds, Vec<TextSegment>), String> {
+    let (bounds, outline, _) = shape_styled(font, text, size, false, false)?;
+    Ok((bounds, outline))
+}
+
+/// Native run metrics retain fractional advances; rounded ink bounds cannot be
+/// added to place adjacent code runs without accumulating alignment error.
+pub fn shape_styled(
+    font: &Font,
+    text: &str,
+    size: Fraction,
+    bold: bool,
+    italic: bool,
+) -> Result<(Bounds, Vec<TextSegment>, f64), String> {
     let prepared = shrimply_fonts::native::prepare(font, to_f64(size)?)?;
     let layout = &prepared.layout;
+    let attrs = layout.attributes().unwrap_or_default();
+    attrs.change(pango::AttrInt::new_weight(if bold {
+        pango::Weight::Bold
+    } else {
+        pango::Weight::Normal
+    }));
+    attrs.change(pango::AttrInt::new_style(if italic {
+        pango::Style::Italic
+    } else {
+        pango::Style::Normal
+    }));
+    layout.set_attributes(Some(&attrs));
     layout.set_text(text);
     if layout.unknown_glyphs_count() != 0 {
         return Err(format!(
@@ -88,5 +115,6 @@ pub fn shape(
             },
         },
         outline,
+        f64::from(logical.width()) / scale,
     ))
 }

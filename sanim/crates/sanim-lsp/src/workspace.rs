@@ -11,6 +11,7 @@ use std::{
 pub(crate) struct OpenDocument {
     pub path: PathBuf,
     pub document: Document,
+    pub highlights: std::cell::RefCell<Option<(i64, Vec<sanim_lang::core::code::Highlight>)>>,
 }
 
 pub(crate) struct Analysis {
@@ -92,6 +93,7 @@ impl Workspace {
             OpenDocument {
                 path,
                 document: Document::new(text, version),
+                highlights: Default::default(),
             },
         );
         Ok(())

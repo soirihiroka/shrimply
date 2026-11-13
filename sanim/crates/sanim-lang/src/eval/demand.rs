@@ -115,6 +115,7 @@ impl Runtime<'_, '_> {
                 ty: Arc::new(ty),
                 types: self.type_bindings.clone(),
                 identity: self.identity.clone(),
+                source_calls: self.source_calls.clone(),
                 cached: None,
                 dependencies: Default::default(),
                 dirty: true,

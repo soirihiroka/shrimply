@@ -1,8 +1,8 @@
 use super::*;
 use std::{path::PathBuf, time::Duration};
-struct Fixture(PathBuf);
+pub(super) struct Fixture(pub(super) PathBuf);
 impl Fixture {
-    fn new(text: &str) -> Self {
+    pub(super) fn new(text: &str) -> Self {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "shrimply-sanim-{}-{}",
@@ -14,10 +14,10 @@ impl Fixture {
         fixture.write(text);
         fixture
     }
-    fn write(&self, text: &str) {
+    pub(super) fn write(&self, text: &str) {
         std::fs::write(self.0.join("scene.sanim"), text).unwrap();
     }
-    fn item(&self) -> VideoItem {
+    pub(super) fn item(&self) -> VideoItem {
         let canvas = CanvasSize {
             width: 100,
             height: 100,
@@ -560,5 +560,150 @@ fn native_sanim_reflection_sets_reuse_source_schema_but_gets_refresh_dependent_d
     assert!(
         matches!(derived.default,reflection::Value::Number(value) if value.value==10.into()),
         "get must compute dependent defaults for current input values"
+    );
+}
+
+#[test]
+fn native_sanim_element_inspection_uses_published_state_and_invalidates_on_reload() {
+    let fixture = Fixture::new("let marker=Circle(radius=10pt)\nadd(marker)\nwait(1s)\n");
+    let item = fixture.item();
+    let canvas = CanvasSize {
+        width: 100,
+        height: 100,
+    };
+    let mut source = Source::new(&item).unwrap();
+    ready(&mut source, &item, canvas, true);
+    ready(&mut source, &item, canvas, false);
+    let presented = source.inspection().unwrap();
+    let result = inspection::request(inspection::Request {
+        source: presented.clone(),
+        item: item.clone(),
+        position: Time::ZERO,
+        canvas,
+        rate: 30.into(),
+        point: [50., 50.],
+        tolerance_px: 2.,
+    })
+    .unwrap()
+    .recv_timeout(Duration::from_secs(5))
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    assert_eq!(result.id, "marker");
+    assert_eq!(result.kind, "Circle");
+    let origin = result.creation.as_ref().expect("constructor origin");
+    assert_eq!(origin.path, fixture.0.join("scene.sanim"));
+    assert_eq!(origin.line, 1);
+    assert_eq!(origin.line_text.as_ref(), "let marker=Circle(radius=10pt)");
+    assert!(inspection::is_current(&result));
+    assert!(inspection::matches_frame(&result, &presented));
+    let track_id = uuid::Uuid::new_v4();
+    let address = |parent| shrimply_project_document::project::ItemAddress::Video {
+        sequence_path: vec![parent],
+        track_id,
+        item_id: item.id,
+    };
+    let first = address(uuid::Uuid::new_v4());
+    let second = address(uuid::Uuid::new_v4());
+    let later = inspection::FrameSource::new(
+        &item,
+        source.runtime.snapshot().prepared.unwrap(),
+        sanim_core::Fraction::new(1u64, 2u64),
+        source.viewport.clone(),
+        &source.observation,
+    );
+    let mut instances = inspection::FrameSources::default();
+    instances.insert(first.clone(), presented.clone());
+    instances.insert(first.clone(), presented.clone());
+    instances.insert(second.clone(), later.clone());
+    assert!(Arc::ptr_eq(instances.get(&first).unwrap(), &presented));
+    assert!(Arc::ptr_eq(instances.get(&second).unwrap(), &later));
+    instances.insert(first.clone(), later);
+    instances.insert(first.clone(), presented.clone());
+    assert!(
+        instances.get(&first).is_none(),
+        "conflicting samples of one instance must never silently overwrite the displayed token"
+    );
+    assert!(
+        instances.get(&second).is_some(),
+        "distinct nested instance with same item UUID stays inspectable"
+    );
+    let revision = source.runtime.snapshot().revision;
+    fixture.write("let marker=Circle(radius=20pt)\nadd(marker)\nwait(1s)\n");
+    assert!(changed(&source, revision).revision > revision);
+    assert!(!inspection::is_current(&result));
+    // A completed reload must never pick its newer geometry over older displayed pixels.
+    let stale = inspection::request(inspection::Request {
+        source: presented,
+        item: item.clone(),
+        position: Time::ZERO,
+        canvas,
+        rate: 30.into(),
+        point: [50., 50.],
+        tolerance_px: 2.,
+    })
+    .unwrap()
+    .recv_timeout(Duration::from_secs(5))
+    .unwrap();
+    assert!(matches!(stale,Err(error) if error.contains("source changed")));
+}
+
+#[test]
+fn native_sanim_inspection_maps_lazy_code_glyphs_to_their_constructor_owner() {
+    let fixture = Fixture::new(
+        r#"bg(Color("transparent"))
+mut count=1
+sig source="x = {count}"
+let view=CodeView(code=source,lang="python",font_size=12pt,line_numbers=false)
+add(view)
+wait(1s)
+count=2
+wait(1s)
+"#,
+    );
+    let mut item = fixture.item();
+    item.source_duration = Time { seconds: 2.into() };
+    let canvas = CanvasSize {
+        width: 100,
+        height: 100,
+    };
+    let mut source = Source::new(&item).unwrap();
+    ready(&mut source, &item, canvas, true);
+    let position = Time { seconds: 1.into() };
+    let Status::Ready(recording) = source
+        .poll(&item, position, canvas, 30.into(), true)
+        .unwrap()
+    else {
+        panic!("signal code frame should be ready");
+    };
+    let frame = recording.rasterize(false).unwrap();
+    let pixel = frame
+        .rgba
+        .chunks_exact(4)
+        .position(|pixel| pixel[3] == 255)
+        .expect("visible native code glyph");
+    let hit = inspection::request(inspection::Request {
+        source: source.inspection().unwrap(),
+        item,
+        position,
+        canvas,
+        rate: 30.into(),
+        point: [
+            (pixel % frame.width as usize) as f32 + 0.5,
+            (pixel / frame.width as usize) as f32 + 0.5,
+        ],
+        tolerance_px: 0.,
+    })
+    .unwrap()
+    .recv_timeout(Duration::from_secs(5))
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    assert!(hit.id.contains("/@live/"));
+    assert_eq!(hit.source_element.as_deref(), Some("view"));
+    assert_eq!(hit.creation.as_ref().unwrap().line, 4);
+    assert_eq!(
+        hit.creation.as_ref().unwrap().line_text.as_ref(),
+        r#"let view=CodeView(code=source,lang="python",font_size=12pt,line_numbers=false)"#
     );
 }

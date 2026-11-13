@@ -20,6 +20,7 @@ mod pdf_render;
 pub mod preview;
 mod sanim_render;
 pub use shrimply_visual_core::sam2::analysis as sam2_analysis;
+pub use shrimply_visual_core::sanim::inspection as sanim_inspection;
 pub mod shape_render;
 pub use shrimply_project_document::svg_color;
 pub mod svg_render;

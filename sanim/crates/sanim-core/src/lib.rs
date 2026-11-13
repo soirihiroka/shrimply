@@ -1,5 +1,6 @@
 //! Platform-independent values, exact arithmetic, scene tracks and verification.
 pub mod cache;
+pub mod code;
 mod collection;
 pub use collection::{List, ListEdit, ListEditResult};
 pub mod dataframe;
@@ -15,6 +16,7 @@ pub use paint::{GradientStop, Paint};
 pub mod reactive;
 pub mod reflection;
 pub mod scene;
+pub mod scrolling;
 pub mod time_map;
 pub mod timeline_diff;
 pub use time_map::{TimeMap, TimeMapEntry, TimeMapKind};

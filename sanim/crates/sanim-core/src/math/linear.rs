@@ -3,6 +3,54 @@ use super::float_arithmetic as calc;
 
 pub type Matrix4 = [[f64; 4]; 4];
 
+/// Conservative local rectangle after the same stretch/scale/rotation/translation order as drawing.
+pub fn transformed_box(
+    bounds: [f64; 4],
+    position: [f64; 2],
+    rotation_degrees: f64,
+    scale: f64,
+    stretch: [f64; 2],
+) -> Result<[f64; 4], String> {
+    let (sin, cos) = rotation_degrees.to_radians().sin_cos();
+    let mut output = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for x in [bounds[0], bounds[2]] {
+        for y in [bounds[1], bounds[3]] {
+            let x = calc(
+                "*",
+                calc(
+                    "+",
+                    stretch[1],
+                    calc("*", calc("-", x, stretch[1])?, stretch[0])?,
+                )?,
+                scale,
+            )?;
+            let y = calc("*", y, scale)?;
+            let point = [
+                calc(
+                    "+",
+                    position[0],
+                    calc("-", calc("*", x, cos)?, calc("*", y, sin)?)?,
+                )?,
+                calc(
+                    "+",
+                    position[1],
+                    calc("+", calc("*", x, sin)?, calc("*", y, cos)?)?,
+                )?,
+            ];
+            for axis in 0..2 {
+                output[axis] = output[axis].min(point[axis]);
+                output[axis + 2] = output[axis + 2].max(point[axis]);
+            }
+        }
+    }
+    Ok(output)
+}
+
 pub fn identity() -> Matrix4 {
     let mut out = [[0.0; 4]; 4];
     for (i, row) in out.iter_mut().enumerate() {

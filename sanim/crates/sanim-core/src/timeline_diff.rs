@@ -40,6 +40,27 @@ impl TimelineDiff {
         if let Some(time) = old.reactive.changed_from(&new.reactive) {
             dirty_from = Some(dirty_from.map_or(time, |previous| previous.min(time)));
         }
+        for id in old
+            .code_views
+            .keys()
+            .chain(new.code_views.keys())
+            .collect::<BTreeSet<_>>()
+        {
+            let empty = imbl::OrdMap::new();
+            let a = old.code_views.get(id).map_or(&empty, |state| &state.events);
+            let b = new.code_views.get(id).map_or(&empty, |state| &state.events);
+            for change in a.diff(b) {
+                let start = match change {
+                    imbl::ordmap::DiffItem::Add(_, event)
+                    | imbl::ordmap::DiffItem::Remove(_, event) => event.start,
+                    imbl::ordmap::DiffItem::Update {
+                        old: (_, a),
+                        new: (_, b),
+                    } => a.start.min(b.start),
+                };
+                dirty_from = Some(dirty_from.map_or(start, |previous| previous.min(start)));
+            }
+        }
         for id in old_layers
             .keys()
             .chain(new_layers.keys())
@@ -181,7 +202,18 @@ pub(crate) fn events(animation: &Animation) -> BTreeSet<Fraction> {
                 .events(|id| visible.contains(id))
                 .flat_map(|(start, end, _)| [start, end]),
         )
+        .chain(code_events(animation).flat_map(|event| [event.start, event.end]))
         .collect()
+}
+
+fn code_events(
+    animation: &Animation,
+) -> impl Iterator<Item = &crate::code::view::PresentationEvent> {
+    animation
+        .code_views
+        .iter()
+        .filter(|(id, _)| animation.find(id).is_some())
+        .flat_map(|(_, state)| state.events.values())
 }
 
 /// Index of exact sample equivalence during holds. Active motions retain exact rational time.
@@ -222,6 +254,14 @@ impl SampleTimes {
                 .map(|(start, end, _)| TimeRange {
                     start,
                     end: Some(end),
+                }),
+        );
+        moving.extend(
+            code_events(animation)
+                .filter(|event| event.start < event.end && event.from != event.to)
+                .map(|event| TimeRange {
+                    start: event.start,
+                    end: Some(event.end),
                 }),
         );
         moving.sort_by_key(|range| range.start);

@@ -345,6 +345,14 @@ impl Runtime<'_, '_> {
             return self.lower_binding(&Binding::Reactive(signal.id), expr.span, depth + 1);
         }
         match &expr.kind {
+            ExprKind::List(values) => {
+                let values = values.iter().map(|value| self.lower_expression(value, env, locals, depth + 1)).collect::<Result<Vec<_>, _>>()?;
+                self.graph_node(Node::List { values }, expr.span)
+            }
+            ExprKind::Record(fields) => {
+                let fields = fields.iter().map(|(name, value)| self.lower_expression(value, env, locals, depth + 1).map(|node| (name.clone(), node))).collect::<Result<BTreeMap<_, _>, _>>()?;
+                self.graph_node(Node::Record { fields }, expr.span)
+            }
             ExprKind::Template(parts) => {
                 let parts = parts.iter().map(|part| {
                     Ok(match part {
@@ -404,6 +412,11 @@ impl Runtime<'_, '_> {
                 };
                 let args = args.iter().filter(|(_, value)| !controls.iter().flatten().any(|control|std::ptr::eq(*control, value)));
                 if let ExprKind::Name(name)=&callee.kind && prelude::builtin(name).is_some(){
+                    if let Some(operation)=sanim_core::code::values::Native::from_name(name) {
+                        let (parameters,_)=operation.signature();let mut arguments=BTreeMap::new();let mut positional=0;
+                        for (label,value) in args {let name=if let Some(label)=label{label.as_str()}else{let name=parameters.get(positional).ok_or_else(||self.error("S140","too many retained constructor arguments",value.span))?.0;positional+=1;name};arguments.insert(name.to_owned(),self.lower_expression(value,env,locals,depth+1)?);}
+                        return self.graph_node(Node::NativeConfig{operation,arguments},expr.span);
+                    }
                     if matches!(name.as_str(),"Vec2"|"Vec3"|"Vec4") {
                         let count=match name.as_str(){"Vec2"=>2,"Vec3"=>3,_=>4};
                         let components=["x","y","z","w"];let mut values=vec![None;count];let mut positional=0;
@@ -448,8 +461,15 @@ impl Runtime<'_, '_> {
 }
 
 pub(super) fn property_name(name: &str) -> Option<Property> {
+    if let Some((_, property)) = sanim_core::code::view::INPUTS
+        .iter()
+        .find(|(input, _)| *input == name)
+    {
+        return Some(*property);
+    }
     Some(match name {
         "position" => Property::Position,
+        "scroll" => Property::Scroll,
         "rotation" => Property::Rotation,
         "scale" => Property::Scale,
         "opacity" => Property::Opacity,
@@ -457,6 +477,11 @@ pub(super) fn property_name(name: &str) -> Option<Property> {
         "radius" => Property::Radius,
         "width" => Property::Width,
         "height" => Property::Height,
+        "text" => Property::Text,
+        "font" => Property::Font,
+        "font_size" => Property::FontSize,
+        "x_align" => Property::XAlign,
+        "y_align" => Property::YAlign,
         _ => return None,
     })
 }

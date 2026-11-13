@@ -154,6 +154,7 @@ pub(super) fn builtins(common: &[Parameter]) -> Vec<Builtin> {
                 },
                 schedule: false,
                 timing: Default::default(),
+                content: Default::default(),
                 execute: Execution::Native(evaluate),
                 check: native_types::fixed,
             }

@@ -1,0 +1,33 @@
+# Native source trees, code changes, scope folding, and dynamic highlighting.
+let title = <Label position={Vec2(0%, -43%)} font_size={28pt}>Source code is animation data.</Label>
+let python_title = <Label font_size={18pt} fill="blue2">Python · parsed patch · scope folding</Label>
+let sanim_title = <Label font_size={18pt} fill="green2">Sanim · native parser · live styles</Label>
+let python_view = <CodeView src="code_view_sample.py" font_size={15pt} />
+let sanim_view = <CodeView src="code_view_sample.sanim" font_size={12pt} />
+let panels = <Row width={90%} height={70%} gap={50pt} align={Align.Start} x_align={Align.Center} y_align={Align.Center} position={Vec2(0%, 3%)}>
+    <Column width={45%} height={100%} gap={18pt} align={Align.Start}>
+        {python_title}
+        {python_view}
+    </Column>
+    <Column width={45%} height={100%} gap={18pt} align={Align.Start}>
+        {sanim_title}
+        {sanim_view}
+    </Column>
+</Row>
+
+add(title)
+add(panels)
+wait(400ms)
+python_view.select(ranges=[python_view.find("answer += value")], duration=350ms)
+wait(400ms)
+python_view.patch(src="code_view_sample.py.patch", animation="morph", duration=900ms)
+wait(500ms)
+python_view.fold(level=1, duration=600ms)
+wait(500ms)
+python_view.unfold(level=1, duration=600ms)
+wait(500ms)
+sanim_view.style(theme=CodeTheme(rules=[
+    CodeRule("function", CodeStyle(fill=Color("blue1"), underline=true)),
+    CodeRule("keyword", CodeStyle(fill=Color("orange2"), bold=true))
+]), duration=500ms)
+wait(1s)

@@ -4,6 +4,7 @@ pub mod ast;
 mod cache;
 mod charts;
 mod checker;
+mod code_view;
 pub mod dataframe;
 mod design;
 mod effects;
@@ -19,6 +20,7 @@ pub mod parser;
 pub mod prelude;
 pub mod progress;
 mod reflection;
+mod scrolling;
 pub mod source;
 mod timing;
 mod type_algebra;
@@ -31,6 +33,7 @@ pub use sanim_core as core;
 use sanim_core::{Animation, Diagnostic, ReflectedInput, Span, Type, Value, digest};
 use serde::Serialize;
 use source::Snapshot;
+pub use source::{ElementSource, SourceLocation};
 pub use source::{FileSources, MemorySources, Sources};
 use std::{collections::BTreeMap, sync::Arc};
 pub use watch::{Reload, Session};
@@ -118,6 +121,11 @@ pub struct Prepared {
     pub source: String,
     pub animation: Animation,
     pub time_map: sanim_core::TimeMap,
+    /// Constructor provenance is editor metadata, independent of visual cache identity.
+    pub element_sources: imbl::OrdMap<String, Arc<ElementSource>>,
+    /// Immutable source bytes from this preparation, including imported modules.
+    #[serde(skip)]
+    pub source_texts: BTreeMap<String, Arc<Vec<u8>>>,
     pub bindings: imbl::OrdMap<String, Value>,
     /// Values intentionally left unevaluated by demand preparation.
     pub deferred_bindings: Vec<DeferredBinding>,

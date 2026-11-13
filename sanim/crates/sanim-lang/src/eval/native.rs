@@ -43,6 +43,9 @@ impl Runtime<'_, '_> {
             arguments.remove(index);
         }
         let value = self.native_inner(builtin, arguments, duration, easing, span)?;
+        if builtin.result == Type::Element {
+            self.record_element_source(&value, span)?;
+        }
         self.finish_call_duration(start, Some(duration), self.cursor, span)?;
         self.last_call.easing = easing;
         Ok(value)
@@ -79,11 +82,42 @@ impl Runtime<'_, '_> {
             .map(|v| v.name.to_string())
             .collect::<Vec<_>>();
         let mut args = order_values(&arguments, &params);
+        if matches!(name, "CodeView" | "CodeView.patch")
+            && let Some(src) = args.get("src")
+        {
+            let language = if name == "CodeView" {
+                let language = args
+                    .get("lang")
+                    .map(Value::string)
+                    .transpose()
+                    .map_err(|e| self.error("S305", e, span))?
+                    .unwrap_or("auto");
+                sanim_core::code::Language::parse(language)
+                    .map_err(|e| self.error("S305", e, span))?
+            } else {
+                sanim_core::code::Language::Auto
+            };
+            let document = self.read_resource(
+                src.string().map_err(|e| self.error("S305", e, span))?,
+                &Type::Code(language),
+                span,
+            )?;
+            args.insert(
+                if name == "CodeView" { "document" } else { "to" }.into(),
+                document,
+            );
+        }
         for parameter in builtin.parameters.iter().filter(|parameter| {
             parameter.name == "font" && parameter.ty == Type::Font && !parameter.required
         }) {
-            args.entry(parameter.name.to_owned())
-                .or_insert_with(|| Value::Font(sanim_core::Font::default()));
+            args.entry(parameter.name.to_owned()).or_insert_with(|| {
+                Value::Font(if name == "CodeView" {
+                    sanim_core::Font::family("monospace", "monospace")
+                        .expect("native monospace family")
+                } else {
+                    sanim_core::Font::default()
+                })
+            });
         }
         if let Some(request) = crate::dataframe::materialization(name, &args)
             .map_err(|message| self.error("S309", message, span))?
@@ -91,21 +125,6 @@ impl Runtime<'_, '_> {
             return self.materialize_frame(request, span);
         }
         if matches!(builtin.execute, prelude::Execution::Read) {
-            let path = args
-                .get("path")
-                .ok_or_else(|| self.error("S305", "missing path", span))?
-                .string()
-                .map_err(|e| self.error("S305", e, span))?;
-            let path =
-                source::resolve(&self.module, path).map_err(|e| self.error("S201", e, span))?;
-            let bytes = self
-                .snapshot
-                .read(&path)
-                .map_err(|e| self.error("S201", e, span))?;
-            let resource_version = self.snapshot.fingerprint(&path);
-            self.used_resources
-                .entry(path.clone())
-                .or_insert((resource_version.clone(), self.root_statement));
             let ty = self
                 .loaded
                 .iter()
@@ -113,28 +132,12 @@ impl Runtime<'_, '_> {
                 .and_then(|v| v.checked.read_types.get(&span.start))
                 .ok_or_else(|| self.error("S301", "missing read schema", span))?
                 .substitute(&self.type_bindings);
-            let key = digest(
-                &serde_json::to_vec(&(
-                    SEMANTICS_VERSION,
-                    &path,
-                    &ty,
-                    self.limits.data,
-                    resource_version,
-                ))
-                .map_err(|e| self.error("S301", e.to_string(), span))?,
-            );
-            if let Some(value) = self.assets.get(&key) {
-                self.statistics.reused_assets += 1;
-                return Ok(value.clone());
-            }
-            self.progress.emit(Phase::Decoding, None, None, Some(&path));
-            let value = sanim_data::decode(&path, &bytes, &ty, self.limits.data).map_err(|e| {
-                self.error("S306", format!("reading '{path}' as {ty:?}: {e}"), span)
-            })?;
-            self.statistics.decoded_assets += 1;
-            self.assets.insert(key, value.clone());
-            self.report_evaluation(Some(span));
-            return Ok(value);
+            let path = args
+                .get("path")
+                .ok_or_else(|| self.error("S305", "missing path", span))?
+                .string()
+                .map_err(|e| self.error("S305", e, span))?;
+            return self.read_resource(path, &ty, span);
         }
         if matches!(
             builtin.execute,
@@ -240,8 +243,9 @@ impl Runtime<'_, '_> {
             }
             return Ok(Value::Unit);
         }
-        let (prelude::Execution::Native(evaluate) | prelude::Execution::Access(evaluate)) =
-            builtin.execute
+        let (prelude::Execution::Native(evaluate)
+        | prelude::Execution::Source(evaluate)
+        | prelude::Execution::Access(evaluate)) = builtin.execute
         else {
             unreachable!("registered host operation was handled above")
         };
@@ -252,6 +256,7 @@ impl Runtime<'_, '_> {
         }
         let native_started = Instant::now();
         let mut list_edit = None;
+        let mut created = Vec::new();
         let mut native_work = 0;
         let result = evaluate(
             name,
@@ -263,9 +268,11 @@ impl Runtime<'_, '_> {
                 animation: &mut self.animation,
                 cursor: &mut self.cursor,
                 limits: self.limits,
+                retained_bytes: &mut self.retained_bytes,
                 duration,
                 easing,
                 list_edit: &mut list_edit,
+                created: &mut created,
                 native_work: &mut native_work,
                 remaining_work: self
                     .limits
@@ -276,6 +283,10 @@ impl Runtime<'_, '_> {
         .map_err(|e| self.error("S305", e, span));
         self.charge_work(native_work, span)?;
         if result.is_ok() {
+            for value in created {
+                self.retain_binding_value(&value, span)?;
+                self.record_element_source(&value, span)?;
+            }
             if builtin.schedule {
                 self.check_elements(span)?;
             }

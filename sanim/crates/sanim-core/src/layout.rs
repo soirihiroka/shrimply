@@ -13,12 +13,23 @@ impl Animation {
         width: Fraction,
         height: Fraction,
     ) -> Result<Vec<Element>, String> {
+        self.layout_with(time, width, height, |_, _| Ok(()))
+    }
+
+    /// Resolve host-native content after sampling, before its bounds enter flow layout.
+    pub fn layout_with(
+        &self,
+        time: Fraction,
+        width: Fraction,
+        height: Fraction,
+        mut native: impl FnMut(&mut Element, Fraction) -> Result<(), String>,
+    ) -> Result<Vec<Element>, String> {
         if width <= Fraction::from(0) || height <= Fraction::from(0) {
             return Err("viewport dimensions must be positive".into());
         }
         let width = to_f64(width)?;
         let height = to_f64(height)?;
-        let mut elements = self.sample(time)?;
+        let mut elements = self.sample_with(time, &mut native)?;
         for element in &mut elements {
             resolve_with_lists(element, width, height, Some((&self.list_views, time)))?;
         }
@@ -63,7 +74,10 @@ fn resolve_with_lists(
         };
     }
     // Alignment anchors the element's bounds to the corresponding parent edge.
-    let (own_min, own_max) = if matches!(element.geometry.as_ref(), Geometry::Group { .. }) {
+    let (own_min, own_max) = if matches!(
+        element.geometry.as_ref(),
+        Geometry::Group { .. } | Geometry::Code { .. }
+    ) {
         (
             [0.0; 2],
             [
@@ -233,6 +247,7 @@ fn resolve_with_lists(
     if !element.position.values[0].is_finite() || !element.position.values[1].is_finite() {
         return Err("layout arithmetic overflow".into());
     }
+    crate::scrolling::resolve(element)?;
     Ok(())
 }
 

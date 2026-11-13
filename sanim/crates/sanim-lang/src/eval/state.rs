@@ -9,6 +9,7 @@ pub struct ExecutionState {
     pub animation: Animation,
     pub cursor: Fraction,
     pub time_map: TimeMap,
+    pub element_sources: imbl::OrdMap<String, Arc<crate::ElementSource>>,
     pub statements: usize,
     reflected: imbl::Vector<ReflectedInput>,
     assertions: imbl::Vector<Assertion>,
@@ -21,6 +22,7 @@ pub struct ExecutionState {
     retained_bytes: usize,
     retained_items: usize,
     retained_frames: imbl::OrdSet<String>,
+    retained_fonts: sanim_core::value_budget::FontBudget,
     logical_operations: u64,
     overhead: usize,
     payload: usize,
@@ -243,6 +245,7 @@ impl Store {
             runtime.animation = saved.animation.clone();
             runtime.cursor = saved.cursor;
             runtime.time_map = saved.time_map.clone();
+            runtime.element_sources = saved.element_sources.clone();
             runtime.reflected = saved.reflected.clone();
             runtime.assertions = saved.assertions.clone();
             runtime.checks = saved.checks.clone();
@@ -251,6 +254,7 @@ impl Store {
             runtime.retained_bytes = saved.retained_bytes;
             runtime.retained_items = saved.retained_items;
             runtime.retained_frames = saved.retained_frames.clone();
+            runtime.retained_fonts = saved.retained_fonts.clone();
             runtime.logical_operations = saved.logical_operations;
             runtime.completed_statements += index as u64;
             runtime.statistics.restored_statements = index as u64;
@@ -287,7 +291,21 @@ impl Store {
             + runtime.animation.element_count()
                 * (std::mem::size_of::<String>() + std::mem::size_of::<Vec<usize>>())
             + runtime.animation.layers.len() * std::mem::size_of::<Layer>()
+            + runtime
+                .animation
+                .code_views
+                .iter()
+                .map(|(id, state)| {
+                    id.len()
+                        + std::mem::size_of::<String>()
+                        + std::mem::size_of::<Arc<sanim_core::code::view::State>>()
+                        + state.metadata_bytes()
+                })
+                .sum::<usize>()
             + runtime.time_map.entries.len() * std::mem::size_of::<TimeMapEntry>()
+            + runtime.element_sources.len()
+                * (std::mem::size_of::<String>()
+                    + std::mem::size_of::<Arc<crate::ElementSource>>())
             + runtime.used_functions.len() * 128
             + runtime.assertions.len() * std::mem::size_of::<Assertion>()
             + runtime.checks.len() * std::mem::size_of::<Verification>()
@@ -323,6 +341,7 @@ impl Store {
             animation: runtime.animation.clone(),
             cursor: runtime.cursor,
             time_map: runtime.time_map.clone(),
+            element_sources: runtime.element_sources.clone(),
             statements,
             reflected: runtime.reflected.clone(),
             assertions: runtime.assertions.clone(),
@@ -335,6 +354,7 @@ impl Store {
             retained_bytes: runtime.retained_bytes,
             retained_items: runtime.retained_items,
             retained_frames: runtime.retained_frames.clone(),
+            retained_fonts: runtime.retained_fonts.clone(),
             logical_operations: runtime.logical_operations,
             overhead,
             payload,

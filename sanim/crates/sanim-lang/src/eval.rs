@@ -4,8 +4,10 @@ pub(crate) mod duration;
 mod lists;
 mod native;
 mod plans;
+mod provenance;
 mod reactive;
 mod reactive_animation;
+mod resources;
 mod signals;
 mod templates;
 use reactive::Binding;
@@ -136,11 +138,15 @@ pub(crate) fn evaluate(
         retained_bytes: limits.data.max_bytes,
         retained_items: limits.data.max_values,
         retained_frames: imbl::OrdSet::new(),
+        retained_fonts: sanim_core::value_budget::FontBudget::default(),
         logical_operations: 0,
         used_functions: imbl::OrdMap::new(),
         used_resources: imbl::OrdMap::new(),
         input_versions: imbl::OrdMap::new(),
         time_map: TimeMap::default(),
+        element_sources: imbl::OrdMap::new(),
+        source_calls: imbl::Vector::new(),
+        source_ids: BTreeMap::new(),
         root_statement: 0,
     };
     if duration_only {
@@ -280,8 +286,12 @@ pub(crate) fn evaluate(
         .progress
         .emit(Phase::Verifying, Some(0), Some(checks), None);
     for (index, assertion) in runtime.assertions.clone().into_iter().enumerate() {
-        let verification =
-            verify::evaluate(&runtime.animation, &assertion.predicate, assertion.time);
+        let verification = verify::evaluate_with(
+            &runtime.animation,
+            &assertion.predicate,
+            assertion.time,
+            sanim_data::resolve_pending,
+        );
         if assertion.required && verification.evidence != verify::Evidence::Proved {
             return Err(Diagnostic::new(
                 "S350",
@@ -366,6 +376,18 @@ pub(crate) fn evaluate(
         source: root.id.clone(),
         animation: runtime.animation,
         time_map: runtime.time_map,
+        element_sources: runtime.element_sources,
+        source_texts: loaded
+            .iter()
+            .filter_map(|module| {
+                runtime.snapshot.reads.get(&module.id).and_then(|bytes| {
+                    bytes
+                        .as_ref()
+                        .ok()
+                        .map(|bytes| (module.id.clone(), bytes.clone()))
+                })
+            })
+            .collect(),
         bindings,
         deferred_bindings,
         reflected: runtime.reflected,
@@ -433,11 +455,15 @@ pub(crate) struct Runtime<'a, 's> {
     retained_bytes: usize,
     retained_items: usize,
     retained_frames: imbl::OrdSet<String>,
+    retained_fonts: sanim_core::value_budget::FontBudget,
     logical_operations: u64,
     used_functions: imbl::OrdMap<String, (String, usize)>,
     used_resources: imbl::OrdMap<String, (String, usize)>,
     input_versions: imbl::OrdMap<String, (Option<Value>, usize)>,
     time_map: TimeMap,
+    element_sources: imbl::OrdMap<String, Arc<crate::ElementSource>>,
+    source_calls: imbl::Vector<crate::SourceLocation>,
+    source_ids: BTreeMap<String, Arc<str>>,
     root_statement: usize,
 }
 
@@ -912,11 +938,13 @@ impl Runtime<'_, '_> {
                 .unwrap_or(u64::MAX),
         );
         if let Some(key) = &key
-            && let Some(value) = self.values.get(key)
+            && let Some(entry) = self.values.get_entry(key)
         {
+            self.restore_element_sources(&entry, expr.span)?;
             self.statistics.reused_expressions += 1;
-            return Ok(value.clone());
+            return Ok(entry.value.clone());
         }
+        let previous_sources = key.as_ref().map(|_| self.element_sources.clone());
         self.statistics.evaluated_expressions += 1;
         self.depth += 1;
         if self.depth > self.limits.max_call_depth * 4 {
@@ -956,8 +984,20 @@ impl Runtime<'_, '_> {
                     .unwrap_or(u64::MAX),
             );
         if let Some(key) = key.filter(|_| !value.ty().contains_signal()) {
-            self.values
-                .insert_measured(key, value.clone(), self.limits.data.max_bytes - bytes);
+            let sources = previous_sources
+                .expect("cached expression provenance root")
+                .diff(&self.element_sources)
+                .filter_map(|change| match change {
+                    imbl::ordmap::DiffItem::Add(id, source) => Some((id.clone(), source.clone())),
+                    _ => None,
+                })
+                .collect();
+            self.values.insert_measured(
+                key,
+                value.clone(),
+                self.limits.data.max_bytes - bytes,
+                sources,
+            );
         }
         Ok(value)
     }
@@ -1543,6 +1583,7 @@ impl Runtime<'_, '_> {
         let call_site = self.instance_site(span);
         let mutates = self.function_mutates(&function);
         let previous_types = std::mem::replace(&mut self.type_bindings, bindings);
+        let caller = self.source_location(span);
         let previous = std::mem::replace(&mut self.module, function.module.clone());
         let mut scope = self
             .globals
@@ -1559,6 +1600,7 @@ impl Runtime<'_, '_> {
         );
         self.identity
             .push(format!("{}@{}", function.name, call_site));
+        self.source_calls.push_back(caller);
         for parameter in &function.parameters {
             let name = &parameter.name;
             let default = &parameter.default;
@@ -1718,6 +1760,7 @@ impl Runtime<'_, '_> {
         self.result_needed = previous_result;
         self.signal_return = previous_signal_return;
         self.identity.pop();
+        self.source_calls.pop_back();
         self.module = previous;
         self.type_bindings = previous_types;
         let result = result?;

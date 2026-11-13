@@ -169,11 +169,30 @@ snapshot of `size` passed instead would keep its fixed value. Overlapping cell
 writers and a property controlled by both a signal and a motion are errors.
 Continuous geometric proofs conservatively report unknown for retained formulas;
 explicit frame checks evaluate their actual sampled geometry.
-Background assignments support finite scalar, boolean, color and vector cells;
-unsupported structured-data writes fail explicitly instead of becoming visible
-before their scheduled time. Fixed child lists can contain shapes with reactive
-properties; changing a signal's entire geometry/topology requires an explicit
-snapshot and is rejected as a retained argument.
+Background assignments preserve their scheduled time for scalar values and typed
+configuration values, including fonts and code documents. Fixed child lists can
+contain shapes with reactive properties; arbitrary replacement of shape topology
+requires an explicit list edit or a component supporting changing content.
+
+`Label` and `Text` accept signals for text, font, font size, fill, alignment and
+transforms. Inline formatted text stays reactive:
+
+```sanim
+mut count = 0
+mut typeface = Font("sans-serif")
+let title = <Label font={typeface} font_size={24pt}>Count = {count:.0f}</Label>
+add(title)
+animate(count, to=10, duration=1s, ease="linear")
+typeface = Font("monospace")
+wait(1s)
+```
+
+Changed text, font or size resolves through the shared native outline cache before
+flow layout, alignment and picking. Equal inputs reuse their geometry; reverse
+seeks reuse sampled frames and outlines. Continuously changing font size creates
+new shaped values; animate `scale` when the text layout can remain fixed. Native
+hosts use `Animation::layout_with` to resolve pending content; pure core bounds
+checks report unresolved shaping rather than using stale text dimensions.
 
 Flow layouts recompute child extents for animated dimensions. They own child
 positions, so retained position writers on those children are rejected.
@@ -804,6 +823,18 @@ numbers and units use native controls; structured values use schema-validated
 JSON. Off-playhead metadata discovery runs on a background worker, while visible
 clips reuse read-only preview observations.
 
+In the GTK editor, pause playback, select a Sanim timeline clip, then click a
+rendered shape in the preview. Its popover shows the element's name and kind,
+containing groups, constructor source line, and helper call sites. Copy buttons
+provide a `file:line:column` reference or the original source line. The selected
+shape is outlined. Dragging continues to transform the clip normally.
+Inspection uses the exact prepared scene and time attached to the displayed
+frame; loading, source edits, seeking, and selection changes cannot reuse stale
+locations. Source evaluation and hit testing run off the GTK thread.
+Clip positioning, rotation, scaling, shear, and preview zoom are respected;
+external warp/distortion modifiers are not included in source-element hit tests.
+Disable those modifiers when inspecting source geometry.
+
 `shrimply sanim get` reports canonical config keys, display labels, defaults,
 current values and full type information. `shrimply sanim set` accepts typed JSON
 `parameters` and separate `reset_keys`; JSON null is an input value rather than a
@@ -842,7 +873,7 @@ Native element notation lowers to the same constructors and render state:
 let name = reflect("Sanim")
 let card = <Rect design="w-60% h-40% card col items-center justify-center gap-16">
     <Label design="text-xl text-light1">Hello {name}</Label>
-    <Rect design="w-200 h-44 pill bg-gradient-to-r from-blue3 to-purple3">
+    <Rect design="w-200 h-44 pill" fill={LinearGradient(from=Color("blue3"),to=Color("purple3"))}>
         <Label font_size={16pt}>Native gradient</Label>
     </Rect>
 </Rect>
@@ -870,9 +901,24 @@ Native fills accept `Color` or `LinearGradient(from=Color("blue3"),
 to=Color("purple3"), angle=0deg)`. A gradient may instead provide an explicit typed
 `stops=[{offset=0,color=Color("blue3")}, {offset=1,color=Color("purple3")}]` list.
 Gradients support 2–64 ordered stops covering 0–1; 0deg points right, 90deg down.
-`bg-gradient-to-r/br/b/bl/l/tl/t/tr from-COLOR to-COLOR` is equivalent design
-notation. Skia shaders paint the existing native path directly. Gradient stop
+Gradients are typed `fill` values; `design` does not encode directions or color
+stops. Skia shaders paint the existing native path directly. Gradient stop
 interpolation currently fails explicitly; opacity and transform animations work.
 See [the complete native markup animation](examples/native_markup.sanim).
 `make markup-bench` verifies identical native IR and measures rendering against
 the ordinary constructor form for 100 gradient cards and labels.
+
+### Native source-code views
+
+`<CodeView src="file.py"/>` loads a watched source file directly as an element.
+A literal `<CodeView lang="python">…</CodeView>` body preserves foreign syntax;
+`code={signal}` accepts live text. Methods animate patches, selections, styles,
+syntax scopes and scrolling through native Pango/Skia. Actual syntax trees are
+cached by source and grammar and shared across views and timeline revisions.
+See [CodeView](docs/code-view.md) and [the example](examples/code_view.sanim).
+
+`ScrollView` provides the same clipped viewport for ordinary element trees.
+Animate its `scroll` signal or call `scroll_to(y=100%, duration=600ms)`; percentages
+stay relative to the current overflow after resizing. CodeView additionally
+accepts source-line and syntax-scope targets. See [scrolling](docs/scrolling.md)
+and [the scrolling example](examples/scrolling.sanim).

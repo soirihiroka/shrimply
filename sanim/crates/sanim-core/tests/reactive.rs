@@ -5,6 +5,63 @@ use sanim_core::{
 };
 use std::sync::Arc;
 
+#[test]
+fn font_budget_shares_checkpoints_without_retaining_assets_or_confusing_cow_updates() {
+    use sanim_core::value_budget::{FontBudget, charge_with_fonts};
+    let mut bytes = Arc::new(vec![0u8; 1024]);
+    let weak = Arc::downgrade(&bytes);
+    let original = Value::Font(sanim_core::Font::Asset(bytes.clone()));
+    let mut budget = FontBudget::default();
+    let (mut remaining, mut items) = (8192usize, 64usize);
+    charge_with_fonts(&original, &mut remaining, &mut items, 8, &mut budget).unwrap();
+    let after_first = remaining;
+    let checkpoint = budget.clone();
+    let metadata = checkpoint.metadata_bytes();
+    charge_with_fonts(&original, &mut remaining, &mut items, 8, &mut budget).unwrap();
+    assert_eq!(after_first - remaining, std::mem::size_of::<Value>());
+    Arc::make_mut(&mut bytes)[0] = 1;
+    let changed = Value::Font(sanim_core::Font::Asset(bytes));
+    let before_change = remaining;
+    charge_with_fonts(&changed, &mut remaining, &mut items, 8, &mut budget).unwrap();
+    assert!(before_change - remaining >= 1024);
+    assert!(budget.metadata_bytes() > metadata);
+    assert_eq!(checkpoint.metadata_bytes(), metadata);
+    drop(original);
+    assert!(
+        weak.upgrade().is_none(),
+        "budget guards must not retain font bytes"
+    );
+}
+
+#[test]
+fn failed_font_charges_cannot_register_unpaid_payloads() {
+    use sanim_core::value_budget::{FontBudget, charge_with_fonts};
+    let font = Value::Font(sanim_core::Font::Asset(Arc::new(vec![0u8; 1024])));
+    let mut budget = FontBudget::default();
+    let (mut bytes, mut items) = (std::mem::size_of::<Value>(), 4);
+    assert!(charge_with_fonts(&font, &mut bytes, &mut items, 8, &mut budget).is_err());
+    assert_eq!(budget.metadata_bytes(), 0);
+    let (mut bytes, mut items) = (4096usize, 4usize);
+    charge_with_fonts(&font, &mut bytes, &mut items, 8, &mut budget).unwrap();
+    assert!(4096 - bytes >= 1024);
+}
+
+#[test]
+fn shared_font_assets_are_budgeted_once_inside_persistent_configuration_values() {
+    let bytes = Arc::new(vec![0u8; 32 * 1024]);
+    let fonts = Value::List(sanim_core::List::typed(
+        sanim_core::Type::Font,
+        (0..128)
+            .map(|_| Value::Font(sanim_core::Font::Asset(bytes.clone())))
+            .collect(),
+    ));
+    let mut remaining_bytes = 128 * 1024;
+    let mut remaining_values = 256;
+    sanim_core::value_budget::charge(&fonts, &mut remaining_bytes, &mut remaining_values, 8)
+        .unwrap();
+    assert!(remaining_bytes > 32 * 1024);
+}
+
 fn numeric(value: i64, unit: Unit) -> Value {
     Value::Number(Number {
         value: Fraction::from(value),

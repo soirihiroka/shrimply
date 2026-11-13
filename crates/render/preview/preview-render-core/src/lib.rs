@@ -77,6 +77,7 @@ pub struct TransitionStage {
 }
 
 pub struct FramePlan {
+    pub sanim_sources: std::sync::Arc<shrimply_visual_core::sanim::inspection::FrameSources>,
     pub time: Time,
     pub accuracy: CompositeAccuracy,
     pub loading: bool,
@@ -160,6 +161,7 @@ pub struct Scene {
     sanim_errors: Vec<String>,
     sanim_loading: bool,
     sanim_active: std::collections::HashSet<uuid::Uuid>,
+    sanim_sources: shrimply_visual_core::sanim::inspection::FrameSources,
     strict_sources: bool,
     source_waker: Option<shrimply_visual_core::generated::SourceWake>,
     manim_updates: Vec<shrimply_manim_state::Update>,
@@ -382,6 +384,7 @@ impl Scene {
         self.blender_loading = false;
         self.stabilization_pending = false;
         self.sanim_active.clear();
+        self.sanim_sources = Default::default();
         let mut external_layers = Vec::with_capacity(dependency_records.len());
         for dependency in dependency_records {
             external_layers.push(ExternalLayers {
@@ -408,6 +411,7 @@ impl Scene {
         }
         self.prepared = Some(key);
         Ok(Some(FramePlan {
+            sanim_sources: std::sync::Arc::new(std::mem::take(&mut self.sanim_sources)),
             time,
             accuracy,
             loading: self.manim_loading || self.blender_loading || self.sanim_loading,

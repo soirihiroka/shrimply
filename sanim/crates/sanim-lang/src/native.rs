@@ -11,12 +11,16 @@ pub(crate) struct Context<'a> {
     pub animation: &'a mut Animation,
     pub cursor: &'a mut Fraction,
     pub limits: &'a Limits,
+    /// Remaining shared runtime budget for newly retained native metadata.
+    pub retained_bytes: &'a mut usize,
     pub duration: Fraction,
     pub easing: Easing,
     pub list_edit: &'a mut Option<crate::lists::EditDelta>,
     /// Native algorithms reserve bounded work before entering their expensive loops.
     pub native_work: &'a mut u64,
     pub remaining_work: u64,
+    /// Fresh visual children created by timed native operations, for source provenance.
+    pub created: &'a mut Vec<Value>,
 }
 
 impl Context<'_> {
@@ -36,35 +40,14 @@ impl Context<'_> {
     }
 }
 
-pub(crate) fn font(
-    _name: &str,
+pub(crate) fn configuration(
+    name: &str,
     args: &imbl::OrdMap<String, Value>,
     _context: Context<'_>,
 ) -> Result<Value, String> {
-    let family = args
-        .get("family")
-        .map(Value::string)
-        .transpose()?
-        .unwrap_or(sanim_core::Font::DEFAULT_FAMILY);
-    let fallback = args
-        .get("fallback")
-        .map(Value::string)
-        .transpose()?
-        .unwrap_or(sanim_core::Font::DEFAULT_FAMILY);
-    Ok(Value::Font(sanim_core::Font::family(family, fallback)?))
-}
-
-pub(crate) fn color(
-    _name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    _context: Context<'_>,
-) -> Result<Value, String> {
-    Ok(Value::Color(Color::parse(
-        args.get("value")
-            .map(Value::string)
-            .transpose()?
-            .unwrap_or("red3"),
-    )?))
+    sanim_core::code::values::Native::from_name(name)
+        .expect("registered native value constructor")
+        .execute(args)
 }
 
 pub(crate) fn fraction(
@@ -571,7 +554,7 @@ fn make_element_raw(
                     .unwrap_or_default(),
             }
         }
-        "Group" | "Row" | "Column" => {
+        "Group" | "Row" | "Column" | "ScrollView" => {
             let children = required("children")?
                 .list()?
                 .iter()
@@ -642,12 +625,14 @@ fn make_element_raw(
             };
             let text = required("text")?.string()?;
             let size = positive(args, "font_size", Fraction::from(24))?;
-            let (bounds, outline) = sanim_data::font::shape(font, text, size)?;
+            let shaped = sanim_data::font::cached_shape(font, text, size, false, false)?;
             Geometry::Text {
                 text: text.into(),
+                font: font.clone(),
                 size,
-                outline: outline.into(),
-                bounds,
+                outline: shaped.outline.clone(),
+                bounds: shaped.bounds,
+                pending: false,
             }
         }
         _ => return Err(format!("native '{name}' has no implementation")),
@@ -716,7 +701,15 @@ fn make_element_raw(
             .unwrap_or(name == "Row"),
         width: args.get("width").map(Value::number).transpose()?,
         height: args.get("height").map(Value::number).transpose()?,
+        scroll: args
+            .get("scroll")
+            .map(Value::vec2)
+            .transpose()?
+            .or_else(|| (name == "ScrollView").then(|| Vec2::zero(Unit::Length))),
     };
+    if name == "ScrollView" && (layout.width.is_none() || layout.height.is_none()) {
+        return Err("ScrollView requires width and height for its viewport".into());
+    }
     if layout.width.into_iter().chain(layout.height).any(|v| {
         !matches!(v.unit, Unit::Length | Unit::Percent)
             || !math::finite(&v.value)

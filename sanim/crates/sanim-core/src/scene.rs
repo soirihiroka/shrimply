@@ -32,12 +32,26 @@ pub enum Geometry {
     },
     Text {
         text: String,
+        font: crate::Font,
         size: Fraction,
         outline: Arc<Vec<TextSegment>>,
         bounds: crate::verify::Bounds,
+        /// A sampled text/font/size changed and requires native shaping before layout.
+        pending: bool,
     },
     Group {
         children: Vector<Element>,
+    },
+    Code {
+        document: Arc<crate::code::Document>,
+        options: Arc<crate::code::view::Options>,
+        children: Vector<Element>,
+        #[serde(default)]
+        pending: bool,
+        #[serde(default)]
+        source_changed: bool,
+        #[serde(default)]
+        presentation: Option<crate::code::view::Presentation>,
     },
 }
 
@@ -67,13 +81,17 @@ impl CornerRadius {
 impl Geometry {
     pub fn children(&self) -> Option<&Vector<Element>> {
         match self {
-            Self::Group { children } | Self::Rectangle { children, .. } => Some(children),
+            Self::Group { children }
+            | Self::Rectangle { children, .. }
+            | Self::Code { children, .. } => Some(children),
             _ => None,
         }
     }
     pub fn children_mut(&mut self) -> Option<&mut Vector<Element>> {
         match self {
-            Self::Group { children } | Self::Rectangle { children, .. } => Some(children),
+            Self::Group { children }
+            | Self::Rectangle { children, .. }
+            | Self::Code { children, .. } => Some(children),
             _ => None,
         }
     }
@@ -158,6 +176,9 @@ pub struct Layout {
     pub justify: Justify,
     pub align: Align,
     pub wrap: bool,
+    /// Content offset inside the element's fixed viewport. Percentages use its overflow range.
+    #[serde(default)]
+    pub scroll: Option<Vec2>,
 }
 impl Layout {
     pub fn dimension_type() -> crate::Type {
@@ -198,6 +219,7 @@ pub enum Direction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Property {
     Position,
+    Scroll,
     Rotation,
     Scale,
     StretchX,
@@ -207,6 +229,18 @@ pub enum Property {
     Radius,
     Width,
     Height,
+    Text,
+    Font,
+    FontSize,
+    XAlign,
+    YAlign,
+    Code,
+    CodeLanguage,
+    CodeTheme,
+    CodeSpans,
+    CodeLineHeight,
+    CodeTabSize,
+    CodeLineNumbers,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -343,6 +377,9 @@ pub struct Animation {
     pub reactive: crate::reactive::ReactiveGraph,
     #[serde(default)]
     pub list_views: crate::list_views::ListViews,
+    /// COW preparation metadata. The actual visual state is in list_views/tracks.
+    #[serde(default)]
+    pub code_views: OrdMap<String, Arc<crate::code::view::State>>,
     pub(crate) element_index: OrdMap<String, Vector<usize>>,
     #[serde(default)]
     pub(crate) flow_controlled: OrdSet<String>,
@@ -366,6 +403,7 @@ impl Animation {
             tracks: OrdMap::new(),
             reactive: crate::reactive::ReactiveGraph::default(),
             list_views: crate::list_views::ListViews::default(),
+            code_views: OrdMap::new(),
             element_index: OrdMap::new(),
             flow_controlled: OrdSet::new(),
         }
@@ -374,6 +412,11 @@ impl Animation {
 
 impl Element {
     pub fn property(&self, property: Property) -> Result<Value, String> {
+        if matches!(self.geometry.as_ref(), Geometry::Code { .. })
+            && crate::code::view::input_type(property).is_some()
+        {
+            return crate::code::view::property(self.geometry.as_ref(), property);
+        }
         if property == Property::Radius
             && matches!(
                 self.geometry.as_ref(),
@@ -396,12 +439,20 @@ impl Element {
             Property::Height => self.layout.height,
             _ => None,
         } && (number.unit == crate::Unit::Percent
-            || matches!(self.geometry.as_ref(), Geometry::Group { .. }))
+            || matches!(
+                self.geometry.as_ref(),
+                Geometry::Group { .. } | Geometry::Code { .. }
+            ))
         {
             return Ok(Value::Number(number));
         }
         Ok(match property {
             Property::Position => Value::Vec2(self.position),
+            Property::Scroll => Value::Vec2(
+                self.layout
+                    .scroll
+                    .unwrap_or(Vec2::zero(crate::Unit::Length)),
+            ),
             Property::Rotation => Value::Number(crate::Number {
                 value: self.rotation,
                 unit: crate::Unit::Angle,
@@ -423,6 +474,39 @@ impl Element {
                 unit: crate::Unit::Number,
             }),
             Property::Fill => self.fill.value(),
+            Property::XAlign | Property::YAlign => {
+                use crate::NativeEnum;
+                let alignment = if property == Property::XAlign {
+                    self.layout.x_align
+                } else {
+                    self.layout.y_align
+                };
+                Value::Variant {
+                    ty: Arc::new(Align::ty()),
+                    tag: Align::VARIANTS
+                        .iter()
+                        .find(|(_, value)| *value == alignment)
+                        .expect("registered alignment")
+                        .0
+                        .into(),
+                    fields: vec![].into(),
+                }
+            }
+            Property::Text => match self.geometry.as_ref() {
+                Geometry::Text { text, .. } => Value::String(text.clone().into()),
+                _ => return Err(format!("{} does not have text content", self.id)),
+            },
+            Property::Font => match self.geometry.as_ref() {
+                Geometry::Text { font, .. } => Value::Font(font.clone()),
+                _ => return Err(format!("{} does not have a font", self.id)),
+            },
+            Property::FontSize => match self.geometry.as_ref() {
+                Geometry::Text { size, .. } => Value::Number(crate::Number {
+                    value: *size,
+                    unit: crate::Unit::Length,
+                }),
+                _ => return Err(format!("{} does not have a font size", self.id)),
+            },
             Property::Radius | Property::Width | Property::Height => {
                 let value = match (property, self.geometry.as_ref()) {
                     (Property::Radius, Geometry::Circle { radius }) => *radius,
@@ -430,8 +514,8 @@ impl Element {
                     (Property::Width, Geometry::Rectangle { width, .. }) => *width,
                     (Property::Width, Geometry::Line { width, .. } | Geometry::Polyline { width, .. }) => *width,
                     (Property::Height, Geometry::Rectangle { height, .. }) => *height,
-                    (Property::Width, Geometry::Group { .. }) => self.layout.width.map(|number|number.value).ok_or_else(|| format!("{}.width is automatic; provide an explicit width before reading it",self.id))?,
-                    (Property::Height, Geometry::Group { .. }) => self.layout.height.map(|number|number.value).ok_or_else(|| format!("{}.height is automatic; provide an explicit height before reading it",self.id))?,
+                    (Property::Width, Geometry::Group { .. } | Geometry::Code { .. }) => self.layout.width.map(|number|number.value).ok_or_else(|| format!("{}.width is automatic; provide an explicit width before reading it",self.id))?,
+                    (Property::Height, Geometry::Group { .. } | Geometry::Code { .. }) => self.layout.height.map(|number|number.value).ok_or_else(|| format!("{}.height is automatic; provide an explicit height before reading it",self.id))?,
                     _ => {
                         return Err(format!(
                             "{} does not have a {property:?} geometry property",
@@ -444,10 +528,113 @@ impl Element {
                     unit: crate::Unit::Length,
                 })
             }
+            Property::Code
+            | Property::CodeLanguage
+            | Property::CodeTheme
+            | Property::CodeSpans
+            | Property::CodeLineHeight
+            | Property::CodeTabSize
+            | Property::CodeLineNumbers => return Err(format!("{} is not a CodeView", self.id)),
         })
     }
     pub fn set(&mut self, property: Property, value: Value) -> Result<(), String> {
+        if matches!(self.geometry.as_ref(), Geometry::Code { .. })
+            && crate::code::view::input_type(property).is_some()
+        {
+            return crate::code::view::set(Arc::make_mut(&mut self.geometry), property, value);
+        }
         match property {
+            Property::XAlign | Property::YAlign => {
+                use crate::NativeEnum;
+                let Value::Variant { ty, tag, fields } = value else {
+                    return Err("alignment requires Align.Start, Align.Center or Align.End".into());
+                };
+                if *ty != Align::ty() || !fields.is_empty() {
+                    return Err("alignment requires an Align enum value".into());
+                }
+                let alignment = Align::from_name(&tag)?;
+                if property == Property::XAlign {
+                    self.layout.x_align = alignment;
+                } else {
+                    self.layout.y_align = alignment;
+                }
+            }
+            Property::Code
+            | Property::CodeLanguage
+            | Property::CodeTheme
+            | Property::CodeSpans
+            | Property::CodeLineHeight
+            | Property::CodeTabSize
+            | Property::CodeLineNumbers => return Err(format!("{} is not a CodeView", self.id)),
+            Property::Text => {
+                let text = value.string()?;
+                if text.len() > math::format::MAX_OUTPUT_BYTES {
+                    return Err("text content exceeds its byte budget".into());
+                }
+                if matches!(self.geometry.as_ref(), Geometry::Text { text: current, .. } if current == text)
+                {
+                    return Ok(());
+                }
+                let Geometry::Text {
+                    text: current,
+                    pending,
+                    ..
+                } = Arc::make_mut(&mut self.geometry)
+                else {
+                    return Err(format!("{} does not have text content", self.id));
+                };
+                if current != text {
+                    *current = text.to_owned();
+                    *pending = true;
+                }
+            }
+            Property::Font => {
+                let Value::Font(font) = value else {
+                    return Err("font requires a Font value".into());
+                };
+                font.validate()?;
+                if matches!(self.geometry.as_ref(), Geometry::Text { font: current, .. } if current == &font)
+                {
+                    return Ok(());
+                }
+                let Geometry::Text {
+                    font: current,
+                    pending,
+                    ..
+                } = Arc::make_mut(&mut self.geometry)
+                else {
+                    return Err(format!("{} does not have a font", self.id));
+                };
+                if current != &font {
+                    *current = font;
+                    *pending = true;
+                }
+            }
+            Property::FontSize => {
+                let number = value.number()?;
+                if number.unit != crate::Unit::Length
+                    || !math::finite(&number.value)
+                    || number.value <= Fraction::from(0)
+                {
+                    return Err("font size requires a finite positive Length".into());
+                }
+                if matches!(self.geometry.as_ref(), Geometry::Text { size, .. } if *size == number.value)
+                {
+                    return Ok(());
+                }
+                let Geometry::Text { size, pending, .. } = Arc::make_mut(&mut self.geometry) else {
+                    return Err(format!("{} does not have a font size", self.id));
+                };
+                if *size != number.value {
+                    *size = number.value;
+                    *pending = true;
+                }
+            }
+            Property::Scroll => {
+                let offset = value.vec2()?;
+                crate::scrolling::validate(self, offset)?;
+                self.layout.scroll = Some(offset);
+            }
             Property::Position => self.position = value.vec2()?,
             Property::Rotation => {
                 let number = value.number()?;
@@ -508,7 +695,7 @@ impl Element {
                 let relative = matches!(property, Property::Width | Property::Height)
                     && matches!(
                         self.geometry.as_ref(),
-                        Geometry::Rectangle { .. } | Geometry::Group { .. }
+                        Geometry::Rectangle { .. } | Geometry::Group { .. } | Geometry::Code { .. }
                     );
                 if !(number.unit == crate::Unit::Length
                     || relative && number.unit == crate::Unit::Percent)
@@ -524,7 +711,10 @@ impl Element {
                 match (property, self.geometry.as_ref()) {
                     (Property::Radius, Geometry::Circle { .. } | Geometry::Rectangle { .. })
                     | (Property::Width | Property::Height, Geometry::Rectangle { .. }) => {}
-                    (Property::Width | Property::Height, Geometry::Group { .. }) => {}
+                    (
+                        Property::Width | Property::Height,
+                        Geometry::Group { .. } | Geometry::Code { .. },
+                    ) => {}
                     (Property::Width, Geometry::Line { .. } | Geometry::Polyline { .. }) => {}
                     _ => {
                         return Err(format!(
@@ -533,7 +723,10 @@ impl Element {
                         ));
                     }
                 }
-                if matches!(self.geometry.as_ref(), Geometry::Group { .. }) {
+                if matches!(
+                    self.geometry.as_ref(),
+                    Geometry::Group { .. } | Geometry::Code { .. }
+                ) {
                     match property {
                         Property::Width => self.layout.width = Some(number),
                         Property::Height => self.layout.height = Some(number),
@@ -598,6 +791,14 @@ impl Animation {
         .logical_size()
     }
     pub fn sample(&self, time: Fraction) -> Result<Vec<Element>, String> {
+        self.sample_with(time, |_, _| Ok(()))
+    }
+    /// Sample the canonical state once, resolving native descriptors in the same traversal.
+    pub fn sample_with(
+        &self,
+        time: Fraction,
+        mut native: impl FnMut(&mut Element, Fraction) -> Result<(), String>,
+    ) -> Result<Vec<Element>, String> {
         if !math::finite(&time) || time < Fraction::zero() {
             return Err("sample time must be finite and nonnegative".into());
         }
@@ -607,15 +808,23 @@ impl Animation {
             .filter(|v| v.birth <= time)
             .map(|v| {
                 let mut out = v.element.clone();
-                self.sample_in_place(&mut out, time, &mut sampler)?;
+                self.sample_in_place(&mut out, time, &mut sampler, &mut native)?;
                 Ok(out)
             })
             .collect()
     }
     pub fn sample_element(&self, element: &Element, time: Fraction) -> Result<Element, String> {
+        self.sample_element_with(element, time, |_, _| Ok(()))
+    }
+    pub fn sample_element_with(
+        &self,
+        element: &Element,
+        time: Fraction,
+        mut native: impl FnMut(&mut Element, Fraction) -> Result<(), String>,
+    ) -> Result<Element, String> {
         let mut out = element.clone();
         let mut sampler = self.reactive.sampler(time)?;
-        self.sample_in_place(&mut out, time, &mut sampler)?;
+        self.sample_in_place(&mut out, time, &mut sampler, &mut native)?;
         Ok(out)
     }
     pub fn sample_property(
@@ -654,7 +863,22 @@ impl Animation {
         out: &mut Element,
         time: Fraction,
         sampler: &mut crate::reactive::Sampler<'_>,
+        native: &mut impl FnMut(&mut Element, Fraction) -> Result<(), String>,
     ) -> Result<(), String> {
+        if matches!(out.geometry.as_ref(), Geometry::Code { .. })
+            && let Some(state) = self.code_views.get(&out.id)
+        {
+            let value = state.presentation(time)?;
+            if let Geometry::Code {
+                presentation,
+                pending,
+                ..
+            } = Arc::make_mut(&mut out.geometry)
+            {
+                *pending |= value.is_some();
+                *presentation = value;
+            }
+        }
         if let Some(properties) = self.reactive.properties(&out.id) {
             for (property, node) in properties {
                 if *property == Property::Position && self.flow_controlled.contains(&out.id) {
@@ -691,8 +915,9 @@ impl Animation {
             }
         }
         if let Some(children) = self.list_views.visual_children(&out.id, time)? {
-            out.geometry = Arc::new(Geometry::Group { children });
+            *Arc::make_mut(&mut out.geometry) = Geometry::Group { children };
         }
+        native(out, time)?;
         if out
             .geometry
             .children()
@@ -700,7 +925,7 @@ impl Animation {
             && let Some(children) = Arc::make_mut(&mut out.geometry).children_mut()
         {
             for child in children {
-                self.sample_in_place(child, time, sampler)?;
+                self.sample_in_place(child, time, sampler, native)?;
             }
         }
         Ok(())
@@ -1001,7 +1226,10 @@ impl Animation {
             }
             let easing = motion.easing.unwrap_or(easing);
             if easing == Easing::Overshoot
-                && !matches!(motion.property, Property::Position | Property::Opacity)
+                && !matches!(
+                    motion.property,
+                    Property::Position | Property::Scroll | Property::Opacity
+                )
             {
                 return Err("overshoot easing supports position and opacity motions; use smootherstep for bounded scale, reveal, rotation or color motions".into());
             }
@@ -1023,6 +1251,7 @@ impl Animation {
                             | Property::Radius
                             | Property::Width
                             | Property::Height
+                            | Property::FontSize
                             | Property::Fill
                     ),
                     reveal: motion.reveal,

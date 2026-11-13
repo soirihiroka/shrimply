@@ -30,6 +30,7 @@ pub(crate) fn register(output: &mut Vec<Builtin>) {
             result,
             schedule: false,
             timing: Default::default(),
+            content: Default::default(),
             execute: Execution::Access(execute),
             check: native_types::fixed,
         });

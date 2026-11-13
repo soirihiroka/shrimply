@@ -3,6 +3,8 @@ use sanim_core::{math::to_f64, *};
 use skia_safe::{Canvas, Picture, PictureRecorder, Rect};
 use std::{collections::BTreeMap, rc::Rc, sync::Arc};
 mod draw;
+mod pick;
+pub use pick::Hit;
 use sanim_core::cache::Cache;
 
 #[derive(Clone, Debug)]
@@ -190,6 +192,9 @@ impl FrameState {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct StateKey {
     scene: String,
+    // Lazy text/code can acquire glyphs after the initial scene was prepared.
+    // Their native font environment must also identify cached future states.
+    font_epoch: Option<sanim_data::font::FontEpoch>,
     time: Fraction,
     width: Fraction,
     height: Fraction,
@@ -211,6 +216,7 @@ enum RasterKind {
 
 pub struct Renderer {
     states: Cache<StateKey, FrameState>,
+    picks: Cache<RecordKey, std::sync::Mutex<pick::Frame>>,
     recordings: Cache<RecordKey, Recording>,
     frames: Cache<(RecordKey, RasterKind), Frame>,
     previous: Option<(String, Arc<Animation>)>,
@@ -235,6 +241,7 @@ impl Renderer {
     pub fn with_cache_limits(limits: CacheLimits) -> Self {
         Self {
             states: Cache::new(limits.state_bytes, limits.entries),
+            picks: Cache::new(limits.recording_bytes, limits.entries),
             recordings: Cache::new(limits.recording_bytes, limits.entries),
             frames: Cache::new(limits.raster_bytes, limits.entries),
             previous: None,
@@ -274,6 +281,10 @@ impl Renderer {
                 record.state = update(record.state)?;
                 Some(record)
             });
+            self.picks.rekey(|mut record| {
+                record.state = update(record.state)?;
+                Some(record)
+            });
             self.frames.rekey(|(mut record, png)| {
                 record.state = update(record.state)?;
                 Some((record, png))
@@ -291,7 +302,10 @@ impl Renderer {
     /// preparation leaves geometry deferred until a frame actually draws it.
     pub fn validate_geometry(&mut self, scene: &Scene) -> Result<(), String> {
         fn visit(element: &Element, renderer: &mut Renderer) -> Result<(), String> {
-            if !matches!(element.geometry.as_ref(), Geometry::Group { .. }) {
+            if !matches!(
+                element.geometry.as_ref(),
+                Geometry::Group { .. } | Geometry::Code { .. }
+            ) {
                 draw::prepared_path(element, renderer)?;
             }
             if let Some(children) = element.geometry.children() {
@@ -312,6 +326,7 @@ impl Renderer {
     pub fn clear_cache(&mut self) {
         self.recordings.clear();
         self.states.clear();
+        self.picks.clear();
         self.frames.clear();
         self.geometry_cache.clear();
         self.geometry_hints.clear();
@@ -330,8 +345,34 @@ impl Renderer {
             return Ok(state);
         }
         let started = std::time::Instant::now();
-        let elements = scene.animation.layout(key.time, key.width, key.height)?;
-        let bytes = state_bytes(&elements);
+        let limits = sanim_data::Limits::default();
+        let mut generated_bytes = limits.max_bytes;
+        let mut generated_items = limits.max_values;
+        let mut fonts = sanim_core::value_budget::FontBudget::default();
+        let elements =
+            scene
+                .animation
+                .layout_with(key.time, key.width, key.height, |element, time| {
+                    let pending = matches!(
+                        element.geometry.as_ref(),
+                        Geometry::Code { pending: true, .. } | Geometry::Text { pending: true, .. }
+                    );
+                    sanim_data::resolve_pending(element, time)?;
+                    if pending {
+                        sanim_core::value_budget::charge_with_fonts(
+                            &Value::Element(Arc::new(element.clone())),
+                            &mut generated_bytes,
+                            &mut generated_items,
+                            limits.max_depth,
+                            &mut fonts,
+                        )
+                        .map_err(|error| {
+                            format!("native frame geometry for '{}': {error}", element.id)
+                        })?;
+                    }
+                    Ok(())
+                })?;
+        let bytes = state_bytes(&elements, limits.max_depth)?;
         let state = Arc::new(FrameState {
             elements,
             compute_micros: started.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
@@ -378,6 +419,7 @@ impl Renderer {
                 renderer: self,
                 pixels,
                 work: options.max_work,
+                output: draw::RecordingOutput,
             };
             for element in &state.elements {
                 draw::element_draw(canvas, element, Reveal::default(), &mut drawing)?;
@@ -444,6 +486,7 @@ impl Renderer {
 fn state_key(scene: &Scene, time: Fraction, options: &Options) -> Result<StateKey, String> {
     Ok(StateKey {
         scene: scene.key.clone(),
+        font_epoch: sanim_data::font::system_font_epoch(),
         time: scene.times.canonical(time)?,
         width: options.logical_width,
         height: options.logical_height,
@@ -458,33 +501,21 @@ fn record_key(scene: &Scene, time: Fraction, options: &Options) -> Result<Record
         max_pixels: options.max_pixels,
     })
 }
-fn state_bytes(elements: &Vec<Element>) -> usize {
-    elements.capacity() * std::mem::size_of::<Element>()
-        + elements.iter().map(element_bytes).sum::<usize>()
-}
-fn element_bytes(element: &Element) -> usize {
-    let paint_bytes = |paint: &sanim_core::Paint| match paint {
-        sanim_core::Paint::LinearGradient { stops, .. } => std::mem::size_of_val(stops.as_ref()),
-        sanim_core::Paint::Solid(_) => 0,
-    };
-    element.id.capacity()
-        + paint_bytes(&element.fill)
-        + element
-            .stroke
-            .as_ref()
-            .map(|stroke| paint_bytes(&stroke.paint))
-            .unwrap_or(0)
-        + match element.geometry.as_ref() {
-            Geometry::Group { children } | Geometry::Rectangle { children, .. } => {
-                children.len() * std::mem::size_of::<Element>()
-                    + children.iter().map(element_bytes).sum::<usize>()
-            }
-            Geometry::Polygon { points } | Geometry::Polyline { points, .. } => {
-                points.capacity() * std::mem::size_of::<Vec2>()
-            }
-            Geometry::Text { text, outline, .. } => {
-                text.capacity() + outline.capacity() * std::mem::size_of::<TextSegment>()
-            }
-            _ => 0,
-        }
+fn state_bytes(elements: &Vec<Element>, max_depth: usize) -> Result<usize, String> {
+    let mut bytes = usize::MAX;
+    let mut items = usize::MAX;
+    let mut fonts = sanim_core::value_budget::FontBudget::default();
+    for element in elements {
+        sanim_core::value_budget::charge_with_fonts(
+            &Value::Element(Arc::new(element.clone())),
+            &mut bytes,
+            &mut items,
+            max_depth,
+            &mut fonts,
+        )?;
+    }
+    Ok(
+        usize::MAX - bytes
+            + (elements.capacity() - elements.len()) * std::mem::size_of::<Element>(),
+    )
 }

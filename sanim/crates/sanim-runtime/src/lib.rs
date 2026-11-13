@@ -98,9 +98,16 @@ impl Runtime {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        let root = parent
-            .canonicalize()
-            .map_err(|e| format!("Sanim source directory: {e}"))?;
+        let root = match parent.canonicalize() {
+            Ok(root) => root,
+            // A missing clip directory is a recoverable source diagnostic, not a
+            // failure to construct the editor's runtime or open its project.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::path::absolute(parent)
+                    .map_err(|error| format!("Sanim source directory: {error}"))?
+            }
+            Err(error) => return Err(format!("Sanim source directory: {error}")),
+        };
         let entry = path
             .file_name()
             .and_then(|s| s.to_str())

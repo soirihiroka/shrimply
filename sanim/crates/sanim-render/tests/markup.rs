@@ -27,7 +27,7 @@ fn pixel(frame: &sanim_render::Frame, x: usize, y: usize) -> &[u8] {
 #[test]
 fn markup_gradients_rounding_borders_and_labels_render_natively() {
     let source = r#"bg(Color("transparent"))
-let card=<Rect width={100pt} height={50pt} design="pill bg-gradient-to-r from-blue3 to-orange3 border-2 border-light1"><Label font_size={12pt}>native</Label></Rect>
+let card=<Rect width={100pt} height={50pt} design="pill border-2 border-light1" fill={LinearGradient(from=Color("blue3"),to=Color("orange3"))}><Label font_size={12pt}>native</Label></Rect>
 add(card)
 wait(1s)"#;
     let image = frame(source, 160, 100);

@@ -25,6 +25,7 @@ pub(crate) fn register(out: &mut Vec<Builtin>) {
             parameters,
             result: Type::Unit,
             schedule: true,
+            content: Default::default(),
             timing: crate::timing::Timing {
                 default: Fraction::new(3u64, 10u64),
                 ..Default::default()

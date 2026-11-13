@@ -103,12 +103,7 @@ impl Channel {
         let (from, to, event) = self.endpoints(time);
         if let Some(event) = event {
             let time = math::progress(time, event.start, event.end)?;
-            let progress = event.easing.apply(time)?;
-            let appearance = if matches!(event.easing, Easing::Spring | Easing::SpringBouncy) {
-                Easing::CubicOut.apply(time)?
-            } else {
-                progress.max(0.into()).min(1.into())
-            };
+            let (progress, appearance) = math::eased_progress(event.easing, time)?;
             Ok(Selection {
                 from,
                 to,
@@ -396,8 +391,8 @@ impl Animation {
         Ok(())
     }
     pub fn bind_list(&mut self, cell: u64, view: &Element, initial: List) -> Result<(), String> {
-        if view.layout.direction.is_none()
-            || !matches!(view.geometry.as_ref(), Geometry::Group { .. })
+        if !(view.layout.direction.is_some()
+            && matches!(view.geometry.as_ref(), Geometry::Group { .. }))
         {
             return Err("live list children require a Row or Column".into());
         }

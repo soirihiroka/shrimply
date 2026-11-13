@@ -4,16 +4,17 @@ use sanim_lang::{Engine, MemorySources};
 use sanim_render::{Options, Renderer};
 use std::{fmt::Write, time::Instant};
 fn source(markup: bool) -> String {
-    let mut source = String::new();
+    let mut source =
+        String::from("let gradient=LinearGradient(from=Color(\"blue3\"),to=Color(\"purple3\"))\n");
     let mut names = Vec::new();
     for i in 0..100 {
         let x = (i % 10) * 66 - 297;
         let y = (i / 10) * 34 - 153;
         names.push(format!("tile_{i}"));
         if markup {
-            writeln!(source,r#"let tile_{i}=<Rect id="tile-{i}" width={{56pt}} height={{28pt}} position={{Vec2({x}pt,{y}pt)}} design="pill bg-gradient-to-r from-blue3 to-purple3"><Label id="label-{i}" font_size={{10pt}}>item {i}</Label></Rect>"#).unwrap();
+            writeln!(source,r#"let tile_{i}=<Rect id="tile-{i}" width={{56pt}} height={{28pt}} position={{Vec2({x}pt,{y}pt)}} design="pill" fill={{gradient}}><Label id="label-{i}" font_size={{10pt}}>item {i}</Label></Rect>"#).unwrap();
         } else {
-            writeln!(source,r#"let tile_{i}=Rect(id="tile-{i}",width=56pt,height=28pt,position=Vec2({x}pt,{y}pt),design="pill bg-gradient-to-r from-blue3 to-purple3",children=[Text("item {i}",id="label-{i}",font_size=10pt)])"#).unwrap();
+            writeln!(source,r#"let tile_{i}=Rect(id="tile-{i}",width=56pt,height=28pt,position=Vec2({x}pt,{y}pt),design="pill",fill=gradient,children=[Text("item {i}",id="label-{i}",font_size=10pt)])"#).unwrap();
         }
     }
     writeln!(source,"let group=Group(children=[{}])\nMoveTo(group,to=Vec2(10pt,0pt),duration=1s,ease=\"linear\")",names.join(",")).unwrap();

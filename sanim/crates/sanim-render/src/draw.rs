@@ -3,7 +3,7 @@ use shrimply_drawing_skia::{
     path::PreparedPath,
     shape::{self, ShapeRoundingStrategy},
 };
-use skia_safe::{Canvas, Paint, PathBuilder, Rect};
+use skia_safe::{Canvas, Paint, PathBuilder, QuickReject, Rect};
 use std::{
     rc::{Rc, Weak as PathWeak},
     sync::{Arc, Weak},
@@ -14,6 +14,7 @@ const MAX_GEOMETRY_CACHE_BYTES: usize = 64 * 1024 * 1024;
 // Weak identity hints therefore have a separate, still bounded entry budget.
 const MAX_GEOMETRY_CACHE_ENTRIES: usize = 1024;
 const MAX_GEOMETRY_HINT_ENTRIES: usize = 8192;
+const LAYER_ANTIALIAS_PADDING: f32 = 1.;
 
 pub(crate) struct GeometryHint {
     // A weak allocation guard prevents pointer reuse, without retaining scene data.
@@ -27,6 +28,15 @@ pub(crate) fn prepared_path(
     element: &Element,
     renderer: &mut crate::Renderer,
 ) -> Result<Rc<PreparedPath>, String> {
+    if matches!(
+        element.geometry.as_ref(),
+        Geometry::Text { pending: true, .. }
+    ) {
+        return Err(
+            "text shaping is unresolved; sample native layout before preparing drawing paths"
+                .into(),
+        );
+    }
     let identity = Arc::as_ptr(&element.geometry) as usize;
     if let Some(path) = renderer
         .geometry_hints
@@ -38,7 +48,9 @@ pub(crate) fn prepared_path(
         return Ok(path);
     }
     // Rectangle child state does not change its surface path.
-    let key = if let Geometry::Rectangle {
+    let key = if let Geometry::Text { outline, .. } = element.geometry.as_ref() {
+        digest(&serde_json::to_vec(outline.as_ref()).map_err(|error| error.to_string())?)
+    } else if let Geometry::Rectangle {
         width,
         height,
         radius,
@@ -49,6 +61,8 @@ pub(crate) fn prepared_path(
             &serde_json::to_vec(&("Rectangle", width, height, radius))
                 .map_err(|error| error.to_string())?,
         )
+    } else if let Geometry::Text { outline, .. } = element.geometry.as_ref() {
+        digest(&serde_json::to_vec(&("Text", outline)).map_err(|error| error.to_string())?)
     } else {
         digest(&serde_json::to_vec(element.geometry.as_ref()).map_err(|error| error.to_string())?)
     };
@@ -128,7 +142,9 @@ pub(crate) fn prepared_path(
                 }
                 path.detach()
             }
-            Geometry::Group { .. } => unreachable!("groups handled before geometry preparation"),
+            Geometry::Group { .. } | Geometry::Code { .. } => {
+                unreachable!("groups handled before geometry preparation")
+            }
         };
         if !path.is_finite() {
             return Err(format!(
@@ -168,17 +184,66 @@ pub(crate) fn prepared_path(
     Ok(prepared)
 }
 
-pub(crate) struct Drawing<'a> {
+pub(crate) trait Output {
+    fn enter(&mut self, _element: &Element) {}
+    fn leave(&mut self) {}
+    fn clip(&mut self, _canvas: &Canvas, _bounds: &Rect) {}
+    fn path(
+        &mut self,
+        canvas: &Canvas,
+        path: &skia_safe::Path,
+        paint: &Paint,
+        fill: &sanim_core::Paint,
+        bounds: &Rect,
+    ) -> Result<(), String>;
+}
+pub(crate) struct RecordingOutput;
+impl Output for RecordingOutput {
+    fn path(
+        &mut self,
+        canvas: &Canvas,
+        path: &skia_safe::Path,
+        paint: &Paint,
+        _fill: &sanim_core::Paint,
+        _bounds: &Rect,
+    ) -> Result<(), String> {
+        canvas.draw_path(path, paint);
+        Ok(())
+    }
+}
+pub(crate) struct Drawing<'a, O> {
     pub renderer: &'a mut crate::Renderer,
     pub pixels: usize,
     pub work: usize,
+    pub output: O,
 }
 
-pub(crate) fn element_draw(
+fn clip_children<O: Output>(
+    canvas: &Canvas,
+    element: &Element,
+    drawing: &mut Drawing<'_, O>,
+) -> Result<(), String> {
+    if element.layout.scroll.is_some() || matches!(element.geometry.as_ref(), Geometry::Code { .. })
+    {
+        let [left, top, right, bottom] = sanim_core::scrolling::viewport(element)?;
+        let bounds = Rect::new(left as f32, top as f32, right as f32, bottom as f32);
+        canvas.clip_rect(bounds, None, true);
+        drawing.output.clip(canvas, &bounds);
+    }
+    Ok(())
+}
+
+fn scroll_children(canvas: &Canvas, element: &Element) {
+    if let Some(offset) = element.layout.scroll {
+        canvas.translate((-offset.values[0] as f32, -offset.values[1] as f32));
+    }
+}
+
+pub(crate) fn element_draw<O: Output>(
     canvas: &Canvas,
     element: &Element,
     inherited: Reveal,
-    drawing: &mut Drawing<'_>,
+    drawing: &mut Drawing<'_, O>,
 ) -> Result<(), String> {
     drawing.work = drawing
         .work
@@ -196,6 +261,7 @@ pub(crate) fn element_draw(
     {
         return Ok(());
     }
+    drawing.output.enter(element);
     let save = canvas.save();
     let result = (|| {
         canvas.translate((
@@ -214,14 +280,73 @@ pub(crate) fn element_draw(
         if !canvas.local_to_device().is_finite() {
             return Err("composed transform exceeds Skia numeric range".into());
         }
-        if let Geometry::Group { children } = element.geometry.as_ref() {
+        if let Geometry::Text {
+            bounds,
+            pending: false,
+            ..
+        } = element.geometry.as_ref()
+        {
+            let border = element
+                .stroke
+                .as_ref()
+                .map(|stroke| to_f64(stroke.width))
+                .transpose()?
+                .unwrap_or(0.) as f32
+                / 2.;
+            let bounds = Rect::new(
+                bounds.min.values[0] as f32,
+                bounds.min.values[1] as f32,
+                bounds.max.values[0] as f32,
+                bounds.max.values[1] as f32,
+            )
+            .with_outset((
+                border + LAYER_ANTIALIAS_PADDING,
+                border + LAYER_ANTIALIAS_PADDING,
+            ));
+            if canvas.quick_reject(&bounds) {
+                return Ok(());
+            }
+        }
+        if let Geometry::Group { children } | Geometry::Code { children, .. } =
+            element.geometry.as_ref()
+        {
+            clip_children(canvas, element, drawing)?;
             if element.opacity != Fraction::from(1) {
+                let mut local = element.clone();
+                local.position = Vec2::zero(Unit::Length);
+                local.rotation = Fraction::from(0);
+                local.scale = Fraction::from(1);
+                local.horizontal = HorizontalTransform::default();
+                let bounds = sanim_core::verify::bounds(&local).ok().map(|bounds| {
+                    Rect::new(
+                        bounds.min.values[0] as f32,
+                        bounds.min.values[1] as f32,
+                        bounds.max.values[0] as f32,
+                        bounds.max.values[1] as f32,
+                    )
+                    .with_outset((LAYER_ANTIALIAS_PADDING, LAYER_ANTIALIAS_PADDING))
+                });
+                let pixels = if let Some(bounds) = &bounds {
+                    let (mut device, _) = canvas.local_to_device_as_3x3().map_rect(bounds);
+                    let clipped = canvas
+                        .device_clip_bounds()
+                        .and_then(|clip| device.intersect(Rect::from(clip)).then_some(device));
+                    clipped
+                        .map_or(0, |rect| {
+                            (rect.width().ceil().max(0.) as usize)
+                                .saturating_mul(rect.height().ceil().max(0.) as usize)
+                        })
+                        .min(drawing.pixels)
+                } else {
+                    drawing.pixels
+                };
                 drawing.work = drawing
                     .work
-                    .checked_sub(drawing.pixels)
+                    .checked_sub(pixels)
                     .ok_or("group compositing exceeds render work budget")?;
-                canvas.save_layer_alpha_f(None, to_f64(element.opacity)? as f32);
+                canvas.save_layer_alpha_f(bounds, to_f64(element.opacity)? as f32);
             }
+            scroll_children(canvas, element);
             // A group reveals its children in parallel, retaining each child's own reveal limit.
             for child in children {
                 element_draw(canvas, child, reveal, drawing)?;
@@ -258,12 +383,25 @@ pub(crate) fn element_draw(
                 .set_style(skia_safe::paint::Style::Stroke)
                 .set_stroke_width(to_f64(*width)? as f32)
                 .set_stroke_join(skia_safe::PaintJoin::Round);
-            canvas.draw_path(&prepared.partial(progress, false), &paint);
+            drawing.output.path(
+                canvas,
+                &prepared.partial(progress, false),
+                &paint,
+                &element.fill,
+                prepared.path.bounds(),
+            )?;
         } else if progress >= 1.0 {
-            canvas.draw_path(&prepared.path, &paint);
+            drawing.output.path(
+                canvas,
+                &prepared.path,
+                &paint,
+                &element.fill,
+                prepared.path.bounds(),
+            )?;
         } else {
             // Traces must stay inside the original bounds used by visual verification.
             canvas.clip_rect(prepared.path.bounds(), None, true);
+            drawing.output.clip(canvas, prepared.path.bounds());
             if paint.alpha_f() < 1.0 {
                 drawing.work = drawing
                     .work
@@ -279,7 +417,13 @@ pub(crate) fn element_draw(
                         .work
                         .checked_sub(partial.count_points())
                         .ok_or("path rendering exceeds render work budget")?;
-                    canvas.draw_path(&partial, &paint);
+                    drawing.output.path(
+                        canvas,
+                        &partial,
+                        &paint,
+                        &element.fill,
+                        prepared.path.bounds(),
+                    )?;
                     (partial, 1.0)
                 }
                 RevealKind::Write => {
@@ -291,7 +435,13 @@ pub(crate) fn element_draw(
                             .ok_or("path rendering exceeds render work budget")?;
                         let mut fill = paint.clone();
                         fill.set_alpha_f(fill.alpha_f() * fill_progress);
-                        canvas.draw_path(&prepared.path, &fill);
+                        drawing.output.path(
+                            canvas,
+                            &prepared.path,
+                            &fill,
+                            &element.fill,
+                            prepared.path.bounds(),
+                        )?;
                     }
                     (
                         prepared.partial((progress * 2.0).min(1.0), false),
@@ -304,7 +454,13 @@ pub(crate) fn element_draw(
                 .set_style(skia_safe::paint::Style::Stroke)
                 .set_stroke_width(TRACE_WIDTH_PT);
             paint.set_alpha_f(paint.alpha_f() * trace_opacity);
-            canvas.draw_path(&trace_path, &paint);
+            drawing.output.path(
+                canvas,
+                &trace_path,
+                &paint,
+                &element.fill,
+                prepared.path.bounds(),
+            )?;
         }
         if let Some(stroke) = &element.stroke {
             let mut border = fill_paint(&stroke.paint, own_opacity, prepared.path.bounds())?;
@@ -316,9 +472,17 @@ pub(crate) fn element_draw(
                 .work
                 .checked_sub(border_path.count_points())
                 .ok_or("border rendering exceeds render work budget")?;
-            canvas.draw_path(&border_path, &border);
+            drawing.output.path(
+                canvas,
+                &border_path,
+                &border,
+                &stroke.paint,
+                prepared.path.bounds(),
+            )?;
         }
         if let Some(children) = element.geometry.children() {
+            clip_children(canvas, element, drawing)?;
+            scroll_children(canvas, element);
             for child in children {
                 element_draw(canvas, child, reveal, drawing)?;
             }
@@ -326,6 +490,7 @@ pub(crate) fn element_draw(
         Ok(())
     })();
     canvas.restore_to_count(save);
+    drawing.output.leave();
     result
 }
 pub(crate) fn paint(color: &Color, opacity: Fraction) -> Result<Paint, String> {

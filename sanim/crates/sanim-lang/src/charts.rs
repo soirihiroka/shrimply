@@ -39,6 +39,7 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
             result,
             schedule: false,
             timing: Default::default(),
+            content: Default::default(),
             execute: Execution::Native(evaluate),
             check: native_types::fixed,
         })

@@ -94,12 +94,21 @@ fn test(relation: Relation, a: Bounds, b: Bounds, gap: f64) -> Option<bool> {
 
 /// These predicates explicitly concern axis-aligned layout bounds, not pixel visibility.
 pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) -> Verification {
+    evaluate_with(animation, predicate, time, |_, _| Ok(()))
+}
+
+pub fn evaluate_with(
+    animation: &Animation,
+    predicate: &Predicate,
+    time: Fraction,
+    mut native: impl FnMut(&mut Element, Fraction) -> Result<(), String>,
+) -> Verification {
     let result = |evidence, message: String, time| Verification {
         evidence,
         message,
         time,
     };
-    let sample = |element: &Element, time: Fraction| -> Result<Bounds, String> {
+    let mut sample = |element: &Element, time: Fraction| -> Result<Bounds, String> {
         if animation.list_views.owner(&element.id).is_some() {
             return Err("list-child assertions require composed layout evidence; assert on the containing Row or Column instead".into());
         }
@@ -110,8 +119,11 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
         {
             return Err("nested-object assertions require composed transform evidence".into());
         }
-        let mut sampled =
-            animation.sample_element(animation.find(&element.id).unwrap_or(element), time)?;
+        let mut sampled = animation.sample_element_with(
+            animation.find(&element.id).unwrap_or(element),
+            time,
+            &mut native,
+        )?;
         if matches!(sampled.geometry.as_ref(), Geometry::Group { .. }) {
             return Err("group assertions require composed layout evidence".into());
         }
@@ -131,7 +143,7 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
         "'{}' must be {:?} {target} (layout bounds, gap {}pt)",
         predicate.left.id, predicate.relation, predicate.gap
     );
-    let at = |t| -> Result<(Bounds, Bounds), String> {
+    let mut at = |t| -> Result<(Bounds, Bounds), String> {
         let a = sample(&predicate.left, t)?;
         let b = if let Some(right) = &predicate.right {
             sample(right, t)?
@@ -190,7 +202,17 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
             ),
         };
     }
-    if animation.reactive.has_bindings() || !animation.list_views.is_empty() {
+    if animation.reactive.has_bindings()
+        || !animation.list_views.is_empty()
+        || std::iter::once(&predicate.left)
+            .chain(predicate.right.iter())
+            .any(|element| {
+                animation
+                    .code_views
+                    .get(&element.id)
+                    .is_some_and(|state| !state.events.is_empty())
+            })
+    {
         return result(
             Evidence::Unknown,
             format!(
@@ -434,7 +456,23 @@ pub(crate) fn bounds_at(
                 },
             )
         }
-        Geometry::Group { children } => {
+        Geometry::Group { .. } | Geometry::Code { .. } if element.layout.scroll.is_some() => {
+            let viewport = crate::scrolling::viewport(element)?;
+            (
+                Vec2 {
+                    values: [viewport[0], viewport[1]],
+                    unit: crate::Unit::Length,
+                },
+                Vec2 {
+                    values: [viewport[2], viewport[3]],
+                    unit: crate::Unit::Length,
+                },
+            )
+        }
+        Geometry::Code { pending: true, .. } => {
+            return Err("code layout is unresolved; native layout must resolve the sampled source/styles before computing visual bounds".into());
+        }
+        Geometry::Group { children } | Geometry::Code { children, .. } => {
             let bounds = children.iter().map(bounds).collect::<Result<Vec<_>, _>>()?;
             (
                 Vec2 {
@@ -469,7 +507,14 @@ pub(crate) fn bounds_at(
                 },
             )
         }
-        Geometry::Text { bounds, .. } => (bounds.min, bounds.max),
+        Geometry::Text {
+            bounds, pending, ..
+        } => {
+            if *pending {
+                return Err("text shaping is unresolved; native layout must resolve the sampled text/font before computing visual bounds".into());
+            }
+            (bounds.min, bounds.max)
+        }
     };
     if let Some(stroke) = &element.stroke {
         let half = to_f64(stroke.width)? / 2.;

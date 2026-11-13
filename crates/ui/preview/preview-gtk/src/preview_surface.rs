@@ -35,6 +35,8 @@ use cursor::name as cursor_name;
 mod geometry;
 #[path = "preview_surface/gtk_guides.rs"]
 mod gtk_guides;
+#[path = "preview_surface/sanim_inspector.rs"]
+mod sanim_inspector;
 use geometry::surface_viewport;
 use shrimply_preview_runtime_cuda::controller::Preparation;
 use shrimply_preview_runtime_cuda::guides;
@@ -61,6 +63,8 @@ impl std::ops::Deref for PreviewController {
 }
 
 struct VideoSurfaceState {
+    sanim_inspector: sanim_inspector::Inspector,
+    presentation: Option<Presentation>,
     renderer: Option<VideoRenderer>,
     frame: Option<CompositedVideoFrame>,
     audio_analysis: FrameAudioAnalysis,
@@ -79,6 +83,13 @@ struct VideoSurfaceState {
     fullscreen: bool,
     zoom_pan_enabled: bool,
     navigation: shrimply_preview_runtime_cuda::navigation::Navigation,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Presentation {
+    position: Time,
+    revision: u64,
+    settled: bool,
 }
 
 struct PreviewControllerState {
@@ -132,6 +143,8 @@ impl PreviewController {
         area.set_required_version(3, 3);
         let preference = preferences_store::snapshot(&preferences);
         let state = Rc::new(RefCell::new(VideoSurfaceState {
+            sanim_inspector: Default::default(),
+            presentation: None,
             renderer: None,
             frame: None,
             audio_analysis: FrameAudioAnalysis::default(),
@@ -175,11 +188,14 @@ impl PreviewController {
             controller.clone(),
         );
         attach_frame_scheduler(&area, player_state.clone(), controller.clone());
+        let resize_state = state.clone();
+        area.connect_resize(move |_, _, _| resize_state.borrow().sanim_inspector.dismiss());
 
         let unrealize_state = state.clone();
         area.connect_unrealize(move |area| {
             area.make_current();
             let mut state = unrealize_state.borrow_mut();
+            state.sanim_inspector.dismiss();
             state.navigation.cancel();
             if let Some(mut renderer) = state.renderer.take() {
                 renderer.destroy();
@@ -187,7 +203,9 @@ impl PreviewController {
         });
         let unmap_state = state.clone();
         area.connect_unmap(move |area| {
-            unmap_state.borrow_mut().navigation.cancel();
+            let mut state = unmap_state.borrow_mut();
+            state.sanim_inspector.dismiss();
+            state.navigation.cancel();
             area.set_cursor_from_name(None);
         });
         let selection_area = area.clone();
@@ -202,6 +220,7 @@ impl PreviewController {
             let surface = selection_surface.clone();
             let controller = selection_controller.clone();
             glib::idle_add_local_once(move || {
+                surface.borrow().sanim_inspector.dismiss();
                 cancel_provider(&area, &project, &player, &surface, &controller);
                 area.queue_render();
             });
@@ -212,6 +231,7 @@ impl PreviewController {
         let focus_surface = state.clone();
         let focus_controller = controller.clone();
         preview_focus::connect_named(&preview_focus, "preview provider focus", move || {
+            focus_surface.borrow().sanim_inspector.dismiss();
             cancel_provider(
                 &focus_area,
                 &focus_project,
@@ -222,11 +242,26 @@ impl PreviewController {
             focus_area.set_cursor_from_name(None);
             focus_area.queue_render();
         });
+        let inspection_state = state.clone();
+        let inspection_area = area.downgrade();
+        player_state::connect_while_alive_named(
+            &player_state,
+            "preview Sanim element inspection",
+            move || inspection_area.upgrade().is_some(),
+            move |event| {
+                if matches!(event, player_state::PlayerEvent::Project(_))
+                    || matches!(event, player_state::PlayerEvent::State(change) if change.position.is_some())
+                {
+                    inspection_state.borrow().sanim_inspector.dismiss();
+                }
+            },
+        );
         let preference_area = area.clone();
         let preference_state = state.clone();
         let preference_controller = controller.clone();
         preferences_store::connect(&preferences, move |preference| {
             let mut state = preference_state.borrow_mut();
+            state.sanim_inspector.dismiss();
             state.zoom_pan_enabled = preference.preview_zoom_pan_enabled;
             if !state.zoom_pan_enabled {
                 state.navigation.reset();
@@ -307,8 +342,10 @@ impl PreviewController {
         &self,
         frame: CompositedVideoFrame,
         audio_analysis: FrameAudioAnalysis,
+        position: Time,
         revision: u64,
         excluded_item_id: Option<uuid::Uuid>,
+        settled: bool,
     ) {
         let mut controller = self.controller.borrow_mut();
         if !controller
@@ -318,6 +355,11 @@ impl PreviewController {
             return;
         }
         drop(controller);
+        self.surface.state.borrow_mut().presentation = Some(Presentation {
+            position,
+            revision,
+            settled,
+        });
         self.surface.set_frame(frame, audio_analysis);
     }
 
@@ -354,6 +396,8 @@ impl VideoSurface {
 
     fn clear_frame(&self, audio_analysis: FrameAudioAnalysis) {
         let mut state = self.state.borrow_mut();
+        state.sanim_inspector.dismiss();
+        state.presentation = None;
         state.frame = None;
         state.audio_analysis = audio_analysis;
         drop(state);
@@ -395,7 +439,10 @@ impl VideoSurface {
     }
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
-        self.state.borrow_mut().fullscreen = fullscreen;
+        let mut state = self.state.borrow_mut();
+        state.sanim_inspector.dismiss();
+        state.fullscreen = fullscreen;
+        drop(state);
         self.area.queue_render();
     }
 
@@ -500,6 +547,11 @@ fn attach_render(
         let shadow_size_px = state.preview_shadow_size_px;
         let upsample_method = state.preview_upsample_method;
         let downsample_method = state.preview_downsample_method;
+        let sanim_inspector = state.sanim_inspector.clone();
+        let sanim_sources = state
+            .frame
+            .as_ref()
+            .map(|frame| frame.sanim_sources.clone());
         let VideoSurfaceState {
             renderer,
             frame,
@@ -558,6 +610,7 @@ fn attach_render(
                         retiring.context.viewport = viewport;
                     }
                     core.draw(canvas, expression_cache);
+                    sanim_inspector.draw(canvas, sanim_sources.as_deref());
                     canvas.restore();
                 },
             );
@@ -628,6 +681,7 @@ fn dispatch_pointer(surface: ProviderDispatch<'_>, event: PointerEvent<'_>) -> P
         if !response.redraw {
             return response;
         }
+        surface.state.borrow().sanim_inspector.dismiss();
         surface.controller.borrow_mut().core.context_invalidated = true;
         surface
             .area
@@ -908,6 +962,7 @@ fn attach_input(
             return;
         }
         begin_area.grab_focus();
+        begin_state.borrow().sanim_inspector.dismiss();
         let button = source.current_button();
         begin_button.set(button);
         let input = pointer_input(source, GlamVec2::new(x as f32, y as f32), button);
@@ -1095,6 +1150,20 @@ fn attach_input(
             },
             PointerEvent::End(input),
         );
+        if end_button.get() == 1 && !end_moved.get() && input.modifiers == Modifiers::NONE {
+            sanim_inspector::inspect(
+                ProviderDispatch {
+                    area: &end_area,
+                    project: &end_project,
+                    player_state: &end_player,
+                    selection_state: &end_selection,
+                    preview_focus: &end_focus,
+                    state: &end_state,
+                    controller: &end_controller,
+                },
+                input.sample.position,
+            );
+        }
         end_button.set(0);
         end_origin.set(None);
         end_moved.set(false);

@@ -140,11 +140,14 @@ pub(super) fn worker(
                 let loading = pending_frame.frame.rendered.loading;
                 let audio_analysis = pending_frame.frame.rendered.audio_analysis.clone();
                 let settled = pending_frame.frame.rendered.accuracy.content_accurate() && !loading;
+                let sanim_sources = pending_frame.frame.rendered.sanim_sources.clone();
                 let (display, rendered) = pending_frame.frame.into_buffers();
                 serial = serial
                     .checked_add(1)
                     .expect("Intel presentation serial overflow");
-                let frame = CompositedVideoFrame::intel(display, rendered, width, height, serial);
+                let mut frame =
+                    CompositedVideoFrame::intel(display, rendered, width, height, serial);
+                frame.sanim_sources = sanim_sources;
                 if current.accuracy.continuous_playback()
                     && let Some(observer) = &channels.playback_observer
                 {

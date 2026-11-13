@@ -316,7 +316,7 @@ fn native_method(
         && let ExprKind::Name(base) = &base.kind
         && let Some(receiver) = ty(module, length, base, offset)
     {
-        return sanim_lang::dataframe::methods_for(&receiver)
+        return sanim_lang::prelude::methods_for(&receiver)
             .find(|builtin| builtin.name.rsplit('.').next() == Some(name.as_str()));
     }
     None
@@ -365,7 +365,7 @@ pub(crate) fn completion(
                     );
                 }
                 if matches!(receiver, Type::DataFrame { .. } | Type::Series(_)) {
-                    let mut members = sanim_lang::dataframe::methods_for(&receiver)
+                    let mut members = sanim_lang::prelude::methods_for(&receiver)
                         .map(|builtin| json!({"label":builtin.name.rsplit('.').next().unwrap_or(builtin.name),"kind":2,"detail":native_signature(builtin,true).0}))
                         .collect::<Vec<_>>();
                     if matches!(receiver, Type::DataFrame { .. }) {
@@ -733,6 +733,7 @@ pub(crate) const TOKEN_TYPES: &[&str] = &[
     "number",
     "keyword",
     "comment",
+    "operator",
 ];
 
 pub(crate) fn semantic_tokens(workspace: &Workspace, uri: &str) -> Result<Value, String> {
@@ -745,8 +746,39 @@ pub(crate) fn semantic_tokens(workspace: &Workspace, uri: &str) -> Result<Value,
         return Ok(json!({"data":[]}));
     };
     let mut tokens = BTreeMap::<(usize, usize), (usize, u32)>::new();
-    for span in &module.ast.comments {
-        tokens.insert((span.start, span.end), (9, 0));
+    let opened = &workspace.documents[uri];
+    let mut highlighting = opened.highlights.borrow_mut();
+    if highlighting
+        .as_ref()
+        .is_none_or(|(version, _)| *version != document.version)
+    {
+        let (_, highlights) = sanim_lang::parser::parse_highlighted(
+            uri,
+            &document.text,
+            sanim_lang::Limits::default().max_parse_steps,
+        );
+        *highlighting = Some((
+            document.version,
+            sanim_lang::core::code::normalize_highlights(&highlights, &document.text),
+        ));
+    }
+    for span in &highlighting
+        .as_ref()
+        .expect("computed source classifications")
+        .1
+    {
+        let kind = match span.kind.as_ref() {
+            "type" => 1,
+            "function" | "tag" => 2,
+            "property" => 5,
+            "string" => 6,
+            "number" => 7,
+            "keyword" => 8,
+            "comment" => 9,
+            "operator" | "punctuation" => 10,
+            _ => 3,
+        };
+        tokens.insert((span.start, span.end), (kind, 0));
     }
     let declarations = symbols(module, document.text.len());
     for symbol in &declarations {
@@ -762,88 +794,6 @@ pub(crate) fn semantic_tokens(workspace: &Workspace, uri: &str) -> Result<Value,
             tokens.insert((symbol.selection.start, symbol.selection.end), (kind, 1));
         }
     }
-    for statement in &module.ast.statements {
-        statement.visit(&mut |statement| {
-            if !matches!(
-                statement.kind,
-                StatementKind::Expr(_) | StatementKind::Assign { .. }
-            ) {
-                let start = statement.span.start;
-                let length = document
-                    .text
-                    .get(start..)
-                    .unwrap_or("")
-                    .chars()
-                    .take_while(|ch| ch.is_ascii_alphabetic() || *ch == '_')
-                    .map(char::len_utf8)
-                    .sum::<usize>();
-                if length > 0 {
-                    tokens.insert((start, start + length), (8, 0));
-                }
-            }
-        });
-    }
-    expressions(&module.ast, &mut |expression| {
-        if expression.span.end <= expression.span.start {
-            return;
-        }
-        let start = expression.span.start;
-        let (end, kind) = match &expression.kind {
-            ExprKind::Template(parts) => {
-                // Literal gaps surround canonical expression spans. No source
-                // scanner is needed, and interpolation names keep their types.
-                let mut literal = |start: usize, end: usize| {
-                    if end > document.text.len() {
-                        return;
-                    }
-                    let mut start = start;
-                    let comments = &module.ast.comments;
-                    let first = comments.partition_point(|span| span.end <= start);
-                    for comment in comments[first..].iter().take_while(|span| span.start < end) {
-                        if start < comment.start {
-                            tokens.entry((start, comment.start)).or_insert((6, 0));
-                        }
-                        start = start.max(comment.end);
-                    }
-                    if start < end {
-                        tokens.entry((start, end)).or_insert((6, 0));
-                    }
-                };
-                let mut previous = start;
-                for part in parts {
-                    if let sanim_lang::core::TemplatePart::Hole { value, format, .. } = part {
-                        literal(previous, value.span.start);
-                        previous = format
-                            .as_ref()
-                            .map_or(value.span.end, |format| format.span.end)
-                            .max(value.span.end);
-                    }
-                }
-                literal(previous, expression.span.end);
-                return;
-            }
-            ExprKind::Name(name) => {
-                let kind = if prelude::builtin(name).is_some()
-                    || matches!(module.checked.exports.get(name), Some(Type::Function(_)))
-                {
-                    2
-                } else if prelude::types().contains_key(name.as_str()) {
-                    1
-                } else {
-                    3
-                };
-                (start + name.len(), kind)
-            }
-            ExprKind::Number(value) => (start + value.len(), 7),
-            ExprKind::Bool(value) => (start + if *value { 4 } else { 5 }, 8),
-            ExprKind::None => (start + 4, 8),
-            ExprKind::String(_) => (expression.span.end, 6),
-            _ => return,
-        };
-        if end <= document.text.len() {
-            tokens.entry((start, end)).or_insert((kind, 0));
-        }
-    });
     let mut absolute = Vec::new();
     let mut covered_until = 0;
     for ((start, end), (kind, modifiers)) in tokens {

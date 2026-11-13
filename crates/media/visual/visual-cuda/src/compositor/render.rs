@@ -134,6 +134,7 @@ pub(super) fn render_project_frame(
         capture_track: capture_track.cloned(),
         snap_cache_item,
         excluded_item_id,
+        sanim_sources: Default::default(),
     };
     if mode.prepare_active_sources() {
         renderer.preload_active_sources(&active_items);
@@ -377,7 +378,10 @@ pub(super) fn render_project_frame(
             }
         };
         match result {
-            Ok(frame) => Some(frame),
+            Ok(mut frame) => {
+                frame.sanim_sources = Arc::new(std::mem::take(&mut renderer.sanim_sources));
+                Some(frame)
+            }
             Err(error) => {
                 abort_render_if_superseded!(renderer.decode_control, renderer.superseded = true);
                 if !renderer.superseded {
@@ -442,6 +446,7 @@ pub(super) struct FrameItemRenderer<'a> {
     capture_track: Option<shrimply_project_document::project::TrackAddress>,
     pub(super) snap_cache_item: bool,
     excluded_item_id: Option<Uuid>,
+    sanim_sources: shrimply_visual_core::sanim::inspection::FrameSources,
 }
 
 impl FrameItemRenderer<'_> {
@@ -1064,12 +1069,16 @@ impl FrameItemRenderer<'_> {
                 .elements
                 .get_mut(&key)
                 .expect("visual element was just created");
-            element.draw(
+            let rendered = element.draw(
                 request,
                 self.compositor,
                 track_id,
                 &mut self.sessions.sources,
-            )?
+            )?;
+            if let Some(source) = element.sanim_source() {
+                self.sanim_sources.insert(address.clone(), source);
+            }
+            rendered
         };
         abort_render_if_superseded!(self.decode_control, return Ok(None));
         let mut visual = match rendered {

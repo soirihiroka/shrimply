@@ -78,6 +78,7 @@ pub(crate) fn register(builtins: &mut Vec<Builtin>) {
             result: Type::Unknown,
             schedule: false,
             timing: Default::default(),
+            content: Default::default(),
             execute: Execution::Access(execute),
             check,
         });

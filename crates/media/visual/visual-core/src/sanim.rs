@@ -18,6 +18,9 @@ pub enum Status {
 }
 
 mod feedback;
+pub mod inspection;
+#[cfg(test)]
+mod project_open_tests;
 pub mod reflection;
 #[cfg(test)]
 mod tests;
@@ -36,6 +39,7 @@ pub struct Source {
     error: Option<String>,
     export: Option<Arc<sanim_runtime::sanim_lang::Prepared>>,
     feedback: Option<feedback::Feedback>,
+    inspection: Option<Arc<inspection::FrameSource>>,
 }
 impl Source {
     pub fn new(item: &VideoItem) -> Result<Self, String> {
@@ -65,6 +69,7 @@ impl Source {
             error: None,
             export: None,
             feedback: None,
+            inspection: None,
         })
     }
     pub fn set_waker(&mut self, wake: Option<crate::generated::SourceWake>) {
@@ -86,6 +91,7 @@ impl Source {
         rate: sanim_core::Fraction,
         strict: bool,
     ) -> Result<Status, String> {
+        self.inspection = None;
         if !strict {
             self.export = None;
         }
@@ -212,7 +218,17 @@ impl Source {
                 return Ok(Status::Ready(self.feedback(canvas, &state, Some(frame))?));
             }
         }
+        self.inspection = Some(inspection::FrameSource::new(
+            item,
+            prepared.clone(),
+            time.seconds.min(prepared.animation.duration),
+            self.viewport.clone(),
+            &self.observation,
+        ));
         Ok(Status::Ready(frame))
+    }
+    pub fn inspection(&self) -> Option<Arc<inspection::FrameSource>> {
+        self.inspection.clone()
     }
     fn feedback(
         &mut self,

@@ -9,6 +9,7 @@ pub enum Type {
     Unit,
     Bool,
     String,
+    Code(crate::code::Language),
     Template,
     Signal(Box<Type>),
     Sql,
@@ -225,6 +226,7 @@ impl Type {
             || matches!(actual,Self::BoundedVariable(_,bound) if matches!(bound.as_ref(),TypeBound::Type(ty) if self.accepts(ty)))
             || matches!(self, Type::Unknown)
             || match (self, actual) {
+                (Self::Code(crate::code::Language::Auto), Self::Code(_)) => true,
                 (Self::Vector(n, None), Self::Vector(m, _)) => n == m,
                 (Self::Signal(a), Self::Signal(b)) => a.accepts(b),
                 (Self::List(a), Self::List(b))
@@ -247,6 +249,7 @@ impl Type {
         match self {
             Self::Bool
             | Self::String
+            | Self::Code(_)
             | Self::Numeric(_)
             | Self::Fraction
             | Self::Vector(..)
@@ -270,7 +273,7 @@ impl Type {
     }
     pub fn data_convertible(&self) -> bool {
         match self {
-            Self::Font => false,
+            Self::Font | Self::Code(_) => false,
             Self::BoundedVariable(_, bound) => match bound.as_ref() {
                 TypeBound::Numeric | TypeBound::Reflectable => true,
                 TypeBound::Type(ty) => ty.data_convertible(),
@@ -287,7 +290,7 @@ impl Type {
     }
     pub fn reflectable(&self) -> bool {
         match self {
-            Self::Font => false,
+            Self::Font | Self::Code(_) => false,
             Self::BoundedVariable(_, bound) => match bound.as_ref() {
                 TypeBound::Reflectable | TypeBound::Numeric => true,
                 TypeBound::Type(ty) => ty.reflectable(),
@@ -341,6 +344,7 @@ impl std::fmt::Display for Type {
             Self::Unit => write!(f, "Unit"),
             Self::Bool => write!(f, "Bool"),
             Self::String => write!(f, "String"),
+            Self::Code(language) => write!(f, "Code<{}>", language.name()),
             Self::Template => write!(f, "Template"),
             Self::Signal(t) => write!(f, "sig {t}"),
             Self::Sql => write!(f, "Sql"),
@@ -501,6 +505,7 @@ pub enum Value {
     Unit,
     Bool(bool),
     String(Arc<str>),
+    Code(Arc<crate::code::Document>),
     Number(Number),
     Fraction(Fraction),
     Vec2(Vec2),
@@ -542,6 +547,7 @@ impl Value {
             Self::Unit => Type::Unit,
             Self::Bool(_) => Type::Bool,
             Self::String(_) => Type::String,
+            Self::Code(document) => Type::Code(document.language),
             Self::Template(_) => Type::Template,
             Self::Signal(signal) => Type::Signal(Box::new(signal.ty.as_ref().clone())),
             Self::Sql(_) => Type::Sql,

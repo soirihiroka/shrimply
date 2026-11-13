@@ -28,6 +28,7 @@ type ExternalMasks = Vec<(
 )>;
 
 pub struct Rendered {
+    pub sanim_sources: Arc<shrimply_visual_core::sanim::inspection::FrameSources>,
     pub buffer: Buffer,
     pub width: u32,
     pub height: u32,
@@ -293,6 +294,7 @@ impl Compositor {
             false
         });
         Ok(Rendered {
+            sanim_sources: plan.sanim_sources,
             buffer,
             width: size.0,
             height: size.1,

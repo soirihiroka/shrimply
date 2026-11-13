@@ -578,3 +578,73 @@ fn text_resources_reload_as_strings_without_interpreting_their_contents() {
     assert!(prepared.dependencies.contains_key("title.txt"));
     assert_eq!(prepared.statistics.decoded_assets, 1);
 }
+
+#[test]
+fn missing_source_directory_starts_with_diagnostic_and_recovers_without_polling() {
+    let fixture = Fixture::new();
+    let directory = fixture.0.join("missing").join("nested");
+    let runtime = Runtime::open(directory.join("main.sanim"))
+        .expect("missing source parents are clip-local diagnostics");
+    let failed = until(&runtime, |state| {
+        !state.preparing && state.diagnostic.is_some()
+    });
+    assert!(
+        failed.prepared.is_none(),
+        "missing source has no fabricated valid scene"
+    );
+    assert!(failed.diagnostic.unwrap().to_string().contains("missing"));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("main.sanim"), "wait(2s)").unwrap();
+    let ready = until(&runtime, |state| {
+        !state.preparing && state.diagnostic.is_none() && state.prepared.is_some()
+    });
+    assert_eq!(
+        ready.prepared.unwrap().animation.duration,
+        sanim_core::Fraction::from(2)
+    );
+    std::fs::write(directory.join("main.sanim"), "wait(3s)").unwrap();
+    let updated = until(&runtime, |state| {
+        !state.preparing && state.revision > ready.revision
+    });
+    assert_eq!(
+        updated.prepared.unwrap().animation.duration,
+        sanim_core::Fraction::from(3)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn recovered_source_directory_keeps_its_canonical_escape_boundary() {
+    let fixture = Fixture::new();
+    let directory = fixture.0.join("source");
+    let runtime = Runtime::open(directory.join("main.sanim")).unwrap();
+    until(&runtime, |state| {
+        !state.preparing && state.diagnostic.is_some()
+    });
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::write(directory.join("main.sanim"), "wait(1s)").unwrap();
+    let ready = until(&runtime, |state| {
+        !state.preparing && state.prepared.is_some() && state.diagnostic.is_none()
+    });
+    let outside = fixture.0.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("main.sanim"), "wait(99s)").unwrap();
+    std::fs::rename(&directory, fixture.0.join("original")).unwrap();
+    std::os::unix::fs::symlink(&outside, &directory).unwrap();
+    let rejected = until(&runtime, |state| {
+        !state.preparing && state.diagnostic.is_some()
+    });
+    assert!(
+        rejected
+            .diagnostic
+            .unwrap()
+            .to_string()
+            .contains("escapes the source root")
+    );
+    assert_eq!(rejected.revision, ready.revision);
+    assert_eq!(
+        rejected.prepared.unwrap().animation.duration,
+        sanim_core::Fraction::from(1),
+        "a replacement symlink must not run code outside the bound source root"
+    );
+}

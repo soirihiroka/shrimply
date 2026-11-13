@@ -90,12 +90,12 @@ impl Runtime<'_, '_> {
         delta: &crate::lists::EditDelta,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let (mut bytes, mut items) = (self.retained_bytes, self.retained_items);
-        crate::lists::charge_delta(delta, &mut bytes, &mut items).map_err(|error| {
-            self.error("S303", format!("preparation binding budget: {error}"), span)
+        if let Some(value) = delta.edit.added() {
+            self.retain_binding_value(value, span)?;
+        }
+        self.retained_bytes = self.retained_bytes.checked_sub(delta.cow_bytes).ok_or_else(|| {
+            self.error("S303", "list edit copy-on-write byte budget exceeded; reduce retained updates or list size", span)
         })?;
-        self.retained_bytes = bytes;
-        self.retained_items = items;
         Ok(())
     }
 

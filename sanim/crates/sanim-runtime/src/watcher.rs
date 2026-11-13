@@ -5,12 +5,12 @@ use sanim_lang::{FileSources, Sources};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, OnceLock, mpsc},
 };
 
 pub(crate) struct WatchedSources {
     root: PathBuf,
-    sources: FileSources,
+    sources: OnceLock<FileSources>,
     watcher: Mutex<RecommendedWatcher>,
     paths: Arc<Mutex<BTreeSet<PathBuf>>>,
     directories: Mutex<BTreeMap<PathBuf, DirectoryIdentity>>,
@@ -65,7 +65,7 @@ impl WatchedSources {
         })
         .map_err(|e| format!("Sanim file watcher: {e}"))?;
         let sources = Self {
-            sources: FileSources::new(&root)?,
+            sources: OnceLock::new(),
             root,
             watcher: Mutex::new(watcher),
             paths,
@@ -74,11 +74,20 @@ impl WatchedSources {
         sources.watch(entry)?;
         Ok(sources)
     }
+    fn sources(&self) -> Result<&FileSources, String> {
+        if self.sources.get().is_none() {
+            let sources = FileSources::new(&self.root).map_err(|error| {
+                format!("Sanim source directory {}: {error}", self.root.display())
+            })?;
+            let _ = self.sources.set(sources);
+        }
+        Ok(self.sources.get().expect("initialized Sanim file sources"))
+    }
     fn watch(&self, path: &str) -> Result<(), String> {
         let absolute = self.root.join(path);
         let mut paths = vec![absolute.clone()];
         if let Ok(canonical) = absolute.canonicalize() {
-            if !canonical.starts_with(&self.root) {
+            if !canonical.starts_with(self.sources()?.root()) {
                 return Err(format!(
                     "resource '{path}' escapes the source root (including symlinks)"
                 ));
@@ -159,7 +168,7 @@ impl WatchedSources {
 impl Sources for WatchedSources {
     fn read(&self, path: &str) -> Result<Vec<u8>, String> {
         self.watch(path)?;
-        self.sources.read(path)
+        self.sources()?.read(path)
     }
 }
 fn affects(dependencies: &BTreeSet<PathBuf>, event: &Path) -> bool {

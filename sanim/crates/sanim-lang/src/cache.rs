@@ -3,9 +3,13 @@ use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Default)]
 pub(crate) struct ValueCache {
-    values: Cache<String, Value>,
+    values: Cache<String, CachedValue>,
     max_bytes: usize,
     max_entries: usize,
+}
+pub(crate) struct CachedValue {
+    pub value: Value,
+    pub sources: imbl::OrdMap<String, Arc<crate::ElementSource>>,
 }
 impl ValueCache {
     pub fn configure(&mut self, bytes: usize, entries: usize) {
@@ -16,14 +20,32 @@ impl ValueCache {
         }
     }
     pub fn get(&mut self, key: &String) -> Option<Value> {
-        self.values.get(key).map(|v| v.as_ref().clone())
+        self.get_entry(key).map(|entry| entry.value.clone())
+    }
+    pub fn get_entry(&mut self, key: &String) -> Option<Arc<CachedValue>> {
+        self.values.get(key)
     }
     pub fn clear(&mut self) {
         self.values.clear();
     }
-    pub fn insert_measured(&mut self, key: String, value: Value, bytes: usize) {
-        let bytes = bytes.saturating_add(key.len());
-        self.values.insert(key, Arc::new(value), bytes);
+    pub fn insert_measured(
+        &mut self,
+        key: String,
+        value: Value,
+        bytes: usize,
+        sources: imbl::OrdMap<String, Arc<crate::ElementSource>>,
+    ) {
+        let source_bytes = sources.iter().fold(0usize, |bytes, (id, source)| {
+            bytes.saturating_add(
+                id.len()
+                    + std::mem::size_of::<String>()
+                    + std::mem::size_of::<Arc<crate::ElementSource>>()
+                    + source.retained_bytes(),
+            )
+        });
+        let bytes = bytes.saturating_add(key.len()).saturating_add(source_bytes);
+        self.values
+            .insert(key, Arc::new(CachedValue { value, sources }), bytes);
     }
     pub fn insert(&mut self, key: String, value: Value) {
         let mut remaining = self.max_bytes;
@@ -33,7 +55,7 @@ impl ValueCache {
         {
             return;
         }
-        self.insert_measured(key, value, self.max_bytes - remaining);
+        self.insert_measured(key, value, self.max_bytes - remaining, imbl::OrdMap::new());
     }
 }
 

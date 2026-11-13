@@ -409,6 +409,9 @@ sanim-reflection-bench: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import native_sanim_reflection_benchmark --lib -- --ignored --nocapture
 
 .PHONY: sanim-inspector-check sanim-inspector-bench
+.PHONY: sanim-preview-inspector-check
+sanim-preview-inspector-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-preview-gtk --all-targets
 check: sanim-inspector-check
 sanim-inspector-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-inspector-core sanim_inspector --lib

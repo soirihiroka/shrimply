@@ -363,15 +363,20 @@ wait(1s)
 mut color_name="blue3"
 fn current_color_name():sig String{return color_name}
 let marker=Circle(fill=Color(current_color_name()))
+add(marker)
+wait(1s)
 color_name="red3"
+wait(1s)
 "#,
     );
-    let error = Engine::default()
+    let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
-        .unwrap_err();
-    assert_eq!(
-        error.code, "S140",
-        "live String-to-Color conversion must fail explicitly while unsupported, rather than silently freezing: {error}"
+        .unwrap();
+    let before = prepared.animation.sample(Fraction::from(0)).unwrap();
+    let after = prepared.animation.sample(Fraction::from(1)).unwrap();
+    assert_ne!(
+        before[0].fill, after[0].fill,
+        "live String-to-Color conversion follows the input cell"
     );
 }
 #[test]

@@ -118,8 +118,20 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
         Type::Matrix4 if name == "rows" => Ok(Type::List(Box::new(Type::List(Box::new(
             Type::Numeric(Unit::Number),
         ))))),
+        Type::Element
+            if sanim_core::code::view::INPUTS
+                .iter()
+                .any(|(input, _)| *input == name) =>
+        {
+            let property = sanim_core::code::view::INPUTS
+                .iter()
+                .find(|(input, _)| *input == name)
+                .expect("checked native code input")
+                .1;
+            Ok(sanim_core::code::view::input_type(property).expect("typed native code input"))
+        }
         Type::Element => match name {
-            "position" => Type::union([
+            "position" | "scroll" => Type::union([
                 Type::Vector(2, Some(Unit::Length)),
                 Type::Vector(2, Some(Unit::Percent)),
             ]),

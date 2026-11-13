@@ -39,6 +39,16 @@ pub enum Node {
         vector: NodeId,
         index: usize,
     },
+    List {
+        values: Vec<NodeId>,
+    },
+    Record {
+        fields: std::collections::BTreeMap<String, NodeId>,
+    },
+    NativeConfig {
+        operation: crate::code::values::Native,
+        arguments: std::collections::BTreeMap<String, NodeId>,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Expression {
@@ -150,6 +160,9 @@ impl ReactiveGraph {
                     }
                 }
                 Node::Vector { values } => pending.extend(values),
+                Node::List { values } => pending.extend(values),
+                Node::Record { fields } => pending.extend(fields.values()),
+                Node::NativeConfig { arguments, .. } => pending.extend(arguments.values()),
                 Node::Component { vector, .. } => pending.push(*vector),
             }
         }
@@ -340,7 +353,7 @@ impl ReactiveGraph {
         if depth > MAX_REACTIVE_DEPTH {
             return Err("retained expression dependency depth exceeded".into());
         }
-        let bytes = self.reserve(node_bytes(&operation))?;
+        let bytes = self.reserve(node_bytes(&operation)?)?;
         self.nodes.push_back(Expression {
             operation,
             ty,
@@ -408,7 +421,47 @@ impl ReactiveGraph {
                 .ok_or_else(|| "retained expression references a missing node".into())
         };
         match operation {
+            Node::NativeConfig {
+                operation,
+                arguments,
+            } => {
+                let mut depth = 0;
+                let actuals = arguments
+                    .iter()
+                    .map(|(name, id)| {
+                        let value = child(*id)?;
+                        depth = depth.max(value.depth);
+                        Ok((name.clone(), value.ty.clone()))
+                    })
+                    .collect::<Result<std::collections::BTreeMap<_, _>, String>>()?;
+                Ok((operation.check(&actuals)?, depth + 1))
+            }
             Node::Constant(value) => Ok((leaf_type(value)?, 1)),
+            Node::List { values } => {
+                let mut depth = 0;
+                let mut types = Vec::with_capacity(values.len());
+                for id in values {
+                    let child = child(*id)?;
+                    depth = depth.max(child.depth);
+                    types.push(child.ty.clone());
+                }
+                let element = if types.is_empty() {
+                    Type::Unknown
+                } else {
+                    Type::union(types)?
+                };
+                Ok((Type::List(Box::new(element)), depth + 1))
+            }
+            Node::Record { fields } => {
+                let mut depth = 0;
+                let mut types = std::collections::BTreeMap::new();
+                for (name, id) in fields {
+                    let child = child(*id)?;
+                    depth = depth.max(child.depth);
+                    types.insert(name.clone(), child.ty.clone());
+                }
+                Ok((Type::Record(types), depth + 1))
+            }
             Node::Cell(id) => {
                 let cell = self
                     .cells
@@ -421,10 +474,16 @@ impl ReactiveGraph {
                         | Type::Bool
                         | Type::String
                         | Type::Color
+                        | Type::Font
+                        | Type::Code(_)
+                        | Type::List(_)
+                        | Type::Record(_)
+                        | Type::Option(_)
+                        | Type::Enum { .. }
                         | Type::Vector(2..=4, Some(_))
                 ) {
                     return Err(format!(
-                        "state of type {} cannot be used as a retained scalar/vector/color expression",
+                        "state of type {} cannot be used by a native animated argument; use scalar, font, code, enum or structured configuration values",
                         cell.ty
                     ));
                 }
@@ -648,13 +707,12 @@ impl ReactiveGraph {
                 }
             }
         }
-        let bytes = self
-            .nodes
-            .iter()
-            .map(|node| node_bytes(&node.operation))
-            .sum::<usize>()
-            + self.cells.len()
-                * (std::mem::size_of::<CellChannel>() + std::mem::size_of::<CellId>())
+        let bytes = self.nodes.iter().try_fold(0usize, |bytes, node| {
+            bytes
+                .checked_add(node_bytes(&node.operation)?)
+                .ok_or_else(|| "retained metadata accounting overflow".to_owned())
+        })? + self.cells.len()
+            * (std::mem::size_of::<CellChannel>() + std::mem::size_of::<CellId>())
             + tracks * 2 * std::mem::size_of::<Track>()
             + state_bytes
             + self
@@ -699,12 +757,22 @@ impl ReactiveGraph {
         earliest
     }
 }
-fn node_bytes(node: &Node) -> usize {
-    std::mem::size_of::<Expression>()
+fn node_bytes(node: &Node) -> Result<usize, String> {
+    Ok(std::mem::size_of::<Expression>()
         + match node {
+            Node::Constant(value) => state_value_bytes(&value.ty(), value)?,
             Node::Unary { op, .. } | Node::Binary { op, .. } => op.len(),
             Node::Math { name, args } => name.len() + args.len() * std::mem::size_of::<NodeId>(),
             Node::Vector { values } => values.len() * std::mem::size_of::<NodeId>(),
+            Node::List { values } => values.len() * std::mem::size_of::<NodeId>(),
+            Node::Record { fields } => fields
+                .keys()
+                .map(|name| name.len() + std::mem::size_of::<(String, NodeId)>())
+                .sum(),
+            Node::NativeConfig { arguments, .. } => arguments
+                .keys()
+                .map(|name| name.len() + std::mem::size_of::<(String, NodeId)>())
+                .sum(),
             Node::Template { parts } => {
                 std::mem::size_of_val(parts.as_ref())
                     + parts
@@ -716,7 +784,7 @@ fn node_bytes(node: &Node) -> usize {
                         .sum::<usize>()
             }
             _ => 0,
-        }
+        })
 }
 
 /// A frame-local memo shared by every retained property in a scene sample.
@@ -741,7 +809,35 @@ impl Sampler<'_> {
             .ok_or("retained sampler references a missing node")?
             .operation;
         let value = match node {
+            Node::NativeConfig {
+                operation,
+                arguments,
+            } => {
+                let arguments = arguments
+                    .iter()
+                    .map(|(name, id)| self.value(*id).map(|value| (name.clone(), value)))
+                    .collect::<Result<imbl::OrdMap<_, _>, _>>()?;
+                operation.execute(&arguments)?
+            }
             Node::Constant(value) => value.clone(),
+            Node::List { values } => {
+                let Type::List(ty) = &graph.nodes[id].ty else {
+                    unreachable!("validated retained list")
+                };
+                Value::List(crate::List::typed(
+                    ty.as_ref().clone(),
+                    values
+                        .iter()
+                        .map(|id| self.value(*id))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ))
+            }
+            Node::Record { fields } => Value::Record(
+                fields
+                    .iter()
+                    .map(|(name, id)| self.value(*id).map(|value| (name.clone(), value)))
+                    .collect::<Result<_, _>>()?,
+            ),
             Node::Cell(cell) => self.graph.sample_cell(*cell, self.time)?,
             Node::Unary { op, value } => math::operations::unary(op, self.value(*value)?)?,
             Node::Binary { op, left, right } => {
@@ -826,19 +922,55 @@ fn interpolated_type(ty: &Type) -> bool {
 }
 fn leaf_type(value: &Value) -> Result<Type, String> {
     match value {
-        Value::Number(number) if math::finite(&number.value) => {},
-        Value::Fraction(value) if math::finite(value) => {},
-        Value::Bool(_) => {},
-        Value::String(text) if text.len() <= math::format::MAX_OUTPUT_BYTES => {},
-        Value::Color(color) if color.0.iter().all(|v| math::finite(v) && *v >= Fraction::from(0) && *v <= Fraction::from(1)) => {},
-        Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_) if value.vector()?.0.iter().all(|v| v.is_finite()) => {},
-        _ => return Err("retained expressions require finite scalar, boolean, color or vector values; materialize other data with let first".into()),
+        Value::Number(number) if math::finite(&number.value) => {}
+        Value::Fraction(value) if math::finite(value) => {}
+        Value::Bool(_) => {}
+        Value::String(text) if text.len() <= math::format::MAX_OUTPUT_BYTES => {}
+        Value::Font(font) => {
+            font.validate()?;
+        }
+        Value::Code(_)
+        | Value::List(_)
+        | Value::Record(_)
+        | Value::Some(_)
+        | Value::None
+        | Value::Variant { .. } => {
+            let mut bytes = MAX_REACTIVE_BYTES;
+            let mut items = MAX_REACTIVE_NODES;
+            crate::value_budget::charge(value, &mut bytes, &mut items, MAX_REACTIVE_DEPTH)?;
+            crate::validate_value(&value.ty(), value)?;
+        }
+        Value::Color(color)
+            if color
+                .0
+                .iter()
+                .all(|v| math::finite(v) && *v >= Fraction::from(0) && *v <= Fraction::from(1)) => {
+        }
+        Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)
+            if value.vector()?.0.iter().all(|v| v.is_finite()) => {}
+        _ => {
+            return Err(format!(
+                "a value of type {} cannot be retained as a native animated argument; use finite scalar, font, code, enum or structured configuration values",
+                value.ty()
+            ));
+        }
     }
     Ok(value.ty())
 }
 fn property_type(property: Property, ty: &Type) -> Result<(), String> {
+    if let Some(expected) = crate::code::view::input_type(property) {
+        return if expected.accepts(ty) {
+            Ok(())
+        } else {
+            Err(format!(
+                "retained {property:?} requires {expected}, found {ty}"
+            ))
+        };
+    }
     let valid = match property {
-        Property::Position => matches!(ty, Type::Vector(2, Some(Unit::Length | Unit::Percent))),
+        Property::Position | Property::Scroll => {
+            matches!(ty, Type::Vector(2, Some(Unit::Length | Unit::Percent)))
+        }
         Property::Rotation => math::operations::scalar_unit(ty) == Some(Unit::Angle),
         Property::Scale | Property::StretchX | Property::Opacity | Property::Reveal => {
             math::operations::scalar_unit(ty) == Some(Unit::Number)
@@ -848,7 +980,21 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
             math::operations::scalar_unit(ty),
             Some(Unit::Length | Unit::Percent)
         ),
-        Property::Fill => *ty == Type::Color,
+        Property::Fill => crate::Paint::ty().accepts(ty),
+        Property::Code
+        | Property::CodeLanguage
+        | Property::CodeTheme
+        | Property::CodeSpans
+        | Property::CodeLineHeight
+        | Property::CodeTabSize
+        | Property::CodeLineNumbers => unreachable!("CodeView properties validated above"),
+        Property::Text => *ty == Type::String,
+        Property::Font => *ty == Type::Font,
+        Property::FontSize => math::operations::scalar_unit(ty) == Some(Unit::Length),
+        Property::XAlign | Property::YAlign => {
+            use crate::NativeEnum;
+            *ty == crate::Align::ty()
+        }
     };
     if valid {
         Ok(())

@@ -15,6 +15,7 @@ pub struct CompositedVideoFrame {
     pub width: u32,
     pub height: u32,
     pub storage_key: CompositedFrameStorageKey,
+    pub sanim_sources: Arc<shrimply_visual_core::sanim::inspection::FrameSources>,
 }
 
 pub enum FrameBuffer {
@@ -76,6 +77,7 @@ impl CompositedVideoFrame {
             width,
             height,
             storage_key,
+            sanim_sources: Arc::default(),
         }
     }
 
@@ -98,6 +100,7 @@ impl CompositedVideoFrame {
             width,
             height,
             storage_key,
+            sanim_sources: Arc::default(),
         }
     }
 

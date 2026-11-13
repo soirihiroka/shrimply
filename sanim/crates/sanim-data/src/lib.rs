@@ -1,4 +1,5 @@
 //! Bounded, schema-driven decoding. No filesystem or network access.
+pub mod code;
 mod csv;
 pub mod dataframe;
 pub mod font;
@@ -8,6 +9,15 @@ mod yaml;
 
 use sanim_core::{Color, Number, Type, Unit, Value};
 use serde_json::Value as Json;
+
+/// Native geometry resolution shared by rendering, layout, picking, and frame verification.
+pub fn resolve_pending(
+    element: &mut sanim_core::Element,
+    time: sanim_core::Fraction,
+) -> Result<(), String> {
+    code::view::resolve_pending(element, time)?;
+    font::resolve_pending(element)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Limits {
@@ -39,6 +49,16 @@ pub fn decode(path: &str, bytes: &[u8], ty: &Type, limits: Limits) -> Result<Val
         return Ok(Value::Font(sanim_core::Font::Asset(std::sync::Arc::new(
             bytes.to_vec(),
         ))));
+    }
+    if let Type::Code(language) = ty {
+        if limits.max_values == 0 {
+            return Err("code asset exceeds value limit".into());
+        }
+        let text = std::str::from_utf8(bytes)
+            .map_err(|error| format!("code resource '{path}' is not valid UTF-8: {error}"))?;
+        return sanim_core::code::Document::read(path, text, *language)
+            .and_then(code::parse)
+            .map(|document| Value::Code(std::sync::Arc::new(document)));
     }
     // An explicit String request reads the UTF-8 source verbatim, independently
     // of extension. Structured JSON strings remain available via read<Data>/decode.

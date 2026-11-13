@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 shrimply-fonts = { workspace = true, features = ["native"] }
 sanim-core.workspace = true
+imbl.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
@@ -17,3 +18,15 @@ cairo-rs.workspace = true
 rusqlite.workspace = true
 serde_yaml_ng.workspace = true
 num-traits.workspace = true
+tree-sitter = "0.27.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-json = "0.24.8"
+tree-sitter-bash = "0.25.1"
+tree-sitter-c = "0.24.2"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-toml-ng = "0.7.0"
+tree-sitter-yaml = "0.7.2"
+tree-sitter-sequel = "0.3.13"

@@ -5,6 +5,56 @@ use std::{
     sync::Arc,
 };
 
+/// A source location in the same revision as its prepared animation.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct SourceLocation {
+    pub source: Arc<str>,
+    pub span: sanim_core::Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ElementSource {
+    pub creation: SourceLocation,
+    /// Outer caller first, immediate caller last. Generated children share this metadata.
+    pub call_sites: imbl::Vector<SourceLocation>,
+}
+
+impl ElementSource {
+    /// Conservative retained size; deliberately includes shared call-site storage.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.creation.source.len()
+            + self.call_sites.len() * std::mem::size_of::<SourceLocation>()
+            + self
+                .call_sites
+                .iter()
+                .map(|site| site.source.len())
+                .sum::<usize>()
+    }
+}
+
+impl crate::Prepared {
+    /// Read the original line from this revision, without accessing the filesystem.
+    pub fn source_line(&self, location: &SourceLocation) -> Option<&str> {
+        let bytes = self.source_texts.get(location.source.as_ref())?;
+        let offset = location.span.start;
+        if offset > bytes.len() {
+            return None;
+        }
+        let start = bytes[..offset]
+            .iter()
+            .rposition(|byte| matches!(*byte, b'\n' | b'\r'))
+            .map_or(0, |index| index + 1);
+        let end = bytes[offset..]
+            .iter()
+            .position(|byte| matches!(*byte, b'\n' | b'\r'))
+            .map_or(bytes.len(), |index| offset + index);
+        std::str::from_utf8(&bytes[start..end])
+            .ok()
+            .map(|line| line.trim_end_matches('\r'))
+    }
+}
+
 /// Hosts supply bytes; Sanim itself has no network or ambient filesystem access.
 pub trait Sources {
     fn read(&self, path: &str) -> Result<Vec<u8>, String>;
@@ -34,6 +84,10 @@ pub struct FileSources {
     pub max_bytes: usize,
 }
 impl FileSources {
+    /// Immutable canonical boundary shared with dependency watchers.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
     pub fn new(root: impl AsRef<Path>) -> Result<Self, String> {
         Ok(Self {
             root: root.as_ref().canonicalize().map_err(|e| e.to_string())?,

@@ -1,0 +1,19 @@
+--- a/code_view_sample.py
++++ b/code_view_sample.py
+@@ -1,11 +1,11 @@
+ def total(values):
+-    answer = 0
+-    for value in values:
+-        answer += value
+-    return answer
++    return sum(values)
+ 
+ 
+ def mean(values):
+     if not values:
+-        return 0
++        return None
+     return total(values) / len(values)
++
++
++print(mean([1, 2, 3]))

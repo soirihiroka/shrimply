@@ -289,6 +289,20 @@ pub fn progress(time: Fraction, start: Fraction, end: Fraction) -> Result<Fracti
         .ok_or("time arithmetic overflow".into())
 }
 
+/// Motion can overshoot; visibility stays bounded and fades smoothly with springs.
+pub fn eased_progress(
+    easing: crate::Easing,
+    raw: Fraction,
+) -> Result<(Fraction, Fraction), String> {
+    let motion = easing.apply(raw)?;
+    let appearance = if matches!(easing, crate::Easing::Spring | crate::Easing::SpringBouncy) {
+        crate::Easing::CubicOut.apply(raw)?
+    } else {
+        motion.max(0.into()).min(1.into())
+    };
+    Ok((motion, appearance))
+}
+
 /// The dependency's is_finite accepts NaN; only rational variants are valid here.
 pub fn finite(value: &Fraction) -> bool {
     matches!(value, Fraction::Rational(..))

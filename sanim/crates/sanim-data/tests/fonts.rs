@@ -2,6 +2,39 @@ use sanim_core::{Font, Fraction};
 use std::sync::Arc;
 const FONT: &[u8] = include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf");
 #[test]
+fn cached_outlines_share_immutable_runs_for_identical_inputs_and_separate_style_changes() {
+    let font = Font::Asset(Arc::new(FONT.to_vec()));
+    let first =
+        sanim_data::font::cached_shape(&font, "cached label", 18.into(), false, false).unwrap();
+    let same =
+        sanim_data::font::cached_shape(&font, "cached label", 18.into(), false, false).unwrap();
+    assert!(Arc::ptr_eq(&first, &same));
+    assert!(Arc::ptr_eq(&first.outline, &same.outline));
+    let larger =
+        sanim_data::font::cached_shape(&font, "cached label", 24.into(), false, false).unwrap();
+    assert!(!Arc::ptr_eq(&first, &larger));
+    assert!(larger.bounds.max.values[0] > first.bounds.max.values[0]);
+    let renamed = Font::Asset(Arc::new(FONT.to_vec()));
+    let separate_asset =
+        sanim_data::font::cached_shape(&renamed, "cached label", 18.into(), false, false).unwrap();
+    assert_eq!(first.outline, separate_asset.outline);
+    let family = Font::family("sans-serif", "sans-serif").unwrap();
+    let epoch = sanim_data::font::system_font_epoch();
+    let family_first =
+        sanim_data::font::cached_shape(&family, "native family", 18.into(), false, false).unwrap();
+    let family_again = sanim_data::font::cached_shape(
+        &Font::family("sans-serif", "sans-serif").unwrap(),
+        "native family",
+        18.into(),
+        false,
+        false,
+    )
+    .unwrap();
+    if sanim_data::font::system_font_epoch() == epoch {
+        assert!(Arc::ptr_eq(&family_first, &family_again));
+    }
+}
+#[test]
 fn pango_shaping_bounds_cover_outlines_and_missing_glyphs_fail() {
     let (bounds, path) = sanim_data::font::shape(
         &Font::Asset(Arc::new(FONT.to_vec())),

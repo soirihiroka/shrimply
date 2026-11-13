@@ -69,7 +69,25 @@ pub struct Recovery {
 }
 
 pub fn parse_recovering(source: &str, text: &str, max_steps: usize) -> Recovery {
+    parse_recovering_highlighted(source, text, max_steps, false).0
+}
+/// Optional source classifications are emitted by the same parser operations.
+/// They are editor metadata, never a second token stream used for parsing.
+pub fn parse_highlighted(
+    source: &str,
+    text: &str,
+    max_steps: usize,
+) -> (Recovery, Vec<sanim_core::code::Highlight>) {
+    parse_recovering_highlighted(source, text, max_steps, true)
+}
+fn parse_recovering_highlighted(
+    source: &str,
+    text: &str,
+    max_steps: usize,
+    highlighted: bool,
+) -> (Recovery, Vec<sanim_core::code::Highlight>) {
     let mut parser = Parser::new(source, text, max_steps, true);
+    parser.highlights = highlighted.then(Vec::new);
     parser.trivia();
     let result = parser.statements(false);
     let (mut module, error) = match result {
@@ -97,12 +115,16 @@ pub fn parse_recovering(source: &str, text: &str, max_steps: usize) -> Recovery 
         .last()
         .map_or(0, |statement| statement.span.end);
     module.comments = parser.comments;
-    Recovery {
-        module,
-        diagnostic: parser.failure.or(error),
-        pending_calls,
-        prefix_end,
-    }
+    let highlights = parser.highlights.take().unwrap_or_default();
+    (
+        Recovery {
+            module,
+            diagnostic: parser.failure.or(error),
+            pending_calls,
+            prefix_end,
+        },
+        highlights,
+    )
 }
 
 #[derive(Clone)]
@@ -113,6 +135,7 @@ struct Mark {
     delimiters: Vec<u8>,
     formatting: Option<crate::formatter::Checkpoint>,
     comments: usize,
+    highlights: usize,
 }
 struct Parser<'a> {
     source: &'a str,
@@ -128,6 +151,7 @@ struct Parser<'a> {
     pending_calls: Option<Vec<PendingCall>>,
     formatting: Option<crate::formatter::Sink>,
     comments: Vec<Span>,
+    highlights: Option<Vec<sanim_core::code::Highlight>>,
 }
 impl<'a> Parser<'a> {
     fn new(source: &'a str, text: &'a str, max_steps: usize, recovery: bool) -> Self {
@@ -145,6 +169,7 @@ impl<'a> Parser<'a> {
             pending_calls: recovery.then(Vec::new),
             formatting: None,
             comments: vec![],
+            highlights: None,
         }
     }
 }
@@ -167,6 +192,7 @@ impl Parser<'_> {
             column: self.column,
             delimiters: self.delimiters.clone(),
             comments: self.comments.len(),
+            highlights: self.highlights.as_ref().map_or(0, Vec::len),
             formatting: self
                 .formatting
                 .as_ref()
@@ -179,6 +205,9 @@ impl Parser<'_> {
         self.column = mark.column;
         self.delimiters = mark.delimiters;
         self.comments.truncate(mark.comments);
+        if let Some(highlights) = &mut self.highlights {
+            highlights.truncate(mark.highlights);
+        }
         if let Some(checkpoint) = mark.formatting
             && let Some(sink) = &mut self.formatting
         {
@@ -189,6 +218,17 @@ impl Parser<'_> {
         self.failure
             .clone()
             .unwrap_or_else(|| Diagnostic::new("S002", message, self.source, self.span()))
+    }
+    fn highlight(&mut self, start: usize, end: usize, kind: &str) {
+        if let Some(highlights) = &mut self.highlights
+            && start < end
+        {
+            highlights.push(sanim_core::code::Highlight {
+                start,
+                end,
+                kind: kind.into(),
+            });
+        }
     }
     fn advance(&mut self, bytes: usize) {
         let mut chars = self.text[self.offset..self.offset + bytes]
@@ -237,6 +277,7 @@ impl Parser<'_> {
                     end: self.offset + count,
                     ..self.span()
                 });
+                self.highlight(self.offset, self.offset + count, "comment");
                 if let Some(sink) = &mut self.formatting {
                     sink.comment(&self.text[self.offset..self.offset + count]);
                 }
@@ -313,6 +354,17 @@ impl Parser<'_> {
         if let Some(sink) = &mut self.formatting {
             sink.token(text);
         }
+        let kind = if Keyword::from_name(text).is_some() {
+            "keyword"
+        } else if text
+            .chars()
+            .any(|character| "=+-*/%!&|".contains(character))
+        {
+            "operator"
+        } else {
+            "punctuation"
+        };
+        self.highlight(self.offset, self.offset + text.len(), kind);
         self.advance(text.len());
         self.trivia();
         true
@@ -320,6 +372,7 @@ impl Parser<'_> {
     fn expect(&mut self, text: &str) -> Result<(), Diagnostic> {
         if text == ">" && self.rest().starts_with('>') {
             self.charge();
+            self.highlight(self.offset, self.offset + 1, "punctuation");
             if let Some(sink) = &mut self.formatting {
                 sink.token(">");
             }
@@ -359,6 +412,18 @@ impl Parser<'_> {
             .take_while(|c| c.is_ascii_alphanumeric() || *c == b'_')
             .count();
         let name = self.rest()[..count].to_owned();
+        if self.highlights.is_some() {
+            let kind = if Keyword::from_name(&name).is_some() {
+                "keyword"
+            } else if crate::prelude::types().contains_key(name.as_str()) {
+                "type"
+            } else if crate::prelude::builtin(&name).is_some() {
+                "function"
+            } else {
+                "variable"
+            };
+            self.highlight(self.offset, self.offset + count, kind);
+        }
         if let Some(sink) = &mut self.formatting {
             sink.token(&name);
         }
@@ -415,6 +480,7 @@ impl Parser<'_> {
         self.advance(quote.len());
         span.end = self.offset;
         expression.span = span;
+        self.highlight(span.start, span.end, "string");
         if let Some(sink) = &mut self.formatting {
             sink.literal(&self.text[span.start..span.end]);
         }
@@ -1132,7 +1198,9 @@ impl Parser<'_> {
             }
             TypeExpr::Record(fields)
         } else {
+            let type_start = self.offset;
             let mut name = self.name()?;
+            self.highlight(type_start, type_start + name.len(), "type");
             while self.eat(".") {
                 name.push('.');
                 name.push_str(&self.name()?);
@@ -1357,6 +1425,7 @@ impl Parser<'_> {
         {
             let count = sanim_core::math::number_literal_len(self.rest());
             let value = self.rest()[..count].to_owned();
+            self.highlight(self.offset, self.offset + count, "number");
             if let Some(sink) = &mut self.formatting {
                 sink.token(&value);
             }
