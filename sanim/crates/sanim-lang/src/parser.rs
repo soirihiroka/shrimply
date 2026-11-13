@@ -1007,27 +1007,7 @@ impl Parser<'_> {
             .first()
             .is_some_and(u8::is_ascii_digit)
         {
-            let bytes = self.rest().as_bytes();
-            let mut count = bytes
-                .iter()
-                .take_while(|c| c.is_ascii_digit() || **c == b'_')
-                .count();
-            if bytes.get(count) == Some(&b'.')
-                && bytes.get(count + 1).is_some_and(u8::is_ascii_digit)
-            {
-                count += 1;
-                while bytes.get(count).is_some_and(u8::is_ascii_digit) {
-                    count += 1;
-                }
-            }
-            while bytes.get(count).is_some_and(u8::is_ascii_alphabetic) {
-                count += 1;
-            }
-            if bytes.get(count) == Some(&b'%')
-                && !bytes.get(count + 1).is_some_and(u8::is_ascii_digit)
-            {
-                count += 1;
-            }
+            let count = sanim_core::math::number_literal_len(self.rest());
             let value = self.rest()[..count].to_owned();
             self.charge();
             self.advance(count);

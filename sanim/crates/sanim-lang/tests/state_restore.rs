@@ -196,7 +196,7 @@ fn snapshots_share_large_data_geometry_and_unchanged_timeline_nodes() {
     ) else {
         panic!("list snapshots")
     };
-    assert!(Arc::ptr_eq(&a.values, &b.values));
+    assert!(a.values.ptr_eq(&b.values));
     assert!(first.animation.layers.ptr_eq(&last.animation.layers));
     assert!(Arc::ptr_eq(
         &first.animation.layers[0].element.geometry,

@@ -20,13 +20,21 @@ impl Animation {
         let height = to_f64(height)?;
         let mut elements = self.sample(time)?;
         for element in &mut elements {
-            resolve(element, width, height)?;
+            resolve_with_lists(element, width, height, Some((&self.list_views, time)))?;
         }
         Ok(elements)
     }
 }
 
 pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> Result<(), String> {
+    resolve_with_lists(element, parent_width, parent_height, None)
+}
+fn resolve_with_lists(
+    element: &mut Element,
+    parent_width: f64,
+    parent_height: f64,
+    lists: Option<(&crate::list_views::ListViews, Fraction)>,
+) -> Result<(), String> {
     if element.horizontal.origin.unit == crate::Unit::Percent {
         let width = element
             .layout
@@ -120,23 +128,75 @@ pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> 
             .transpose()?
             .unwrap_or(parent_height);
         if let Some(direction) = element.layout.direction {
-            let positions = flow::positions(children, &element.layout, width, height, direction)?;
-            for (child, position) in children.iter_mut().zip(positions.iter()) {
+            let transition = lists
+                .map(|(lists, time)| lists.selection(&element.id, time))
+                .transpose()?
+                .flatten();
+            let animated =
+                if let Some(selection) = transition.as_ref().filter(|selection| selection.active) {
+                    Some(list_positions(
+                        children,
+                        &element.layout,
+                        width,
+                        height,
+                        direction,
+                        selection,
+                    )?)
+                } else {
+                    None
+                };
+            let positions = if animated.is_none() {
+                Some(flow::positions(
+                    children,
+                    &element.layout,
+                    width,
+                    height,
+                    direction,
+                )?)
+            } else {
+                None
+            };
+            for (index, child) in children.iter_mut().enumerate() {
+                let mut position = if let Some(animated) = &animated {
+                    animated[index].0
+                } else {
+                    positions.as_ref().expect("static flow positions")[index]
+                };
+                if let Some(animated) = &animated {
+                    let visibility = animated[index].1;
+                    child.opacity = crate::math::arithmetic("*", child.opacity, visibility)?;
+                    if visibility != Fraction::from(1) {
+                        let before = extent(child)?;
+                        child.scale = crate::math::arithmetic("*", child.scale, visibility)?;
+                        let after = extent(child)?;
+                        position[0] = calc(
+                            "+",
+                            position[0],
+                            calc("/", calc("-", before.0, after.0)?, 2.)?,
+                        )?;
+                        position[1] = calc(
+                            "+",
+                            position[1],
+                            calc("/", calc("-", before.1, after.1)?, 2.)?,
+                        )?;
+                    }
+                }
                 child.position = Vec2 {
-                    values: *position,
+                    values: position,
                     unit: crate::Unit::Length,
                 };
                 child.layout.x_align = crate::Align::Start;
                 child.layout.y_align = crate::Align::Start;
-                resolve(child, width, height)?;
+                resolve_with_lists(child, width, height, lists)?;
             }
         } else {
             let padding = to_f64(element.layout.padding)?;
             for child in children {
-                resolve(
+                resolve_with_lists(
                     child,
                     (width - 2. * padding).max(0.),
                     (height - 2. * padding).max(0.),
+                    lists,
                 )?;
                 child.position.values[0] = calc("+", child.position.values[0], padding)?;
                 child.position.values[1] = calc("+", child.position.values[1], padding)?;
@@ -186,4 +246,68 @@ pub fn extent(element: &Element) -> Result<(f64, f64), String> {
         calc("*", w, to_f64(element.scale)?)?,
         calc("*", h, to_f64(element.scale)?)?,
     ))
+}
+
+/// Resolve both endpoint flows through the same Taffy cache. Removed children are
+/// overlays, so they never occupy space in the destination flow.
+fn list_positions(
+    children: &imbl::Vector<Element>,
+    style: &crate::Layout,
+    width: f64,
+    height: f64,
+    direction: crate::Direction,
+    selection: &crate::list_views::Selection<'_>,
+) -> Result<Vec<([f64; 2], Fraction)>, String> {
+    let by_id: std::collections::BTreeMap<_, _> = children
+        .iter()
+        .map(|element| (element.id.as_str(), element))
+        .collect();
+    let endpoint = |items: &crate::List| {
+        let elements: imbl::Vector<_> = crate::list_views::elements(items)?
+            .map(|element| {
+                by_id
+                    .get(element.id.as_str())
+                    .copied()
+                    .unwrap_or(element)
+                    .clone()
+            })
+            .collect();
+        let positions = flow::positions(&elements, style, width, height, direction)?;
+        Ok::<_, String>(positions)
+    };
+    let from_positions = endpoint(selection.from)?;
+    let to_positions = endpoint(selection.to)?;
+    let from: std::collections::BTreeMap<_, _> = crate::list_views::elements(selection.from)?
+        .zip(from_positions.iter())
+        .map(|(element, position)| (element.id.as_str(), *position))
+        .collect();
+    let to: std::collections::BTreeMap<_, _> = crate::list_views::elements(selection.to)?
+        .zip(to_positions.iter())
+        .map(|(element, position)| (element.id.as_str(), *position))
+        .collect();
+    children
+        .iter()
+        .map(|child| {
+            let a = from.get(child.id.as_str());
+            let b = to.get(child.id.as_str());
+            let visibility = if a.is_some() && b.is_none() {
+                crate::math::arithmetic("-", 1.into(), selection.progress)?
+            } else if a.is_none() && b.is_some() {
+                selection.progress
+            } else {
+                1.into()
+            };
+            let a = a
+                .or(b)
+                .ok_or("list transition is missing a child identity")?;
+            let b = b.unwrap_or(a);
+            Ok((
+                [
+                    crate::math::motion_lerp(a[0], b[0], selection.progress, false)?,
+                    crate::math::motion_lerp(a[1], b[1], selection.progress, false)?,
+                ],
+                visibility,
+            ))
+        })
+        .collect()
 }

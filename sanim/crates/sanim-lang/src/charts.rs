@@ -37,6 +37,7 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
             parameters,
             result,
             schedule: false,
+            timing: Default::default(),
             execute: Execution::Native(evaluate),
             check: native_types::fixed,
         })
@@ -504,8 +505,8 @@ pub(crate) fn evaluate(
                     .get("highlight")
                     .map(Value::list)
                     .transpose()?
-                    .unwrap_or(&[])
-                    .iter()
+                    .into_iter()
+                    .flatten()
                     .map(|v| math::to_f64(v.number()?.value))
                     .collect::<Result<Vec<_>, _>>()?;
                 for value in values {

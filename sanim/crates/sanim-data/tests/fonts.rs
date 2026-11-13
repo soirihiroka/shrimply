@@ -1,5 +1,5 @@
 use sanim_core::Fraction;
-const FONT: &[u8] = include_bytes!("../../../tests/fixtures/DejaVuSansCondensed-subset.ttf");
+const FONT: &[u8] = include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf");
 #[test]
 fn pango_shaping_bounds_cover_outlines_and_missing_glyphs_fail() {
     let (bounds, path) = sanim_data::font::shape(FONT, "AV ffi السلام", Fraction::from(24)).unwrap();

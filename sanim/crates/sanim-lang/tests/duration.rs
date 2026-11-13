@@ -152,7 +152,8 @@ fn duration_analysis_skips_unneeded_geometry_and_assets() {
 }
 #[test]
 fn every_checked_node_and_function_has_a_duration_effect() {
-    let files = sources("fn pause():Unit{wait(200ms)}\npause()", &[]);
+    let source = "fn pause():Unit{let value=abs(-2);wait(200ms)}\npause()";
+    let files = sources(source, &[]);
     let full = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -163,7 +164,33 @@ fn every_checked_node_and_function_has_a_duration_effect() {
         signature.duration,
         TimelineEffect::Fixed(Fraction::new(1u64, 5u64))
     );
-    assert!(!full.durations["main.sanim"].is_empty());
+    let nodes = &full.durations["main.sanim"];
+    let module = sanim_lang::parser::parse("main.sanim", source, 10000).unwrap();
+    for statement in &module.statements {
+        let statements =
+            if let sanim_lang::ast::StatementKind::Function { body, .. } = &statement.kind {
+                body.as_slice()
+            } else {
+                std::slice::from_ref(statement)
+            };
+        for statement in statements {
+            assert!(nodes.iter().any(|node| node.span == statement.span));
+            statement.visit_expressions(&mut |expr| {
+                assert!(
+                    nodes.iter().any(|node| node.span == expr.span),
+                    "missing timing metadata for {:?}",
+                    expr.kind
+                )
+            });
+        }
+    }
+    for builtin in sanim_lang::prelude::builtins() {
+        assert_eq!(
+            builtin.parameters[builtin.timing.parameter].name,
+            "duration"
+        );
+        assert_eq!(builtin.timeline_duration(), TimelineEffect::Dependent);
+    }
 }
 #[test]
 fn duration_limits_and_iteration_limits_fail_in_both_paths() {
@@ -192,10 +219,9 @@ fn duration_limits_and_iteration_limits_fail_in_both_paths() {
     compare("wait(7200s)", &[], Fraction::from(7200));
 }
 #[test]
-fn import_scheduling_cannot_hide_behind_zero_or_fixed_duration() {
+fn import_scene_effects_and_positive_timing_cannot_hide_behind_fixed_duration() {
     for imported in [
         "let invalid=wait(1s)",
-        "let invalid=wait(0s)",
         "add(Circle())",
         "fn side():Unit{add(Circle())}\nside()",
     ] {
@@ -336,5 +362,101 @@ fn reveals_and_growth_have_the_same_bounded_duration_in_both_passes() {
         "let shape=Circle()\nplay(Create(shape),duration:100ms)\nplay(Uncreate(shape),duration:200ms)\nplay(Write(shape),duration:300ms)\nplay(Unwrite(shape),duration:400ms)\nplay(GrowFromCenter(shape),duration:500ms)\nplay(ShrinkToCenter(shape),duration:600ms)",
         &[],
         Fraction::new(21u64, 10u64),
+    );
+}
+
+#[test]
+fn ordinary_calls_have_optional_exact_duration_effects() {
+    compare(
+        "fn value(x:Number=abs(-1,duration=200ms)):Number{return x}\nlet a=value()\nwait(a*100ms)",
+        &[],
+        Fraction::new(3u64, 10u64),
+    );
+    compare(
+        "fn value(x:Number=abs(-1,duration=200ms)):Number{return x}\nlet a=value(1)\nwait(a*100ms)",
+        &[],
+        Fraction::new(1u64, 10u64),
+    );
+    compare(
+        "type Pair={x:Number,y:Number}\nlet pair=Pair(x=1,y=2,duration=300ms)\nwait(pair.x*100ms)",
+        &[],
+        Fraction::new(2u64, 5u64),
+    );
+    compare(
+        "type Window={duration:Duration}\nlet window=Window(duration=300ms)\nwait(window.duration)",
+        &[],
+        Fraction::new(3u64, 10u64),
+    );
+    compare(
+        "let x=abs(-2,duration=300ms)\nlet color=Color(\"red3\",duration=200ms)\nwait(x*100ms)",
+        &[],
+        Fraction::new(7u64, 10u64),
+    );
+    compare(
+        "fn twice(value:Number):Number{return value*2}\nlet x=twice(3,duration=400ms)\nwait(x*100ms)",
+        &[],
+        Fraction::from(1),
+    );
+    compare(
+        "fn pulse():Unit{wait(200ms)}\npulse(duration=500ms)",
+        &[],
+        Fraction::new(1u64, 2u64),
+    );
+    compare(
+        "fn pause(duration:Duration):Unit{wait(duration)}\npause(duration=300ms)",
+        &[],
+        Fraction::new(3u64, 10u64),
+    );
+    compare(
+        "let delay=read<Duration>(\"delay.json\")\nlet x=abs(-2,duration=delay)\nwait(x*100ms)",
+        &[("delay.json", "\"300ms\"")],
+        Fraction::new(1u64, 2u64),
+    );
+}
+#[test]
+fn timed_call_envelopes_reject_overflow_and_too_short_bodies() {
+    for source in [
+        "let x=abs(-1,duration=7201s)",
+        "fn pulse():Unit{wait(2s)}\npulse(duration=1s)",
+        "let x=abs(-1,duration=-1s)",
+        "let x=abs(-1,duration=1pt)",
+    ] {
+        let files = sources(source, &[]);
+        for duration_only in [false, true] {
+            let result = if duration_only {
+                Engine::default()
+                    .duration("main.sanim", &files, &BTreeMap::new())
+                    .map(|_| ())
+            } else {
+                Engine::default()
+                    .prepare("main.sanim", &files, &BTreeMap::new())
+                    .map(|_| ())
+            };
+            assert!(result.is_err(), "{source}");
+        }
+    }
+}
+#[test]
+fn zero_duration_calls_remain_pure_and_timed_cache_hits_preserve_time() {
+    compare(
+        "import \"utils\" as utils",
+        &[("utils.sanim", "let idle=wait(0s)")],
+        Fraction::from(0),
+    );
+    compare(
+        "let x=reflect(abs(-2,duration=0s))\nsig y=sin(0deg,duration=0s)\nrepeat 3{let timed=abs(-2,duration=100ms)}",
+        &[],
+        Fraction::new(3u64, 10u64),
+    );
+    compare(
+        "import \"utils\" as utils\nwait(utils.value*100ms)",
+        &[("utils.sanim", "let value=abs(-2,duration=0s)")],
+        Fraction::new(1u64, 5u64),
+    );
+    let files = sources("let x=reflect(abs(-2,duration=1s))", &[]);
+    assert!(
+        Engine::default()
+            .prepare("main.sanim", &files, &BTreeMap::new())
+            .is_err()
     );
 }

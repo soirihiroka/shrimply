@@ -278,9 +278,11 @@ pub struct Animation {
     pub tracks: OrdMap<String, OrdMap<Property, Vector<Track>>>,
     #[serde(default)]
     pub reactive: crate::reactive::ReactiveGraph,
-    element_index: OrdMap<String, Vector<usize>>,
     #[serde(default)]
-    flow_controlled: OrdSet<String>,
+    pub list_views: crate::list_views::ListViews,
+    pub(crate) element_index: OrdMap<String, Vector<usize>>,
+    #[serde(default)]
+    pub(crate) flow_controlled: OrdSet<String>,
 }
 
 impl Default for Animation {
@@ -300,6 +302,7 @@ impl Animation {
             layers: Vector::new(),
             tracks: OrdMap::new(),
             reactive: crate::reactive::ReactiveGraph::default(),
+            list_views: crate::list_views::ListViews::default(),
             element_index: OrdMap::new(),
             flow_controlled: OrdSet::new(),
         }
@@ -585,6 +588,9 @@ impl Animation {
                 }
             }
         }
+        if let Some(children) = self.list_views.visual_children(&out.id, time)? {
+            out.geometry = Arc::new(Geometry::Group { children });
+        }
         if matches!(out.geometry.as_ref(), Geometry::Group { .. })
             && let Geometry::Group { children } = Arc::make_mut(&mut out.geometry)
         {
@@ -595,7 +601,12 @@ impl Animation {
         Ok(())
     }
     pub fn find(&self, id: &str) -> Option<&Element> {
-        let path = self.element_index.get(id)?;
+        let Some(path) = self.element_index.get(id) else {
+            return self.list_views.find(id);
+        };
+        if path.is_empty() {
+            return self.list_views.find(id);
+        }
         let mut element = &self.layers.get(*path.front()?)?.element;
         for index in path.iter().skip(1) {
             let Geometry::Group { children } = element.geometry.as_ref() else {
@@ -622,7 +633,17 @@ impl Animation {
         element.ids(&mut ids);
         let mut unique = std::collections::BTreeSet::new();
         for id in ids {
-            if !unique.insert(id.clone()) || self.find(&id).is_some() {
+            let owned_here = self.list_views.owner(&id).is_some_and(|cell| {
+                self.list_views.view_cell(&element.id) == Some(cell)
+                    || self.list_views.views_in(&element, cell)
+            });
+            if !unique.insert(id.clone())
+                || self
+                    .element_index
+                    .get(&id)
+                    .is_some_and(|path| !path.is_empty())
+                || self.list_views.find(&id).is_some() && !owned_here
+            {
                 return Err(format!("duplicate element identity '{id}'"));
             }
         }
@@ -899,7 +920,7 @@ impl Animation {
     }
 }
 
-fn collect_flow_positions(element: &Element, ids: &mut OrdSet<String>) {
+pub(crate) fn collect_flow_positions(element: &Element, ids: &mut OrdSet<String>) {
     if let Geometry::Group { children } = element.geometry.as_ref() {
         if element.layout.direction.is_some() {
             ids.extend(children.iter().map(|child| child.id.clone()));
@@ -929,7 +950,77 @@ impl Track {
         }
         let p = math::progress(time, self.start, self.end)?;
         let one = Fraction::from(1);
-        let p = match self.easing {
+        let p = self.easing.apply(p)?;
+        match (&self.from, &self.to) {
+            (Value::Number(a), Value::Number(b)) if a.unit == b.unit => {
+                Ok(Value::Number(crate::Number {
+                    value: math::lerp(
+                        a.value,
+                        b.value,
+                        if self.easing == Easing::Overshoot {
+                            p.min(one)
+                        } else {
+                            p
+                        },
+                    )?,
+                    unit: a.unit,
+                }))
+            }
+            (Value::Fraction(a), Value::Fraction(b)) => Ok(Value::Fraction(math::lerp(
+                *a,
+                *b,
+                if self.easing == Easing::Overshoot {
+                    p.min(one)
+                } else {
+                    p
+                },
+            )?)),
+            (Value::Vec2(a), Value::Vec2(b)) if a.unit == b.unit => Ok(Value::Vec2(Vec2 {
+                values: math::motion_vector_lerp(
+                    a.values,
+                    b.values,
+                    p,
+                    self.easing == Easing::Overshoot,
+                )?,
+                unit: a.unit,
+            })),
+            (Value::Vec3(a), Value::Vec3(b)) if a.unit == b.unit => Ok(Value::Vec3(crate::Vec3 {
+                values: math::motion_vector_lerp(
+                    a.values,
+                    b.values,
+                    p,
+                    self.easing == Easing::Overshoot,
+                )?,
+                unit: a.unit,
+            })),
+            (Value::Vec4(a), Value::Vec4(b)) if a.unit == b.unit => Ok(Value::Vec4(crate::Vec4 {
+                values: math::motion_vector_lerp(
+                    a.values,
+                    b.values,
+                    p,
+                    self.easing == Easing::Overshoot,
+                )?,
+                unit: a.unit,
+            })),
+            (Value::Color(a), Value::Color(b)) => {
+                let mut out = a.clone();
+                for i in 0..4 {
+                    out.0[i] = math::lerp(a.0[i], b.0[i], p.min(one))?;
+                }
+                Ok(Value::Color(out))
+            }
+            (from, to) if from.ty().accepts(&to.ty()) || to.ty().accepts(&from.ty()) => {
+                Ok(from.clone())
+            }
+            _ => Err("incompatible track endpoints".into()),
+        }
+    }
+}
+
+impl Easing {
+    pub fn apply(self, p: Fraction) -> Result<Fraction, String> {
+        let one = Fraction::from(1);
+        Ok(match self {
             Easing::Linear => p,
             Easing::CubicIn => p
                 .checked_mul(&p)
@@ -954,47 +1045,6 @@ impl Track {
             )?,
             Easing::Smootherstep => math::smootherstep(p)?,
             Easing::Overshoot => math::overshoot(p)?,
-        };
-        match (&self.from, &self.to) {
-            (Value::Number(a), Value::Number(b)) if a.unit == b.unit => {
-                Ok(Value::Number(crate::Number {
-                    value: math::lerp(
-                        a.value,
-                        b.value,
-                        if self.easing == Easing::Overshoot {
-                            p.min(one)
-                        } else {
-                            p
-                        },
-                    )?,
-                    unit: a.unit,
-                }))
-            }
-            (Value::Vec2(a), Value::Vec2(b)) if a.unit == b.unit => Ok(Value::Vec2(Vec2 {
-                values: [
-                    math::motion_lerp(
-                        a.values[0],
-                        b.values[0],
-                        p,
-                        self.easing == Easing::Overshoot,
-                    )?,
-                    math::motion_lerp(
-                        a.values[1],
-                        b.values[1],
-                        p,
-                        self.easing == Easing::Overshoot,
-                    )?,
-                ],
-                unit: a.unit,
-            })),
-            (Value::Color(a), Value::Color(b)) => {
-                let mut out = a.clone();
-                for i in 0..4 {
-                    out.0[i] = math::lerp(a.0[i], b.0[i], p)?;
-                }
-                Ok(Value::Color(out))
-            }
-            _ => Err("incompatible track endpoints".into()),
-        }
+        })
     }
 }

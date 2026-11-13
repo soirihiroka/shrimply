@@ -82,12 +82,19 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
             ));
         }
         let mut converted = vec![];
-        for chunk in values.chunks_exact(width) {
+        let mut components = values.iter();
+        for _ in 0..values.len() / width {
+            let mut chunk = components.by_ref().take(width);
             let value = if *element == Type::Fraction {
-                Value::Fraction(chunk[0].number()?.value)
+                Value::Fraction(
+                    chunk
+                        .next()
+                        .expect("validated NPY component count")
+                        .number()?
+                        .value,
+                )
             } else {
                 let numbers = chunk
-                    .iter()
                     .map(|v| match v {
                         Value::Data(v) => v
                             .as_f64()

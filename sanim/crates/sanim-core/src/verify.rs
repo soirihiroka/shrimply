@@ -100,6 +100,9 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
         time,
     };
     let sample = |element: &Element, time: Fraction| -> Result<Bounds, String> {
+        if animation.list_views.owner(&element.id).is_some() {
+            return Err("list-child assertions require composed layout evidence; assert on the containing Row or Column instead".into());
+        }
         if animation
             .layers
             .iter()
@@ -187,7 +190,7 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
             ),
         };
     }
-    if animation.reactive.has_bindings() {
+    if animation.reactive.has_bindings() || !animation.list_views.is_empty() {
         return result(
             Evidence::Unknown,
             format!(

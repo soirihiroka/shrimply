@@ -334,13 +334,66 @@ executes sequentially. `timer count every period { ... }` starts iterations at
 fixed intervals and pads the remaining time; an overrun is an error. Counts,
 nesting, total preparation operations, source size, and scene size are bounded.
 Recursive call graphs and copying functions into values/containers are rejected.
-Every expression, statement and function carries a timeline effect. `Engine::duration`
+Every expression, statement, block and function carries a timeline effect, including
+ordinary operations whose duration is zero. Native and user functions use the same
+contract; `wait` is an ordinary zero-value function with a duration argument.
+Every builtin accepts optional `duration=...` (normally zero). A user function can
+also receive a call-duration envelope: its body retains its own timing, remaining
+time becomes a hold, and exceeding the requested duration is an error. The envelope
+includes concurrent jobs started by that function body, including nested helpers;
+unrelated work scheduled before the call does not count against it. A declared
+parameter named `duration` remains an ordinary parameter whose body decides timing.
+Argument/default-expression effects occur before the call-body envelope.
+Assignments interpolate numeric, fraction, color and vector state over the returned
+call's interval. Arguments finish first; a zero-time call commits immediately after
+its arguments. Other typed state (such as strings, records, arrays and union values)
+commits at the interval end. Timing is independent of the returned value's type.
+
+Durations use exact units: `0.5s`, `250ms`, `7m`, `4m1s`, and `1s250ms` are valid.
+Compound units appear once in decreasing order (`m`, `s`, `ms`). Durations cannot
+be confused with dimensionless numbers or angles.
+
+`Engine::duration`
 and CLI `duration` resolve exact total length without building unrelated geometry.
 Timing-dependent reads are evaluated; unrelated data and visual validation can be
 skipped, so a duration report does not replace full preparation before rendering.
 State-observing timing can fall back to full preparation with a `P004` warning.
 All animations are finite: resolved duration above two hours is an error;
 exactly two hours is valid. Overflow uses structured diagnostics, never an unbounded loop.
+
+## Animated lists
+
+`append(items, value)`, `insert(items, index, value)`, `remove_at(items, index)`,
+`replace_at(items, index, value)`, and `move_item(items, from_index, to_index)` return
+new typed lists. Inputs remain unchanged. Empty results retain their element type.
+Indices must be nonnegative integers; invalid edits report the index and list length.
+Lists and arrays share persistent copy-on-write vector storage; edits share unchanged
+branches instead of copying every item.
+Proven native edits share the core edit implementation with scene updates; only
+changed item payloads and copied tree paths are validated and charged. Arbitrary
+replacement expressions retain full validation.
+
+```sanim
+mut items: List<Element> = []
+let row = Row(children=items, width=400pt, height=100pt, gap=12pt)
+add(row)
+items = append(items, Rect(width=64pt, height=64pt), duration=0.5s)
+items = remove_at(items, 0, duration=300ms)
+```
+
+Assigning a timed result to a mutable list records a bounded state transition.
+Logical state commits at the end; seeking restores the correct snapshot without
+replaying edits. A bound `Row`/`Column` matches stable element identities, fades
+entries/exits, and interpolates surviving items between Taffy layouts. Removed
+items are temporary overlays and do not occupy destination layout slots. Layout
+responds to the host viewport during the transition. A replacement with different
+geometry needs a new identity; list indices are never identities. Currently each
+mutable element list supports one live view, and overlapping writes to that list
+are rejected. Independent lists can animate concurrently in `background` blocks.
+
+The complete [stack and queue example](examples/stack_queue.sanim) uses the same
+append operation for arrivals, then removes the last stack item or the first queue
+item. It uses no hand-authored item position tracks.
 
 ## Relative layout
 

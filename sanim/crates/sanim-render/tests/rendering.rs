@@ -186,7 +186,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
     let mut files = MemorySources::default();
     files.insert(
         "font.ttf",
-        include_bytes!("../../../tests/fixtures/DejaVuSansCondensed-subset.ttf").as_slice(),
+        include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf").as_slice(),
     );
     files.insert("main.sanim","bg(Color(\"transparent\"))\nlet font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font:font,font_size:24pt,fill:Color(\"white\"))\nplay(Write(label),duration:1s)");
     let prepared = Engine::new(sanim_core::Viewport {

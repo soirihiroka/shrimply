@@ -245,10 +245,19 @@ impl Renderer {
     }
     /// Preserve immutable path geometry across source, style, timing and viewport edits.
     pub fn prepare(&mut self, animation: Animation) -> Result<Scene, String> {
-        let key = digest(&serde_json::to_vec(&animation).map_err(|error| error.to_string())?);
+        let key = digest(&animation.visual_key()?);
         let mut paths = BTreeMap::new();
         for layer in &animation.layers {
             draw::prepare_paths(&layer.element, &mut paths, self)?;
+        }
+        for element in animation.list_views.elements() {
+            if !matches!(
+                element.geometry.as_ref(),
+                sanim_core::Geometry::Group { .. }
+            ) && !paths.contains_key(&element.id)
+            {
+                draw::prepare_paths(element, &mut paths, self)?;
+            }
         }
         let times = SampleTimes::new(&animation);
         let dynamic_geometry = animation

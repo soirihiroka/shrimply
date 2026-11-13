@@ -1,6 +1,18 @@
 //! Selective timeline evaluation reuses the value evaluator and canonical AST.
 use super::*;
+#[derive(Default)]
+pub(super) struct CallBoundary {
+    pub module: String,
+    pub span: Span,
+    pub start: Fraction,
+    pub end: Fraction,
+}
 impl Runtime<'_, '_> {
+    pub(super) fn observe_call_horizon(&mut self, end: Fraction) {
+        if let Some(horizon) = self.call_horizons.last_mut() {
+            *horizon = (*horizon).max(end);
+        }
+    }
     pub(super) fn timeline_effect(&self, span: Span) -> TimelineEffect {
         let Some(module) = self.loaded.iter().find(|m| m.id == self.module) else {
             return TimelineEffect::Dependent;
@@ -32,6 +44,47 @@ impl Runtime<'_, '_> {
         self.cursor =
             math::timeline_end(self.cursor, duration).map_err(|e| self.error("S304", e, span))?;
         self.animation.duration = self.animation.duration.max(self.cursor);
+        self.observe_call_horizon(self.cursor);
+        Ok(())
+    }
+    pub(super) fn finish_call_duration(
+        &mut self,
+        start: Fraction,
+        requested: Option<Fraction>,
+        horizon: Fraction,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        self.last_call.module.clone_from(&self.module);
+        self.last_call.span = span;
+        self.last_call.start = start;
+        self.last_call.end = self.cursor;
+        if requested == Some(Fraction::from(0)) && self.cursor == start && horizon <= start {
+            return Ok(());
+        }
+        if let Some(requested) = requested {
+            let end =
+                math::timeline_end(start, requested).map_err(|e| self.error("S304", e, span))?;
+            if self.cursor.max(horizon) > end {
+                return Err(self.error(
+                    "S304",
+                    format!(
+                        "call body takes {}s, exceeding requested timeline duration {requested}s",
+                        math::arithmetic("-", self.cursor.max(horizon), start)
+                            .map_err(|e| self.error("S304", e, span))?
+                    ),
+                    span,
+                ));
+            }
+            if self.cursor < end {
+                let remaining = math::arithmetic("-", end, self.cursor)
+                    .map_err(|e| self.error("S304", e, span))?;
+                self.advance_duration(remaining, span)?;
+            }
+        }
+        if self.cursor.max(horizon) > start {
+            self.map_time_until(start, self.cursor.max(horizon), span, TimeMapKind::Schedule)?;
+        }
+        self.last_call.end = self.cursor;
         Ok(())
     }
     pub(super) fn duration_effects(&mut self, expr: &Expr, env: &Env) -> Result<(), Diagnostic> {
@@ -43,49 +96,25 @@ impl Runtime<'_, '_> {
         }
         match &expr.kind {
             ExprKind::Call { callee, args, .. } => {
-                if let ExprKind::Name(name) = &callee.kind
-                    && let Some(builtin) = prelude::builtin(name)
-                {
-                    if matches!(
-                        builtin.execute,
-                        prelude::Execution::Play | prelude::Execution::Wait(_)
-                    ) {
-                        if !self.root_active {
-                            return Err(self.error(
-                                "S115",
-                                "imported modules cannot schedule animation while being imported",
-                                expr.span,
-                            ));
-                        }
-                        let wait = matches!(builtin.execute, prelude::Execution::Wait(_));
-                        let mut duration = None;
-                        for (index, (label, value)) in args.iter().enumerate() {
-                            if label.as_deref() == Some("duration")
-                                || wait && index == 0 && label.is_none()
-                            {
-                                duration = Some(
-                                    self.expression(value, env)?
-                                        .number()
-                                        .map_err(|e| self.error("S304", e, value.span))?
-                                        .value,
-                                );
-                            } else {
-                                self.duration_effects(value, env)?;
-                            }
-                        }
-                        let duration = duration.unwrap_or(Fraction::from(1));
-                        if !wait && duration <= Fraction::from(0) {
-                            return Err(self.error(
-                                "S304",
-                                "play duration must be positive",
-                                expr.span,
-                            ));
-                        }
-                        return self.advance_duration(duration, expr.span);
+                if let Some(call) = crate::timing::builtin_call(callee, args) {
+                    if let Some(receiver) = call.receiver {
+                        self.duration_effects(receiver, env)?;
                     }
+                    let duration_expr = call.duration_argument();
+                    let mut requested = None;
                     for (_, value) in args {
-                        self.duration_effects(value, env)?;
+                        if duration_expr.is_some_and(|expr| std::ptr::eq(expr, value)) {
+                            requested = Some(self.expression(value, env)?);
+                        } else {
+                            self.duration_effects(value, env)?;
+                        }
                     }
+                    let duration = call
+                        .builtin
+                        .timing
+                        .value(requested.as_ref())
+                        .map_err(|e| self.error("S304", e, expr.span))?;
+                    self.advance_duration(duration, expr.span)?;
                     return Ok(());
                 }
                 let callee_value = self.expression(callee, env)?;
@@ -97,11 +126,25 @@ impl Runtime<'_, '_> {
                     ));
                 };
                 let Some(function) = self.functions.get(&key).cloned() else {
-                    if self.constructors.contains_key(&key) {
+                    if let Some(ty) = self.constructors.get(&key) {
+                        let duration = if !matches!(ty,Type::Record(fields) if fields.contains_key("duration"))
+                        {
+                            crate::timing::envelope(args)
+                        } else {
+                            None
+                        };
+                        let mut requested = None;
                         for (_, value) in args {
-                            self.duration_effects(value, env)?;
+                            if duration.is_some_and(|expr| std::ptr::eq(expr, value)) {
+                                requested = Some(self.expression(value, env)?);
+                            } else {
+                                self.duration_effects(value, env)?;
+                            }
                         }
-                        return Ok(());
+                        let total = crate::timing::Timing::default()
+                            .value(requested.as_ref())
+                            .map_err(|e| self.error("S304", e, expr.span))?;
+                        return self.advance_duration(total, expr.span);
                     }
                     return Err(self.error("S305", format!("unknown function '{key}'"), expr.span));
                 };
@@ -133,9 +176,11 @@ impl Runtime<'_, '_> {
                         name
                     };
                     provided.insert(parameter.clone());
-                    if parameters
-                        .iter()
-                        .any(|(name, needed)| name == &parameter && *needed)
+                    if parameter == "duration"
+                        && !parameters.iter().any(|(name, _)| name == "duration")
+                        || parameters
+                            .iter()
+                            .any(|(name, needed)| name == &parameter && *needed)
                     {
                         evaluated.push((Some(parameter), self.expression(value, env)?));
                     } else {

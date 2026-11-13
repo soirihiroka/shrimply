@@ -6,7 +6,7 @@ fn files(text: &str) -> MemorySources {
     let mut files = MemorySources::default();
     files.insert(
         "font.ttf",
-        include_bytes!("../../../tests/fixtures/DejaVuSansCondensed-subset.ttf"),
+        include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf"),
     );
     files.insert("points.csv", "x,y\n0.8,1\n1.0,2\n1.2,3\n");
     files.insert("main.sanim", text);

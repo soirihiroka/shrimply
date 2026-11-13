@@ -1,4 +1,5 @@
 mod duration;
+mod lists;
 mod plans;
 mod reactive;
 mod reactive_animation;
@@ -86,7 +87,10 @@ pub(crate) fn evaluate(
         globals: imbl::OrdMap::new(),
         reactive: reactive::Store::default(),
         signal_frames: Vec::new(),
+        call_horizons: Vec::new(),
+        last_call: duration::CallBoundary::default(),
         named_constructor: None,
+        list_edit: None,
         background_depth: 0,
         instance_paths: loaded
             .iter()
@@ -372,7 +376,11 @@ pub(crate) struct Runtime<'a, 's> {
     globals: imbl::OrdMap<String, Env>,
     reactive: reactive::Store,
     signal_frames: Vec<reactive::Frame>,
+    // Intrinsic work observed during active calls, excluding their argument effects.
+    call_horizons: Vec<Fraction>,
+    last_call: duration::CallBoundary,
     named_constructor: Option<(usize, String)>,
+    pub(super) list_edit: Option<crate::lists::EditReceipt>,
     background_depth: usize,
     instance_paths: BTreeMap<String, BTreeMap<usize, String>>,
     functions: BTreeMap<String, Arc<Function>>,
@@ -429,6 +437,16 @@ impl Runtime<'_, '_> {
         span: Span,
         kind: TimeMapKind,
     ) -> Result<(), Diagnostic> {
+        self.map_time_until(start, self.cursor, span, kind)
+    }
+    fn map_time_until(
+        &mut self,
+        start: Fraction,
+        end: Fraction,
+        span: Span,
+        kind: TimeMapKind,
+    ) -> Result<(), Diagnostic> {
+        self.observe_call_horizon(end);
         if self.duration_only || !self.root_active {
             return Ok(());
         }
@@ -438,7 +456,7 @@ impl Runtime<'_, '_> {
                     source: self.module.clone(),
                     span,
                     start,
-                    end: self.cursor,
+                    end,
                     statement: self.root_statement,
                     kind,
                     call_path: self.identity.iter().cloned().collect(),
@@ -470,11 +488,27 @@ impl Runtime<'_, '_> {
     fn block(&mut self, body: &[Statement], env: &mut Env) -> Result<Option<Value>, Diagnostic> {
         for statement in body {
             if self.duration_only {
+                match &statement.kind {
+                    StatementKind::Bind {
+                        kind, name, value, ..
+                    } if !self.result_needed && !self.duration_binding_needed(name) => {
+                        if *kind != BindingKind::Sig {
+                            self.duration_effects(value, env)?;
+                        }
+                        continue;
+                    }
+                    StatementKind::Assign { name, value }
+                        if !self.duration_binding_needed(name)
+                            && (!self.result_needed || !env.contains_key(name)) =>
+                    {
+                        self.duration_effects(value, env)?;
+                        continue;
+                    }
+                    _ => {}
+                }
                 let binding_needed = match &statement.kind {
-                    StatementKind::Bind { kind, name, .. } => {
-                        *kind != BindingKind::Let
-                            || self.result_needed
-                            || self.duration_binding_needed(name)
+                    StatementKind::Bind { name, .. } => {
+                        self.result_needed || self.duration_binding_needed(name)
                     }
                     _ => false,
                 };
@@ -491,16 +525,6 @@ impl Runtime<'_, '_> {
                     continue;
                 }
                 match &statement.kind {
-                    StatementKind::Bind {
-                        kind: BindingKind::Let,
-                        name,
-                        ..
-                    } if !self.result_needed && !self.duration_binding_needed(name) => {
-                        if let StatementKind::Bind { value, .. } = &statement.kind {
-                            self.duration_effects(value, env)?;
-                            continue;
-                        }
-                    }
                     StatementKind::Expr(value) => {
                         self.duration_effects(value, env)?;
                         continue;
@@ -843,12 +867,16 @@ impl Runtime<'_, '_> {
         let mut bytes = self.limits.data.max_bytes;
         let mut items = self.limits.data.max_values;
         let validation_started = Instant::now();
-        sanim_core::value_budget::charge(
-            &value,
-            &mut bytes,
-            &mut items,
-            self.limits.data.max_depth,
-        )
+        if let Some(delta) = self.proven_list_edit_result(expr, &value) {
+            crate::lists::charge_delta(delta, &mut bytes, &mut items)
+        } else {
+            sanim_core::value_budget::charge(
+                &value,
+                &mut bytes,
+                &mut items,
+                self.limits.data.max_depth,
+            )
+        }
         .map_err(|e| self.error("S303", e, expr.span))?;
         self.statistics.value_validation_micros =
             self.statistics.value_validation_micros.saturating_add(
@@ -1223,7 +1251,17 @@ impl Runtime<'_, '_> {
                     evaluated.push((name.clone(), self.expression(value, env)?));
                 }
                 if let Some(ty) = self.constructors.get(&key).cloned() {
-                    return match ty {
+                    let requested = if !matches!(&ty,Type::Record(fields) if fields.contains_key("duration"))
+                    {
+                        crate::timing::envelope(&evaluated)
+                            .map(|value| crate::timing::Timing::default().value(Some(value)))
+                            .transpose()
+                            .map_err(|e| self.error("S304", e, expr.span))?
+                    } else {
+                        None
+                    };
+                    let start = self.cursor;
+                    let value = match ty {
                         Type::Record(fields) => {
                             let ordered = order_values(
                                 &evaluated,
@@ -1284,7 +1322,9 @@ impl Runtime<'_, '_> {
                             })
                         }
                         _ => Err(self.error("S305", "type is not constructible", expr.span)),
-                    };
+                    }?;
+                    self.finish_call_duration(start, requested, self.cursor, expr.span)?;
+                    return Ok(value);
                 }
                 self.invoke(&key, &evaluated, expr.span, true, None)
             }
@@ -1303,6 +1343,25 @@ impl Runtime<'_, '_> {
             .get(key)
             .cloned()
             .ok_or_else(|| self.error("S305", format!("unknown function '{key}'"), span))?;
+        let envelope = if !function
+            .parameters
+            .iter()
+            .any(|(name, _, _)| name == "duration")
+        {
+            crate::timing::envelope(evaluated)
+                .map(|value| crate::timing::Timing::default().value(Some(value)))
+                .transpose()
+                .map_err(|e| self.error("S304", e, span))?
+        } else {
+            None
+        };
+        if envelope.is_some_and(|duration| duration > Fraction::from(0)) && !self.root_active {
+            return Err(self.error(
+                "S115",
+                "imported modules cannot schedule animation while being imported",
+                span,
+            ));
+        }
         self.used_functions
             .entry(key.to_owned())
             .or_insert((function.fingerprint.clone(), self.root_statement));
@@ -1383,6 +1442,7 @@ impl Runtime<'_, '_> {
         let previous_result = self.result_needed;
         self.result_needed = need_result;
         let function_start = self.cursor;
+        self.call_horizons.push(function_start);
         self.depth += 1;
         let result = if self.depth > self.limits.max_call_depth {
             Err(self.error("S303", "bounded function call depth exceeded", span))
@@ -1415,15 +1475,34 @@ impl Runtime<'_, '_> {
                 })
                 .transpose()
         });
-        if result.is_ok() {
-            self.map_time(function_start, function.span, TimeMapKind::Function)?;
-        }
+        let result = result.and_then(|value| {
+            let horizon = self
+                .call_horizons
+                .last()
+                .copied()
+                .expect("active function horizon")
+                .max(self.cursor);
+            self.map_time_until(
+                function_start,
+                horizon,
+                function.span,
+                TimeMapKind::Function,
+            )?;
+            Ok(value)
+        });
+        let horizon = self
+            .call_horizons
+            .pop()
+            .expect("active function horizon")
+            .max(self.cursor);
         self.depth -= 1;
         self.result_needed = previous_result;
         self.identity.pop();
         self.module = previous;
         self.type_bindings = previous_types;
-        Ok(result?.unwrap_or(Value::Unit))
+        let result = result?;
+        self.finish_call_duration(function_start, envelope, horizon, span)?;
+        Ok(result.unwrap_or(Value::Unit))
     }
     fn native(
         &mut self,
@@ -1431,8 +1510,43 @@ impl Runtime<'_, '_> {
         arguments: Vec<(Option<String>, Value)>,
         span: Span,
     ) -> Result<Value, Diagnostic> {
-        let builtin = prelude::builtin(name)
-            .ok_or_else(|| self.error("S305", format!("unknown native '{name}'"), span))?;
+        self.list_edit = None;
+        let builtin = prelude::builtin(name).expect("checked builtin");
+        let duration = builtin
+            .timing
+            .value(builtin.duration_argument(&arguments))
+            .map_err(|e| self.error("S304", e, span))?;
+        if duration > Fraction::from(0) && !self.root_active {
+            return Err(self.error(
+                "S115",
+                "imported modules cannot schedule animation while being imported",
+                span,
+            ));
+        }
+        let start = self.cursor;
+        let mut arguments = arguments;
+        if !matches!(builtin.execute, prelude::Execution::Play) {
+            let timing = builtin.duration_argument(&arguments).and_then(|value| {
+                arguments
+                    .iter()
+                    .position(|(_, candidate)| std::ptr::eq(value, candidate))
+            });
+            if let Some(index) = timing {
+                arguments.remove(index);
+            }
+        }
+        let value = self.native_inner(builtin, arguments, duration, span)?;
+        self.finish_call_duration(start, Some(duration), self.cursor, span)?;
+        Ok(value)
+    }
+    fn native_inner(
+        &mut self,
+        builtin: &prelude::Builtin,
+        arguments: Vec<(Option<String>, Value)>,
+        duration: Fraction,
+        span: Span,
+    ) -> Result<Value, Diagnostic> {
+        let name = builtin.name;
         if self.duration_only && name == "Shift" {
             return Err(self.error(
                 "S390",
@@ -1568,24 +1682,12 @@ impl Runtime<'_, '_> {
             };
         }
         if matches!(builtin.execute, prelude::Execution::Play) && self.duration_only {
-            let duration = args
-                .get("duration")
-                .map(Value::number)
-                .transpose()
-                .map_err(|e| self.error("S304", e, span))?
-                .map_or(Fraction::from(1), |n| n.value);
-            if duration <= Fraction::from(0) {
-                return Err(self.error("S304", "play duration must be positive", span));
-            }
             self.advance_duration(duration, span)?;
             return Ok(Value::Unit);
         }
         if self.duration_only
             && builtin.schedule
-            && !matches!(
-                builtin.execute,
-                prelude::Execution::Play | prelude::Execution::Wait(_)
-            )
+            && !matches!(builtin.execute, prelude::Execution::Play)
         {
             return Ok(Value::Unit);
         }
@@ -1602,12 +1704,6 @@ impl Runtime<'_, '_> {
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| self.error("S305", e, span))?;
-            let duration = args
-                .get("duration")
-                .map(Value::number)
-                .transpose()
-                .map_err(|e| self.error("S305", e, span))?
-                .map_or(Fraction::from(1), |v| v.value);
             let ease = Easing::parse(
                 args.get("ease")
                     .map(Value::string)
@@ -1616,24 +1712,11 @@ impl Runtime<'_, '_> {
                     .unwrap_or("linear"),
             )
             .map_err(|e| self.error("S305", e, span))?;
-            let schedule_start = self.cursor;
             self.animation
                 .schedule(&motions, self.cursor, duration, ease)
                 .map_err(|e| self.error("S307", e, span))?;
-            self.cursor = Number {
-                value: self.cursor,
-                unit: Unit::Duration,
-            }
-            .binary(
-                "+",
-                Number {
-                    value: duration,
-                    unit: Unit::Duration,
-                },
-            )
-            .map_err(|e| self.error("S307", e, span))?
-            .value;
-            self.map_time(schedule_start, span, TimeMapKind::Schedule)?;
+            self.cursor = math::timeline_end(self.cursor, duration)
+                .map_err(|e| self.error("S307", e, span))?;
             self.check_elements(span)?;
             return Ok(Value::Unit);
         }
@@ -1681,9 +1764,8 @@ impl Runtime<'_, '_> {
             }
             return Ok(Value::Unit);
         }
-        let (prelude::Execution::Native(evaluate)
-        | prelude::Execution::Access(evaluate)
-        | prelude::Execution::Wait(evaluate)) = builtin.execute
+        let (prelude::Execution::Native(evaluate) | prelude::Execution::Access(evaluate)) =
+            builtin.execute
         else {
             unreachable!("registered host operation was handled above")
         };
@@ -1692,8 +1774,8 @@ impl Runtime<'_, '_> {
             self.progress
                 .emit(Phase::Shaping, None, None, Some(&resource));
         }
-        let schedule_start = self.cursor;
         let native_started = Instant::now();
+        let mut list_edit = None;
         let result = evaluate(
             name,
             &args,
@@ -1704,9 +1786,17 @@ impl Runtime<'_, '_> {
                 animation: &mut self.animation,
                 cursor: &mut self.cursor,
                 limits: self.limits,
+                list_edit: &mut list_edit,
             },
         )
         .map_err(|e| self.error("S305", e, span));
+        if result.is_ok() {
+            self.list_edit = list_edit.map(|delta| crate::lists::EditReceipt {
+                module: self.module.clone(),
+                span,
+                delta,
+            });
+        }
         self.statistics.native_micros = self.statistics.native_micros.saturating_add(
             native_started
                 .elapsed()
@@ -1714,9 +1804,6 @@ impl Runtime<'_, '_> {
                 .try_into()
                 .unwrap_or(u64::MAX),
         );
-        if result.is_ok() && matches!(builtin.execute, prelude::Execution::Wait(_)) {
-            self.map_time(schedule_start, span, TimeMapKind::Schedule)?;
-        }
         if name == "Text" && result.is_ok() {
             self.report_evaluation(Some(span));
         }
@@ -1756,7 +1843,7 @@ fn order_values(args: &[(Option<String>, Value)], parameters: &[String]) -> Valu
 fn cacheable(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Call { callee, args, .. } => {
-            matches!(&callee.kind,ExprKind::Name(name)if prelude::builtin(name).is_some_and(|v|!v.schedule&&v.result!=Type::Motion&&matches!(v.execute,prelude::Execution::Native(_))))
+            matches!(&callee.kind,ExprKind::Name(name)if prelude::builtin(name).is_some_and(|v|!v.call_schedules(args)&&v.result!=Type::Motion&&matches!(v.execute,prelude::Execution::Native(_))))
                 && args.iter().all(|(_, v)| cacheable(v))
         }
         // Recording metadata and override dependencies is part of evaluating an input.
@@ -1784,75 +1871,4 @@ fn access_path(expr: &Expr) -> String {
         ),
         _ => "data".into(),
     }
-}
-pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
-    if !ty.accepts(&value.ty()) {
-        return Err(format!("expected {ty}, found {}", value.ty()));
-    }
-    match (ty, value) {
-        (Type::Union(alternatives), value) => {
-            let mut reasons = Vec::new();
-            for alternative in alternatives {
-                match validate_value(alternative, value) {
-                    Ok(()) => return Ok(()),
-                    Err(reason) => reasons.push(reason),
-                }
-            }
-            return Err(format!(
-                "value matches no alternative of {ty}: {}",
-                reasons.join("; ")
-            ));
-        }
-        (Type::Fraction, Value::Fraction(value)) if !math::finite(value) => {
-            return Err("fraction must be finite".into());
-        }
-        (Type::Matrix4, Value::Matrix4(matrix))
-            if matrix.iter().flatten().any(|v| !v.is_finite()) =>
-        {
-            return Err("matrix entries must be finite".into());
-        }
-        (Type::Numeric(_), Value::Number(n)) if !math::finite(&n.value) => {
-            return Err("non-finite numeric input".into());
-        }
-        (Type::Color, Value::Color(color))
-            if color
-                .0
-                .iter()
-                .any(|v| !math::finite(v) || *v < Fraction::from(0) || *v > Fraction::from(1)) =>
-        {
-            return Err("color channels must be in [0, 1]".into());
-        }
-        (Type::Vector(..), vector @ (Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)))
-            if vector.vector()?.0.iter().any(|v| !v.is_finite()) =>
-        {
-            return Err("vector components must be finite".into());
-        }
-        (Type::Array(_), Value::Array { shape, values, .. })
-            if shape.iter().try_fold(1usize, |n, d| n.checked_mul(*d)) != Some(values.len()) =>
-        {
-            return Err("array shape does not match its value count".into());
-        }
-        (Type::List(inner) | Type::Array(inner), values) => {
-            for value in values.list()? {
-                validate_value(inner, value)?;
-            }
-        }
-        (Type::Option(inner), Value::Some(value)) => validate_value(inner, value)?,
-        (Type::Record(fields), Value::Record(values)) => {
-            for (name, ty) in fields {
-                validate_value(ty, &values[name]).map_err(|e| format!("field '{name}': {e}"))?;
-            }
-        }
-        (Type::Enum { variants, .. }, Value::Variant { tag, fields, .. }) => {
-            let types = variants.get(tag).ok_or("unknown enum variant")?;
-            if types.len() != fields.len() {
-                return Err("variant field count mismatch".into());
-            }
-            for (ty, value) in types.iter().zip(fields.iter()) {
-                validate_value(ty, value)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
 }

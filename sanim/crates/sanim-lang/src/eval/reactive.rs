@@ -366,26 +366,60 @@ impl Runtime<'_, '_> {
                 span,
             ));
         };
+        let list = matches!(cell.value, Value::List(_));
         let timed = self.animation.reactive.has_cell(id)
+            || self.animation.list_views.has_cell(id)
             || self.background_depth > 0 && cell.creation_background_depth != self.background_depth;
-        if timed && !self.animation.reactive.has_cell(id) {
-            self.ensure_animated_cell(id, span)?;
+        if timed {
+            if list {
+                self.ensure_list_cell(id, span)?;
+            } else if !self.animation.reactive.has_cell(id) {
+                self.ensure_animated_cell(id, span)?;
+            }
         }
         // Fully evaluate and validate against the old store before committing the write.
         let value = self
             .expression(expr, env)?
             .with_type(&cell.ty)
             .map_err(|e| self.error("S140", e, span))?;
-        validate_value(&cell.ty, &value)
-            .map_err(|e| self.error("S140", format!("cannot assign '{name}': {e}"), span))?;
-        if matches!(self.reactive.nodes.get(&id),Some(Node::Cell(current)) if current.value==value)
-        {
+        self.refresh_cell(id, span)?;
+        let current = match self.reactive.nodes.get(&id) {
+            Some(Node::Cell(current)) => current.value.clone(),
+            _ => unreachable!("live assignment target"),
+        };
+        let delta = self.take_list_edit(name, expr, &current, &value, &cell.ty);
+        if delta.is_none() {
+            validate_value(&cell.ty, &value)
+                .map_err(|e| self.error("S140", format!("cannot assign '{name}': {e}"), span))?;
+        }
+        let start = self.assignment_start(expr);
+        let unchanged = match (self.reactive.nodes.get(&id), &value, &delta) {
+            (Some(Node::Cell(current)), Value::List(value), Some(delta))
+                if delta.cow_bytes == 0 =>
+            {
+                matches!(&current.value, Value::List(current) if current.values.ptr_eq(&value.values) || current == value)
+            }
+            (_, _, Some(_)) => false,
+            (Some(Node::Cell(current)), value, None) => current.value == *value,
+            _ => false,
+        };
+        if unchanged {
             if self.background_depth > 0 && timed {
                 // An explicit future event may override a main-thread write inserted earlier later.
-                self.animation
-                    .reactive
-                    .write_cell(id, self.cursor, value)
-                    .map_err(|error| self.error("S140", error, span))?;
+                if list {
+                    self.write_list_assignment(
+                        id,
+                        &value,
+                        start,
+                        delta.as_ref().map(|delta| &delta.edit),
+                        span,
+                    )?;
+                } else {
+                    self.animation
+                        .reactive
+                        .write_cell(id, self.cursor, value)
+                        .map_err(|error| self.error("S140", error, span))?;
+                }
                 if let Some(Node::Cell(cell)) = self.reactive.nodes.get_mut(&id) {
                     cell.sampled_at = Some(self.cursor);
                 }
@@ -394,8 +428,26 @@ impl Runtime<'_, '_> {
             self.statistics.unchanged_writes += 1;
             return Ok(());
         }
-        self.retain_binding_value(&value, span)?;
-        if self.animation.reactive.has_cell(id) {
+        if let Some(delta) = &delta {
+            self.retain_list_edit(delta, span)?;
+        } else {
+            self.retain_binding_value(&value, span)?;
+        }
+        if list && (timed || self.cursor > start) {
+            self.write_list_assignment(
+                id,
+                &value,
+                start,
+                delta.as_ref().map(|delta| &delta.edit),
+                span,
+            )?;
+        } else if self.cursor > start {
+            self.ensure_animated_cell(id, span)?;
+            self.animation
+                .reactive
+                .animate_cell(id, start, self.cursor, value.clone(), Easing::Smooth)
+                .map_err(|error| self.error("S140", error, span))?;
+        } else if self.animation.reactive.has_cell(id) {
             self.animation
                 .reactive
                 .write_cell(id, self.cursor, value.clone())
@@ -420,7 +472,7 @@ impl Runtime<'_, '_> {
             .ok_or_else(|| self.error("S140", "binding is missing its checked static type", span))
     }
     pub(super) fn refresh_cell(&mut self, id: Id, span: Span) -> Result<(), Diagnostic> {
-        if !self.animation.reactive.has_cell(id) {
+        if !self.animation.reactive.has_cell(id) && !self.animation.list_views.has_cell(id) {
             return Ok(());
         }
         let Some(Node::Cell(cell)) = self.reactive.nodes.get(&id) else {
@@ -429,11 +481,19 @@ impl Runtime<'_, '_> {
         if cell.sampled_at == Some(self.cursor) {
             return Ok(());
         }
-        let value = self
-            .animation
-            .reactive
-            .sample_cell(id, self.cursor)
-            .map_err(|e| self.error("S140", e, span))?;
+        let value = if self.animation.list_views.has_cell(id) {
+            Value::List(
+                self.animation
+                    .sample_list(id, self.cursor)
+                    .map_err(|error| self.error("S140", error, span))?
+                    .expect("registered list channel"),
+            )
+        } else {
+            self.animation
+                .reactive
+                .sample_cell(id, self.cursor)
+                .map_err(|error| self.error("S140", error, span))?
+        };
         let Some(Node::Cell(cell)) = self.reactive.nodes.get_mut(&id) else {
             unreachable!("live cell")
         };
@@ -648,7 +708,24 @@ impl Runtime<'_, '_> {
             return true;
         };
         let mut schedules = false;
-        expr.visit_while(&mut |expr|{if let ExprKind::Call {callee,..}=&expr.kind {schedules|=matches!(&callee.kind,ExprKind::Name(name) if prelude::builtin(name).is_some_and(|builtin|builtin.schedule))||matches!(crate::effects::lookup(callee,&module.checked.exports),Some(Type::Function(signature)) if signature.schedules);}!schedules});
+        expr.visit_while(&mut |expr| {
+            if let ExprKind::Call { callee, args, .. } = &expr.kind {
+                schedules |=
+                    crate::timing::builtin_call(callee, args).is_some_and(|call| call.schedules());
+                if let Some(Type::Function(signature)) =
+                    crate::effects::lookup(callee, &module.checked.exports)
+                {
+                    schedules |= signature.schedules
+                        || !signature
+                            .parameters
+                            .iter()
+                            .any(|(name, ..)| name == "duration")
+                            && crate::timing::envelope(args)
+                                .is_some_and(|duration| !crate::timing::known_zero(duration));
+                }
+            }
+            !schedules
+        });
         schedules
     }
 }

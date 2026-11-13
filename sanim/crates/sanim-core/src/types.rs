@@ -1,4 +1,4 @@
-use crate::{Element, Fraction, Motion, Number, Unit};
+use crate::{Element, Fraction, List, Motion, Number, Unit};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -122,11 +122,25 @@ impl Type {
         }
     }
     pub fn unresolved(&self) -> bool {
+        self.incomplete(true)
+    }
+    /// Runtime schemas must resolve generic parameters as well as inferred units.
+    pub fn is_concrete(&self) -> bool {
+        !self.incomplete(false)
+    }
+    fn incomplete(&self, symbolic_parameters: bool) -> bool {
         match self {
             Self::Unknown | Self::Vector(_, None) => true,
-            Self::List(t) | Self::Option(t) | Self::Array(t) => t.unresolved(),
-            Self::Record(fields) => fields.values().any(Self::unresolved),
-            Self::Union(alternatives) => alternatives.iter().any(Self::unresolved),
+            Self::Variable(_) | Self::BoundedVariable(..) => !symbolic_parameters,
+            Self::List(t) | Self::Option(t) | Self::Array(t) => t.incomplete(symbolic_parameters),
+            Self::Record(fields) => fields.values().any(|ty| ty.incomplete(symbolic_parameters)),
+            Self::Union(alternatives) => alternatives
+                .iter()
+                .any(|ty| ty.incomplete(symbolic_parameters)),
+            Self::Enum { variants, .. } => variants
+                .values()
+                .flatten()
+                .any(|ty| ty.incomplete(symbolic_parameters)),
             _ => false,
         }
     }
@@ -136,6 +150,7 @@ impl Type {
             Self::List(t) | Self::Option(t) | Self::Array(t) => t.contains_function(),
             Self::Record(fields) => fields.values().any(Self::contains_function),
             Self::Union(alternatives) => alternatives.iter().any(Self::contains_function),
+            Self::Enum { variants, .. } => variants.values().flatten().any(Self::contains_function),
             _ => false,
         }
     }
@@ -385,51 +400,6 @@ pub type Vec2 = Vector<2>;
 pub type Vec3 = Vector<3>;
 pub type Vec4 = Vector<4>;
 
-/// One homogeneous collection representation. The schema survives even when empty.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct List {
-    pub element_type: Arc<Type>,
-    pub values: Arc<[Value]>,
-}
-impl PartialEq for List {
-    fn eq(&self, other: &Self) -> bool {
-        self.values == other.values
-    }
-}
-impl List {
-    pub fn from_values(element_type: Arc<Type>, values: Arc<[Value]>) -> Self {
-        Self {
-            element_type,
-            values,
-        }
-    }
-    pub fn typed(element_type: Type, values: Vec<Value>) -> Self {
-        Self::from_values(Arc::new(element_type), values.into())
-    }
-}
-impl std::ops::Deref for List {
-    type Target = [Value];
-    fn deref(&self) -> &Self::Target {
-        &self.values
-    }
-}
-impl AsRef<[Value]> for List {
-    fn as_ref(&self) -> &[Value] {
-        &self.values
-    }
-}
-impl From<Vec<Value>> for List {
-    fn from(values: Vec<Value>) -> Self {
-        let element_type = values.first().map_or(Type::Unknown, Value::ty);
-        Self::typed(element_type, values)
-    }
-}
-impl FromIterator<Value> for List {
-    fn from_iter<T: IntoIterator<Item = Value>>(values: T) -> Self {
-        values.into_iter().collect::<Vec<_>>().into()
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Unit,
@@ -446,7 +416,7 @@ pub enum Value {
     Array {
         element_type: Arc<Type>,
         shape: Vec<usize>,
-        values: std::sync::Arc<Vec<Value>>,
+        values: imbl::Vector<Value>,
     },
     Record(imbl::OrdMap<String, Value>),
     Some(Arc<Value>),
@@ -541,12 +511,10 @@ impl Value {
             (Type::Array(inner), Self::Array { shape, values, .. }) => Self::Array {
                 element_type: Arc::new(inner.as_ref().clone()),
                 shape: shape.clone(),
-                values: Arc::new(
-                    values
-                        .iter()
-                        .map(|value| value.with_type(inner))
-                        .collect::<Result<_, _>>()?,
-                ),
+                values: values
+                    .iter()
+                    .map(|value| value.with_type(inner))
+                    .collect::<Result<_, _>>()?,
             },
             (Type::Record(fields), Self::Record(values)) => Self::Record(
                 fields
@@ -619,10 +587,10 @@ impl Value {
             _ => return Err("vectors must have 2, 3 or 4 components".into()),
         })
     }
-    pub fn list(&self) -> Result<&[Value], String> {
+    pub fn list(&self) -> Result<&imbl::Vector<Value>, String> {
         match self {
-            Self::List(v) => Ok(v),
-            Self::Array { values: v, .. } => Ok(v.as_ref()),
+            Self::List(v) => Ok(&v.values),
+            Self::Array { values: v, .. } => Ok(v),
             _ => Err("expected a collection".into()),
         }
     }

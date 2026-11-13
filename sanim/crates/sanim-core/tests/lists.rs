@@ -15,13 +15,13 @@ fn contextual_empty_lists_retain_schema_without_adding_values_or_copying_payload
         unreachable!()
     };
     assert_eq!(after.len(), 0);
-    assert!(Arc::ptr_eq(&before.values, &after.values));
+    assert!(before.values.is_empty() && after.values.is_empty());
     assert_eq!(before.element_type.as_ref(), &Type::Unknown);
     let cloned = refined.with_type(&expected).unwrap();
     let Value::List(cloned) = cloned else {
         unreachable!()
     };
-    assert!(Arc::ptr_eq(&after.values, &cloned.values));
+    assert!(after.values.is_empty() && cloned.values.is_empty());
     assert!(Arc::ptr_eq(&after.element_type, &cloned.element_type));
 }
 
@@ -70,6 +70,97 @@ fn assignable_list_schemas_do_not_change_value_equality() {
 }
 
 #[test]
+fn list_edits_keep_old_versions_and_share_untouched_tree_chunks() {
+    let original = List::typed(
+        number(),
+        (0..10_000)
+            .map(|n| Value::Number(sanim_core::Number::scalar(n)))
+            .collect(),
+    );
+    let mut appended = original.clone();
+    appended
+        .values
+        .push_back(Value::Number(sanim_core::Number::scalar(10_000)));
+    assert_eq!(original.len(), 10_000);
+    assert_eq!(appended.len(), 10_001);
+    assert!(std::ptr::eq(&original[0], &appended[0]));
+    let mut removed = appended.clone();
+    removed.values.remove(5_000);
+    assert_eq!(appended[5_000].number().unwrap().value, 5_000.into());
+    assert_eq!(removed[5_000].number().unwrap().value, 5_001.into());
+    assert!(std::ptr::eq(&original[0], &removed[0]));
+}
+
+#[test]
+fn arrays_and_lists_use_the_same_shared_collection_storage() {
+    let list = List::typed(
+        number(),
+        (0..1_000)
+            .map(|n| Value::Number(sanim_core::Number::scalar(n)))
+            .collect(),
+    );
+    let array = Value::Array {
+        element_type: list.element_type.clone(),
+        shape: vec![100, 10],
+        values: list.values.clone(),
+    };
+    assert!(array.list().unwrap().ptr_eq(&list.values));
+    let restored: Value = serde_json::from_slice(&serde_json::to_vec(&array).unwrap()).unwrap();
+    assert_eq!(restored, array);
+    assert_eq!(restored.list().unwrap()[999], list[999]);
+}
+
+#[test]
+#[ignore = "microbenchmark: persistent edits and sequential collection traversal"]
+fn collection_storage_benchmark() {
+    const VALUES: u32 = 100_000;
+    const EDITS: u32 = 1_000;
+    let values: Vec<_> = (0..VALUES)
+        .map(|n| Value::Number(sanim_core::Number::scalar(i64::from(n))))
+        .collect();
+    let started = std::time::Instant::now();
+    let original = List::typed(number(), values.clone());
+    let build = started.elapsed();
+    let started = std::time::Instant::now();
+    let mut current = original.clone();
+    let mut snapshots = Vec::new();
+    for n in 0..EDITS {
+        let mut next = current.clone();
+        next.values
+            .push_back(Value::Number(sanim_core::Number::scalar(i64::from(n))));
+        snapshots.push(current);
+        current = next;
+    }
+    let edits = started.elapsed();
+    assert_eq!(snapshots[0].len(), VALUES as usize);
+    assert_eq!(current.len(), (VALUES + EDITS) as usize);
+    let started = std::time::Instant::now();
+    let mut count = 0;
+    for _ in 0..10 {
+        for value in original.values.iter() {
+            std::hint::black_box(value);
+            count += 1;
+        }
+    }
+    let persistent_scan = started.elapsed();
+    let started = std::time::Instant::now();
+    for _ in 0..10 {
+        for value in values.iter() {
+            std::hint::black_box(value);
+        }
+    }
+    let contiguous_scan = started.elapsed();
+    eprintln!(
+        "shared collection storage: {VALUES} value build={}us; {EDITS} retained append snapshots={}us ({}ns/edit); {count} borrowed visits persistent={}us contiguous={}us",
+        build.as_micros(),
+        edits.as_micros(),
+        edits.as_nanos() / u128::from(EDITS),
+        persistent_scan.as_micros(),
+        contiguous_scan.as_micros()
+    );
+}
+
+#[test]
 #[ignore = "microbenchmark: typed list COW context/clone"]
 fn typed_list_benchmark() {
     let count = 100_000_u32;
@@ -94,5 +185,5 @@ fn typed_list_benchmark() {
     let Value::List(cloned) = value.with_type(&ty).unwrap() else {
         unreachable!()
     };
-    assert!(Arc::ptr_eq(&original.values, &cloned.values));
+    assert!(original.values.ptr_eq(&cloned.values));
 }

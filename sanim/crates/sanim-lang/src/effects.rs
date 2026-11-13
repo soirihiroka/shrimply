@@ -286,6 +286,15 @@ impl Analyzer<'_> {
             }
         }
         self.constants = previous;
+        if let (Some(first), Some(last)) = (body.first(), body.last()) {
+            self.record(
+                Span {
+                    end: last.span.end,
+                    ..first.span
+                },
+                effect,
+            )?;
+        }
         Ok(effect)
     }
     fn statement(&mut self, statement: &Statement) -> Result<Effect, Diagnostic> {
@@ -490,6 +499,46 @@ impl Analyzer<'_> {
             }
         }
     }
+    fn call_duration(
+        &mut self,
+        duration: Option<&Expr>,
+        rule: crate::timing::Timing,
+        span: Span,
+    ) -> Result<Effect, Diagnostic> {
+        let Some(expr) = duration else {
+            return Ok(Effect::Fixed(rule.default));
+        };
+        if let Some(value) = constant(expr, &self.constants).and_then(|value| value.number().ok()) {
+            if value.unit != Unit::Duration {
+                return Err(self.fail("timeline duration requires Duration units", expr.span));
+            }
+            return rule
+                .validate(value.value)
+                .map(Effect::Fixed)
+                .map_err(|e| self.fail(e, span));
+        }
+        self.need(expr);
+        Ok(Effect::Dependent)
+    }
+    fn envelope(
+        &mut self,
+        intrinsic: Effect,
+        duration: Option<&Expr>,
+        span: Span,
+    ) -> Result<Effect, Diagnostic> {
+        let Some(duration) = duration else {
+            return Ok(intrinsic);
+        };
+        let requested = self.call_duration(Some(duration), Default::default(), span)?;
+        match (intrinsic, requested) {
+            (Effect::Fixed(body), Effect::Fixed(total)) if body > total => Err(self.fail(
+                format!("function body takes {body}s, exceeding requested duration {total}s"),
+                span,
+            )),
+            (Effect::Fixed(_), requested) => Ok(requested),
+            _ => Ok(Effect::Dependent),
+        }
+    }
     fn expression(&mut self, expr: &Expr) -> Result<Effect, Diagnostic> {
         let effect = match &expr.kind {
             ExprKind::Call { callee, args, .. } => {
@@ -498,58 +547,56 @@ impl Analyzer<'_> {
                     let next = self.expression(value)?;
                     effect = self.sum(effect, next, expr.span)?;
                 }
-                if let ExprKind::Name(name) = &callee.kind {
-                    if let Some(builtin) = prelude::builtin(name) {
-                        if matches!(
-                            builtin.execute,
-                            prelude::Execution::Wait(_) | prelude::Execution::Play
-                        ) {
-                            let wait = matches!(builtin.execute, prelude::Execution::Wait(_));
-                            let duration = args
-                                .iter()
-                                .find(|(name, _)| name.as_deref() == Some("duration"))
-                                .map(|(_, v)| v)
-                                .or_else(|| {
-                                    if wait {
-                                        args.first().map(|(_, v)| v)
-                                    } else {
-                                        None
-                                    }
-                                });
-                            let timing = duration
-                                .map(|v| {
-                                    constant(v, &self.constants)
-                                        .and_then(|v| v.number().ok())
-                                        .filter(|n| n.unit == Unit::Duration)
-                                        .map(|n| Effect::Fixed(n.value))
-                                        .unwrap_or(Effect::Dependent)
-                                })
-                                .unwrap_or(Effect::Fixed(Fraction::from(1)));
-                            if let Effect::Fixed(value) = timing
-                                && !wait
-                                && value <= Fraction::from(0)
-                            {
-                                return Err(self.fail("play duration must be positive", expr.span));
-                            }
-                            if timing == Effect::Dependent
-                                && let Some(duration) = duration
-                            {
-                                self.need(duration);
-                            }
-                            effect = self.sum(effect, timing, expr.span)?;
-                        }
-                    } else if self.functions.contains_key(name) {
+                if let Some(call) = crate::timing::builtin_call(callee, args) {
+                    let timing = self.call_duration(
+                        call.duration_argument(),
+                        call.builtin.timing,
+                        expr.span,
+                    )?;
+                    effect = self.sum(effect, timing, expr.span)?;
+                } else if let ExprKind::Name(name) = &callee.kind {
+                    if self.functions.contains_key(name) {
                         let called = self.function(name)?;
+                        let called = if matches!(lookup(callee,self.env),Some(Type::Function(signature)) if !signature.parameters.iter().any(|(name,_)| name=="duration"))
+                        {
+                            self.envelope(called, crate::timing::envelope(args), expr.span)?
+                        } else {
+                            called
+                        };
                         effect = self.sum(effect, called, expr.span)?;
                         if called == Effect::Dependent
                             || matches!(lookup(callee,self.env),Some(Type::Function(signature)) if signature.mutates)
                         {
                             self.call_dependencies(callee, args);
                         }
+                    } else if let Some(Type::Function(signature)) = lookup(callee, self.env) {
+                        let called = if !signature
+                            .parameters
+                            .iter()
+                            .any(|(name, _)| name == "duration")
+                        {
+                            self.envelope(
+                                signature.duration,
+                                crate::timing::envelope(args),
+                                expr.span,
+                            )?
+                        } else {
+                            signature.duration
+                        };
+                        effect = self.sum(effect, called, expr.span)?;
                     }
                 } else if let Some(Type::Function(signature)) = lookup(callee, self.env) {
-                    effect = self.sum(effect, signature.duration, expr.span)?;
-                    if signature.duration == Effect::Dependent || signature.mutates {
+                    let called = if !signature
+                        .parameters
+                        .iter()
+                        .any(|(name, _)| name == "duration")
+                    {
+                        self.envelope(signature.duration, crate::timing::envelope(args), expr.span)?
+                    } else {
+                        signature.duration
+                    };
+                    effect = self.sum(effect, called, expr.span)?;
+                    if called == Effect::Dependent || signature.mutates {
                         self.call_dependencies(callee, args);
                     }
                 }

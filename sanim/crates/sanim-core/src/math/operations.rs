@@ -207,9 +207,11 @@ pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
             let Type::List(element_type) = ty else {
                 unreachable!("checked list concatenation type")
             };
-            Ok(Value::List(crate::List::typed(
-                *element_type,
-                a.iter().chain(b.iter()).cloned().collect(),
+            let mut values = a.values;
+            values.append(b.values);
+            Ok(Value::List(crate::List::from_values(
+                element_type.into(),
+                values,
             )))
         }
         (Value::Matrix4(a), Value::Matrix4(b)) => {

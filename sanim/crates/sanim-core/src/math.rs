@@ -22,6 +22,7 @@ const UNIT_SPELLINGS: &[(&str, Unit, u64, u64, bool)] = &[
     ("pt", Unit::Length, 1, 1, true),
     ("px", Unit::Length, 3, 4, false),
     ("s", Unit::Duration, 1, 1, true),
+    ("m", Unit::Duration, 60, 1, false),
     ("ms", Unit::Duration, 1, 1000, false),
     ("deg", Unit::Angle, 1, 1, true),
     ("fps", Unit::Rate, 1, 1, true),
@@ -42,6 +43,54 @@ impl Number {
         }
     }
     pub fn parse(text: &str) -> Result<Self, String> {
+        let (negative, unsigned) = text
+            .strip_prefix('-')
+            .map_or((false, text), |text| (true, text));
+        // Fraction spellings are used by serialized values and inspector controls.
+        if unsigned.contains('/') {
+            return Self::parse_single(text);
+        }
+        let mut remaining = unsigned;
+        let mut result: Option<Self> = None;
+        let mut previous_scale = None;
+        while !remaining.is_empty() {
+            let length = component_len(remaining);
+            if length == 0 {
+                return Err("expected a number followed by a unit, such as 0.5s or 4m1s".into());
+            }
+            let component = &remaining[..length];
+            let value = Self::parse_single(component)?;
+            let suffix =
+                component.trim_start_matches(|c: char| c.is_ascii_digit() || c == '_' || c == '.');
+            let scale = UNIT_SPELLINGS
+                .iter()
+                .find(|(name, ..)| *name == suffix)
+                .map(|(_, _, numerator, denominator, _)| Fraction::new(*numerator, *denominator))
+                .expect("parsed numeric unit");
+            if let Some(total) = result {
+                if value.unit != Unit::Duration || total.unit != Unit::Duration {
+                    return Err("only durations can combine units; write 4m1s, or separate other values with an operator".into());
+                }
+                if previous_scale.is_some_and(|previous| scale >= previous) {
+                    return Err(
+                        "compound duration units must occur once in decreasing order: m, s, ms"
+                            .into(),
+                    );
+                }
+                result = Some(total.binary("+", value)?);
+            } else {
+                result = Some(value);
+            }
+            previous_scale = Some(scale);
+            remaining = &remaining[length..];
+        }
+        let mut result = result.ok_or("empty numeric literal")?;
+        if negative {
+            result.value = -result.value;
+        }
+        Ok(result)
+    }
+    fn parse_single(text: &str) -> Result<Self, String> {
         let split = text
             .find(|c: char| c.is_ascii_alphabetic() || c == '%')
             .unwrap_or(text.len());
@@ -131,6 +180,46 @@ impl Number {
         }
         self.value.to_usize().ok_or("integer out of range".into())
     }
+}
+
+fn component_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut count = bytes
+        .iter()
+        .take_while(|c| c.is_ascii_digit() || **c == b'_')
+        .count();
+    if count == 0 {
+        return 0;
+    }
+    if bytes.get(count) == Some(&b'.') && bytes.get(count + 1).is_some_and(u8::is_ascii_digit) {
+        count += 1;
+        while bytes
+            .get(count)
+            .is_some_and(|c| c.is_ascii_digit() || *c == b'_')
+        {
+            count += 1;
+        }
+    }
+    while bytes.get(count).is_some_and(u8::is_ascii_alphabetic) {
+        count += 1;
+    }
+    if bytes.get(count) == Some(&b'%') && !bytes.get(count + 1).is_some_and(u8::is_ascii_digit) {
+        count += 1;
+    }
+    count
+}
+
+/// Extent of one source numeric literal, including adjacent duration components.
+pub fn number_literal_len(text: &str) -> usize {
+    let mut count = component_len(text);
+    while text.as_bytes().get(count).is_some_and(u8::is_ascii_digit) {
+        let next = component_len(&text[count..]);
+        if next == 0 {
+            break;
+        }
+        count += next;
+    }
+    count
 }
 
 pub fn decimal(text: &str) -> Result<Fraction, String> {
@@ -293,6 +382,20 @@ pub fn overshoot(p: Fraction) -> Result<Fraction, String> {
         )?,
     )?;
     arithmetic("*", arithmetic("*", p, p)?, inner)
+}
+
+/// Interpolate fixed-size vectors without allocating temporary component lists.
+pub fn motion_vector_lerp<const N: usize>(
+    a: [f64; N],
+    b: [f64; N],
+    progress: Fraction,
+    overshooting: bool,
+) -> Result<[f64; N], String> {
+    let mut out = a;
+    for (index, value) in out.iter_mut().enumerate() {
+        *value = motion_lerp(a[index], b[index], progress, overshooting)?;
+    }
+    Ok(out)
 }
 
 pub fn motion_lerp(a: f64, b: f64, progress: Fraction, overshooting: bool) -> Result<f64, String> {

@@ -45,6 +45,7 @@ struct Expression {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CellChannel {
+    pub ty: std::sync::Arc<Type>,
     pub initial: Value,
     pub tracks: Vector<Track>,
 }
@@ -168,18 +169,28 @@ impl ReactiveGraph {
     }
     /// Register the initial value once. Later program writes are exact timed events.
     pub fn set_cell(&mut self, id: CellId, value: Value) -> Result<(), String> {
-        leaf_type(&value)?;
+        self.set_typed_cell(id, value.ty(), value)
+    }
+    /// Retain the declared schema, including union alternatives and empty Option/List element types.
+    pub fn set_typed_cell(&mut self, id: CellId, ty: Type, value: Value) -> Result<(), String> {
+        let schema_bytes = state_schema_bytes(&ty)?;
+        let value_bytes = state_value_bytes(&ty, &value)?;
         if self.cells.contains_key(&id) {
             return Err(format!("reactive cell {id} is already registered"));
         }
         if self.cells.len() >= MAX_REACTIVE_NODES {
             return Err("retained reactive cell limit exceeded".into());
         }
-        let bytes =
-            self.reserve(std::mem::size_of::<CellChannel>() + std::mem::size_of::<CellId>())?;
+        let bytes = self.reserve(
+            std::mem::size_of::<CellChannel>()
+                + std::mem::size_of::<CellId>()
+                + schema_bytes
+                + value_bytes,
+        )?;
         self.cells.insert(
             id,
             CellChannel {
+                ty: std::sync::Arc::new(ty),
                 initial: value,
                 tracks: Vector::new(),
             },
@@ -193,8 +204,18 @@ impl ReactiveGraph {
             .cells
             .get(&id)
             .ok_or_else(|| format!("unknown reactive cell {id}"))?;
-        Track::at(&cell.tracks, time)
-            .map_or_else(|| Ok(cell.initial.clone()), |track| track.sample(time))
+        Track::at(&cell.tracks, time).map_or_else(
+            || Ok(cell.initial.clone()),
+            |track| {
+                if interpolated_type(&cell.ty) {
+                    track.sample(time)
+                } else if time >= track.end {
+                    Ok(track.to.clone())
+                } else {
+                    Ok(track.from.clone())
+                }
+            },
+        )
     }
     pub fn write_cell(&mut self, id: CellId, time: Fraction, value: Value) -> Result<(), String> {
         self.insert_cell_track(id, time, time, value, Easing::Linear)
@@ -227,11 +248,12 @@ impl ReactiveGraph {
             .cells
             .get(&id)
             .ok_or_else(|| format!("unknown reactive cell {id}"))?;
-        if leaf_type(&cell.initial)? != leaf_type(&to)? {
-            return Err(
-                "cell assignment/animation must preserve its exact value type and units".into(),
-            );
-        }
+        let value_bytes = state_value_bytes(&cell.ty, &to).map_err(|e| {
+            format!(
+                "cell assignment/animation must preserve its declared type {}: {e}",
+                cell.ty
+            )
+        })?;
         // Insert after equal-time events: the last source write wins at an instant.
         let index = cell
             .tracks
@@ -275,7 +297,7 @@ impl ReactiveGraph {
             next
         });
         for candidate in std::iter::once(&track).chain(successor.as_ref()) {
-            if candidate.end > candidate.start {
+            if interpolated_type(&cell.ty) && candidate.end > candidate.start {
                 candidate.sample(math::lerp(
                     candidate.start,
                     candidate.end,
@@ -283,7 +305,7 @@ impl ReactiveGraph {
                 )?)?;
             }
         }
-        let bytes = self.reserve(2 * std::mem::size_of::<Track>())?;
+        let bytes = self.reserve(2 * std::mem::size_of::<Track>() + value_bytes)?;
         let mut tracks = cell.tracks.clone();
         tracks.insert(index, track);
         if let Some(successor) = successor {
@@ -375,16 +397,26 @@ impl ReactiveGraph {
         };
         match operation {
             Node::Constant(value) => Ok((leaf_type(value)?, 1)),
-            Node::Cell(id) => Ok((
-                leaf_type(
-                    &self
-                        .cells
-                        .get(id)
-                        .ok_or("retained expression references a missing cell")?
-                        .initial,
-                )?,
-                1,
-            )),
+            Node::Cell(id) => {
+                let cell = self
+                    .cells
+                    .get(id)
+                    .ok_or("retained expression references a missing cell")?;
+                if !matches!(
+                    cell.ty.as_ref(),
+                    Type::Numeric(_)
+                        | Type::Fraction
+                        | Type::Bool
+                        | Type::Color
+                        | Type::Vector(2..=4, Some(_))
+                ) {
+                    return Err(format!(
+                        "state of type {} cannot be used as a retained scalar/vector/color expression",
+                        cell.ty
+                    ));
+                }
+                Ok((cell.ty.as_ref().clone(), 1))
+            }
             Node::Unary { op, value } => {
                 let value = child(*value)?;
                 Ok((
@@ -498,8 +530,17 @@ impl ReactiveGraph {
             return Err("retained reactive node/cell limit exceeded".into());
         }
         let mut tracks = 0usize;
+        let mut state_bytes = 0usize;
         for cell in self.cells.values() {
-            let ty = leaf_type(&cell.initial)?;
+            let schema = state_schema_bytes(&cell.ty)?;
+            let initial = state_value_bytes(&cell.ty, &cell.initial)?;
+            state_bytes = state_bytes
+                .checked_add(schema)
+                .and_then(|bytes| bytes.checked_add(initial))
+                .ok_or("retained state size overflow")?;
+            if state_bytes > MAX_REACTIVE_BYTES {
+                return Err("retained state exceeds its byte budget".into());
+            }
             let mut previous: Option<Fraction> = None;
             let mut previous_value = &cell.initial;
             for track in &cell.tracks {
@@ -512,8 +553,13 @@ impl ReactiveGraph {
                 {
                     return Err("invalid or overlapping retained cell tracks".into());
                 }
-                if leaf_type(&track.from)? != ty || leaf_type(&track.to)? != ty {
-                    return Err("retained track endpoint types differ from its cell".into());
+                crate::validate_value(&cell.ty, &track.from)?;
+                let target = state_value_bytes(&cell.ty, &track.to)?;
+                state_bytes = state_bytes
+                    .checked_add(target)
+                    .ok_or("retained state size overflow")?;
+                if state_bytes > MAX_REACTIVE_BYTES {
+                    return Err("retained state exceeds its byte budget".into());
                 }
                 if &track.from != previous_value {
                     return Err(
@@ -521,7 +567,7 @@ impl ReactiveGraph {
                             .into(),
                     );
                 }
-                if track.end > track.start {
+                if interpolated_type(&cell.ty) && track.end > track.start {
                     track.sample(math::lerp(
                         track.start,
                         track.end,
@@ -572,6 +618,7 @@ impl ReactiveGraph {
             + self.cells.len()
                 * (std::mem::size_of::<CellChannel>() + std::mem::size_of::<CellId>())
             + tracks * 2 * std::mem::size_of::<Track>()
+            + state_bytes
             + self
                 .bindings
                 .keys()
@@ -595,7 +642,7 @@ impl ReactiveGraph {
             let (Some(a), Some(b)) = (self.cells.get(id), next.cells.get(id)) else {
                 return Some(Fraction::from(0));
             };
-            if a.initial != b.initial {
+            if a.ty != b.ty || a.initial != b.initial {
                 return Some(Fraction::from(0));
             }
             if a.tracks == b.tracks {
@@ -699,6 +746,27 @@ fn check_time(time: Fraction) -> Result<(), String> {
     } else {
         Ok(())
     }
+}
+fn state_schema_bytes(ty: &Type) -> Result<usize, String> {
+    let mut remaining = MAX_REACTIVE_BYTES;
+    crate::type_budget::charge(ty, &mut remaining)?;
+    if !ty.is_concrete() || ty.contains_function() {
+        return Err("retained state requires a complete static schema; use set_typed_cell for empty options/lists and union types".into());
+    }
+    Ok(MAX_REACTIVE_BYTES - remaining)
+}
+fn state_value_bytes(ty: &Type, value: &Value) -> Result<usize, String> {
+    let mut remaining = MAX_REACTIVE_BYTES;
+    let mut values = MAX_REACTIVE_BYTES / std::mem::size_of::<Value>();
+    crate::value_budget::charge(value, &mut remaining, &mut values, MAX_REACTIVE_DEPTH)?;
+    crate::validate_value(ty, value)?;
+    Ok(MAX_REACTIVE_BYTES - remaining)
+}
+fn interpolated_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Numeric(_) | Type::Fraction | Type::Color | Type::Vector(2..=4, Some(_))
+    )
 }
 fn leaf_type(value: &Value) -> Result<Type, String> {
     match value {

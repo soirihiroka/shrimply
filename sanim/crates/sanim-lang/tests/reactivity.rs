@@ -251,7 +251,7 @@ fn only_mutable_bindings_accept_assignment_and_the_type_is_fixed() {
 fn signals_reject_transitive_writes_scheduling_assertions_and_cycles() {
     for source in [
         "mut count=1\nfn advance():Number{count=count+1;return count}\nsig value=advance()",
-        "fn phase():Number{wait(0s);return 1}\nsig value=phase()",
+        "fn phase():Number{wait(1ms);return 1}\nsig value=phase()",
         "fn checked():Number{assert(true);return 1}\nsig value=checked()",
         "sig value=reflect(1)",
         "sig value=current()\nfn current():Number{return value}",
@@ -551,16 +551,15 @@ fn future_same_value_background_writes_remain_explicit_events() {
 }
 
 #[test]
-fn complex_background_writes_fail_explicitly_including_helper_writes() {
+fn background_list_writes_commit_at_their_timeline_point_including_helper_writes() {
     for body in ["rows=[1]", "let ignored=replace_rows()"] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim",format!("mut rows:List<Number>=[]\nfn replace_rows():Number{{rows=[1];return 0}}\nbackground{{wait(1s);{body}}}"));
-        let error = Engine::default()
+        files.insert("main.sanim",format!("mut rows:List<Number>=[]\nfn replace_rows():Number{{rows=[1];return 0}}\nbackground{{wait(1s);{body}}}\nlet before=len(rows)\nwait(1s)\nlet after=len(rows)"));
+        let prepared = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
-            .unwrap_err();
-        assert_eq!(error.code, "S140");
-        assert!(error.message.contains("rows"), "{error}");
-        assert!(error.message.contains("finite scalar"), "{error}");
+            .unwrap();
+        assert_eq!(number(&prepared, "before"), Fraction::from(0));
+        assert_eq!(number(&prepared, "after"), Fraction::from(1));
     }
 }
 

@@ -227,6 +227,7 @@ pub fn check(
                     unreachable!()
                 };
                 let declaration_variables = generic_variables(&declaration.generics);
+                checker.function = Some(name.clone());
                 let mut saw_default = false;
                 for (_, ty, default) in parameters {
                     if let Some(default) = default {
@@ -440,16 +441,15 @@ impl Checker<'_> {
         Diagnostic::new(code, message, self.source, span)
     }
     fn call_schedules(&self, expr: &Expr, env: &Environment) -> bool {
-        let ExprKind::Call { callee, .. } = &expr.kind else {
+        let ExprKind::Call { callee, args, .. } = &expr.kind else {
             return false;
         };
-        if let ExprKind::Name(name) = &callee.kind
-            && (prelude::builtin(name).is_some_and(|builtin| builtin.schedule)
-                || self.effects.contains(name))
+        if crate::timing::builtin_call(callee, args).is_some_and(|call| call.schedules())
+            || matches!(&callee.kind,ExprKind::Name(name) if self.effects.contains(name))
         {
             return true;
         }
-        matches!(crate::effects::lookup(callee,env),Some(Type::Function(signature)) if signature.schedules)
+        matches!(crate::effects::lookup(callee,env),Some(Type::Function(signature)) if signature.schedules || !signature.parameters.iter().any(|(name,_)|name=="duration") && crate::timing::envelope(args).is_some_and(|expr|!crate::timing::known_zero(expr)))
     }
     fn call_mutates(&self, expr: &Expr, env: &Environment) -> bool {
         let ExprKind::Call { callee, .. } = &expr.kind else {
@@ -1235,9 +1235,6 @@ impl Checker<'_> {
         else {
             unreachable!()
         };
-        if !direct_callee(callee) {
-            return Err(self.error("S111","indirect function calls are forbidden; call a declared function or imported module function directly so the compiler can verify the call graph",callee.span));
-        }
         if let ExprKind::Member(base, name) = &callee.kind {
             let receiver = self.expression(base, env, None, variables)?;
             if receiver == Type::Element
@@ -1255,6 +1252,9 @@ impl Checker<'_> {
                 return self.native(expr, name, &all, env, expected, variables);
             }
         }
+        if !direct_callee(callee) {
+            return Err(self.error("S111","indirect function calls are forbidden; call a declared function or imported module function directly so the compiler can verify the call graph",callee.span));
+        }
         if let ExprKind::Name(name) = &callee.kind
             && prelude::builtin(name).is_some()
         {
@@ -1264,8 +1264,32 @@ impl Checker<'_> {
         let Type::Function(signature) = ty else {
             return Err(self.error("S123", format!("cannot call {ty:?}"), callee.span));
         };
+        let enveloped = !signature
+            .parameters
+            .iter()
+            .any(|(name, _)| name == "duration");
+        let normal = if enveloped {
+            if let Some(duration) = crate::timing::envelope(args) {
+                let ty = self.expression(
+                    duration,
+                    env,
+                    Some(&Type::Numeric(Unit::Duration)),
+                    variables,
+                )?;
+                self.expect(&Type::Numeric(Unit::Duration), &ty, duration.span)?;
+            }
+            args.iter()
+                .filter(|(name, _)| name.as_deref() != Some("duration"))
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            args.clone()
+        };
+        let timed = enveloped
+            && crate::timing::envelope(args).is_some_and(|expr| !crate::timing::known_zero(expr));
+        let args = &normal;
         if let Some(function) = &self.function {
-            if signature.schedules {
+            if signature.schedules || timed {
                 self.effects.insert(function.clone());
             }
             if signature.mutates {
@@ -1481,16 +1505,30 @@ impl Checker<'_> {
         };
         let builtin = prelude::builtin(name)
             .ok_or_else(|| self.error("S120", format!("unknown function '{name}'"), expr.span))?;
-        if builtin.schedule
+        if builtin.call_schedules(args)
             && let Some(function) = &self.function
         {
             self.effects.insert(function.clone());
+        }
+        if let Some(duration) = builtin.duration_argument(args) {
+            let ty = self.expression(
+                duration,
+                env,
+                Some(&Type::Numeric(Unit::Duration)),
+                variables,
+            )?;
+            self.expect(&Type::Numeric(Unit::Duration), &ty, duration.span)?;
         }
         if builtin.result == Type::Data && builtin.name == "Data" {
             if !types.is_empty() {
                 return Err(self.error("S123", "Data does not take type arguments", expr.span));
             }
-            let ordered = self.arguments(args, &[("value", Type::Unknown, true)], expr.span)?;
+            let params = builtin
+                .parameters
+                .iter()
+                .map(|p| (p.name, p.ty.clone(), p.required))
+                .collect::<Vec<_>>();
+            let ordered = self.arguments(args, &params, expr.span)?;
             self.data_expression(ordered[0].expect("required data argument"), env, variables)?;
             return Ok(Type::Data);
         }
@@ -1544,6 +1582,9 @@ impl Checker<'_> {
             let ordered = self.arguments(args, &params, expr.span)?;
             let mut actuals = vec![];
             for (param, arg) in builtin.parameters.iter().zip(ordered) {
+                if param.name == "duration" {
+                    continue;
+                }
                 if let Some(arg) = arg {
                     let actual = self.expression(arg, env, Some(&param.ty), variables)?;
                     self.expect(&param.ty, &actual, arg.span)?;
@@ -1606,7 +1647,12 @@ impl Checker<'_> {
                     expr.span,
                 ));
             }
-            let ordered = self.arguments(args, &[("path", Type::String, true)], expr.span)?;
+            let params = builtin
+                .parameters
+                .iter()
+                .map(|p| (p.name, p.ty.clone(), p.required))
+                .collect::<Vec<_>>();
+            let ordered = self.arguments(args, &params, expr.span)?;
             let path = ordered[0].ok_or_else(|| self.error("S125", "missing path", expr.span))?;
             let actual = self.expression(path, env, Some(&Type::String), variables)?;
             self.expect(&Type::String, &actual, path.span)?;
@@ -1642,6 +1688,9 @@ impl Checker<'_> {
         let ordered = self.arguments(&normal, &parameters, expr.span)?;
         let mut actuals = vec![];
         for (parameter, value) in builtin.parameters.iter().zip(ordered) {
+            if parameter.name == "duration" {
+                continue;
+            }
             if let Some(value) = value {
                 let ty = self.expression(value, env, Some(&parameter.ty), variables)?;
                 if ty.contains_function() {

@@ -34,6 +34,9 @@ impl TimelineDiff {
         let old_layers = layers(old);
         let new_layers = layers(new);
         let mut dirty_from = global.then_some(Fraction::from(0));
+        if let Some(time) = old.list_views.changed_from(&new.list_views) {
+            dirty_from = Some(dirty_from.map_or(time, |previous| previous.min(time)));
+        }
         if let Some(time) = old.reactive.changed_from(&new.reactive) {
             dirty_from = Some(dirty_from.map_or(time, |previous| previous.min(time)));
         }
@@ -149,6 +152,9 @@ impl TimelineDiff {
 }
 
 pub(crate) fn events(animation: &Animation) -> BTreeSet<Fraction> {
+    let visible = animation
+        .list_views
+        .reachable_views(animation.layers.iter().map(|layer| &layer.element));
     let cells = animation
         .reactive
         .bound_cells(|id| animation.find(id).is_some());
@@ -169,6 +175,12 @@ pub(crate) fn events(animation: &Animation) -> BTreeSet<Fraction> {
                 .flat_map(|cell| &cell.tracks)
                 .flat_map(|track| [track.start, track.end]),
         )
+        .chain(
+            animation
+                .list_views
+                .events(|id| visible.contains(id))
+                .flat_map(|(start, end, _)| [start, end]),
+        )
         .collect()
 }
 
@@ -179,6 +191,9 @@ pub struct SampleTimes {
 }
 impl SampleTimes {
     pub fn new(animation: &Animation) -> Self {
+        let visible = animation
+            .list_views
+            .reachable_views(animation.layers.iter().map(|layer| &layer.element));
         let cells = animation
             .reactive
             .bound_cells(|id| animation.find(id).is_some());
@@ -199,6 +214,16 @@ impl SampleTimes {
                 end: Some(track.end),
             })
             .collect();
+        moving.extend(
+            animation
+                .list_views
+                .events(|id| visible.contains(id))
+                .filter(|(start, end, changed)| *changed && start < end)
+                .map(|(start, end, _)| TimeRange {
+                    start,
+                    end: Some(end),
+                }),
+        );
         moving.sort_by_key(|range| range.start);
         let mut merged: Vec<TimeRange> = Vec::new();
         for range in moving {

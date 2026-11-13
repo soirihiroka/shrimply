@@ -11,6 +11,7 @@ pub(crate) struct Context<'a> {
     pub animation: &'a mut Animation,
     pub cursor: &'a mut Fraction,
     pub limits: &'a Limits,
+    pub list_edit: &'a mut Option<crate::lists::EditDelta>,
 }
 
 pub(crate) fn color(
@@ -279,55 +280,6 @@ pub(crate) fn unwrap(
     }
 }
 
-pub(crate) fn scalar(
-    name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    _context: Context<'_>,
-) -> Result<Value, String> {
-    let required = |name: &str| {
-        args.get(name)
-            .ok_or_else(|| format!("missing argument '{name}'"))
-    };
-    let first = if matches!(name, "min" | "max") {
-        required("a")?
-    } else {
-        required("value")?
-    }
-    .number()?;
-    let value = match name {
-        "abs" => {
-            if first.value < Fraction::from(0) {
-                -first.value
-            } else {
-                first.value
-            }
-        }
-        "min" => first.value.min(required("b")?.number()?.value),
-        "max" => first.value.max(required("b")?.number()?.value),
-        _ => {
-            let low = required("low")?.number()?.value;
-            let high = required("high")?.number()?.value;
-            if low > high {
-                return Err("clamp low must not exceed high".into());
-            }
-            first.value.max(low).min(high)
-        }
-    };
-    let first_value = args.get(if matches!(name, "min" | "max") {
-        "a"
-    } else {
-        "value"
-    });
-    Ok(if matches!(first_value, Some(Value::Fraction(_))) {
-        Value::Fraction(value)
-    } else {
-        Value::Number(Number {
-            value,
-            unit: first.unit,
-        })
-    })
-}
-
 pub(crate) fn str(
     _name: &str,
     args: &imbl::OrdMap<String, Value>,
@@ -348,24 +300,11 @@ pub(crate) fn str(
     ))
 }
 
-pub(crate) fn wait(
+pub(crate) fn unit(
     _name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    context: Context<'_>,
+    _args: &imbl::OrdMap<String, Value>,
+    _context: Context<'_>,
 ) -> Result<Value, String> {
-    let Context {
-        animation, cursor, ..
-    } = context;
-    let required = |name: &str| {
-        args.get(name)
-            .ok_or_else(|| format!("missing argument '{name}'"))
-    };
-    let duration = required("duration")?.number()?;
-    if duration.value < Fraction::from(0) {
-        return Err("wait duration must be nonnegative".into());
-    }
-    *cursor = math::timeline_end(*cursor, duration.value)?;
-    animation.duration = animation.duration.max(*cursor);
     Ok(Value::Unit)
 }
 

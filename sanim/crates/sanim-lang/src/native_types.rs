@@ -81,15 +81,6 @@ pub(crate) fn unwrap(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, Strin
     expect(inner, &actuals[1])?;
     Ok(*inner.clone())
 }
-pub(crate) fn scalar(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
-    if scalar_unit(&actuals[0]).is_none() {
-        return Err("requires numeric arguments".into());
-    }
-    for actual in &actuals[1..] {
-        expect(&actuals[0], actual)?;
-    }
-    Ok(actuals[0].clone())
-}
 pub(crate) fn assertion(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
     if !matches!(actuals[0], Type::Bool | Type::Predicate) {
         return Err("assert/check requires Bool or a visual relationship".into());

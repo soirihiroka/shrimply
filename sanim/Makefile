@@ -42,3 +42,17 @@ reactive-bench:
 .PHONY: state-reactive-bench
 state-reactive-bench:
 	$(CARGO) run -p sanim-lang --example reactive_state -- $(ARGS)
+
+.PHONY: collection-storage-bench
+collection-storage-bench:
+	$(CARGO) test -p sanim-core -p sanim-data collection_storage_benchmark -- --ignored --nocapture
+
+.PHONY: collection-language-bench
+collection-language-bench:
+	$(CARGO) run -p sanim-lang --example collection_edits
+
+.PHONY: list-view-check list-view-bench
+list-view-check:
+	$(CARGO) test -p sanim-core -p sanim-render --test list_views
+list-view-bench:
+	$(CARGO) test -p sanim-core -p sanim-render --test list_views retained_list_ -- --ignored --nocapture

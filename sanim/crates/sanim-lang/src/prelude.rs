@@ -1,3 +1,4 @@
+pub use crate::timing::Timing;
 use crate::{native, native_types};
 use sanim_core::{NativeEnum, Type, Unit as Dimension};
 
@@ -18,7 +19,6 @@ pub(crate) enum Execution {
     Native(Evaluator),
     /// Cheap accessors must not serialize/hash their entire input just to cache a lookup.
     Access(Evaluator),
-    Wait(Evaluator),
     Read,
     Decode,
     Query,
@@ -30,7 +30,9 @@ pub struct Builtin {
     pub name: &'static str,
     pub parameters: Vec<Parameter>,
     pub result: Type,
+    /// Scene/assertion effects remain impure even when they consume zero timeline time.
     pub schedule: bool,
+    pub timing: Timing,
     pub(crate) execute: Execution,
     pub(crate) check: TypeRule,
 }
@@ -54,6 +56,7 @@ fn build_builtins() -> Vec<Builtin> {
             parameters,
             result,
             schedule,
+            timing: Default::default(),
             execute,
             check,
         })
@@ -290,8 +293,8 @@ fn build_builtins() -> Vec<Builtin> {
         "wait",
         vec![p("duration", duration, true)],
         Unit,
-        true,
-        Execution::Wait(native::wait),
+        false,
+        Execution::Native(native::unit),
         native_types::fixed,
     );
     add(
@@ -398,36 +401,6 @@ fn build_builtins() -> Vec<Builtin> {
         Execution::Access(native::unwrap),
         native_types::unwrap,
     );
-    for name in ["min", "max"] {
-        add(
-            name,
-            vec![p("a", Unknown, true), p("b", Unknown, true)],
-            Unknown,
-            false,
-            Execution::Native(native::scalar),
-            native_types::scalar,
-        );
-    }
-    add(
-        "abs",
-        vec![p("value", Unknown, true)],
-        Unknown,
-        false,
-        Execution::Native(native::scalar),
-        native_types::scalar,
-    );
-    add(
-        "clamp",
-        vec![
-            p("value", Unknown, true),
-            p("low", Unknown, true),
-            p("high", Unknown, true),
-        ],
-        Unknown,
-        false,
-        Execution::Native(native::scalar),
-        native_types::scalar,
-    );
     add(
         "str",
         vec![p("value", Unknown, true)],
@@ -504,6 +477,26 @@ fn build_builtins() -> Vec<Builtin> {
         }
     }
     out.extend(crate::charts::builtins(common()));
+    crate::lists::register(&mut out);
+    for builtin in &mut out {
+        if matches!(builtin.execute, Execution::Play) {
+            builtin.timing = crate::timing::Timing {
+                default: sanim_core::Fraction::from(1),
+                positive: true,
+                ..Default::default()
+            };
+        }
+        if !builtin.parameters.iter().any(|p| p.name == "duration") {
+            builtin
+                .parameters
+                .push(p("duration", Numeric(Dimension::Duration), false));
+        }
+        builtin.timing.parameter = builtin
+            .parameters
+            .iter()
+            .position(|p| p.name == "duration")
+            .expect("registered duration parameter");
+    }
     out
 }
 

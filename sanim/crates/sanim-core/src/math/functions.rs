@@ -41,9 +41,24 @@ pub const UNARY: &[Function] = unary![
     "sin"=>Trig,"cos"=>Trig,"tan"=>Trig,"asin"=>Scalar,"acos"=>Scalar,"atan"=>Scalar,
     "sqrt"=>Scalar,"cbrt"=>Scalar,"exp"=>Scalar,"exp2"=>Scalar,
     "ln"=>Scalar,"log2"=>Scalar,"log10"=>Scalar,
-    "floor"=>Numeric,"ceil"=>Numeric,"round"=>Numeric,"trunc"=>Numeric,"sign"=>Numeric,
+    "abs"=>Numeric,"floor"=>Numeric,"ceil"=>Numeric,"round"=>Numeric,"trunc"=>Numeric,"sign"=>Numeric,
 ];
 pub const MULTI: &[Function] = &[
+    Function {
+        name: "min",
+        parameters: &[("a", true), ("b", true)],
+        domain: Domain::Numeric,
+    },
+    Function {
+        name: "max",
+        parameters: &[("a", true), ("b", true)],
+        domain: Domain::Numeric,
+    },
+    Function {
+        name: "clamp",
+        parameters: &[("value", true), ("low", true), ("high", true)],
+        domain: Domain::Numeric,
+    },
     Function {
         name: "log",
         parameters: &[("value", true), ("base", false)],
@@ -150,8 +165,33 @@ pub fn evaluate(name: &str, values: &[Number]) -> Result<Number, String> {
             unit: Unit::Number,
         });
     }
-    if matches!(name, "floor" | "ceil" | "round" | "trunc" | "sign") {
+    if matches!(
+        name,
+        "abs" | "min" | "max" | "clamp" | "floor" | "ceil" | "round" | "trunc" | "sign"
+    ) {
+        let argument = |index: usize| {
+            values
+                .get(index)
+                .map(|number| number.value)
+                .ok_or_else(|| format!("{name} is missing numeric argument {index}"))
+        };
         let value = match name {
+            "abs" => {
+                if first.value < Fraction::zero() {
+                    -first.value
+                } else {
+                    first.value
+                }
+            }
+            "min" => first.value.min(argument(1)?),
+            "max" => first.value.max(argument(1)?),
+            "clamp" => {
+                let (low, high) = (argument(1)?, argument(2)?);
+                if low > high {
+                    return Err("clamp low must not exceed high".into());
+                }
+                first.value.max(low).min(high)
+            }
             "floor" => first.value.floor(),
             "ceil" => first.value.ceil(),
             "round" => first.value.round(),

@@ -14,6 +14,44 @@ fn rows() -> Type {
 fn bindings(name: &str, value: Value) -> Value {
     Value::Record([(name.to_owned(), value)].into_iter().collect())
 }
+
+#[test]
+#[ignore = "microbenchmark: numerical array import into shared collection storage"]
+fn collection_storage_benchmark() {
+    const VALUES: u32 = 100_000;
+    const RUNS: u32 = 3;
+    let mut header = format!("{{'descr': '<f8', 'fortran_order': False, 'shape': ({VALUES},), }}");
+    while (10 + header.len() + 1) % 16 != 0 {
+        header.push(' ');
+    }
+    header.push('\n');
+    let mut bytes = b"\x93NUMPY\x01\x00".to_vec();
+    bytes.extend_from_slice(&u16::try_from(header.len()).unwrap().to_le_bytes());
+    bytes.extend_from_slice(header.as_bytes());
+    for n in 0..VALUES {
+        bytes.extend_from_slice(&f64::from(n).to_le_bytes());
+    }
+    let ty = Type::Array(Box::new(number()));
+    let started = std::time::Instant::now();
+    for _ in 0..RUNS {
+        let decoded = decode("numbers.npy", &bytes, &ty, Limits::default()).unwrap();
+        let Value::Array { shape, values, .. } = decoded else {
+            panic!("array")
+        };
+        assert_eq!(shape, vec![VALUES as usize]);
+        assert_eq!(values.len(), VALUES as usize);
+        assert_eq!(
+            values[VALUES as usize - 1].number().unwrap().value,
+            (VALUES - 1).into()
+        );
+        std::hint::black_box(values);
+    }
+    eprintln!(
+        "NPY shared collection import: {} bytes / {VALUES} f64 values, {}us/import ({RUNS} runs)",
+        bytes.len(),
+        started.elapsed().as_micros() / u128::from(RUNS)
+    );
+}
 fn query(sql: &str, inputs: &Value, result: &Type) -> Value {
     sqlite::query(sql, inputs, None, result, Limits::default()).unwrap()
 }

@@ -57,7 +57,7 @@ impl Runtime<'_, '_> {
             };
             self.animation
                 .reactive
-                .set_cell(id, cell.value.clone())
+                .set_typed_cell(id, cell.ty.as_ref().clone(), cell.value.clone())
                 .map_err(|e| {
                     self.error(
                         "S140",
@@ -253,6 +253,9 @@ impl Runtime<'_, '_> {
                 })
                 .unwrap_or("");
             if label == "children" {
+                if self.bind_list_children(element, expr, env)? {
+                    continue;
+                }
                 if let ExprKind::List(children) = &expr.kind {
                     for child in children {
                         let native = matches!(&child.kind,ExprKind::Call {callee,..} if matches!(&callee.kind,ExprKind::Name(name) if prelude::builtin(name).is_some_and(|builtin|builtin.result==Type::Element)));
@@ -386,6 +389,17 @@ impl Runtime<'_, '_> {
                 }
             }
             ExprKind::Call{callee,args,..}=>{
+                // Zero-time call envelopes are effects, not inputs to retained value math.
+                let timing = if let Some(call) = crate::timing::builtin_call(callee, args) {
+                    call.duration_argument()
+                } else {
+                    let declared = self.loaded.iter().find(|module| module.id == self.module)
+                        .and_then(|module| crate::effects::lookup(callee, &module.checked.exports));
+                    if matches!(declared,Some(Type::Function(signature)) if signature.parameters.iter().any(|(name,_)|name=="duration")) {
+                        None
+                    } else { crate::timing::envelope(args) }
+                };
+                let args = args.iter().filter(|(_, value)| !timing.is_some_and(|timing| std::ptr::eq(timing, value)));
                 if let ExprKind::Name(name)=&callee.kind && prelude::builtin(name).is_some(){
                     if matches!(name.as_str(),"Vec2"|"Vec3"|"Vec4") {
                         let count=match name.as_str(){"Vec2"=>2,"Vec3"=>3,_=>4};
@@ -408,7 +422,7 @@ impl Runtime<'_, '_> {
                 let Value::Function(key)=self.expression(callee,env)? else{return Err(self.error("S140","retained signals require direct pure helper calls",expr.span));};
                 let function=self.functions.get(&key).cloned().ok_or_else(||self.error("S140","retained constructor/data calls must be snapshotted with let first",expr.span))?;
                 let mut inputs=BTreeMap::new();
-                for (index,(label,value)) in args.iter().enumerate(){let name=label.as_ref().or_else(||function.parameters.get(index).map(|(name,..)|name)).ok_or_else(||self.error("S140","invalid retained helper argument",value.span))?;inputs.insert(name.clone(),self.lower_expression(value,env,locals,depth+1)?);}
+                for (index,(label,value)) in args.enumerate(){let name=label.as_ref().or_else(||function.parameters.get(index).map(|(name,..)|name)).ok_or_else(||self.error("S140","invalid retained helper argument",value.span))?;inputs.insert(name.clone(),self.lower_expression(value,env,locals,depth+1)?);}
                 let scope=self.globals.get(&function.module).cloned().unwrap_or_default();
                 let previous=std::mem::replace(&mut self.module,function.module.clone());
                 let result=(||{

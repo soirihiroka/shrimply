@@ -5,6 +5,7 @@ mod charts;
 mod checker;
 mod effects;
 mod eval;
+mod lists;
 mod native;
 mod native_types;
 pub mod parser;
@@ -12,6 +13,7 @@ pub mod prelude;
 pub mod progress;
 mod reflection;
 pub mod source;
+mod timing;
 mod type_algebra;
 pub mod watch;
 
@@ -385,7 +387,7 @@ impl Engine {
                 })?
             } else {
                 inputs.normalize(overrides, |ty, value| {
-                    eval::validate_value(ty, value)?;
+                    sanim_core::validate_value(ty, value)?;
                     Ok(value.clone())
                 })?
             };

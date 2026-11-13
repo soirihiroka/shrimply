@@ -1,7 +1,10 @@
 //! Platform-independent values, exact arithmetic, scene tracks and verification.
 pub mod cache;
+mod collection;
+pub use collection::{List, ListEdit, ListEditResult};
 pub mod duration;
 pub mod layout;
+pub mod list_views;
 pub use duration::{NodeDuration, TimelineEffect};
 pub mod math;
 pub mod reactive;
@@ -13,7 +16,9 @@ pub use time_map::{TimeMap, TimeMapEntry, TimeMapKind};
 pub use timeline_diff::{SampleTimes, TimeRange, TimelineDiff};
 pub mod type_budget;
 pub mod types;
+pub mod validation;
 pub mod value_budget;
+pub use validation::validate_value;
 pub mod verify;
 
 pub use fraction::Fraction;
