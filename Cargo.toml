@@ -158,6 +158,7 @@ exclude = ["external/vtracer", "sanim"]
 
 [workspace.dependencies]
 sanim-cli = { path = "sanim/crates/sanim-cli" }
+sanim-lsp = { path = "sanim/crates/sanim-lsp" }
 shrimply-fonts = { path = "crates/media/fonts" }
 sanim-core = { path = "sanim/crates/sanim-core" }
 sanim-data = { path = "sanim/crates/sanim-data" }

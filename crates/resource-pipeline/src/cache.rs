@@ -84,8 +84,8 @@ impl<K: Eq + Hash + Clone, V, R: Clone> Cache<K, V, R> {
     }
     /// Drop exactly one invalidated resource without scanning unrelated entries.
     pub fn remove(&mut self, key: &K) -> Option<R> {
-        let entry=self.entries.remove(key)?;
-        self.bytes-=entry.bytes;
+        let entry = self.entries.remove(key)?;
+        self.bytes -= entry.bytes;
         self.ages.remove(&entry.used);
         Some(entry.value)
     }
@@ -123,19 +123,28 @@ mod tests {
     use std::rc::Rc;
     #[test]
     fn thread_affine_entries_obey_the_same_byte_and_lru_bounds() {
-        let mut cache=Cache::<String,usize,Rc<usize>>::new(16,3);
-        let first=Rc::new(1);
-        cache.insert("first".into(),first.clone(),8);
-        cache.insert("second".into(),Rc::new(2),8);
-        assert!(Rc::ptr_eq(&cache.get(&"first".into()).unwrap(),&first));
-        cache.insert("third".into(),Rc::new(3),8);
+        let mut cache = Cache::<String, usize, Rc<usize>>::new(16, 3);
+        let first = Rc::new(1);
+        cache.insert("first".into(), first.clone(), 8);
+        cache.insert("second".into(), Rc::new(2), 8);
+        assert!(Rc::ptr_eq(&cache.get(&"first".into()).unwrap(), &first));
+        cache.insert("third".into(), Rc::new(3), 8);
         assert!(cache.get(&"second".into()).is_none());
-        cache.rekey(|key|if key=="first" {Some("renamed".into())} else {None});
-        assert!(Rc::ptr_eq(&cache.get(&"renamed".into()).unwrap(),&first));
-        cache.insert("oversized".into(),Rc::new(4),17);
+        cache.rekey(|key| {
+            if key == "first" {
+                Some("renamed".into())
+            } else {
+                None
+            }
+        });
+        assert!(Rc::ptr_eq(&cache.get(&"renamed".into()).unwrap(), &first));
+        cache.insert("oversized".into(), Rc::new(4), 17);
         assert!(cache.get(&"oversized".into()).is_none());
         cache.clear();
-        assert_eq!(*first,1,"eviction releases cache ownership, not caller references");
-        assert_eq!(Rc::strong_count(&first),1);
+        assert_eq!(
+            *first, 1,
+            "eviction releases cache ownership, not caller references"
+        );
+        assert_eq!(Rc::strong_count(&first), 1);
     }
 }

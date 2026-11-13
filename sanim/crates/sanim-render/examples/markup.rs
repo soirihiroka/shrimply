@@ -17,7 +17,12 @@ fn source(markup: bool) -> String {
             writeln!(source,r#"let tile_{i}=Rect(id="tile-{i}",width=56pt,height=28pt,position=Vec2({x}pt,{y}pt),pill,fill=gradient,children=[Text("item {i}",id="label-{i}",font_size=10pt)])"#).unwrap();
         }
     }
-    writeln!(source,"let group=Box(children=[{}])\nMoveTo(group,to=Vec2(10pt,0pt),duration=1s,ease=\"linear\")",names.join(",")).unwrap();
+    writeln!(
+        source,
+        "let group=Box(children=[{}])\nMoveTo(group,to=Vec2(10pt,0pt),duration=1s,ease=\"linear\")",
+        names.join(",")
+    )
+    .unwrap();
     source
 }
 fn prepare(markup: bool) -> sanim_lang::Prepared {

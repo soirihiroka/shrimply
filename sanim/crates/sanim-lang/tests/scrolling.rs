@@ -354,17 +354,32 @@ wait(1s)"#,
 
 #[test]
 fn box_dimension_signals_accept_zero_and_keep_a_zero_sized_clip() {
-    let prepared=prepare(r#"mut height=20pt
+    let prepared = prepare(
+        r#"mut height=20pt
 let pane=<Box w-100 height={height} overflow-hidden><Rect width={20pt} height={20pt}/></Box>
 add(pane)
 wait(100ms)
 height=0pt
-wait(100ms)"#).unwrap();
-    let time=Fraction::new(1u64,10u64);
-    let pane=prepared.animation.find("pane").unwrap();
-    assert_eq!(prepared.animation.sample_property(pane,Property::Height,time).unwrap().number().unwrap().value,0.into());
-    let laid=prepared.animation.layout_with(time,200.into(),120.into(),sanim_data::resolve_pending).unwrap();
-    let viewport=sanim_core::scrolling::viewport(&laid[0]).unwrap();
-    assert_eq!(viewport[1],viewport[3]);
+wait(100ms)"#,
+    )
+    .unwrap();
+    let time = Fraction::new(1u64, 10u64);
+    let pane = prepared.animation.find("pane").unwrap();
+    assert_eq!(
+        prepared
+            .animation
+            .sample_property(pane, Property::Height, time)
+            .unwrap()
+            .number()
+            .unwrap()
+            .value,
+        0.into()
+    );
+    let laid = prepared
+        .animation
+        .layout_with(time, 200.into(), 120.into(), sanim_data::resolve_pending)
+        .unwrap();
+    let viewport = sanim_core::scrolling::viewport(&laid[0]).unwrap();
+    assert_eq!(viewport[1], viewport[3]);
     assert!(!laid[0].geometry.children().unwrap().is_empty());
 }

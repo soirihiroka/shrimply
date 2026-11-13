@@ -649,89 +649,185 @@ fn recovered_source_directory_keeps_its_canonical_escape_boundary() {
     );
 }
 
-fn literal_edit_source(size:usize,level:usize)->String {
-    format!("let stable=Text(\"Shared stable glyphs\")\nadd(stable)\nwait(200ms)\nlet edge=reflect({size}pt,key=\"edge\")\nmut level={level}\nlet changing=Rect(width=edge,height=40pt+level*0.01pt)\nadd(changing)\nwait(1s)\n")
+fn literal_edit_source(size: usize, level: usize) -> String {
+    format!(
+        "let stable=Text(\"Shared stable glyphs\")\nadd(stable)\nwait(200ms)\nlet edge=reflect({size}pt,key=\"edge\")\nmut level={level}\nlet changing=Rect(width=edge,height=40pt+level*0.01pt)\nadd(changing)\nwait(1s)\n"
+    )
 }
-fn resident_bytes()->Option<usize> {
-    #[cfg(target_os="linux")]
-    {std::fs::read_to_string("/proc/self/status").ok()?.lines().find(|line|line.starts_with("VmRSS:"))?.split_whitespace().nth(1)?.parse::<usize>().ok()?.checked_mul(1024)}
-    #[cfg(not(target_os="linux"))]
-    {None}
-}
-fn exercise_literal_edits(edits:usize)->(Option<usize>,Option<usize>) {
-    use std::sync::Arc;
-    let files=Fixture::new();
-    let mut size=40;
-    let mut level=0;
-    files.write("main.sanim",&literal_edit_source(size,level));
-    let limits=sanim_lang::Limits {max_cache_bytes:2*1024*1024,max_cache_entries:64,max_modules:16,..Default::default()};
-    let runtime=Runtime::with_limits(files.0.join("main.sanim"),limits.clone()).unwrap();
-    let first=until(&runtime,|state|!state.preparing && state.prepared.is_some());
-    let mut revision=first.revision;
-    let mut current=first.prepared.unwrap();
-    let mut renderer=sanim_render::Renderer::default();
-    let scene=renderer.prepare(current.animation.clone()).unwrap();
-    let options=sanim_render::Options::for_animation(scene.animation());
-    let time=sanim_core::Fraction::new(1u64,10u64);
-    let prefix=renderer.record(&scene,time,&options).unwrap();
-    let mut warmed=None;
-    let mut peak=None;
-    for index in 0..edits {
-        if index%2==0 {size+=1;} else {level+=1;}
-        let old=Arc::downgrade(&current);
-        let old_outline=match current.animation.find("stable").unwrap().geometry.as_ref() {
-            sanim_core::Geometry::Text {outline,..}=>outline.clone(),_=>panic!("text")
-        };
-        files.write("pending.sanim",&literal_edit_source(size,level));
-        std::fs::rename(files.0.join("pending.sanim"),files.0.join("main.sanim")).unwrap();
-        let next=until(&runtime,|state|!state.preparing && state.diagnostic.is_none() && state.revision>revision);
-        revision=next.revision;
-        current=next.prepared.unwrap();
-        assert!(old.upgrade().is_none(),"old Prepared revisions must drop after their last consumer releases them");
-        assert!(current.statistics.restored_statements>=3,"a late scalar edit must retain the earlier execution state");
-        assert!(current.statistics.checkpoint_bytes<=limits.max_cache_bytes);
-        let sanim_core::Geometry::Text {outline,..}=current.animation.find("stable").unwrap().geometry.as_ref() else {panic!("text")};
-        assert!(Arc::ptr_eq(&old_outline,outline),"unchanged native glyph state must remain shared");
-        let scene=renderer.prepare(current.animation.clone()).unwrap();
-        assert!(Arc::ptr_eq(&prefix,&renderer.record(&scene,time,&options).unwrap()),"a scalar edit after the prefix must retain its exact recording");
-        if index==255 {warmed=resident_bytes();peak=warmed;}
-        if index>=255 {if let Some(rss)=resident_bytes() {peak=Some(peak.map_or(rss,|previous:usize|previous.max(rss)));}}
+fn resident_bytes() -> Option<usize> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()?
+            .lines()
+            .find(|line| line.starts_with("VmRSS:"))?
+            .split_whitespace()
+            .nth(1)?
+            .parse::<usize>()
+            .ok()?
+            .checked_mul(1024)
     }
-    let good=Arc::downgrade(&current);
-    files.write("main.sanim","let invalid=(");
-    let failed=until(&runtime,|state|!state.preparing && state.diagnostic.is_some());
-    assert!(Arc::ptr_eq(failed.prepared.as_ref().unwrap(),&current));
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+fn exercise_literal_edits(edits: usize) -> (Option<usize>, Option<usize>) {
+    use std::sync::Arc;
+    let files = Fixture::new();
+    let mut size = 40;
+    let mut level = 0;
+    files.write("main.sanim", &literal_edit_source(size, level));
+    let limits = sanim_lang::Limits {
+        max_cache_bytes: 2 * 1024 * 1024,
+        max_cache_entries: 64,
+        max_modules: 16,
+        ..Default::default()
+    };
+    let runtime = Runtime::with_limits(files.0.join("main.sanim"), limits.clone()).unwrap();
+    let first = until(&runtime, |state| {
+        !state.preparing && state.prepared.is_some()
+    });
+    let mut revision = first.revision;
+    let mut current = first.prepared.unwrap();
+    let mut renderer = sanim_render::Renderer::default();
+    let scene = renderer.prepare(current.animation.clone()).unwrap();
+    let options = sanim_render::Options::for_animation(scene.animation());
+    let time = sanim_core::Fraction::new(1u64, 10u64);
+    let prefix = renderer.record(&scene, time, &options).unwrap();
+    let mut warmed = None;
+    let mut peak = None;
+    for index in 0..edits {
+        if index % 2 == 0 {
+            size += 1;
+        } else {
+            level += 1;
+        }
+        let old = Arc::downgrade(&current);
+        let old_outline = match current.animation.find("stable").unwrap().geometry.as_ref() {
+            sanim_core::Geometry::Text { outline, .. } => outline.clone(),
+            _ => panic!("text"),
+        };
+        files.write("pending.sanim", &literal_edit_source(size, level));
+        std::fs::rename(files.0.join("pending.sanim"), files.0.join("main.sanim")).unwrap();
+        let next = until(&runtime, |state| {
+            !state.preparing && state.diagnostic.is_none() && state.revision > revision
+        });
+        revision = next.revision;
+        current = next.prepared.unwrap();
+        assert!(
+            old.upgrade().is_none(),
+            "old Prepared revisions must drop after their last consumer releases them"
+        );
+        assert!(
+            current.statistics.restored_statements >= 3,
+            "a late scalar edit must retain the earlier execution state"
+        );
+        assert!(current.statistics.checkpoint_bytes <= limits.max_cache_bytes);
+        let sanim_core::Geometry::Text { outline, .. } =
+            current.animation.find("stable").unwrap().geometry.as_ref()
+        else {
+            panic!("text")
+        };
+        assert!(
+            Arc::ptr_eq(&old_outline, outline),
+            "unchanged native glyph state must remain shared"
+        );
+        let sampled = current
+            .animation
+            .sample(sanim_core::Fraction::from(1))
+            .unwrap();
+        let changed = sampled
+            .iter()
+            .find(|element| element.id == "changing")
+            .unwrap();
+        let sanim_core::Geometry::Rectangle { width, height, .. } = changed.geometry.as_ref()
+        else {
+            panic!("rectangle")
+        };
+        assert_eq!(
+            *width,
+            sanim_core::Fraction::from(size as u64),
+            "the edited reflected literal must be applied"
+        );
+        assert_eq!(
+            *height,
+            sanim_core::Fraction::from(40u64) + sanim_core::Fraction::new(level as u64, 100u64),
+            "the edited mutable literal must be applied"
+        );
+        let scene = renderer.prepare(current.animation.clone()).unwrap();
+        assert!(
+            Arc::ptr_eq(&prefix, &renderer.record(&scene, time, &options).unwrap()),
+            "a scalar edit after the prefix must retain its exact recording"
+        );
+        if index == 255 {
+            warmed = resident_bytes();
+            peak = warmed;
+        }
+        if index >= 255 {
+            if let Some(rss) = resident_bytes() {
+                peak = Some(peak.map_or(rss, |previous: usize| previous.max(rss)));
+            }
+        }
+    }
+    let good = Arc::downgrade(&current);
+    files.write("main.sanim", "let invalid=(");
+    let failed = until(&runtime, |state| {
+        !state.preparing && state.diagnostic.is_some()
+    });
+    assert!(Arc::ptr_eq(failed.prepared.as_ref().unwrap(), &current));
     drop(failed);
-    files.write("main.sanim",&literal_edit_source(size+1,level));
-    let recovered=until(&runtime,|state|!state.preparing && state.diagnostic.is_none() && state.revision>revision);
-    current=recovered.prepared.unwrap();
-    assert!(good.upgrade().is_none(),"failed-edit last-good retention must release after recovery");
-    assert!(current.statistics.checkpoint_bytes<=limits.max_cache_bytes);
-    (warmed,peak)
+    files.write("main.sanim", &literal_edit_source(size + 1, level));
+    let recovered = until(&runtime, |state| {
+        !state.preparing && state.diagnostic.is_none() && state.revision > revision
+    });
+    current = recovered.prepared.unwrap();
+    assert!(
+        good.upgrade().is_none(),
+        "failed-edit last-good retention must release after recovery"
+    );
+    assert!(current.statistics.checkpoint_bytes <= limits.max_cache_bytes);
+    (warmed, peak)
 }
 
 #[test]
 fn scalar_hot_edits_release_old_revisions_and_preserve_glyphs_and_prefix_frames() {
-    const CHILD:&str="SANIM_SCALAR_EDIT_LIFETIME_CHILD";
+    const CHILD: &str = "SANIM_SCALAR_EDIT_LIFETIME_CHILD";
     if std::env::var_os(CHILD).is_none() {
-        let output=std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact","scalar_hot_edits_release_old_revisions_and_preserve_glyphs_and_prefix_frames"])
-            .env(CHILD,"1").output().unwrap();
-        assert!(output.status.success(),"{}\n{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "scalar_hot_edits_release_old_revisions_and_preserve_glyphs_and_prefix_frames",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         return;
     }
     exercise_literal_edits(16);
 }
 
 #[test]
-#[ignore="long native-event/RSS stress: make hot-reload-memory-bench"]
+#[ignore = "long native-event/RSS stress: make hot-reload-memory-bench"]
 fn scalar_hot_reload_memory_plateau_benchmark() {
-    const EDITS:usize=2000;
-    let started=Instant::now();
-    let (warmed,peak)=exercise_literal_edits(EDITS);
-    eprintln!("scalar hotreload {EDITS} native atomic edits: {:?}; warmed RSS={warmed:?}; peak after warmup={peak:?}; configured execution cache=2MiB/64 entries",started.elapsed());
-    if let (Some(warmed),Some(peak))=(warmed,peak) {
-        const MAX_GROWTH:usize=32*1024*1024;
-        assert!(peak<=warmed+MAX_GROWTH,"RSS must plateau after cache warmup rather than retaining every revision");
+    const EDITS: usize = 2000;
+    let started = Instant::now();
+    let (warmed, peak) = exercise_literal_edits(EDITS);
+    eprintln!(
+        "scalar hotreload {EDITS} native atomic edits: {:?}; warmed RSS={warmed:?}; peak after warmup={peak:?}; configured execution cache=2MiB/64 entries",
+        started.elapsed()
+    );
+    if let (Some(warmed), Some(peak)) = (warmed, peak) {
+        const MAX_GROWTH: usize = 32 * 1024 * 1024;
+        assert!(
+            peak <= warmed + MAX_GROWTH,
+            "RSS must plateau after cache warmup rather than retaining every revision"
+        );
     }
 }

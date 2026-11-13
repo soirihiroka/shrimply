@@ -436,6 +436,74 @@ fn channel_edits_preserve_earlier_frame_cache_intervals_and_active_times_are_not
 }
 
 #[test]
+fn reactive_edits_invalidate_only_reachable_elements_after_their_birth() {
+    fn animation(initial: i64, unused: i64, prepend: bool) -> Animation {
+        let mut graph = ReactiveGraph::default();
+        graph.set_cell(1, numeric(initial, Unit::Number)).unwrap();
+        graph.set_cell(2, numeric(unused, Unit::Number)).unwrap();
+        if prepend {
+            graph
+                .insert_node(Node::Constant(numeric(99, Unit::Number)), 100)
+                .unwrap();
+        }
+        let node = graph.insert_node(Node::Cell(1), 100).unwrap();
+        graph.bind("circle".into(), Property::Scale, node).unwrap();
+        let mut animation = Animation::default();
+        animation.reactive = graph;
+        animation
+            .add(
+                element(
+                    "circle",
+                    Geometry::Circle {
+                        radius: Fraction::from(1),
+                    },
+                ),
+                Fraction::from(2),
+            )
+            .unwrap();
+        animation
+    }
+    let old = animation(1, 1, false);
+    let new = animation(2, 2, true);
+    let diff = TimelineDiff::between(&old, &new);
+    assert!(
+        !diff.affects(Fraction::from(1)),
+        "changed initial values cannot affect an unborn element"
+    );
+    assert!(diff.affects(Fraction::from(2)));
+    assert!(diff.affects(Fraction::from(9)));
+    let equivalent = animation(1, 500, true);
+    assert!(
+        TimelineDiff::between(&old, &equivalent)
+            .invalidated
+            .is_empty(),
+        "unreachable cells and shifted node identities have no visual effect"
+    );
+    let mut before_birth = old.clone();
+    before_birth
+        .reactive
+        .write_cell(1, Fraction::from(1), numeric(3, Unit::Number))
+        .unwrap();
+    let diff = TimelineDiff::between(&old, &before_birth);
+    assert!(!diff.affects(Fraction::from(1)));
+    assert!(
+        diff.affects(Fraction::from(2)),
+        "earlier writes first become visible at birth"
+    );
+    let mut after_birth = old.clone();
+    after_birth
+        .reactive
+        .write_cell(1, Fraction::from(5), numeric(3, Unit::Number))
+        .unwrap();
+    let diff = TimelineDiff::between(&old, &after_birth);
+    assert!(!diff.affects(Fraction::from(4)));
+    assert!(
+        diff.affects(Fraction::from(5)),
+        "later writes preserve an already visible prefix"
+    );
+}
+
+#[test]
 fn serde_rejects_forward_references_corrupt_types_and_unbounded_tracks() {
     let (graph, size) = oscillator();
     let json = serde_json::to_value(&graph).unwrap();

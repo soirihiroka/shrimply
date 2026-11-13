@@ -33,11 +33,33 @@ impl TimelineDiff {
         }
         let old_layers = layers(old);
         let new_layers = layers(new);
+        let births = |animation: &Animation| {
+            let mut result = BTreeMap::new();
+            animation.list_views.visit_reachable(
+                animation
+                    .layers
+                    .iter()
+                    .map(|layer| (&layer.element, layer.birth)),
+                |element, birth| {
+                    result.insert(element.id.clone(), birth);
+                },
+            );
+            result
+        };
+        let old_births = births(old);
+        let new_births = births(new);
         let mut dirty_from = global.then_some(Fraction::from(0));
         if let Some(time) = old.list_views.changed_from(&new.list_views) {
             dirty_from = Some(dirty_from.map_or(time, |previous| previous.min(time)));
         }
-        if let Some(time) = old.reactive.changed_from(&new.reactive) {
+        if let Some(time) = old.reactive.changed_from(&new.reactive, |id| {
+            old_births
+                .get(id)
+                .into_iter()
+                .chain(new_births.get(id))
+                .copied()
+                .min()
+        }) {
             dirty_from = Some(dirty_from.map_or(time, |previous| previous.min(time)));
         }
         for id in old
@@ -78,17 +100,6 @@ impl TimelineDiff {
                 dirty_from = Some(dirty_from.map_or(birth, |previous| previous.min(birth)));
             }
         }
-        let births = |animation: &Animation| {
-            let mut result = BTreeMap::new();
-            for layer in &animation.layers {
-                let mut ids = Vec::new();
-                layer.element.ids(&mut ids);
-                result.extend(ids.into_iter().map(|id| (id, layer.birth)));
-            }
-            result
-        };
-        let old_births = births(old);
-        let new_births = births(new);
         let mut changed = Vec::new();
         let mut boundaries = BTreeSet::from([Fraction::from(0)]);
         boundaries.extend(dirty_from);

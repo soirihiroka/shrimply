@@ -58,19 +58,26 @@ fn replacing_many_sources_releases_old_native_values_without_a_collector() {
         let bytes = Arc::new(format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"><rect width=\"1\" height=\"1\" fill=\"#{index:06x}\"/></svg>").into_bytes());
         shrimply_drawing_skia::media::prepare(bytes).unwrap();
     }
-    assert!(native.upgrade().is_none(), "bounded cache eviction drops obsolete native DOMs");
-    assert!(source.upgrade().is_none(), "weak identity hints retain no encoded payload");
+    assert!(
+        native.upgrade().is_none(),
+        "bounded cache eviction drops obsolete native DOMs"
+    );
+    assert!(
+        source.upgrade().is_none(),
+        "weak identity hints retain no encoded payload"
+    );
 }
 
 #[test]
 fn bitmap_native_cache_identity_is_independent_of_font_activation() {
-    let _guard=MEDIA_CACHE_TESTS.lock().unwrap();
-    let bytes=Arc::new(PNG.to_vec());
-    let first=shrimply_drawing_skia::media::prepare(bytes.clone()).unwrap();
-    let font=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/DejaVuSansCondensed-subset.ttf");
+    let _guard = MEDIA_CACHE_TESTS.lock().unwrap();
+    let bytes = Arc::new(PNG.to_vec());
+    let first = shrimply_drawing_skia::media::prepare(bytes.clone()).unwrap();
+    let font = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/assets/DejaVuSansCondensed-subset.ttf");
     sanim_data::font::register_application_font(font).unwrap();
-    let after=shrimply_drawing_skia::media::prepare(bytes).unwrap();
-    assert!(Arc::ptr_eq(&first,&after));
+    let after = shrimply_drawing_skia::media::prepare(bytes).unwrap();
+    assert!(Arc::ptr_eq(&first, &after));
 }
 
 #[test]

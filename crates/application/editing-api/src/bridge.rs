@@ -153,7 +153,12 @@ impl Bridge {
 
     /// Send one request on this connection, then close it, including on failure.
     /// The request validates project ownership; no separate queued handshake is needed.
-    pub fn request(mut self, command: BridgeCommand) -> Result<serde_json::Value, BridgeError> {
+    pub fn request(self, command: BridgeCommand) -> Result<serde_json::Value, BridgeError> {
+        self.request_with_timeout(command, RESPONSE_TIMEOUT)
+    }
+
+    /// Interactive clients can bound how long an active owner may take to reply.
+    pub fn request_with_timeout(mut self, command: BridgeCommand, timeout: Duration) -> Result<serde_json::Value, BridgeError> {
         let transport = |error: std::io::Error| {
             BridgeError::Transport(format!(
                 "project session at {}: {error}; inspect state before retrying",
@@ -162,10 +167,10 @@ impl Bridge {
         };
         let stream = &mut self.stream;
         stream
-            .set_write_timeout(Some(WRITE_TIMEOUT))
+            .set_write_timeout(Some(WRITE_TIMEOUT.min(timeout)))
             .map_err(transport)?;
         stream
-            .set_read_timeout(Some(RESPONSE_TIMEOUT))
+            .set_read_timeout(Some(timeout))
             .map_err(transport)?;
         let request = BridgeRequest {
             project_path: self.project_path.clone(),

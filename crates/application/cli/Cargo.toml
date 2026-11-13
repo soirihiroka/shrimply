@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 sanim-cli.workspace = true
+sanim-lsp.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true

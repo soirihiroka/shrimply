@@ -147,6 +147,24 @@ impl ListViews {
         &'a self,
         roots: impl Iterator<Item = &'a Element>,
     ) -> BTreeSet<&'a str> {
+        let mut views = BTreeSet::new();
+        self.visit_reachable(
+            roots.map(|element| (element, Fraction::from(0))),
+            |element, _| {
+                if self.views.contains_key(&element.id) {
+                    views.insert(element.id.as_str());
+                }
+            },
+        );
+        views
+    }
+    /// Visit static and future catalog children once, at the earliest birth of
+    /// any mounted view which can expose them. Catalog-only items stay absent.
+    pub(crate) fn visit_reachable<'a>(
+        &'a self,
+        roots: impl Iterator<Item = (&'a Element, Fraction)>,
+        mut visit: impl FnMut(&'a Element, Fraction),
+    ) {
         let mut owned = std::collections::BTreeMap::<u64, Vec<&Element>>::new();
         for (id, element) in &self.catalog {
             if let Some(cell) = self.owners.get(id) {
@@ -154,23 +172,22 @@ impl ListViews {
             }
         }
         let mut pending: Vec<_> = roots.collect();
+        pending.sort_unstable_by(|a, b| b.1.cmp(&a.1));
         let mut seen = BTreeSet::new();
-        let mut views = BTreeSet::new();
-        while let Some(element) = pending.pop() {
+        while let Some((element, birth)) = pending.pop() {
             if !seen.insert(element.id.as_str()) {
                 continue;
             }
-            if let Some(cell) = self.views.get(&element.id) {
-                views.insert(element.id.as_str());
-                if let Some(children) = owned.get(cell) {
-                    pending.extend(children.iter().copied());
-                }
+            visit(element, birth);
+            if let Some(cell) = self.views.get(&element.id)
+                && let Some(children) = owned.get(cell)
+            {
+                pending.extend(children.iter().map(|element| (*element, birth)));
             }
             if let Some(children) = element.geometry.children() {
-                pending.extend(children.iter());
+                pending.extend(children.iter().map(|element| (element, birth)));
             }
         }
-        views
     }
     pub fn has_cell(&self, cell: u64) -> bool {
         self.channels.contains_key(&cell)

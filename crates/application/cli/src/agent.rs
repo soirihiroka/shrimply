@@ -34,6 +34,13 @@ pub fn run(arguments: Vec<std::ffi::OsString>) -> u8 {
         }
     };
     let (path, leaf) = leaf(&matches);
+    if path == "sanim lsp" {
+        if matches.get_flag("dry-run") || matches.get_one::<String>("if-revision").is_some() {
+            eprintln!("sanim lsp does not accept --dry-run or --if-revision");
+            return 2;
+        }
+        return crate::lsp::run(matches.get_one::<String>("project").map(PathBuf::from));
+    }
     if let Some(tool) = path.strip_prefix("sanim ")
         && sanim_cli::COMMANDS
             .iter()
@@ -109,6 +116,9 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
             .cloned()
             .collect::<Vec<_>>()
             .join(" ");
+        if path == "sanim lsp" {
+            return Ok(crate::lsp::schema());
+        }
         if let Some(command) = path.strip_prefix("sanim ")
             && sanim_cli::COMMANDS.iter().any(|tool| tool.name == command)
         {
@@ -119,6 +129,7 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
                 .iter()
                 .map(|command| sanim_cli::schema(command.name))
                 .collect::<Result<Vec<_>, _>>()?;
+            schemas.push(crate::lsp::schema());
             schemas.extend(
                 commands::COMMANDS
                     .iter()
@@ -684,7 +695,7 @@ mod tests {
         let (path, leaf) = leaf(&matches);
         let schemas = execute(&path, leaf, &matches).unwrap();
         let schemas = schemas["commands"].as_array().unwrap();
-        assert_eq!(schemas.len(), sanim_cli::COMMANDS.len() + 2);
+        assert_eq!(schemas.len(), sanim_cli::COMMANDS.len() + 3);
     }
 
     #[test]

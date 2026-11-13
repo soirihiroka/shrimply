@@ -1,5 +1,6 @@
 mod agent;
 mod catalog;
+mod lsp;
 mod render;
 mod render_options;
 mod search;

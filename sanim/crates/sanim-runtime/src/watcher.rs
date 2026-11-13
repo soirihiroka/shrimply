@@ -34,7 +34,7 @@ struct WatchState {
     aliases: BTreeMap<PathBuf, BTreeSet<String>>,
     cache: Cache<String, ResourceSnapshot>,
     next_version: u64,
-    remote:BTreeSet<String>,
+    remote: BTreeSet<String>,
 }
 impl WatchState {
     fn new() -> Self {
@@ -43,7 +43,7 @@ impl WatchState {
             aliases: BTreeMap::new(),
             cache: Cache::new(MAX_RESOURCE_CACHE_BYTES, MAX_RESOURCE_CACHE_ENTRIES),
             next_version: 0,
-            remote:BTreeSet::new(),
+            remote: BTreeSet::new(),
         }
     }
     fn version(&mut self) -> u64 {
@@ -66,7 +66,8 @@ impl WatchState {
         {
             return Ok(());
         }
-        if !self.dependencies.contains_key(path) && self.dependencies.len()+self.remote.len() >= MAX_WATCHED_RESOURCES
+        if !self.dependencies.contains_key(path)
+            && self.dependencies.len() + self.remote.len() >= MAX_WATCHED_RESOURCES
         {
             return Err(format!(
                 "Sanim dependency watch budget exceeds {MAX_WATCHED_RESOURCES} resources"
@@ -124,7 +125,7 @@ impl WatchState {
         self.invalidate(paths);
     }
     fn retain(&mut self, active: &BTreeSet<String>) {
-        self.remote.retain(|path|active.contains(path));
+        self.remote.retain(|path| active.contains(path));
         let removed = self
             .dependencies
             .keys()
@@ -185,8 +186,11 @@ impl WatchedSources {
                     if event.need_rescan() {
                         state.clear();
                     } else {
-                        let metadata=matches!(event.kind,notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_)));
-                        let mut recheck=false;
+                        let metadata = matches!(
+                            event.kind,
+                            notify::EventKind::Modify(notify::event::ModifyKind::Metadata(_))
+                        );
+                        let mut recheck = false;
                         let affected = event
                             .paths
                             .iter()
@@ -196,9 +200,11 @@ impl WatchedSources {
                                     // watch() checks object identity before cache
                                     // hits; ordinary metadata must not evict all
                                     // unrelated data files in the directory.
-                                    recheck|=!state.affected(path).is_empty();
+                                    recheck |= !state.affected(path).is_empty();
                                     false
-                                } else {true}
+                                } else {
+                                    true
+                                }
                             })
                             .flat_map(|path| state.affected(path))
                             .collect::<BTreeSet<_>>();
@@ -307,15 +313,18 @@ impl WatchedSources {
         Ok(())
     }
     pub fn invalidate_all(&self) {
-        let remote={
-            let mut state=self.state.lock().expect("Sanim watch dependencies poisoned");
+        let remote = {
+            let mut state = self
+                .state
+                .lock()
+                .expect("Sanim watch dependencies poisoned");
             state.clear();
             state.remote.iter().cloned().collect::<Vec<_>>()
         };
         for url in remote {
             // Invalid URLs have no cached response; their normal read reports
             // the source diagnostic during the next preparation.
-            let _=sanim_lang::source::invalidate_remote(&url);
+            let _ = sanim_lang::source::invalidate_remote(&url);
         }
     }
     pub fn retain(&self, dependencies: impl Iterator<Item = impl AsRef<str>>) {
@@ -357,9 +366,16 @@ impl Sources for WatchedSources {
     fn read_snapshot(&self, path: &str) -> Result<(Arc<Vec<u8>>, String), String> {
         if sanim_lang::source::is_remote(path) {
             {
-                let mut state=self.state.lock().expect("Sanim watch dependencies poisoned");
-                if !state.remote.contains(path) && state.remote.len()+state.dependencies.len()>=MAX_WATCHED_RESOURCES {
-                    return Err(format!("Sanim dependency budget exceeds {MAX_WATCHED_RESOURCES} resources"));
+                let mut state = self
+                    .state
+                    .lock()
+                    .expect("Sanim watch dependencies poisoned");
+                if !state.remote.contains(path)
+                    && state.remote.len() + state.dependencies.len() >= MAX_WATCHED_RESOURCES
+                {
+                    return Err(format!(
+                        "Sanim dependency budget exceeds {MAX_WATCHED_RESOURCES} resources"
+                    ));
                 }
                 state.remote.insert(path.to_owned());
             }
@@ -437,81 +453,115 @@ fn affects(dependencies: &BTreeSet<PathBuf>, event: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{sync::atomic::{AtomicU64,Ordering},time::{Duration,Instant}};
+    use std::{
+        sync::atomic::{AtomicU64, Ordering},
+        time::{Duration, Instant},
+    };
     struct Files(PathBuf);
     impl Files {
-        fn new()->Self {
-            static NEXT:AtomicU64=AtomicU64::new(0);
-            let path=std::env::temp_dir().join(format!("sanim-watch-snapshots-{}-{}",std::process::id(),NEXT.fetch_add(1,Ordering::Relaxed)));
-            std::fs::create_dir(&path).unwrap();Self(path)
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "sanim-watch-snapshots-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
         }
     }
-    impl Drop for Files {fn drop(&mut self){std::fs::remove_dir_all(&self.0).unwrap();}}
+    impl Drop for Files {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
 
     #[test]
     fn source_only_atomic_edit_keeps_large_resource_bytes_and_hashes() {
-        let files=Files::new();
-        std::fs::write(files.0.join("main.sanim"),"wait(1s)").unwrap();
-        const BYTES:usize=32 * 1024 * 1024;
-        std::fs::write(files.0.join("payload.txt"),vec![b'x';BYTES]).unwrap();
-        let (sender,receiver)=mpsc::sync_channel(128);
-        let sources=WatchedSources::new(files.0.clone(),"main.sanim",sender).unwrap();
+        let files = Files::new();
+        std::fs::write(files.0.join("main.sanim"), "wait(1s)").unwrap();
+        const BYTES: usize = 32 * 1024 * 1024;
+        std::fs::write(files.0.join("payload.txt"), vec![b'x'; BYTES]).unwrap();
+        let (sender, receiver) = mpsc::sync_channel(128);
+        let sources = WatchedSources::new(files.0.clone(), "main.sanim", sender).unwrap();
         sources.read_snapshot("main.sanim").unwrap();
-        let first=sources.read_snapshot("payload.txt").unwrap();
-        let before=sources.hashed_bytes.load(Ordering::Relaxed);
-        let reads=sources.reads.load(Ordering::Relaxed);
+        let first = sources.read_snapshot("payload.txt").unwrap();
+        let before = sources.hashed_bytes.load(Ordering::Relaxed);
+        let reads = sources.reads.load(Ordering::Relaxed);
         for _ in 0..10 {
-            let unchanged=sources.read_snapshot("payload.txt").unwrap();
-            assert!(Arc::ptr_eq(&first.0,&unchanged.0));
-            assert_eq!(first.1,unchanged.1);
+            let unchanged = sources.read_snapshot("payload.txt").unwrap();
+            assert!(Arc::ptr_eq(&first.0, &unchanged.0));
+            assert_eq!(first.1, unchanged.1);
         }
-        assert_eq!(sources.reads.load(Ordering::Relaxed),reads);
-        assert_eq!(sources.hashed_bytes.load(Ordering::Relaxed),before);
-        let version=sources.state.lock().unwrap().dependencies["main.sanim"].version;
-        std::fs::write(files.0.join("pending.sanim"),"wait(2s)").unwrap();
-        std::fs::rename(files.0.join("pending.sanim"),files.0.join("main.sanim")).unwrap();
-        let deadline=Instant::now()+Duration::from_secs(5);
-        while sources.state.lock().unwrap().dependencies["main.sanim"].version==version {
-            receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("source replacement native notification");
+        assert_eq!(sources.reads.load(Ordering::Relaxed), reads);
+        assert_eq!(sources.hashed_bytes.load(Ordering::Relaxed), before);
+        let version = sources.state.lock().unwrap().dependencies["main.sanim"].version;
+        std::fs::write(files.0.join("pending.sanim"), "wait(2s)").unwrap();
+        std::fs::rename(files.0.join("pending.sanim"), files.0.join("main.sanim")).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while sources.state.lock().unwrap().dependencies["main.sanim"].version == version {
+            receiver
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("source replacement native notification");
         }
-        let changed=sources.read_snapshot("main.sanim").unwrap();
-        assert_eq!(changed.0.as_slice(),b"wait(2s)");
+        let changed = sources.read_snapshot("main.sanim").unwrap();
+        assert_eq!(changed.0.as_slice(), b"wait(2s)");
         for _ in 0..10 {
-            let retained=sources.read_snapshot("payload.txt").unwrap();
-            assert!(Arc::ptr_eq(&first.0,&retained.0),"ordinary parent-directory ctime changes must not invalidate the unrelated payload");
+            let retained = sources.read_snapshot("payload.txt").unwrap();
+            assert!(
+                Arc::ptr_eq(&first.0, &retained.0),
+                "ordinary parent-directory ctime changes must not invalidate the unrelated payload"
+            );
         }
-        assert_eq!(sources.hashed_bytes.load(Ordering::Relaxed)-before,b"wait(2s)".len());
+        assert_eq!(
+            sources.hashed_bytes.load(Ordering::Relaxed) - before,
+            b"wait(2s)".len()
+        );
         sources.invalidate_all();
-        let refreshed=sources.read_snapshot("payload.txt").unwrap();
-        assert!(!Arc::ptr_eq(&first.0,&refreshed.0),"manual refresh must bypass cached filesystem bytes");
+        let refreshed = sources.read_snapshot("payload.txt").unwrap();
+        assert!(
+            !Arc::ptr_eq(&first.0, &refreshed.0),
+            "manual refresh must bypass cached filesystem bytes"
+        );
     }
 
     #[test]
     fn per_resource_generations_and_alias_pruning_release_old_bytes_without_gc() {
-        let mut state=WatchState::new();
-        let mut previous=None;
+        let mut state = WatchState::new();
+        let mut previous = None;
         for index in 0..2000 {
-            let name=format!("data-{index}.txt");
-            let path=PathBuf::from("/source").join(&name);
-            state.register(&name,BTreeSet::from([path.clone(),PathBuf::from("/source/link").join(&name)]),true).unwrap();
-            let bytes=Arc::new(vec![index as u8;1024]);
-            let weak=Arc::downgrade(&bytes);
-            state.cache.insert(name.clone(),Arc::new(Ok((bytes,"hash".into()))),1024);
+            let name = format!("data-{index}.txt");
+            let path = PathBuf::from("/source").join(&name);
+            state
+                .register(
+                    &name,
+                    BTreeSet::from([path.clone(), PathBuf::from("/source/link").join(&name)]),
+                    true,
+                )
+                .unwrap();
+            let bytes = Arc::new(vec![index as u8; 1024]);
+            let weak = Arc::downgrade(&bytes);
+            state
+                .cache
+                .insert(name.clone(), Arc::new(Ok((bytes, "hash".into()))), 1024);
             state.retain(&BTreeSet::from([name.clone()]));
-            if let Some(old)=previous.take() {
-                let old:std::sync::Weak<Vec<u8>>=old;
-                assert!(old.upgrade().is_none(),"pruned resource bytes release deterministically after the last Arc");
+            if let Some(old) = previous.take() {
+                let old: std::sync::Weak<Vec<u8>> = old;
+                assert!(
+                    old.upgrade().is_none(),
+                    "pruned resource bytes release deterministically after the last Arc"
+                );
             }
-            assert_eq!(state.dependencies.len(),1);
-            assert_eq!(state.aliases.len(),2);
+            assert_eq!(state.dependencies.len(), 1);
+            assert_eq!(state.aliases.len(), 2);
             assert!(weak.upgrade().is_some());
-            previous=Some(weak);
+            previous = Some(weak);
         }
-        let name="data-1999.txt".to_owned();
-        let before=state.dependencies[&name].version;
-        let affected=state.affected(&PathBuf::from("/source/data-1999.txt"));
+        let name = "data-1999.txt".to_owned();
+        let before = state.dependencies[&name].version;
+        let affected = state.affected(&PathBuf::from("/source/data-1999.txt"));
         state.invalidate(affected);
-        assert!(state.dependencies[&name].version>before);
+        assert!(state.dependencies[&name].version > before);
         assert!(state.cache.get(&name).is_none());
         assert!(previous.unwrap().upgrade().is_none());
         state.retain(&BTreeSet::new());

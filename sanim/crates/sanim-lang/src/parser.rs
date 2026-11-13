@@ -56,6 +56,22 @@ pub struct PendingCall {
     pub span: Span,
     pub argument: usize,
     pub argument_name: Option<String>,
+    pub argument_span: Option<Span>,
+}
+
+/// Opening-tag source metadata retained by the ordinary grammar for editor tools.
+#[derive(Clone, Debug)]
+pub struct MarkupOpening {
+    pub name: String,
+    pub span: Span,
+    pub attributes: Vec<MarkupAttribute>,
+}
+#[derive(Clone, Debug)]
+pub struct MarkupAttribute {
+    pub name: String,
+    pub span: Span,
+    pub value: Option<Span>,
+    pub utility: bool,
 }
 
 /// Completed declarations and the unfinished call context, without executing or
@@ -65,6 +81,7 @@ pub struct Recovery {
     pub module: Module,
     pub diagnostic: Option<Diagnostic>,
     pub pending_calls: Vec<PendingCall>,
+    pub markup: Vec<MarkupOpening>,
     pub prefix_end: usize,
 }
 
@@ -109,6 +126,16 @@ fn parse_recovering_highlighted(
     let mut pending_calls = parser.pending_calls.take().unwrap_or_default();
     for call in &mut pending_calls {
         call.span.end = parser.offset;
+        if let Some(span) = &mut call.argument_span { span.end = parser.offset; }
+    }
+    let mut markup = parser.markup.take().unwrap_or_default();
+    for opening in &mut markup {
+        if opening.span.end == usize::MAX {
+            opening.span.end = parser.offset;
+        }
+        for attribute in &mut opening.attributes {
+            if let Some(value) = &mut attribute.value && value.end == usize::MAX { value.end = parser.offset; }
+        }
     }
     let prefix_end = module
         .statements
@@ -121,6 +148,7 @@ fn parse_recovering_highlighted(
             module,
             diagnostic: parser.failure.or(error),
             pending_calls,
+            markup,
             prefix_end,
         },
         highlights,
@@ -136,6 +164,7 @@ struct Mark {
     formatting: Option<crate::formatter::Checkpoint>,
     comments: usize,
     highlights: usize,
+    markup: usize,
 }
 struct Parser<'a> {
     source: &'a str,
@@ -149,6 +178,7 @@ struct Parser<'a> {
     failure: Option<Diagnostic>,
     recovered: Option<Module>,
     pending_calls: Option<Vec<PendingCall>>,
+    markup: Option<Vec<MarkupOpening>>,
     formatting: Option<crate::formatter::Sink>,
     comments: Vec<Span>,
     highlights: Option<Vec<sanim_core::code::Highlight>>,
@@ -167,6 +197,7 @@ impl<'a> Parser<'a> {
             failure: None,
             recovered: None,
             pending_calls: recovery.then(Vec::new),
+            markup: recovery.then(Vec::new),
             formatting: None,
             comments: vec![],
             highlights: None,
@@ -193,6 +224,7 @@ impl Parser<'_> {
             delimiters: self.delimiters.clone(),
             comments: self.comments.len(),
             highlights: self.highlights.as_ref().map_or(0, Vec::len),
+            markup: self.markup.as_ref().map_or(0, Vec::len),
             formatting: self
                 .formatting
                 .as_ref()
@@ -205,6 +237,9 @@ impl Parser<'_> {
         self.column = mark.column;
         self.delimiters = mark.delimiters;
         self.comments.truncate(mark.comments);
+        if let Some(markup) = &mut self.markup {
+            markup.truncate(mark.markup);
+        }
         if let Some(highlights) = &mut self.highlights {
             highlights.truncate(mark.highlights);
         }
@@ -570,7 +605,8 @@ impl Parser<'_> {
         self.depth -= 1;
         literal_span.end = self.offset;
         if parts.is_empty() {
-            return Ok(Expr { cache_id: crate::ast::next_expr_identity(), 
+            return Ok(Expr {
+                cache_id: crate::ast::next_expr_identity(),
                 kind: ExprKind::String(value),
                 span: literal_span,
             });
@@ -578,7 +614,8 @@ impl Parser<'_> {
         if !value.is_empty() {
             parts.push(sanim_core::TemplatePart::Text(value.into()));
         }
-        Ok(Expr { cache_id: crate::ast::next_expr_identity(), 
+        Ok(Expr {
+            cache_id: crate::ast::next_expr_identity(),
             kind: ExprKind::Template(parts),
             span: Span {
                 end: self.offset,
@@ -727,6 +764,7 @@ impl Parser<'_> {
                 span: callee.span,
                 argument: 0,
                 argument_name: None,
+                argument_span: None,
             });
             Some(calls.len() - 1)
         } else {
@@ -735,9 +773,11 @@ impl Parser<'_> {
         let mut args = vec![];
         if !self.eat(")") {
             loop {
+                let argument_span = self.span();
                 if let (Some(frame), Some(calls)) = (frame, &mut self.pending_calls) {
                     calls[frame].argument = args.len();
                     calls[frame].argument_name = None;
+                    calls[frame].argument_span = Some(Span {end:argument_span.start,..argument_span});
                 }
                 let candidate = self.expr(0)?;
                 if self.is(":") {
@@ -747,8 +787,10 @@ impl Parser<'_> {
                     let ExprKind::Name(name) = candidate.kind else {
                         return Err(self.error("named argument label must be a name"));
                     };
+                    let argument_span = self.span();
                     if let (Some(frame), Some(calls)) = (frame, &mut self.pending_calls) {
                         calls[frame].argument_name = Some(name.clone());
+                        calls[frame].argument_span = Some(Span {end:argument_span.start,..argument_span});
                     }
                     (Some(name), self.expr(0)?)
                 } else {
@@ -838,7 +880,8 @@ impl Parser<'_> {
             ));
         };
         let options = self.reflection_options(args.collect())?;
-        Ok(Expr { cache_id: crate::ast::next_expr_identity(), 
+        Ok(Expr {
+            cache_id: crate::ast::next_expr_identity(),
             kind: ExprKind::Reflect {
                 value: Box::new(value),
                 options,
@@ -1176,6 +1219,12 @@ impl Parser<'_> {
         }
         let mut out = if self.eat(Keyword::Sig.text()) {
             TypeExpr::Signal(Box::new(self.type_expression(3)?))
+        } else if self.quoted() {
+            let expression=self.string_expression()?;
+            match expression.kind {
+                ExprKind::String(value) => TypeExpr::StringLiteral(value),
+                _ => return Err(Diagnostic::new("S002","a string literal type must contain a fixed string; interpolation is not allowed in types",self.source,expression.span)),
+            }
         } else if self.eat("(") {
             let value = self.ty()?;
             self.expect(")")?;
@@ -1273,7 +1322,8 @@ impl Parser<'_> {
                 sink.role(crate::formatter::Role::Unary);
             }
             self.expect(&op)?;
-            Expr { cache_id: crate::ast::next_expr_identity(), 
+            Expr {
+                cache_id: crate::ast::next_expr_identity(),
                 kind: ExprKind::Unary(op, Box::new(self.expr(7)?)),
                 span,
             }
@@ -1295,7 +1345,8 @@ impl Parser<'_> {
             }
             if self.eat(".") {
                 let member = self.name()?;
-                left = Expr { cache_id: crate::ast::next_expr_identity(), 
+                left = Expr {
+                    cache_id: crate::ast::next_expr_identity(),
                     kind: ExprKind::Member(Box::new(left), member),
                     span: Span {
                         end: self.offset,
@@ -1307,7 +1358,8 @@ impl Parser<'_> {
             if self.eat("[") {
                 let index = self.expr(0)?;
                 self.expect("]")?;
-                left = Expr { cache_id: crate::ast::next_expr_identity(), 
+                left = Expr {
+                    cache_id: crate::ast::next_expr_identity(),
                     kind: ExprKind::Index(Box::new(left), Box::new(index)),
                     span: Span {
                         end: self.offset,
@@ -1348,7 +1400,8 @@ impl Parser<'_> {
                 };
             if self.eat("(") {
                 let args = self.arguments(Some(&left))?;
-                left = Expr { cache_id: crate::ast::next_expr_identity(), 
+                left = Expr {
+                    cache_id: crate::ast::next_expr_identity(),
                     kind: ExprKind::Call {
                         callee: Box::new(left),
                         types,
@@ -1403,7 +1456,8 @@ impl Parser<'_> {
             } else {
                 precedence + 1
             })?;
-            left = Expr { cache_id: crate::ast::next_expr_identity(), 
+            left = Expr {
+                cache_id: crate::ast::next_expr_identity(),
                 kind: ExprKind::Binary(op, Box::new(left), Box::new(right)),
                 span,
             };
@@ -1504,7 +1558,8 @@ impl Parser<'_> {
                     }
                 }
                 span.end = self.offset;
-                return Ok(Expr { cache_id: crate::ast::next_expr_identity(), 
+                return Ok(Expr {
+                    cache_id: crate::ast::next_expr_identity(),
                     kind: ExprKind::Dict(entries),
                     span,
                 });
@@ -1531,6 +1586,10 @@ impl Parser<'_> {
             return Err(self.error("expected an expression"));
         };
         span.end = self.offset;
-        Ok(Expr { cache_id: crate::ast::next_expr_identity(),  kind, span })
+        Ok(Expr {
+            cache_id: crate::ast::next_expr_identity(),
+            kind,
+            span,
+        })
     }
 }

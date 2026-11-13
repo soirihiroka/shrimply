@@ -1,9 +1,9 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
-use shrimply_resource_pipeline::cache::Cache;
 use pango::Alignment;
 pub use shrimply_fonts::native::register_application_font;
 use shrimply_fonts::native::{self as fonts, FontEpoch};
+use shrimply_resource_pipeline::cache::Cache;
 use skia_safe::{
     AlphaType, ColorType, Data, IRect, Image, ImageInfo, Matrix, Path, PathBuilder, Rect, Region,
 };
@@ -83,7 +83,11 @@ impl ColorGlyphLayout {
             )
             .expect("create native color glyph image"),
         );
-        self.images.borrow_mut().insert(key, Rc::clone(&image), width as usize * height as usize * 4);
+        self.images.borrow_mut().insert(
+            key,
+            Rc::clone(&image),
+            width as usize * height as usize * 4,
+        );
         image
     }
 
@@ -205,9 +209,7 @@ pub fn layout(
         tracking: tracking.to_bits(),
         line_height: line_height.to_bits(),
     };
-    if let Some(layout) =
-        LAYOUTS.with(|layouts| layouts.borrow_mut().get(&key))
-    {
+    if let Some(layout) = LAYOUTS.with(|layouts| layouts.borrow_mut().get(&key)) {
         return layout;
     }
 
@@ -222,11 +224,25 @@ pub fn layout(
     ));
     key.font_epoch = fonts::system_font_epoch().expect("load shared native font map");
     LAYOUTS.with(|layouts| {
-        let bytes = std::mem::size_of::<TextLayout>() + std::mem::size_of::<Key>() + key.text.len()
+        let bytes = std::mem::size_of::<TextLayout>()
+            + std::mem::size_of::<Key>()
+            + key.text.len()
             + layout.path.approximate_bytes_used()
-            + layout.subpaths.iter().map(Path::approximate_bytes_used).sum::<usize>()
-            + layout.word_subpaths.iter().map(Path::approximate_bytes_used).sum::<usize>()
-            + layout.mask_units.iter().map(|unit|unit.path.approximate_bytes_used()).sum::<usize>();
+            + layout
+                .subpaths
+                .iter()
+                .map(Path::approximate_bytes_used)
+                .sum::<usize>()
+            + layout
+                .word_subpaths
+                .iter()
+                .map(Path::approximate_bytes_used)
+                .sum::<usize>()
+            + layout
+                .mask_units
+                .iter()
+                .map(|unit| unit.path.approximate_bytes_used())
+                .sum::<usize>();
         layouts.borrow_mut().insert(key, Rc::clone(&layout), bytes);
     });
     layout
@@ -262,7 +278,12 @@ fn build(
     let v_align = text.v_align.value_at(time);
     let font_style = text.font_style.value_at(time);
     let native = fonts::shaping::layout(
-        &text.font_families.iter().map(|font| font.name().to_owned()).collect::<Vec<_>>().into(),
+        &text
+            .font_families
+            .iter()
+            .map(|font| font.name().to_owned())
+            .collect::<Vec<_>>()
+            .into(),
         if content.is_empty() { " " } else { content },
         &fonts::shaping::Options {
             weight: font_weight.round().clamp(1.0, 1000.0) as i32,
@@ -271,7 +292,10 @@ fn build(
                 TextFontStyle::Italic => pango::Style::Italic,
                 TextFontStyle::Oblique => pango::Style::Oblique,
             },
-            variations: normalized_variations(text).into_iter().map(|(axis,value)|(axis,f32::from_bits(value))).collect(),
+            variations: normalized_variations(text)
+                .into_iter()
+                .map(|(axis, value)| (axis, f32::from_bits(value)))
+                .collect(),
             vertical: direction == TextDirection::Vertical,
             alignment: match direction {
                 TextDirection::Horizontal => match h_align {
@@ -290,7 +314,8 @@ fn build(
             line_spacing: f64::from(line_height.max(f32::EPSILON)),
             ..fonts::shaping::Options::new(f64::from(font_size.max(1.0)))
         },
-    ).expect("shape shared native text layout");
+    )
+    .expect("shape shared native text layout");
     let layout = native.layout();
     let color_ranges = color_glyph_ranges(layout);
     let is_color = |index: usize| color_ranges.iter().any(|range| range.contains(&index));
@@ -350,13 +375,26 @@ fn build(
         shaped.bounds[3] - shaped.origin[1],
     ];
     let mut path = PathBuilder::new();
-    let point = |[x,y]:[f64;2]| ((x - shaped.origin[0] - min_x) as f32, (y - shaped.origin[1] - min_y) as f32);
+    let point = |[x, y]: [f64; 2]| {
+        (
+            (x - shaped.origin[0] - min_x) as f32,
+            (y - shaped.origin[1] - min_y) as f32,
+        )
+    };
     for segment in shaped.outline.iter() {
         match segment {
-            shrimply_fonts::TextSegment::Move(to) => {path.move_to(point(*to));}
-            shrimply_fonts::TextSegment::Line(to) => {path.line_to(point(*to));}
-            shrimply_fonts::TextSegment::Curve(a,b,to) => {path.cubic_to(point(*a),point(*b),point(*to));}
-            shrimply_fonts::TextSegment::Close => {path.close();}
+            shrimply_fonts::TextSegment::Move(to) => {
+                path.move_to(point(*to));
+            }
+            shrimply_fonts::TextSegment::Line(to) => {
+                path.line_to(point(*to));
+            }
+            shrimply_fonts::TextSegment::Curve(a, b, to) => {
+                path.cubic_to(point(*a), point(*b), point(*to));
+            }
+            shrimply_fonts::TextSegment::Close => {
+                path.close();
+            }
         }
     }
     let base_path: Path = path.into();
@@ -395,7 +433,10 @@ fn build(
         offset: glam::Vec2::new(bounds.left, bounds.top),
         size: glam::Vec2::new(bounds.width(), bounds.height()),
         silhouette: Path::default(),
-        images: RefCell::new(Cache::new(MAX_COLOR_GLYPH_CACHE_BYTES,MAX_COLOR_GLYPH_CACHE_ENTRIES)),
+        images: RefCell::new(Cache::new(
+            MAX_COLOR_GLYPH_CACHE_BYTES,
+            MAX_COLOR_GLYPH_CACHE_ENTRIES,
+        )),
     });
 
     let mut subpaths = character_rects

@@ -906,3 +906,101 @@ fn template_literals_keep_string_highlighting_and_typed_interpolation_names() {
         "{tokens:?}"
     );
 }
+
+#[test]
+fn markup_utility_completion_replaces_full_hyphenated_tokens_and_hover_resolves_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    // UTF-16 edit ranges must remain correct after non-BMP source characters.
+    let source = "let title=\"🙂\"; let panel=<Box w-180.5 items-center h-50% />\nwait(1s)";
+    let position = |needle: &str, inside: usize| {
+        let start = source.find(needle).unwrap();
+        json!({"line":0,"character":source[..start + inside].encode_utf16().count()})
+    };
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification("textDocument/didOpen", json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}})),
+        request(2,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":position("w-180.5",2)})),
+        request(3,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":position("items-center",6)})),
+        request(4,"textDocument/hover",json!({"textDocument":{"uri":uri},"position":position("h-50%",3)})),
+        notification("textDocument/didChange",json!({"textDocument":{"uri":uri,"version":2},"contentChanges":[{"text":"let panel=<Box w-"}]})),
+        request(5,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":{"line":0,"character":17}})),
+    ];
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    assert!(reply(&replies,1)["result"]["capabilities"]["completionProvider"]["triggerCharacters"].as_array().unwrap().contains(&json!("-")));
+    let items = reply(&replies,2)["result"]["items"].as_array().unwrap();
+    let width = items.iter().find(|item| item["label"] == "w-180").unwrap();
+    assert_eq!(width["detail"],"width=180pt");
+    assert_eq!(width["textEdit"]["range"]["start"],position("w-180.5",0));
+    assert_eq!(width["textEdit"]["range"]["end"],position("w-180.5",7));
+    let align = reply(&replies,3)["result"]["items"].as_array().unwrap();
+    assert!(align.iter().any(|item| item["label"] == "items-end"));
+    assert!(!align.iter().any(|item| item["label"] == "Circle"));
+    let hover=reply(&replies,4)["result"]["contents"]["value"].as_str().unwrap();
+    assert!(hover.contains("height=50%"),"{hover}");
+    assert!(hover.contains("parent layout box"),"{hover}");
+    let incomplete=reply(&replies,5)["result"]["items"].as_array().unwrap();
+    assert!(incomplete.iter().any(|item| item["label"] == "w-full"));
+}
+
+#[test]
+fn markup_utility_diagnostics_are_specific_and_explicit_properties_are_intentional() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let cases = [
+        ("let panel=<Box widht-20 />", "unknown native utility 'widht-20'"),
+        ("let panel=<Box w-20px />", "nonnegative logical point value"),
+        ("let panel=<Line rounded-8 />", "does not support"),
+        ("let panel=<Box w-100 w-180 />", "overridden"),
+        ("let panel=<Box w-100 w-100 />", "repeated"),
+        ("let panel=<Box w-100 w-180 width={220pt} />", ""),
+    ];
+    for (index,(source,expected)) in cases.iter().enumerate() {
+        let mut messages=vec![initialize(dir.path()),notification("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":"sanim","version":index+1,"text":source}}))];
+        finish(&mut messages);
+        let (_,replies)=session(&messages);
+        let diagnostics=replies.iter().filter(|reply| reply["method"]=="textDocument/publishDiagnostics").flat_map(|reply| reply["params"]["diagnostics"].as_array().unwrap());
+        let messages=diagnostics.map(|diagnostic| diagnostic["message"].as_str().unwrap()).collect::<Vec<_>>();
+        if expected.is_empty() {
+            assert!(!messages.iter().any(|message| message.contains("overridden") || message.contains("repeated")),"{messages:?}");
+        } else {
+            assert!(messages.iter().any(|message| message.contains(expected)),"{source}: {messages:?}");
+        }
+    }
+}
+
+#[test]
+fn utility_completion_never_treats_strings_comments_or_attribute_values_as_attributes() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    for source in ["let value=\"<Box w-\"", "# <Box w-", "let panel=<Box id=\"w-\" />", "let view=<CodeView lang=\"python\">\n<Box w-\n</CodeView>"] {
+        let offset=source.find("w-").unwrap()+2;
+        let prefix=&source[..offset];
+        let line=prefix.bytes().filter(|byte| *byte==b'\n').count();
+        let character=prefix.rsplit('\n').next().unwrap().encode_utf16().count();
+        let mut messages=vec![initialize(dir.path()),notification("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}})),request(2,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":{"line":line,"character":character}}))];
+        finish(&mut messages);
+        let (_,replies)=session(&messages);
+        assert!(!reply(&replies,2)["result"]["items"].as_array().unwrap().iter().any(|item| item["label"]=="w-full"),"{source}");
+    }
+}
+
+#[test]
+#[ignore = "manual editor latency benchmark"]
+fn markup_utility_completion_benchmark() {
+    let dir=tempfile::tempdir().unwrap();
+    let uri=format!("file://{}",dir.path().join("main.sanim").display());
+    let source="let panel=<Box w-180 items-center h-50% />\nwait(1s)";
+    let mut messages=vec![initialize(dir.path()),notification("textDocument/didOpen",json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}))];
+    const REQUESTS:u64=500;
+    for index in 0..REQUESTS {
+        messages.push(request(index+2,"textDocument/completion",json!({"textDocument":{"uri":uri},"position":{"line":0,"character":17}})));
+    }
+    finish(&mut messages);
+    let started=std::time::Instant::now();
+    let (_,replies)=session(&messages);
+    let elapsed=started.elapsed();
+    assert!(reply(&replies,2)["result"]["items"].as_array().unwrap().iter().any(|item|item["label"]=="w-full"));
+    println!("native utility completion: {REQUESTS} requests in {elapsed:?}, {:.3} ms/request including framing, initial analysis and JSON",elapsed.as_secs_f64()*1000.0/REQUESTS as f64);
+}

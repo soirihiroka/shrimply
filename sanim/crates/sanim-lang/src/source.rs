@@ -1,5 +1,5 @@
 use sanim_core::digest;
-pub use shrimply_asset::remote::{is_url as is_remote,invalidate as invalidate_remote};
+pub use shrimply_asset::remote::{invalidate as invalidate_remote, is_url as is_remote};
 use std::{
     collections::BTreeMap,
     path::{Component, Path, PathBuf},
@@ -69,7 +69,6 @@ pub trait Sources {
     }
 }
 
-
 #[derive(Clone, Debug, Default)]
 pub struct MemorySources {
     pub files: BTreeMap<String, Vec<u8>>,
@@ -132,17 +131,16 @@ impl Sources for FileSources {
         }
         Ok(bytes)
     }
-    fn read_snapshot(&self,path:&str)->Result<(Arc<Vec<u8>>,String),String> {
+    fn read_snapshot(&self, path: &str) -> Result<(Arc<Vec<u8>>, String), String> {
         if is_remote(path) {
-            let download=shrimply_asset::remote::load(path,self.max_bytes)?;
-            Ok((download.bytes.clone(),download.fingerprint.clone()))
+            let download = shrimply_asset::remote::load(path, self.max_bytes)?;
+            Ok((download.bytes.clone(), download.fingerprint.clone()))
         } else {
-            let bytes=Arc::new(self.read(path)?);
-            let fingerprint=digest(&bytes);
-            Ok((bytes,fingerprint))
+            let bytes = Arc::new(self.read(path)?);
+            let fingerprint = digest(&bytes);
+            Ok((bytes, fingerprint))
         }
     }
-
 }
 
 pub fn resolve(module: &str, path: &str) -> Result<String, String> {
@@ -177,10 +175,13 @@ pub(crate) struct Snapshot<'a> {
 impl Snapshot<'_> {
     pub fn read(&mut self, path: &str) -> Result<Arc<Vec<u8>>, String> {
         if !self.reads.contains_key(path) {
-            let read = self.provider.read_snapshot(path).map(|(bytes, fingerprint)| {
-                self.hashes.borrow_mut().insert(path.into(), fingerprint);
-                bytes
-            });
+            let read = self
+                .provider
+                .read_snapshot(path)
+                .map(|(bytes, fingerprint)| {
+                    self.hashes.borrow_mut().insert(path.into(), fingerprint);
+                    bytes
+                });
             self.reads.insert(path.into(), read);
         }
         self.reads[path].clone()

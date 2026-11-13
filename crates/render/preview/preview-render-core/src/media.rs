@@ -479,7 +479,10 @@ fn load(
             Kind::Image => {
                 let bytes = entry.snapshot.read()?;
                 let prepared = shrimply_drawing_skia::media::prepare(Arc::new(bytes))?;
-                let image = prepared.bitmap().ok_or("image source is SVG; use the SVG media path")?.clone();
+                let image = prepared
+                    .bitmap()
+                    .ok_or("image source is SVG; use the SVG media path")?
+                    .clone();
                 if let Some(modifier) = &source.vectorize {
                     let width = u32::try_from(image.width())
                         .map_err(|_| "Vectorize image width is negative")?;

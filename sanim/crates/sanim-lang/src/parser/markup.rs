@@ -2,9 +2,11 @@
 use super::*;
 
 fn call(name: &str, args: Vec<(Option<String>, Expr)>, span: Span) -> Expr {
-    Expr { cache_id: crate::ast::next_expr_identity(), 
+    Expr {
+        cache_id: crate::ast::next_expr_identity(),
         kind: ExprKind::Call {
-            callee: Box::new(Expr { cache_id: crate::ast::next_expr_identity(), 
+            callee: Box::new(Expr {
+                cache_id: crate::ast::next_expr_identity(),
                 kind: ExprKind::Name(name.into()),
                 span: Span {
                     end: span.start,
@@ -25,7 +27,8 @@ fn tagged_call(name: &str, args: Vec<(Option<String>, Expr)>, span: Span, tag_sp
     expression
 }
 fn string(value: String, span: Span) -> Expr {
-    Expr { cache_id: crate::ast::next_expr_identity(), 
+    Expr {
+        cache_id: crate::ast::next_expr_identity(),
         kind: ExprKind::String(value),
         span,
     }
@@ -123,6 +126,19 @@ impl Parser<'_> {
         tag_span.end = tag_span.start + tag.len();
         self.highlight(tag_span.start, tag_span.end, "tag");
         let constructor = tag.as_str();
+        let opening = self.markup.as_mut().map(|openings| {
+            let index = openings.len();
+            openings.push(super::MarkupOpening {
+                name: tag.clone(),
+                span: Span {
+                    start: tag_span.end,
+                    end: usize::MAX,
+                    ..tag_span
+                },
+                attributes: vec![],
+            });
+            index
+        });
         let mut args: Vec<(Option<String>, Expr)> = Vec::new();
         let mut utilities: Vec<(String, Expr)> = Vec::new();
         loop {
@@ -132,6 +148,9 @@ impl Parser<'_> {
                 self.highlight(self.offset, self.offset + 2, "punctuation");
                 self.advance(2);
                 span.end = self.offset;
+                if let (Some(index), Some(openings)) = (opening, &mut self.markup) {
+                    openings[index].span.end = self.offset - 2;
+                }
                 return Ok(tagged_call(
                     constructor,
                     merge_utilities(args, utilities),
@@ -142,6 +161,9 @@ impl Parser<'_> {
             if self.rest().starts_with('>') {
                 self.highlight(self.offset, self.offset + 1, "punctuation");
                 self.advance(1);
+                if let (Some(index), Some(openings)) = (opening, &mut self.markup) {
+                    openings[index].span.end = self.offset - 1;
+                }
                 break;
             }
             if self.eof() {
@@ -175,6 +197,20 @@ impl Parser<'_> {
                     parameter.name == attribute && parameter.ty == sanim_core::Type::Bool
                 })
             });
+            let attribute_index = if let (Some(index), Some(openings)) = (opening, &mut self.markup)
+            {
+                let attributes = &mut openings[index].attributes;
+                let attribute_index = attributes.len();
+                attributes.push(super::MarkupAttribute {
+                    name: attribute.clone(),
+                    span: attribute_span,
+                    value: None,
+                    utility: !assigned && !boolean,
+                });
+                Some(attribute_index)
+            } else {
+                None
+            };
             if !assigned && !boolean {
                 let lowered = crate::utilities::lower(constructor, &attribute, attribute_span)
                     .map_err(|message| {
@@ -196,6 +232,15 @@ impl Parser<'_> {
                 return Err(self.error(format!("duplicate '{attribute}' attribute on <{tag}>")));
             }
             let mut value = if self.eat("=") {
+                if let (Some(index), Some(attribute), Some(openings)) =
+                    (opening, attribute_index, &mut self.markup)
+                {
+                    openings[index].attributes[attribute].value = Some(Span {
+                        start: self.offset,
+                        end: usize::MAX,
+                        ..attribute_span
+                    });
+                }
                 if self.quoted() {
                     self.string_expression()?
                 } else if self.eat("{") {
@@ -206,11 +251,17 @@ impl Parser<'_> {
                     return Err(self.error(format!("attribute '{attribute}' requires a quoted string or {{expression}}; write {attribute}={{value}}")));
                 }
             } else {
-                Expr { cache_id: crate::ast::next_expr_identity(), 
+                Expr {
+                    cache_id: crate::ast::next_expr_identity(),
                     kind: ExprKind::Bool(true),
                     span: attribute_span,
                 }
             };
+            if let (Some(index), Some(attribute), Some(openings)) =
+                (opening, attribute_index, &mut self.markup)
+            {
+                openings[index].attributes[attribute].value = Some(value.span);
+            }
             // Constructor metadata owns the type rule. Color-valued string
             // attributes are just the existing Color(...) call, never CSS parsing.
             if crate::prelude::builtin(constructor)
@@ -401,7 +452,8 @@ impl Parser<'_> {
             if !text.is_empty() {
                 args.push((
                     Some("text".into()),
-                    Expr { cache_id: crate::ast::next_expr_identity(), 
+                    Expr {
+                        cache_id: crate::ast::next_expr_identity(),
                         kind: ExprKind::Template(text),
                         span: body_span,
                     },
@@ -418,7 +470,8 @@ impl Parser<'_> {
             }
             args.push((
                 Some("children".into()),
-                Expr { cache_id: crate::ast::next_expr_identity(), 
+                Expr {
+                    cache_id: crate::ast::next_expr_identity(),
                     kind: ExprKind::List(children),
                     span,
                 },

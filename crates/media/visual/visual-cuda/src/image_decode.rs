@@ -707,18 +707,36 @@ fn decode_still_image(
 }
 
 fn decode_still_rgba(file: &Path) -> Result<DecodedRgba, String> {
-    let encoded = std::fs::read(file).map_err(|error| format!("could not read {}: {error}", file.display()))?;
+    let encoded = std::fs::read(file)
+        .map_err(|error| format!("could not read {}: {error}", file.display()))?;
     if skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&encoded)).is_some() {
         let prepared = shrimply_drawing_skia::media::prepare(std::sync::Arc::new(encoded))?;
-        let image = prepared.bitmap().expect("bitmap codec recognized its source");
+        let image = prepared
+            .bitmap()
+            .expect("bitmap codec recognized its source");
         let [width, height] = prepared.dimensions();
         let row_bytes = width as usize * 4;
         let mut pixels = vec![0u8; row_bytes * height as usize];
-        let info = skia_safe::ImageInfo::new((width as i32, height as i32), skia_safe::ColorType::RGBA8888, skia_safe::AlphaType::Unpremul, None);
-        if !image.read_pixels(&info, &mut pixels, row_bytes, (0, 0), skia_safe::image::CachingHint::Allow) {
+        let info = skia_safe::ImageInfo::new(
+            (width as i32, height as i32),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Unpremul,
+            None,
+        );
+        if !image.read_pixels(
+            &info,
+            &mut pixels,
+            row_bytes,
+            (0, 0),
+            skia_safe::image::CachingHint::Allow,
+        ) {
             return Err(format!("could not read decoded bitmap {}", file.display()));
         }
-        return Ok(DecodedRgba { pixels, width, height });
+        return Ok(DecodedRgba {
+            pixels,
+            width,
+            height,
+        });
     }
     // Keep FFmpeg for still formats outside Skia's installed codec set.
 

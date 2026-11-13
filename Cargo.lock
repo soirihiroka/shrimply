@@ -5236,7 +5236,6 @@ dependencies = [
  "num-traits",
  "serde",
  "serde_json",
- "sha2",
  "shrimply-fonts",
  "shrimply-math-color",
  "shrimply-resource-pipeline",
@@ -5283,6 +5282,15 @@ dependencies = [
  "sanim-core",
  "sanim-data",
  "serde",
+ "serde_json",
+ "shrimply-asset",
+]
+
+[[package]]
+name = "sanim-lsp"
+version = "0.1.0"
+dependencies = [
+ "sanim-lang",
  "serde_json",
 ]
 
@@ -5650,7 +5658,9 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "notify",
+ "reqwest",
  "serde",
+ "shrimply-resource-pipeline",
  "tempfile",
  "tracing",
 ]
@@ -5741,6 +5751,7 @@ dependencies = [
  "base64 0.23.1",
  "clap 4.6.7",
  "sanim-cli",
+ "sanim-lsp",
  "schemars",
  "serde",
  "serde_json",
@@ -6026,7 +6037,6 @@ name = "shrimply-drawing-skia"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
- "sha2",
  "shrimply-fonts",
  "shrimply-math-color",
  "shrimply-math-geometry",
@@ -7589,6 +7599,9 @@ dependencies = [
 [[package]]
 name = "shrimply-resource-pipeline"
 version = "0.1.0"
+dependencies = [
+ "sha2",
+]
 
 [[package]]
 name = "shrimply-rhubarb-lip-sync"
@@ -7781,9 +7794,9 @@ dependencies = [
  "glam 0.34.1",
  "hashbrown 0.17.1",
  "imagesize",
- "reqwest",
  "serde_json",
  "shrimply-3dgs-core",
+ "shrimply-asset",
  "shrimply-audio-engine",
  "shrimply-blender-core",
  "shrimply-components-skia",

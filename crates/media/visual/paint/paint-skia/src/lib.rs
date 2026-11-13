@@ -484,7 +484,9 @@ fn decode_texture_mask(asset: &Asset, snapshot: &AssetSnapshot) -> Result<Image,
         })?;
     let prepared = shrimply_drawing_skia::media::prepare(std::sync::Arc::new(encoded))
         .map_err(|_| PaintRenderError::UndecodableTexture(path.to_path_buf()))?;
-    let decoded = prepared.bitmap().ok_or_else(|| PaintRenderError::UndecodableTexture(path.to_path_buf()))?;
+    let decoded = prepared
+        .bitmap()
+        .ok_or_else(|| PaintRenderError::UndecodableTexture(path.to_path_buf()))?;
     let dimensions = decoded.dimensions();
     let width = usize::try_from(dimensions.width)
         .ok()

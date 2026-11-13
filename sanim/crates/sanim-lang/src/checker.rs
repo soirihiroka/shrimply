@@ -691,6 +691,7 @@ impl Checker<'_> {
                 .ok_or_else(|| self.error("S105", "generic type budget exceeded", span))?,
         );
         let depends = match expr {
+            TypeExpr::StringLiteral(_) => false,
             TypeExpr::Signal(inner) => self.validate_template(inner, variables, depth + 1, span)?,
             TypeExpr::Named(name, args) => {
                 if variables.contains_key(name) {
@@ -778,6 +779,7 @@ impl Checker<'_> {
                 .ok_or_else(|| self.error("S105", "resolved type budget exceeded", span))?,
         );
         match expr {
+            TypeExpr::StringLiteral(value) => Ok(Type::StringLiteral(value.clone())),
             TypeExpr::Signal(inner) => Ok(Type::Signal(Box::new(self.resolve(
                 inner,
                 variables,
@@ -952,7 +954,11 @@ impl Checker<'_> {
                             self.expect(expected, &ty, value.span)?;
                         }
                     }
-                    let ty = expected.unwrap_or(ty);
+                    let ty = expected.unwrap_or_else(|| {
+                        if *kind==BindingKind::Let && let ExprKind::String(value)=&value.kind {
+                            Type::StringLiteral(value.clone())
+                        } else {ty}
+                    });
                     if ty.contains_signal() && !matches!(ty, Type::Signal(_)) {
                         return Err(self.error("S106","containers hold value snapshots; put sig around the entire value type instead, for example sig List<Number>",statement.span));
                     }
@@ -1238,8 +1244,10 @@ impl Checker<'_> {
                     .map_err(|e| self.error("S119", e, expr.span))?
                     .unit,
             )),
-            ExprKind::String(_) => {
-                if crate::templates::expected(expected) {
+            ExprKind::String(value) => {
+                if expected.is_some_and(|ty|ty.string_literals().is_some()) {
+                    Ok(Type::StringLiteral(value.clone()))
+                } else if crate::templates::expected(expected) {
                     self.template_expressions
                         .insert((expr.span.start, expr.span.end), Type::Template);
                     Ok(Type::Template)
@@ -1257,7 +1265,10 @@ impl Checker<'_> {
                 if let Some(value) = prelude::values().get(name.as_str()) {
                     Ok(value.ty())
                 } else {
-                    env.get(name).ok_or_else(||self.error("S120",format!("unknown name '{name}'. Standard constructors such as Circle and Color need no import; user names are case-sensitive."),expr.span)).and_then(|ty|self.copy_type(if let Type::Signal(inner)=ty {inner}else{ty},expr.span))
+                    env.get(name).ok_or_else(|| {
+                        let hint=expected.and_then(Type::string_literals).filter(|values|values.contains(&name.as_str())).map(|_|format!(" Did you mean {name:?}? This argument expects a quoted string value ({expected}).",expected=expected.expect("literal context"))).unwrap_or_default();
+                        self.error("S120",format!("unknown name '{name}'.{hint} Standard constructors such as Circle and Color need no import; user names are case-sensitive."),expr.span)
+                    }).and_then(|ty|self.copy_type(if let Type::Signal(inner)=ty {inner}else{ty},expr.span))
                 }
             }
             ExprKind::List(items) => {
@@ -1412,7 +1423,8 @@ impl Checker<'_> {
                 );
                 let mut all = vec![(None, *base.clone())];
                 let method_args = if builtin.name == "DataFrame.assign" {
-                    crate::dataframe::named_assignments(args.clone(), |columns| Expr { cache_id: crate::ast::next_expr_identity(), 
+                    crate::dataframe::named_assignments(args.clone(), |columns| Expr {
+                        cache_id: crate::ast::next_expr_identity(),
                         kind: ExprKind::Record(columns),
                         span: expr.span,
                     })

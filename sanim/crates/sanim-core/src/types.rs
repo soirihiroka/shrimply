@@ -9,6 +9,7 @@ pub enum Type {
     Unit,
     Bool,
     String,
+    StringLiteral(String),
     Code(crate::code::Language),
     Template,
     Signal(Box<Type>),
@@ -141,12 +142,27 @@ impl Type {
         alternatives
             .sort_by_cached_key(|ty| serde_json::to_vec(ty).expect("serializable semantic type"));
         alternatives.dedup();
+        if alternatives.contains(&Self::String) {
+            alternatives.retain(|ty| !matches!(ty,Self::StringLiteral(_)));
+        }
         match alternatives.len() {
             0 => Err("a union type requires at least one alternative".into()),
             1 => Ok(alternatives
                 .pop()
                 .expect("one normalized union alternative")),
             _ => Ok(Self::Union(alternatives)),
+        }
+    }
+    /// Closed string choices, shared by diagnostics, completions and editors.
+    /// An unrestricted String or a mixed non-string union has no finite choices.
+    pub fn string_literals(&self) -> Option<Vec<&str>> {
+        match self {
+            Self::StringLiteral(value) => Some(vec![value.as_str()]),
+            Self::Union(types) => types.iter().try_fold(Vec::new(), |mut values,ty| {
+                values.extend(ty.string_literals()?);
+                Some(values)
+            }),
+            _ => None,
         }
     }
     pub fn unresolved(&self) -> bool {
@@ -226,6 +242,7 @@ impl Type {
             || matches!(actual,Self::BoundedVariable(_,bound) if matches!(bound.as_ref(),TypeBound::Type(ty) if self.accepts(ty)))
             || matches!(self, Type::Unknown)
             || match (self, actual) {
+                (Self::String, Self::StringLiteral(_)) => true,
                 (Self::Code(crate::code::Language::Auto), Self::Code(_)) => true,
                 (Self::Vector(n, None), Self::Vector(m, _)) => n == m,
                 (Self::Signal(a), Self::Signal(b)) => a.accepts(b),
@@ -249,6 +266,7 @@ impl Type {
         match self {
             Self::Bool
             | Self::String
+            | Self::StringLiteral(_)
             | Self::Code(_)
             | Self::Numeric(_)
             | Self::Fraction
@@ -344,6 +362,7 @@ impl std::fmt::Display for Type {
             Self::Unit => write!(f, "Unit"),
             Self::Bool => write!(f, "Bool"),
             Self::String => write!(f, "String"),
+            Self::StringLiteral(value) => write!(f, "{}",serde_json::to_string(&value.replace('{',"{{").replace('}',"}}" )).expect("string literal serializes")),
             Self::Code(language) => write!(f, "Code<{}>", language.name()),
             Self::Template => write!(f, "Template"),
             Self::Signal(t) => write!(f, "sig {t}"),
@@ -435,6 +454,12 @@ impl std::fmt::Display for Type {
 pub struct Color(pub [Fraction; 4]);
 
 impl Color {
+    /// Shared Adwaita names, used by editors without copying the palette.
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        shrimply_math_color::Color::ADWAITA
+            .iter()
+            .map(|(name, _)| *name)
+    }
     pub fn parse(text: &str) -> Result<Self, String> {
         if let Some((_, color)) = shrimply_math_color::Color::ADWAITA
             .iter()

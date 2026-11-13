@@ -6,7 +6,6 @@ mod charts;
 mod checker;
 mod code_view;
 pub mod dataframe;
-mod utilities;
 mod effects;
 mod eval;
 #[cfg(test)]
@@ -25,6 +24,7 @@ mod scrolling;
 pub mod source;
 mod timing;
 mod type_algebra;
+pub mod utilities;
 pub mod watch;
 
 pub use checker::{Checked as CheckedModule, NativeMethod};

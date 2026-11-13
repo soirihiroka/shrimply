@@ -45,13 +45,15 @@ run:
 build:
 	$(CARGO) build --workspace --exclude sanim-lsp --release
 
-.PHONY: lsp-build lsp-check lsp-bench lsp-install
+.PHONY: lsp-build lsp-check lsp-bench lsp-utility-bench lsp-install
 lsp-install: lsp-build
 	mkdir -p "$(LSP_INSTALL_DIR)"
 	install -m 755 "$(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)/release/sanim-lsp" "$(LSP_INSTALL_DIR)/.sanim-lsp.new"
 	mv -f "$(LSP_INSTALL_DIR)/.sanim-lsp.new" "$(LSP_INSTALL_DIR)/sanim-lsp"
 lsp-bench:
 	$(CARGO) test -p sanim-lsp --test protocol incremental_analysis_benchmark -- --ignored --nocapture
+lsp-utility-bench:
+	$(CARGO) test -p sanim-lsp --test protocol markup_utility_completion_benchmark -- --ignored --nocapture
 lsp-build:
 	$(CARGO) build -p sanim-lsp --release
 lsp-check:
@@ -194,6 +196,8 @@ code-view-bench:
 .PHONY: runtime-watch-check
 .PHONY: hot-reload-io-check hot-reload-memory-bench
 hot-reload-io-check:
+	$(CARGO) test -p sanim-core --test reactive reactive_edits_invalidate_only_reachable_elements_after_their_birth
+	$(CARGO) test -p sanim-core --test list_views changed_signals_on_future_list_items_invalidate_the_mounted_view_only
 	$(CARGO) test -p sanim-lang --test hot_reload_io
 	$(CARGO) test -p sanim-runtime --lib watcher::tests
 	$(CARGO) test -p sanim-runtime --test watching scalar_hot_edits_release_old_revisions_and_preserve_glyphs_and_prefix_frames

@@ -932,9 +932,7 @@ impl ColorPicker {
         action::attach(
             &well,
             move |control| {
-                let well = control
-                    .downcast_ref::<NSColorWell>()
-                    .expect("color sender");
+                let well = control.downcast_ref::<NSColorWell>().expect("color sender");
                 if well.window().is_none() || well.isHiddenOrHasHiddenAncestor() {
                     well.deactivate();
                     return;

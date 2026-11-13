@@ -315,37 +315,60 @@ pub fn generate_mesh(geometry: &Geometry<'_>) -> Result<ObjMesh, Text3dError> {
 
 fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
     let native = fonts::shaping::layout(
-        &geometry.font_families.iter().map(|font|font.name().to_owned()).collect::<Vec<_>>().into(),
+        &geometry
+            .font_families
+            .iter()
+            .map(|font| font.name().to_owned())
+            .collect::<Vec<_>>()
+            .into(),
         geometry.text,
         &fonts::shaping::Options {
-            weight: geometry.font_weight.round().clamp(1.,1000.) as i32,
-            style:match geometry.font_style {
-                TextFontStyle::Normal=>pango::Style::Normal,
-                TextFontStyle::Italic=>pango::Style::Italic,
-                TextFontStyle::Oblique=>pango::Style::Oblique,
+            weight: geometry.font_weight.round().clamp(1., 1000.) as i32,
+            style: match geometry.font_style {
+                TextFontStyle::Normal => pango::Style::Normal,
+                TextFontStyle::Italic => pango::Style::Italic,
+                TextFontStyle::Oblique => pango::Style::Oblique,
             },
-            variations:geometry.font_variations.iter().filter(|variation| variation.value.is_finite() && variation.axis.len()==4 && variation.axis.bytes().all(|byte|byte.is_ascii_graphic()) && variation.axis!="wght" && variation.axis!="ital")
-                .map(|variation|(variation.axis.clone(),variation.value)).collect(),
-            vertical:geometry.direction==TextDirection::Vertical,
-            alignment:match geometry.direction {
-                TextDirection::Horizontal=>match geometry.h_align {
-                    TextHorizontalAlign::Left|TextHorizontalAlign::Fill=>Alignment::Left,
-                    TextHorizontalAlign::Center=>Alignment::Center,
-                    TextHorizontalAlign::Right=>Alignment::Right,
+            variations: geometry
+                .font_variations
+                .iter()
+                .filter(|variation| {
+                    variation.value.is_finite()
+                        && variation.axis.len() == 4
+                        && variation.axis.bytes().all(|byte| byte.is_ascii_graphic())
+                        && variation.axis != "wght"
+                        && variation.axis != "ital"
+                })
+                .map(|variation| (variation.axis.clone(), variation.value))
+                .collect(),
+            vertical: geometry.direction == TextDirection::Vertical,
+            alignment: match geometry.direction {
+                TextDirection::Horizontal => match geometry.h_align {
+                    TextHorizontalAlign::Left | TextHorizontalAlign::Fill => Alignment::Left,
+                    TextHorizontalAlign::Center => Alignment::Center,
+                    TextHorizontalAlign::Right => Alignment::Right,
                 },
-                TextDirection::Vertical=>match geometry.v_align {
-                    VerticalAlign::Top=>Alignment::Left,
-                    VerticalAlign::Middle=>Alignment::Center,
-                    VerticalAlign::Bottom=>Alignment::Right,
+                TextDirection::Vertical => match geometry.v_align {
+                    VerticalAlign::Top => Alignment::Left,
+                    VerticalAlign::Middle => Alignment::Center,
+                    VerticalAlign::Bottom => Alignment::Right,
                 },
             },
-            justify:geometry.direction==TextDirection::Horizontal && geometry.h_align==TextHorizontalAlign::Fill,
+            justify: geometry.direction == TextDirection::Horizontal
+                && geometry.h_align == TextHorizontalAlign::Fill,
             ..fonts::shaping::Options::new(LAYOUT_EM_SIZE)
         },
-    ).map_err(Text3dError)?;
-    let shaped=&native.shaped;
-    let min=Vec2::new((shaped.bounds[0]-shaped.origin[0]) as f32,(shaped.bounds[1]-shaped.origin[1]) as f32);
-    let size=Vec2::new((shaped.bounds[2]-shaped.bounds[0]) as f32,(shaped.bounds[3]-shaped.bounds[1]) as f32);
+    )
+    .map_err(Text3dError)?;
+    let shaped = &native.shaped;
+    let min = Vec2::new(
+        (shaped.bounds[0] - shaped.origin[0]) as f32,
+        (shaped.bounds[1] - shaped.origin[1]) as f32,
+    );
+    let size = Vec2::new(
+        (shaped.bounds[2] - shaped.bounds[0]) as f32,
+        (shaped.bounds[3] - shaped.bounds[1]) as f32,
+    );
     let anchor = Vec2::new(
         match geometry.h_align {
             TextHorizontalAlign::Left => 0.0,
@@ -360,8 +383,8 @@ fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
     );
     let convert = |[x, y]: [f64; 2]| {
         point(
-            ((x-shaped.origin[0]) as f32 - min.x - anchor.x) / LAYOUT_EM_SIZE as f32,
-            -((y-shaped.origin[1]) as f32 - min.y - anchor.y) / LAYOUT_EM_SIZE as f32,
+            ((x - shaped.origin[0]) as f32 - min.x - anchor.x) / LAYOUT_EM_SIZE as f32,
+            -((y - shaped.origin[1]) as f32 - min.y - anchor.y) / LAYOUT_EM_SIZE as f32,
         )
     };
     let mut output = LyonPath::builder();

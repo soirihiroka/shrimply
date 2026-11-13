@@ -74,7 +74,8 @@ impl Session {
     pub fn poll(&mut self, sources: &dyn Sources) -> Reload {
         self.poll_inner(sources, None)
     }
-    /// Publish the exact planned duration before constructing the new animation scene.
+    /// Cold loads publish a duration plan before scene construction. Hot edits
+    /// restore execution checkpoints once and publish their exact resulting duration.
     pub fn poll_with_duration(
         &mut self,
         sources: &dyn Sources,
@@ -85,7 +86,7 @@ impl Session {
     fn poll_inner(
         &mut self,
         sources: &dyn Sources,
-        probe: Option<&mut dyn FnMut(sanim_core::Fraction)>,
+        mut probe: Option<&mut dyn FnMut(sanim_core::Fraction)>,
     ) -> Reload {
         let overrides = digest(
             &serde_json::to_vec(&(
@@ -97,30 +98,43 @@ impl Session {
             ))
             .expect("serializable overrides"),
         );
-        let mut changed=self.observed.is_empty()
+        let mut changed = self.observed.is_empty()
             || self.font_environment_changed()
-            || overrides!=self.previous_overrides;
+            || overrides != self.previous_overrides;
         if !changed {
             // Source/input changes can remove an old dependency entirely. Probe
             // the entry and local resources first, stopping as soon as a change
             // is known; never fetch an obsolete remote asset before preparing
             // the new program that no longer references it.
-            let paths=std::iter::once(self.entry.as_str())
-                .chain(self.observed.keys().map(String::as_str).filter(|path|*path!=self.entry && !crate::source::is_remote(path)))
-                .chain(self.observed.keys().map(String::as_str).filter(|path|crate::source::is_remote(path)));
-            changed=paths.into_iter().any(|path| {
-                let current=match sources.read_snapshot(path) {
-                    Ok((_,fingerprint))=>fingerprint,
-                    Err(error)=>format!("error:{error}"),
+            let paths = std::iter::once(self.entry.as_str())
+                .chain(
+                    self.observed
+                        .keys()
+                        .map(String::as_str)
+                        .filter(|path| *path != self.entry && !crate::source::is_remote(path)),
+                )
+                .chain(
+                    self.observed
+                        .keys()
+                        .map(String::as_str)
+                        .filter(|path| crate::source::is_remote(path)),
+                );
+            changed = paths.into_iter().any(|path| {
+                let current = match sources.read_snapshot(path) {
+                    Ok((_, fingerprint)) => fingerprint,
+                    Err(error) => format!("error:{error}"),
                 };
-                self.observed.get(path)!=Some(&current)
+                self.observed.get(path) != Some(&current)
             });
         }
-        if !changed {return Reload::Unchanged;}
+        if !changed {
+            return Reload::Unchanged;
+        }
         self.previous_overrides = overrides;
         let mut planning_performance = vec![];
         let mut planning_micros = 0;
-        if let Some(publish) = probe {
+        let cold = self.current.is_none();
+        if let Some(publish) = probe.as_mut().filter(|_| cold) {
             let duration = if let Some(json) = &self.json_overrides {
                 self.engine.duration_json(&self.entry, sources, json)
             } else {
@@ -146,6 +160,9 @@ impl Session {
             self.engine.prepare(&self.entry, sources, &self.overrides)
         }
         .map(|mut prepared| {
+            if !cold && let Some(publish) = probe {
+                publish(prepared.animation.duration);
+            }
             prepared.statistics.prepare_micros = prepared
                 .statistics
                 .prepare_micros

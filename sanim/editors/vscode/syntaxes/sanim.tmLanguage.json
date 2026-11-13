@@ -12,6 +12,9 @@
       "include": "#strings"
     },
     {
+      "include": "#markup"
+    },
+    {
       "include": "#declarations"
     },
     {
@@ -258,6 +261,72 @@
         {
           "name": "punctuation.section.sanim",
           "match": "[{}\\[\\]()]"
+        }
+      ]
+    },
+    "markup": {
+      "patterns": [
+        {
+          "match": "(</)([A-Z][A-Za-z0-9_]*)(\\s*>)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.tag.begin.sanim"
+            },
+            "2": {
+              "name": "entity.name.tag.sanim"
+            },
+            "3": {
+              "name": "punctuation.definition.tag.end.sanim"
+            }
+          }
+        },
+        {
+          "name": "meta.tag.sanim",
+          "begin": "(<)([A-Z][A-Za-z0-9_]*)\\b",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.tag.begin.sanim"
+            },
+            "2": {
+              "name": "entity.name.tag.sanim"
+            }
+          },
+          "end": "/?>",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.tag.end.sanim"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#comments"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "name": "meta.embedded.expression.sanim",
+              "begin": "\\{",
+              "end": "\\}",
+              "patterns": [
+                {
+                  "include": "$self"
+                }
+              ]
+            },
+            {
+              "name": "entity.other.attribute-name.sanim",
+              "match": "\\b[A-Za-z_]\\w*(?=\\s*=)"
+            },
+            {
+              "name": "keyword.operator.assignment.sanim",
+              "match": "="
+            },
+            {
+              "name": "support.constant.native-utility.sanim",
+              "match": "\\b[A-Za-z_][A-Za-z0-9_.%\\-]*"
+            }
+          ]
         }
       ]
     }

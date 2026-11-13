@@ -119,6 +119,10 @@ enum Utility {
     Align(Align),
     Justify(Justify),
     Wrap,
+    Grow(u32),
+    Shrink(u32),
+    Basis(u32),
+    Border(u32),
 }
 const PRESETS: &[(&str, &[Utility])] = &[
     (
@@ -166,7 +170,182 @@ const PRESETS: &[(&str, &[Utility])] = &[
     ("text-lg", &[Utility::Font(20)]),
     ("text-xl", &[Utility::Font(24)]),
     ("title", &[Utility::Font(32)]),
+    ("grow", &[Utility::Grow(1)]),
+    ("grow-0", &[Utility::Grow(0)]),
+    ("shrink", &[Utility::Shrink(1)]),
+    ("shrink-0", &[Utility::Shrink(0)]),
+    ("flex-none", &[Utility::Grow(0), Utility::Shrink(0)]),
+    (
+        "flex-1",
+        &[Utility::Grow(1), Utility::Shrink(1), Utility::Basis(0)],
+    ),
+    ("border", &[Utility::Border(1)]),
 ];
+
+#[derive(Clone, Copy)]
+enum Values {
+    Length { relative: bool },
+    Color,
+    Border,
+    Overflow,
+}
+struct Family {
+    prefix: &'static str,
+    property: &'static str,
+    values: Values,
+}
+// Prefix order matters: axis policies precede the shorthand policy.
+const FAMILIES: &[Family] = &[
+    Family {
+        prefix: "overflow-x-",
+        property: "overflow_x",
+        values: Values::Overflow,
+    },
+    Family {
+        prefix: "overflow-y-",
+        property: "overflow_y",
+        values: Values::Overflow,
+    },
+    Family {
+        prefix: "overflow-",
+        property: "overflow",
+        values: Values::Overflow,
+    },
+    Family {
+        prefix: "w-",
+        property: "width",
+        values: Values::Length { relative: true },
+    },
+    Family {
+        prefix: "h-",
+        property: "height",
+        values: Values::Length { relative: true },
+    },
+    Family {
+        prefix: "basis-",
+        property: "flex_basis",
+        values: Values::Length { relative: true },
+    },
+    Family {
+        prefix: "p-",
+        property: "padding",
+        values: Values::Length { relative: false },
+    },
+    Family {
+        prefix: "gap-",
+        property: "gap",
+        values: Values::Length { relative: false },
+    },
+    Family {
+        prefix: "rounded-",
+        property: "radius",
+        values: Values::Length { relative: false },
+    },
+    Family {
+        prefix: "bg-",
+        property: "fill",
+        values: Values::Color,
+    },
+    Family {
+        prefix: "text-",
+        property: "fill",
+        values: Values::Color,
+    },
+    Family {
+        prefix: "border-",
+        property: "border_color",
+        values: Values::Border,
+    },
+];
+
+/// Resolved constructor arguments from the same utility lowering used by parsing.
+#[derive(Clone, Debug)]
+pub struct Description {
+    pub token: String,
+    pub properties: Vec<(String, String)>,
+}
+impl Description {
+    pub fn detail(&self) -> String {
+        self.properties
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+    pub fn markdown(&self) -> String {
+        format!(
+            "```sanim\n{}\n```\n\nNative utility `{}`. Numeric sizes use logical **pt**, independent of output resolution; `%` sizes use the parent layout box. Explicit properties override utilities.",
+            self.detail(),
+            self.token
+        )
+    }
+}
+/// Describe a valid utility, including target-element compatibility checks.
+pub fn describe(element: &str, token: &str) -> Result<Description, String> {
+    fn literal(expression: &crate::ast::Expr) -> String {
+        use crate::ast::ExprKind;
+        match &expression.kind {
+            ExprKind::Number(value) | ExprKind::Name(value) => value.clone(),
+            ExprKind::String(value) => format!("{value:?}"),
+            ExprKind::Bool(value) => value.to_string(),
+            ExprKind::Member(base, member) => format!("{}.{member}", literal(base)),
+            ExprKind::Call { callee, args, .. } => format!(
+                "{}({})",
+                literal(callee),
+                args.iter()
+                    .map(|(_, value)| literal(value))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            _ => unreachable!("native utilities only lower to literals and Color calls"),
+        }
+    }
+    Ok(Description {
+        token: token.into(),
+        properties: lower(element, token, Span::default())?
+            .into_iter()
+            .map(|(name, value)| (name, literal(&value)))
+            .collect(),
+    })
+}
+/// Concrete completions, filtered by the registered constructor's supported properties.
+/// Families accept arbitrary nonnegative sizes; these are useful starting values.
+pub fn completions(element: &str, prefix: &str) -> Vec<Description> {
+    let mut tokens: std::collections::BTreeSet<String> =
+        PRESETS.iter().map(|(name, _)| (*name).into()).collect();
+    for family in FAMILIES {
+        if !prefix.starts_with(family.prefix) && !family.prefix.starts_with(prefix) {
+            continue;
+        }
+        let mut values: Vec<String> = match family.values {
+            Values::Length { .. } | Values::Border => [0, 4, 8, 12, 16, 24, 32, 64, 100, 180, 320]
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            Values::Color => vec![],
+            Values::Overflow => Overflow::VALUES
+                .iter()
+                .map(|(name, _)| (*name).to_owned())
+                .collect(),
+        };
+        if matches!(family.values, Values::Length { relative: true }) {
+            values.extend(["full", "25%", "50%", "75%", "100%"].map(str::to_owned));
+        }
+        if matches!(family.values, Values::Color | Values::Border) {
+            values.extend(Color::names().map(str::to_owned));
+        }
+        tokens.extend(
+            values
+                .into_iter()
+                .map(|value| format!("{}{value}", family.prefix)),
+        );
+    }
+    tokens
+        .into_iter()
+        .filter(|token| token.starts_with(prefix))
+        .filter_map(|token| describe(element, &token).ok())
+        .collect()
+}
 
 /// Utilities lower to ordinary typed arguments before checking or evaluation.
 /// This keeps markup, constructors, reflection, and signals on one property path.
@@ -176,7 +355,11 @@ pub(crate) fn lower(
     span: Span,
 ) -> Result<Vec<(String, crate::ast::Expr)>, String> {
     use crate::ast::{Expr, ExprKind};
-    let expression = |kind| Expr { cache_id: crate::ast::next_expr_identity(),  kind, span };
+    let expression = |kind| Expr {
+        cache_id: crate::ast::next_expr_identity(),
+        kind,
+        span,
+    };
     let text = |value: &str| expression(ExprKind::String(value.into()));
     let number = |value: String| expression(ExprKind::Number(value));
     let color = |value: &str| -> Result<Expr, String> {
@@ -199,15 +382,7 @@ pub(crate) fn lower(
             "gradient utility '{token}' is not supported; use fill={{LinearGradient(...)}} instead"
         ));
     }
-    if let Some(mode) = token.strip_prefix("overflow-") {
-        let (key, mode) = mode
-            .strip_prefix("x-")
-            .map(|v| ("overflow_x", v))
-            .or_else(|| mode.strip_prefix("y-").map(|v| ("overflow_y", v)))
-            .unwrap_or(("overflow", mode));
-        Overflow::parse(mode)?;
-        set(key, text(mode));
-    } else if let Some((_, utilities)) = PRESETS.iter().find(|(name, _)| *name == token) {
+    if let Some((_, utilities)) = PRESETS.iter().find(|(name, _)| *name == token) {
         for utility in *utilities {
             match utility {
                 Utility::Radius(value) => set("radius", number(format!("{value}pt"))),
@@ -220,58 +395,48 @@ pub(crate) fn lower(
                 Utility::Align(value) => set("align", enum_expression(value, span)),
                 Utility::Justify(value) => set("justify", enum_expression(value, span)),
                 Utility::Wrap => set("wrap", expression(ExprKind::Bool(true))),
+                Utility::Grow(value) => set("flex_grow", number(value.to_string())),
+                Utility::Shrink(value) => set("flex_shrink", number(value.to_string())),
+                Utility::Basis(value) => set("flex_basis", number(format!("{value}pt"))),
+                Utility::Border(value) => set("border_width", number(format!("{value}pt"))),
             }
         }
-    } else if token == "grow" || token == "shrink" || token == "grow-0" || token == "shrink-0" {
-        let key = if token.starts_with("grow") {
-            "flex_grow"
-        } else {
-            "flex_shrink"
-        };
-        set(
-            key,
-            number(if token.ends_with("-0") { "0" } else { "1" }.into()),
-        );
-    } else if token == "flex-none" {
-        set("flex_grow", number("0".into()));
-        set("flex_shrink", number("0".into()));
-    } else if token == "flex-1" {
-        set("flex_grow", number("1".into()));
-        set("flex_shrink", number("1".into()));
-        set("flex_basis", number("0pt".into()));
-    } else if token == "border" {
-        set("border_width", number("1pt".into()));
-    } else if let Some(value) = token.strip_prefix("border-") {
-        if value.as_bytes().first().is_some_and(u8::is_ascii_digit) {
-            nonnegative(value, token)?;
-            set("border_width", number(format!("{value}pt")));
-        } else {
-            set("border_color", color(value)?);
+    } else if let Some((family, value)) = FAMILIES.iter().find_map(|family| {
+        token
+            .strip_prefix(family.prefix)
+            .map(|value| (family, value))
+    }) {
+        match family.values {
+            Values::Length { relative } => {
+                let literal = if relative && value == "full" {
+                    "100%".into()
+                } else if relative && value.ends_with('%') {
+                    nonnegative(&value[..value.len() - 1], token)?;
+                    value.into()
+                } else {
+                    nonnegative(value, token)?;
+                    format!("{value}pt")
+                };
+                set(family.property, number(literal));
+            }
+            Values::Color => set(family.property, color(value)?),
+            Values::Border => {
+                if value
+                    .as_bytes()
+                    .first()
+                    .is_some_and(|byte| byte.is_ascii_digit() || matches!(byte, b'-' | b'.'))
+                {
+                    nonnegative(value, token)?;
+                    set("border_width", number(format!("{value}pt")));
+                } else {
+                    set("border_color", color(value)?);
+                }
+            }
+            Values::Overflow => {
+                Overflow::parse(value)?;
+                set(family.property, text(value));
+            }
         }
-    } else if let Some(value) = token.strip_prefix("bg-") {
-        set("fill", color(value)?);
-    } else if let Some(value) = token.strip_prefix("text-") {
-        set("fill", color(value)?);
-    } else if let Some((prefix, value)) = token.split_once('-') {
-        let key = match prefix {
-            "w" => "width",
-            "h" => "height",
-            "p" => "padding",
-            "gap" => "gap",
-            "rounded" => "radius",
-            "basis" => "flex_basis",
-            _ => return Err(unknown(token)),
-        };
-        let literal = if matches!(prefix, "w" | "h" | "basis") && value == "full" {
-            "100%".into()
-        } else if matches!(prefix, "w" | "h" | "basis") && value.ends_with('%') {
-            nonnegative(&value[..value.len() - 1], token)?;
-            value.into()
-        } else {
-            nonnegative(value, token)?;
-            format!("{value}pt")
-        };
-        set(key, number(literal));
     } else {
         return Err(unknown(token));
     }
@@ -300,9 +465,11 @@ fn enum_expression<E: NativeEnum + PartialEq>(value: &E, span: Span) -> crate::a
         .find(|(_, candidate)| candidate == value)
         .expect("native enum case")
         .0;
-    Expr { cache_id: crate::ast::next_expr_identity(), 
+    Expr {
+        cache_id: crate::ast::next_expr_identity(),
         kind: ExprKind::Member(
-            Box::new(Expr { cache_id: crate::ast::next_expr_identity(), 
+            Box::new(Expr {
+                cache_id: crate::ast::next_expr_identity(),
                 kind: ExprKind::Name(name),
                 span,
             }),
@@ -321,7 +488,12 @@ fn nonnegative(value: &str, token: &str) -> Result<Fraction, String> {
     }
 }
 fn unknown(token: &str) -> String {
+    let families = FAMILIES
+        .iter()
+        .map(|family| format!("{}VALUE", family.prefix))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
-        "unknown native utility '{token}'; use flex, flex-col, items-center, justify-between, gap-N, p-N, w-N, h-N, rounded-N, bg-COLOR or border. Numbers are logical pt."
+        "unknown native utility '{token}'; use a native preset such as flex, or {families}. Numeric sizes are nonnegative logical pt; w-, h- and basis- also accept percentages/full."
     )
 }

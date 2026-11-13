@@ -33,3 +33,15 @@ Syntax highlighting covers declarations, comments, native calls, type names,
 colors, point/percent/time units, compound durations, default string interpolation,
 escaped braces, and `r"literal strings"`. All semantic language features use the
 Rust compiler's canonical AST and types rather than an independent parser.
+
+Native XML-style elements have tag/property highlighting and whole-token native
+utility highlighting, including `w-180.5`, `h-50%` and `overflow-y-auto`. The
+language server completes utility values after `-`, filters them by the element's
+registered properties, and replaces the entire hyphenated token. Hover shows the
+resolved typed properties (`w-full` → `width=100%`) and unit semantics. Invalid
+utilities receive compiler diagnostics; repeated or superseded utility properties
+receive `U001` warnings with the later setting linked. Explicit properties such as
+`width={220pt}` intentionally override utilities without an override warning.
+
+Zed receives the same completion, hover, diagnostics and semantic tokens from the
+standalone server; these features use the native parser and utility registry.

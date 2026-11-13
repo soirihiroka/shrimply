@@ -102,6 +102,7 @@ pub struct Case {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeExpr {
+    StringLiteral(String),
     Named(String, Vec<TypeExpr>),
     Signal(Box<TypeExpr>),
     Record(Vec<(String, TypeExpr)>),
@@ -153,7 +154,11 @@ pub(crate) fn next_expr_identity() -> u64 {
 
 impl Expr {
     pub fn new(kind: ExprKind, span: Span) -> Self {
-        Self { cache_id: next_expr_identity(), kind, span }
+        Self {
+            cache_id: next_expr_identity(),
+            kind,
+            span,
+        }
     }
     pub fn visit(&self, visitor: &mut impl FnMut(&Expr)) {
         self.visit_while(&mut |expr| {

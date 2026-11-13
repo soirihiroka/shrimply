@@ -73,7 +73,10 @@ pub fn external_files_need_remux(paths: &[PathBuf]) -> Result<bool, String> {
 
 fn download_image(url: &str) -> Result<OwnedFile, String> {
     let response = shrimply_asset::remote::load(url, MAX_CLIPBOARD_IMAGE_BYTES)?;
-    let extension = response.content_type.as_deref().and_then(image_extension_for_content_type)
+    let extension = response
+        .content_type
+        .as_deref()
+        .and_then(image_extension_for_content_type)
         .or_else(|| image_extension_for_url(url))
         .ok_or("the dropped URL did not resolve to a supported image")?;
     validate_clipboard_image_length(response.bytes.len())?;

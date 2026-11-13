@@ -208,16 +208,27 @@ pub enum Overflow {
     Scroll,
 }
 impl Overflow {
+    pub const VALUES: &'static [(&'static str, Self)] = &[
+        ("visible", Self::Visible),
+        ("hidden", Self::Hidden),
+        ("auto", Self::Auto),
+        ("scroll", Self::Scroll),
+    ];
     pub fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "visible" => Ok(Self::Visible),
-            "hidden" => Ok(Self::Hidden),
-            "auto" => Ok(Self::Auto),
-            "scroll" => Ok(Self::Scroll),
-            _ => Err(format!(
-                "unknown overflow {value:?}; use visible, hidden, auto or scroll"
-            )),
-        }
+        Self::VALUES
+            .iter()
+            .find(|(name, _)| *name == value)
+            .map(|(_, mode)| *mode)
+            .ok_or_else(|| {
+                format!(
+                    "unknown overflow {value:?}; use {}",
+                    Self::VALUES
+                        .iter()
+                        .map(|(name, _)| *name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
     }
     pub fn clips(self) -> bool {
         self != Self::Visible

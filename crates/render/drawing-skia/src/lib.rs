@@ -1,5 +1,5 @@
-pub mod path;
 pub mod media;
+pub mod path;
 pub mod shape;
 use std::rc::Rc;
 

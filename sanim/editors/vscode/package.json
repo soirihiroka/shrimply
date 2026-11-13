@@ -53,9 +53,15 @@
       "properties": {
         "sanim.server.path": {
           "type": "string",
-          "default": "sanim-lsp",
+          "default": "",
           "scope": "machine-overridable",
-          "description": "Path to the separately built native sanim-lsp executable. Defaults to PATH lookup. No Shrimply GUI or animation runtime is launched."
+          "description": "Optional executable path. Automatically prefers Shrimply on PATH or in its standard installation location, then standalone sanim-lsp. Shrimply runs sanim lsp without opening its GUI."
+        },
+        "sanim.server.arguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "scope": "machine-overridable",
+          "description": "Optional server arguments. Defaults to [\"sanim\", \"lsp\"] for Shrimply, otherwise []. Add --project and a project path to select runtime reflection context explicitly."
         }
       }
     }

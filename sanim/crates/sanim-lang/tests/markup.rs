@@ -216,7 +216,10 @@ fn one_utility_can_lower_to_several_distinct_cached_arguments() {
     let basis = child.layout.flex_basis.unwrap();
     assert_eq!(basis.value, Fraction::from(0));
     assert_eq!(basis.unit, sanim_core::Unit::Length);
-    let laid = prepared.animation.layout(0.into(),180.into(),60.into()).unwrap();
+    let laid = prepared
+        .animation
+        .layout(0.into(), 180.into(), 60.into())
+        .unwrap();
     let children = laid[0].geometry.children().unwrap();
     assert_eq!(children[0].layout.width.unwrap().value, Fraction::from(90));
     assert_eq!(children[1].layout.width.unwrap().value, Fraction::from(90));

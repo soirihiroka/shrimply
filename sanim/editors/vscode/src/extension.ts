@@ -1,11 +1,37 @@
 import { commands, ExtensionContext, workspace } from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import * as path from 'node:path';
 
 let client: LanguageClient | undefined;
 
 export async function activate(context: ExtensionContext): Promise<void> {
-    const command = workspace.getConfiguration('sanim').get<string>('server.path', 'sanim-lsp');
-    const serverOptions: ServerOptions = { command, args: [] };
+    const configuration = workspace.getConfiguration('sanim');
+    const configured = configuration.get<string>('server.path', '').trim();
+    const suffix = process.platform === 'win32' ? '.exe' : '';
+    const directories = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
+    const installed = [path.join(homedir(), '.local', 'bin', `shrimply${suffix}`)];
+    if (process.platform === 'darwin') {
+        installed.push('/Applications/Shrimply.app/Contents/MacOS/shrimply', path.join(homedir(), 'Applications/Shrimply.app/Contents/MacOS/shrimply'));
+    }
+    const candidates = configured
+        ? path.isAbsolute(configured) || configured.includes('/') || configured.includes('\\') ? [configured] : directories.map(directory => path.join(directory, configured))
+        : [...directories.map(directory => path.join(directory, `shrimply${suffix}`)), ...installed, ...directories.map(directory => path.join(directory, `sanim-lsp${suffix}`))];
+    let command: string | undefined;
+    for (const candidate of candidates) {
+        try {
+            await access(candidate, constants.X_OK);
+            command = candidate;
+            break;
+        } catch (error) {
+            if (!['ENOENT', 'ENOTDIR', 'EACCES'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        }
+    }
+    if (!command) throw new Error('Sanim language server not found. Install Shrimply and enable its CLI, or set sanim.server.path to Shrimply or a standalone sanim-lsp executable.');
+    const args = configuration.get<string[]>('server.arguments') ?? (/^shrimply(?:\.exe)?$/i.test(path.basename(command)) ? ['sanim', 'lsp'] : []);
+    const serverOptions: ServerOptions = { command, args };
     const watcher = workspace.createFileSystemWatcher('**/*.sanim');
     context.subscriptions.push(watcher);
     const clientOptions: LanguageClientOptions = {

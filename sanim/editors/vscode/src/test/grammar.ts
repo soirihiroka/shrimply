@@ -24,6 +24,13 @@ async function main(): Promise<void> {
     assert.ok(tokens('"Value: {round(2.5):04d}"').some(token => token.scopes.includes('meta.interpolation.sanim')));
     assert.ok(!tokens('r"literal {value}"').some(token => token.scopes.includes('meta.interpolation.sanim')));
     assert.ok(!tokens('"literal {{value}}"').some(token => token.scopes.includes('meta.interpolation.sanim')));
+    assert.ok(has('<Box w-180.5 h-50% overflow-y-auto>', 'Box', 'entity.name.tag.sanim'));
+    for (const utility of ['w-180.5', 'h-50%', 'overflow-y-auto']) {
+        assert.ok(has('<Box w-180.5 h-50% overflow-y-auto>', utility, 'support.constant.native-utility.sanim'));
+    }
+    assert.ok(has('<Box width={180pt} fill="blue3" />', 'width', 'entity.other.attribute-name.sanim'));
+    assert.ok(has('</Box>', 'Box', 'entity.name.tag.sanim'));
+    assert.ok(!tokens('"<Box w-180>"').some(token => token.scopes.includes('meta.tag.sanim')));
     for (const prefix of ['"""', "'''", 'r"""', "r'''"]) {
         let state = grammar.tokenizeLine(`let sql = ${prefix}`, INITIAL).ruleStack;
         const middle = grammar.tokenizeLine('SELECT "name" FROM samples # string text', state);
@@ -36,6 +43,6 @@ async function main(): Promise<void> {
         assert.ok(grammar.tokenizeLine('# real comment', ending.ruleStack).tokens.some(token => token.scopes.includes('comment.line.number-sign.sanim')));
     }
     registry.dispose();
-    console.log('Sanim TextMate grammar: declarations, units, colors, comments, raw strings, interpolation passed');
+    console.log('Sanim TextMate grammar: declarations, units, colors, comments, raw strings, interpolation, native markup utilities passed');
 }
 void main().catch(error => { console.error(error); process.exitCode = 1; });

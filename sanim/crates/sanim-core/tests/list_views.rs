@@ -26,6 +26,58 @@ fn tile(id: &str) -> Element {
 }
 
 #[test]
+fn changed_signals_on_future_list_items_invalidate_the_mounted_view_only() {
+    use sanim_core::{Number, Property, reactive::Node};
+    let mut old = animation(&[]);
+    old.layers[0].birth = Fraction::from(2);
+    let edit = items(&[])
+        .edit(ListEdit::Append(Value::Element(Arc::new(tile("future")))))
+        .unwrap();
+    old.write_list_edit(1, 3.into(), 4.into(), &edit, Easing::Linear)
+        .unwrap();
+    old.reactive
+        .set_cell(
+            1,
+            Value::Number(Number {
+                value: 1.into(),
+                unit: Unit::Number,
+            }),
+        )
+        .unwrap();
+    let node = old.reactive.insert_node(Node::Cell(1), 10).unwrap();
+    old.reactive
+        .bind("future".into(), Property::Scale, node)
+        .unwrap();
+    let mut new = old.clone();
+    new.reactive = Default::default();
+    new.reactive
+        .set_cell(
+            1,
+            Value::Number(Number {
+                value: 2.into(),
+                unit: Unit::Number,
+            }),
+        )
+        .unwrap();
+    let node = new.reactive.insert_node(Node::Cell(1), 10).unwrap();
+    new.reactive
+        .bind("future".into(), Property::Scale, node)
+        .unwrap();
+    let diff = TimelineDiff::between(&old, &new);
+    assert!(!diff.affects(1.into()));
+    assert!(
+        diff.affects(3.into()),
+        "future items must participate in reactive invalidation even when absent from the static tree"
+    );
+    old.layers.clear();
+    new.layers.clear();
+    assert!(
+        TimelineDiff::between(&old, &new).invalidated.is_empty(),
+        "unmounted catalog items have no visual effect"
+    );
+}
+
+#[test]
 fn nested_future_views_keep_their_clock_and_sample_their_actual_transition() {
     let mut animation = animation(&[]);
     let mut inner = tile("inner_view");

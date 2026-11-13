@@ -141,11 +141,14 @@ pub(crate) struct ObservedSources<'a> {
 }
 impl Sources for ObservedSources<'_> {
     fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        Ok(self.read_snapshot(path)?.0.as_ref().clone())
+    }
+    fn read_snapshot(&self, path: &str) -> Result<(Arc<Vec<u8>>, String), String> {
         self.reporter.emit(Phase::Reading, None, None, Some(path));
-        let bytes = self.provider.read(path)?;
-        let count = bytes.len() as u64;
+        let snapshot = self.provider.read_snapshot(path)?;
+        let count = snapshot.0.len() as u64;
         self.reporter
             .emit(Phase::Reading, Some(count), Some(count), Some(path));
-        Ok(bytes)
+        Ok(snapshot)
     }
 }

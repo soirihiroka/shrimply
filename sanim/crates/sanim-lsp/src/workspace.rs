@@ -11,7 +11,39 @@ use std::{
 pub(crate) struct OpenDocument {
     pub path: PathBuf,
     pub document: Document,
-    pub highlights: std::cell::RefCell<Option<(i64, Vec<sanim_lang::core::code::Highlight>)>>,
+    pub syntax: std::cell::RefCell<Option<Syntax>>,
+}
+pub(crate) struct Syntax {
+    version: i64,
+    pub markup: Vec<sanim_lang::parser::MarkupOpening>,
+    pub highlights: Vec<sanim_lang::core::code::Highlight>,
+}
+impl OpenDocument {
+    pub fn syntax(&self) -> std::cell::Ref<'_, Syntax> {
+        if self
+            .syntax
+            .borrow()
+            .as_ref()
+            .is_none_or(|syntax| syntax.version != self.document.version)
+        {
+            self.parse_syntax();
+        }
+        std::cell::Ref::map(self.syntax.borrow(), |syntax| {
+            syntax.as_ref().expect("computed parser metadata")
+        })
+    }
+    fn parse_syntax(&self) -> sanim_lang::parser::Recovery {
+        let (recovery, highlights) = sanim_lang::parser::parse_highlighted(
+            "editor", &self.document.text, sanim_lang::Limits::default().max_parse_steps,
+        );
+        *self.syntax.borrow_mut() = Some(Syntax {
+            version: self.document.version,
+            markup: recovery.markup.clone(),
+            highlights: sanim_lang::core::code::normalize_highlights(&highlights, &self.document.text),
+        });
+        recovery
+    }
+
 }
 
 pub(crate) struct Analysis {
@@ -93,7 +125,7 @@ impl Workspace {
             OpenDocument {
                 path,
                 document: Document::new(text, version),
-                highlights: Default::default(),
+                syntax: Default::default(),
             },
         );
         Ok(())
@@ -197,10 +229,11 @@ impl Workspace {
             root: &root,
             documents: &self.documents,
         };
-        let (result, max_steps) = {
-            let engine = self.engines.entry(root.clone()).or_default();
-            (engine.lint(&entry, &sources), engine.limits.max_parse_steps)
-        };
+        let result = self
+            .engines
+            .entry(root.clone())
+            .or_default()
+            .lint(&entry, &sources);
         let mut analysis = Analysis {
             root: root.clone(),
             entry: entry.clone(),
@@ -252,11 +285,7 @@ impl Workspace {
                 // parser call contexts. A typed prefix supports completion and
                 // signatures during ordinary unfinished edits, without inventing
                 // tokens, stale ranges, or an independent parser/checker.
-                let recovery = sanim_lang::parser::parse_recovering(
-                    &entry,
-                    &document.document.text,
-                    max_steps,
-                );
+                let recovery = document.parse_syntax();
                 let prefix_end = if recovery.diagnostic.is_some() {
                     recovery.prefix_end
                 } else if diagnostic.source == entry {
@@ -309,6 +338,36 @@ impl Workspace {
                             checked: Arc::default(),
                         },
                     );
+                }
+            }
+        }
+        // Superseded utilities remain source metadata even though the parser
+        // correctly removes them from the executable argument list.
+        for opening in &document.syntax().markup {
+            let explicit = opening.attributes.iter().filter(|attribute| !attribute.utility).map(|attribute| attribute.name.as_str()).collect::<BTreeSet<_>>();
+            struct Override<'a> {
+                previous: &'a sanim_lang::parser::MarkupAttribute,
+                keys: Vec<String>,
+                redundant: bool,
+            }
+            let mut properties = BTreeMap::<String, (&sanim_lang::parser::MarkupAttribute, String)>::new();
+            for attribute in opening.attributes.iter().filter(|attribute| attribute.utility) {
+                let Ok(utility) = sanim_lang::utilities::describe(&opening.name, &attribute.name) else { continue };
+                let mut replaced = BTreeMap::<(usize, usize), Override<'_>>::new();
+                for (key, value) in utility.properties {
+                    if explicit.contains(key.as_str()) { continue; }
+                    if let Some((previous, old_value)) = properties.insert(key.clone(), (attribute, value.clone())) {
+                        let entry = replaced.entry((previous.span.start, previous.span.end)).or_insert(Override {previous, keys:vec![], redundant:true});
+                        entry.keys.push(key);
+                        entry.redundant &= old_value == value;
+                    }
+                }
+                for Override {previous, keys, redundant} in replaced.into_values() {
+                    analysis.diagnostics.entry(uri.into()).or_default().push(json!({
+                        "range":document.document.range(previous.span),"severity":2,"source":"sanim","code":"U001",
+                        "message":format!("utility '{}' is {} by later '{}' for {}; remove the unnecessary setting", previous.name, if redundant {"repeated"} else {"overridden"}, attribute.name, keys.join(", ")),
+                        "relatedInformation":[{"location":{"uri":uri,"range":document.document.range(attribute.span)},"message":"Later utility takes precedence here"}],
+                    }));
                 }
             }
         }

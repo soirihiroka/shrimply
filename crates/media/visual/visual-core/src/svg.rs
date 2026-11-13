@@ -8,8 +8,11 @@ pub struct PreparedSvg {
 
 impl PreparedSvg {
     pub fn new(source: String) -> Result<Self, String> {
-        let shared = shrimply_drawing_skia::media::prepare(std::sync::Arc::new(source.into_bytes()))?;
-        if shared.kind() != shrimply_drawing_skia::media::Kind::Svg { return Err("SVG source decoded as a bitmap".into()); }
+        let shared =
+            shrimply_drawing_skia::media::prepare(std::sync::Arc::new(source.into_bytes()))?;
+        if shared.kind() != shrimply_drawing_skia::media::Kind::Svg {
+            return Err("SVG source decoded as a bitmap".into());
+        }
         Ok(Self { shared })
     }
     fn with_dom<T>(&self, operation: impl FnOnce(&Dom) -> T) -> T {

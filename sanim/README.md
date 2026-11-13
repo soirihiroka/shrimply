@@ -643,8 +643,12 @@ to 1,024, and formatted output to 1 MiB. Locale-specific `n` and fractional-digi
 grouping are rejected with explicit diagnostics. `str(value)` keeps its existing
 representation; an explicit empty format uses decimal numeric presentation.
 
-`Session::poll` compares content hashes for all source/data dependencies, including
-failed reads, so creating a previously missing resource recovers automatically.
+`Runtime` uses native filesystem notifications, not a polling timer. A notification
+invalidates only the affected resource snapshots before preparation begins. Unchanged
+resources reuse immutable bytes and their content hash; manual refresh invalidates
+the snapshots explicitly. `Session::poll` checks the entry first and stops at the
+first changed dependency. Missing resources remain watched, so creating one recovers
+a failed preparation automatically. Custom `Sources` control their own I/O policy.
 Every successful revision is prepared atomically. Circular imports fail at the
 closing import with the full cycle and guidance to extract shared declarations. Failed edits return diagnostics
 and preserve a clearly identified last-good revision. Dependencies are rechecked
@@ -655,8 +659,7 @@ Parsed modules, pure expression results and decoded assets are cached separately
 Prepared fingerprints identify the complete semantic inputs, including source/data hashes, overrides, limits and viewport. Nonvisual source edits can publish a new revision while frame caches retain equal animation states.
 Keys cover semantic version, expression structure, inputs, invocation identity,
 data schema, content and relevant limits. Expression and asset/query caches each
-have an aggregate byte cap as well as an entry cap. Lists and arrays share
-immutable storage across bindings and warm preparations. Unchanged dependencies are reused;
+have an aggregate byte cap as well as an entry cap. Lists share immutable storage across bindings and warm preparations. Unchanged dependencies are reused;
 source/schema/input changes invalidate affected expression results. Scheduling
 effects and user calls before a valid execution checkpoint are skipped entirely.
 Checkpoints store persistent bindings, scene/timeline indexes, cursor, reflected
@@ -672,6 +675,14 @@ prefix states. Checkpoints have independent entry/estimated-byte accounting unde
 the host cache limits; `Engine::execution_state(boundary)` directly returns a
 retained immutable state root. Statistics report restored statements/time separately
 from work actually executed on this attempt.
+
+The runtime has no tracing garbage collector. Reference-counted immutable payloads
+and persistent collections release ownership when their last consumer drops. Cache
+eviction and dependency pruning release old revisions; an editor may deliberately
+retain a last-good revision while a source edit is invalid. Shared native font and
+media caches use the same byte/entry-bounded cache implementation as other resources.
+`make hot-reload-memory-bench` exercises 2,000 real filesystem edits, checks old
+revision release and unchanged prefix recordings, and measures RSS after warmup.
 
 `Prepared::time_map` links source spans and repeated helper calls to exact timeline
 ranges and root boundaries. `at_frame(frame)` uses a direct frame table (O(1));

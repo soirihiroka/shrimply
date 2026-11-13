@@ -60,7 +60,7 @@ pub fn cli() -> Command {
                     ),
             );
         }
-        command
+        command.subcommand(Command::new("lsp").about(crate::lsp::SUMMARY))
     });
     root = root.version(env!("CARGO_PKG_VERSION"));
     root

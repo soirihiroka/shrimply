@@ -813,8 +813,9 @@ pub(crate) fn composition(
             child.layout.y_align = Align::Start;
         }
         for axis in 0..2 {
-            if !args.contains_key(if axis==0 {"x_align"} else {"y_align"}) {
-                element.layout.position_offset[axis] = math::float_arithmetic("+",low[axis]/2.,high[axis]/2.)?;
+            if !args.contains_key(if axis == 0 { "x_align" } else { "y_align" }) {
+                element.layout.position_offset[axis] =
+                    math::float_arithmetic("+", low[axis] / 2., high[axis] / 2.)?;
             }
         }
         for (axis, field) in [&mut element.layout.width, &mut element.layout.height]
@@ -838,7 +839,11 @@ pub(crate) fn number(
     default: Fraction,
 ) -> Result<Fraction, String> {
     args.get(name)
-        .map(|value| value.number().map_err(|error| format!("{name}: {error}; found {}", value.ty())))
+        .map(|value| {
+            value
+                .number()
+                .map_err(|error| format!("{name}: {error}; found {}", value.ty()))
+        })
         .transpose()
         .map(|n| n.map_or(default, |v| v.value))
 }

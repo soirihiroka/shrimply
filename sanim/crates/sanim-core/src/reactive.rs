@@ -726,35 +726,193 @@ impl ReactiveGraph {
         }
         Ok((tracks, bindings, bytes))
     }
-    pub(crate) fn changed_from(&self, next: &Self) -> Option<Fraction> {
-        if self.bindings.is_empty() && next.bindings.is_empty() {
-            return None;
-        }
-        if self.nodes != next.nodes || self.bindings != next.bindings {
-            return Some(Fraction::from(0));
-        }
-        let mut earliest: Option<Fraction> = None;
-        for id in self.cells.keys().chain(next.cells.keys()) {
-            let (Some(a), Some(b)) = (self.cells.get(id), next.cells.get(id)) else {
-                return Some(Fraction::from(0));
-            };
-            if a.ty != b.ty || a.initial != b.initial {
-                return Some(Fraction::from(0));
-            }
-            if a.tracks == b.tracks {
-                continue;
-            }
-            let common = a
-                .tracks
-                .iter()
-                .zip(&b.tracks)
-                .take_while(|(a, b)| a == b)
-                .count();
-            for track in a.tracks.get(common).into_iter().chain(b.tracks.get(common)) {
-                earliest = Some(earliest.map_or(track.start, |time| time.min(track.start)));
+    /// Compare only expression trees reachable from visible properties. A changed
+    /// value cannot invalidate a frame before the element using it exists.
+    pub(crate) fn changed_from(
+        &self,
+        next: &Self,
+        mut birth: impl FnMut(&str) -> Option<Fraction>,
+    ) -> Option<Fraction> {
+        let mut memo = std::collections::HashMap::new();
+        let mut earliest = None;
+        for id in self
+            .bindings
+            .keys()
+            .chain(next.bindings.keys())
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            let Some(birth) = birth(id) else { continue };
+            let a = self.bindings.get(id);
+            let b = next.bindings.get(id);
+            for property in a
+                .into_iter()
+                .chain(b)
+                .flat_map(|properties| properties.keys())
+                .collect::<std::collections::BTreeSet<_>>()
+            {
+                let changed = match (
+                    a.and_then(|p| p.get(property)),
+                    b.and_then(|p| p.get(property)),
+                ) {
+                    (Some(&a), Some(&b)) => self.node_changed_from(next, a, b, &mut memo),
+                    _ => Some(Fraction::from(0)),
+                };
+                earliest = earlier(earliest, changed.map(|time| time.max(birth)));
             }
         }
         earliest
+    }
+    fn node_changed_from(
+        &self,
+        next: &Self,
+        a: NodeId,
+        b: NodeId,
+        memo: &mut std::collections::HashMap<(NodeId, NodeId), Option<Fraction>>,
+    ) -> Option<Fraction> {
+        if let Some(result) = memo.get(&(a, b)) {
+            return *result;
+        }
+        // Adversarial DAG rewiring can produce more pairs than either graph
+        // has nodes. Cap diff metadata and conservatively invalidate uncertain
+        // bindings rather than letting a patch allocate quadratic memory.
+        if memo.len() >= MAX_REACTIVE_NODES {
+            return Some(Fraction::from(0));
+        }
+        // Validated nodes refer only to earlier nodes, so this recursion is bounded
+        // by MAX_REACTIVE_DEPTH and memoized once per shared pair of subexpressions.
+        let left = &self.nodes[a];
+        let right = &next.nodes[b];
+        let mut children = |a, b| self.node_changed_from(next, a, b, memo);
+        let zero = Some(Fraction::from(0));
+        let changed = if left.ty != right.ty {
+            zero
+        } else {
+            match (&left.operation, &right.operation) {
+                (Node::Constant(a), Node::Constant(b)) if a == b => None,
+                (Node::Cell(a), Node::Cell(b)) => {
+                    let a = &self.cells[a];
+                    let b = &next.cells[b];
+                    if a.ty != b.ty || a.initial != b.initial {
+                        zero
+                    } else {
+                        let common = a
+                            .tracks
+                            .iter()
+                            .zip(&b.tracks)
+                            .take_while(|(a, b)| a == b)
+                            .count();
+                        a.tracks
+                            .get(common)
+                            .into_iter()
+                            .chain(b.tracks.get(common))
+                            .map(|track| track.start)
+                            .min()
+                    }
+                }
+                (Node::Unary { op: a, value: x }, Node::Unary { op: b, value: y }) if a == b => {
+                    children(*x, *y)
+                }
+                (
+                    Node::Binary {
+                        op: a,
+                        left: x,
+                        right: y,
+                    },
+                    Node::Binary {
+                        op: b,
+                        left: u,
+                        right: v,
+                    },
+                ) if a == b => earlier(children(*x, *u), children(*y, *v)),
+                (
+                    Node::Component {
+                        vector: a,
+                        index: x,
+                    },
+                    Node::Component {
+                        vector: b,
+                        index: y,
+                    },
+                ) if x == y => children(*a, *b),
+                (Node::Math { name: a, args: x }, Node::Math { name: b, args: y })
+                    if a == b && x.len() == y.len() =>
+                {
+                    x.iter()
+                        .zip(y)
+                        .fold(None, |time, (&a, &b)| earlier(time, children(a, b)))
+                }
+                (Node::Vector { values: a }, Node::Vector { values: b })
+                | (Node::List { values: a }, Node::List { values: b })
+                    if a.len() == b.len() =>
+                {
+                    a.iter()
+                        .zip(b)
+                        .fold(None, |time, (&a, &b)| earlier(time, children(a, b)))
+                }
+                (Node::Record { fields: a }, Node::Record { fields: b })
+                    if a.keys().eq(b.keys()) =>
+                {
+                    a.values()
+                        .zip(b.values())
+                        .fold(None, |time, (&a, &b)| earlier(time, children(a, b)))
+                }
+                (
+                    Node::NativeConfig {
+                        operation: a,
+                        arguments: x,
+                    },
+                    Node::NativeConfig {
+                        operation: b,
+                        arguments: y,
+                    },
+                ) if a == b && x.keys().eq(y.keys()) => x
+                    .values()
+                    .zip(y.values())
+                    .fold(None, |time, (&a, &b)| earlier(time, children(a, b))),
+                (Node::Template { parts: a }, Node::Template { parts: b })
+                    if a.len() == b.len() =>
+                {
+                    a.iter().zip(b.iter()).fold(None, |time, (a, b)| {
+                        use crate::TemplatePart::{Hole, Text};
+                        let changed = match (a, b) {
+                            (Text(a), Text(b)) if a == b => None,
+                            (
+                                Hole {
+                                    value: a,
+                                    format: x,
+                                    conversion: u,
+                                },
+                                Hole {
+                                    value: b,
+                                    format: y,
+                                    conversion: v,
+                                },
+                            ) if u == v => {
+                                let format = match (x, y) {
+                                    (Some(a), Some(b)) => children(*a, *b),
+                                    (None, None) => None,
+                                    _ => zero,
+                                };
+                                earlier(children(*a, *b), format)
+                            }
+                            _ => zero,
+                        };
+                        earlier(time, changed)
+                    })
+                }
+                _ => zero,
+            }
+        };
+        if memo.len() < MAX_REACTIVE_NODES {
+            memo.insert((a, b), changed);
+        }
+        changed
+    }
+}
+fn earlier(a: Option<Fraction>, b: Option<Fraction>) -> Option<Fraction> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
     }
 }
 fn node_bytes(node: &Node) -> Result<usize, String> {

@@ -1,5 +1,6 @@
-//! Standalone static Sanim language server. No runtime, renderer, GUI, or JavaScript engine.
+//! Sanim language server, with optional read-only runtime queries supplied by its host.
 mod features;
+mod runtime;
 mod text;
 mod transport;
 mod type_display;
@@ -8,17 +9,24 @@ use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use workspace::Workspace;
 
+pub type RuntimeQuery<'a> = &'a mut dyn FnMut(&std::path::Path) -> Result<Value, String>;
+
 #[derive(Default)]
-struct Server {
+struct Server<'a> {
     workspace: Workspace,
+    runtime: Option<RuntimeQuery<'a>>,
     initialized: bool,
     shutdown: bool,
 }
 
-/// Run an LSP session over framed standard streams. This is deliberately a
-/// separate binary/library and is not linked into Shrimply or the Sanim runtime.
-pub fn run(mut input: impl BufRead, mut output: impl Write) -> Result<u8, String> {
-    let mut server = Server::default();
+/// Run the standalone server without a project runtime connection.
+pub fn run(input: impl BufRead, output: impl Write) -> Result<u8, String> {
+    run_with_runtime(input, output, None)
+}
+
+/// Run an LSP session; the host owns discovery and read-only runtime access.
+pub fn run_with_runtime(mut input: impl BufRead, mut output: impl Write, runtime: Option<RuntimeQuery<'_>>) -> Result<u8, String> {
+    let mut server = Server { runtime, ..Default::default() };
     while let Some(message) = transport::read(&mut input)? {
         if message.get("method").and_then(Value::as_str) == Some("exit") {
             return Ok(u8::from(!server.shutdown));
@@ -40,7 +48,7 @@ fn log(message: impl Into<String>) -> Value {
     json!({"jsonrpc":"2.0","method":"window/logMessage","params":{"type":1,"message":message.into()}})
 }
 
-impl Server {
+impl Server<'_> {
     fn handle(&mut self, message: Value) -> Vec<Value> {
         if message["jsonrpc"] != "2.0" {
             return vec![error(
@@ -92,7 +100,8 @@ impl Server {
                 id,
                 json!({"serverInfo":{"name":"sanim-lsp","version":env!("CARGO_PKG_VERSION")},"capabilities":{
                     "positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":2,"save":{"includeText":true}},
-                    "completionProvider":{"triggerCharacters":["."]},"hoverProvider":true,"definitionProvider":true,
+                    "experimental":{"sanimRuntime":self.runtime.is_some()},
+                    "completionProvider":{"triggerCharacters":[".","-"]},"hoverProvider":true,"definitionProvider":true,
                 "signatureHelpProvider":{"triggerCharacters":["(",","]},"documentSymbolProvider":true,
                 "inlayHintProvider":true,
                 "documentFormattingProvider":true,
@@ -111,6 +120,19 @@ impl Server {
             });
         }
         match method {
+            "sanim/runtime" => {
+                let Some(id) = id else { return Vec::new() };
+                let Some(query) = self.runtime.as_mut() else {
+                    return vec![error(id, -32601, "Runtime queries require shrimply sanim lsp")];
+                };
+                let result = params["textDocument"]["uri"].as_str().ok_or("request requires textDocument.uri".into())
+                    .and_then(|uri| self.workspace.documents.get(uri).ok_or("document is not open".into()))
+                    .and_then(|document| query(&document.path));
+                vec![match result {
+                    Ok(value) => response(id, value),
+                    Err(message) => error(id, -32603, message),
+                }]
+            }
             "initialized" | "$/cancelRequest" | "$/setTrace" => Vec::new(),
             "shutdown" => {
                 self.shutdown = true;
@@ -211,7 +233,11 @@ impl Server {
                             features::completion(&self.workspace, uri, &params["position"])
                         }
                         "textDocument/hover" => {
-                            features::hover(&self.workspace, uri, &params["position"])
+                            let mut hover = features::hover(&self.workspace, uri, &params["position"])?;
+                            if let Some(query) = self.runtime.as_mut() {
+                                runtime::hover(&self.workspace, uri, &params["position"], &mut hover, &mut **query)?;
+                            }
+                            Ok(hover)
                         }
                         "textDocument/definition" => {
                             features::definition(&self.workspace, uri, &params["position"])

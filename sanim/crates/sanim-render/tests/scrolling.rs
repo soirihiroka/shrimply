@@ -178,13 +178,17 @@ fn scroll_benchmark() {
 
 #[test]
 fn a_zero_height_hidden_box_clips_every_child_pixel() {
-    let mut renderer=Renderer::default();
-    let scene=renderer.prepare(animation(r#"bg(Color("transparent"))
+    let mut renderer = Renderer::default();
+    let scene = renderer
+        .prepare(animation(
+            r#"bg(Color("transparent"))
 let pane=<Box w-100 h-0 overflow-hidden><Rect width={20pt} height={20pt} fill="blue3"/></Box>
 add(pane)
-wait(1s)"#)).unwrap();
-    let mut options=Options::for_animation(scene.animation());
-    options.encode_png=false;
-    let frame=renderer.render(&scene,0.into(),&options).unwrap();
-    assert!(frame.rgba.chunks_exact(4).all(|pixel|pixel[3]==0));
+wait(1s)"#,
+        ))
+        .unwrap();
+    let mut options = Options::for_animation(scene.animation());
+    options.encode_png = false;
+    let frame = renderer.render(&scene, 0.into(), &options).unwrap();
+    assert!(frame.rgba.chunks_exact(4).all(|pixel| pixel[3] == 0));
 }

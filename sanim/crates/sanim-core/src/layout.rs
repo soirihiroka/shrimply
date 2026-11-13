@@ -597,12 +597,16 @@ fn resolve_dimensions(
     } = element.geometry.as_ref()
     {
         let wanted = if element.layout.width.is_some() && element.layout.height.is_none() {
-            let [width,height]=crate::math::media::aspect_size([asset.width,asset.height],0,*width)?;
-            Some((width,height))
+            let [width, height] =
+                crate::math::media::aspect_size([asset.width, asset.height], 0, *width)?;
+            Some((width, height))
         } else if element.layout.height.is_some() && element.layout.width.is_none() {
-            let [width,height]=crate::math::media::aspect_size([asset.width,asset.height],1,*height)?;
-            Some((width,height))
-        } else {None};
+            let [width, height] =
+                crate::math::media::aspect_size([asset.width, asset.height], 1, *height)?;
+            Some((width, height))
+        } else {
+            None
+        };
         if let Some((wanted_width, wanted_height)) = wanted
             && (*width != wanted_width || *height != wanted_height)
         {
