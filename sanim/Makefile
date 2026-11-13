@@ -273,3 +273,36 @@ box-migration-check:
 	$(CARGO) test -p sanim-core --test reactive box_dimensions
 	$(CARGO) test -p sanim-lang --test animation --test charts --test plots --test spring --no-fail-fast
 	$(CARGO) test -p sanim-render --test frame_cache --test list_views --test picking --test plots --test rendering --no-fail-fast
+
+.PHONY: perf-reload-check
+perf-reload-check:
+	$(CARGO) test -p sanim-runtime --lib watcher::tests::native_session_suffix_edits_preserve_prehashed_resources_and_execution_work
+
+.PHONY: perf-reload-bench
+perf-reload-bench:
+	$(CARGO) test --release -p sanim-runtime --lib watcher::tests::cached_import_size_does_not_scale_hot_reload_like_rehashing -- --ignored --nocapture
+
+.PHONY: performance-check
+performance-check: perf-reload-check
+	$(CARGO) test -p sanim-render --test performance
+	$(CARGO) test -p sanim-lang --lib cache::parsed::tests
+	$(CARGO) test -p sanim-runtime --test watching scalar_hot_edits_release_old_revisions_and_preserve_glyphs_and_prefix_frames
+
+.PHONY: text-wrapping-check
+text-wrapping-check:
+	$(CARGO) clippy -p sanim-core -p sanim-data -p sanim-lang -p sanim-render --all-targets -- -D warnings
+	$(CARGO) test -p sanim-core -p sanim-render --test text_wrapping
+	$(CARGO) test -p sanim-data --lib code::view::
+
+.PHONY: text-wrapping-bench
+text-wrapping-bench:
+	$(CARGO) test --release -p sanim-data --lib width_reflow_benchmark -- --ignored --nocapture
+
+.PHONY: text-cow-check
+text-cow-check:
+	$(CARGO) test -p sanim-core --test reactive shared_geometry_text_and_language_values_charge_one_weakly_guarded_payload
+	$(CARGO) test -p sanim-lang --test reactive_labels text_constructor_getter_and_setter_share_language_string_allocations
+
+.PHONY: text-wrapping-integration-bench
+text-wrapping-integration-bench:
+	$(CARGO) test --release -p sanim-render --test text_wrapping codeview_frame_pipeline_benchmark -- --ignored --nocapture

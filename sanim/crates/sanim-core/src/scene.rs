@@ -42,7 +42,7 @@ pub enum Geometry {
         width: Fraction,
     },
     Text {
-        text: String,
+        text: Arc<str>,
         font: crate::Font,
         size: Fraction,
         outline: Arc<Vec<TextSegment>>,
@@ -173,6 +173,8 @@ pub enum RevealKind {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Layout {
+    #[serde(default)]
+    pub text: crate::text::Layout,
     pub x_align: Align,
     pub y_align: Align,
     /// Fixed native-composition translation added after the relative position.
@@ -330,6 +332,8 @@ pub enum Property {
     Width,
     Height,
     Text,
+    WhiteSpace,
+    OverflowWrap,
     Font,
     FontSize,
     XAlign,
@@ -546,6 +550,17 @@ impl Element {
         }
         Ok(match property {
             Property::Position => Value::Vec2(self.position),
+            Property::WhiteSpace => Value::String(
+                self.layout
+                    .text
+                    .recipe(matches!(self.geometry.as_ref(), Geometry::Code { .. }))
+                    .white_space
+                    .name()
+                    .into(),
+            ),
+            Property::OverflowWrap => {
+                Value::String(self.layout.text.recipe(false).overflow_wrap.name().into())
+            }
             Property::Overflow | Property::OverflowX | Property::OverflowY => {
                 if property == Property::Overflow
                     && self.layout.overflow_x != self.layout.overflow_y
@@ -609,7 +624,7 @@ impl Element {
                 }
             }
             Property::Text => match self.geometry.as_ref() {
-                Geometry::Text { text, .. } => Value::String(text.clone().into()),
+                Geometry::Text { text, .. } => Value::String(text.clone()),
                 _ => return Err(format!("{} does not have text content", self.id)),
             },
             Property::Font => match self.geometry.as_ref() {
@@ -683,12 +698,22 @@ impl Element {
             | Property::CodeLineHeight
             | Property::CodeTabSize
             | Property::CodeLineNumbers => return Err(format!("{} is not a CodeView", self.id)),
+            Property::WhiteSpace => {
+                self.layout.text.white_space =
+                    Some(crate::text::WhiteSpace::parse(value.string()?)?);
+            }
+            Property::OverflowWrap => {
+                self.layout.text.overflow_wrap =
+                    Some(crate::text::OverflowWrap::parse(value.string()?)?);
+            }
             Property::Text => {
-                let text = value.string()?;
+                let Value::String(text) = value else {
+                    return Err("expected a string".into());
+                };
                 if text.len() > math::format::MAX_OUTPUT_BYTES {
                     return Err("text content exceeds its byte budget".into());
                 }
-                if matches!(self.geometry.as_ref(), Geometry::Text { text: current, .. } if current == text)
+                if matches!(self.geometry.as_ref(), Geometry::Text { text: current, .. } if current == &text)
                 {
                     return Ok(());
                 }
@@ -700,10 +725,8 @@ impl Element {
                 else {
                     return Err(format!("{} does not have text content", self.id));
                 };
-                if current != text {
-                    *current = text.to_owned();
-                    *pending = true;
-                }
+                *current = text;
+                *pending = true;
             }
             Property::Font => {
                 let Value::Font(font) = value else {
@@ -1519,13 +1542,11 @@ impl Track {
                 values: math::motion_vector_lerp(a.values, b.values, p, overshooting)?,
                 unit: a.unit,
             })),
-            (Value::Color(a), Value::Color(b)) => {
-                let mut out = a.clone();
-                for i in 0..4 {
-                    out.0[i] = math::visual_lerp(a.0[i], b.0[i], bounded_progress)?;
-                }
-                Ok(Value::Color(out))
-            }
+            (Value::Color(a), Value::Color(b)) => Ok(Value::Color(math::paint::color_lerp(
+                a,
+                b,
+                bounded_progress,
+            )?)),
             (from, to) if from.ty().accepts(&to.ty()) || to.ty().accepts(&from.ty()) => {
                 Ok(from.clone())
             }

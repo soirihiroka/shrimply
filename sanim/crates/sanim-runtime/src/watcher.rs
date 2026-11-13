@@ -18,6 +18,8 @@ pub(crate) struct WatchedSources {
     #[cfg(test)]
     reads: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
+    copied_reads: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
     hashed_bytes: std::sync::atomic::AtomicUsize,
 }
 const MAX_RESOURCE_CACHE_BYTES: usize = 128 * 1024 * 1024;
@@ -235,6 +237,8 @@ impl WatchedSources {
             #[cfg(test)]
             reads: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
+            copied_reads: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
             hashed_bytes: std::sync::atomic::AtomicUsize::new(0),
         };
         sources.watch(entry)?;
@@ -360,6 +364,9 @@ impl WatchedSources {
 }
 impl Sources for WatchedSources {
     fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        #[cfg(test)]
+        self.copied_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.read_snapshot(path)
             .map(|(bytes, _)| bytes.as_ref().clone())
     }
@@ -476,6 +483,202 @@ mod tests {
         }
     }
 
+    fn settle_source_edit(
+        sources: &WatchedSources,
+        receiver: &mpsc::Receiver<Command>,
+        previous: u64,
+    ) {
+        const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
+        const QUIET: Duration = Duration::from_millis(20);
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        while sources.state.lock().unwrap().dependencies["main.sanim"].version == previous {
+            receiver
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .expect("atomic source edit native notification");
+        }
+        // Drain duplicate backend notifications before measuring preparation.
+        // This is event synchronization, not a performance deadline.
+        loop {
+            match receiver
+                .recv_timeout(QUIET.min(deadline.saturating_duration_since(Instant::now())))
+            {
+                Ok(Command::WatchError(error)) => panic!("native watch failed: {error}"),
+                Ok(_) => assert!(
+                    Instant::now() < deadline,
+                    "native notifications did not settle"
+                ),
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(error) => panic!("native watch disconnected: {error}"),
+            }
+        }
+    }
+    fn replace_source(
+        files: &Files,
+        sources: &WatchedSources,
+        receiver: &mpsc::Receiver<Command>,
+        source: &str,
+    ) {
+        let previous = sources.state.lock().unwrap().dependencies["main.sanim"].version;
+        std::fs::write(files.0.join("pending.sanim"), source).unwrap();
+        std::fs::rename(files.0.join("pending.sanim"), files.0.join("main.sanim")).unwrap();
+        settle_source_edit(sources, receiver, previous);
+    }
+    fn session_source(hold: u64) -> String {
+        format!(
+            "import \"library\" as library\nlet payload=read<String>(\"payload.txt\")\nif payload!=\"\" {{wait(library.hold)}}\nwait({hold}s)\n"
+        )
+    }
+    #[test]
+    fn native_session_suffix_edits_preserve_prehashed_resources_and_execution_work() {
+        use sanim_lang::{
+            Reload, Session,
+            progress::{Progress, State},
+        };
+        use std::sync::atomic::AtomicUsize;
+        const PAYLOAD_BYTES: usize = 1024 * 1024;
+        const IMPORT_BYTES: usize = 32 * 1024;
+        const EDITS: u64 = 8;
+        const MAX_SUFFIX_OPERATIONS: u64 = 8;
+        let files = Files::new();
+        std::fs::write(files.0.join("main.sanim"), session_source(1)).unwrap();
+        std::fs::write(files.0.join("payload.txt"), vec![b'x'; PAYLOAD_BYTES]).unwrap();
+        std::fs::write(
+            files.0.join("library.sanim"),
+            format!("#{}\nlet hold=100ms\n", "x".repeat(IMPORT_BYTES)),
+        )
+        .unwrap();
+        let (sender, receiver) = mpsc::sync_channel(128);
+        let sources = WatchedSources::new(files.0.clone(), "main.sanim", sender).unwrap();
+        let mut session = Session::new("main.sanim");
+        let completed = Arc::new(AtomicUsize::new(0));
+        session.engine.set_progress_observer(Some(Arc::new({
+            let completed = completed.clone();
+            move |progress: Progress| {
+                if progress.state == State::Ready {
+                    completed.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        })));
+        let Reload::Updated {
+            prepared: mut current,
+            ..
+        } = session.poll_with_duration(&sources, |_| {})
+        else {
+            panic!("cold native session")
+        };
+        assert_eq!(
+            completed.swap(0, Ordering::Relaxed),
+            2,
+            "cold preparation retains its exact duration preflight"
+        );
+        assert_eq!(
+            sources.reads.load(Ordering::Relaxed),
+            3,
+            "entry, imported source and data are read/hash once across both cold passes"
+        );
+        assert_eq!(
+            sources.copied_reads.load(Ordering::Relaxed),
+            0,
+            "ObservedSources must forward immutable snapshots rather than rehashing owned copies"
+        );
+        let prefix = session
+            .engine
+            .execution_state(2)
+            .expect("prefix after forcing data and scheduling imported hold");
+        let payload = sources.read_snapshot("payload.txt").unwrap().0;
+        let sanim_core::Value::String(payload_value) = current.bindings["payload"].clone() else {
+            panic!("decoded string payload")
+        };
+        let library = current.source_texts["library.sanim"].clone();
+        let mut operations = None;
+        for hold in 2..=EDITS + 1 {
+            let source = session_source(hold);
+            replace_source(&files, &sources, &receiver, &source);
+            let reads = sources.reads.load(Ordering::Relaxed);
+            let hashed = sources.hashed_bytes.load(Ordering::Relaxed);
+            let old = Arc::downgrade(&current);
+            let fingerprint = current.fingerprint.clone();
+            let mut durations = Vec::new();
+            let Reload::Updated { prepared, .. } =
+                session.poll_with_duration(&sources, |duration| durations.push(duration))
+            else {
+                panic!("edited hold must publish a distinct revision")
+            };
+            current = prepared;
+            assert!(
+                old.upgrade().is_none(),
+                "replaced Prepared revisions release deterministically"
+            );
+            assert_ne!(current.fingerprint, fingerprint);
+            assert_eq!(
+                current.animation.duration,
+                sanim_core::Fraction::from(hold) + sanim_core::Fraction::new(1u64, 10u64)
+            );
+            assert_eq!(durations, vec![current.animation.duration]);
+            assert_eq!(
+                completed.swap(0, Ordering::Relaxed),
+                1,
+                "hot reload must restore once, not replay a duration preflight"
+            );
+            assert_eq!(
+                sources.reads.load(Ordering::Relaxed) - reads,
+                1,
+                "only changed entry bytes should be read"
+            );
+            assert_eq!(
+                sources.hashed_bytes.load(Ordering::Relaxed) - hashed,
+                source.len(),
+                "unchanged imported source and payload must never be rehashed"
+            );
+            assert_eq!(
+                sources.copied_reads.load(Ordering::Relaxed),
+                0,
+                "snapshot progress forwarding must not copy or rehash resource bytes"
+            );
+            assert!(Arc::ptr_eq(
+                &payload,
+                &sources.read_snapshot("payload.txt").unwrap().0
+            ));
+            let sanim_core::Value::String(value) = &current.bindings["payload"] else {
+                panic!("decoded string payload")
+            };
+            assert!(
+                Arc::ptr_eq(&payload_value, value),
+                "restored data values share their immutable payload"
+            );
+            assert!(Arc::ptr_eq(
+                &library,
+                &current.source_texts["library.sanim"]
+            ));
+            assert!(
+                Arc::ptr_eq(&prefix, &session.engine.execution_state(2).unwrap()),
+                "late edits must retain the exact execution checkpoint"
+            );
+            assert_eq!(current.statistics.restored_statements, 2);
+            assert_eq!(current.statistics.decoded_assets, 0);
+            assert_eq!(current.statistics.executed_queries, 0);
+            assert_eq!(current.statistics.parsed_modules, 1);
+            assert_eq!(current.statistics.reused_modules, 1);
+            assert!(current.statistics.operations <= MAX_SUFFIX_OPERATIONS);
+            assert_eq!(
+                *operations.get_or_insert(current.statistics.operations),
+                current.statistics.operations,
+                "suffix execution work must stay constant across distinct edits"
+            );
+            let reads = sources.reads.load(Ordering::Relaxed);
+            let hashed = sources.hashed_bytes.load(Ordering::Relaxed);
+            assert!(matches!(
+                session.poll_with_duration(&sources, |_| panic!(
+                    "unchanged sources must not republish duration"
+                )),
+                Reload::Unchanged
+            ));
+            assert_eq!(sources.reads.load(Ordering::Relaxed), reads);
+            assert_eq!(sources.hashed_bytes.load(Ordering::Relaxed), hashed);
+            assert_eq!(completed.load(Ordering::Relaxed), 0);
+        }
+    }
+
     #[test]
     fn source_only_atomic_edit_keeps_large_resource_bytes_and_hashes() {
         let files = Files::new();
@@ -495,15 +698,7 @@ mod tests {
         }
         assert_eq!(sources.reads.load(Ordering::Relaxed), reads);
         assert_eq!(sources.hashed_bytes.load(Ordering::Relaxed), before);
-        let version = sources.state.lock().unwrap().dependencies["main.sanim"].version;
-        std::fs::write(files.0.join("pending.sanim"), "wait(2s)").unwrap();
-        std::fs::rename(files.0.join("pending.sanim"), files.0.join("main.sanim")).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while sources.state.lock().unwrap().dependencies["main.sanim"].version == version {
-            receiver
-                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .expect("source replacement native notification");
-        }
+        replace_source(&files, &sources, &receiver, "wait(2s)");
         let changed = sources.read_snapshot("main.sanim").unwrap();
         assert_eq!(changed.0.as_slice(), b"wait(2s)");
         for _ in 0..10 {
@@ -522,6 +717,80 @@ mod tests {
         assert!(
             !Arc::ptr_eq(&first.0, &refreshed.0),
             "manual refresh must bypass cached filesystem bytes"
+        );
+    }
+
+    #[test]
+    #[ignore = "release import-witness cost regression: make perf-reload-bench"]
+    fn cached_import_size_does_not_scale_hot_reload_like_rehashing() {
+        use sanim_lang::{Reload, Session};
+        const SMALL_BYTES: usize = 1024;
+        const LARGE_BYTES: usize = 8 * 1024 * 1024;
+        const SAMPLES: usize = 15;
+        const HASH_COST_DIVISOR: u32 = 2;
+        let fixture = |comment_bytes: usize| {
+            let files = Files::new();
+            std::fs::write(files.0.join("main.sanim"), session_source(1)).unwrap();
+            std::fs::write(files.0.join("payload.txt"), "x").unwrap();
+            std::fs::write(
+                files.0.join("library.sanim"),
+                format!("#{}\nlet hold=100ms\n", "x".repeat(comment_bytes)),
+            )
+            .unwrap();
+            let (sender, receiver) = mpsc::sync_channel(128);
+            let sources = WatchedSources::new(files.0.clone(), "main.sanim", sender).unwrap();
+            let mut session = Session::new("main.sanim");
+            session.engine.limits.max_source_bytes = LARGE_BYTES + 1024;
+            assert!(matches!(
+                session.poll_with_duration(&sources, |_| {}),
+                Reload::Updated { .. }
+            ));
+            (files, sources, receiver, session)
+        };
+        let mut cases = [fixture(SMALL_BYTES), fixture(LARGE_BYTES)];
+        let mut timings = [Vec::new(), Vec::new()];
+        for sample in 0..SAMPLES {
+            // Alternate paired measurements to avoid always charging one case
+            // for unrelated machine load. Native event settling is not timed.
+            for index in if sample % 2 == 0 { [0, 1] } else { [1, 0] } {
+                let (files, sources, receiver, session) = &mut cases[index];
+                let hold = sample as u64 + 2;
+                replace_source(files, sources, receiver, &session_source(hold));
+                let started = Instant::now();
+                let Reload::Updated { prepared, .. } = session.poll_with_duration(sources, |_| {})
+                else {
+                    panic!("changed hold")
+                };
+                timings[index].push(started.elapsed());
+                assert_eq!(prepared.statistics.restored_statements, 2);
+                assert_eq!(prepared.statistics.decoded_assets, 0);
+                assert_eq!(
+                    prepared.animation.duration,
+                    sanim_core::Fraction::from(hold) + sanim_core::Fraction::new(1u64, 10u64)
+                );
+                assert_eq!(sources.copied_reads.load(Ordering::Relaxed), 0);
+            }
+        }
+        let bytes = cases[1].1.read_snapshot("library.sanim").unwrap().0;
+        let mut hashing = Vec::new();
+        for _ in 0..SAMPLES {
+            let started = Instant::now();
+            std::hint::black_box(sanim_core::digest(std::hint::black_box(bytes.as_slice())));
+            hashing.push(started.elapsed());
+        }
+        for samples in &mut timings {
+            samples.sort_unstable();
+        }
+        hashing.sort_unstable();
+        let [small, large] = timings.map(|samples| samples[SAMPLES / 2]);
+        let hash = hashing[SAMPLES / 2];
+        let extra = large.saturating_sub(small);
+        println!(
+            "cached source import reload: small={SMALL_BYTES}B median={small:?}; large={LARGE_BYTES}B median={large:?}; fresh large hash={hash:?}; import-size overhead={extra:?}; samples={SAMPLES}"
+        );
+        assert!(
+            extra < hash / HASH_COST_DIVISOR,
+            "unchanged source reload grew like rehashing the import: small={small:?}, large={large:?}, full hash={hash:?}; cached fingerprint witnesses must stay independent of source byte length"
         );
     }
 

@@ -46,6 +46,15 @@ pub struct Submission {
     _resources: Vec<Buffer>,
 }
 impl Submission {
+    pub fn wait(&self) -> Result<(), String> {
+        self.command.waitUntilCompleted();
+        if self.completed()? {
+            Ok(())
+        } else {
+            Err("Metal command did not finish after waiting".into())
+        }
+    }
+
     pub fn new(
         command: Retained<ProtocolObject<dyn MTLCommandBuffer>>,
         resources: Vec<Buffer>,

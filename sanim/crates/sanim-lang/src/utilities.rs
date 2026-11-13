@@ -188,6 +188,8 @@ enum Values {
     Color,
     Border,
     Overflow,
+    WhiteSpace,
+    OverflowWrap,
 }
 struct Family {
     prefix: &'static str,
@@ -196,6 +198,16 @@ struct Family {
 }
 // Prefix order matters: axis policies precede the shorthand policy.
 const FAMILIES: &[Family] = &[
+    Family {
+        prefix: "whitespace-",
+        property: "white_space",
+        values: Values::WhiteSpace,
+    },
+    Family {
+        prefix: "wrap-",
+        property: "overflow_wrap",
+        values: Values::OverflowWrap,
+    },
     Family {
         prefix: "overflow-x-",
         property: "overflow_x",
@@ -323,6 +335,14 @@ pub fn completions(element: &str, prefix: &str) -> Vec<Description> {
                 .map(ToString::to_string)
                 .collect(),
             Values::Color => vec![],
+            Values::WhiteSpace => sanim_core::text::WhiteSpace::VALUES
+                .iter()
+                .map(|(name, _)| (*name).to_owned())
+                .collect(),
+            Values::OverflowWrap => sanim_core::text::OverflowWrap::VALUES
+                .iter()
+                .map(|(name, _)| (*name).to_owned())
+                .collect(),
             Values::Overflow => Overflow::VALUES
                 .iter()
                 .map(|(name, _)| (*name).to_owned())
@@ -431,6 +451,14 @@ pub(crate) fn lower(
                 } else {
                     set("border_color", color(value)?);
                 }
+            }
+            Values::WhiteSpace => {
+                sanim_core::text::WhiteSpace::parse(value)?;
+                set(family.property, text(value));
+            }
+            Values::OverflowWrap => {
+                sanim_core::text::OverflowWrap::parse(value)?;
+                set(family.property, text(value));
             }
             Values::Overflow => {
                 Overflow::parse(value)?;

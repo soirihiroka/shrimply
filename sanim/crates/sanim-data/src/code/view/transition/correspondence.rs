@@ -8,6 +8,15 @@ use std::collections::BTreeMap;
 // work: ambiguous unmatched tokens simply leave/enter instead of stealing identity.
 const MAX_MATCH_WORK: usize = 1_000_000;
 
+// Styling is presentation, not source identity. A selection/theme change must
+// recolor a stable glyph instead of deleting it and inserting a translucent copy.
+fn identity(token: &Token) -> (&str, &str) {
+    (
+        token.key.split(':').next().unwrap_or("token"),
+        super::text(&token.element).unwrap_or(&token.key),
+    )
+}
+
 pub(super) fn matches(from: &Vector<Token>, to: &Vector<Token>) -> Vec<Option<usize>> {
     let mut output = vec![None; to.len()];
     if from
@@ -18,22 +27,25 @@ pub(super) fn matches(from: &Vector<Token>, to: &Vector<Token>) -> Vec<Option<us
         let old: BTreeMap<_, _> = from
             .iter()
             .enumerate()
-            .map(|(index, token)| ((token.line, token.column, token.key.as_ref()), index))
+            .map(|(index, token)| ((token.line, token.column, identity(token)), index))
             .collect();
         for (index, token) in to.iter().enumerate() {
             output[index] = old
-                .get(&(token.line, token.column, token.key.as_ref()))
+                .get(&(token.line, token.column, identity(token)))
                 .copied();
         }
         return output;
     }
     let mut start = 0;
-    while start < from.len().min(to.len()) && from[start].key == to[start].key {
+    while start < from.len().min(to.len()) && identity(&from[start]) == identity(&to[start]) {
         output[start] = Some(start);
         start += 1;
     }
     let (mut old_end, mut new_end) = (from.len(), to.len());
-    while old_end > start && new_end > start && from[old_end - 1].key == to[new_end - 1].key {
+    while old_end > start
+        && new_end > start
+        && identity(&from[old_end - 1]) == identity(&to[new_end - 1])
+    {
         old_end -= 1;
         new_end -= 1;
         output[new_end] = Some(old_end);
@@ -43,20 +55,20 @@ pub(super) fn matches(from: &Vector<Token>, to: &Vector<Token>) -> Vec<Option<us
         new_end - start,
         start,
         &mut output,
-        |old, new| from[old].key == to[new].key,
+        |old, new| identity(&from[old]) == identity(&to[new]),
     );
 
     // A unique moved identifier can still morph across the ordered edit path.
     // Repeated words never use this fallback: their identity requires context.
     type Occurrences = (Option<usize>, usize, Option<usize>, usize);
-    let mut unique: BTreeMap<&str, Occurrences> = BTreeMap::new();
+    let mut unique: BTreeMap<(&str, &str), Occurrences> = BTreeMap::new();
     for (index, token) in from.iter().enumerate() {
-        let entry = unique.entry(&token.key).or_default();
+        let entry = unique.entry(identity(token)).or_default();
         entry.0 = Some(index);
         entry.1 += 1;
     }
     for (index, token) in to.iter().enumerate() {
-        let entry = unique.entry(&token.key).or_default();
+        let entry = unique.entry(identity(token)).or_default();
         entry.2 = Some(index);
         entry.3 += 1;
     }

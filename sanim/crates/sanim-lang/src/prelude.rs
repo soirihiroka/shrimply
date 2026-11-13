@@ -88,6 +88,8 @@ pub(crate) fn element_parameters() -> Vec<Parameter> {
         p("justify", sanim_core::Justify::ty()),
         p("align", sanim_core::Align::ty()),
         p("wrap", Bool),
+        p("white_space", sanim_core::text::WhiteSpace::ty()),
+        p("overflow_wrap", sanim_core::text::OverflowWrap::ty()),
         p("flex_direction", String),
         p("flex_grow", Numeric(Dimension::Number)),
         p("flex_shrink", Numeric(Dimension::Number)),

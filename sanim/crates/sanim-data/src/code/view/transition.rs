@@ -1,5 +1,6 @@
 //! One transition engine for every native code view, including signal-controlled styles.
 mod correspondence;
+mod fragments;
 use imbl::Vector;
 use pango::glib::translate::ToGlibPtr;
 use sanim_core::{
@@ -28,6 +29,8 @@ struct Outgoing {
     before: usize,
 }
 struct Plan {
+    source: Vector<Token>,
+    target: Vector<Token>,
     from: Vector<Token>,
     to: Vector<Token>,
     incoming: Vec<Incoming>,
@@ -81,13 +84,17 @@ fn boundaries(text: &str) -> Result<Arc<[usize]>, String> {
     Ok(ends.into())
 }
 
-fn plan(from: &Vector<Token>, to: &Vector<Token>, typing: bool) -> Result<Arc<Plan>, String> {
-    type Key = (usize, usize, bool);
+fn plan(
+    source: &Vector<Token>,
+    target: &Vector<Token>,
+    animation: PatchAnimation,
+) -> Result<Arc<Plan>, String> {
+    type Key = (usize, usize, u8);
     static CACHE: OnceLock<Mutex<Cache<Key, Plan>>> = OnceLock::new();
     let key = (
-        std::ptr::from_ref(from) as usize,
-        std::ptr::from_ref(to) as usize,
-        typing,
+        std::ptr::from_ref(source) as usize,
+        std::ptr::from_ref(target) as usize,
+        animation as u8,
     );
     let cache =
         CACHE.get_or_init(|| Mutex::new(Cache::new(MAX_TRANSITION_BYTES, MAX_TRANSITION_ENTRIES)));
@@ -95,12 +102,21 @@ fn plan(from: &Vector<Token>, to: &Vector<Token>, typing: bool) -> Result<Arc<Pl
         .lock()
         .expect("code transition cache poisoned")
         .get(&key)
-        && plan.from.ptr_eq(from)
-        && plan.to.ptr_eq(to)
+        && plan.source.ptr_eq(source)
+        && plan.target.ptr_eq(target)
     {
         return Ok(plan);
     }
-    let matches = correspondence::matches(from, to);
+    let typing = animation == PatchAnimation::Typewriter;
+    let (from, to, matches) = if animation == PatchAnimation::Morph {
+        fragments::prepare(source, target)?
+    } else {
+        (
+            source.clone(),
+            target.clone(),
+            correspondence::matches(source, target),
+        )
+    };
     let mut retained = vec![false; from.len()];
     let mut incoming = Vec::with_capacity(to.len());
     let mut characters = 0usize;
@@ -163,10 +179,18 @@ fn plan(from: &Vector<Token>, to: &Vector<Token>, typing: bool) -> Result<Arc<Pl
     characters = characters
         .checked_add(deletion_characters)
         .ok_or("typewriter edit count overflow")?;
+    let mut seen = std::collections::HashSet::new();
+    let retained_tokens: Vec<_> = source
+        .iter()
+        .chain(target)
+        .chain(&from)
+        .chain(&to)
+        .filter(|token| seen.insert(Arc::as_ptr(&token.element)))
+        .collect();
     let retained = Value::List(List::typed(
         Type::Element,
-        from.iter()
-            .chain(to)
+        retained_tokens
+            .iter()
             .map(|token| Value::Element(token.element.clone()))
             .collect(),
     ));
@@ -176,9 +200,8 @@ fn plan(from: &Vector<Token>, to: &Vector<Token>, typing: bool) -> Result<Arc<Pl
     let metadata = std::mem::size_of::<Plan>()
         + incoming.len() * std::mem::size_of::<Incoming>()
         + outgoing.len() * std::mem::size_of::<Outgoing>()
-        + from
+        + retained_tokens
             .iter()
-            .chain(to)
             .map(|token| {
                 token.key.len() + std::mem::size_of::<Style>() + std::mem::size_of::<Token>()
             })
@@ -198,8 +221,10 @@ fn plan(from: &Vector<Token>, to: &Vector<Token>, typing: bool) -> Result<Arc<Pl
         return Err("code transition exceeds its retained byte budget".into());
     }
     let value = Arc::new(Plan {
-        from: from.clone(),
-        to: to.clone(),
+        source: source.clone(),
+        target: target.clone(),
+        from,
+        to,
         incoming,
         outgoing,
         characters,
@@ -217,8 +242,8 @@ fn at(token: &Token) -> Element {
     element.position = token.position;
     element
 }
-fn leaving(element: &mut Element) {
-    element.id.push_str("/@leaving");
+fn identify(element: &mut Element, suffix: &str) {
+    element.id.push_str(suffix);
     if let Some(children) = element.geometry.children()
         && !children.is_empty()
     {
@@ -226,7 +251,7 @@ fn leaving(element: &mut Element) {
             .children_mut()
             .expect("container children")
         {
-            leaving(child);
+            identify(child, suffix);
         }
     }
 }
@@ -284,6 +309,61 @@ fn prefix(element: &mut Element, value: &str, style: &Style) -> Result<f64, Stri
     Ok(advance)
 }
 
+// Native code tokens use solid paints. Update existing glyph/decorations in
+// place so a theme or selection change does not fade unchanged source text.
+fn recolor(element: &mut Element, previous: &Element, progress: Fraction) -> Result<(), String> {
+    let previous = if matches!(element.geometry.as_ref(), Geometry::Text { .. }) {
+        previous
+            .geometry
+            .children()
+            .and_then(|children| {
+                children
+                    .iter()
+                    .find(|child| matches!(child.geometry.as_ref(), Geometry::Text { .. }))
+            })
+            .unwrap_or(previous)
+    } else {
+        previous
+    };
+    if std::mem::discriminant(element.geometry.as_ref())
+        == std::mem::discriminant(previous.geometry.as_ref())
+        && let (sanim_core::Paint::Solid(from), sanim_core::Paint::Solid(to)) =
+            (&previous.fill, &element.fill)
+        && from != to
+    {
+        element.fill = math::paint::color_lerp(from, to, progress)?.into();
+    }
+    if element
+        .geometry
+        .children()
+        .is_some_and(|children| !children.is_empty())
+    {
+        let role = |element: &Element| {
+            element
+                .id
+                .split("/@fragment/")
+                .next()
+                .unwrap_or(&element.id)
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .to_owned()
+        };
+        for child in Arc::make_mut(&mut element.geometry)
+            .children_mut()
+            .expect("code children")
+        {
+            let previous = previous
+                .geometry
+                .children()
+                .and_then(|children| children.iter().find(|old| role(old) == role(child)))
+                .unwrap_or(previous);
+            recolor(child, previous, progress)?;
+        }
+    }
+    Ok(())
+}
+
 /// Blend immutable native endpoints. Typewriter reveals complete Unicode cursor
 /// clusters; the completed token uses the exact original target outline.
 pub fn transition_tokens(
@@ -300,15 +380,26 @@ pub fn transition_tokens(
     if raw_progress >= 1.into() {
         return Ok(to.iter().map(at).collect());
     }
-    let plan = plan(from, to, animation == PatchAnimation::Typewriter)?;
-    let typed = math::functions::evaluate(
-        "floor",
-        &[Number {
-            value: raw_progress * Fraction::from(plan.characters as u64),
-            unit: Unit::Number,
-        }],
-    )?
-    .usize()?;
+    let plan = plan(from, to, animation)?;
+    let from = &plan.from;
+    let to = &plan.to;
+    let typed = if animation == PatchAnimation::Typewriter {
+        math::functions::evaluate(
+            "floor",
+            &[Number {
+                value: raw_progress * Fraction::from(plan.characters as u64),
+                unit: Unit::Number,
+            }],
+        )?
+        .usize()?
+    } else {
+        0
+    };
+    let [removed_opacity, inserted_opacity] = if animation == PatchAnimation::Morph {
+        math::paint::edit_opacities(appearance)?
+    } else {
+        [math::arithmetic("-", 1.into(), appearance)?, appearance]
+    };
     let mut children = Vector::new();
     for (token, item) in to.iter().zip(&plan.incoming) {
         let mut element = at(token);
@@ -316,10 +407,11 @@ pub fn transition_tokens(
             let previous = &from[previous];
             if animation == PatchAnimation::Fade
                 && (previous.position != token.position
-                    || previous.element.opacity != token.element.opacity)
+                    || previous.element.opacity != token.element.opacity
+                    || previous.style != token.style)
             {
                 let mut old = at(previous);
-                leaving(&mut old);
+                identify(&mut old, "/@leaving");
                 old.opacity = math::visual_product(
                     old.opacity,
                     math::arithmetic("-", 1.into(), appearance)?,
@@ -327,16 +419,25 @@ pub fn transition_tokens(
                 children.push_back(old);
                 element.opacity = math::visual_product(element.opacity, appearance)?;
             } else if animation != PatchAnimation::Fade {
-                for axis in 0..2 {
-                    element.position.values[axis] = math::motion_lerp(
-                        previous.position.values[axis],
-                        token.position.values[axis],
-                        progress,
-                        true,
-                    )?;
+                if previous.position != token.position {
+                    for axis in 0..2 {
+                        if previous.position.values[axis] != token.position.values[axis] {
+                            element.position.values[axis] = math::motion_lerp(
+                                previous.position.values[axis],
+                                token.position.values[axis],
+                                progress,
+                                true,
+                            )?;
+                        }
+                    }
                 }
-                element.opacity =
-                    math::visual_lerp(previous.element.opacity, element.opacity, appearance)?;
+                if previous.element.opacity != element.opacity {
+                    element.opacity =
+                        math::visual_lerp(previous.element.opacity, element.opacity, appearance)?;
+                }
+                if previous.style != token.style {
+                    recolor(&mut element, &previous.element, appearance)?;
+                }
             }
         } else if animation == PatchAnimation::Typewriter && !item.boundaries.is_empty() {
             let count = typed
@@ -352,14 +453,14 @@ pub fn transition_tokens(
                 prefix(&mut element, &value, &token.style)?;
             }
         } else if animation != PatchAnimation::Typewriter {
-            element.opacity = math::visual_product(element.opacity, appearance)?;
+            element.opacity = math::visual_product(element.opacity, inserted_opacity)?;
         }
         children.push_back(element);
     }
     for item in &plan.outgoing {
         let token = &from[item.index];
         let mut old = at(token);
-        leaving(&mut old);
+        identify(&mut old, "/@leaving");
         if animation == PatchAnimation::Typewriter && !item.boundaries.is_empty() {
             let count = item
                 .boundaries
@@ -374,8 +475,7 @@ pub fn transition_tokens(
                 prefix(&mut old, &value, &token.style)?;
             }
         } else {
-            old.opacity =
-                math::visual_product(old.opacity, math::arithmetic("-", 1.into(), appearance)?)?;
+            old.opacity = math::visual_product(old.opacity, removed_opacity)?;
         }
         children.push_back(old);
     }

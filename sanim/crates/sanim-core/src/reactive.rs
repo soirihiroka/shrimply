@@ -1193,6 +1193,8 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
             crate::Overflow::ty().accepts(ty)
         }
         Property::Text => Type::String.accepts(ty),
+        Property::WhiteSpace => crate::text::WhiteSpace::ty().accepts(ty),
+        Property::OverflowWrap => crate::text::OverflowWrap::ty().accepts(ty),
         Property::Font => *ty == Type::Font,
         Property::FontSize => math::operations::scalar_unit(ty) == Some(Unit::Length),
         Property::XAlign | Property::YAlign => {

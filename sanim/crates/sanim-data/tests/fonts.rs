@@ -13,8 +13,11 @@ fn sanim_uses_the_applications_exact_shaped_font_cache_entry() {
         &shrimply_fonts::native::shaping::Options::new(24.),
     )
     .unwrap();
-    assert!(Arc::ptr_eq(&cached, &native.shaped));
-    assert!(Arc::ptr_eq(&cached.outline, &native.shaped.outline));
+    assert!(Arc::ptr_eq(&cached, native.shaped().unwrap()));
+    assert!(Arc::ptr_eq(
+        &cached.outline,
+        &native.shaped().unwrap().outline
+    ));
     let bounds = sanim_data::font::bounds(&cached);
     assert_eq!(
         bounds.min.values,

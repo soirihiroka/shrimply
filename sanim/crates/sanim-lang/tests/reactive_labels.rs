@@ -169,3 +169,46 @@ fn native_alignment_arguments_accept_typed_signal_values() {
         assert_eq!(tag, "End");
     }
 }
+
+#[test]
+fn text_constructor_getter_and_setter_share_language_string_allocations() {
+    use std::sync::Arc;
+    let mut files = MemorySources::default();
+    files.insert(
+        "main.sanim",
+        "let words=\"Shared authored text\"\nlet label=Text(words)\nadd(label)",
+    );
+    let prepared = Engine::default()
+        .prepare("main.sanim", &files, &Default::default())
+        .unwrap();
+    let Value::String(words) = &prepared.bindings["words"] else {
+        panic!("String")
+    };
+    let source = prepared.animation.find("label").unwrap();
+    let Geometry::Text { text, .. } = source.geometry.as_ref() else {
+        panic!("Text")
+    };
+    assert!(
+        Arc::ptr_eq(words, text),
+        "construction must retain the language string allocation"
+    );
+    let Value::String(getter) = source.property(Property::Text).unwrap() else {
+        panic!("String")
+    };
+    assert!(Arc::ptr_eq(words, &getter));
+    let mut changed = source.clone();
+    let replacement: Arc<str> = "Changed text".into();
+    changed
+        .set(Property::Text, Value::String(replacement.clone()))
+        .unwrap();
+    let Geometry::Text { text, pending, .. } = changed.geometry.as_ref() else {
+        panic!("Text")
+    };
+    assert!(Arc::ptr_eq(text, &replacement));
+    assert!(*pending);
+    assert_eq!(
+        words.as_ref(),
+        "Shared authored text",
+        "COW mutation must leave the authored source intact"
+    );
+}

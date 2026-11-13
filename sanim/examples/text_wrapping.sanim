@@ -1,0 +1,48 @@
+# Reflow happens immediately at each sampled width, like a browser layout.
+mut panel_width = 620pt
+mut whitespace: "normal" | "pre-wrap" | "nowrap" = "normal"
+mut overflow_wrap: "normal" | "anywhere" = "normal"
+mut mode_label = "whitespace-normal · wrap-normal"
+let title = <Label font_size={26pt} position={Vec2(0%, -43%)}>A box changes width. Text reflows.</Label>
+let mode = <Label font_size={15pt} fill="blue2" position={Vec2(0%, -34%)}>{mode_label}</Label>
+let prose = <Label font_size={20pt}>
+    A   small paragraph keeps its words together while this box gets narrower.
+    HTML whitespace rules collapse extra spaces and newlines.
+    SupercalifragilisticexpialidociousShowsWhatHappensToAnUnbrokenWord.
+</Label>
+let panel = <Box width={panel_width} p-20 rounded-lg bg-card_bg_dark white_space={whitespace} overflow_wrap={overflow_wrap} overflow-x-hidden x_align={Align.Center} position={Vec2(0%, 20%)}>
+    {prose}
+</Box>
+let code = <CodeView lang="python" whitespace-pre-wrap wrap-anywhere width={panel_width} line_numbers={true} font_size={15pt} line_height={22pt} position={Vec2(0%, 27%)}>
+    def greet(name):
+        return f"A long message for {name}: code wraps without adding source line numbers."
+</CodeView>
+add(title)
+add(mode)
+add(panel)
+add(code)
+wait(600ms)
+repeat 2 {
+    animate(panel_width, to = 280pt, duration = 1400ms, ease = "linear")
+    animate(panel_width, to = 620pt, duration = 1400ms, ease = "linear")
+}
+whitespace = "pre-wrap"
+mode_label = "whitespace-pre-wrap · preserved spaces and newlines"
+repeat 2 {
+    animate(panel_width, to = 280pt, duration = 1400ms, ease = "linear")
+    animate(panel_width, to = 620pt, duration = 1400ms, ease = "linear")
+}
+whitespace = "nowrap"
+mode_label = "whitespace-nowrap · clipped horizontal overflow"
+repeat 2 {
+    animate(panel_width, to = 280pt, duration = 1400ms, ease = "linear")
+    animate(panel_width, to = 620pt, duration = 1400ms, ease = "linear")
+}
+whitespace = "normal"
+overflow_wrap = "anywhere"
+mode_label = "whitespace-normal · wrap-anywhere · long words can break"
+repeat 2 {
+    animate(panel_width, to = 280pt, duration = 1400ms, ease = "linear")
+    animate(panel_width, to = 620pt, duration = 1400ms, ease = "linear")
+}
+wait(1s)

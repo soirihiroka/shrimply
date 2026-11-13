@@ -17,7 +17,7 @@ wait(1s)"#).unwrap();
     else {
         panic!("Text alias")
     };
-    assert_eq!(text, "hello {literal} 0007 & more");
+    assert_eq!(text.as_ref(), "hello {literal} 0007 & more");
     let card = prepared.animation.find("card").unwrap();
     let Geometry::Rectangle {
         width,
@@ -126,7 +126,7 @@ wait(1s)"#,
     else {
         panic!("label")
     };
-    assert_eq!(text, "count=5 + 06 = 11 / done");
+    assert_eq!(text.as_ref(), "count=5 + 06 = 11 / done");
     let prepared =
         prepare("let card=<Rect>first<Label>middle</Label>last</Rect>\nadd(card)\nwait(1s)")
             .unwrap();
@@ -141,7 +141,7 @@ wait(1s)"#,
         .iter()
         .map(|child| {
             if let Geometry::Text { text, .. } = child.geometry.as_ref() {
-                text.as_str()
+                text.as_ref()
             } else {
                 panic!("text")
             }
@@ -198,7 +198,7 @@ fn relative_pill_radius_does_not_claim_percentages_are_point_lengths() {
 fn label_alias_uses_the_native_registry_and_is_protected() {
     let prepared = prepare("let label=Label(\"registered\")\nadd(label)\nwait(1s)").unwrap();
     assert!(
-        matches!(prepared.animation.find("label").unwrap().geometry.as_ref(),Geometry::Text{text,..}if text=="registered")
+        matches!(prepared.animation.find("label").unwrap().geometry.as_ref(),Geometry::Text{text,..}if text.as_ref()=="registered")
     );
     let error = prepare("let Label=1").unwrap_err().to_string();
     assert!(

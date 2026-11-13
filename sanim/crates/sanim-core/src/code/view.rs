@@ -79,7 +79,7 @@ pub struct Theme {
 }
 impl Default for Theme {
     fn default() -> Self {
-        // GtkSourceView's Adwaita-dark semantic colors. See docs/code-view.md.
+        // GtkSourceView's Adwaita-dark semantic colors. See docs/source/sanim/code-view.rst.
         let style = |hex: &str, bold| Style {
             fill: Some(Color::parse(hex).expect("Adwaita source color")),
             bold: Some(bold),

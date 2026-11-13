@@ -71,7 +71,7 @@ ExpandX(interval_box,duration=400ms,ease="smootherstep")
             < 1e-9
     );
     let label = p.animation.find("axis/label/1").unwrap();
-    assert!(matches!(label.geometry.as_ref(),Geometry::Text{text,..}if text=="100%"));
+    assert!(matches!(label.geometry.as_ref(),Geometry::Text{text,..}if text.as_ref()=="100%"));
 }
 #[test]
 fn native_quantiles_match_linear_interpolation_and_do_not_modify_samples() {

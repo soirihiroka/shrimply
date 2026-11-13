@@ -15,7 +15,7 @@ mod oidn;
 mod optical_flow;
 pub use buffer::Buffer;
 pub use optical_flow::OpticalFlow;
-pub use vaapi::{ImportedFrame, decoder_backend, video_color_space};
+pub use vaapi::{ImportedFrame, decoder_backend};
 
 use ash::vk;
 use device::Device;

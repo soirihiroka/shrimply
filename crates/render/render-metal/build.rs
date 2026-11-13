@@ -10,7 +10,10 @@ fn main() {
     let device = MTLCreateSystemDefaultDevice().expect("Metal compiler device unavailable");
     let mut generated = String::from("static MODULES: &[Module] = &[\n");
     // Keep the same module set as render-cuda. Only target compilation differs.
-    for module in include_str!("../render-core/shaders/kernels.txt").lines() {
+    for module in include_str!("../render-core/shaders/kernels.txt")
+        .lines()
+        .chain(["video_metal"])
+    {
         let source_path = directory.join(format!("{module}.slang"));
         let (artifacts, changed) = cached_artifacts(&directory, &output, module).map_or_else(
             || {
@@ -58,6 +61,18 @@ fn main() {
                     continue;
                 }
                 write_fields(&mut generated, parameter, "", 0);
+            }
+            generated.push_str("], textures: &[\n");
+            for parameter in entry["parameters"].as_array().expect("kernel parameters") {
+                if parameter["binding"]["kind"] == "shaderResource"
+                    && parameter["type"]["baseShape"] == "texture2D"
+                {
+                    let name = parameter["name"].as_str().expect("texture name");
+                    let index = parameter["binding"]["index"]
+                        .as_u64()
+                        .expect("texture binding");
+                    writeln!(generated, "({name:?}, {index}),").unwrap();
+                }
             }
             generated.push_str("] },\n");
         }

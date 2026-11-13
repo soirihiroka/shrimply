@@ -14,7 +14,7 @@ fn sample(prepared: &Prepared, time: Fraction) -> Vec<Element> {
 }
 fn texts(element: &Element, output: &mut BTreeMap<String, String>) {
     if let Geometry::Text { text, .. } = element.geometry.as_ref() {
-        output.insert(text.clone(), element.id.clone());
+        output.insert(text.to_string(), element.id.clone());
     }
     if let Some(children) = element.geometry.children() {
         for child in children {

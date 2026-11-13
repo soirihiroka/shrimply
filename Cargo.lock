@@ -6293,6 +6293,7 @@ dependencies = [
  "shrimply-trust-core",
  "shrimply-visual-core",
  "shrimply-visual-cuda",
+ "shrimply-visual-frame",
  "shrimply-visual-modifiers",
  "skia-safe",
  "uuid",
@@ -7309,6 +7310,7 @@ dependencies = [
  "shrimply-render-metal",
  "shrimply-resource-pipeline",
  "shrimply-visual-core",
+ "shrimply-visual-frame",
  "skia-safe",
  "tracing",
  "uuid",
@@ -7565,13 +7567,16 @@ dependencies = [
 name = "shrimply-render-metal"
 version = "0.1.0"
 dependencies = [
+ "ffmpeg-next",
  "objc2",
+ "objc2-core-video",
  "objc2-foundation",
  "objc2-metal",
  "serde_json",
  "shrimply-gpu-metal",
  "shrimply-render-core",
  "shrimply-slang-build",
+ "shrimply-visual-frame",
  "skia-safe",
  "tracing",
 ]

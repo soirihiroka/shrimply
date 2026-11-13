@@ -49,13 +49,12 @@ fn main() -> Result<(), String> {
     let input = ffmpeg::format::input(&path).map_err(|error| error.to_string())?;
     let stream = input
         .streams()
-        .filter(|stream| stream.parameters().medium() == ffmpeg::media::Type::Video)
-        .filter(|stream| {
-            !stream
-                .disposition()
-                .contains(ffmpeg::format::stream::Disposition::ATTACHED_PIC)
+        .find(|stream| {
+            stream.parameters().medium() == ffmpeg::media::Type::Video
+                && !stream
+                    .disposition()
+                    .contains(ffmpeg::format::stream::Disposition::ATTACHED_PIC)
         })
-        .next()
         .ok_or("input has no video track")?;
     let rate = stream.avg_frame_rate();
     if rate.numerator() <= 0 || rate.denominator() <= 0 || input.duration() <= 0 {
@@ -84,12 +83,19 @@ fn main() -> Result<(), String> {
     item.source_duration = duration;
     item.playback_fps = fps;
     println!(
-        "{}",
-        serde_json::json!({"video": item.file.display().to_string(), "width": size.width, "height": size.height, "fps": format!("{}/{}", rate.numerator(), rate.denominator()), "codec": format!("{:?}", parameters.id()), "runs": runs, "frames": frames, "seeks": seeks, "warmup_frames": WARMUP_FRAMES})
+        "input={} size={}x{} fps={}/{} codec={:?} runs={runs} frames={frames} seeks={seeks} warmup={WARMUP_FRAMES}",
+        item.file.display(),
+        size.width,
+        size.height,
+        rate.numerator(),
+        rate.denominator(),
+        parameters.id()
     );
     drop(input);
+    let device = shrimply_video_decoder::DecoderBackend::cuda()?;
     let mut context = CudaContext::new(shrimply_gpu_cuda::selected_device())
         .map_err(|error| error.to_string())?;
+    drop(device);
     for run in 0..runs {
         let mut pool = VideoDecoderPool::new(1);
         let owner = pool.owner(&[], uuid::Uuid::new_v4(), item.id, VideoPlane::Color);
@@ -97,14 +103,15 @@ fn main() -> Result<(), String> {
         let started = Instant::now();
         decode_ready(&decoder, &mut context, Time::ZERO, DecodeMode::Accurate)?;
         println!(
-            "{}",
-            serde_json::json!({"run": run, "mode": "open_first_frame", "ready_us": started.elapsed().as_micros()})
+            "run={run} mode=open_first_frame ready_us={}",
+            started.elapsed().as_micros()
         );
         for frame in 1..WARMUP_FRAMES {
             decode_ready(
                 &decoder,
                 &mut context,
-                shrimply_math_core::time_from_frame(frame, fps),
+                shrimply_math_core::time_from_frame(frame as u64, fps)
+                    .ok_or("frame timestamp overflow")?,
                 DecodeMode::Continuous,
             )?;
         }
@@ -125,7 +132,8 @@ fn main() -> Result<(), String> {
                 let timing = decode_ready(
                     &decoder,
                     &mut context,
-                    shrimply_math_core::time_from_frame(frame, fps),
+                    shrimply_math_core::time_from_frame(frame as u64, fps)
+                        .ok_or("frame timestamp overflow")?,
                     mode,
                 )?;
                 decode.push(timing.0);
@@ -135,8 +143,13 @@ fn main() -> Result<(), String> {
             let elapsed = started.elapsed();
             ready.sort_unstable();
             println!(
-                "{}",
-                serde_json::json!({"run": run, "mode": name, "frames": count, "wall_us": elapsed.as_micros(), "ready_fps_milli": count as u128 * 1_000_000_000_000 / elapsed.as_nanos(), "decode_us": decode.iter().sum::<Duration>().as_micros(), "import_ready_us": import.iter().sum::<Duration>().as_micros(), "ready_p50_us": ready[ready.len() / 2].as_micros(), "ready_p95_us": ready[(ready.len() * 95).div_ceil(100) - 1].as_micros()})
+                "run={run} mode={name} frames={count} wall_us={} ready_fps_milli={} decode_us={} import_ready_us={} ready_p50_us={} ready_p95_us={}",
+                elapsed.as_micros(),
+                count as u128 * 1_000_000_000_000 / elapsed.as_nanos(),
+                decode.iter().sum::<Duration>().as_micros(),
+                import.iter().sum::<Duration>().as_micros(),
+                ready[ready.len() / 2].as_micros(),
+                ready[(ready.len() * 95).div_ceil(100) - 1].as_micros()
             );
         }
         drop(decoder);

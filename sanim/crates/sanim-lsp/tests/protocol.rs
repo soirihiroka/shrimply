@@ -974,6 +974,80 @@ fn markup_utility_completion_replaces_full_hyphenated_tokens_and_hover_resolves_
 }
 
 #[test]
+fn wrapping_utilities_complete_and_hover_as_typed_layout_properties() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = "let emoji=\"🙂\"; let text=<Label w-160 whitespace-pre-wrap wrap-anywhere>hello</Label>\nwait(1s)";
+    let position = |needle: &str, inside: usize| {
+        let start = source.find(needle).unwrap();
+        json!({"line":0,"character":source[..start+inside].encode_utf16().count()})
+    };
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+    ];
+    for (id, method, needle, inside) in [
+        (
+            2,
+            "textDocument/completion",
+            "whitespace-pre-wrap",
+            "whitespace-".len(),
+        ),
+        (3, "textDocument/completion", "wrap-anywhere", "wrap-".len()),
+        (
+            4,
+            "textDocument/hover",
+            "whitespace-pre-wrap",
+            "whitespace-pre".len(),
+        ),
+        (5, "textDocument/hover", "wrap-anywhere", "wrap-any".len()),
+    ] {
+        messages.push(request(
+            id,
+            method,
+            json!({"textDocument":{"uri":uri},"position":position(needle,inside)}),
+        ));
+    }
+    finish(&mut messages);
+    let (status, replies) = session(&messages);
+    assert_eq!(status, 0);
+    for (id, expected, token) in [
+        (2, "whitespace-pre-wrap", "whitespace-pre-wrap"),
+        (3, "wrap-anywhere", "wrap-anywhere"),
+    ] {
+        let items = reply(&replies, id)["result"]["items"].as_array().unwrap();
+        let item = items.iter().find(|item| item["label"] == expected).unwrap();
+        assert_eq!(item["textEdit"]["range"]["start"], position(token, 0));
+        assert_eq!(
+            item["textEdit"]["range"]["end"],
+            position(token, token.len())
+        );
+    }
+    for (id, property, value) in [
+        (4, "white_space", "pre-wrap"),
+        (5, "overflow_wrap", "anywhere"),
+    ] {
+        let hover = reply(&replies, id)["result"]["contents"]["value"]
+            .as_str()
+            .unwrap();
+        assert!(hover.contains(property) && hover.contains(value), "{hover}");
+    }
+    let diagnostics = replies
+        .iter()
+        .filter(|reply| reply["method"] == "textDocument/publishDiagnostics")
+        .flat_map(|reply| reply["params"]["diagnostics"].as_array().unwrap());
+    assert!(
+        diagnostics
+            .into_iter()
+            .all(|diagnostic| diagnostic["severity"] != 1),
+        "{replies:?}"
+    );
+}
+
+#[test]
 fn markup_utility_diagnostics_are_specific_and_explicit_properties_are_intentional() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
@@ -990,6 +1064,14 @@ fn markup_utility_diagnostics_are_specific_and_explicit_properties_are_intention
         ("let panel=<Box w-100 w-180 />", "overridden"),
         ("let panel=<Box w-100 w-100 />", "repeated"),
         ("let panel=<Box w-100 w-180 width={220pt} />", ""),
+        (
+            "let label=<Label whitespace-nowarp>text</Label>",
+            "unknown WhiteSpace \"nowarp\"",
+        ),
+        (
+            "let label=<Label whitespace-nowrap whitespace-pre-wrap>text</Label>",
+            "overridden",
+        ),
     ];
     for (index, (source, expected)) in cases.iter().enumerate() {
         let mut messages = vec![

@@ -591,11 +591,13 @@ pub(crate) fn make_element(
                     "Text requires Font(\"Family\", \"sans-serif\") or read<Font>(...)".into(),
                 );
             };
-            let text = required("text")?.string()?;
+            let Value::String(text) = required("text")? else {
+                return Err("expected a string".into());
+            };
             let size = positive(args, "font_size", Fraction::from(24))?;
             let shaped = sanim_data::font::cached_shape(font, text, size, false, false)?;
             Geometry::Text {
-                text: text.into(),
+                text: text.clone(),
                 font: font.clone(),
                 size,
                 outline: shaped.outline.clone(),
@@ -656,6 +658,21 @@ pub(crate) fn make_element(
         _ => return Err("align requires an Align enum case".into()),
     };
     let mut layout = Layout {
+        text: sanim_core::text::Layout {
+            white_space: args
+                .get("white_space")
+                .map(Value::string)
+                .transpose()?
+                .map(sanim_core::text::WhiteSpace::parse)
+                .transpose()?,
+            overflow_wrap: args
+                .get("overflow_wrap")
+                .map(Value::string)
+                .transpose()?
+                .map(sanim_core::text::OverflowWrap::parse)
+                .transpose()?,
+            ..Default::default()
+        },
         x_align: alignment("x_align")?,
         y_align: alignment("y_align")?,
         position_offset: [0.; 2],

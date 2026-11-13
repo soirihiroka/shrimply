@@ -360,7 +360,7 @@ fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
         },
     )
     .map_err(Text3dError)?;
-    let shaped = &native.shaped;
+    let shaped = native.shaped().map_err(Text3dError)?;
     let min = Vec2::new(
         (shaped.bounds[0] - shaped.origin[0]) as f32,
         (shaped.bounds[1] - shaped.origin[1]) as f32,

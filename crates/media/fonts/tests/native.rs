@@ -13,7 +13,7 @@ fn editor_layout_and_headless_shapes_share_the_exact_outline_artifact() {
     let repeated = native::shaping::layout(&font, "Shared AV ffi", &options).unwrap();
     assert!(Rc::ptr_eq(&layout, &repeated));
     let shape = native::shaping::shape(&font, "Shared AV ffi", &options).unwrap();
-    assert!(Arc::ptr_eq(&layout.shaped, &shape));
+    assert!(Arc::ptr_eq(layout.shaped().unwrap(), &shape));
     let worker_font = font.clone();
     let shared = std::thread::spawn(move || {
         native::shaping::shape(

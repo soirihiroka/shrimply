@@ -1,6 +1,8 @@
 #![cfg(target_os = "macos")]
 
 mod skia;
+mod video;
+pub use video::ImportedFrame;
 
 use objc2::{msg_send, rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSString;
@@ -25,6 +27,7 @@ struct KernelLayout {
     name: &'static str,
     group: [usize; 3],
     fields: &'static [Field],
+    textures: &'static [(&'static str, usize)],
 }
 struct Module {
     name: &'static str,
@@ -190,6 +193,7 @@ impl Renderer {
 /// Metal resource management and dispatch for the shared Slang rendering modules.
 pub struct Renderer {
     skia: Option<skia_safe::gpu::DirectContext>,
+    video_cache: Option<Retained<objc2_core_video::CVMetalTextureCache>>,
     context: shrimply_gpu_metal::Context,
     libraries: HashMap<&'static str, Retained<ProtocolObject<dyn MTLLibrary>>>,
     kernels: HashMap<&'static str, Kernel>,
@@ -348,6 +352,7 @@ impl Renderer {
     pub fn new() -> Result<Self, String> {
         Ok(Self {
             skia: None,
+            video_cache: None,
             context: shrimply_gpu_metal::Context::new()?,
             libraries: HashMap::new(),
             kernels: HashMap::new(),
@@ -420,6 +425,21 @@ impl Renderer {
             let bindings = reflection
                 .ok_or("Metal omitted pipeline reflection")?
                 .bindings();
+            let textures: Vec<_> = bindings
+                .iter()
+                .filter(|binding| binding.r#type() == MTLBindingType::Texture)
+                .map(|binding| binding.index())
+                .collect();
+            if textures.len() != layout.textures.len()
+                || layout
+                    .textures
+                    .iter()
+                    .any(|(_, index)| !textures.contains(index))
+            {
+                return Err(format!(
+                    "Slang and Metal disagree about {name} texture bindings"
+                ));
+            }
             let buffers: Vec<_> = bindings
                 .iter()
                 .filter(|binding| binding.r#type() == MTLBindingType::Buffer)

@@ -17,6 +17,7 @@ shrimply-preview-render-core.workspace = true
 shrimply-preview-render-vulkan.workspace = true
 shrimply-render-core.workspace = true
 shrimply-render-vulkan.workspace = true
+shrimply-visual-frame.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 skia-safe.workspace = true

@@ -192,3 +192,39 @@ wait(1s)"#,
     let frame = renderer.render(&scene, 0.into(), &options).unwrap();
     assert!(frame.rgba.chunks_exact(4).all(|pixel| pixel[3] == 0));
 }
+
+#[test]
+fn idle_scrollbar_has_no_rail_and_its_caps_survive_a_rounded_viewport() {
+    let scene=Renderer::default().prepare(animation("bg(Color(\"transparent\"))\nlet pane=<Box w-100 h-100 rounded-lg overflow-x-hidden overflow-y-scroll><Box w-100 h-500 /></Box>\nadd(pane)\nwait(1s)")).unwrap();
+    let mut renderer = Renderer::default();
+    let mut options = Options::for_animation(scene.animation());
+    options.encode_png = false;
+    let frame = renderer.render(&scene, 0.into(), &options).unwrap();
+    let coverage = |y: usize| {
+        (90..100)
+            .filter(|&x| frame.rgba[(y * frame.width as usize + x) * 4 + 3] > 0)
+            .count()
+    };
+    assert_eq!(
+        coverage(0),
+        0,
+        "the indicator must be inset from the rounded viewport corner"
+    );
+    assert!(
+        coverage(7) > 0,
+        "the leading rounded cap must remain visible"
+    );
+    assert!(
+        coverage(15) > coverage(6),
+        "the thumb must have a rounded leading cap"
+    );
+    assert!(
+        coverage(15) <= 5,
+        "idle indicator must stay thin rather than use hovered width"
+    );
+    assert_eq!(
+        coverage(80),
+        0,
+        "idle overlay must not paint a permanent trough"
+    );
+}

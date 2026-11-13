@@ -497,6 +497,8 @@ pub(super) fn property_name(name: &str) -> Option<Property> {
     Some(match name {
         "position" => Property::Position,
         "scroll" => Property::Scroll,
+        "white_space" => Property::WhiteSpace,
+        "overflow_wrap" => Property::OverflowWrap,
         "overflow" => Property::Overflow,
         "overflow_x" => Property::OverflowX,
         "overflow_y" => Property::OverflowY,

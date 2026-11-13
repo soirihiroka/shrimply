@@ -1,10 +1,16 @@
 //! Overlay scrollbar geometry in logical points. No rendering or element traversal.
 use crate::Overflow;
 
-pub const GUTTER: f64 = 12.;
-pub const THICKNESS: f64 = 6.;
-const EDGE: f64 = 3.;
-const MIN_THUMB: f64 = 24.;
+// libadwaita's idle overlay indicator: 3px thumb, 4px cross-axis margins,
+// 9px along-axis margins and a 40px minimum thumb (CSS pixels at 96 DPI).
+// https://github.com/GNOME/libadwaita/blob/main/src/stylesheet/widgets/_scrolling.scss
+const CSS_PIXEL_PT: f64 = 3. / 4.;
+pub const THICKNESS: f64 = 3. * CSS_PIXEL_PT;
+const CROSS_MARGIN: f64 = 4. * CSS_PIXEL_PT;
+const END_MARGIN: f64 = 9. * CSS_PIXEL_PT;
+pub const OUTLINE: f64 = CSS_PIXEL_PT;
+pub const GUTTER: f64 = 2. * CROSS_MARGIN + THICKNESS;
+const MIN_THUMB: f64 = 40. * CSS_PIXEL_PT;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scrollbar {
@@ -31,8 +37,8 @@ pub fn bars(
         }
         let cross = 1 - axis;
         let length = viewport[axis + 2] - viewport[axis];
-        let start = viewport[axis] + EDGE;
-        let end = viewport[axis + 2] - EDGE - if shown[cross] { GUTTER } else { 0. };
+        let start = viewport[axis] + END_MARGIN;
+        let end = viewport[axis + 2] - END_MARGIN - if shown[cross] { GUTTER } else { 0. };
         let track_length = (end - start).max(0.);
         if track_length == 0. || viewport[cross + 2] - viewport[cross] < GUTTER {
             continue;
@@ -50,8 +56,8 @@ pub fn bars(
         let mut track = viewport;
         track[axis] = start;
         track[axis + 2] = end;
-        track[cross] = viewport[cross + 2] - EDGE - THICKNESS;
-        track[cross + 2] = viewport[cross + 2] - EDGE;
+        track[cross] = viewport[cross + 2] - CROSS_MARGIN - THICKNESS;
+        track[cross + 2] = viewport[cross + 2] - CROSS_MARGIN;
         let mut thumb = track;
         thumb[axis] = thumb_start;
         thumb[axis + 2] = thumb_start + thumb_length;

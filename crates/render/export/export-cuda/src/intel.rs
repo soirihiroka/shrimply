@@ -11,7 +11,8 @@ fn unmodified_video(
         return Ok(None);
     };
     if video.native().color_range() == ffmpeg::color::Range::JPEG
-        || shrimply_render_vulkan::video_color_space(video.native())? != ffmpeg::color::Space::BT709
+        || shrimply_visual_frame::math::video_color_space(video.native())?
+            != ffmpeg::color::Space::BT709
     {
         return Ok(None);
     }

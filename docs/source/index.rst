@@ -28,6 +28,11 @@ Get started
 * :doc:`Getting started <getting-started>`
 * :doc:`Editor <guides/editor>`
 
+Programmatic animation
+----------------------
+
+* :doc:`Sanim animation language <sanim/index>`
+
 License
 -------
 
@@ -65,6 +70,13 @@ License
 
    server/index
    integrations/cli
+
+.. toctree::
+   :maxdepth: 1
+   :hidden:
+   :caption: Sanim
+
+   sanim/index
 
 .. toctree::
    :maxdepth: 2

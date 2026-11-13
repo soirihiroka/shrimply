@@ -46,7 +46,7 @@ pub enum Source {
     Generated(Box<shrimply_visual_core::generated::GeneratedFrame>),
     Group(Vec<Layer>),
     Image(Image),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     Video(std::sync::Arc<shrimply_visual_frame::VideoFrame>),
     Background(Box<shrimply_render_core::background_spirv::BackgroundUniforms>),
     Manim(ManimFrame),

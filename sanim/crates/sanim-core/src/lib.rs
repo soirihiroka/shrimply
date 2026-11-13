@@ -78,5 +78,6 @@ impl std::fmt::Display for Diagnostic {
 impl std::error::Error for Diagnostic {}
 
 pub mod template;
+pub mod text;
 pub use template::{Template, TemplatePart};
 pub mod sql;

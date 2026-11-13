@@ -12,6 +12,7 @@ shrimply-render-3d-metal = { workspace = true }
 shrimply-preview-render-core = { workspace = true }
 shrimply-preview-provider-skia = { workspace = true }
 shrimply-render-metal = { workspace = true }
+shrimply-visual-frame.workspace = true
 shrimply-render-core = { workspace = true }
 shrimply-visual-core = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }

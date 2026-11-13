@@ -53,3 +53,37 @@ fn thumb_matches_scroll_endpoints_and_resizes_with_content() {
     );
     assert_eq!(fits[0].thumb, fits[0].track);
 }
+
+#[test]
+fn idle_overlay_keeps_adwaita_spacing_so_rounded_caps_are_not_cropped() {
+    let viewport = [0., 0., 100., 200.];
+    let result = bars(
+        viewport,
+        [0., 400.],
+        [0., 0.],
+        [Overflow::Hidden, Overflow::Scroll],
+    );
+    let bar = &result[0];
+    assert_eq!(bar.thumb[2] - bar.thumb[0], 2.25, "3 CSS px at 96 DPI");
+    assert_eq!(
+        bar.thumb[1], 6.75,
+        "9 CSS px leaves room at rounded viewport corners"
+    );
+    assert_eq!(viewport[2] - bar.thumb[2], 3., "4 CSS px cross-axis inset");
+    let tail = bars(
+        viewport,
+        [0., 400.],
+        [0., 400.],
+        [Overflow::Hidden, Overflow::Scroll],
+    );
+    assert_eq!(viewport[3] - tail[0].thumb[3], 6.75);
+    for tiny in [[0., 0., 5., 5.], [0., 0., 100., 10.]] {
+        for bar in bars(tiny, [100., 100.], [0., 0.], [Overflow::Scroll; 2]) {
+            for axis in 0..2 {
+                assert!(bar.thumb[axis] >= tiny[axis]);
+                assert!(bar.thumb[axis + 2] <= tiny[axis + 2]);
+                assert!(bar.thumb[axis] < bar.thumb[axis + 2]);
+            }
+        }
+    }
+}

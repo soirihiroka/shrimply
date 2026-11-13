@@ -25,7 +25,7 @@ fn prepare(animation: &str, before: &str, patch: &str) -> (Renderer, sanim_rende
 fn texts(elements: &[sanim_core::Element]) -> Vec<String> {
     fn visit(element: &sanim_core::Element, words: &mut Vec<String>) {
         if let Geometry::Text { text, .. } = element.geometry.as_ref() {
-            words.push(text.clone());
+            words.push(text.to_string());
         }
         if let Some(children) = element.geometry.children() {
             for child in children {

@@ -29,7 +29,7 @@ fn options() -> Options {
 fn strings(elements: impl IntoIterator<Item = Element>) -> Vec<String> {
     fn collect(element: &Element, output: &mut Vec<String>) {
         if let Geometry::Text { text, .. } = element.geometry.as_ref() {
-            output.push(text.clone());
+            output.push(text.to_string());
         }
         if let Some(children) = element.geometry.children() {
             for child in children {
@@ -259,6 +259,11 @@ fn folded_repeated_words_follow_original_source_coordinates() {
             .find(|element| element.id == token.element.id)
             .unwrap();
         assert_eq!(
+            moved.opacity,
+            1.into(),
+            "folding keeps surviving source fully opaque"
+        );
+        assert_eq!(
             moved.position.values[1],
             (old.position.values[1] + token.position.values[1]) / 2.
         );
@@ -331,5 +336,225 @@ fn transition_benchmark_repetitive_functions_patch_and_fold() {
             to.len(),
             started.elapsed()
         );
+    }
+}
+
+#[test]
+fn edited_identifiers_keep_shared_grapheme_fragments_opaque_and_move_suffixes() {
+    let before = tokens("prefix_old_suffix");
+    let after = tokens("prefix_longer_suffix");
+    let quarter = Fraction::new(1u64, 4u64);
+    let half = Fraction::new(1u64, 2u64);
+    let first = transition_tokens(
+        &before,
+        &after,
+        quarter,
+        quarter,
+        quarter,
+        PatchAnimation::Morph,
+    )
+    .unwrap();
+    let middle =
+        transition_tokens(&before, &after, half, half, half, PatchAnimation::Morph).unwrap();
+    for frame in [&first, &middle] {
+        let stable: Vec<_> = frame.iter().filter(|element| matches!(element.geometry.as_ref(), Geometry::Text { text, .. } if text.as_ref() == "prefix_" || text.as_ref() == "_suffix")).collect();
+        assert_eq!(stable.len(), 2, "only the replaced middle may fade");
+        assert!(stable.iter().all(|element| element.opacity == 1.into()));
+    }
+    let suffix = |frame: &imbl::Vector<Element>| {
+        frame.iter().find(|element| matches!(element.geometry.as_ref(), Geometry::Text { text, .. } if text.as_ref() == "_suffix")).unwrap().position.values[0]
+    };
+    assert!(
+        suffix(&middle) > suffix(&first),
+        "unchanged suffix follows the expanding replacement width"
+    );
+    let added = middle.iter().find(|element| matches!(element.geometry.as_ref(), Geometry::Text { text, .. } if text.as_ref() == "longer")).unwrap();
+    let removed = middle.iter().find(|element| matches!(element.geometry.as_ref(), Geometry::Text { text, .. } if text.as_ref() == "old")).unwrap();
+    assert_eq!(
+        added.opacity,
+        0.into(),
+        "the new span waits for layout space"
+    );
+    assert_eq!(
+        removed.opacity,
+        0.into(),
+        "the old span leaves before replacement"
+    );
+    for (progress, endpoint) in [(0.into(), &before), (1.into(), &after)] {
+        let frame = transition_tokens(
+            &before,
+            &after,
+            progress,
+            progress,
+            progress,
+            PatchAnimation::Morph,
+        )
+        .unwrap();
+        assert_eq!(frame.len(), 1);
+        assert!(
+            Arc::ptr_eq(&frame[0].geometry, &endpoint[0].element.geometry),
+            "exact endpoints preserve the complete native ligature run"
+        );
+    }
+    // A cached plan shares its fragment geometry across samples; shaping and
+    // text splitting are never repeated in the frame loop.
+    let stable_first = first.iter().find(|element| matches!(element.geometry.as_ref(), Geometry::Text { text, .. } if text.as_ref() == "_suffix")).unwrap();
+    let stable_middle = middle.iter().find(|element| matches!(element.geometry.as_ref(), Geometry::Text { text, .. } if text.as_ref() == "_suffix")).unwrap();
+    assert!(Arc::ptr_eq(&stable_first.geometry, &stable_middle.geometry));
+}
+
+#[test]
+fn identifier_edits_do_not_split_combining_cursor_clusters() {
+    let before = tokens("e\u{301}oldn\u{303}");
+    let after = tokens("e\u{301}newn\u{303}");
+    let half = Fraction::new(1u64, 2u64);
+    let frame =
+        transition_tokens(&before, &after, half, half, half, PatchAnimation::Morph).unwrap();
+    let stable: Vec<_> = frame
+        .iter()
+        .filter(|element| element.opacity == 1.into())
+        .cloned()
+        .collect();
+    assert_eq!(strings(stable), ["e\u{301}", "n\u{303}"]);
+}
+
+#[test]
+fn stable_source_recolors_without_crossfading_when_highlight_style_changes() {
+    use sanim_core::{
+        Color, Paint,
+        code::view::{Override, Range, Style},
+    };
+    let document = Document::read("code.txt", "unchanged", Language::Plain).unwrap();
+    let before = prepare("code", &document, &options(), &Default::default(), &[])
+        .unwrap()
+        .tokens;
+    let mut changed = options();
+    changed.spans.push(Override {
+        range: Range {
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 10,
+        },
+        style: Style {
+            fill: Some(Color::parse("blue3").unwrap()),
+            ..Default::default()
+        },
+    });
+    let after = prepare("code", &document, &changed, &Default::default(), &[])
+        .unwrap()
+        .tokens;
+    let half = Fraction::new(1u64, 2u64);
+    let frame =
+        transition_tokens(&before, &after, half, half, half, PatchAnimation::Morph).unwrap();
+    assert_eq!(frame.len(), 1);
+    assert_eq!(frame[0].opacity, 1.into());
+    let (Paint::Solid(a), Paint::Solid(b), Paint::Solid(actual)) = (
+        &before[0].element.fill,
+        &after[0].element.fill,
+        &frame[0].fill,
+    ) else {
+        panic!("native glyph uses solid paint")
+    };
+    assert_ne!(actual, a);
+    assert_ne!(actual, b);
+    assert_eq!(
+        actual,
+        &sanim_core::math::paint::color_lerp(a, b, half).unwrap()
+    );
+}
+
+#[test]
+fn decorated_fragment_edits_preserve_unique_element_ids() {
+    use sanim_core::{
+        Color,
+        code::view::{Override, Range, Style},
+    };
+    let mut styled = options();
+    styled.spans.push(Override {
+        range: Range {
+            start_line: 1,
+            start_column: 1,
+            end_line: 1,
+            end_column: 18,
+        },
+        style: Style {
+            background: Some(Color::parse("blue5").unwrap()),
+            underline: Some(true),
+            ..Default::default()
+        },
+    });
+    let prepare_styled = |source| {
+        prepare(
+            "code",
+            &Document::read("code.txt", source, Language::Plain).unwrap(),
+            &styled,
+            &Default::default(),
+            &[],
+        )
+        .unwrap()
+        .tokens
+    };
+    let before = prepare_styled("prefix_old_suffix");
+    let after = prepare_styled("prefix_new_suffix");
+    let half = Fraction::new(1u64, 2u64);
+    let frame =
+        transition_tokens(&before, &after, half, half, half, PatchAnimation::Morph).unwrap();
+    fn visit(element: &Element, ids: &mut std::collections::HashSet<String>) {
+        assert!(
+            ids.insert(element.id.clone()),
+            "duplicate fragment element id: {}",
+            element.id
+        );
+        if let Some(children) = element.geometry.children() {
+            for child in children {
+                visit(child, ids);
+            }
+        }
+    }
+    let mut ids = Default::default();
+    for element in frame {
+        visit(&element, &mut ids);
+    }
+}
+
+#[test]
+fn inserted_words_wait_for_the_suffix_to_open_space_without_fading_stable_code() {
+    let before = tokens("Running job");
+    let after = tokens("Running queued job");
+    for progress in [
+        Fraction::new(1u64, 4u64),
+        Fraction::new(1u64, 2u64),
+        Fraction::new(3u64, 4u64),
+    ] {
+        let frame = transition_tokens(
+            &before,
+            &after,
+            progress,
+            progress,
+            progress,
+            PatchAnimation::Morph,
+        )
+        .unwrap();
+        for element in &frame {
+            if let Geometry::Text { text, .. } = element.geometry.as_ref() {
+                if text.as_ref() == "queued" {
+                    assert_eq!(
+                        element.opacity,
+                        if progress <= Fraction::new(1u64, 2u64) {
+                            Fraction::from(0)
+                        } else {
+                            Fraction::new(1u64, 2u64)
+                        }
+                    );
+                } else {
+                    assert_eq!(
+                        element.opacity,
+                        1.into(),
+                        "unchanged word {text} must stay readable"
+                    );
+                }
+            }
+        }
     }
 }

@@ -14,11 +14,12 @@ void video_texture_to_rgba(uint3 id : SV_DispatchThreadID,
                           uniform Texture2D<float2> uv_texture,
                           uniform uint* output, uniform uint width,
                           uniform uint height, uniform int4 coefficients,
-                          uniform bool full_range, uniform bool p010,
+                          uniform bool full_range, uniform bool p010, uniform bool flip_y,
                           uniform float2 chroma_offset) {
   uint i = id.x;
   if (i >= width * height) return;
   uint2 pixel = uint2(i % width, i / width);
+  if (flip_y) pixel.y = height - 1u - pixel.y;
   uint2 chroma_size = uint2((width + 1u) / 2u, (height + 1u) / 2u);
   float2 position = (float2(pixel) - chroma_offset) * 0.5f;
   int2 low = int2(floor(position));

@@ -15,7 +15,7 @@ use std::{
 #[derive(Clone)]
 pub enum DecodedImage {
     Raster(Image),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     Video(Arc<VideoFrame>),
 }
 
@@ -23,21 +23,21 @@ impl DecodedImage {
     pub fn width(&self) -> i32 {
         match self {
             Self::Raster(image) => image.width(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             Self::Video(video) => video.native().width() as i32,
         }
     }
     pub fn height(&self) -> i32 {
         match self {
             Self::Raster(image) => image.height(),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             Self::Video(video) => video.native().height() as i32,
         }
     }
     pub fn source(&self) -> crate::Source {
         match self {
             Self::Raster(image) => crate::Source::Image(image.clone()),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             Self::Video(video) => crate::Source::Video(video.clone()),
         }
     }
@@ -58,8 +58,6 @@ struct CachedFrame {
 pub struct Decoder {
     session: VideoDecoderSession,
     scaler: Option<software::scaling::Context>,
-    #[cfg(target_os = "macos")]
-    output_format: Option<Pixel>,
     current: Option<(DecodedVisual, DecodedImage)>,
     cancellation: DecodeControl,
     history: VecDeque<CachedFrame>,
@@ -83,8 +81,6 @@ impl Decoder {
         Ok(Self {
             session,
             scaler: None,
-            #[cfg(target_os = "macos")]
-            output_format: None,
             current: None,
             cancellation,
             history: VecDeque::new(),
@@ -166,57 +162,12 @@ impl Decoder {
     }
 
     fn image_for_frame(&mut self, source: &Arc<VideoFrame>) -> Result<DecodedImage, String> {
-        #[cfg(target_os = "linux")]
-        if source.native().format() == Pixel::VAAPI {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if matches!(source.native().format(), Pixel::VAAPI | Pixel::VIDEOTOOLBOX) {
             return Ok(DecodedImage::Video(source.clone()));
         }
         // Raster consumers need a software image; hardware compositors never use this path.
-        let native = unsafe { ffmpeg::sys::av_frame_clone(source.native().as_ptr()) };
-        if native.is_null() {
-            return Err("retain raster video frame".into());
-        }
-        let decoded = unsafe { frame::Video::wrap(native) };
-        #[cfg(target_os = "macos")]
-        let decoded = {
-            let mut decoded = decoded;
-            if self.output_format != Some(decoded.format()) {
-                self.output_format = Some(decoded.format());
-                if decoded.format() == Pixel::VIDEOTOOLBOX {
-                    tracing::info!("Preview is decoding VideoToolbox frames");
-                } else {
-                    tracing::info!(format = ?decoded.format(), "Preview is decoding software frames");
-                }
-            }
-            if decoded.format() == Pixel::VIDEOTOOLBOX {
-                let mut downloaded = frame::Video::empty();
-                // FFmpeg owns the CVPixelBuffer in decoded. Transfer to a new
-                // owned software AVFrame before passing pixels to swscale/Skia.
-                let result = unsafe {
-                    ffmpeg::ffi::av_hwframe_transfer_data(
-                        downloaded.as_mut_ptr(),
-                        decoded.as_ptr(),
-                        0,
-                    )
-                };
-                if result < 0 {
-                    return Err(format!(
-                        "could not transfer VideoToolbox frame: {}",
-                        ffmpeg::Error::from(result)
-                    ));
-                }
-                let result = unsafe {
-                    ffmpeg::ffi::av_frame_copy_props(downloaded.as_mut_ptr(), decoded.as_ptr())
-                };
-                if result < 0 {
-                    return Err(format!(
-                        "could not copy VideoToolbox frame properties: {}",
-                        ffmpeg::Error::from(result)
-                    ));
-                }
-                decoded = downloaded;
-            }
-            decoded
-        };
+        let decoded = source.native();
         let definition = software::scaling::context::Definition {
             format: decoded.format(),
             width: decoded.width(),
@@ -244,7 +195,7 @@ impl Decoder {
         self.scaler
             .as_mut()
             .expect("video scaler initialized")
-            .run(&decoded, &mut rgba)
+            .run(decoded, &mut rgba)
             .map_err(|e| e.to_string())?;
         let row_bytes = rgba.width() as usize * RGBA_CHANNELS;
         let mut pixels = Vec::with_capacity(row_bytes * rgba.height() as usize);

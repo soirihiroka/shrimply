@@ -1,68 +1,73 @@
 # A normal Box owns overflow. Its code child keeps its natural content height.
 mut scroll = Vec2(0%, 0%)
+let show_line_numbers = reflect(true, key="code.line_numbers", label="Line Numbers")
+mut numbers = show_line_numbers
+mut stage = "Scroll through the source"
 
 let heading = <Label font_size={28pt} position={Vec2(0%, -43%)}>Code, inside a box.</Label>
-let subtitle = <Label font_size={14pt} fill="light4" position={Vec2(0%, -36%)}>Native syntax trees · normal layout · one animated scroll value</Label>
+let subtitle = <Label font_size={14pt} fill="light4" position={Vec2(0%, -36%)}>Native syntax trees · animated scopes · optional line numbers</Label>
+
+let code = <CodeView line_numbers={numbers} lang="python" font_size={15pt} line_height={24pt} width={100%}>
+    from collections import deque
+    from dataclasses import dataclass
+
+
+    @dataclass(frozen=True)
+    class Job:
+        name: str
+        priority: int = 0
+
+
+    class WorkQueue:
+        """A small FIFO queue with explicit, readable operations."""
+
+        def __init__(self):
+            self.pending = deque()
+            self.completed = []
+
+        def push(self, job):
+            self.pending.append(job)
+
+        def pop(self):
+            if not self.pending:
+                raise IndexError("the queue is empty")
+            return self.pending.popleft()
+
+        def run_next(self):
+            job = self.pop()
+            print(f"Running {job.name}")
+            self.completed.append(job)
+            return job
+
+        def drain(self):
+            while self.pending:
+                self.run_next()
+
+
+    def main():
+        queue = WorkQueue()
+        queue.push(Job("Read source"))
+        queue.push(Job("Build syntax tree"))
+        queue.push(Job("Resolve layout"))
+        queue.push(Job("Record draw calls"))
+        queue.drain()
+        print(f"Completed {len(queue.completed)} jobs")
+
+
+    if __name__ == "__main__":
+        main()
+</CodeView>
 
 let panel = <Box w-84% h-70% p-24 gap-16 rounded-xl bg-card_bg_dark position={Vec2(8%, 20%)}>
     <Box flex flex-row gap-12 h-28 items-center>
         <Circle radius={5pt} fill="green3" />
         <Label font_size={17pt}>work_queue.py</Label>
     </Box>
-    <Box w-full h-360 p-12 rounded-lg bg-view_bg_dark overflow-x-hidden overflow-y-scroll scroll={scroll}>
-        <CodeView lang="python" font_size={15pt} line_height={24pt} width={100%}>
-            from collections import deque
-            from dataclasses import dataclass
-
-
-            @dataclass(frozen=True)
-            class Job:
-                name: str
-                priority: int = 0
-
-
-            class WorkQueue:
-                """A small FIFO queue with explicit, readable operations."""
-
-                def __init__(self):
-                    self.pending = deque()
-                    self.completed = []
-
-                def push(self, job):
-                    self.pending.append(job)
-
-                def pop(self):
-                    if not self.pending:
-                        raise IndexError("the queue is empty")
-                    return self.pending.popleft()
-
-                def run_next(self):
-                    job = self.pop()
-                    print(f"Running {job.name}")
-                    self.completed.append(job)
-                    return job
-
-                def drain(self):
-                    while self.pending:
-                        self.run_next()
-
-
-            def main():
-                queue = WorkQueue()
-                queue.push(Job("Read source"))
-                queue.push(Job("Build syntax tree"))
-                queue.push(Job("Resolve layout"))
-                queue.push(Job("Record draw calls"))
-                queue.drain()
-                print(f"Completed {len(queue.completed)} jobs")
-
-
-            if __name__ == "__main__":
-                main()
-        </CodeView>
+    <Box w-full h-400 p-12 rounded-lg bg-view_bg_dark overflow-x-hidden overflow-y-scroll scroll={scroll}>
+        {code}
     </Box>
     <Box flex flex-row items-center justify-between>
-        <Label font_size={13pt} fill="light4">One scroll value. Native syntax and clipping.</Label>
+        <Label font_size={13pt} fill="light4">{stage}</Label>
         <Label font_size={13pt} fill="blue2">overflow-y-scroll</Label>
     </Box>
 </Box>
@@ -70,8 +75,31 @@ let panel = <Box w-84% h-70% p-24 gap-16 rounded-xl bg-card_bg_dark position={Ve
 add(heading)
 add(subtitle)
 add(panel)
+wait(600ms)
+animate(scroll, to=Vec2(0%, 100%), duration=1800ms, ease="smooth")
+wait(500ms)
+animate(scroll, to=Vec2(0%, 0%), duration=1200ms, ease="smooth")
+wait(400ms)
+stage = "Fold top-level scopes · level 1"
+code.fold(level=1, duration=800ms, ease="smooth")
 wait(800ms)
-animate(scroll, to=Vec2(0%, 100%), duration=3s, ease="smooth")
+stage = "Line numbers off"
+numbers = false
+wait(1s)
+stage = "Unfold top-level scopes"
+code.unfold(level=1, duration=800ms, ease="smooth")
+wait(600ms)
+stage = "Restore the Line Numbers inspector setting"
+numbers = show_line_numbers
+wait(600ms)
+stage = "Fold method bodies · level 2"
+code.fold(level=2, duration=800ms, ease="smooth")
 wait(800ms)
-animate(scroll, to=Vec2(0%, 0%), duration=2s, ease="smooth")
+stage = "Unfold method bodies"
+code.unfold(level=2, duration=800ms, ease="smooth")
 wait(800ms)
+stage = "Insert one word; unchanged code stays visible"
+animate(scroll, to=Vec2(0%, 45%), duration=600ms, ease="smooth")
+wait(400ms)
+code.patch(src="code_view_scroller.py.patch", animation="morph", duration=1200ms, ease="smooth")
+wait(1s)

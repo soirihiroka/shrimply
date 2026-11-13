@@ -11,6 +11,19 @@ mod yaml;
 use sanim_core::{Color, Number, Type, Unit, Value};
 use serde_json::Value as Json;
 
+/// Width/policy changes need the same bounded native work as a pending source.
+pub fn requires_resolution(element: &sanim_core::Element) -> bool {
+    match element.geometry.as_ref() {
+        sanim_core::Geometry::Code { pending, .. } => {
+            *pending || element.layout.text.resolved != Some(element.layout.text.recipe(true))
+        }
+        sanim_core::Geometry::Text { pending, .. } => {
+            *pending || element.layout.text.resolved != Some(element.layout.text.recipe(false))
+        }
+        _ => false,
+    }
+}
+
 /// Native geometry resolution shared by rendering, layout, picking, and frame verification.
 pub fn resolve_pending(
     element: &mut sanim_core::Element,

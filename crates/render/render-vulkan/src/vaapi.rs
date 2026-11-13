@@ -4,22 +4,6 @@ use ffmpeg_next::{self as ffmpeg, sys};
 use shrimply_visual_frame::{GpuFrame, VideoFrame};
 use std::{ptr, rc::Rc, sync::Arc};
 
-const HD_MINIMUM_HEIGHT: u32 = 720;
-
-pub fn video_color_space(frame: &ffmpeg::frame::Video) -> Result<ffmpeg::color::Space, String> {
-    use ffmpeg::color::Space;
-    match frame.color_space() {
-        Space::Unspecified if frame.height() >= HD_MINIMUM_HEIGHT => Ok(Space::BT709),
-        Space::Unspecified => Ok(Space::SMPTE170M),
-        space @ (Space::BT709
-        | Space::BT470BG
-        | Space::SMPTE170M
-        | Space::FCC
-        | Space::SMPTE240M) => Ok(space),
-        space => Err(format!("Unsupported Intel video color matrix: {space:?}")),
-    }
-}
-
 pub struct ImportedFrame {
     // Wait for GPU readers before releasing the native decoder surface.
     pub submission: Submission,
@@ -434,37 +418,9 @@ impl Renderer {
 
     /// Import the VA-API surface through DRM PRIME; pixels stay on the GPU.
     fn import_video(&mut self, source: &Arc<VideoFrame>) -> Result<(Buffer, Submission), String> {
-        use ffmpeg::color::Range;
-        let colorspace = video_color_space(source.native())?;
-        let coefficients = unsafe {
-            std::slice::from_raw_parts(
-                sys::sws_getCoefficients(sys::AVColorSpace::from(colorspace) as i32),
-                4,
-            )
-        };
-        let coefficients = coefficients
-            .iter()
-            .flat_map(|value| value.to_ne_bytes())
-            .collect::<Vec<_>>();
-        let mut chroma_x = 0;
-        let mut chroma_y = 0;
-        let location = unsafe { (*source.native().as_ptr()).chroma_location };
-        let location = if location == sys::AVChromaLocation::AVCHROMA_LOC_UNSPECIFIED {
-            sys::AVChromaLocation::AVCHROMA_LOC_LEFT
-        } else {
-            location
-        };
-        let result =
-            unsafe { sys::av_chroma_location_enum_to_pos(&mut chroma_x, &mut chroma_y, location) };
-        if result < 0 {
-            return Err(format!(
-                "Unsupported Intel video chroma location: {location:?}"
-            ));
-        }
-        // FFmpeg specifies chroma positions in units of 1/256 luma pixels.
-        const CHROMA_POSITION_SCALE: f32 = 256.0;
-        let chroma_offset = [chroma_x, chroma_y]
-            .map(|position| (position as f32 / CHROMA_POSITION_SCALE).to_ne_bytes());
+        let color = shrimply_visual_frame::math::video_color(source.native())?;
+        let coefficients = color.coefficients.map(i32::to_ne_bytes);
+        let chroma_offset = color.chroma_offset.map(f32::to_ne_bytes);
         let layout = frame_layout(source.native())?;
         let Layout {
             width,
@@ -523,12 +479,9 @@ impl Renderer {
             .set("width", &(width as u32).to_ne_bytes())?
             .set("height", &(height as u32).to_ne_bytes())?
             .set("output", &output.address().to_ne_bytes())?
-            .set("coefficients", &coefficients)?
+            .set("coefficients", coefficients.as_flattened())?
             .set("chroma_offset", chroma_offset.as_flattened())?
-            .set(
-                "full_range",
-                &[u8::from(source.native().color_range() == Range::JPEG)],
-            )?;
+            .set("full_range", &[u8::from(color.full_range)])?;
         let mut converted =
             unsafe { self.dispatch(arguments, vec![planes, output.clone()], [count, 1, 1]) }?;
         converted._prior.push(prior);

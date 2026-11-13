@@ -1,6 +1,32 @@
 //! Local gradient coordinates are derived from the same path bounds used by Skia.
 use super::{float_arithmetic as calc, to_f64};
 use crate::Fraction;
+/// Interpolate bounded native color channels without changing glyph identity.
+pub fn color_lerp(
+    from: &crate::Color,
+    to: &crate::Color,
+    progress: Fraction,
+) -> Result<crate::Color, String> {
+    let mut color = to.clone();
+    for (channel, (from, to)) in color.0.iter_mut().zip(from.0.iter().zip(&to.0)) {
+        *channel = super::visual_lerp(*from, *to, progress)?;
+    }
+    Ok(color)
+}
+
+/// Remove the old changed span before revealing its replacement. Stable code
+/// continues moving throughout, so newly inserted glyphs do not cover a suffix
+/// before its interpolated layout has opened the required space.
+pub fn edit_opacities(progress: Fraction) -> Result<[Fraction; 2], String> {
+    let doubled = super::visual_product(progress, Fraction::from(2))?;
+    Ok([
+        super::arithmetic("-", Fraction::from(1), doubled)?.max(Fraction::from(0)),
+        super::arithmetic("-", doubled, Fraction::from(1))?
+            .min(Fraction::from(1))
+            .max(Fraction::from(0)),
+    ])
+}
+
 pub fn gradient_endpoints(bounds: [f64; 4], angle: Fraction) -> Result<[[f64; 2]; 2], String> {
     if bounds.iter().any(|value| !value.is_finite()) {
         return Err("gradient path bounds must be finite".into());

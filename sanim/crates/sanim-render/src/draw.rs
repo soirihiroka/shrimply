@@ -303,40 +303,44 @@ fn draw_scrollbars<O: Output>(
         viewport[2] as f32,
         viewport[3] as f32,
     );
-    let fill = Color::parse("light4")?;
+    let fill = Color::parse("light1")?;
+    let outline = Color::parse("black")?;
     for bar in bars {
-        for (bounds, opacity) in [
-            (bar.track, Fraction::new(1u64, 8u64)),
-            (bar.thumb, Fraction::new(3u64, 5u64)),
+        let bounds = bar.thumb;
+        let rect = Rect::new(
+            bounds[0] as f32,
+            bounds[1] as f32,
+            bounds[2] as f32,
+            bounds[3] as f32,
+        );
+        let mut builder = PathBuilder::new();
+        builder.add_rrect(
+            skia_safe::RRect::new_rect_xy(
+                rect,
+                math::scroll::THICKNESS as f32 / 2.,
+                math::scroll::THICKNESS as f32 / 2.,
+            ),
+            None,
+            None,
+        );
+        let path = builder.detach();
+        // The idle overlay has no painted trough. Its subtle outline remains
+        // legible over code without painting a permanent rail across the view.
+        let mut border = paint(&outline, Fraction::new(35u64, 100u64))?;
+        border
+            .set_style(skia_safe::paint::Style::Stroke)
+            .set_stroke_width(math::scroll::OUTLINE as f32);
+        for (color, paint) in [
+            (&outline, border),
+            (&fill, paint(&fill, Fraction::new(1u64, 5u64))?),
         ] {
-            let rect = Rect::new(
-                bounds[0] as f32,
-                bounds[1] as f32,
-                bounds[2] as f32,
-                bounds[3] as f32,
-            );
-            let mut builder = PathBuilder::new();
-            builder.add_rrect(
-                skia_safe::RRect::new_rect_xy(
-                    rect,
-                    math::scroll::THICKNESS as f32 / 2.,
-                    math::scroll::THICKNESS as f32 / 2.,
-                ),
-                None,
-                None,
-            );
-            let path = builder.detach();
             drawing.work = drawing
                 .work
                 .checked_sub(path.count_points())
                 .ok_or("scrollbar rendering exceeds render work budget")?;
-            drawing.output.path(
-                canvas,
-                &path,
-                &paint(&fill, opacity)?,
-                &fill.clone().into(),
-                &full,
-            )?;
+            drawing
+                .output
+                .path(canvas, &path, &paint, &color.clone().into(), &full)?;
         }
     }
     Ok(())

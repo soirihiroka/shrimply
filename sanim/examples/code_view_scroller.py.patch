@@ -1,0 +1,5 @@
+--- a/work_queue.py
++++ b/work_queue.py
+@@ -28 +28 @@
+-        print(f"Running {job.name}")
++        print(f"Running queued {job.name}")

@@ -1,16 +1,19 @@
 use crate::{Element, Geometry, Value};
 use std::sync::{Arc, Weak};
 
-/// COW allocation guards for shared native font and encoded-media payloads. A guard never keeps
+/// COW allocation guards for shared native font, text and encoded-media payloads. A guard never keeps
 /// the font bytes alive and cannot confuse a reused address with an older asset.
 #[derive(Clone, Debug, Default)]
 pub struct Budget {
     assets: imbl::OrdMap<usize, Weak<Vec<u8>>>,
     media: imbl::OrdMap<usize, Weak<crate::media::Asset>>,
+    text: imbl::OrdMap<usize, Weak<str>>,
 }
 impl Budget {
     pub fn metadata_bytes(&self) -> usize {
-        self.assets.len() * FONT_ENTRY_BYTES + self.media.len() * MEDIA_ENTRY_BYTES
+        self.assets.len() * FONT_ENTRY_BYTES
+            + self.media.len() * MEDIA_ENTRY_BYTES
+            + self.text.len() * TEXT_ENTRY_BYTES
     }
     fn contains(&self, bytes: &Arc<Vec<u8>>) -> bool {
         self.assets
@@ -19,6 +22,8 @@ impl Budget {
             .is_some_and(|existing| Arc::ptr_eq(&existing, bytes))
     }
 }
+const TEXT_ENTRY_BYTES: usize = std::mem::size_of::<imbl::OrdMap<usize, Weak<str>>>()
+    + std::mem::size_of::<(usize, Weak<str>)>();
 const MEDIA_ENTRY_BYTES: usize =
     std::mem::size_of::<imbl::OrdMap<usize, Weak<crate::media::Asset>>>()
         + std::mem::size_of::<(usize, Weak<crate::media::Asset>)>();
@@ -38,7 +43,7 @@ pub fn charge(
     charge_with_budget(value, bytes, items, max_depth, &mut Budget::default())
 }
 
-/// Charge several independently retained roots against one shared font budget.
+/// Charge several independently retained roots against one shared payload budget.
 /// Reuse the context for a frame or execution prefix; clone it to checkpoint COW state.
 pub fn charge_with_budget(
     value: &Value,
@@ -54,6 +59,28 @@ pub fn charge_with_budget(
         *items = items
             .checked_sub(1)
             .ok_or("generated value item budget exceeded")?;
+        Ok(())
+    }
+    fn shared_text(
+        text: &Arc<str>,
+        bytes: &mut usize,
+        items: &mut usize,
+        budget: &mut Budget,
+    ) -> Result<(), String> {
+        let id = Arc::as_ptr(text) as *const () as usize;
+        if !budget
+            .text
+            .get(&id)
+            .and_then(Weak::upgrade)
+            .is_some_and(|previous| Arc::ptr_eq(&previous, text))
+        {
+            take(
+                bytes,
+                items,
+                TEXT_ENTRY_BYTES + std::mem::size_of::<(usize, usize)>() + text.len(),
+            )?;
+            budget.text.insert(id, Arc::downgrade(text));
+        }
         Ok(())
     }
     fn json(
@@ -221,10 +248,9 @@ pub fn charge_with_budget(
                 ..
             } => {
                 visit(&Value::Font(font.clone()), bytes, items, depth - 1, fonts)?;
+                shared_text(text, bytes, items, fonts)?;
                 *bytes = bytes
-                    .checked_sub(
-                        text.len() + outline.len() * std::mem::size_of::<crate::TextSegment>(),
-                    )
+                    .checked_sub(outline.len() * std::mem::size_of::<crate::TextSegment>())
                     .ok_or("generated value byte budget exceeded")?;
             }
             Geometry::Polygon { points } | Geometry::Polyline { points, .. } => {
@@ -302,16 +328,12 @@ pub fn charge_with_budget(
                     .checked_sub(name.len())
                     .ok_or("SQL identifier exceeds generated value byte budget")?;
             }
-            Value::String(s) => {
-                *bytes = bytes
-                    .checked_sub(s.len())
-                    .ok_or("generated value byte budget exceeded")?;
-            }
+            Value::String(s) => shared_text(s, bytes, items, fonts)?,
             Value::Code(document) => {
+                shared_text(&document.text, bytes, items, fonts)?;
                 *bytes = bytes
                     .checked_sub(
                         std::mem::size_of_val(document.as_ref())
-                            + document.text.len()
                             + document.syntax.retained_bytes
                             + document.path.len()
                             + std::mem::size_of_val(document.scopes.as_ref())

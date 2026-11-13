@@ -353,10 +353,7 @@ impl Renderer {
             scene
                 .animation
                 .layout_with(key.time, key.width, key.height, |element, time| {
-                    let pending = matches!(
-                        element.geometry.as_ref(),
-                        Geometry::Code { pending: true, .. } | Geometry::Text { pending: true, .. }
-                    );
+                    let pending = sanim_data::requires_resolution(element);
                     sanim_data::resolve_pending(element, time)?;
                     if pending {
                         sanim_core::value_budget::charge_with_budget(

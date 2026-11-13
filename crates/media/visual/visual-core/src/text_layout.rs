@@ -367,7 +367,7 @@ fn build(key: &Key) -> TextLayout {
         }
     }
 
-    let shaped = &native.shaped;
+    let shaped = native.shaped().expect("outline shared native text layout");
     let [min_x, min_y, max_x, max_y] = [
         shaped.bounds[0] - shaped.origin[0],
         shaped.bounds[1] - shaped.origin[1],

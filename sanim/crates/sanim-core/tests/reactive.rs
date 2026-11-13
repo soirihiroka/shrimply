@@ -34,6 +34,57 @@ fn font_budget_shares_checkpoints_without_retaining_assets_or_confusing_cow_upda
 }
 
 #[test]
+fn shared_geometry_text_and_language_values_charge_one_weakly_guarded_payload() {
+    use sanim_core::value_budget::{Budget, charge_with_budget};
+    const TEXT_BYTES: usize = 128 * 1024;
+    let text: Arc<str> = "A".repeat(TEXT_BYTES).into();
+    let weak = Arc::downgrade(&text);
+    let source = Value::String(text.clone());
+    let label = Value::Element(Arc::new(element(
+        "label",
+        Geometry::Text {
+            text: text.clone(),
+            font: Default::default(),
+            size: 14.into(),
+            outline: Arc::new(vec![]),
+            bounds: sanim_core::verify::Bounds {
+                min: Vec2::zero(Unit::Length),
+                max: Vec2::zero(Unit::Length),
+            },
+            pending: false,
+        },
+    )));
+    let mut budget = Budget::default();
+    let (mut bytes, mut items) = (TEXT_BYTES * 2, 128);
+    charge_with_budget(&source, &mut bytes, &mut items, 8, &mut budget).unwrap();
+    let after_source = bytes;
+    charge_with_budget(&label, &mut bytes, &mut items, 8, &mut budget).unwrap();
+    assert!(
+        after_source - bytes < TEXT_BYTES / 2,
+        "the geometry must share rather than recharge its source string allocation"
+    );
+    let checkpoint = budget.clone();
+    let metadata = checkpoint.metadata_bytes();
+    charge_with_budget(&source, &mut bytes, &mut items, 8, &mut budget).unwrap();
+    assert_eq!(checkpoint.metadata_bytes(), metadata);
+    let (mut insufficient, mut items) = (std::mem::size_of::<Value>(), 8);
+    let mut unpaid = Budget::default();
+    assert!(charge_with_budget(&source, &mut insufficient, &mut items, 8, &mut unpaid).is_err());
+    assert_eq!(
+        unpaid.metadata_bytes(),
+        0,
+        "failed charges cannot leave unpaid text guards"
+    );
+    drop(label);
+    drop(source);
+    drop(text);
+    assert!(
+        weak.upgrade().is_none(),
+        "persistent budget guards must not keep old text alive"
+    );
+}
+
+#[test]
 fn failed_font_charges_cannot_register_unpaid_payloads() {
     use sanim_core::value_budget::{Budget, charge_with_budget};
     let font = Value::Font(sanim_core::Font::Asset(Arc::new(vec![0u8; 1024])));

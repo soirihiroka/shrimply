@@ -29,10 +29,18 @@ impl Animation {
         }
         let width = to_f64(width)?;
         let height = to_f64(height)?;
-        let mut elements = self.sample_with(time, &mut native)?;
+        let mut elements = self.sample(time)?;
         for element in &mut elements {
             let mut measured = Measurement::default();
-            measure_boxes(element, width, Some(height), &mut measured)?;
+            measure_boxes(
+                element,
+                width,
+                Some(height),
+                &mut measured,
+                &mut native,
+                time,
+                &Default::default(),
+            )?;
             resolve_with_lists(
                 element,
                 width,
@@ -47,7 +55,15 @@ impl Animation {
 
 pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> Result<(), String> {
     let mut measured = Measurement::default();
-    measure_boxes(element, parent_width, Some(parent_height), &mut measured)?;
+    measure_boxes(
+        element,
+        parent_width,
+        Some(parent_height),
+        &mut measured,
+        &mut |_, _| Ok(()),
+        0.into(),
+        &Default::default(),
+    )?;
     resolve_with_lists(element, parent_width, parent_height, None, &measured)
 }
 #[derive(Default)]
@@ -86,9 +102,27 @@ fn measure_boxes(
     parent_width: f64,
     parent_height: Option<f64>,
     measured: &mut Measurement,
+    native: &mut dyn FnMut(&mut Element, Fraction) -> Result<(), String>,
+    time: Fraction,
+    inherited_text: &crate::text::Layout,
 ) -> Result<(), String> {
     let is_box = matches!(element.geometry.as_ref(), Geometry::Box { .. });
+    let is_text = matches!(
+        element.geometry.as_ref(),
+        Geometry::Text { .. } | Geometry::Code { .. }
+    );
+    element.layout.text.white_space = element
+        .layout
+        .text
+        .white_space
+        .or(inherited_text.white_space);
+    element.layout.text.overflow_wrap = element
+        .layout
+        .text
+        .overflow_wrap
+        .or(inherited_text.overflow_wrap);
     if is_box
+        || is_text
         || [element.layout.width, element.layout.height]
             .into_iter()
             .flatten()
@@ -122,6 +156,10 @@ fn measure_boxes(
         .transpose()?
         .or(physical.map(|size| size[0]))
         .unwrap_or(parent_width);
+    if is_text {
+        element.layout.text.width = Some(crate::math::from_f64((width - 2. * padding).max(0.))?);
+    }
+    native(element, time)?;
     let height = element
         .layout
         .height
@@ -138,7 +176,15 @@ fn measure_boxes(
             if element.layout.flex {
                 measured.remember(child);
             }
-            measure_boxes(child, available_width, available_height, measured)?;
+            measure_boxes(
+                child,
+                available_width,
+                available_height,
+                measured,
+                native,
+                time,
+                &element.layout.text,
+            )?;
         }
         if is_box && let Some(direction) = element.layout.direction {
             let mut plan = flow::positions(children, &element.layout, width, height, direction)?;
@@ -167,7 +213,15 @@ fn measure_boxes(
                                 });
                             }
                         }
-                        measure_boxes(child, available_width, available_height, measured)?;
+                        measure_boxes(
+                            child,
+                            available_width,
+                            available_height,
+                            measured,
+                            native,
+                            time,
+                            &element.layout.text,
+                        )?;
                         changed = true;
                     }
                 }

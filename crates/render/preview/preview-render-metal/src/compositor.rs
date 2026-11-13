@@ -1,10 +1,12 @@
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_metal::MTLTexture;
 use shrimply_math_core::Time;
-use shrimply_preview_render_core::{FramePlan, Scene, Source};
+use shrimply_preview_render_core::{DecodedImage, FramePlan, Scene, Source};
 use shrimply_project_document::project::Project;
+use shrimply_visual_frame::{GpuFrame, VideoFrame};
 use skia_safe::{AlphaType, ColorType, Image, ImageInfo};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::mpsc::{self, TryRecvError};
 use std::time::Duration;
 
@@ -124,6 +126,8 @@ pub(super) struct Compositor {
     presented: Option<Presented>,
     revision: u64,
     sources: HashMap<u32, shrimply_render_metal::Buffer>,
+    videos: HashMap<usize, shrimply_render_metal::ImportedFrame>,
+    used_videos: HashSet<usize>,
     layered_sources: HashMap<(String, usize), shrimply_render_metal::Buffer>,
     used_layered_sources: HashSet<(String, usize)>,
     manim: Option<shrimply_manim_metal::Renderer>,
@@ -299,6 +303,7 @@ impl Compositor {
         }
         let mut effect_submissions = Vec::new();
         let mut used_sources = HashSet::new();
+        self.used_videos.clear();
         let mut used_manim = HashSet::new();
         self.used_layered_sources.clear();
         let started = std::time::Instant::now();
@@ -343,6 +348,7 @@ impl Compositor {
         };
         effect_submissions.append(&mut self.deferred_submissions);
         self.sources.retain(|id, _| used_sources.contains(id));
+        self.videos.retain(|id, _| self.used_videos.contains(id));
         self.manim_slots
             .retain(|item_id, _| used_manim.contains(item_id));
         if let Some(manim) = &mut self.manim {
@@ -457,6 +463,7 @@ impl Compositor {
                     (buffer, None)
                 }
                 Source::Image(image) => (self.image_buffer(image, used_sources)?, None),
+                Source::Video(video) => (self.video_buffer(video)?, None),
                 Source::LayeredImage(plan) => (
                     crate::layered_image::composite(
                         self.compute
@@ -613,9 +620,9 @@ impl Compositor {
             let mask_buffer = layer
                 .video_mask
                 .as_ref()
-                .map(|mask| {
-                    let shrimply_preview_render_core::DecodedImage::Raster(image) = &mask.image;
-                    self.image_buffer(image, used_sources)
+                .map(|mask| match &mask.image {
+                    DecodedImage::Raster(image) => self.image_buffer(image, used_sources),
+                    DecodedImage::Video(video) => self.video_buffer(video),
                 })
                 .transpose()?;
             let renderer = self.compute.as_mut().expect("initialized Metal compositor");
@@ -925,6 +932,24 @@ impl Compositor {
             buffer,
             parameters: baked,
         })
+    }
+
+    fn video_buffer(
+        &mut self,
+        source: &Arc<VideoFrame>,
+    ) -> Result<shrimply_render_metal::Buffer, String> {
+        let key = Arc::as_ptr(source) as usize;
+        self.used_videos.insert(key);
+        if let Some(imported) = self.videos.get(&key) {
+            return Ok(imported.output.clone());
+        }
+        let imported = shrimply_render_metal::ImportedFrame::import(
+            self.compute.as_mut().expect("initialized Metal compositor"),
+            source.clone(),
+        )?;
+        let output = imported.output.clone();
+        self.videos.insert(key, imported);
+        Ok(output)
     }
 
     fn image_buffer(
