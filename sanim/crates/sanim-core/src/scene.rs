@@ -169,8 +169,9 @@ pub struct Motion {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Easing {
-    #[default]
     Linear,
+    #[default]
+    Spring,
     CubicIn,
     CubicOut,
     Smooth,
@@ -180,6 +181,7 @@ pub enum Easing {
 impl Easing {
     pub fn parse(name: &str) -> Result<Self, String> {
         const OPTIONS: &[(&str, Easing)] = &[
+            ("spring", Easing::Spring),
             ("linear", Easing::Linear),
             ("cubic_in", Easing::CubicIn),
             ("cubic_out", Easing::CubicOut),
@@ -211,6 +213,9 @@ pub struct Track {
     pub from: Value,
     pub to: Value,
     pub easing: Easing,
+    /// Constrained visual properties must not overshoot their valid endpoints.
+    #[serde(default)]
+    pub bounded: bool,
     #[serde(default)]
     pub reveal: Option<RevealKind>,
     #[serde(default)]
@@ -669,8 +674,8 @@ impl Animation {
         duration: Fraction,
         easing: Easing,
     ) -> Result<(), String> {
-        if !math::finite(&duration) || duration <= Fraction::zero() {
-            return Err("play duration must be positive".into());
+        if !math::finite(&duration) || duration < Fraction::zero() {
+            return Err("animation duration must be nonnegative".into());
         }
         let end = math::timeline_end(start, duration)?;
         // Validate a small write set before committing; do not clone the whole scene.
@@ -893,6 +898,7 @@ impl Animation {
                     from,
                     to,
                     easing,
+                    bounded: matches!(motion.property, Property::Opacity | Property::Scale | Property::StretchX | Property::Reveal | Property::Radius | Property::Width | Property::Height | Property::Fill),
                     reveal: motion.reveal,
                     horizontal: motion.horizontal,
                 },
@@ -957,8 +963,8 @@ impl Track {
                     value: math::lerp(
                         a.value,
                         b.value,
-                        if self.easing == Easing::Overshoot {
-                            p.min(one)
+                        if self.bounded || self.easing == Easing::Overshoot {
+                            p.max(Fraction::zero()).min(one)
                         } else {
                             p
                         },
@@ -969,8 +975,8 @@ impl Track {
             (Value::Fraction(a), Value::Fraction(b)) => Ok(Value::Fraction(math::lerp(
                 *a,
                 *b,
-                if self.easing == Easing::Overshoot {
-                    p.min(one)
+                if self.bounded || self.easing == Easing::Overshoot {
+                    p.max(Fraction::zero()).min(one)
                 } else {
                     p
                 },
@@ -980,7 +986,7 @@ impl Track {
                     a.values,
                     b.values,
                     p,
-                    self.easing == Easing::Overshoot,
+                    matches!(self.easing, Easing::Overshoot | Easing::Spring),
                 )?,
                 unit: a.unit,
             })),
@@ -989,7 +995,7 @@ impl Track {
                     a.values,
                     b.values,
                     p,
-                    self.easing == Easing::Overshoot,
+                    matches!(self.easing, Easing::Overshoot | Easing::Spring),
                 )?,
                 unit: a.unit,
             })),
@@ -998,14 +1004,14 @@ impl Track {
                     a.values,
                     b.values,
                     p,
-                    self.easing == Easing::Overshoot,
+                    matches!(self.easing, Easing::Overshoot | Easing::Spring),
                 )?,
                 unit: a.unit,
             })),
             (Value::Color(a), Value::Color(b)) => {
                 let mut out = a.clone();
                 for i in 0..4 {
-                    out.0[i] = math::lerp(a.0[i], b.0[i], p.min(one))?;
+                    out.0[i] = math::lerp(a.0[i], b.0[i], p.max(Fraction::zero()).min(one))?;
                 }
                 Ok(Value::Color(out))
             }
@@ -1022,6 +1028,7 @@ impl Easing {
         let one = Fraction::from(1);
         Ok(match self {
             Easing::Linear => p,
+            Easing::Spring => math::spring(p)?,
             Easing::CubicIn => p
                 .checked_mul(&p)
                 .and_then(|v| v.checked_mul(&p))

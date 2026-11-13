@@ -20,10 +20,10 @@ fn make_dot(identity: String, appearance: DotStyle): Element {
 }
 
 let marker = make_dot("marker", dot_style)
-play(FadeIn(marker), duration= 250ms)
+FadeIn(marker, duration=250ms, ease="linear")
 repeat repetitions {
-    play(MoveTo(marker, Vec2(30%, 0%)), duration= 750ms, ease= "smooth")
-    play(MoveTo(marker, Vec2(-30%, 0%)), duration= 750ms, ease= "smooth")
+    MoveTo(marker, Vec2(30%, 0%), duration=750ms, ease="smooth")
+    MoveTo(marker, Vec2(-30%, 0%), duration=750ms, ease="smooth")
 }
 assert(always(inside_canvas(marker)))
 wait(500ms)

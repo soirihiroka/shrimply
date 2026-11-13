@@ -158,16 +158,17 @@ fn resolve_with_lists(
             };
             for (index, child) in children.iter_mut().enumerate() {
                 let mut position = if let Some(animated) = &animated {
-                    animated[index].0
+                    animated[index].position
                 } else {
                     positions.as_ref().expect("static flow positions")[index]
                 };
                 if let Some(animated) = &animated {
-                    let visibility = animated[index].1;
+                    let visibility = animated[index].opacity;
                     child.opacity = crate::math::arithmetic("*", child.opacity, visibility)?;
-                    if visibility != Fraction::from(1) {
+                    let scale = animated[index].scale;
+                    if scale != Fraction::from(1) {
                         let before = extent(child)?;
-                        child.scale = crate::math::arithmetic("*", child.scale, visibility)?;
+                        child.scale = crate::math::arithmetic("*", child.scale, scale)?;
                         let after = extent(child)?;
                         position[0] = calc(
                             "+",
@@ -250,6 +251,12 @@ pub fn extent(element: &Element) -> Result<(f64, f64), String> {
 
 /// Resolve both endpoint flows through the same Taffy cache. Removed children are
 /// overlays, so they never occupy space in the destination flow.
+struct ListPlacement {
+    position: [f64; 2],
+    opacity: Fraction,
+    scale: Fraction,
+}
+
 fn list_positions(
     children: &imbl::Vector<Element>,
     style: &crate::Layout,
@@ -257,7 +264,10 @@ fn list_positions(
     height: f64,
     direction: crate::Direction,
     selection: &crate::list_views::Selection<'_>,
-) -> Result<Vec<([f64; 2], Fraction)>, String> {
+) -> Result<Vec<ListPlacement>, String> {
+    // Entry/exit should be a subtle emphasis, not shrinking the item to a dot.
+    const LIST_SCALE_PERCENT: u64 = 92;
+    let minimum_scale = Fraction::new(LIST_SCALE_PERCENT, 100u64);
     let by_id: std::collections::BTreeMap<_, _> = children
         .iter()
         .map(|element| (element.id.as_str(), element))
@@ -290,10 +300,12 @@ fn list_positions(
         .map(|child| {
             let a = from.get(child.id.as_str());
             let b = to.get(child.id.as_str());
-            let visibility = if a.is_some() && b.is_none() {
-                crate::math::arithmetic("-", 1.into(), selection.progress)?
-            } else if a.is_none() && b.is_some() {
-                selection.progress
+            let leaving = a.is_some() && b.is_none();
+            let entering = a.is_none() && b.is_some();
+            let visibility = if leaving {
+                crate::math::arithmetic("-", 1.into(), selection.appearance)?
+            } else if entering {
+                selection.appearance
             } else {
                 1.into()
             };
@@ -301,13 +313,21 @@ fn list_positions(
                 .or(b)
                 .ok_or("list transition is missing a child identity")?;
             let b = b.unwrap_or(a);
-            Ok((
-                [
-                    crate::math::motion_lerp(a[0], b[0], selection.progress, false)?,
-                    crate::math::motion_lerp(a[1], b[1], selection.progress, false)?,
+            let scale = if leaving {
+                crate::math::lerp(minimum_scale, 1.into(), visibility)?
+            } else if entering {
+                crate::math::lerp(minimum_scale, 1.into(), selection.progress.max(0.into()))?
+            } else {
+                1.into()
+            };
+            Ok(ListPlacement {
+                position: [
+                    crate::math::motion_lerp(a[0], b[0], selection.progress, true)?,
+                    crate::math::motion_lerp(a[1], b[1], selection.progress, true)?,
                 ],
-                visibility,
-            ))
+                opacity: visibility,
+                scale,
+            })
         })
         .collect()
 }

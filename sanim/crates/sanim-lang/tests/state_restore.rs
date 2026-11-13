@@ -23,7 +23,7 @@ fn semantic_output(prepared: &sanim_lang::Prepared) -> serde_json::Value {
 fn suffix_edit_restores_bindings_tracks_cursor_and_skips_prefix_execution() {
     let mut files = MemorySources::default();
     let prefix =
-        "let c=Circle(id=\"dot\")\nrepeat 100 { let unused=1+2 }\nplay(FadeIn(c),duration=1s)\n";
+        "let c=Circle(id=\"dot\")\nrepeat 100 { let unused=1+2 }\nFadeIn(c, duration=1s, ease=\"linear\")\n";
     files.insert("main.sanim", format!("{prefix}wait(1s)\n"));
     let mut engine = Engine::default();
     let old = prepare(&mut engine, &files);
@@ -158,13 +158,13 @@ fn restored_continuous_assertions_are_checked_against_the_new_suffix() {
         "let c=Circle(radius=2pt,id=\"c\")\nadd(c)\nassert(always(inside_canvas(c)))\nwait(1s)\n";
     files.insert(
         "main.sanim",
-        format!("{prefix}play(MoveTo(c,Vec2(1pt,0pt)),duration=1s)\n"),
+        format!("{prefix}MoveTo(c, Vec2(1pt,0pt), duration=1s, ease=\"linear\")\n"),
     );
     let mut engine = Engine::default();
     prepare(&mut engine, &files);
     files.insert(
         "main.sanim",
-        format!("{prefix}play(MoveTo(c,Vec2(9999pt,0pt)),duration=1s)\n"),
+        format!("{prefix}MoveTo(c, Vec2(9999pt,0pt), duration=1s, ease=\"linear\")\n"),
     );
     let error = engine
         .prepare("main.sanim", &files, &BTreeMap::new())

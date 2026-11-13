@@ -1251,6 +1251,7 @@ impl Runtime<'_, '_> {
                     evaluated.push((name.clone(), self.expression(value, env)?));
                 }
                 if let Some(ty) = self.constructors.get(&key).cloned() {
+                    let easing=if matches!(&ty,Type::Record(fields) if fields.contains_key("ease")){Easing::default()}else{crate::timing::easing(crate::timing::ease_argument(&evaluated)).map_err(|error|self.error("S304",error,expr.span))?};
                     let requested = if !matches!(&ty,Type::Record(fields) if fields.contains_key("duration"))
                     {
                         crate::timing::envelope(&evaluated)
@@ -1324,6 +1325,7 @@ impl Runtime<'_, '_> {
                         _ => Err(self.error("S305", "type is not constructible", expr.span)),
                     }?;
                     self.finish_call_duration(start, requested, self.cursor, expr.span)?;
+                    self.last_call.easing=easing;
                     return Ok(value);
                 }
                 self.invoke(&key, &evaluated, expr.span, true, None)
@@ -1355,6 +1357,7 @@ impl Runtime<'_, '_> {
         } else {
             None
         };
+        let easing=if function.parameters.iter().any(|(name,_,_)|name=="ease"){Easing::default()}else{crate::timing::easing(crate::timing::ease_argument(evaluated)).map_err(|error|self.error("S304",error,span))?};
         if envelope.is_some_and(|duration| duration > Fraction::from(0)) && !self.root_active {
             return Err(self.error(
                 "S115",
@@ -1502,6 +1505,7 @@ impl Runtime<'_, '_> {
         self.type_bindings = previous_types;
         let result = result?;
         self.finish_call_duration(function_start, envelope, horizon, span)?;
+        self.last_call.easing=easing;
         Ok(result.unwrap_or(Value::Unit))
     }
     fn native(
@@ -1524,19 +1528,15 @@ impl Runtime<'_, '_> {
             ));
         }
         let start = self.cursor;
-        let mut arguments = arguments;
-        if !matches!(builtin.execute, prelude::Execution::Play) {
-            let timing = builtin.duration_argument(&arguments).and_then(|value| {
-                arguments
-                    .iter()
-                    .position(|(_, candidate)| std::ptr::eq(value, candidate))
-            });
-            if let Some(index) = timing {
-                arguments.remove(index);
-            }
-        }
-        let value = self.native_inner(builtin, arguments, duration, span)?;
+        let easing=crate::timing::easing(builtin.easing_argument(&arguments)).map_err(|error|self.error("S304",error,span))?;
+        let mut controls=[builtin.duration_argument(&arguments),builtin.easing_argument(&arguments)].into_iter().flatten()
+            .filter_map(|value|arguments.iter().position(|(_,candidate)|std::ptr::eq(value,candidate))).collect::<Vec<_>>();
+        controls.sort_unstable();controls.dedup();
+        let mut arguments=arguments;
+        for index in controls.into_iter().rev(){arguments.remove(index);}
+        let value = self.native_inner(builtin, arguments, duration, easing, span)?;
         self.finish_call_duration(start, Some(duration), self.cursor, span)?;
+        self.last_call.easing=easing;
         Ok(value)
     }
     fn native_inner(
@@ -1544,16 +1544,10 @@ impl Runtime<'_, '_> {
         builtin: &prelude::Builtin,
         arguments: Vec<(Option<String>, Value)>,
         duration: Fraction,
+        easing: Easing,
         span: Span,
     ) -> Result<Value, Diagnostic> {
         let name = builtin.name;
-        if self.duration_only && name == "Shift" {
-            return Err(self.error(
-                "S390",
-                "duration value depends on sampled animation state; full preparation is required",
-                span,
-            ));
-        }
         if builtin.schedule && !self.root_active {
             return Err(self.error("S115","imported modules cannot schedule or assert while being imported; call a helper from the root script instead",span));
         }
@@ -1562,18 +1556,7 @@ impl Runtime<'_, '_> {
             .iter()
             .map(|v| v.name.to_string())
             .collect::<Vec<_>>();
-        let mut args = if matches!(builtin.execute, prelude::Execution::Play) {
-            order_values(
-                &arguments
-                    .iter()
-                    .filter(|(name, _)| name.is_some())
-                    .cloned()
-                    .collect::<Vec<_>>(),
-                &params,
-            )
-        } else {
-            order_values(&arguments, &params)
-        };
+        let mut args = order_values(&arguments, &params);
         if matches!(builtin.execute, prelude::Execution::Read) {
             let path = args
                 .get("path")
@@ -1681,45 +1664,7 @@ impl Runtime<'_, '_> {
                 Ok(value)
             };
         }
-        if matches!(builtin.execute, prelude::Execution::Play) && self.duration_only {
-            self.advance_duration(duration, span)?;
-            return Ok(Value::Unit);
-        }
-        if self.duration_only
-            && builtin.schedule
-            && !matches!(builtin.execute, prelude::Execution::Play)
-        {
-            return Ok(Value::Unit);
-        }
-        if matches!(builtin.execute, prelude::Execution::Play) {
-            let motions = arguments
-                .iter()
-                .filter(|(name, _)| name.is_none())
-                .map(|(_, v)| {
-                    if let Value::Motion(m) = v {
-                        Ok(m.as_ref().clone())
-                    } else {
-                        Err("play expects Motion".to_string())
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| self.error("S305", e, span))?;
-            let ease = Easing::parse(
-                args.get("ease")
-                    .map(Value::string)
-                    .transpose()
-                    .map_err(|e| self.error("S305", e, span))?
-                    .unwrap_or("linear"),
-            )
-            .map_err(|e| self.error("S305", e, span))?;
-            self.animation
-                .schedule(&motions, self.cursor, duration, ease)
-                .map_err(|e| self.error("S307", e, span))?;
-            self.cursor = math::timeline_end(self.cursor, duration)
-                .map_err(|e| self.error("S307", e, span))?;
-            self.check_elements(span)?;
-            return Ok(Value::Unit);
-        }
+        if self.duration_only && builtin.schedule { return Ok(Value::Unit); }
         if matches!(name, "assert" | "check") {
             let condition = args
                 .remove("condition")
@@ -1786,11 +1731,14 @@ impl Runtime<'_, '_> {
                 animation: &mut self.animation,
                 cursor: &mut self.cursor,
                 limits: self.limits,
+                duration,
+                easing,
                 list_edit: &mut list_edit,
             },
         )
         .map_err(|e| self.error("S305", e, span));
         if result.is_ok() {
+            if builtin.schedule { self.check_elements(span)?; }
             self.list_edit = list_edit.map(|delta| crate::lists::EditReceipt {
                 module: self.module.clone(),
                 span,
@@ -1843,7 +1791,7 @@ fn order_values(args: &[(Option<String>, Value)], parameters: &[String]) -> Valu
 fn cacheable(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Call { callee, args, .. } => {
-            matches!(&callee.kind,ExprKind::Name(name)if prelude::builtin(name).is_some_and(|v|!v.call_schedules(args)&&v.result!=Type::Motion&&matches!(v.execute,prelude::Execution::Native(_))))
+            matches!(&callee.kind,ExprKind::Name(name)if prelude::builtin(name).is_some_and(|v|!v.call_schedules(args)&&matches!(v.execute,prelude::Execution::Native(_))))
                 && args.iter().all(|(_, v)| cacheable(v))
         }
         // Recording metadata and override dependencies is part of evaluating an input.

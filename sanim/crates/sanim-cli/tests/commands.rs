@@ -148,7 +148,7 @@ fn script_filename_with_spaces() {
 #[test]
 fn video_renders_complete_independent_h264_stream() {
     let (output, mp4) = run(
-        "let marker=Circle(radius:4pt,fill:Color(\"red\"))\nplay(MoveTo(marker,Vec2(25%,0%)),duration:300ms)\n",
+        "let marker=Circle(radius:4pt,fill:Color(\"red\"))\nMoveTo(marker, Vec2(25%,0%), duration=300ms, ease=\"linear\")\n",
         &["video", "--output", "OUTPUT"],
     );
     assert!(

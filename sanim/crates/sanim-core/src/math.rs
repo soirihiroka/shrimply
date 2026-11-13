@@ -384,6 +384,36 @@ pub fn overshoot(p: Fraction) -> Result<Fraction, String> {
     arithmetic("*", arithmetic("*", p, p)?, inner)
 }
 
+/// Closed-form unit-mass damped spring, evaluated directly for arbitrary seeks.
+/// The final fifth smoothly removes its tiny residual displacement so the
+/// bounded timeline ends exactly at rest without truncating a live oscillation.
+pub fn spring(progress: Fraction) -> Result<Fraction, String> {
+    if !finite(&progress) {
+        return Err("spring progress must be finite".into());
+    }
+    if progress <= Fraction::zero() {
+        return Ok(Fraction::zero());
+    }
+    if progress >= Fraction::from(1) {
+        return Ok(Fraction::from(1));
+    }
+    const DAMPING_RATIO: f64 = 0.78;
+    const ANGULAR_FREQUENCY: f64 = 12.;
+    const SETTLE_START: f64 = 0.8;
+    let time = to_f64(progress)?;
+    let oscillation = (1. - DAMPING_RATIO * DAMPING_RATIO).sqrt();
+    let angle = ANGULAR_FREQUENCY * oscillation * time;
+    let residual = (-DAMPING_RATIO * ANGULAR_FREQUENCY * time).exp()
+        * (angle.cos() + DAMPING_RATIO / oscillation * angle.sin());
+    let window = if time > SETTLE_START {
+        let t = (time - SETTLE_START) / (1. - SETTLE_START);
+        1. - t * t * t * (10. + t * (-15. + 6. * t))
+    } else {
+        1.
+    };
+    functions::approximate(1. - residual * window)
+}
+
 /// Interpolate fixed-size vectors without allocating temporary component lists.
 pub fn motion_vector_lerp<const N: usize>(
     a: [f64; N],

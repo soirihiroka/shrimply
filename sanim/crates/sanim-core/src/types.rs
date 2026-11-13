@@ -1,4 +1,4 @@
-use crate::{Element, Fraction, List, Motion, Number, Unit};
+use crate::{Element, Fraction, List, Number, Unit};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -15,7 +15,6 @@ pub enum Type {
     Matrix4,
     Color,
     Element,
-    Motion,
     Predicate,
     Font,
     Data,
@@ -287,7 +286,6 @@ impl std::fmt::Display for Type {
             Self::Matrix4 => write!(f, "Matrix4"),
             Self::Color => write!(f, "Color"),
             Self::Element => write!(f, "Element"),
-            Self::Motion => write!(f, "Motion"),
             Self::Predicate => write!(f, "visual relationship"),
             Self::Font => write!(f, "Font"),
             Self::Data => write!(f, "Data"),
@@ -427,7 +425,6 @@ pub enum Value {
         fields: Arc<[Value]>,
     },
     Element(Arc<Element>),
-    Motion(Arc<Motion>),
     Predicate(Arc<crate::verify::Predicate>),
     Function(String),
     Font(std::sync::Arc<Vec<u8>>),
@@ -457,7 +454,6 @@ impl Value {
             Self::None => Type::Option(Box::new(Type::Unknown)),
             Self::Variant { ty, .. } => ty.as_ref().clone(),
             Self::Element(_) => Type::Element,
-            Self::Motion(_) => Type::Motion,
             Self::Predicate(_) => Type::Predicate,
             Self::Function(_) => Type::Unknown,
             Self::Font(_) => Type::Font,

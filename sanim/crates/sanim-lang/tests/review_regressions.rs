@@ -8,7 +8,7 @@ fn run(text: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic> {
 }
 #[test]
 fn repeated_shift_uses_current_timeline_state() {
-    let p=run("let marker = Circle(id: \"marker\")\nrepeat 4 { play(Shift(marker, Vec2(10pt,0pt)), duration: 1s) }\n").unwrap();
+    let p=run("let marker = Circle(id: \"marker\")\nrepeat 4 { Shift(marker, Vec2(10pt,0pt), duration=1s, ease=\"linear\") }\n").unwrap();
     for (index, track) in p.animation.tracks["marker"][&Property::Position]
         .iter()
         .enumerate()
@@ -123,10 +123,10 @@ fn generated_concatenations_are_bounded_before_allocation() {
 #[test]
 fn flow_position_conflicts_in_same_play_fail_before_scheduling() {
     for motions in [
-        "FadeIn(row), MoveTo(child, Vec2(10pt,0pt))",
-        "MoveTo(child, Vec2(10pt,0pt)), FadeIn(row)",
+        "background { FadeIn(row,duration=1s) }; MoveTo(child,Vec2(10pt,0pt),duration=1s)",
+        "background { MoveTo(child,Vec2(10pt,0pt),duration=1s) }; FadeIn(row,duration=1s)",
     ] {
-        let e=run(&format!("let child=Circle(id: \"child\")\nlet row=Row(children: [child])\nplay({motions}, duration: 1s)\n")).unwrap_err();
+        let e=run(&format!("let child=Circle(id: \"child\")\nlet row=Row(children: [child])\nadd(row)\n{motions}\n")).unwrap_err();
         assert!(e.message.contains("flow layout controls"), "{e}");
     }
 }
@@ -134,7 +134,7 @@ fn flow_position_conflicts_in_same_play_fail_before_scheduling() {
 #[test]
 fn changed_flow_child_tracks_invalidate_sibling_layout() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let factor=reflect(2)\nlet a=Rect(id: \"a\")\nlet b=Rect(id: \"b\")\nadd(Row(id: \"row\", children: [a,b]))\nplay(ScaleTo(a, factor), duration: 1s)\n");
+    files.insert("main.sanim","let factor=reflect(2)\nlet a=Rect(id: \"a\")\nlet b=Rect(id: \"b\")\nadd(Row(id: \"row\", children: [a,b]))\nScaleTo(a, factor, duration=1s, ease=\"linear\")\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set("factor", Value::Number(sanim_core::Number::scalar(3)));

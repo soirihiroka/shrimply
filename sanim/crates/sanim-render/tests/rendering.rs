@@ -144,7 +144,7 @@ fn pixel_budget_rejects_large_surfaces() {
 #[test]
 fn later_motion_frame_changes_pixels() {
     let scene = scene_in(
-        "let marker = Circle(radius: 4pt, position: Vec2(-25%, 0%))\nplay(MoveTo(marker, Vec2(25%, 0%)), duration: 1s)\n",
+        "let marker = Circle(radius: 4pt, position: Vec2(-25%, 0%))\nMoveTo(marker, Vec2(25%, 0%), duration=1s, ease=\"linear\")\n",
         64,
         64,
     );
@@ -188,7 +188,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
         "font.ttf",
         include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf").as_slice(),
     );
-    files.insert("main.sanim","bg(Color(\"transparent\"))\nlet font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font:font,font_size:24pt,fill:Color(\"white\"))\nplay(Write(label),duration:1s)");
+    files.insert("main.sanim","bg(Color(\"transparent\"))\nlet font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font:font,font_size:24pt,fill:Color(\"white\"))\nWrite(label, duration=1s, ease=\"linear\")");
     let prepared = Engine::new(sanim_core::Viewport {
         width: 240,
         height: 96,
@@ -224,7 +224,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
 #[test]
 fn create_draws_a_line_segment_instead_of_fading_the_whole_line() {
     let scene = scene_in(
-        "let line=Line(end:Vec2(40pt,0pt),width:4pt,fill:Color(\"red\"))\nplay(Create(line),duration:1s)",
+        "let line=Line(end:Vec2(40pt,0pt),width:4pt,fill:Color(\"red\"))\nCreate(line, duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -254,7 +254,7 @@ fn write_traces_then_fills_and_inverse_returns_to_empty() {
     for (forward, reverse) in [("Create", "Uncreate"), ("Write", "Unwrite")] {
         let scene = scene_in(
             &format!(
-                "let shape=Rect(width:32pt,height:32pt,fill:Color(\"red\"))\nplay({forward}(shape),duration:1s)\nplay({reverse}(shape),duration:1s)"
+                "let shape=Rect(width:32pt,height:32pt,fill:Color(\"red\"))\n{forward}(shape,duration:1s,ease:\"linear\")\n{reverse}(shape,duration:1s,ease:\"linear\")"
             ),
             64,
             64,
@@ -294,7 +294,7 @@ fn write_traces_then_fills_and_inverse_returns_to_empty() {
 #[test]
 fn group_write_reveals_children_without_changing_their_layout() {
     let scene = scene_in(
-        "let group=Row(children:[Rect(width:16pt,height:16pt),Circle(radius:8pt)],gap:8pt)\nplay(Write(group),duration:1s)",
+        "let group=Row(children:[Rect(width:16pt,height:16pt),Circle(radius:8pt)],gap:8pt)\nWrite(group, duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -320,7 +320,7 @@ fn group_write_reveals_children_without_changing_their_layout() {
 #[test]
 fn grow_and_shrink_render_centered_without_zero_scale_artifacts() {
     let scene = scene_in(
-        "let shape=Rect(width:32pt,height:32pt)\nplay(GrowFromCenter(shape),duration:1s)\nplay(ShrinkToCenter(shape),duration:1s)",
+        "let shape=Rect(width:32pt,height:32pt)\nGrowFromCenter(shape, duration=1s, ease=\"linear\")\nShrinkToCenter(shape, duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -413,7 +413,7 @@ fn overlapping_trace_and_fill_preserve_element_opacity() {
     for kind in ["Create", "Write"] {
         let scene = scene_in(
             &format!(
-                "let shape=Rect(width:32pt,height:32pt,opacity:0.5)\nplay({kind}(shape),duration:1s)"
+                "let shape=Rect(width:32pt,height:32pt,opacity:0.5)\n{kind}(shape,duration:1s,ease:\"linear\")"
             ),
             64,
             64,

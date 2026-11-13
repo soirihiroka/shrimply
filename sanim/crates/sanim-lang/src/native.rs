@@ -11,6 +11,8 @@ pub(crate) struct Context<'a> {
     pub animation: &'a mut Animation,
     pub cursor: &'a mut Fraction,
     pub limits: &'a Limits,
+    pub duration: Fraction,
+    pub easing: Easing,
     pub list_edit: &'a mut Option<crate::lists::EditDelta>,
 }
 
@@ -389,144 +391,6 @@ pub(crate) fn math_function(
     )
 }
 
-pub(crate) fn motion(
-    name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    context: Context<'_>,
-) -> Result<Value, String> {
-    let Context {
-        animation, cursor, ..
-    } = context;
-    let required = |name: &str| {
-        args.get(name)
-            .ok_or_else(|| format!("missing argument '{name}'"))
-    };
-    let Value::Element(element) = required("element")? else {
-        return Err("motion target must be Element".into());
-    };
-    let (property, to, from) = match name {
-        "MoveTo" => (Property::Position, required("to")?.clone(), None),
-        "Shift" => {
-            let offset = required("to")?.vec2()?;
-            let mut current = animation
-                .sample_property(element, Property::Position, *cursor)?
-                .vec2()?;
-            if current.values.iter().all(|v| *v == 0.0) {
-                current.unit = offset.unit;
-            }
-            if offset.unit != current.unit {
-                return Err(
-                    "Shift and current position must both use pt or both use percentages".into(),
-                );
-            }
-            (
-                Property::Position,
-                Value::Vec2(Vec2 {
-                    values: [
-                        math::float_arithmetic("+", current.values[0], offset.values[0])?,
-                        math::float_arithmetic("+", current.values[1], offset.values[1])?,
-                    ],
-                    unit: current.unit,
-                }),
-                None,
-            )
-        }
-        "FadeIn" => (
-            Property::Opacity,
-            Value::Number(Number::scalar(1)),
-            Some(Value::Number(Number::scalar(0))),
-        ),
-        "FadeOut" => (Property::Opacity, Value::Number(Number::scalar(0)), None),
-        "Create" | "Write" => (
-            Property::Reveal,
-            Value::Number(Number::scalar(1)),
-            Some(Value::Number(Number::scalar(0))),
-        ),
-        "Uncreate" | "Unwrite" => (Property::Reveal, Value::Number(Number::scalar(0)), None),
-        "GrowFromCenter" | "ShrinkToCenter" => {
-            if element.layout.x_align != Align::Center || element.layout.y_align != Align::Center {
-                return Err(format!(
-                    "{name} requires x_align: Align.Center and y_align: Align.Center; use ScaleTo for an edge-anchored element"
-                ));
-            }
-            if name == "GrowFromCenter" {
-                (
-                    Property::Scale,
-                    Value::Number(Number {
-                        value: element.scale,
-                        unit: Unit::Number,
-                    }),
-                    Some(Value::Number(Number::scalar(0))),
-                )
-            } else {
-                (Property::Scale, Value::Number(Number::scalar(0)), None)
-            }
-        }
-        "RotateTo" => (Property::Rotation, required("to")?.clone(), None),
-        "ScaleTo" => {
-            if required("to")?.number()?.value <= Fraction::from(0) {
-                return Err("scale must be positive".into());
-            }
-            (Property::Scale, required("to")?.clone(), None)
-        }
-        "ExpandX" => (
-            Property::StretchX,
-            Value::Number(Number::scalar(1)),
-            Some(Value::Number(Number::scalar(0))),
-        ),
-        "StretchXTo" => {
-            let to = required("to")?.number()?;
-            if !math::finite(&to.value) || to.value < Fraction::from(0) {
-                return Err("horizontal scale must be finite and nonnegative".into());
-            }
-            (Property::StretchX, required("to")?.clone(), None)
-        }
-        _ => (Property::Fill, required("to")?.clone(), None),
-    };
-    Ok(Value::Motion(std::sync::Arc::new(Motion {
-        element: element.as_ref().clone(),
-        property,
-        to,
-        from,
-        reveal: match name {
-            "Create" | "Uncreate" => Some(RevealKind::Create),
-            "Write" | "Unwrite" => Some(RevealKind::Write),
-            _ => None,
-        },
-        horizontal: if name == "ExpandX"
-            || name == "StretchXTo" && (args.contains_key("origin") || args.contains_key("offset"))
-        {
-            Some(HorizontalTransform {
-                scale: Fraction::from(1),
-                origin: Number {
-                    value: number(
-                        args,
-                        "origin",
-                        if matches!(element.geometry.as_ref(), Geometry::Group { .. }) {
-                            if element.horizontal == HorizontalTransform::default() {
-                                Fraction::new(1u64, 2u64)
-                            } else {
-                                element.horizontal.origin.value
-                            }
-                        } else {
-                            Fraction::from(0)
-                        },
-                    )?,
-                    unit: Unit::Percent,
-                },
-                offset: number(args, "offset", element.horizontal.offset)?,
-            })
-        } else {
-            None
-        },
-        easing: args
-            .get("ease")
-            .map(Value::string)
-            .transpose()?
-            .map(Easing::parse)
-            .transpose()?,
-    })))
-}
 
 pub(crate) fn relationship(
     name: &str,
@@ -768,7 +632,7 @@ pub(crate) fn make_element(
     })))
 }
 
-fn number(
+pub(crate) fn number(
     args: &imbl::OrdMap<String, Value>,
     name: &str,
     default: Fraction,

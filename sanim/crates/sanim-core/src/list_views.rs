@@ -56,6 +56,7 @@ pub(crate) struct Selection<'a> {
     pub from: &'a List,
     pub to: &'a List,
     pub progress: Fraction,
+    pub appearance: Fraction,
     pub active: bool,
 }
 pub(crate) fn elements(items: &List) -> Result<impl Iterator<Item = &Element>, String> {
@@ -97,6 +98,7 @@ impl Channel {
                 from: &self.initial.items,
                 to: &self.initial.items,
                 progress: 1.into(),
+                appearance: 1.into(),
                 active: false,
             });
         };
@@ -105,17 +107,22 @@ impl Channel {
                 from: &event.to.items,
                 to: &event.to.items,
                 progress: 1.into(),
+                appearance: 1.into(),
                 active: false,
             })
         } else {
+            let time = math::progress(time, event.start, event.end)?;
+            let progress = event.easing.apply(time)?;
+            let appearance = if event.easing == Easing::Spring {
+                Easing::CubicOut.apply(time)?
+            } else {
+                progress.max(0.into()).min(1.into())
+            };
             Ok(Selection {
                 from: &event.from.items,
                 to: &event.to.items,
-                progress: event
-                    .easing
-                    .apply(math::progress(time, event.start, event.end)?)?
-                    .max(0.into())
-                    .min(1.into()),
+                progress,
+                appearance,
                 active: true,
             })
         }

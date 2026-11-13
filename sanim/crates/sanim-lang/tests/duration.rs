@@ -26,7 +26,7 @@ fn compare(source: &str, assets: &[(&str, &str)], expected: Fraction) {
 #[test]
 fn exact_rational_sums_and_parallel_plays_match() {
     compare(
-        "let a=Circle()\nlet b=Rect()\nplay(FadeIn(a),FadeIn(b),duration:100ms)\nrepeat 3{wait(1s/3)}",
+        "let a=Circle()\nlet b=Rect()\nFadeIn([a, b], duration=100ms, ease=\"linear\")\nrepeat 3{wait(1s/3)}",
         &[],
         Fraction::new(11u64, 10u64),
     );
@@ -136,7 +136,7 @@ fn match_payloads_and_early_returns_match() {
 #[test]
 fn duration_analysis_skips_unneeded_geometry_and_assets() {
     let files = sources(
-        "let font=read<Font>(\"unused.ttf\")\nfn caption():Element{return Text(\"x\",font:font)}\nrepeat 100000{let marker=Circle();play(FadeIn(marker),duration:1ms)}",
+        "let font=read<Font>(\"unused.ttf\")\nfn caption():Element{return Text(\"x\",font:font)}\nrepeat 100000{let marker=Circle();FadeIn(marker, duration=1ms, ease=\"linear\")}",
         &[],
     );
     let report = Engine::default()
@@ -359,7 +359,7 @@ fn value_helpers_can_return_whole_imported_records() {
 #[test]
 fn reveals_and_growth_have_the_same_bounded_duration_in_both_passes() {
     compare(
-        "let shape=Circle()\nplay(Create(shape),duration:100ms)\nplay(Uncreate(shape),duration:200ms)\nplay(Write(shape),duration:300ms)\nplay(Unwrite(shape),duration:400ms)\nplay(GrowFromCenter(shape),duration:500ms)\nplay(ShrinkToCenter(shape),duration:600ms)",
+        "let shape=Circle()\nCreate(shape, duration=100ms, ease=\"linear\")\nUncreate(shape, duration=200ms, ease=\"linear\")\nWrite(shape, duration=300ms, ease=\"linear\")\nUnwrite(shape, duration=400ms, ease=\"linear\")\nGrowFromCenter(shape, duration=500ms, ease=\"linear\")\nShrinkToCenter(shape, duration=600ms, ease=\"linear\")",
         &[],
         Fraction::new(21u64, 10u64),
     );

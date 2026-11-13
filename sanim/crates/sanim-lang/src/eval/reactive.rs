@@ -392,7 +392,7 @@ impl Runtime<'_, '_> {
             validate_value(&cell.ty, &value)
                 .map_err(|e| self.error("S140", format!("cannot assign '{name}': {e}"), span))?;
         }
-        let start = self.assignment_start(expr);
+        let (start, easing) = self.assignment_timing(expr);
         let unchanged = match (self.reactive.nodes.get(&id), &value, &delta) {
             (Some(Node::Cell(current)), Value::List(value), Some(delta))
                 if delta.cow_bytes == 0 =>
@@ -412,6 +412,7 @@ impl Runtime<'_, '_> {
                         &value,
                         start,
                         delta.as_ref().map(|delta| &delta.edit),
+                        easing,
                         span,
                     )?;
                 } else {
@@ -439,13 +440,14 @@ impl Runtime<'_, '_> {
                 &value,
                 start,
                 delta.as_ref().map(|delta| &delta.edit),
+                easing,
                 span,
             )?;
         } else if self.cursor > start {
             self.ensure_animated_cell(id, span)?;
             self.animation
                 .reactive
-                .animate_cell(id, start, self.cursor, value.clone(), Easing::Smooth)
+                .animate_cell(id, start, self.cursor, value.clone(), easing)
                 .map_err(|error| self.error("S140", error, span))?;
         } else if self.animation.reactive.has_cell(id) {
             self.animation

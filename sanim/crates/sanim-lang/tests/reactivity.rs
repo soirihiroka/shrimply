@@ -480,7 +480,7 @@ fn background_assignments_and_helper_writes_do_not_leak_into_the_main_present() 
 #[test]
 fn property_getters_follow_the_current_cursor_and_temporal_signals_refresh() {
     let prepared = run(
-        "mut extent=20pt\nlet rect=Rect(width=extent,height=40pt)\nbackground{animate(extent,to=40pt,duration=2s)}\nwait(2s)\nlet current_width=rect.width\nsig angle=rect.rotation\nsig doubled=angle*2\nlet before=doubled\nplay(RotateTo(rect,90deg),duration=1s)\nlet after=doubled\n",
+        "mut extent=20pt\nlet rect=Rect(width=extent,height=40pt)\nbackground{animate(extent,to=40pt,duration=2s)}\nwait(2s)\nlet current_width=rect.width\nsig angle=rect.rotation\nsig doubled=angle*2\nlet before=doubled\nRotateTo(rect, 90deg, duration=1s, ease=\"linear\")\nlet after=doubled\n",
     );
     assert_eq!(number(&prepared, "current_width"), Fraction::from(40));
     assert_eq!(number(&prepared, "before"), Fraction::from(0));
@@ -505,7 +505,7 @@ fn structural_group_children_allow_independently_retained_child_properties() {
 #[test]
 fn unannotated_position_signals_refresh_after_ordinary_motion() {
     let prepared = run(
-        "let rect=Rect()\nsig point=rect.position\nlet before=point\nplay(MoveTo(rect,Vec2(20pt,0pt)),duration=1s)\nlet after=point\n",
+        "let rect=Rect()\nsig point=rect.position\nlet before=point\nMoveTo(rect, Vec2(20pt,0pt), duration=1s, ease=\"linear\")\nlet after=point\n",
     );
     assert_eq!(prepared.bindings["before"].vec2().unwrap().values, [0., 0.]);
     assert_eq!(prepared.bindings["after"].vec2().unwrap().values, [20., 0.]);
@@ -514,7 +514,7 @@ fn unannotated_position_signals_refresh_after_ordinary_motion() {
 #[test]
 fn retaining_an_ordinary_motion_getter_fails_instead_of_freezing() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let first=Rect()\nsig point=first.position\nlet second=Circle(position=point)\nplay(MoveTo(first,Vec2(20pt,0pt)),duration=1s)");
+    files.insert("main.sanim","let first=Rect()\nsig point=first.position\nlet second=Circle(position=point)\nMoveTo(first, Vec2(20pt,0pt), duration=1s, ease=\"linear\")");
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();

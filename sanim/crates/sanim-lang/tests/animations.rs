@@ -17,7 +17,7 @@ fn reveal_constructors_have_exact_endpoints_and_distinct_modes() {
         ("Unwrite", RevealKind::Write, 1, 0),
     ] {
         let prepared = prepare(&format!(
-            "let shape=Circle(opacity:0.6)\nplay({name}(shape),duration:1s)\nwait(1s)"
+            "let shape=Circle(opacity:0.6)\n{name}(shape,duration:1s,ease:\"linear\")\nwait(1s)"
         ))
         .unwrap();
         let animation = &prepared.animation;
@@ -37,7 +37,7 @@ fn reveal_constructors_have_exact_endpoints_and_distinct_modes() {
 
 #[test]
 fn reveals_compose_with_motion_but_reject_competing_reveals() {
-    let prepared=prepare("let shape=Circle()\nplay(Create(shape),MoveTo(shape,Vec2(20pt,0pt)),FadeIn(shape),duration:1s)\nplay(Unwrite(shape),duration:1s)\nplay(Write(shape),duration:1s)").unwrap();
+    let prepared=prepare("let shape=Circle()\nbackground { Create(shape, duration=1s, ease=\"linear\") }; background { MoveTo(shape, Vec2(20pt,0pt), duration=1s, ease=\"linear\") }; FadeIn(shape, duration=1s, ease=\"linear\")\nUnwrite(shape, duration=1s, ease=\"linear\")\nWrite(shape, duration=1s, ease=\"linear\")").unwrap();
     assert_eq!(
         prepared.animation.tracks.values().next().unwrap()[&Property::Reveal].len(),
         3
@@ -49,13 +49,13 @@ fn reveals_compose_with_motion_but_reject_competing_reveals() {
         Fraction::from(1)
     );
     let error =
-        prepare("let shape=Circle()\nplay(Create(shape),Write(shape),duration:1s)").unwrap_err();
+        prepare("let shape=Circle()\nbackground { Create(shape, duration=1s, ease=\"linear\") }; Write(shape, duration=1s, ease=\"linear\")").unwrap_err();
     assert!(error.to_string().contains("overlapping writers"), "{error}");
 }
 
 #[test]
 fn center_growth_preserves_original_scale_and_anchoring() {
-    let prepared=prepare("let shape=Rect(scale:2)\nplay(GrowFromCenter(shape),duration:1s)\nplay(ShrinkToCenter(shape),duration:1s)").unwrap();
+    let prepared=prepare("let shape=Rect(scale:2)\nGrowFromCenter(shape, duration=1s, ease=\"linear\")\nShrinkToCenter(shape, duration=1s, ease=\"linear\")").unwrap();
     for (time, scale) in [(0, 0), (1, 2), (2, 0)] {
         let elements = prepared
             .animation
@@ -70,13 +70,13 @@ fn center_growth_preserves_original_scale_and_anchoring() {
         assert_eq!(elements[0].layout.x_align, Align::Center);
     }
     assert!(
-        prepare("let shape=Rect(x_align:Align.Start)\nplay(GrowFromCenter(shape))")
+        prepare("let shape=Rect(x_align:Align.Start)\nGrowFromCenter(shape, duration=1s, ease=\"linear\")")
             .unwrap_err()
             .to_string()
             .contains("Align.Center")
     );
     assert!(
-        prepare("let shape=Rect()\nadd(Row(children:[shape]))\nplay(GrowFromCenter(shape))")
+        prepare("let shape=Rect()\nadd(Row(children:[shape]))\nGrowFromCenter(shape, duration=1s, ease=\"linear\")")
             .unwrap_err()
             .to_string()
             .contains("flow layout controls")
@@ -86,7 +86,7 @@ fn center_growth_preserves_original_scale_and_anchoring() {
 #[test]
 fn group_reveals_keep_child_geometry_and_layout_unchanged() {
     let prepared =
-        prepare("let row=Row(children:[Circle(),Rect()],gap:10pt)\nplay(Write(row),duration:1s)")
+        prepare("let row=Row(children:[Circle(),Rect()],gap:10pt)\nWrite(row, duration=1s, ease=\"linear\")")
             .unwrap();
     let start = prepared
         .animation
@@ -123,11 +123,11 @@ fn animation_names_are_protected_by_registration() {
 #[test]
 fn ambiguous_hierarchical_reveals_and_rotated_growth_fail_cleanly() {
     for motions in [
-        "Write(group),Uncreate(child)",
-        "Uncreate(child),Write(group)",
+        "background { Write(group,duration=1s,ease=\"linear\") }; Uncreate(child,duration=1s,ease=\"linear\")",
+        "background { Uncreate(child,duration=1s,ease=\"linear\") }; Write(group,duration=1s,ease=\"linear\")",
     ] {
         let error = prepare(&format!(
-            "let child=Rect()\nlet group=Group(children:[child])\nplay({motions},duration:1s)"
+            "let child=Rect()\nlet group=Group(children:[child])\nadd(group)\n{motions}"
         ))
         .unwrap_err();
         assert!(
@@ -136,9 +136,9 @@ fn ambiguous_hierarchical_reveals_and_rotated_growth_fail_cleanly() {
         );
     }
     for source in [
-        "let shape=Line(end:Vec2(40pt,0pt),rotation:90deg)\nplay(GrowFromCenter(shape))",
-        "let shape=Rect()\nplay(RotateTo(shape,90deg))\nplay(GrowFromCenter(shape))",
-        "let shape=Rect()\nplay(GrowFromCenter(shape),RotateTo(shape,90deg))",
+        "let shape=Line(end:Vec2(40pt,0pt),rotation:90deg)\nGrowFromCenter(shape, duration=1s, ease=\"linear\")",
+        "let shape=Rect()\nRotateTo(shape, 90deg, duration=1s, ease=\"linear\")\nGrowFromCenter(shape, duration=1s, ease=\"linear\")",
+        "let shape=Rect()\nbackground { GrowFromCenter(shape, duration=1s, ease=\"linear\") }; RotateTo(shape, 90deg, duration=1s, ease=\"linear\")",
     ] {
         let error = prepare(source).unwrap_err();
         assert!(error.to_string().contains("zero rotation"), "{error}");
@@ -148,11 +148,11 @@ fn ambiguous_hierarchical_reveals_and_rotated_growth_fail_cleanly() {
 #[test]
 fn parent_child_parallel_writes_are_independent_of_argument_order() {
     let mut animations = Vec::new();
-    for motions in ["Write(group),FadeIn(child)", "FadeIn(child),Write(group)"] {
+    for targets in ["[group,child]", "[child,group]"] {
         let prepared = prepare(&format!(
             r#"let child=Circle(id:"child")
 let group=Group(id:"group",children:[child])
-play({motions},duration:1s)"#
+FadeIn({targets},duration:1s,ease:"linear")"#
         ))
         .unwrap();
         assert_eq!(prepared.animation.layers.len(), 1);

@@ -1268,23 +1268,16 @@ impl Checker<'_> {
             .parameters
             .iter()
             .any(|(name, _)| name == "duration");
-        let normal = if enveloped {
-            if let Some(duration) = crate::timing::envelope(args) {
-                let ty = self.expression(
-                    duration,
-                    env,
-                    Some(&Type::Numeric(Unit::Duration)),
-                    variables,
-                )?;
-                self.expect(&Type::Numeric(Unit::Duration), &ty, duration.span)?;
-            }
-            args.iter()
-                .filter(|(name, _)| name.as_deref() != Some("duration"))
-                .cloned()
-                .collect::<Vec<_>>()
-        } else {
-            args.clone()
-        };
+        let eased=!signature.parameters.iter().any(|(name,_)|name=="ease");
+        if enveloped && let Some(duration)=crate::timing::envelope(args){
+            let ty=self.expression(duration,env,Some(&Type::Numeric(Unit::Duration)),variables)?;
+            self.expect(&Type::Numeric(Unit::Duration),&ty,duration.span)?;
+        }
+        if eased && let Some(ease)=crate::timing::ease_argument(args){
+            let ty=self.expression(ease,env,Some(&Type::String),variables)?;
+            self.expect(&Type::String,&ty,ease.span)?;
+        }
+        let normal=args.iter().filter(|(name,_)| !(enveloped && name.as_deref()==Some("duration") || eased && name.as_deref()==Some("ease"))).cloned().collect::<Vec<_>>();
         let timed = enveloped
             && crate::timing::envelope(args).is_some_and(|expr| !crate::timing::known_zero(expr));
         let args = &normal;
@@ -1519,6 +1512,7 @@ impl Checker<'_> {
             )?;
             self.expect(&Type::Numeric(Unit::Duration), &ty, duration.span)?;
         }
+        if let Some(ease)=builtin.easing_argument(args) {let ty=self.expression(ease,env,Some(&Type::String),variables)?;self.expect(&Type::String,&ty,ease.span)?;}
         if builtin.result == Type::Data && builtin.name == "Data" {
             if !types.is_empty() {
                 return Err(self.error("S123", "Data does not take type arguments", expr.span));
@@ -1666,29 +1660,15 @@ impl Checker<'_> {
                 expr.span,
             ));
         }
-        let mut normal = vec![];
-        for (name, value) in args {
-            if matches!(builtin.execute, prelude::Execution::Play) && name.is_none() {
-                let ty = self.expression(value, env, Some(&Type::Motion), variables)?;
-                self.expect(&Type::Motion, &ty, value.span)?;
-            } else {
-                normal.push((name.clone(), value.clone()));
-            }
-        }
-        if matches!(builtin.execute, prelude::Execution::Play)
-            && args.iter().all(|(name, _)| name.is_some())
-        {
-            return Err(self.error("S124", "play requires at least one motion", expr.span));
-        }
         let parameters = builtin
             .parameters
             .iter()
             .map(|p| (p.name, p.ty.clone(), p.required))
             .collect::<Vec<_>>();
-        let ordered = self.arguments(&normal, &parameters, expr.span)?;
+        let ordered = self.arguments(args, &parameters, expr.span)?;
         let mut actuals = vec![];
         for (parameter, value) in builtin.parameters.iter().zip(ordered) {
-            if parameter.name == "duration" {
+            if matches!(parameter.name,"duration"|"ease") {
                 continue;
             }
             if let Some(value) = value {

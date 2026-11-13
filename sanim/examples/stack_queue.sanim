@@ -1,6 +1,6 @@
 // The same persistent list API drives both the data and the animated views.
 let font = read<Font>("assets/DejaVuSansCondensed-subset.ttf")
-let step = reflect(650ms, label="Operation Time", key="lists.step")
+let step = reflect(450ms, label="Operation Time", key="lists.step")
 
 fn caption(words: String, position: Vec2<Percent>, size: Length, tint: Color): Element {
     return Text(words, font=font, position=position, font_size=size, fill=tint)
@@ -30,7 +30,7 @@ let arrivals = caption("PUSH / ENQUEUE: 1, 2, 3", Vec2(0%, 31%), 22pt, Color("li
 let departures = caption("POP from the right. DEQUEUE from the left.", Vec2(0%, 31%), 22pt, Color("light2"))
 let result = caption("Stack: 3, 2, 1       Queue: 1, 2, 3", Vec2(0%, 31%), 24pt, Color("light1"))
 
-play(FadeIn(labels), FadeIn(arrivals), duration=400ms)
+FadeIn([labels, arrivals], duration=400ms)
 
 fn offer(value: Number): Unit {
     background {
@@ -45,16 +45,16 @@ for value in [1, 2, 3] {
 }
 assert(len(stack) == 3 and len(queue) == 3)
 wait(0.5s)
-play(FadeOut(arrivals), FadeIn(departures), duration=300ms)
+background { FadeOut(arrivals, duration=300ms) }; FadeIn(departures, duration=300ms)
 
 repeat 3 {
     background {
-        stack = remove_at(stack, len(stack) - 1, duration=step)
+        stack = pop(stack, duration=step)
     }
-    queue = remove_at(queue, 0, duration=step)
+    queue = popleft(queue, duration=step)
     wait(500ms)
 }
 assert(len(stack) == 0 and len(queue) == 0)
-play(FadeOut(departures), FadeIn(result), duration=300ms)
+background { FadeOut(departures, duration=300ms) }; FadeIn(result, duration=300ms)
 wait(1.5s)
-play(FadeOut(labels), FadeOut(result), duration=400ms)
+FadeOut([labels, result], duration=400ms)

@@ -22,7 +22,6 @@ pub(crate) enum Execution {
     Read,
     Decode,
     Query,
-    Play,
     Assertion,
 }
 #[derive(Clone, Debug)]
@@ -225,70 +224,6 @@ fn build_builtins() -> Vec<Builtin> {
         Execution::Native(native::element),
         native_types::fixed,
     );
-    for (name, ty) in [
-        ("MoveTo", Vector(2, None)),
-        ("Shift", Vector(2, None)),
-        ("RotateTo", angle.clone()),
-        ("ScaleTo", num.clone()),
-        ("FillTo", Color),
-    ] {
-        add(
-            name,
-            vec![p("element", Element, true), p("to", ty, true)],
-            Motion,
-            false,
-            Execution::Native(native::motion),
-            native_types::fixed,
-        );
-    }
-    for name in [
-        "FadeIn",
-        "FadeOut",
-        "Create",
-        "Uncreate",
-        "Write",
-        "Unwrite",
-        "GrowFromCenter",
-        "ShrinkToCenter",
-    ] {
-        add(
-            name,
-            vec![p("element", Element, true)],
-            Motion,
-            false,
-            Execution::Native(native::motion),
-            native_types::fixed,
-        );
-    }
-    for name in ["ExpandX", "StretchXTo"] {
-        let mut params = vec![p("element", Element, true)];
-        if name == "StretchXTo" {
-            params.push(p("to", num.clone(), true));
-        }
-        params.extend([
-            p("origin", Numeric(Dimension::Percent), false),
-            p("offset", length.clone(), false),
-        ]);
-        add(
-            name,
-            params,
-            Motion,
-            false,
-            Execution::Native(native::motion),
-            native_types::fixed,
-        );
-    }
-    add(
-        "play",
-        vec![
-            p("duration", duration.clone(), false),
-            p("ease", String, false),
-        ],
-        Unit,
-        true,
-        Execution::Play,
-        native_types::fixed,
-    );
     add(
         "wait",
         vec![p("duration", duration, true)],
@@ -471,26 +406,16 @@ fn build_builtins() -> Vec<Builtin> {
             native_types::math,
         );
     }
-    for builtin in &mut out {
-        if builtin.result == Motion {
-            builtin.parameters.push(p("ease", String, false));
-        }
-    }
     out.extend(crate::charts::builtins(common()));
     crate::lists::register(&mut out);
+    crate::animations::register(&mut out);
     for builtin in &mut out {
-        if matches!(builtin.execute, Execution::Play) {
-            builtin.timing = crate::timing::Timing {
-                default: sanim_core::Fraction::from(1),
-                positive: true,
-                ..Default::default()
-            };
-        }
         if !builtin.parameters.iter().any(|p| p.name == "duration") {
             builtin
                 .parameters
                 .push(p("duration", Numeric(Dimension::Duration), false));
         }
+        if !builtin.parameters.iter().any(|p|p.name=="ease") { builtin.parameters.push(p("ease",Type::String,false)); }
         builtin.timing.parameter = builtin
             .parameters
             .iter()
@@ -546,7 +471,6 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
             ("Fraction", Type::Fraction),
             ("Matrix4", Type::Matrix4),
             ("Element", Type::Element),
-            ("Motion", Type::Motion),
             ("Font", Type::Font),
             ("Data", Type::Data),
             ("Dict", Type::Dict),

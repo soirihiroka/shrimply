@@ -6,6 +6,7 @@ pub(super) struct CallBoundary {
     pub span: Span,
     pub start: Fraction,
     pub end: Fraction,
+    pub easing: Easing,
 }
 impl Runtime<'_, '_> {
     pub(super) fn observe_call_horizon(&mut self, end: Fraction) {
@@ -58,6 +59,7 @@ impl Runtime<'_, '_> {
         self.last_call.span = span;
         self.last_call.start = start;
         self.last_call.end = self.cursor;
+        self.last_call.easing=Easing::default();
         if requested == Some(Fraction::from(0)) && self.cursor == start && horizon <= start {
             return Ok(());
         }
@@ -176,8 +178,8 @@ impl Runtime<'_, '_> {
                         name
                     };
                     provided.insert(parameter.clone());
-                    if parameter == "duration"
-                        && !parameters.iter().any(|(name, _)| name == "duration")
+                    if matches!(parameter.as_str(),"duration"|"ease")
+                        && !parameters.iter().any(|(name, _)| name == &parameter)
                         || parameters
                             .iter()
                             .any(|(name, needed)| name == &parameter && *needed)

@@ -53,15 +53,16 @@ fn copied_path_bytes(len: usize, paths: usize) -> Result<usize, String> {
 }
 
 pub(crate) fn register(builtins: &mut Vec<Builtin>) {
-    for (name, arguments) in [
+    for (operation, arguments) in [
         ("append", &["items", "value"][..]),
         ("insert", &["items", "index", "value"][..]),
-        ("remove_at", &["items", "index"][..]),
+        ("pop", &["items", "index"][..]),
+        ("popleft", &["items"][..]),
         ("replace_at", &["items", "index", "value"][..]),
         ("move_item", &["items", "from_index", "to_index"][..]),
     ] {
         builtins.push(Builtin {
-            name,
+            name: operation,
             parameters: arguments
                 .iter()
                 .map(|name| Parameter {
@@ -71,7 +72,7 @@ pub(crate) fn register(builtins: &mut Vec<Builtin>) {
                     } else {
                         Type::Unknown
                     },
-                    required: true,
+                    required: !(operation == "pop" && *name == "index"),
                 })
                 .collect(),
             result: Type::Unknown,
@@ -130,13 +131,23 @@ pub(crate) fn execute(
             .cloned()
             .ok_or_else(|| format!("{name}: missing 'value'"))
     };
+    if matches!(name, "pop" | "popleft") && items.is_empty() {
+        return Err(format!(
+            "{name}: cannot remove an item; the list is empty (length 0)"
+        ));
+    }
     let operation = match name {
         "append" => ListEdit::Append(value()?),
         "insert" => ListEdit::Insert {
             index: index("index")?,
             value: value()?,
         },
-        "remove_at" => ListEdit::RemoveAt(index("index")?),
+        "pop" => ListEdit::RemoveAt(if args.contains_key("index") {
+            index("index")?
+        } else {
+            items.len() - 1
+        }),
+        "popleft" => ListEdit::RemoveAt(0),
         "replace_at" => ListEdit::ReplaceAt {
             index: index("index")?,
             value: value()?,

@@ -120,7 +120,7 @@ impl Runtime<'_, '_> {
             )
             .map_err(|e| self.error("S140", e, easing.span))?
         } else {
-            Easing::Linear
+            Easing::default()
         };
         self.ensure_animated_cell(id, span)?;
         let start = self.cursor;
@@ -390,16 +390,17 @@ impl Runtime<'_, '_> {
             }
             ExprKind::Call{callee,args,..}=>{
                 // Zero-time call envelopes are effects, not inputs to retained value math.
-                let timing = if let Some(call) = crate::timing::builtin_call(callee, args) {
-                    call.duration_argument()
+                let controls = if let Some(call) = crate::timing::builtin_call(callee, args) {
+                    [call.duration_argument(), call.easing_argument()]
                 } else {
                     let declared = self.loaded.iter().find(|module| module.id == self.module)
                         .and_then(|module| crate::effects::lookup(callee, &module.checked.exports));
-                    if matches!(declared,Some(Type::Function(signature)) if signature.parameters.iter().any(|(name,_)|name=="duration")) {
-                        None
-                    } else { crate::timing::envelope(args) }
+                    [
+                        if matches!(&declared,Some(Type::Function(signature)) if signature.parameters.iter().any(|(name,_)|name=="duration")) {None} else {crate::timing::envelope(args)},
+                        if matches!(&declared,Some(Type::Function(signature)) if signature.parameters.iter().any(|(name,_)|name=="ease")) {None} else {crate::timing::ease_argument(args)},
+                    ]
                 };
-                let args = args.iter().filter(|(_, value)| !timing.is_some_and(|timing| std::ptr::eq(timing, value)));
+                let args = args.iter().filter(|(_, value)| !controls.iter().flatten().any(|control|std::ptr::eq(*control, value)));
                 if let ExprKind::Name(name)=&callee.kind && prelude::builtin(name).is_some(){
                     if matches!(name.as_str(),"Vec2"|"Vec3"|"Vec4") {
                         let count=match name.as_str(){"Vec2"=>2,"Vec3"=>3,_=>4};

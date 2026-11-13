@@ -1,5 +1,6 @@
 //! Sanim: a bounded, typed animation scripting language, independent of any editor.
 pub mod ast;
+mod animations;
 mod cache;
 mod charts;
 mod checker;

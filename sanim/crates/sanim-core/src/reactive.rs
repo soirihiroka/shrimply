@@ -286,6 +286,7 @@ impl ReactiveGraph {
             from,
             to,
             easing,
+            bounded: false,
             reveal: None,
             horizontal: None,
         };
@@ -550,6 +551,7 @@ impl ReactiveGraph {
                 if previous.is_some_and(|end| end > track.start)
                     || track.reveal.is_some()
                     || track.horizontal.is_some()
+                    || track.bounded
                 {
                     return Err("invalid or overlapping retained cell tracks".into());
                 }

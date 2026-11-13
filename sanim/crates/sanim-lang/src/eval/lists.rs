@@ -5,15 +5,15 @@ use reactive::{Id, Node as Stored};
 impl Runtime<'_, '_> {
     /// Call arguments complete before the returned value begins its transition.
     /// The shared call evaluator supplies this boundary in full and duration-only modes.
-    pub(super) fn assignment_start(&self, expression: &Expr) -> Fraction {
+    pub(super) fn assignment_timing(&self, expression: &Expr) -> (Fraction, Easing) {
         if !matches!(expression.kind, ExprKind::Call { .. }) {
-            return self.cursor;
+            return (self.cursor, Easing::default());
         }
         let call = &self.last_call;
         if call.module == self.module && call.span == expression.span && call.end == self.cursor {
-            call.start
+            (call.start, call.easing)
         } else {
-            self.cursor
+            (self.cursor, Easing::default())
         }
     }
 
@@ -149,6 +149,7 @@ impl Runtime<'_, '_> {
         value: &Value,
         start: Fraction,
         edit: Option<&sanim_core::ListEditResult>,
+        easing: Easing,
         span: Span,
     ) -> Result<(), Diagnostic> {
         let Value::List(items) = value else {
@@ -157,10 +158,10 @@ impl Runtime<'_, '_> {
         self.ensure_list_cell(id, span)?;
         let result = if let Some(edit) = edit {
             self.animation
-                .write_list_edit(id, start, self.cursor, edit, Easing::Smooth)
+                .write_list_edit(id, start, self.cursor, edit, easing)
         } else {
             self.animation
-                .write_list(id, start, self.cursor, items.clone(), Easing::Smooth)
+                .write_list(id, start, self.cursor, items.clone(), easing)
         };
         result.map_err(|error| self.error("S140", error, span))
     }

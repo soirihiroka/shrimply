@@ -23,7 +23,7 @@ fn holds_reuse_layout_and_recording_at_distinct_exact_times() {
     let mut renderer = Renderer::default();
     let scene = renderer
         .prepare(animation(
-            "let c=Circle()\nplay(FadeIn(c),duration=1s)\nwait(3s)",
+            "let c=Circle()\nFadeIn(c, duration=1s, ease=\"linear\")\nwait(3s)",
         ))
         .unwrap();
     let options = Options::for_animation(scene.animation());
@@ -51,7 +51,7 @@ fn lru_keeps_recently_used_frames_and_evicts_only_oldest() {
         ..CacheLimits::default()
     });
     let scene = renderer
-        .prepare(animation("let c=Circle()\nplay(FadeIn(c),duration=1s)"))
+        .prepare(animation("let c=Circle()\nFadeIn(c, duration=1s, ease=\"linear\")"))
         .unwrap();
     let options = Options::for_animation(scene.animation());
     let first = renderer.frame_state(&scene, time(0), &options).unwrap();
@@ -77,7 +77,7 @@ fn lru_keeps_recently_used_frames_and_evicts_only_oldest() {
 fn independently_recording_at_new_pixel_sizes_reuses_calculated_layout() {
     let mut renderer = Renderer::default();
     let scene = renderer
-        .prepare(animation("play(FadeIn(Circle()),duration=1s)"))
+        .prepare(animation("FadeIn(Circle(), duration=1s, ease=\"linear\")"))
         .unwrap();
     let mut options = Options::for_animation(scene.animation());
     renderer.record(&scene, time(5), &options).unwrap();
@@ -115,7 +115,7 @@ fn byte_limits_and_clear_release_cache_ownership_without_invalidating_callers() 
 fn hot_edit_reuses_earlier_and_reconverged_states_but_invalidates_changed_motion() {
     let mut renderer = Renderer::default();
     let old = animation(
-        "let c=Circle(id=\"c\")\nadd(c)\nwait(1s)\nplay(FadeOut(c),duration=1s)\nplay(FadeIn(c),duration=1s)\nwait(1s)",
+        "let c=Circle(id=\"c\")\nadd(c)\nwait(1s)\nFadeOut(c, duration=1s, ease=\"linear\")\nFadeIn(c, duration=1s, ease=\"linear\")\nwait(1s)",
     );
     let first = renderer.prepare(old.clone()).unwrap();
     let options = Options::for_animation(first.animation());
@@ -166,7 +166,7 @@ fn inserting_motion_into_an_old_hold_never_reuses_that_hold_at_changed_times() {
         .record(&first, Fraction::from(3), &options)
         .unwrap();
     let edited = animation(
-        "let c=Circle(id=\"c\")\nadd(c)\nwait(1s)\nplay(FadeOut(c),duration=1s)\nwait(2s)",
+        "let c=Circle(id=\"c\")\nadd(c)\nwait(1s)\nFadeOut(c, duration=1s, ease=\"linear\")\nwait(2s)",
     );
     let second = renderer.prepare(edited).unwrap();
     let changed = renderer
@@ -222,7 +222,7 @@ fn birth_paint_order_background_and_geometry_changes_invalidate_cached_frames() 
 #[test]
 fn horizontal_ranges_expand_about_their_anchor_without_changing_vertical_extent() {
     let mut renderer = Renderer::default();
-    let scene = renderer.prepare(animation("let interval_box=Group(id=\"range\",children=[Rect(width=4pt,height=20pt,position=Vec2(-40pt,0pt)),Rect(width=4pt,height=20pt,position=Vec2(40pt,0pt))])\nplay(ExpandX(interval_box,origin=50%,offset=10pt),duration=1s)")).unwrap();
+    let scene = renderer.prepare(animation("let interval_box=Group(id=\"range\",children=[Rect(width=4pt,height=20pt,position=Vec2(-40pt,0pt)),Rect(width=4pt,height=20pt,position=Vec2(40pt,0pt))])\nExpandX(interval_box, origin=50%, offset=10pt, duration=1s, ease=\"linear\")")).unwrap();
     let mut options = Options::for_animation(scene.animation());
     options.width = 128;
     options.height = 128;

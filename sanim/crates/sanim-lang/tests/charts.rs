@@ -35,7 +35,7 @@ let interval_box=BoxPlot(id="box",summary={{low=0.8,q1=0.9,middle=1.0,q3=1.1,hig
 add(dots)
 add(grid)
 add(axis)
-play(ExpandX(interval_box),duration=400ms,ease="smootherstep")
+ExpandX(interval_box,duration=400ms,ease="smootherstep")
 "#
     ));
     let dots = p.animation.find("dots").unwrap();

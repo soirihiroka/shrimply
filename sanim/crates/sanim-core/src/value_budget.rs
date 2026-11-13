@@ -127,13 +127,6 @@ pub fn charge(
                 }
             }
             Value::Element(value) => element(value, bytes, items, depth - 1)?,
-            Value::Motion(value) => {
-                element(&value.element, bytes, items, depth - 1)?;
-                visit(&value.to, bytes, items, depth - 1)?;
-                if let Some(from) = &value.from {
-                    visit(from, bytes, items, depth - 1)?;
-                }
-            }
             Value::Predicate(value) => {
                 element(&value.left, bytes, items, depth - 1)?;
                 if let Some(right) = &value.right {

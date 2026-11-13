@@ -87,7 +87,7 @@ pub fn function(name: &str) -> Option<&'static Function> {
     functions().find(|f| f.name == name)
 }
 
-fn approximate(value: f64) -> Result<Fraction, String> {
+pub(super) fn approximate(value: f64) -> Result<Fraction, String> {
     if !value.is_finite() {
         return Err("math result is not finite (domain error or overflow)".into());
     }

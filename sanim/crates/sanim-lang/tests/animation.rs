@@ -21,7 +21,7 @@ fn prepare_in(text: &str, width: u32, height: u32, rate: Fraction) -> Prepared {
 #[test]
 fn direct_seek_has_no_playback_history() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\", position: Vec2(-40%, 0%))\nplay(MoveTo(marker, Vec2(40%, 0%)), duration: 2s)\n",
+        "let marker = Circle(id: \"marker\", position: Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=2s, ease=\"linear\")\n",
     );
     let later = p.animation.sample(Fraction::from(2)).unwrap();
     let middle = p.animation.sample(Fraction::from(1)).unwrap();
@@ -33,7 +33,7 @@ fn direct_seek_has_no_playback_history() {
 #[test]
 fn final_values_hold_past_motion_end() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\", position: Vec2(-40%, 0%))\nplay(MoveTo(marker, Vec2(40%, 0%)), duration: 1s)\nwait(2s)\n",
+        "let marker = Circle(id: \"marker\", position: Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"linear\")\nwait(2s)\n",
     );
     assert_eq!(
         p.animation.sample(Fraction::from(2)).unwrap()[0]
@@ -45,14 +45,14 @@ fn final_values_hold_past_motion_end() {
 #[test]
 fn multiple_tracks_run_together() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\")\nplay(FadeIn(marker), MoveTo(marker, Vec2(40%, 0%)), duration: 1s)\n",
+        "let marker = Circle(id: \"marker\")\nbackground { FadeIn(marker, duration=1s, ease=\"linear\") }; MoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"linear\")\n",
     );
     assert_eq!(p.animation.tracks["marker"].len(), 2);
     assert_eq!(p.animation.duration, Fraction::from(1));
 }
 #[test]
 fn fade_default_duration() {
-    let p = prepare("let marker = Circle()\nplay(FadeIn(marker))\n");
+    let p = prepare("let marker = Circle()\nFadeIn(marker, duration=1s, ease=\"linear\")\n");
     assert_eq!(p.animation.duration, Fraction::from(1));
 }
 
@@ -69,9 +69,9 @@ let after_range = Group(id="after_range",children=[
     Line(position=Vec2(-10pt,60pt),end=Vec2(0pt,16pt))
 ])
 wait(300ms)
-play(ExpandX(before_range,origin=50%,offset=10pt),duration=400ms,ease="smootherstep")
+ExpandX(before_range,origin=50%,offset=10pt,duration=400ms,ease="smootherstep")
 wait(700ms)
-play(ExpandX(after_range,origin=50%,offset=-10pt),duration=300ms,ease="smootherstep")
+ExpandX(after_range,origin=50%,offset=-10pt,duration=300ms,ease="smootherstep")
 "#,
     );
     assert_eq!(p.animation.duration, Fraction::new(17u64, 10u64));
@@ -123,7 +123,7 @@ play(ExpandX(after_range,origin=50%,offset=-10pt),duration=300ms,ease="smoothers
 }
 #[test]
 fn not_visible_before_added() {
-    let p = prepare("wait(1s)\nlet marker = Circle()\nplay(FadeIn(marker), duration: 1s)\n");
+    let p = prepare("wait(1s)\nlet marker = Circle()\nFadeIn(marker, duration=1s, ease=\"linear\")\n");
     assert!(p.animation.sample(Fraction::from(0)).unwrap().is_empty());
     assert_eq!(
         p.animation.sample(Fraction::from(1)).unwrap()[0].opacity,
@@ -194,7 +194,7 @@ fn visual_assertions_name_objects() {
 #[test]
 fn continuous_inside_proof_covers_translation() {
     let p = prepare_in(
-        "let marker = Circle(id: \"marker\", radius: 5pt, position: Vec2(-40%, 0%))\nplay(MoveTo(marker, Vec2(40%, 0%)), duration: 1s, ease: \"cubic_out\")\nassert(always(inside_canvas(marker)))\n",
+        "let marker = Circle(id: \"marker\", radius: 5pt, position: Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"cubic_out\")\nassert(always(inside_canvas(marker)))\n",
         200,
         100,
         Fraction::from(30),
@@ -204,7 +204,7 @@ fn continuous_inside_proof_covers_translation() {
 #[test]
 fn unsupported_continuous_proof_is_unknown() {
     let p = prepare(
-        "let marker = Rect(id: \"marker\")\nplay(RotateTo(marker, 90deg), duration: 1s)\ncheck(always(inside_canvas(marker)))\n",
+        "let marker = Rect(id: \"marker\")\nRotateTo(marker, 90deg, duration=1s, ease=\"linear\")\ncheck(always(inside_canvas(marker)))\n",
     );
     assert_eq!(p.checks[0].evidence, Evidence::Unknown);
 }
@@ -224,7 +224,7 @@ fn overlapping_writers_fail_atomically() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let marker = Circle(id: \"marker\")\nplay(FadeIn(marker), FadeOut(marker), duration: 1s)\n",
+        "let marker = Circle(id: \"marker\")\nbackground { FadeIn(marker, duration=1s, ease=\"linear\") }; FadeOut(marker, duration=1s, ease=\"linear\")\n",
     );
     let e = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -235,7 +235,7 @@ fn overlapping_writers_fail_atomically() {
 #[test]
 fn sequential_properties_have_indexed_tracks() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\")\nrepeat 4 { play(FadeIn(marker), duration: 1s) }\n",
+        "let marker = Circle(id: \"marker\")\nrepeat 4 { FadeIn(marker, duration=1s, ease=\"linear\") }\n",
     );
     assert_eq!(p.animation.tracks["marker"][&Property::Opacity].len(), 4);
     assert!(matches!(p.bindings["marker"], Value::Element(_)));
@@ -312,7 +312,9 @@ fn manim_title_overshoot_is_per_motion_and_does_not_invalidate_continuous_proofs
         r#"
 let title=Rect(id="title",width=10pt,height=10pt,position=Vec2(0pt,12pt))
 let labels=Rect(id="labels",width=10pt,height=10pt)
-play(FadeIn(title,ease="overshoot"),MoveTo(title,Vec2(0pt,0pt),ease="overshoot"),FadeIn(labels),duration=300ms,ease="smootherstep")
+background { FadeIn(title,duration=300ms,ease="overshoot") }
+background { MoveTo(title,Vec2(0pt,0pt),duration=300ms,ease="overshoot") }
+FadeIn(labels,duration=300ms,ease="smootherstep")
 check(always(inside_canvas(title)))
 "#,
     );

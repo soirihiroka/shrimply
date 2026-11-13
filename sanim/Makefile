@@ -56,3 +56,7 @@ list-view-check:
 	$(CARGO) test -p sanim-core -p sanim-render --test list_views
 list-view-bench:
 	$(CARGO) test -p sanim-core -p sanim-render --test list_views retained_list_ -- --ignored --nocapture
+
+.PHONY: pop-bench
+pop-bench:
+	$(CARGO) test -p sanim-lang --test list_edits pop_benchmark -- --ignored --nocapture

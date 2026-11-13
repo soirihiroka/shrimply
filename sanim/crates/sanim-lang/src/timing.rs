@@ -66,9 +66,6 @@ impl Builtin {
         {
             return Some(value);
         }
-        if matches!(self.execute, crate::prelude::Execution::Play) {
-            return None;
-        }
         let parameter = self.timing.parameter.checked_sub(implicit)?;
         if args.len() <= parameter {
             return None;
@@ -77,6 +74,14 @@ impl Builtin {
             .filter(|(name, _)| name.is_none())
             .nth(parameter)
             .map(|(_, value)| value)
+    }
+    pub(crate) fn easing_argument<'a,T>(&self,args:&'a [(Option<String>,T)])->Option<&'a T>{
+        self.easing_argument_after(args,0)
+    }
+    fn easing_argument_after<'a,T>(&self,args:&'a [(Option<String>,T)],implicit:usize)->Option<&'a T>{
+        if let Some((_,value))=args.iter().find(|(name,_)|name.as_deref()==Some("ease")){return Some(value);}
+        let index=self.parameters.iter().position(|p|p.name=="ease")?.checked_sub(implicit)?;
+        args.iter().filter(|(name,_)|name.is_none()).nth(index).map(|(_,value)|value)
     }
     pub(crate) fn call_schedules(&self, args: &[(Option<String>, Expr)]) -> bool {
         self.call_schedules_after(args, 0)
@@ -101,6 +106,8 @@ pub(crate) struct BuiltinCall<'a> {
     args: &'a [(Option<String>, Expr)],
 }
 impl<'a> BuiltinCall<'a> {
+    pub(crate) fn easing_argument(&self)->Option<&'a Expr>{self.builtin.easing_argument_after(self.args,usize::from(self.receiver.is_some()))}
+
     pub fn duration_argument(&self) -> Option<&'a Expr> {
         self.builtin
             .duration_argument_after(self.args, usize::from(self.receiver.is_some()))
@@ -137,3 +144,9 @@ pub(crate) fn envelope<T>(args: &[(Option<String>, T)]) -> Option<&T> {
         .find(|(name, _)| name.as_deref() == Some("duration"))
         .map(|(_, value)| value)
 }
+
+/// Shared optional easing control. It affects value interpolation, never time arithmetic.
+pub(crate) fn easing(value:Option<&Value>)->Result<sanim_core::Easing,String>{
+    value.map(Value::string).transpose()?.map(sanim_core::Easing::parse).transpose().map(|value|value.unwrap_or_default())
+}
+pub(crate) fn ease_argument<T>(args:&[(Option<String>,T)])->Option<&T>{args.iter().find(|(name,_)|name.as_deref()==Some("ease")).map(|(_,value)|value)}

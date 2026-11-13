@@ -12,10 +12,10 @@ fn make_marker(identity: String, radius: Length = 24pt): Element {
 }
 
 let marker = make_marker("marker")
-play(FadeIn(marker), duration= 250ms)
+FadeIn(marker, duration=250ms, ease="linear")
 repeat 2 {
-    play(MoveTo(marker, Vec2(30%, 0%)), duration= 1s)
-    play(MoveTo(marker, Vec2(-30%, 0%)), duration= 1s)
+    MoveTo(marker, Vec2(30%, 0%), duration=1s, ease="linear")
+    MoveTo(marker, Vec2(-30%, 0%), duration=1s, ease="linear")
 }
 assert(always(inside_canvas(marker)))
 ```
@@ -221,7 +221,7 @@ and constraints such as `<T: Numeric>` or `<T: Readable = Data>`.
 exhaustive `match` with `case Variant(binding) { ... }` arms.
 
 Values include `Number`, `Bool`, `String`, `Color`, `Length`, `Duration`, `Angle`,
-`Rate`, `Percent`, `Fraction`, `Vec2`, `Vec3`, `Vec4`, `Matrix4`, `Element`, `Motion`, `Font`, `List<T>`, `Option<T>`,
+`Rate`, `Percent`, `Fraction`, `Vec2`, `Vec3`, `Vec4`, `Matrix4`, `Element`, `Font`, `List<T>`, `Option<T>`,
 `Array<T>`, `Dict`, `Data`, records, and enums. Vector component units can be made
 explicit with `Vec2<Length>` or `Vec2<Percent>`. A vector inferred from
 `Vec2(25%, 50%)` retains its percentage units. Accessing `.x`/`.y` requires known
@@ -261,8 +261,11 @@ retain their schemas in reflection and typed JSON/TOML/NPY data loading.
 `Circle`, `Rect`/`Rectangle`, `Line`, `Polygon`, `Text`, `Group`, `Row` and `Column`
 construct immutable elements. `MoveTo`, `Shift`, `FadeIn`, `FadeOut`, `RotateTo`,
 `ScaleTo`, `FillTo`, `Create`, `Write`, `Uncreate`, `Unwrite`, `GrowFromCenter`,
-`ShrinkToCenter`, `ExpandX` and `StretchXTo` construct motions. `play` schedules one or more motions
-in parallel, then advances the script cursor; `wait` advances it without motion.
+`ShrinkToCenter`, `ExpandX` and `StretchXTo` schedule directly and advance the script
+cursor. They return `Unit`, with a default duration of 300ms. Give a list of targets
+to animate them together: `FadeIn([heading, subtitle], duration=400ms)`. Sequential
+calls advance in order; use `background { ... }` for independent concurrent work.
+`wait` advances time without changing the scene.
 `add` inserts a still element. Functions may schedule animation. There is no
 per-frame script execution.
 
@@ -272,7 +275,7 @@ per-frame script execution.
 These use the actual Skia paths, including prepared Pango glyph outlines; they are
 independent of opacity. A group reveals its children in parallel without changing
 layout. Overlapping reveals on an ancestor and descendant are rejected: reveal
-the group or use separate plays. Reveal traces remain inside the original bounds.
+the group or use sequential calls. Reveal traces remain inside the original bounds.
 
 `GrowFromCenter` scales from zero to the element's declared scale;
 `ShrinkToCenter` scales the current state to zero. They require center alignment,
@@ -289,8 +292,8 @@ proofs conservatively report unknown for this transform.
 See [`examples/animations.sanim`](examples/animations.sanim) for the full supported set.
 
 Supported easings are `linear`, `cubic_in`, `cubic_out`, `smooth` (cubic), and
-`smootherstep` (quintic, matching ManimGL's `smooth`), and `overshoot` (ManimGL's title entrance curve for positions/fades). A motion can override its play's easing, for example `MoveTo(title, Vec2(0pt, 0pt), ease="overshoot")`. Tracks hold
-their final value. Duplicate property writers in one `play` are errors. Position
+`smootherstep` (quintic, matching ManimGL's `smooth`), and `overshoot` (ManimGL's title entrance curve for positions/fades). Each call accepts an easing override, for example `MoveTo(title, Vec2(0pt, 0pt), ease="overshoot")`. Tracks hold
+their final value. Overlapping writers of the same property are errors. Position
 track endpoints use matching units: both percentages or both pt. A zero offset
 adopts the other endpoint’s units because it has the same meaning in either mode.
 Explicit element IDs are recommended for stable identity across source edits;
@@ -310,7 +313,7 @@ let points = Scatter(data=samples, x_scale=xs, y_scale=ys, radius=2pt)
 let interval_box = BoxPlot(scale=xs, summary={low=0.8, q1=0.9, middle=1.0, q3=1.1, high=1.2})
 add(grid)
 add(axis)
-play(FadeIn(points), ExpandX(interval_box), duration=400ms, ease="smootherstep")
+background { FadeIn(points, duration=400ms, ease="smootherstep") }; ExpandX(interval_box, duration=400ms, ease="smootherstep")
 ```
 
 `Axis`, `Grid`, `Scatter` and `BoxPlot` produce ordinary elements with stable child
@@ -337,7 +340,7 @@ Recursive call graphs and copying functions into values/containers are rejected.
 Every expression, statement, block and function carries a timeline effect, including
 ordinary operations whose duration is zero. Native and user functions use the same
 contract; `wait` is an ordinary zero-value function with a duration argument.
-Every builtin accepts optional `duration=...` (normally zero). A user function can
+Every builtin accepts optional `duration=...` (normally zero; direct animation functions default to 300ms) and `ease=...`. A user function can
 also receive a call-duration envelope: its body retains its own timing, remaining
 time becomes a hold, and exceeding the requested duration is an error. The envelope
 includes concurrent jobs started by that function body, including nested helpers;
@@ -363,9 +366,12 @@ exactly two hours is valid. Overflow uses structured diagnostics, never an unbou
 
 ## Animated lists
 
-`append(items, value)`, `insert(items, index, value)`, `remove_at(items, index)`,
+`append(items, value)`, `insert(items, index, value)`, `pop(items)` (last item),
+`popleft(items)` (first item),
 `replace_at(items, index, value)`, and `move_item(items, from_index, to_index)` return
 new typed lists. Inputs remain unchanged. Empty results retain their element type.
+`pop(items, index=...)` removes another position. Removing from an empty list
+reports its length.
 Indices must be nonnegative integers; invalid edits report the index and list length.
 Lists and arrays share persistent copy-on-write vector storage; edits share unchanged
 branches instead of copying every item.
@@ -378,7 +384,7 @@ mut items: List<Element> = []
 let row = Row(children=items, width=400pt, height=100pt, gap=12pt)
 add(row)
 items = append(items, Rect(width=64pt, height=64pt), duration=0.5s)
-items = remove_at(items, 0, duration=300ms)
+items = popleft(items, duration=300ms)
 ```
 
 Assigning a timed result to a mutable list records a bounded state transition.
