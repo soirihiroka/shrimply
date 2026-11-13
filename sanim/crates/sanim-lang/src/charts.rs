@@ -111,7 +111,7 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
                     ]);
                 } else {
                     params.extend([
-                        p("font", Type::Font, true),
+                        p("font", Type::Font, false),
                         p("show_labels", Type::Bool, false),
                         p("font_size", length.clone(), false),
                         p("labels", list(Type::String), false),

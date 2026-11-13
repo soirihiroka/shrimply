@@ -470,7 +470,8 @@ fail explicitly. NPY floating data must be finite and representable. Limits
 cover decoded values, nesting, bytes, cumulative binding storage and NPZ expansion.
 Fonts are first-class values: `Font("Google Sans", "sans-serif")` tries the preferred
 native family then its fallback. `Font()` and `Font("sans-serif")` use the generic
-sans family. `Text` accepts either a family descriptor or `read<Font>("font.ttf")`
+sans family. `Text("Hello")` and chart axis labels use this default automatically.
+An explicit `font=` accepts either a family descriptor or `read<Font>("font.ttf")`
 for an exact bundled asset. Family selection depends on installed host fonts; the
 prepared Pango outlines are portable. Asset fonts remain isolated and report missing
 glyphs instead of silently substituting a different installed font.

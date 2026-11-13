@@ -372,7 +372,7 @@ impl Engine {
                         let mut uses_family = false;
                         statement.visit_expressions(&mut |expression| {
                         if let ast::ExprKind::Call { callee, .. } = &expression.kind
-                            && matches!(&callee.kind, ast::ExprKind::Name(name) if name == "Font")
+                            && matches!(&callee.kind, ast::ExprKind::Name(name) if prelude::builtin(name).is_some_and(prelude::Builtin::uses_font_environment))
                         {
                             uses_family = true;
                         }

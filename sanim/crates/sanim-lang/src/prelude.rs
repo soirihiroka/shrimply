@@ -35,6 +35,11 @@ pub struct Builtin {
     pub(crate) execute: Execution,
     pub(crate) check: TypeRule,
 }
+impl Builtin {
+    pub(crate) fn uses_font_environment(&self) -> bool {
+        self.result == Type::Font || self.parameters.iter().any(|parameter| parameter.ty == Type::Font)
+    }
+}
 
 pub fn builtins() -> &'static [Builtin] {
     static BUILTINS: std::sync::OnceLock<Vec<Builtin>> = std::sync::OnceLock::new();
@@ -221,7 +226,7 @@ fn build_builtins() -> Vec<Builtin> {
         Execution::Native(native::element),
         native_types::fixed,
     );
-    let mut params = vec![p("text", String, true), p("font", Font, true)];
+    let mut params = vec![p("text", String, true), p("font", Font, false)];
     params.extend(common());
     params.push(p("font_size", length.clone(), false));
     add(

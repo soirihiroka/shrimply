@@ -25,12 +25,12 @@ pub(crate) fn font(
         .get("family")
         .map(Value::string)
         .transpose()?
-        .unwrap_or("sans-serif");
+        .unwrap_or(sanim_core::Font::DEFAULT_FAMILY);
     let fallback = args
         .get("fallback")
         .map(Value::string)
         .transpose()?
-        .unwrap_or("sans-serif");
+        .unwrap_or(sanim_core::Font::DEFAULT_FAMILY);
     Ok(Value::Font(sanim_core::Font::family(family, fallback)?))
 }
 

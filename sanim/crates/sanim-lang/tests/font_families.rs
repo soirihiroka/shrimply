@@ -60,3 +60,48 @@ fn font_defaults_fallback_types_and_diagnostics_are_explicit() {
         );
     }
 }
+
+#[test]
+fn text_without_font_uses_the_sans_default_without_asset_dependencies() {
+    let mut files = MemorySources::default();
+    files.insert(
+        "main.sanim",
+        "let label=Text(\"Hello\")\nadd(label)\nwait(0.5s)",
+    );
+    let mut engine = Engine::default();
+    let default = engine
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(default.dependencies.len(), 1);
+    let planned = Engine::default()
+        .duration("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(planned.duration, default.animation.duration);
+    files.insert(
+        "main.sanim",
+        "let label=Text(\"Hello\",font=Font())\nadd(label)\nwait(0.5s)",
+    );
+    let explicit = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(default.animation, explicit.animation);
+}
+
+#[test]
+fn axis_labels_share_the_same_optional_font_default() {
+    let mut files = MemorySources::default();
+    files.insert("main.sanim","let scale=LinearScale(domain=Vec2(0,10),range=Vec2(0pt,100pt))\nlet axis=Axis(scale=scale)\nadd(axis)\nwait(1s)");
+    let prepared = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(prepared.dependencies.len(), 1);
+    let Geometry::Group { children } = prepared.animation.layers[0].element.geometry.as_ref()
+    else {
+        panic!("axis")
+    };
+    assert!(
+        children
+            .iter()
+            .any(|child| matches!(child.geometry.as_ref(), Geometry::Text { .. }))
+    );
+}

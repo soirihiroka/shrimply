@@ -7,7 +7,13 @@ pub enum Font {
     Asset(Arc<Vec<u8>>),
     Family(Arc<[String]>),
 }
+impl Default for Font {
+    fn default() -> Self {
+        Self::Family(vec![Self::DEFAULT_FAMILY.to_owned()].into())
+    }
+}
 impl Font {
+    pub const DEFAULT_FAMILY: &'static str = "sans-serif";
     pub fn family(preferred: &str, fallback: &str) -> Result<Self, String> {
         let mut families = vec![preferred.to_owned()];
         if !preferred.eq_ignore_ascii_case(fallback) {

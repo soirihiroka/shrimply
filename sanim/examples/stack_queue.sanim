@@ -1,14 +1,13 @@
 // The same persistent list API drives both the data and the animated views.
-let font = Font("sans-serif")
 let step = reflect(450ms, label="Operation Time", key="lists.step")
 
 fn caption(words: String, position: Vec2<Percent>, size: Length, tint: Color): Element {
-    return Text(words, font=font, position=position, font_size=size, fill=tint)
+    return Text(words, position=position, font_size=size, fill=tint)
 }
 
 fn tile(value: Number, tint: Color): Element {
     let face = Rect(width=84pt, height=84pt, radius=14pt, fill=tint)
-    let label = Text(str(value), font=font, font_size=34pt, fill=Color("light1"))
+    let label = Text(str(value), font_size=34pt, fill=Color("light1"))
     return Group(children=[face, label], width=84pt, height=84pt)
 }
 

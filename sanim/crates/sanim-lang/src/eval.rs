@@ -835,7 +835,7 @@ impl Runtime<'_, '_> {
                         fingerprint,
                         plan.names
                             .iter()
-                            .any(|name| name == "Text")
+                            .any(|name| prelude::builtin(name).is_some_and(prelude::Builtin::uses_font_environment))
                             .then(sanim_data::font::system_font_epoch),
                         deps,
                     ))
@@ -1590,6 +1590,12 @@ impl Runtime<'_, '_> {
             .map(|v| v.name.to_string())
             .collect::<Vec<_>>();
         let mut args = order_values(&arguments, &params);
+        for parameter in builtin.parameters.iter().filter(|parameter| {
+            parameter.name == "font" && parameter.ty == Type::Font && !parameter.required
+        }) {
+            args.entry(parameter.name.to_owned())
+                .or_insert_with(|| Value::Font(sanim_core::Font::default()));
+        }
         if matches!(builtin.execute, prelude::Execution::Read) {
             let path = args
                 .get("path")
