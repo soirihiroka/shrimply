@@ -92,38 +92,37 @@ impl Channel {
             .unwrap_err();
         count.checked_sub(1).map(|index| &self.transitions[index])
     }
+    fn endpoints(&self, time: Fraction) -> (&List, &List, Option<&Transition>) {
+        match self.transition(time) {
+            Some(event) if time < event.end => (&event.from.items, &event.to.items, Some(event)),
+            Some(event) => (&event.to.items, &event.to.items, None),
+            None => (&self.initial.items, &self.initial.items, None),
+        }
+    }
     fn at(&self, time: Fraction) -> Result<Selection<'_>, String> {
-        let Some(event) = self.transition(time) else {
-            return Ok(Selection {
-                from: &self.initial.items,
-                to: &self.initial.items,
-                progress: 1.into(),
-                appearance: 1.into(),
-                active: false,
-            });
-        };
-        if time >= event.end {
-            Ok(Selection {
-                from: &event.to.items,
-                to: &event.to.items,
-                progress: 1.into(),
-                appearance: 1.into(),
-                active: false,
-            })
-        } else {
+        let (from, to, event) = self.endpoints(time);
+        if let Some(event) = event {
             let time = math::progress(time, event.start, event.end)?;
             let progress = event.easing.apply(time)?;
-            let appearance = if event.easing == Easing::Spring {
+            let appearance = if matches!(event.easing, Easing::Spring | Easing::SpringBouncy) {
                 Easing::CubicOut.apply(time)?
             } else {
                 progress.max(0.into()).min(1.into())
             };
             Ok(Selection {
-                from: &event.from.items,
-                to: &event.to.items,
+                from,
+                to,
                 progress,
                 appearance,
                 active: true,
+            })
+        } else {
+            Ok(Selection {
+                from,
+                to,
+                progress: 1.into(),
+                appearance: 1.into(),
+                active: false,
             })
         }
     }
@@ -234,18 +233,21 @@ impl ListViews {
         view: &str,
         time: Fraction,
     ) -> Result<Option<Vector<Element>>, String> {
-        let Some(selection) = self.selection(view, time)? else {
+        let Some(cell) = self.views.get(view) else {
             return Ok(None);
         };
-        let mut children: Vector<_> = elements(selection.to)?.cloned().collect();
-        if selection.progress == Fraction::from(1) {
+        let (from, to, event) = self
+            .channels
+            .get(cell)
+            .ok_or("list view references a missing channel")?
+            .endpoints(time);
+        let mut children: Vector<_> = elements(to)?.cloned().collect();
+        if event.is_none() {
             return Ok(Some(children));
         }
-        let target: BTreeSet<_> = elements(selection.to)?
-            .map(|element| element.id.as_str())
-            .collect();
+        let target: BTreeSet<_> = elements(to)?.map(|element| element.id.as_str()).collect();
         children.extend(
-            elements(selection.from)?
+            elements(from)?
                 .filter(|element| !target.contains(element.id.as_str()))
                 .cloned(),
         );

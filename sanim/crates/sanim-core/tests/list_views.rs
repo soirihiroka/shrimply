@@ -578,3 +578,22 @@ fn retained_list_lookup_benchmark() {
         started.elapsed().as_nanos() / u128::from(SAMPLES)
     );
 }
+
+#[test]
+fn spring_list_seeks_preserve_outgoing_items_until_the_actual_interval_end() {
+    let mut animation = animation(&["a", "b"]);
+    animation
+        .write_list(1, 0.into(), 1.into(), items(&["b"]), Easing::Spring)
+        .unwrap();
+    for time in [
+        Fraction::new(123_456_789u64, 1_000_000_000u64),
+        Fraction::new(99u64, 100u64),
+    ] {
+        let sampled = children(&animation, time, 100);
+        assert_eq!(sampled.len(), 2);
+        let outgoing = sampled.iter().find(|element| element.id == "a").unwrap();
+        assert!(outgoing.opacity > 0.into() && outgoing.opacity <= 1.into());
+        assert!(outgoing.scale >= Fraction::new(23u64, 25u64));
+    }
+    assert_eq!(children(&animation, 1.into(), 100).len(), 1);
+}

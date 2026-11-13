@@ -60,3 +60,19 @@ list-view-bench:
 .PHONY: pop-bench
 pop-bench:
 	$(CARGO) test -p sanim-lang --test list_edits pop_benchmark -- --ignored --nocapture
+
+.PHONY: font-check font-bench
+font-check:
+	$(CARGO) test -p sanim-data --test fonts
+	$(CARGO) test -p sanim-lang --test font_families
+	$(CARGO) test -p sanim-lang font_ --lib
+font-bench:
+	$(CARGO) test -p sanim-data --test fonts native_family_shaping_benchmark -- --ignored --nocapture
+
+.PHONY: animation-call-check
+animation-call-check:
+	$(CARGO) test -p sanim-lang --tests --no-fail-fast
+
+.PHONY: spring-bench
+spring-bench:
+	$(CARGO) test -p sanim-core --test spring spring_sampling_benchmark -- --ignored --nocapture

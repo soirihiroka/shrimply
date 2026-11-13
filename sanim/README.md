@@ -12,10 +12,10 @@ fn make_marker(identity: String, radius: Length = 24pt): Element {
 }
 
 let marker = make_marker("marker")
-FadeIn(marker, duration=250ms, ease="linear")
+FadeIn(marker, duration=250ms)
 repeat 2 {
-    MoveTo(marker, Vec2(30%, 0%), duration=1s, ease="linear")
-    MoveTo(marker, Vec2(-30%, 0%), duration=1s, ease="linear")
+    MoveTo(marker, Vec2(30%, 0%), duration=1s)
+    MoveTo(marker, Vec2(-30%, 0%), duration=1s)
 }
 assert(always(inside_canvas(marker)))
 ```
@@ -119,7 +119,7 @@ let circle = Circle(radius=size / 2)
 add(rectangle)
 add(circle)
 background {
-    animate(phase, to=1800deg, duration=10s)
+    animate(phase, to=1800deg, duration=10s, ease="linear")
 }
 wait(10s)
 ```
@@ -291,13 +291,23 @@ horizontal scale. Stretching uses native Skia transforms; continuous bounds
 proofs conservatively report unknown for this transform.
 See [`examples/animations.sanim`](examples/animations.sanim) for the full supported set.
 
-Supported easings are `linear`, `cubic_in`, `cubic_out`, `smooth` (cubic), and
-`smootherstep` (quintic, matching ManimGL's `smooth`), and `overshoot` (ManimGL's title entrance curve for positions/fades). Each call accepts an easing override, for example `MoveTo(title, Vec2(0pt, 0pt), ease="overshoot")`. Tracks hold
+The default easing is `spring`: a critically damped physical response that stays
+between its endpoints. `spring_bouncy` adds restrained overshoot for unconstrained
+motion. Both are stateless closed-form curves with exact bounded start/end times
+and a smooth final settle; seeking never runs a physics integration loop.
+List reflow uses the spring, while entry/exit use a monotonic fade and a subtle
+92%–100% centered scale instead of shrinking whole items to a dot.
+
+Other easings are `linear`, `cubic_in`, `cubic_out`, `smooth` (cubic),
+`smootherstep` (quintic, matching ManimGL's `smooth`), and `overshoot` (ManimGL's
+title entrance curve for positions/fades). Calls accept `ease=...`, for example
+`MoveTo(title, Vec2(0pt, 0pt), ease="spring_bouncy")`. Use `ease="linear"` for
+constant-speed phase or clock inputs such as a sine oscillator. Tracks hold
 their final value. Overlapping writers of the same property are errors. Position
 track endpoints use matching units: both percentages or both pt. A zero offset
 adopts the other endpoint’s units because it has the same meaning in either mode.
-Explicit element IDs are recommended for stable identity across source edits;
-otherwise IDs derive from source locations and bounded invocation paths.
+Bound variables infer stable element IDs automatically; explicit `id=` is optional.
+Unbound constructors use source locations and bounded invocation paths.
 
 Native chart elements share one explicit coordinate mapping:
 
@@ -360,7 +370,6 @@ be confused with dimensionless numbers or angles.
 and CLI `duration` resolve exact total length without building unrelated geometry.
 Timing-dependent reads are evaluated; unrelated data and visual validation can be
 skipped, so a duration report does not replace full preparation before rendering.
-State-observing timing can fall back to full preparation with a `P004` warning.
 All animations are finite: resolved duration above two hours is an error;
 exactly two hours is valid. Overflow uses structured diagnostics, never an unbounded loop.
 
@@ -458,8 +467,13 @@ YAML aliases consume expanded byte/value/depth budgets and duplicate keys fail. 
 numeric/boolean arrays and retains shape; NPZ maps named arrays to record fields.
 Object/pickle arrays, structured dtypes, Fortran order and unsupported formats
 fail explicitly. NPY floating data must be finite and representable. Limits
-cover decoded values, nesting, bytes, cumulative binding storage and NPZ expansion. Fonts load through
-`read<Font>("font.ttf")`; Text requires an explicit font resource.
+cover decoded values, nesting, bytes, cumulative binding storage and NPZ expansion.
+Fonts are first-class values: `Font("Google Sans", "sans-serif")` tries the preferred
+native family then its fallback. `Font()` and `Font("sans-serif")` use the generic
+sans family. `Text` accepts either a family descriptor or `read<Font>("font.ttf")`
+for an exact bundled asset. Family selection depends on installed host fonts; the
+prepared Pango outlines are portable. Asset fonts remain isolated and report missing
+glyphs instead of silently substituting a different installed font.
 
 ## Verification and diagnostics
 
@@ -570,7 +584,7 @@ match session.poll(&sources) {
 
 This implementation does not have complete Manim feature parity. It has no audio,
 physics, arbitrary per-frame callbacks, LaTeX typesetting, or general path morphing
-(`Transform`/`ReplacementTransform`). Pango shapes explicit font assets into vector
+(`Transform`/`ReplacementTransform`). Pango shapes native font families or explicit font assets into vector
 outlines, including complex scripts; bitmap/color glyphs fail explicitly.
 Skia records vector commands and replays them directly on native GPU canvases.
 CPU rasterization is explicit for headless PNG/FFmpeg output. Timeline evaluation

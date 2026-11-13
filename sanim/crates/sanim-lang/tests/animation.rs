@@ -123,7 +123,8 @@ ExpandX(after_range,origin=50%,offset=-10pt,duration=300ms,ease="smootherstep")
 }
 #[test]
 fn not_visible_before_added() {
-    let p = prepare("wait(1s)\nlet marker = Circle()\nFadeIn(marker, duration=1s, ease=\"linear\")\n");
+    let p =
+        prepare("wait(1s)\nlet marker = Circle()\nFadeIn(marker, duration=1s, ease=\"linear\")\n");
     assert!(p.animation.sample(Fraction::from(0)).unwrap().is_empty());
     assert_eq!(
         p.animation.sample(Fraction::from(1)).unwrap()[0].opacity,
@@ -229,7 +230,7 @@ fn overlapping_writers_fail_atomically() {
     let e = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
-    assert_eq!(e.code, "S307");
+    assert_eq!(e.code, "S305");
     assert!(e.message.contains("overlapping"));
 }
 #[test]

@@ -427,7 +427,7 @@ pub enum Value {
     Element(Arc<Element>),
     Predicate(Arc<crate::verify::Predicate>),
     Function(String),
-    Font(std::sync::Arc<Vec<u8>>),
+    Font(crate::Font),
     Data(Arc<serde_json::Value>),
     Dict(imbl::OrdMap<String, serde_json::Value>),
 }

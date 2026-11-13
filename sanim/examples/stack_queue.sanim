@@ -1,5 +1,5 @@
 // The same persistent list API drives both the data and the animated views.
-let font = read<Font>("assets/DejaVuSansCondensed-subset.ttf")
+let font = Font("sans-serif")
 let step = reflect(450ms, label="Operation Time", key="lists.step")
 
 fn caption(words: String, position: Vec2<Percent>, size: Length, tint: Color): Element {

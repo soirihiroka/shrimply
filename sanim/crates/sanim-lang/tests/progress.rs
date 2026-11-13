@@ -98,22 +98,18 @@ fn compile_and_resource_failures_are_terminal_without_false_success() {
 }
 
 #[test]
-fn duration_fallback_is_a_single_job_without_transient_failure() {
+fn direct_animation_duration_is_a_single_job_without_geometry_preparation() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let marker = Circle()\nlet motions = [Shift(marker, Vec2(1pt, 0pt))]\nfor motion in motions { wait(1s) }\n",
+        "let marker = Circle()\nShift(marker, Vec2(1pt, 0pt), duration=300ms)\nwait(1s)\n",
     );
     let (mut engine, events) = observed();
     let report = engine
         .duration("main.sanim", &files, &BTreeMap::new())
         .unwrap();
-    assert!(
-        report
-            .performance
-            .iter()
-            .any(|warning| warning.code == "P004")
-    );
+    assert_eq!(report.duration, sanim_core::Fraction::new(13u64, 10u64));
+    assert_eq!(report.statistics.decoded_assets, 0);
     let events = events.lock().unwrap();
     assert_eq!(events.last().unwrap().state, State::Ready);
     assert_eq!(

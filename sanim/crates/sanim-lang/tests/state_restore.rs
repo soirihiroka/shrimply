@@ -22,8 +22,7 @@ fn semantic_output(prepared: &sanim_lang::Prepared) -> serde_json::Value {
 #[test]
 fn suffix_edit_restores_bindings_tracks_cursor_and_skips_prefix_execution() {
     let mut files = MemorySources::default();
-    let prefix =
-        "let c=Circle(id=\"dot\")\nrepeat 100 { let unused=1+2 }\nFadeIn(c, duration=1s, ease=\"linear\")\n";
+    let prefix = "let c=Circle(id=\"dot\")\nrepeat 100 { let unused=1+2 }\nFadeIn(c, duration=1s, ease=\"linear\")\n";
     files.insert("main.sanim", format!("{prefix}wait(1s)\n"));
     let mut engine = Engine::default();
     let old = prepare(&mut engine, &files);

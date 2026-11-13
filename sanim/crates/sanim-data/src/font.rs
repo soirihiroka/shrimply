@@ -1,6 +1,6 @@
-//! Explicit font assets, Pango shaping, and vector outlines. No glyph bitmap rendering.
+//! Native font family fallback and explicit assets share one Pango outline pipeline.
 use pango::prelude::*;
-use sanim_core::{Fraction, TextSegment, Unit, Vec2, math::to_f64, verify::Bounds};
+use sanim_core::{Font, Fraction, TextSegment, Unit, Vec2, math::to_f64, verify::Bounds};
 use skia_safe::{Data, FontMgr, Typeface};
 use std::io::Write;
 
@@ -13,55 +13,84 @@ pub fn validate(bytes: &[u8]) -> Result<(), String> {
     typeface(bytes).map(|_| ())
 }
 
+thread_local! {
+    // Match the host's native backend without mutating Pango's global default.
+    static SYSTEM_MAP: Option<pango::FontMap> = [
+        cairo::FontType::FontTypeQuartz,
+        cairo::FontType::FontTypeWin32,
+        cairo::FontType::FontTypeFt,
+    ].into_iter().find_map(pangocairo::FontMap::for_font_type);
+}
+
+fn system_map() -> Result<pango::FontMap, String> {
+    SYSTEM_MAP.with(|map| map.clone().ok_or_else(|| "Pango has no native font backend; install a Pango build with CoreText, Win32, or Fontconfig/FreeType support".into()))
+}
+
+/// The map serial changes when native font selection is invalidated. Text cache
+/// keys include it, including inline Font(...) and descriptors stored in records.
+pub fn system_font_epoch() -> Option<u32> {
+    system_map().ok().map(|map| map.serial())
+}
+
 pub fn shape(
-    bytes: &[u8],
+    font: &Font,
     text: &str,
     size: Fraction,
 ) -> Result<(Bounds, Vec<TextSegment>), String> {
+    font.validate()?;
     let size = to_f64(size)?;
     if size <= 0. || size * f64::from(pango::SCALE) > f64::from(i32::MAX) {
         return Err("font size exceeds Pango layout range".into());
     }
-    let face = typeface(bytes)?;
-    // Keep the private asset snapshot alive through shaping. It takes precedence
-    // over installed fonts without registering anything into the system font map.
-    let mut file = tempfile::Builder::new()
-        .suffix(".ttf")
-        .tempfile()
-        .map_err(|e| e.to_string())?;
-    file.write_all(bytes).map_err(|e| e.to_string())?;
-    file.flush().map_err(|e| e.to_string())?;
-    // macOS defaults to CoreText, which cannot add private font files. Choose a
-    // file-capable backend explicitly; never change Pango's process/thread default.
-    let map = [cairo::FontType::FontTypeFt, cairo::FontType::FontTypeWin32]
-        .into_iter()
-        .find_map(pangocairo::FontMap::for_font_type)
-        .ok_or("Pango has no backend supporting explicit font files; use a Pango build with Fontconfig/FreeType enabled (included in Homebrew's Pango)")?;
-    map.add_font_file(file.path())
-        .map_err(|e| format!("Pango could not load font asset: {e}"))?;
+    let mut description = pango::FontDescription::new();
+    description.set_absolute_size(size * f64::from(pango::SCALE));
+    // Keep an explicit asset's private snapshot alive until outlining finishes.
+    let mut asset = None;
+    let (map, fallback) = match font {
+        Font::Asset(bytes) => {
+            let face = typeface(bytes)?;
+            let mut file = tempfile::Builder::new()
+                .suffix(".ttf")
+                .tempfile()
+                .map_err(|error| error.to_string())?;
+            file.write_all(bytes).map_err(|error| error.to_string())?;
+            file.flush().map_err(|error| error.to_string())?;
+            // CoreText cannot add private files. Asset selection remains isolated
+            // and file-capable on macOS, regardless of the ambient backend.
+            let map=[cairo::FontType::FontTypeFt,cairo::FontType::FontTypeWin32]
+                .into_iter().find_map(pangocairo::FontMap::for_font_type)
+                .ok_or("Pango has no backend supporting explicit font files; use a Pango build with Fontconfig/FreeType enabled (included in Homebrew's Pango)")?;
+            map.add_font_file(file.path())
+                .map_err(|error| format!("Pango could not load font asset: {error}"))?;
+            description.set_family(&face.family_name());
+            let style = face.font_style();
+            description.set_stretch(pango::Stretch::__Unknown((*style.width() - 1).clamp(0, 8)));
+            description.set_weight(pango::Weight::__Unknown(*style.weight()));
+            description.set_style(match style.slant() {
+                skia_safe::font_style::Slant::Upright => pango::Style::Normal,
+                skia_safe::font_style::Slant::Italic => pango::Style::Italic,
+                skia_safe::font_style::Slant::Oblique => pango::Style::Oblique,
+            });
+            asset = Some(file);
+            (map, false)
+        }
+        Font::Family(families) => {
+            description.set_family(&families.join(","));
+            (system_map()?, true)
+        }
+    };
     let context = map.create_context();
     context.set_round_glyph_positions(false);
     context.set_language(Some(&pango::Language::from_string("und")));
-    let mut description = pango::FontDescription::new();
-    description.set_family(&face.family_name());
-    description.set_absolute_size(size * f64::from(pango::SCALE));
-    let style = face.font_style();
-    description.set_stretch(pango::Stretch::__Unknown((*style.width() - 1).clamp(0, 8)));
-    description.set_weight(pango::Weight::__Unknown(*style.weight()));
-    description.set_style(match style.slant() {
-        skia_safe::font_style::Slant::Upright => pango::Style::Normal,
-        skia_safe::font_style::Slant::Italic => pango::Style::Italic,
-        skia_safe::font_style::Slant::Oblique => pango::Style::Oblique,
-    });
     let layout = pango::Layout::new(&context);
     layout.set_font_description(Some(&description));
     let attributes = pango::AttrList::new();
-    attributes.insert(pango::AttrInt::new_fallback(false));
+    attributes.insert(pango::AttrInt::new_fallback(fallback));
     layout.set_attributes(Some(&attributes));
     layout.set_text(text);
     if layout.unknown_glyphs_count() != 0 {
         return Err(format!(
-            "font asset cannot shape this text: {} missing glyph(s); supply a font covering the requested characters",
+            "font cannot shape this text: {} missing glyph(s); choose a family/fallback or asset covering the requested characters",
             layout.unknown_glyphs_count()
         ));
     }
@@ -122,6 +151,7 @@ pub fn shape(
     if min.iter().chain(&max).any(|v| !v.is_finite()) {
         return Err("Pango text bounds overflow".into());
     }
+    drop(asset);
     Ok((
         Bounds {
             min: Vec2 {

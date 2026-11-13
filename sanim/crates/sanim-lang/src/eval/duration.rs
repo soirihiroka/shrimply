@@ -59,7 +59,7 @@ impl Runtime<'_, '_> {
         self.last_call.span = span;
         self.last_call.start = start;
         self.last_call.end = self.cursor;
-        self.last_call.easing=Easing::default();
+        self.last_call.easing = Easing::default();
         if requested == Some(Fraction::from(0)) && self.cursor == start && horizon <= start {
             return Ok(());
         }
@@ -178,7 +178,7 @@ impl Runtime<'_, '_> {
                         name
                     };
                     provided.insert(parameter.clone());
-                    if matches!(parameter.as_str(),"duration"|"ease")
+                    if matches!(parameter.as_str(), "duration" | "ease")
                         && !parameters.iter().any(|(name, _)| name == &parameter)
                         || parameters
                             .iter()

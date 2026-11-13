@@ -928,7 +928,7 @@ impl Checker<'_> {
                 StatementKind::Expr(expr) => {
                     let ty = self.expression(expr, env, None, variables)?;
                     if ty != Type::Unit {
-                        return Err(self.error("S114",format!("unused {ty:?} value; bind it with 'let' or schedule it with play/add"),expr.span));
+                        return Err(self.error("S114",format!("unused {ty:?} value; bind it with 'let', insert it with add, or pass it to an animation function"),expr.span));
                     }
                     if !self.root && self.function.is_none() {
                         return Err(self.error("S115","imported modules may define helpers but cannot execute scheduling or assertion statements",statement.span));
@@ -1235,6 +1235,26 @@ impl Checker<'_> {
         else {
             unreachable!()
         };
+        // Controls are removed before parameter binding, so validate the original
+        // call once, before native, method, function, or constructor dispatch.
+        let mut names = BTreeSet::new();
+        for (name, value) in args {
+            if let Some(name) = name {
+                if !names.insert(name.as_str()) {
+                    return Err(self.error(
+                        "S124",
+                        format!("argument '{name}' supplied twice"),
+                        value.span,
+                    ));
+                }
+            } else if !names.is_empty() {
+                return Err(self.error(
+                    "S124",
+                    "positional arguments must precede named arguments",
+                    value.span,
+                ));
+            }
+        }
         if let ExprKind::Member(base, name) = &callee.kind {
             let receiver = self.expression(base, env, None, variables)?;
             if receiver == Type::Element
@@ -1268,16 +1288,28 @@ impl Checker<'_> {
             .parameters
             .iter()
             .any(|(name, _)| name == "duration");
-        let eased=!signature.parameters.iter().any(|(name,_)|name=="ease");
-        if enveloped && let Some(duration)=crate::timing::envelope(args){
-            let ty=self.expression(duration,env,Some(&Type::Numeric(Unit::Duration)),variables)?;
-            self.expect(&Type::Numeric(Unit::Duration),&ty,duration.span)?;
+        let eased = !signature.parameters.iter().any(|(name, _)| name == "ease");
+        if enveloped && let Some(duration) = crate::timing::envelope(args) {
+            let ty = self.expression(
+                duration,
+                env,
+                Some(&Type::Numeric(Unit::Duration)),
+                variables,
+            )?;
+            self.expect(&Type::Numeric(Unit::Duration), &ty, duration.span)?;
         }
-        if eased && let Some(ease)=crate::timing::ease_argument(args){
-            let ty=self.expression(ease,env,Some(&Type::String),variables)?;
-            self.expect(&Type::String,&ty,ease.span)?;
+        if eased && let Some(ease) = crate::timing::ease_argument(args) {
+            let ty = self.expression(ease, env, Some(&Type::String), variables)?;
+            self.expect(&Type::String, &ty, ease.span)?;
         }
-        let normal=args.iter().filter(|(name,_)| !(enveloped && name.as_deref()==Some("duration") || eased && name.as_deref()==Some("ease"))).cloned().collect::<Vec<_>>();
+        let normal = args
+            .iter()
+            .filter(|(name, _)| {
+                !(enveloped && name.as_deref() == Some("duration")
+                    || eased && name.as_deref() == Some("ease"))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         let timed = enveloped
             && crate::timing::envelope(args).is_some_and(|expr| !crate::timing::known_zero(expr));
         let args = &normal;
@@ -1387,10 +1419,8 @@ impl Checker<'_> {
     ) -> Result<Vec<Option<&'a Expr>>, Diagnostic> {
         let mut ordered = vec![None; parameters.len()];
         let mut positional = 0;
-        let mut named = false;
         for (name, value) in args {
             let index = if let Some(name) = name {
-                named = true;
                 parameters
                     .iter()
                     .position(|(n, _, _)| *n == name)
@@ -1409,13 +1439,6 @@ impl Checker<'_> {
                         )
                     })?
             } else {
-                if named {
-                    return Err(self.error(
-                        "S124",
-                        "positional arguments must precede named arguments",
-                        value.span,
-                    ));
-                }
                 let i = positional;
                 positional += 1;
                 i
@@ -1512,7 +1535,10 @@ impl Checker<'_> {
             )?;
             self.expect(&Type::Numeric(Unit::Duration), &ty, duration.span)?;
         }
-        if let Some(ease)=builtin.easing_argument(args) {let ty=self.expression(ease,env,Some(&Type::String),variables)?;self.expect(&Type::String,&ty,ease.span)?;}
+        if let Some(ease) = builtin.easing_argument(args) {
+            let ty = self.expression(ease, env, Some(&Type::String), variables)?;
+            self.expect(&Type::String, &ty, ease.span)?;
+        }
         if builtin.result == Type::Data && builtin.name == "Data" {
             if !types.is_empty() {
                 return Err(self.error("S123", "Data does not take type arguments", expr.span));
@@ -1668,7 +1694,7 @@ impl Checker<'_> {
         let ordered = self.arguments(args, &parameters, expr.span)?;
         let mut actuals = vec![];
         for (parameter, value) in builtin.parameters.iter().zip(ordered) {
-            if matches!(parameter.name,"duration"|"ease") {
+            if matches!(parameter.name, "duration" | "ease") {
                 continue;
             }
             if let Some(value) = value {

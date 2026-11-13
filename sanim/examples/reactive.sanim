@@ -9,6 +9,6 @@ add(circle)
 add(rectangle)
 
 background {
-    animate(phase, to=1800deg, duration=10s)
+    animate(phase, to=1800deg, duration=10s, ease="linear")
 }
 wait(10s)

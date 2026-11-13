@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[test]
 fn list_transition_starts_after_timed_arguments_finish() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "mut items:List<Element>=[]\nlet row=Row(children=items,width=100pt,height=100pt)\nadd(row)\nitems=append(items,Rect(width=10pt,height=10pt,duration=1s),duration=500ms)\nwait(1s)");
+    files.insert("main.sanim", "mut items:List<Element>=[]\nlet row=Row(children=items,width=100pt,height=100pt)\nadd(row)\nitems=append(items,Rect(width=10pt,height=10pt,duration=1s,ease=\"linear\"),duration=500ms,ease=\"linear\")\nwait(1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -33,7 +33,7 @@ fn imported_call_provenance_and_timed_assignment_use_the_caller_span() {
         "helpers.sanim",
         "fn target(value:Length):Length{return value}",
     );
-    files.insert("main.sanim", "import \"helpers\" as helpers\nmut radius=10pt\nlet marker=Circle(radius=radius)\nadd(marker)\nradius=helpers.target(abs(30pt,duration=1s),duration=500ms)\nwait(1s)");
+    files.insert("main.sanim", "import \"helpers\" as helpers\nmut radius=10pt\nlet marker=Circle(radius=radius)\nadd(marker)\nradius=helpers.target(abs(30pt,duration=1s,ease=\"linear\"),duration=500ms,ease=\"linear\")\nwait(1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -65,7 +65,7 @@ fn imported_call_provenance_and_timed_assignment_use_the_caller_span() {
 #[test]
 fn duration_planning_skips_animated_list_geometry_but_preserves_needed_mutations() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let font=read<Font>(\"missing.ttf\")\nfn tile():Element{return Text(\"test\",font=font)}\nmut items:List<Element>=[]\nlet row=Row(children=items,width=100pt,height=100pt)\nadd(row)\nitems=append(items,tile(),duration=500ms)\nwait(1s)");
+    files.insert("main.sanim", "let font=read<Font>(\"missing.ttf\")\nfn tile():Element{return Text(\"test\",font=font)}\nmut items:List<Element>=[]\nlet row=Row(children=items,width=100pt,height=100pt)\nadd(row)\nitems=append(items,tile(),duration=500ms,ease=\"linear\")\nwait(1s)");
     let planned = Engine::default()
         .duration("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -103,7 +103,10 @@ fn duration_planning_skips_animated_list_geometry_but_preserves_needed_mutations
 
 #[test]
 fn zero_time_operators_do_not_borrow_their_operands_timeline_interval() {
-    for expression in ["abs(10pt,duration=1s)+1pt", "+abs(11pt,duration=1s)"] {
+    for expression in [
+        "abs(10pt,duration=1s,ease=\"linear\")+1pt",
+        "+abs(11pt,duration=1s,ease=\"linear\")",
+    ] {
         let mut files = MemorySources::default();
         files.insert("main.sanim",format!("mut size=1pt\nlet marker=Circle(radius=size)\nadd(marker)\nsize={expression}\nwait(1s)"));
         let prepared = Engine::default()
@@ -122,7 +125,10 @@ fn zero_time_operators_do_not_borrow_their_operands_timeline_interval() {
         assert_eq!(radius(Fraction::new(1u64, 2u64)), Fraction::from(1));
         assert_eq!(radius(Fraction::from(1)), Fraction::from(11));
     }
-    for expression in ["[abs(1,duration=1s)]", "append([],abs(1,duration=1s))"] {
+    for expression in [
+        "[abs(1,duration=1s,ease=\"linear\")]",
+        "append([],abs(1,duration=1s,ease=\"linear\"))",
+    ] {
         let mut files = MemorySources::default();
         files.insert("main.sanim",format!("mut rows:List<Number>=[]\nbackground{{rows={expression}}}\nlet before=len(rows)\nwait(1s)\nlet after=len(rows)"));
         let prepared = Engine::default()
@@ -138,7 +144,7 @@ fn zero_time_operators_do_not_borrow_their_operands_timeline_interval() {
         );
     }
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "mut state={value=0}\nbackground{state={value=abs(1,duration=1s)}}\nlet before=state.value\nwait(1s)\nlet after=state.value");
+    files.insert("main.sanim", "mut state={value=0}\nbackground{state={value=abs(1,duration=1s,ease=\"linear\")}}\nlet before=state.value\nwait(1s)\nlet after=state.value");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -157,7 +163,7 @@ fn planned_duration_observes_intermediate_background_value_transitions() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "mut phase=0\nbackground{phase=abs(10,duration=2s)}\nwait(1s)\nwait(phase*1s)",
+        "mut phase=0\nbackground{phase=abs(10,duration=2s,ease=\"linear\")}\nwait(1s)\nwait(phase*1s)",
     );
     let full = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())

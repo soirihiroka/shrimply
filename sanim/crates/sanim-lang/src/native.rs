@@ -16,6 +16,24 @@ pub(crate) struct Context<'a> {
     pub list_edit: &'a mut Option<crate::lists::EditDelta>,
 }
 
+pub(crate) fn font(
+    _name: &str,
+    args: &imbl::OrdMap<String, Value>,
+    _context: Context<'_>,
+) -> Result<Value, String> {
+    let family = args
+        .get("family")
+        .map(Value::string)
+        .transpose()?
+        .unwrap_or("sans-serif");
+    let fallback = args
+        .get("fallback")
+        .map(Value::string)
+        .transpose()?
+        .unwrap_or("sans-serif");
+    Ok(Value::Font(sanim_core::Font::family(family, fallback)?))
+}
+
 pub(crate) fn color(
     _name: &str,
     args: &imbl::OrdMap<String, Value>,
@@ -391,7 +409,6 @@ pub(crate) fn math_function(
     )
 }
 
-
 pub(crate) fn relationship(
     name: &str,
     args: &imbl::OrdMap<String, Value>,
@@ -519,7 +536,9 @@ pub(crate) fn make_element(
         }
         "Text" => {
             let Value::Font(font) = required("font")? else {
-                return Err("Text requires read<Font>(...)".into());
+                return Err(
+                    "Text requires Font(\"Family\", \"sans-serif\") or read<Font>(...)".into(),
+                );
             };
             let text = required("text")?.string()?;
             let size = positive(args, "font_size", Fraction::from(24))?;

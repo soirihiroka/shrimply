@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 fn vector_formulas_and_component_getters_drive_live_position_and_radius() {
     for constructor in ["Vec2(sin(phase)*20pt,0pt)", "Vec2(x=sin(phase)*20pt)"] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim",format!("mut phase=0deg\nsig point={constructor}\nsig extent=point.x+30pt\nadd(Circle(id=\"circle\",position=point,radius=extent))\nbackground {{animate(phase,to=360deg,duration=2s)}}\nwait(2s)"));
+        files.insert("main.sanim",format!("mut phase=0deg\nsig point={constructor}\nsig extent=point.x+30pt\nadd(Circle(id=\"circle\",position=point,radius=extent))\nbackground {{animate(phase,to=360deg,duration=2s,ease=\"linear\")}}\nwait(2s)"));
         let p = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap();

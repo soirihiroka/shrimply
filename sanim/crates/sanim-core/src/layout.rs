@@ -164,11 +164,11 @@ fn resolve_with_lists(
                 };
                 if let Some(animated) = &animated {
                     let visibility = animated[index].opacity;
-                    child.opacity = crate::math::arithmetic("*", child.opacity, visibility)?;
+                    child.opacity = crate::math::visual_product(child.opacity, visibility)?;
                     let scale = animated[index].scale;
                     if scale != Fraction::from(1) {
                         let before = extent(child)?;
-                        child.scale = crate::math::arithmetic("*", child.scale, scale)?;
+                        child.scale = crate::math::visual_product(child.scale, scale)?;
                         let after = extent(child)?;
                         position[0] = calc(
                             "+",
@@ -314,9 +314,9 @@ fn list_positions(
                 .ok_or("list transition is missing a child identity")?;
             let b = b.unwrap_or(a);
             let scale = if leaving {
-                crate::math::lerp(minimum_scale, 1.into(), visibility)?
+                crate::math::visual_lerp(minimum_scale, 1.into(), visibility)?
             } else if entering {
-                crate::math::lerp(minimum_scale, 1.into(), selection.progress.max(0.into()))?
+                crate::math::visual_lerp(minimum_scale, 1.into(), selection.progress.max(0.into()))?
             } else {
                 1.into()
             };

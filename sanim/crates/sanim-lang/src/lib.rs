@@ -1,11 +1,13 @@
 //! Sanim: a bounded, typed animation scripting language, independent of any editor.
-pub mod ast;
 mod animations;
+pub mod ast;
 mod cache;
 mod charts;
 mod checker;
 mod effects;
 mod eval;
+#[cfg(test)]
+mod font_tests;
 mod lists;
 mod native;
 mod native_types;
@@ -223,6 +225,7 @@ pub struct Engine {
     pub(crate) attempted: BTreeMap<String, String>,
     progress_observer: Option<progress::Observer>,
     states: eval::state::Store,
+    font_environment: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -262,6 +265,7 @@ impl Engine {
         self.values.clear();
         self.assets.clear();
         self.states.clear();
+        self.font_environment = None;
     }
     pub fn prepare(
         &mut self,
@@ -299,7 +303,14 @@ impl Engine {
     ) -> Result<DurationReport, Diagnostic> {
         self.with_progress(entry, |engine, reporter| {
             engine
-                .duration_prepared(entry, sources, &BTreeMap::new(), Some(overrides), reporter)
+                .prepare_inputs(
+                    entry,
+                    sources,
+                    &BTreeMap::new(),
+                    Some(overrides),
+                    true,
+                    reporter,
+                )
                 .and_then(DurationReport::from_prepared)
         })
     }
@@ -311,24 +322,9 @@ impl Engine {
     ) -> Result<DurationReport, Diagnostic> {
         self.with_progress(entry, |engine, reporter| {
             engine
-                .duration_prepared(entry, sources, overrides, None, reporter)
+                .prepare_inputs(entry, sources, overrides, None, true, reporter)
                 .and_then(DurationReport::from_prepared)
         })
-    }
-    fn duration_prepared(
-        &mut self,
-        entry: &str,
-        sources: &dyn Sources,
-        overrides: &BTreeMap<String, Value>,
-        json: Option<&BTreeMap<String, serde_json::Value>>,
-        reporter: &progress::Reporter,
-    ) -> Result<Prepared, Diagnostic> {
-        match self.prepare_inputs(entry, sources, overrides, json, true, reporter) {
-            Err(error) if error.code == "S390" => {
-                self.prepare_inputs(entry, sources, overrides, json, false, reporter).map(|mut prepared|{prepared.performance.push(PerformanceWarning{code:"P004".into(),message:"duration depends on sampled animation state; full scene preparation was required".into(),source:error.source,span:error.span,operations:prepared.statistics.operations});prepared})
-            }
-            result => result,
-        }
     }
     fn prepare_inputs(
         &mut self,
@@ -370,6 +366,28 @@ impl Engine {
                 &mut vec![],
                 (&mut statistics, &type_budget, reporter),
             )?;
+            let family_fonts = !duration_only
+                && loaded.iter().any(|module| {
+                    module.ast.statements.iter().any(|statement| {
+                        let mut uses_family = false;
+                        statement.visit_expressions(&mut |expression| {
+                        if let ast::ExprKind::Call { callee, .. } = &expression.kind
+                            && matches!(&callee.kind, ast::ExprKind::Name(name) if name == "Font")
+                        {
+                            uses_family = true;
+                        }
+                    });
+                        uses_family
+                    })
+                });
+            if family_fonts {
+                let epoch = sanim_data::font::system_font_epoch();
+                if self.font_environment.is_some() && self.font_environment != epoch {
+                    self.values.clear();
+                    self.states.clear();
+                }
+                self.font_environment = epoch;
+            }
             reporter.emit(
                 progress::Phase::Checking,
                 Some(loaded.len() as u64),
@@ -400,6 +418,9 @@ impl Engine {
                 (&mut self.values, &mut self.assets, &mut self.states),
                 &mut statistics,
             )?;
+            if family_fonts {
+                self.font_environment = sanim_data::font::system_font_epoch();
+            }
             prepared.dependencies = snapshot.fingerprints();
             prepared.statistics = statistics.clone();
             Ok(prepared)

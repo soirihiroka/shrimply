@@ -18,7 +18,7 @@ for sample in samples {
         fill= bar_color,
         position= Vec2(0%, (sample.rank * 20 - 30) * 1%),
     )
-    FadeIn(bar, duration=200ms, ease="linear")
+    FadeIn(bar, duration=200ms)
     assert(always(inside_canvas(bar)))
 }
 wait(1s)

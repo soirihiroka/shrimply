@@ -271,7 +271,7 @@ fn signals_reject_transitive_writes_scheduling_assertions_and_cycles() {
 
 #[test]
 fn background_cell_animation_drives_shared_retained_dimensions_without_advancing_main_time() {
-    let source = "mut phase=0deg\nsig size=100pt+sin(phase)*25pt\nlet saved=size\nlet rectangle=Rect(id=\"rectangle\",width=size,height=size)\nlet circle=Circle(id=\"circle\",radius=size)\nlet frozen=Rect(id=\"frozen\",width=saved,height=saved)\nadd(rectangle)\nadd(circle)\nadd(frozen)\nbackground {animate(phase,to=1800deg,duration=10s)}\nwait(10s)\n";
+    let source = "mut phase=0deg\nsig size=100pt+sin(phase)*25pt\nlet saved=size\nlet rectangle=Rect(id=\"rectangle\",width=size,height=size)\nlet circle=Circle(id=\"circle\",radius=size)\nlet frozen=Rect(id=\"frozen\",width=saved,height=saved)\nadd(rectangle)\nadd(circle)\nadd(frozen)\nbackground {animate(phase,to=1800deg,duration=10s,ease=\"linear\")}\nwait(10s)\n";
     let p = run(source);
     assert_eq!(p.animation.duration, Fraction::from(10));
     assert_eq!(
@@ -310,7 +310,7 @@ fn background_cell_animation_drives_shared_retained_dimensions_without_advancing
 #[test]
 fn background_jobs_extend_duration_by_their_latest_end_instead_of_their_sum() {
     let p = run(
-        "mut phase=0deg\nmut amount=0\nbackground {animate(phase,to=1800deg,duration=10s)}\nbackground {animate(amount,to=1,duration=4s)}\nwait(2s)\n",
+        "mut phase=0deg\nmut amount=0\nbackground {animate(phase,to=1800deg,duration=10s,ease=\"linear\")}\nbackground {animate(amount,to=1,duration=4s,ease=\"linear\")}\nwait(2s)\n",
     );
     assert_eq!(p.animation.duration, Fraction::from(10));
     assert_eq!(number(&p, "phase"), Fraction::from(360));
@@ -320,7 +320,7 @@ fn background_jobs_extend_duration_by_their_latest_end_instead_of_their_sum() {
 #[test]
 fn foreground_animate_advances_time_and_conflicting_cell_writes_are_rejected() {
     let p = run(
-        "mut amount=0\nsig size=amount+1\nadd(Circle(id=\"circle\",scale=size))\nanimate(amount,to=1,duration=2s)\nwait(1s)\n",
+        "mut amount=0\nsig size=amount+1\nadd(Circle(id=\"circle\",scale=size))\nanimate(amount,to=1,duration=2s,ease=\"linear\")\nwait(1s)\n",
     );
     assert_eq!(p.animation.duration, Fraction::from(3));
     assert_eq!(
@@ -328,10 +328,10 @@ fn foreground_animate_advances_time_and_conflicting_cell_writes_are_rejected() {
         Fraction::new(3u64, 2u64)
     );
     for source in [
-        "mut amount=0\nbackground {animate(amount,to=1,duration=2s)}\nbackground {animate(amount,to=2,duration=2s)}",
-        "mut amount=0\nbackground {animate(amount,to=1,duration=2s)}\nwait(1s)\namount=2",
-        "mut amount=0\nanimate(amount,to=1,duration=0s)",
-        "mut amount=0\nanimate(amount,to=1,duration=7201s)",
+        "mut amount=0\nbackground {animate(amount,to=1,duration=2s,ease=\"linear\")}\nbackground {animate(amount,to=2,duration=2s,ease=\"linear\")}",
+        "mut amount=0\nbackground {animate(amount,to=1,duration=2s,ease=\"linear\")}\nwait(1s)\namount=2",
+        "mut amount=0\nanimate(amount,to=1,duration=0s,ease=\"linear\")",
+        "mut amount=0\nanimate(amount,to=1,duration=7201s,ease=\"linear\")",
     ] {
         let mut files = MemorySources::default();
         files.insert("main.sanim", source);
@@ -373,7 +373,7 @@ fn malformed_host_union_list_payloads_are_fully_validated() {
 #[test]
 fn retained_dimensions_reflow_rows_but_row_owned_positions_are_rejected() {
     let p = run(
-        "mut amount=10pt\nsig extent=amount\nlet first=Rect(id=\"first\",width=extent,height=10pt)\nlet second=Rect(id=\"second\",width=10pt,height=10pt)\nadd(Row(id=\"row\",children=[first,second],gap=5pt))\nbackground {animate(amount,to=20pt,duration=2s)}\nwait(2s)",
+        "mut amount=10pt\nsig extent=amount\nlet first=Rect(id=\"first\",width=extent,height=10pt)\nlet second=Rect(id=\"second\",width=10pt,height=10pt)\nadd(Row(id=\"row\",children=[first,second],gap=5pt))\nbackground {animate(amount,to=20pt,duration=2s,ease=\"linear\")}\nwait(2s)",
     );
     let (width, height) = p.animation.logical_size();
     let before = p
@@ -404,7 +404,7 @@ fn retained_dimensions_reflow_rows_but_row_owned_positions_are_rejected() {
 fn constructor_properties_lift_direct_cells_and_pure_helper_captures() {
     use sanim_core::{Geometry, Number};
     let p = run(
-        "mut radius=10pt\nsig size=radius*2\nfn get_size():Length{return size}\nlet direct=Circle(radius=radius)\nlet wrapped=Circle(radius=get_size())\nadd(direct)\nadd(wrapped)\nbackground{animate(radius,to=20pt,duration=2s)}\nwait(2s)\n",
+        "mut radius=10pt\nsig size=radius*2\nfn get_size():Length{return size}\nlet direct=Circle(radius=radius)\nlet wrapped=Circle(radius=get_size())\nadd(direct)\nadd(wrapped)\nbackground{animate(radius,to=20pt,duration=2s,ease=\"linear\")}\nwait(2s)\n",
     );
     let elements = p.animation.sample(Fraction::from(1)).unwrap();
     let circle_radius = |name: &str| {
@@ -480,7 +480,7 @@ fn background_assignments_and_helper_writes_do_not_leak_into_the_main_present() 
 #[test]
 fn property_getters_follow_the_current_cursor_and_temporal_signals_refresh() {
     let prepared = run(
-        "mut extent=20pt\nlet rect=Rect(width=extent,height=40pt)\nbackground{animate(extent,to=40pt,duration=2s)}\nwait(2s)\nlet current_width=rect.width\nsig angle=rect.rotation\nsig doubled=angle*2\nlet before=doubled\nRotateTo(rect, 90deg, duration=1s, ease=\"linear\")\nlet after=doubled\n",
+        "mut extent=20pt\nlet rect=Rect(width=extent,height=40pt)\nbackground{animate(extent,to=40pt,duration=2s,ease=\"linear\")}\nwait(2s)\nlet current_width=rect.width\nsig angle=rect.rotation\nsig doubled=angle*2\nlet before=doubled\nRotateTo(rect, 90deg, duration=1s, ease=\"linear\")\nlet after=doubled\n",
     );
     assert_eq!(number(&prepared, "current_width"), Fraction::from(40));
     assert_eq!(number(&prepared, "before"), Fraction::from(0));
@@ -490,7 +490,7 @@ fn property_getters_follow_the_current_cursor_and_temporal_signals_refresh() {
 #[test]
 fn structural_group_children_allow_independently_retained_child_properties() {
     let prepared = run(
-        "mut radius=10pt\nlet group=Group(children=[Circle(id=\"child\",radius=radius)])\nadd(group)\nbackground{animate(radius,to=20pt,duration=2s)}\nwait(2s)\n",
+        "mut radius=10pt\nlet group=Group(children=[Circle(id=\"child\",radius=radius)])\nadd(group)\nbackground{animate(radius,to=20pt,duration=2s,ease=\"linear\")}\nwait(2s)\n",
     );
     let elements = prepared.animation.sample(Fraction::from(1)).unwrap();
     let sanim_core::Geometry::Group { children } = elements[0].geometry.as_ref() else {
@@ -567,7 +567,7 @@ fn background_list_writes_commit_at_their_timeline_point_including_helper_writes
 fn retained_record_xy_fields_and_imported_scalar_x_are_not_vector_components() {
     let mut files = MemorySources::default();
     files.insert("theme.sanim", "mut x=10pt");
-    files.insert("main.sanim","import \"theme.sanim\" as theme\nlet point={x=10pt,y=0pt}\nmut offset=0pt\nlet record_shape=Circle(position=Vec2(point.x+offset,point.y))\nlet imported_shape=Circle(position=Vec2(theme.x,0pt))\nadd(record_shape)\nadd(imported_shape)\nbackground{animate(offset,to=20pt,duration=2s)}\nwait(2s)\n");
+    files.insert("main.sanim","import \"theme.sanim\" as theme\nlet point={x=10pt,y=0pt}\nmut offset=0pt\nlet record_shape=Circle(position=Vec2(point.x+offset,point.y))\nlet imported_shape=Circle(position=Vec2(theme.x,0pt))\nadd(record_shape)\nadd(imported_shape)\nbackground{animate(offset,to=20pt,duration=2s,ease=\"linear\")}\nwait(2s)\n");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();

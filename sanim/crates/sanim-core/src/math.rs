@@ -351,43 +351,53 @@ pub fn float_arithmetic(op: &str, a: f64, b: f64) -> Result<f64, String> {
 /// Quintic easing with zero first and second derivatives at both endpoints.
 /// This is the `smooth` curve used by the bundled ManimGL renderer.
 pub fn smootherstep(p: Fraction) -> Result<Fraction, String> {
-    let square = arithmetic("*", p, p)?;
-    let cube = arithmetic("*", square, p)?;
-    let inner = arithmetic(
-        "-",
-        arithmetic("*", Fraction::from(6), p)?,
-        Fraction::from(15),
-    )?;
-    arithmetic(
-        "*",
-        cube,
-        arithmetic("+", arithmetic("*", p, inner)?, Fraction::from(10))?,
-    )
+    visual_polynomial(p, &[0, 0, 0, 10, -15, 6])
 }
 
 /// ManimGL's degree-five Bezier with controls [0, 0, 1.5, 1.5, 1, 1].
 pub fn overshoot(p: Fraction) -> Result<Fraction, String> {
-    let inner = arithmetic(
-        "-",
-        Fraction::from(20),
-        arithmetic("*", Fraction::from(4), p)?,
-    )?;
-    let inner = arithmetic(
-        "+",
-        Fraction::from(15),
-        arithmetic(
-            "*",
-            p,
-            arithmetic("-", arithmetic("*", p, inner)?, Fraction::from(30))?,
-        )?,
-    )?;
-    arithmetic("*", arithmetic("*", p, p)?, inner)
+    visual_polynomial(p, &[0, 0, 15, -30, 20, -4])
+}
+
+/// Keep ordinary frame fractions exact, while supporting arbitrary seek
+/// precision without denominator overflow in a visual-only polynomial.
+pub fn visual_polynomial(progress: Fraction, coefficients: &[i64]) -> Result<Fraction, String> {
+    if !finite(&progress) {
+        return Err("easing progress must be finite".into());
+    }
+    if let Some(value) =
+        coefficients
+            .iter()
+            .rev()
+            .try_fold(Fraction::zero(), |value, coefficient| {
+                value
+                    .checked_mul(&progress)?
+                    .checked_add(&Fraction::from(*coefficient))
+            })
+    {
+        return Ok(value);
+    }
+    let p = to_f64(progress)?;
+    let value = coefficients
+        .iter()
+        .rev()
+        .fold(0., |value, coefficient| value * p + *coefficient as f64);
+    functions::approximate_to(value, 1_000_000)
 }
 
 /// Closed-form unit-mass damped spring, evaluated directly for arbitrary seeks.
 /// The final fifth smoothly removes its tiny residual displacement so the
 /// bounded timeline ends exactly at rest without truncating a live oscillation.
 pub fn spring(progress: Fraction) -> Result<Fraction, String> {
+    spring_response(progress, 1.)
+}
+
+/// A lightly underdamped alternative for unconstrained spatial motion.
+pub fn spring_bouncy(progress: Fraction) -> Result<Fraction, String> {
+    spring_response(progress, 0.78)
+}
+
+fn spring_response(progress: Fraction, damping_ratio: f64) -> Result<Fraction, String> {
     if !finite(&progress) {
         return Err("spring progress must be finite".into());
     }
@@ -397,21 +407,55 @@ pub fn spring(progress: Fraction) -> Result<Fraction, String> {
     if progress >= Fraction::from(1) {
         return Ok(Fraction::from(1));
     }
-    const DAMPING_RATIO: f64 = 0.78;
     const ANGULAR_FREQUENCY: f64 = 12.;
     const SETTLE_START: f64 = 0.8;
     let time = to_f64(progress)?;
-    let oscillation = (1. - DAMPING_RATIO * DAMPING_RATIO).sqrt();
-    let angle = ANGULAR_FREQUENCY * oscillation * time;
-    let residual = (-DAMPING_RATIO * ANGULAR_FREQUENCY * time).exp()
-        * (angle.cos() + DAMPING_RATIO / oscillation * angle.sin());
+    let residual = if damping_ratio == 1. {
+        (-ANGULAR_FREQUENCY * time).exp() * (1. + ANGULAR_FREQUENCY * time)
+    } else {
+        let oscillation = (1. - damping_ratio * damping_ratio).sqrt();
+        let angle = ANGULAR_FREQUENCY * oscillation * time;
+        (-damping_ratio * ANGULAR_FREQUENCY * time).exp()
+            * (angle.cos() + damping_ratio / oscillation * angle.sin())
+    };
     let window = if time > SETTLE_START {
         let t = (time - SETTLE_START) / (1. - SETTLE_START);
         1. - t * t * t * (10. + t * (-15. + 6. * t))
     } else {
         1.
     };
-    functions::approximate(1. - residual * window)
+    functions::approximate_to(1. - residual * window, 1_000_000)
+}
+
+/// Visual composition may approximate if multiplying valid rational inputs
+/// would overflow their representation. Timeline and ordinary math stay exact.
+pub fn visual_product(a: Fraction, b: Fraction) -> Result<Fraction, String> {
+    a.checked_mul(&b).filter(finite).map_or_else(
+        || functions::approximate_to(float_arithmetic("*", to_f64(a)?, to_f64(b)?)?, 1_000_000),
+        Ok,
+    )
+}
+
+pub fn visual_lerp(a: Fraction, b: Fraction, progress: Fraction) -> Result<Fraction, String> {
+    if progress.is_zero() {
+        return Ok(a);
+    }
+    if progress == Fraction::from(1) {
+        return Ok(b);
+    }
+    lerp(a, b, progress).or_else(|_| {
+        let value = functions::approximate_to(
+            motion_lerp(to_f64(a)?, to_f64(b)?, progress, true)?,
+            1_000_000,
+        )?;
+        Ok(
+            if progress >= Fraction::zero() && progress <= Fraction::from(1) {
+                value.max(a.min(b)).min(a.max(b))
+            } else {
+                value
+            },
+        )
+    })
 }
 
 /// Interpolate fixed-size vectors without allocating temporary component lists.

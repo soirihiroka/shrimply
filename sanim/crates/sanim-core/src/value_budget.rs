@@ -133,9 +133,16 @@ pub fn charge(
                     element(right, bytes, items, depth - 1)?;
                 }
             }
-            Value::Font(values) => {
+            Value::Font(font) => {
+                let size = match font {
+                    crate::Font::Asset(values) => values.len(),
+                    crate::Font::Family(families) => families
+                        .iter()
+                        .map(|family| std::mem::size_of::<String>() + family.len())
+                        .sum(),
+                };
                 *bytes = bytes
-                    .checked_sub(values.len())
+                    .checked_sub(size)
                     .ok_or("generated value byte budget exceeded")?;
             }
             _ => {}

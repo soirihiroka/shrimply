@@ -78,10 +78,7 @@ impl Scene {
                 _ => false,
             };
             self.context.file = match project.item(&address) {
-                Some(ItemRef::Video(item))
-                    if item.is_media()
-                        || matches!(item.content, project::VideoItemContent::Manim(_)) =>
-                {
+                Some(ItemRef::Video(item)) if item.uses_file_asset() => {
                     Some(item.file.path().to_owned())
                 }
                 Some(ItemRef::Audio(item))

@@ -745,7 +745,7 @@ impl Runtime<'_, '_> {
                             .map_err(|e| self.error("S303", e, statement.span))?
                             .value;
                             if self.cursor > next {
-                                return Err(self.error("S304",format!("timer iteration {} ends at {}s, past its {}s deadline. Shorten play/wait durations or increase the timer period.",index+1,self.cursor,next),statement.span));
+                                return Err(self.error("S304",format!("timer iteration {} ends at {}s, past its {}s deadline. Shorten animation/wait durations or increase the timer period.",index+1,self.cursor,next),statement.span));
                             }
                             math::timeline_end(Fraction::from(0), next)
                                 .map_err(|e| self.error("S304", e, statement.span))?;
@@ -833,6 +833,10 @@ impl Runtime<'_, '_> {
                             .as_ref()
                             .filter(|_| identity.is_some()),
                         fingerprint,
+                        plan.names
+                            .iter()
+                            .any(|name| name == "Text")
+                            .then(sanim_data::font::system_font_epoch),
                         deps,
                     ))
                     .map_err(|error| self.error("S301", error.to_string(), expr.span))?,
@@ -1251,7 +1255,13 @@ impl Runtime<'_, '_> {
                     evaluated.push((name.clone(), self.expression(value, env)?));
                 }
                 if let Some(ty) = self.constructors.get(&key).cloned() {
-                    let easing=if matches!(&ty,Type::Record(fields) if fields.contains_key("ease")){Easing::default()}else{crate::timing::easing(crate::timing::ease_argument(&evaluated)).map_err(|error|self.error("S304",error,expr.span))?};
+                    let easing = if matches!(&ty,Type::Record(fields) if fields.contains_key("ease"))
+                    {
+                        Easing::default()
+                    } else {
+                        crate::timing::easing(crate::timing::ease_argument(&evaluated))
+                            .map_err(|error| self.error("S304", error, expr.span))?
+                    };
                     let requested = if !matches!(&ty,Type::Record(fields) if fields.contains_key("duration"))
                     {
                         crate::timing::envelope(&evaluated)
@@ -1325,7 +1335,7 @@ impl Runtime<'_, '_> {
                         _ => Err(self.error("S305", "type is not constructible", expr.span)),
                     }?;
                     self.finish_call_duration(start, requested, self.cursor, expr.span)?;
-                    self.last_call.easing=easing;
+                    self.last_call.easing = easing;
                     return Ok(value);
                 }
                 self.invoke(&key, &evaluated, expr.span, true, None)
@@ -1357,7 +1367,16 @@ impl Runtime<'_, '_> {
         } else {
             None
         };
-        let easing=if function.parameters.iter().any(|(name,_,_)|name=="ease"){Easing::default()}else{crate::timing::easing(crate::timing::ease_argument(evaluated)).map_err(|error|self.error("S304",error,span))?};
+        let easing = if function
+            .parameters
+            .iter()
+            .any(|(name, _, _)| name == "ease")
+        {
+            Easing::default()
+        } else {
+            crate::timing::easing(crate::timing::ease_argument(evaluated))
+                .map_err(|error| self.error("S304", error, span))?
+        };
         if envelope.is_some_and(|duration| duration > Fraction::from(0)) && !self.root_active {
             return Err(self.error(
                 "S115",
@@ -1505,7 +1524,7 @@ impl Runtime<'_, '_> {
         self.type_bindings = previous_types;
         let result = result?;
         self.finish_call_duration(function_start, envelope, horizon, span)?;
-        self.last_call.easing=easing;
+        self.last_call.easing = easing;
         Ok(result.unwrap_or(Value::Unit))
     }
     fn native(
@@ -1528,15 +1547,29 @@ impl Runtime<'_, '_> {
             ));
         }
         let start = self.cursor;
-        let easing=crate::timing::easing(builtin.easing_argument(&arguments)).map_err(|error|self.error("S304",error,span))?;
-        let mut controls=[builtin.duration_argument(&arguments),builtin.easing_argument(&arguments)].into_iter().flatten()
-            .filter_map(|value|arguments.iter().position(|(_,candidate)|std::ptr::eq(value,candidate))).collect::<Vec<_>>();
-        controls.sort_unstable();controls.dedup();
-        let mut arguments=arguments;
-        for index in controls.into_iter().rev(){arguments.remove(index);}
+        let easing = crate::timing::easing(builtin.easing_argument(&arguments))
+            .map_err(|error| self.error("S304", error, span))?;
+        let mut controls = [
+            builtin.duration_argument(&arguments),
+            builtin.easing_argument(&arguments),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(|value| {
+            arguments
+                .iter()
+                .position(|(_, candidate)| std::ptr::eq(value, candidate))
+        })
+        .collect::<Vec<_>>();
+        controls.sort_unstable();
+        controls.dedup();
+        let mut arguments = arguments;
+        for index in controls.into_iter().rev() {
+            arguments.remove(index);
+        }
         let value = self.native_inner(builtin, arguments, duration, easing, span)?;
         self.finish_call_duration(start, Some(duration), self.cursor, span)?;
-        self.last_call.easing=easing;
+        self.last_call.easing = easing;
         Ok(value)
     }
     fn native_inner(
@@ -1664,7 +1697,9 @@ impl Runtime<'_, '_> {
                 Ok(value)
             };
         }
-        if self.duration_only && builtin.schedule { return Ok(Value::Unit); }
+        if self.duration_only && builtin.schedule {
+            return Ok(Value::Unit);
+        }
         if matches!(name, "assert" | "check") {
             let condition = args
                 .remove("condition")
@@ -1738,7 +1773,9 @@ impl Runtime<'_, '_> {
         )
         .map_err(|e| self.error("S305", e, span));
         if result.is_ok() {
-            if builtin.schedule { self.check_elements(span)?; }
+            if builtin.schedule {
+                self.check_elements(span)?;
+            }
             self.list_edit = list_edit.map(|delta| crate::lists::EditReceipt {
                 module: self.module.clone(),
                 span,

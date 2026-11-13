@@ -1,4 +1,4 @@
-use sanim_core::{Value, cache::Cache, value_budget};
+use sanim_core::{Font, Value, cache::Cache, value_budget};
 use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Default)]
@@ -54,12 +54,19 @@ impl FontCache {
             max_entries,
         }
     }
-    pub fn key(&mut self, font: &std::sync::Arc<Vec<u8>>) -> String {
+    pub fn key(&mut self, font: &Font) -> String {
+        let Font::Asset(font) = font else {
+            return format!(
+                "family:{}:{:?}",
+                sanim_core::digest(&serde_json::to_vec(font).expect("font descriptors serialize")),
+                sanim_data::font::system_font_epoch()
+            );
+        };
         let identity = std::sync::Arc::as_ptr(font) as usize;
         if let Some((_, key)) = self.values.get(&identity) {
             return key.clone();
         }
-        let key = sanim_core::digest(font);
+        let key = format!("asset:{}", sanim_core::digest(font));
         if self.max_entries == 0 || font.len() > self.max_bytes {
             return key;
         }
@@ -83,11 +90,21 @@ mod tests {
     fn font_fingerprints_follow_content_through_copy_on_write_and_eviction() {
         let mut cache = FontCache::new(4, 1);
         let mut font = Arc::new(vec![1, 2, 3]);
-        let original = cache.key(&font);
+        let original = cache.key(&sanim_core::Font::Asset(font.clone()));
         Arc::make_mut(&mut font)[0] = 9;
-        assert_ne!(original, cache.key(&font));
-        assert_eq!(original, cache.key(&Arc::new(vec![1, 2, 3])));
+        assert_ne!(original, cache.key(&sanim_core::Font::Asset(font)));
+        assert_eq!(
+            original,
+            cache.key(&sanim_core::Font::Asset(Arc::new(vec![1, 2, 3])))
+        );
         let mut disabled = FontCache::new(0, 0);
-        assert_eq!(original, disabled.key(&Arc::new(vec![1, 2, 3])));
+        assert_eq!(
+            original,
+            disabled.key(&sanim_core::Font::Asset(Arc::new(vec![1, 2, 3])))
+        );
+        let sans = sanim_core::Font::family("sans-serif", "sans-serif").unwrap();
+        let serif = sanim_core::Font::family("serif", "sans-serif").unwrap();
+        assert_ne!(original, cache.key(&sans));
+        assert_ne!(cache.key(&sans), cache.key(&serif));
     }
 }

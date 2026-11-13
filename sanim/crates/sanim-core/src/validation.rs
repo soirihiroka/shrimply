@@ -6,6 +6,7 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
         return Err(format!("expected {ty}, found {}", value.ty()));
     }
     match (ty, value) {
+        (Type::Font, Value::Font(font)) => font.validate()?,
         (Type::Union(alternatives), value) => {
             let mut reasons = Vec::new();
             for alternative in alternatives {

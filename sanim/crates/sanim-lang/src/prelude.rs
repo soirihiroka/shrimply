@@ -69,6 +69,14 @@ fn build_builtins() -> Vec<Builtin> {
         native_types::fixed,
     );
     add(
+        "Font",
+        vec![p("family", String, false), p("fallback", String, false)],
+        Font,
+        false,
+        Execution::Native(native::font),
+        native_types::fixed,
+    );
+    add(
         "Fraction",
         vec![
             p("numerator", num.clone(), false),
@@ -415,7 +423,9 @@ fn build_builtins() -> Vec<Builtin> {
                 .parameters
                 .push(p("duration", Numeric(Dimension::Duration), false));
         }
-        if !builtin.parameters.iter().any(|p|p.name=="ease") { builtin.parameters.push(p("ease",Type::String,false)); }
+        if !builtin.parameters.iter().any(|p| p.name == "ease") {
+            builtin.parameters.push(p("ease", Type::String, false));
+        }
         builtin.timing.parameter = builtin
             .parameters
             .iter()

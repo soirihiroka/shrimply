@@ -3,6 +3,8 @@ pub mod cache;
 mod collection;
 pub use collection::{List, ListEdit, ListEditResult};
 pub mod duration;
+pub mod font;
+pub use font::Font;
 pub mod layout;
 pub mod list_views;
 pub use duration::{NodeDuration, TimelineEffect};

@@ -1,7 +1,7 @@
 use crate::{Color, Value, Vec2, math};
 use fraction::Fraction;
 use imbl::{OrdMap, OrdSet, Vector};
-use num_traits::{CheckedMul, Zero};
+use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -172,6 +172,7 @@ pub enum Easing {
     Linear,
     #[default]
     Spring,
+    SpringBouncy,
     CubicIn,
     CubicOut,
     Smooth,
@@ -182,6 +183,7 @@ impl Easing {
     pub fn parse(name: &str) -> Result<Self, String> {
         const OPTIONS: &[(&str, Easing)] = &[
             ("spring", Easing::Spring),
+            ("spring_bouncy", Easing::SpringBouncy),
             ("linear", Easing::Linear),
             ("cubic_in", Easing::CubicIn),
             ("cubic_out", Easing::CubicOut),
@@ -833,6 +835,24 @@ impl Animation {
             }
             let element = self.find(&motion.element.id).unwrap_or(&motion.element);
             let current = self.sample_property(element, motion.property, start)?;
+            if motion.property == Property::Rotation
+                && motion.to.number()?.value != Fraction::zero()
+                && self
+                    .tracks
+                    .get(&motion.element.id)
+                    .and_then(|properties| properties.get(&Property::Scale))
+                    .is_some_and(|tracks| {
+                        tracks.iter().any(|track| {
+                            (track.start < end || duration.is_zero() && track.start == start)
+                                && track.end > start
+                                && [&track.from, &track.to].iter().any(|value| {
+                                    value.number().is_ok_and(|number| number.value.is_zero())
+                                })
+                        })
+                    })
+            {
+                return Err("GrowFromCenter/ShrinkToCenter require zero rotation throughout the motion; sequence rotation outside the centered growth interval".into());
+            }
             if centered_growth
                 && (self
                     .sample_property(element, Property::Rotation, start)?
@@ -853,7 +873,7 @@ impl Animation {
                                 .any(|track| track.start < end && track.end > start)
                         }))
             {
-                return Err("GrowFromCenter/ShrinkToCenter require zero rotation throughout the motion; use ScaleTo for rotated geometry, or reset rotation in an earlier play".into());
+                return Err("GrowFromCenter/ShrinkToCenter require zero rotation throughout the motion; use ScaleTo for rotated geometry, or reset rotation in an earlier animation call".into());
             }
             let mut from = motion.from.clone().unwrap_or(current);
             let mut to = motion.to.clone();
@@ -898,7 +918,17 @@ impl Animation {
                     from,
                     to,
                     easing,
-                    bounded: matches!(motion.property, Property::Opacity | Property::Scale | Property::StretchX | Property::Reveal | Property::Radius | Property::Width | Property::Height | Property::Fill),
+                    bounded: matches!(
+                        motion.property,
+                        Property::Opacity
+                            | Property::Scale
+                            | Property::StretchX
+                            | Property::Reveal
+                            | Property::Radius
+                            | Property::Width
+                            | Property::Height
+                            | Property::Fill
+                    ),
                     reveal: motion.reveal,
                     horizontal: motion.horizontal,
                 },
@@ -957,61 +987,47 @@ impl Track {
         let p = math::progress(time, self.start, self.end)?;
         let one = Fraction::from(1);
         let p = self.easing.apply(p)?;
+        let bounded_progress = p.max(Fraction::zero()).min(one);
+        let scalar_progress = if self.bounded || self.easing == Easing::Overshoot {
+            bounded_progress
+        } else {
+            p
+        };
+        let overshooting = matches!(
+            self.easing,
+            Easing::Overshoot | Easing::Spring | Easing::SpringBouncy
+        );
+        let scalar_lerp = |from, to| {
+            if matches!(self.easing, Easing::Spring | Easing::SpringBouncy) {
+                math::visual_lerp(from, to, scalar_progress)
+            } else {
+                math::lerp(from, to, scalar_progress)
+            }
+        };
         match (&self.from, &self.to) {
             (Value::Number(a), Value::Number(b)) if a.unit == b.unit => {
                 Ok(Value::Number(crate::Number {
-                    value: math::lerp(
-                        a.value,
-                        b.value,
-                        if self.bounded || self.easing == Easing::Overshoot {
-                            p.max(Fraction::zero()).min(one)
-                        } else {
-                            p
-                        },
-                    )?,
+                    value: scalar_lerp(a.value, b.value)?,
                     unit: a.unit,
                 }))
             }
-            (Value::Fraction(a), Value::Fraction(b)) => Ok(Value::Fraction(math::lerp(
-                *a,
-                *b,
-                if self.bounded || self.easing == Easing::Overshoot {
-                    p.max(Fraction::zero()).min(one)
-                } else {
-                    p
-                },
-            )?)),
+            (Value::Fraction(a), Value::Fraction(b)) => Ok(Value::Fraction(scalar_lerp(*a, *b)?)),
             (Value::Vec2(a), Value::Vec2(b)) if a.unit == b.unit => Ok(Value::Vec2(Vec2 {
-                values: math::motion_vector_lerp(
-                    a.values,
-                    b.values,
-                    p,
-                    matches!(self.easing, Easing::Overshoot | Easing::Spring),
-                )?,
+                values: math::motion_vector_lerp(a.values, b.values, p, overshooting)?,
                 unit: a.unit,
             })),
             (Value::Vec3(a), Value::Vec3(b)) if a.unit == b.unit => Ok(Value::Vec3(crate::Vec3 {
-                values: math::motion_vector_lerp(
-                    a.values,
-                    b.values,
-                    p,
-                    matches!(self.easing, Easing::Overshoot | Easing::Spring),
-                )?,
+                values: math::motion_vector_lerp(a.values, b.values, p, overshooting)?,
                 unit: a.unit,
             })),
             (Value::Vec4(a), Value::Vec4(b)) if a.unit == b.unit => Ok(Value::Vec4(crate::Vec4 {
-                values: math::motion_vector_lerp(
-                    a.values,
-                    b.values,
-                    p,
-                    matches!(self.easing, Easing::Overshoot | Easing::Spring),
-                )?,
+                values: math::motion_vector_lerp(a.values, b.values, p, overshooting)?,
                 unit: a.unit,
             })),
             (Value::Color(a), Value::Color(b)) => {
                 let mut out = a.clone();
                 for i in 0..4 {
-                    out.0[i] = math::lerp(a.0[i], b.0[i], p.max(Fraction::zero()).min(one))?;
+                    out.0[i] = math::visual_lerp(a.0[i], b.0[i], bounded_progress)?;
                 }
                 Ok(Value::Color(out))
             }
@@ -1025,31 +1041,13 @@ impl Track {
 
 impl Easing {
     pub fn apply(self, p: Fraction) -> Result<Fraction, String> {
-        let one = Fraction::from(1);
         Ok(match self {
             Easing::Linear => p,
             Easing::Spring => math::spring(p)?,
-            Easing::CubicIn => p
-                .checked_mul(&p)
-                .and_then(|v| v.checked_mul(&p))
-                .ok_or("easing overflow")?,
-            Easing::CubicOut => {
-                let q = math::arithmetic("-", one, p)?;
-                math::arithmetic(
-                    "-",
-                    one,
-                    math::arithmetic("*", math::arithmetic("*", q, q)?, q)?,
-                )?
-            }
-            Easing::Smooth => math::arithmetic(
-                "*",
-                math::arithmetic("*", p, p)?,
-                math::arithmetic(
-                    "-",
-                    Fraction::from(3),
-                    math::arithmetic("*", Fraction::from(2), p)?,
-                )?,
-            )?,
+            Easing::SpringBouncy => math::spring_bouncy(p)?,
+            Easing::CubicIn => math::visual_polynomial(p, &[0, 0, 0, 1])?,
+            Easing::CubicOut => math::visual_polynomial(p, &[0, 3, -3, 1])?,
+            Easing::Smooth => math::visual_polynomial(p, &[0, 0, 3, -2])?,
             Easing::Smootherstep => math::smootherstep(p)?,
             Easing::Overshoot => math::overshoot(p)?,
         })

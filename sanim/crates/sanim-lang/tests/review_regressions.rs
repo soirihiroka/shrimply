@@ -126,7 +126,10 @@ fn flow_position_conflicts_in_same_play_fail_before_scheduling() {
         "background { FadeIn(row,duration=1s) }; MoveTo(child,Vec2(10pt,0pt),duration=1s)",
         "background { MoveTo(child,Vec2(10pt,0pt),duration=1s) }; FadeIn(row,duration=1s)",
     ] {
-        let e=run(&format!("let child=Circle(id: \"child\")\nlet row=Row(children: [child])\nadd(row)\n{motions}\n")).unwrap_err();
+        let e = run(&format!(
+            "let child=Circle(id: \"child\")\nlet row=Row(children: [child])\nadd(row)\n{motions}\n"
+        ))
+        .unwrap_err();
         assert!(e.message.contains("flow layout controls"), "{e}");
     }
 }

@@ -3,7 +3,7 @@ let cycles: Number = reflect(4)
 
 let pulse = Circle(id= "pulse", radius= 24pt, fill= #64D8CB)
 timer cycles every 500ms {
-    FadeIn(pulse, duration=100ms, ease="linear")
-    FadeOut(pulse, duration=100ms, ease="linear")
+    FadeIn(pulse, duration=100ms)
+    FadeOut(pulse, duration=100ms)
 }
 assert(always(inside_canvas(pulse)))

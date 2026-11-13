@@ -51,7 +51,9 @@ fn lru_keeps_recently_used_frames_and_evicts_only_oldest() {
         ..CacheLimits::default()
     });
     let scene = renderer
-        .prepare(animation("let c=Circle()\nFadeIn(c, duration=1s, ease=\"linear\")"))
+        .prepare(animation(
+            "let c=Circle()\nFadeIn(c, duration=1s, ease=\"linear\")",
+        ))
         .unwrap();
     let options = Options::for_animation(scene.animation());
     let first = renderer.frame_state(&scene, time(0), &options).unwrap();
