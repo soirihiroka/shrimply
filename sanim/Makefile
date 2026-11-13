@@ -2,6 +2,12 @@ RUSTUP ?= rustup
 RUST_TOOLCHAIN ?= nightly-2026-04-03
 CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
+
+.PHONY: media-check media-bench
+media-check:
+	$(CARGO) test -p sanim-core -p sanim-data -p sanim-lang -p sanim-render --test media
+media-bench:
+	$(CARGO) test $(ARGS) -p sanim-data --test media media_benchmark -- --ignored --nocapture
 LSP_INSTALL_DIR ?= $(HOME)/.local/bin
 
 .PHONY: core-data-check list-bench
@@ -186,6 +192,13 @@ code-view-bench:
 	$(CARGO) test --release -p sanim-data -p sanim-lang -p sanim-render --test code code_view_benchmark -- --ignored --nocapture
 
 .PHONY: runtime-watch-check
+.PHONY: hot-reload-io-check hot-reload-memory-bench
+hot-reload-io-check:
+	$(CARGO) test -p sanim-lang --test hot_reload_io
+	$(CARGO) test -p sanim-runtime --lib watcher::tests
+	$(CARGO) test -p sanim-runtime --test watching scalar_hot_edits_release_old_revisions_and_preserve_glyphs_and_prefix_frames
+hot-reload-memory-bench:
+	$(CARGO) test -p sanim-runtime --test watching scalar_hot_reload_memory_plateau_benchmark -- --ignored --nocapture
 .PHONY: native-cache-check native-cache-bench
 native-cache-check:
 	$(CARGO) test -p sanim-render --test native_cache
@@ -219,6 +232,7 @@ scrolling-check:
 	$(CARGO) clippy -p sanim-core -p sanim-lang -p sanim-render --all-targets -- -D warnings
 	$(MAKE) scrolling-test
 scrolling-test:
+	$(CARGO) test -p sanim-core --test scrollbar_geometry
 	$(CARGO) test -p sanim-lang -p sanim-render --test scrolling
 scrolling-bench:
 	$(CARGO) test --release -p sanim-render --test scrolling scroll_benchmark -- --ignored --nocapture

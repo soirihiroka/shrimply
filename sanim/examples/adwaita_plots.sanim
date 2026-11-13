@@ -1,6 +1,6 @@
 # Native XML-style elements, shared scales, and Adwaita colors.
 fn Panel(caption: String, xs: LinearScale, ys: LinearScale, plots: List<Element>): Element {
-    return <Group>
+    return <Box>
         <Grid scale={xs} ticks={[-3,-2,-1,0,1,2,3]} spans={[Vec2(-45pt,45pt)]}
             fill="light5" grid_opacity={0.12} highlight={[0]} />
         <Axis scale={xs} ticks={[-3,-2,-1,0,1,2,3]} position={Vec2(0pt,60pt)}
@@ -8,8 +8,8 @@ fn Panel(caption: String, xs: LinearScale, ys: LinearScale, plots: List<Element>
         <Axis scale={ys} tick_count={5} vertical position={Vec2(-174pt,0pt)}
             font_size={10pt} label_gap={3pt} tick_length={4pt} format=".1f" fill="light4" />
         <Label position={Vec2(0pt,-78pt)} font_size={18pt} fill="light1">{caption}</Label>
-        <Group children={plots} />
-    </Group>
+        <Box children={plots} />
+    </Box>
 }
 
 let xs = LinearScale(domain=Vec2(-3.5,3.5),range=Vec2(-160pt,160pt))
@@ -33,22 +33,22 @@ let wide = <NormalCurve x_scale={xs} y_scale={density_y} fill="purple3" std_dev=
 let shifted = <NormalCurve x_scale={xs} y_scale={density_y} fill="orange3" mean={1.1}
     std_dev={0.8} shade={false} />
 
-let top_left = <Group position={Vec2(-24%,-12%)}>
+let top_left = <Box position={Vec2(-24%,-12%)}>
     <Panel caption="Shape-preserving curves & bands" xs={xs} ys={waves_y} plots={[interval,curve]} />
-</Group>
-let top_right = <Group position={Vec2(24%,-12%)}>
+</Box>
+let top_right = <Box position={Vec2(24%,-12%)}>
     <Panel caption="Histogram & Gaussian density" xs={xs} ys={density_y} plots={[histogram,estimated]} />
     <Legend labels={["Density histogram","Gaussian KDE"]} colors={[Color("blue3"),Color("orange3")]}
         position={Vec2(-110pt,86pt)} font_size={10pt} gap={14pt} swatch_width={12pt} />
-</Group>
-let bottom_left = <Group position={Vec2(-24%,28%)}>
+</Box>
+let bottom_left = <Box position={Vec2(-24%,28%)}>
     <Panel caption="Empirical cumulative distribution" xs={xs} ys={probability_y} plots={[empirical]} />
-</Group>
-let bottom_right = <Group position={Vec2(24%,28%)}>
+</Box>
+let bottom_right = <Box position={Vec2(24%,28%)}>
     <Panel caption="Normal distribution families" xs={xs} ys={density_y} plots={[normal,wide,shifted]} />
     <Legend labels={["σ=0.7","σ=1.3","μ=1.1"]} colors={[Color("blue3"),Color("purple3"),Color("orange3")]}
         position={Vec2(-108pt,86pt)} font_size={10pt} gap={14pt} swatch_width={12pt} />
-</Group>
+</Box>
 let title = <Label position={Vec2(0%,-44%)} font_size={27pt} fill="light1">Native plots. Adwaita colors.</Label>
 let subtitle = <Label position={Vec2(0%,-36%)} font_size={13pt} fill="light4">Typed data • shared scales • bounded statistics • cached vector paths</Label>
 

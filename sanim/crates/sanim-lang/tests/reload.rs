@@ -227,7 +227,7 @@ fn viewport_changes_report_all_affected_elements() {
 #[test]
 fn parent_changes_report_descendant_dependencies() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let offset: Length=reflect(0pt)\nlet child = Circle(id= \"child\")\nadd(Group(id= \"parent\", children= [child], position= Vec2(offset, 0pt)))\n");
+    files.insert("main.sanim","let offset: Length=reflect(0pt)\nlet child = Circle(id= \"child\")\nadd(Box(id= \"parent\", children= [child], position= Vec2(offset, 0pt)))\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(

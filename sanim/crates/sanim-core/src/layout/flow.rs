@@ -5,26 +5,36 @@ use taffy::prelude::*;
 
 const MAX_CACHED_LAYOUTS: usize = 64;
 const MAX_CACHED_ITEMS: usize = 32_768;
+type SizeKey = (u64, u64, u64, u64, Option<(u64, bool)>);
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Key {
     width: u64,
-    height: u64,
+    height: Option<u64>,
     gap: u64,
     padding: u64,
     direction: Direction,
     justify: Justify,
     align: Align,
     wrap: bool,
-    sizes: Vec<(u64, u64)>,
+    sizes: Vec<SizeKey>,
 }
-type Positions = Arc<[[f64; 2]]>;
+#[derive(Clone, Copy)]
+pub(super) struct Item {
+    pub position: [f64; 2],
+    pub size: [f64; 2],
+}
+pub(super) struct Plan {
+    pub items: Arc<[Item]>,
+    pub size: [f64; 2],
+}
+type Positions = Arc<Plan>;
 thread_local! { static CACHE:RefCell<BTreeMap<Key,Positions>>=const{RefCell::new(BTreeMap::new())}; }
 
 pub(super) fn positions(
     children: &imbl::Vector<Element>,
     style: &Layout,
     width: f64,
-    height: f64,
+    height: Option<f64>,
     direction: Direction,
 ) -> Result<Positions, String> {
     let sizes = children
@@ -35,7 +45,7 @@ pub(super) fn positions(
     let padding = to_f64(style.padding)?;
     let key = Key {
         width: width.to_bits(),
-        height: height.to_bits(),
+        height: height.map(f64::to_bits),
         gap: gap.to_bits(),
         padding: padding.to_bits(),
         direction,
@@ -44,8 +54,37 @@ pub(super) fn positions(
         wrap: style.wrap,
         sizes: sizes
             .iter()
-            .map(|(w, h)| (w.to_bits(), h.to_bits()))
-            .collect(),
+            .zip(children.iter())
+            .map(|((w, h), child)| -> Result<SizeKey, String> {
+                let grow = to_f64(child.layout.flex_grow)?;
+                let shrink = to_f64(child.layout.flex_shrink)?;
+                if grow < 0. || shrink < 0. {
+                    return Err("flex factors must be nonnegative".into());
+                }
+                let basis = child
+                    .layout
+                    .flex_basis
+                    .map(|basis| -> Result<_, String> {
+                        let value = to_f64(basis.value)?;
+                        if value < 0.
+                            || !matches!(basis.unit, crate::Unit::Length | crate::Unit::Percent)
+                        {
+                            return Err(
+                                "flex_basis requires nonnegative points or a percentage".into()
+                            );
+                        }
+                        Ok((value.to_bits(), basis.unit == crate::Unit::Percent))
+                    })
+                    .transpose()?;
+                Ok((
+                    w.to_bits(),
+                    h.to_bits(),
+                    if style.flex { grow.to_bits() } else { 0 },
+                    if style.flex { shrink.to_bits() } else { 0 },
+                    if style.flex { basis } else { None },
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?,
     };
     if let Some(cached) = CACHE.with(|cache| cache.borrow().get(&key).cloned()) {
         return Ok(cached);
@@ -62,13 +101,40 @@ pub(super) fn positions(
     tree.disable_rounding();
     let nodes = sizes
         .iter()
-        .map(|(w, h)| {
+        .zip(children.iter())
+        .map(|((w, h), child)| {
             tree.new_leaf(Style {
                 size: Size {
                     width: length(coordinate(*w)?),
                     height: length(coordinate(*h)?),
                 },
-                flex_shrink: 0.,
+                flex_grow: if style.flex {
+                    coordinate(to_f64(child.layout.flex_grow)?)?
+                } else {
+                    0.
+                },
+                flex_shrink: if style.flex {
+                    coordinate(to_f64(child.layout.flex_shrink)?)?
+                } else {
+                    0.
+                },
+                flex_basis: if style.flex {
+                    child
+                        .layout
+                        .flex_basis
+                        .map(|basis| -> Result<Dimension, String> {
+                            let value = coordinate(to_f64(basis.value)?)?;
+                            match basis.unit {
+                                crate::Unit::Length => Ok(length(value)),
+                                crate::Unit::Percent => Ok(percent(value)),
+                                _ => Err("flex_basis requires points or a percentage".into()),
+                            }
+                        })
+                        .transpose()?
+                        .unwrap_or(Dimension::AUTO)
+                } else {
+                    Dimension::AUTO
+                },
                 ..Style::default()
             })
             .map_err(|e| e.to_string())
@@ -93,7 +159,10 @@ pub(super) fn positions(
                 display: Display::Flex,
                 size: Size {
                     width: length(coordinate(width)?),
-                    height: length(coordinate(height)?),
+                    height: height
+                        .map(|height| coordinate(height).map(length))
+                        .transpose()?
+                        .unwrap_or(Dimension::AUTO),
                 },
                 flex_direction: if direction == Direction::Row {
                     FlexDirection::Row
@@ -125,23 +194,32 @@ pub(super) fn positions(
         .map_err(|e| e.to_string())?;
     tree.compute_layout(root, Size::MAX_CONTENT)
         .map_err(|e| e.to_string())?;
-    let positions: Positions = nodes
+    let root_layout = tree.layout(root).map_err(|error| error.to_string())?;
+    let root_size = [
+        f64::from(root_layout.size.width),
+        f64::from(root_layout.size.height),
+    ];
+    let items = nodes
         .iter()
         .map(|node| {
-            let layout = tree.layout(*node).map_err(|e| e.to_string())?;
+            let layout = tree.layout(*node).map_err(|error| error.to_string())?;
             let position = [f64::from(layout.location.x), f64::from(layout.location.y)];
-            if position.iter().any(|v| !v.is_finite()) {
-                return Err("Taffy layout overflow".into());
+            let size = [f64::from(layout.size.width), f64::from(layout.size.height)];
+            if position.iter().chain(size.iter()).any(|v| !v.is_finite()) {
+                return Err("Taffy layout overflow".to_string());
             }
-            Ok(position)
+            Ok(Item { position, size })
         })
-        .collect::<Result<Vec<_>, String>>()?
-        .into();
+        .collect::<Result<Vec<_>, String>>()?;
+    let positions = Arc::new(Plan {
+        items: items.into(),
+        size: root_size,
+    });
     if children.len() <= MAX_CACHED_ITEMS {
         CACHE.with(|cache| {
             let mut cache = cache.borrow_mut();
             if cache.len() >= MAX_CACHED_LAYOUTS
-                || cache.values().map(|v| v.len()).sum::<usize>() + children.len()
+                || cache.values().map(|v| v.items.len()).sum::<usize>() + children.len()
                     > MAX_CACHED_ITEMS
             {
                 cache.clear();

@@ -81,10 +81,16 @@ add(markers)
         .animation
         .layout(0.into(), 400.into(), 300.into())
         .unwrap();
-    let Geometry::Group { children: curve } = elements[0].geometry.as_ref() else {
+    let Geometry::Box {
+        children: curve, ..
+    } = elements[0].geometry.as_ref()
+    else {
         panic!()
     };
-    let Geometry::Group { children: markers } = elements[1].geometry.as_ref() else {
+    let Geometry::Box {
+        children: markers, ..
+    } = elements[1].geometry.as_ref()
+    else {
         panic!()
     };
     let Geometry::Polyline { points, .. } = curve[0].geometry.as_ref() else {
@@ -154,7 +160,7 @@ add(empty)
 "#,
     );
     assert!(
-        matches!(prepared.animation.find("empty").unwrap().geometry.as_ref(),Geometry::Group{children}if children.is_empty())
+        matches!(prepared.animation.find("empty").unwrap().geometry.as_ref(),Geometry::Box {children, ..}if children.is_empty())
     );
 }
 

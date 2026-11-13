@@ -8,7 +8,7 @@ pub(super) struct Plan {
 }
 impl Runtime<'_, '_> {
     pub(super) fn expression_plan(&mut self, expr: &Expr) -> Result<Arc<Plan>, Diagnostic> {
-        let key = (self.module.clone(), expr.span.start, expr.span.end);
+        let key = expr.cache_id;
         if let Some(plan) = self.expression_plans.get(&key) {
             return Ok(plan);
         }
@@ -29,7 +29,6 @@ impl Runtime<'_, '_> {
         let iteration_limit = names.contains("range");
         let bytes = std::mem::size_of::<Plan>()
             + std::mem::size_of_val(&key)
-            + self.module.len()
             + fingerprint.as_ref().map_or(0, String::len)
             + names
                 .iter()

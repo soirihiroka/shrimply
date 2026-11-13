@@ -15,6 +15,19 @@ pub fn validate(element: &Element, offset: Vec2) -> Result<(), String> {
             "scroll requires a finite Vec2 of pt offsets or percentages of the scroll range".into(),
         );
     }
+    for (axis, overflow) in [element.layout.overflow_x, element.layout.overflow_y]
+        .into_iter()
+        .enumerate()
+    {
+        if !overflow.clips() && offset.values[axis] != 0. {
+            return Err(format!(
+                "{}.scroll cannot move the {} axis while overflow_{} is visible; use auto, scroll or hidden",
+                element.id,
+                ["x", "y"][axis],
+                ["x", "y"][axis]
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -55,7 +68,16 @@ pub fn resolve(element: &mut Element) -> Result<(), String> {
         return Ok(());
     };
     validate(element, requested)?;
-    let maximum = range(element)?;
+    let mut maximum = range(element)?;
+    for (axis, overflow) in [element.layout.overflow_x, element.layout.overflow_y]
+        .into_iter()
+        .enumerate()
+    {
+        if !overflow.clips() {
+            maximum[axis] = 0.;
+        }
+    }
+    element.layout.scroll_range = maximum;
     let mut offset = requested.values;
     for axis in 0..2 {
         if requested.unit == Unit::Percent {
@@ -161,11 +183,11 @@ fn code_height(
 }
 
 fn content_bounds(element: &Element) -> Result<[f64; 4], String> {
-    let local = if element.layout.scroll.is_some() {
+    let mut local = if element.layout.overflow_x.clips() && element.layout.overflow_y.clips() {
         viewport(element)?
     } else if matches!(
         element.geometry.as_ref(),
-        Geometry::Group { .. } | Geometry::Code { .. }
+        Geometry::Box { .. } | Geometry::Code { .. }
     ) {
         let mut bounds = [0.0f64; 4];
         if let Some(width) = element.layout.width {
@@ -198,6 +220,18 @@ fn content_bounds(element: &Element) -> Result<[f64; 4], String> {
             bounds.max.values[1],
         ]
     };
+    if element.layout.clips() {
+        let viewport = viewport(element)?;
+        for (axis, overflow) in [element.layout.overflow_x, element.layout.overflow_y]
+            .into_iter()
+            .enumerate()
+        {
+            if overflow.clips() {
+                local[axis] = viewport[axis];
+                local[axis + 2] = viewport[axis + 2];
+            }
+        }
+    }
     math::linear::transformed_box(
         local,
         element.position.values,

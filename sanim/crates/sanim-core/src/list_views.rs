@@ -392,7 +392,7 @@ impl Animation {
     }
     pub fn bind_list(&mut self, cell: u64, view: &Element, initial: List) -> Result<(), String> {
         if !(view.layout.direction.is_some()
-            && matches!(view.geometry.as_ref(), Geometry::Group { .. }))
+            && matches!(view.geometry.as_ref(), Geometry::Box { .. }))
         {
             return Err("live list children require a Row or Column".into());
         }

@@ -49,7 +49,7 @@ fn explicit_bouncy_spring_retains_spatial_overshoot_and_exact_endpoint() {
 #[test]
 fn continuous_proofs_do_not_ignore_bouncy_motion_on_group_children() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let marker=Circle(radius=5pt)\nlet group=Group(children=[marker])\nadd(group)\nMoveTo(marker,Vec2(1pt,0pt),duration=1s,ease=\"spring_bouncy\")\ncheck(always(inside_canvas(group)))");
+    files.insert("main.sanim","let marker=Circle(radius=5pt)\nlet group=Box(children=[marker])\nadd(group)\nMoveTo(marker,Vec2(1pt,0pt),duration=1s,ease=\"spring_bouncy\")\ncheck(always(inside_canvas(group)))");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();

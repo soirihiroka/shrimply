@@ -1,6 +1,7 @@
 #![cfg(target_os = "macos")]
 
 mod control;
+mod editing;
 mod files;
 mod focus;
 mod fonts;
@@ -63,12 +64,17 @@ struct CardBody {
 
 impl CardBody {
     fn populate(&self, mtm: MainThreadMarker) {
-        if !self.dirty.replace(false) {
+        if !self.dirty.get() {
             return;
         }
         let Some(controls) = self.controls.load() else {
             return;
         };
+        if editing::active(&controls) {
+            return;
+        }
+        self.dirty.set(false);
+        editing::finish(&controls);
         self.context.polls.borrow_mut().clear();
         for child in controls.arrangedSubviews().iter() {
             controls.removeArrangedSubview(&child);
@@ -190,6 +196,7 @@ impl Inspector {
         }
         let errors = shrimply_inspector_core::manim_parameters::take_scene_errors();
         if self.view().window().is_none() || self.view().isHiddenOrHasHiddenAncestor() {
+            editing::finish(self.view());
             return errors;
         }
         #[cfg(debug_assertions)]
@@ -201,9 +208,6 @@ impl Inspector {
             self.view().layoutSubtreeIfNeeded();
             layout_debug::dump(self.view(), 0);
             layout_debug::expanded_cards(mtm);
-        }
-        for poll in self.state.polls.borrow().iter() {
-            poll();
         }
         // Keep the inspector tree stable throughout a scrub or native tracking
         // loop. Seeks update graph playheads in the document, which otherwise
@@ -223,12 +227,35 @@ impl Inspector {
         if self.state.dirty.replace(false) {
             self.state.rebuild(mtm);
         }
+        for poll in self.state.polls.borrow().iter() {
+            poll();
+        }
         errors
+    }
+}
+
+impl Drop for Inspector {
+    fn drop(&mut self) {
+        editing::deactivate_color_wells(self.view());
     }
 }
 
 impl State {
     fn rebuild(self: &Rc<Self>, mtm: MainThreadMarker) {
+        // Live edits can change values, titles, and even reflected controls.
+        // Preserve the native editor (including marked text and the shared color
+        // panel connection) until it finishes. A new selection still replaces it.
+        if !self.force_rebuild.get()
+            && self
+                .visible_document
+                .borrow()
+                .as_ref()
+                .is_some_and(|previous| previous.target == self.controller.target())
+            && editing::active(self.host.view())
+        {
+            self.dirty.set(true);
+            return;
+        }
         let document = shrimply_inspector_document::document(
             &self.controller,
             info::format_date,
@@ -269,6 +296,7 @@ impl State {
                 .borrow_mut()
                 .set_scroll_position(&previous.target, scroll.position());
         }
+        editing::finish(self.host.view());
         self.polls.borrow_mut().clear();
         self.cards.borrow_mut().clear();
         self.focus.clear(&document.target);
@@ -299,6 +327,7 @@ impl State {
             })
             .unwrap_or_default();
         let context = control::Context {
+            root: Weak::new(self.host.view()),
             focus: self.focus.clone(),
             preferences: self.preferences.clone(),
             server_url: self.server_url.clone(),
@@ -361,6 +390,10 @@ impl State {
             tabs,
             selected,
             move |index| {
+                let previous = visible_scroll.borrow().clone();
+                if let Some(previous) = previous {
+                    editing::finish(previous.view());
+                }
                 list.borrow_mut()
                     .set_active_category(&target, category_keys[index]);
                 visible_scroll.replace(Some(scrolls[index].clone()));
@@ -416,6 +449,7 @@ impl State {
                 toggle.tooltip,
                 toggle.active,
                 move |requested| {
+                    context.end_editing();
                     let result = context
                         .controller
                         .apply_basic_action(&context.target, &action.action(requested));
@@ -478,6 +512,11 @@ impl State {
             body.expanded.set(expanded);
             if expanded && !completed {
                 body.populate(mtm);
+            } else if !expanded
+                && !completed
+                && let Some(controls) = body.controls.load()
+            {
+                editing::finish(&controls);
             }
         });
         card.view().into()

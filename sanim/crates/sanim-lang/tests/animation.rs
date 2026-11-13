@@ -60,11 +60,11 @@ fn fade_default_duration() {
 fn manim_ranges_expand_from_the_median_with_matching_curve_and_timing() {
     let p = prepare(
         r#"
-let before_range = Group(id="before_range",children=[
+let before_range = Box(id="before_range",children=[
     Line(position=Vec2(-30pt,20pt),end=Vec2(40pt,0pt)),
     Line(position=Vec2(10pt,20pt),end=Vec2(0pt,16pt))
 ])
-let after_range = Group(id="after_range",children=[
+let after_range = Box(id="after_range",children=[
     Line(position=Vec2(-30pt,60pt),end=Vec2(40pt,0pt)),
     Line(position=Vec2(-10pt,60pt),end=Vec2(0pt,16pt))
 ])
@@ -150,13 +150,13 @@ fn parent_relative_positions_resize() {
 #[test]
 fn row_layout_wraps_when_parent_shrinks() {
     let p = prepare(
-        "let a = Rect(id= \"a\", width= 60pt, height= 20pt)\nlet b = Rect(id= \"b\", width= 60pt, height= 20pt)\nadd(Row(children= [a, b], gap= 10pt))\n",
+        "let a = Rect(id= \"a\", width= 60pt, height= 20pt)\nlet b = Rect(id= \"b\", width= 60pt, height= 20pt)\nadd(Box(flex_direction=\"row\",children= [a, b], gap= 10pt))\n",
     );
     let rows = p
         .animation
         .layout(Fraction::from(0), Fraction::from(100), Fraction::from(100))
         .unwrap();
-    let sanim_core::Geometry::Group { children } = rows[0].geometry.as_ref() else {
+    let sanim_core::Geometry::Box { children, .. } = rows[0].geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children[1].position.values[1], 40.0);
@@ -164,13 +164,13 @@ fn row_layout_wraps_when_parent_shrinks() {
 #[test]
 fn nested_group_positions_remain_local() {
     let p = prepare(
-        "let marker = Circle(id= \"marker\", position= Vec2(0%, 0%))\nadd(Group(children= [marker], width= 200pt, height= 100pt, position= Vec2(20pt, 30pt)))\n",
+        "let marker = Circle(id= \"marker\", position= Vec2(0%, 0%))\nadd(Box(children= [marker], width= 200pt, height= 100pt, position= Vec2(20pt, 30pt)))\n",
     );
     let group = p
         .animation
         .layout(Fraction::from(0), Fraction::from(800), Fraction::from(600))
         .unwrap();
-    let sanim_core::Geometry::Group { children } = group[0].geometry.as_ref() else {
+    let sanim_core::Geometry::Box { children, .. } = group[0].geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children[0].position.values[0], 100.0);
@@ -259,7 +259,7 @@ fn external_viewports_revalidate_required_contracts() {
 #[test]
 fn taffy_flex_layout_aligns_distributes_and_resizes() {
     let p = prepare(
-        "let a=Circle(id=\"a\",radius=10pt)\nlet b=Rect(id=\"b\",width=40pt,height=40pt)\nadd(Row(children=[a,b],height=100pt,padding=10pt,justify=Justify.SpaceBetween,align=Align.Center,wrap=false))",
+        "let a=Circle(id=\"a\",radius=10pt)\nlet b=Rect(id=\"b\",width=40pt,height=40pt)\nadd(Box(flex_direction=\"row\",children=[a,b],height=100pt,padding=10pt,justify=Justify.SpaceBetween,align=Align.Center,wrap=false))",
     );
     for (width, expected) in [(200, 170.), (300, 270.)] {
         let layout = p
@@ -270,7 +270,7 @@ fn taffy_flex_layout_aligns_distributes_and_resizes() {
                 Fraction::from(100),
             )
             .unwrap();
-        let sanim_core::Geometry::Group { children } = layout[0].geometry.as_ref() else {
+        let sanim_core::Geometry::Box { children, .. } = layout[0].geometry.as_ref() else {
             panic!()
         };
         assert_eq!(children[0].position.values, [20., 50.]);
@@ -280,13 +280,13 @@ fn taffy_flex_layout_aligns_distributes_and_resizes() {
 #[test]
 fn column_layout_supports_spacing_and_cross_axis_alignment() {
     let p = prepare(
-        "let a=Rect(width=20pt,height=20pt)\nlet b=Rect(width=40pt,height=40pt)\nadd(Column(children=[a,b],width=100pt,height=200pt,padding=10pt,justify=Justify.SpaceEvenly,align=Align.Center))",
+        "let a=Rect(width=20pt,height=20pt)\nlet b=Rect(width=40pt,height=40pt)\nadd(Box(flex_direction=\"column\",children=[a,b],width=100pt,height=200pt,padding=10pt,justify=Justify.SpaceEvenly,align=Align.Center))",
     );
     let layout = p
         .animation
         .layout(Fraction::from(0), Fraction::from(100), Fraction::from(200))
         .unwrap();
-    let sanim_core::Geometry::Group { children } = layout[0].geometry.as_ref() else {
+    let sanim_core::Geometry::Box { children, .. } = layout[0].geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children[0].position.values, [50., 60.]);
@@ -295,13 +295,13 @@ fn column_layout_supports_spacing_and_cross_axis_alignment() {
 #[test]
 fn non_flow_groups_apply_padding_to_the_child_viewport() {
     let p = prepare(
-        "let marker=Circle(radius=5pt,position=Vec2(0%,0%),x_align=Align.End,y_align=Align.End)\nadd(Group(children=[marker],width=100pt,height=100pt,padding=10pt))",
+        "let marker=Circle(radius=5pt,position=Vec2(0%,0%),x_align=Align.End,y_align=Align.End)\nadd(Box(children=[marker],width=100pt,height=100pt,padding=10pt))",
     );
     let layout = p
         .animation
         .layout(Fraction::from(0), Fraction::from(100), Fraction::from(100))
         .unwrap();
-    let sanim_core::Geometry::Group { children } = layout[0].geometry.as_ref() else {
+    let sanim_core::Geometry::Box { children, .. } = layout[0].geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children[0].position.values, [85., 85.]);

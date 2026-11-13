@@ -2,6 +2,30 @@ use sanim_core::{Font, Fraction};
 use std::sync::Arc;
 const FONT: &[u8] = include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf");
 #[test]
+fn sanim_uses_the_applications_exact_shaped_font_cache_entry() {
+    let font = Font::Asset(Arc::new(FONT.to_vec()));
+    let cached =
+        sanim_data::font::cached_shape(&font, "One shared font pipeline", 24.into(), false, false)
+            .unwrap();
+    let native = shrimply_fonts::native::shaping::layout(
+        &font,
+        "One shared font pipeline",
+        &shrimply_fonts::native::shaping::Options::new(24.),
+    )
+    .unwrap();
+    assert!(Arc::ptr_eq(&cached, &native.shaped));
+    assert!(Arc::ptr_eq(&cached.outline, &native.shaped.outline));
+    let bounds = sanim_data::font::bounds(&cached);
+    assert_eq!(
+        bounds.min.values,
+        [cached.bounds[0].floor(), cached.bounds[1].floor()]
+    );
+    assert_eq!(
+        bounds.max.values,
+        [cached.bounds[2].ceil(), cached.bounds[3].ceil()]
+    );
+}
+#[test]
 fn cached_outlines_share_immutable_runs_for_identical_inputs_and_separate_style_changes() {
     let font = Font::Asset(Arc::new(FONT.to_vec()));
     let first =
@@ -13,7 +37,7 @@ fn cached_outlines_share_immutable_runs_for_identical_inputs_and_separate_style_
     let larger =
         sanim_data::font::cached_shape(&font, "cached label", 24.into(), false, false).unwrap();
     assert!(!Arc::ptr_eq(&first, &larger));
-    assert!(larger.bounds.max.values[0] > first.bounds.max.values[0]);
+    assert!(larger.bounds[2] > first.bounds[2]);
     let renamed = Font::Asset(Arc::new(FONT.to_vec()));
     let separate_asset =
         sanim_data::font::cached_shape(&renamed, "cached label", 18.into(), false, false).unwrap();

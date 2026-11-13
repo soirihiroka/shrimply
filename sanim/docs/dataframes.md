@@ -20,7 +20,7 @@ The familiar Pandas operations have a deliberately static contract:
 
 | Operation | Result |
 | --- | --- |
-| `df["value"]` | A typed lazy `Series<ColumnType>` |
+| `df["value"]` | A typed lazy `Series<Box flex flex-colType>` |
 | `df[["x", "y"]]`, `df.select(["x", "y"])` | A projection with exactly those fields |
 | `df[df["value"] > 0]` | A lazy row filter |
 | `df.assign(ratio=df["x"] / df["y"])` | A frame with added/replaced columns |

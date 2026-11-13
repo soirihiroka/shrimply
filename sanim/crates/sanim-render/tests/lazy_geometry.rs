@@ -54,7 +54,7 @@ fn many_elements_sharing_one_path_keep_their_identity_hints_between_frames() {
         .collect::<Vec<_>>()
         .join(",");
     let source = format!(
-        "let dots=Group(children=[{circles}])\nMoveTo(dots,Vec2(30pt,0pt),duration=1s,ease=\"linear\")"
+        "let dots=Box(children=[{circles}])\nMoveTo(dots,Vec2(30pt,0pt),duration=1s,ease=\"linear\")"
     );
     let mut renderer = Renderer::default();
     let scene = renderer.prepare(animation(&source)).unwrap();
@@ -76,7 +76,7 @@ fn exceeding_the_identity_hint_budget_keeps_admitted_geometry_cached() {
         .collect::<Vec<_>>()
         .join(",");
     let source = format!(
-        "let markers=Group(children=[{circles}])\nMoveTo(markers,Vec2(30pt,0pt),duration=1s,ease=\"linear\")"
+        "let markers=Box(children=[{circles}])\nMoveTo(markers,Vec2(30pt,0pt),duration=1s,ease=\"linear\")"
     );
     let mut renderer = Renderer::default();
     let scene = renderer.prepare(animation(&source)).unwrap();

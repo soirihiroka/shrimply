@@ -33,6 +33,7 @@ struct PaintedPath {
     inverse: Matrix,
     clips: Arc<Vec<Clip>>,
     hit: Arc<Hit>,
+    media: Option<Arc<shrimply_drawing_skia::media::Prepared>>,
 }
 pub(crate) struct Frame {
     paths: Vec<PaintedPath>,
@@ -42,6 +43,8 @@ struct Collector {
     entries: Vec<Entry>,
     clips: Arc<Vec<Clip>>,
     paths: Vec<PaintedPath>,
+    media_seen: std::collections::BTreeSet<usize>,
+    media_bytes: usize,
 }
 impl draw::Output for Collector {
     fn enter(&mut self, element: &Element) {
@@ -52,7 +55,11 @@ impl draw::Output for Collector {
             Geometry::Polyline { .. } => "Polyline",
             Geometry::Polygon { .. } => "Polygon",
             Geometry::Text { .. } => "Text",
-            Geometry::Group { .. } => "Group",
+            Geometry::Box { .. } => "Box",
+            Geometry::Media { asset, .. } => match asset.kind {
+                sanim_core::media::Kind::Bitmap => "Image",
+                sanim_core::media::Kind::Svg => "SVG",
+            },
             Geometry::Code { .. } => "Code",
         };
         self.entries.push(Entry {
@@ -76,6 +83,39 @@ impl draw::Output for Collector {
                 bounds: *bounds,
             });
         }
+    }
+    fn media(
+        &mut self,
+        canvas: &Canvas,
+        prepared: &Arc<shrimply_drawing_skia::media::Prepared>,
+        bounds: &Rect,
+        opacity: f32,
+    ) -> Result<(), String> {
+        if self.media_seen.insert(Arc::as_ptr(prepared) as usize) {
+            self.media_bytes = self
+                .media_bytes
+                .checked_add(prepared.retained_bytes())
+                .ok_or("media pick byte budget overflow")?;
+            if self.media_bytes > sanim_data::Limits::default().max_bytes {
+                return Err("native media pick exceeds its retained byte budget".into());
+            }
+        }
+        let mut builder = PathBuilder::new();
+        builder.add_rect(bounds, None, None);
+        let path = builder.detach();
+        let mut paint = Paint::default();
+        paint.set_alpha_f(opacity);
+        self.path(
+            canvas,
+            &path,
+            &paint,
+            &sanim_core::Color::parse("white")?.into(),
+            bounds,
+        )?;
+        if let Some(record) = self.paths.last_mut() {
+            record.media = Some(prepared.clone());
+        }
+        Ok(())
     }
     fn path(
         &mut self,
@@ -125,6 +165,7 @@ impl draw::Output for Collector {
             inverse,
             clips: self.clips.clone(),
             hit,
+            media: None,
         });
         Ok(())
     }
@@ -148,6 +189,14 @@ impl Frame {
                 continue;
             }
             let local = path.inverse.map_point(point);
+            if let Some(media) = &path.media
+                && !media.contains([
+                    (local.x - path.bounds.left) / path.bounds.width(),
+                    (local.y - path.bounds.top) / path.bounds.height(),
+                ])
+            {
+                continue;
+            }
             if sanim_core::math::paint::alpha_at(
                 &path.fill,
                 [
@@ -204,7 +253,16 @@ impl Frame {
         Ok(None)
     }
     fn bytes(&self) -> usize {
-        self.paths.capacity() * std::mem::size_of::<PaintedPath>()
+        let mut media_seen = std::collections::BTreeSet::new();
+        let media_bytes: usize = self
+            .paths
+            .iter()
+            .filter_map(|path| path.media.as_ref())
+            .filter(|asset| media_seen.insert(Arc::as_ptr(asset) as usize))
+            .map(|asset| asset.retained_bytes())
+            .sum();
+        media_bytes
+            + self.paths.capacity() * std::mem::size_of::<PaintedPath>()
             + self
                 .paths
                 .iter()

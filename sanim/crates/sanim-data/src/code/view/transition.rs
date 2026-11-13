@@ -244,8 +244,8 @@ fn prefix(element: &mut Element, value: &str, style: &Style) -> Result<f64, Stri
             style.italic.unwrap_or(false),
         )?;
         let difference = [
-            shaped.bounds.min.values[0] - bounds.min.values[0],
-            shaped.bounds.min.values[1] - bounds.min.values[1],
+            crate::font::bounds(&shaped).min.values[0] - bounds.min.values[0],
+            crate::font::bounds(&shaped).min.values[1] - bounds.min.values[1],
         ];
         for (axis, delta) in difference.into_iter().enumerate() {
             element.position.values[axis] += delta;
@@ -261,7 +261,7 @@ fn prefix(element: &mut Element, value: &str, style: &Style) -> Result<f64, Stri
             unreachable!("typed glyph")
         };
         *text = value.into();
-        *bounds = shaped.bounds;
+        *bounds = crate::font::bounds(&shaped);
         *outline = shaped.outline.clone();
         *pending = false;
         return Ok(shaped.advance);

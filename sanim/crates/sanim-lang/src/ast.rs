@@ -112,6 +112,8 @@ pub enum TypeExpr {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Expr {
+    #[serde(skip, default = "next_expr_identity")]
+    pub(crate) cache_id: u64,
     pub kind: ExprKind,
     pub span: Span,
 }
@@ -142,7 +144,17 @@ pub enum ExprKind {
     },
 }
 
+pub(crate) fn next_expr_identity() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .expect("expression identity overflow")
+}
+
 impl Expr {
+    pub fn new(kind: ExprKind, span: Span) -> Self {
+        Self { cache_id: next_expr_identity(), kind, span }
+    }
     pub fn visit(&self, visitor: &mut impl FnMut(&Expr)) {
         self.visit_while(&mut |expr| {
             visitor(expr);

@@ -186,14 +186,16 @@ struct Chart<'a> {
     span: Span,
     id: String,
     args: &'a OrdMap<String, Value>,
+    name: String,
     children: Vec<Value>,
     max_elements: usize,
 }
 impl<'a> Chart<'a> {
-    fn new(args: &'a OrdMap<String, Value>, mut context: Context<'a>) -> Result<Self, String> {
-        if let Some(design) = args.get("design") {
-            context.charge_work(design.string()?.len())?;
-        }
+    fn new(
+        name: &str,
+        args: &'a OrdMap<String, Value>,
+        context: Context<'a>,
+    ) -> Result<Self, String> {
         let id = args
             .get("id")
             .map(Value::string)
@@ -213,6 +215,7 @@ impl<'a> Chart<'a> {
             span: context.span,
             id,
             args,
+            name: name.to_owned(),
             children: vec![],
             max_elements: context.limits.max_elements,
         })
@@ -261,20 +264,24 @@ impl<'a> Chart<'a> {
         )
     }
     fn finish(self) -> Result<Value, String> {
+        let common = crate::prelude::element_parameters();
+        let builtin = crate::prelude::builtin(&self.name).expect("registered chart constructor");
         let mut args: OrdMap<String, Value> = self
             .args
             .iter()
             .filter(|(name, _)| {
-                matches!(
-                    name.as_str(),
-                    "id" | "position" | "x_align" | "y_align" | "opacity" | "rotation"
-                )
+                common.iter().any(|parameter| {
+                    parameter.name == name.as_str()
+                        && builtin.parameters.iter().any(|actual| {
+                            actual.name == parameter.name && actual.ty == parameter.ty
+                        })
+                })
             })
-            .map(|(k, v)| (k.clone(), v.clone()))
+            .map(|(name, value)| (name.clone(), value.clone()))
             .collect();
         args.insert("id".into(), Value::String(self.id.into()));
         args.insert("children".into(), Value::List(self.children.into()));
-        native::make_element("Group", &args, self.module, self.identity, self.span)
+        native::composition(&args, self.module, self.identity, self.span)
     }
 }
 fn ticks(args: &OrdMap<String, Value>, scale: LinearScale) -> Result<Vec<f64>, String> {
@@ -379,7 +386,7 @@ pub(crate) fn evaluate(
         }
         _ => {}
     }
-    let mut chart = Chart::new(args, context)?;
+    let mut chart = Chart::new(name, args, context)?;
     let ink = color(
         args,
         "fill",

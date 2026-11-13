@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[test]
 fn retained_row_width_reflows_its_children_and_supports_current_width_getters() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","mut container_width=100pt\nlet child=Circle(id=\"child\",radius=10pt)\nlet row=Row(id=\"row\",width=container_width,height=40pt,children=[child],justify=Justify.End)\nadd(row)\nbackground {animate(container_width,to=200pt,duration=2s)}\nwait(2s)");
+    files.insert("main.sanim","mut container_width=100pt\nlet child=Circle(id=\"child\",radius=10pt)\nlet row=Box(flex_direction=\"row\",id=\"row\",width=container_width,height=40pt,children=[child],justify=Justify.End)\nadd(row)\nbackground {animate(container_width,to=200pt,duration=2s)}\nwait(2s)");
     let p = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -32,10 +32,16 @@ fn retained_row_width_reflows_its_children_and_supports_current_width_getters() 
             unit: sanim_core::Unit::Length
         })
     );
-    let Geometry::Group { children: before } = before[0].geometry.as_ref() else {
+    let Geometry::Box {
+        children: before, ..
+    } = before[0].geometry.as_ref()
+    else {
         panic!("row expected")
     };
-    let Geometry::Group { children: after } = after[0].geometry.as_ref() else {
+    let Geometry::Box {
+        children: after, ..
+    } = after[0].geometry.as_ref()
+    else {
         panic!("row expected")
     };
     assert!((after[0].position.values[0] - before[0].position.values[0] - 100.).abs() < 1e-6);

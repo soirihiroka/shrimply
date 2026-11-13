@@ -303,14 +303,14 @@ overflow fail explicitly. Matrix inversion uses partial pivoting.
 `Vec3` is never silently extended to homogeneous coordinates. These native types
 retain their schemas in reflection and typed JSON/TOML/NPY data loading.
 
-`Circle`, `Rect`/`Rectangle`, `Line`, `Polygon`, `Text`, `Group`, `Row` and `Column`
+`Circle`, `Rect`/`Rectangle`, `Line`, `Polygon`, `Text`/`Label`, `Box` and `CodeView`
 construct immutable elements. `MoveTo`, `Shift`, `FadeIn`, `FadeOut`, `RotateTo`,
 `ScaleTo`, `FillTo`, `Create`, `Write`, `Uncreate`, `Unwrite`, `GrowFromCenter`,
 `ShrinkToCenter`, `ExpandX` and `StretchXTo` schedule directly and advance the script
 cursor. They return `Unit`, with a default duration of 300ms. Give a list of targets
 to animate them together: `FadeIn([heading, subtitle], duration=400ms)`. Sequential
 calls advance in order; use `background { ... }` for independent concurrent work.
-When animating a group and its children in separate calls, `add(group)` first to
+When animating a box and its children in separate calls, `add(box)` first to
 establish the hierarchy before scheduling child animations.
 `wait` advances time without changing the scene.
 `add` inserts a still element. Functions may schedule animation. There is no
@@ -496,7 +496,7 @@ replacement expressions retain full validation.
 
 ```sanim
 mut items: List<Element> = []
-let row = Row(children=items, width=400pt, height=100pt, gap=12pt)
+let row = Box(flex_direction="row",children=items, width=400pt, height=100pt, gap=12pt)
 add(row)
 items = append(items, Rect(width=64pt, height=64pt), duration=0.5s)
 items = popleft(items, duration=300ms)
@@ -504,7 +504,7 @@ items = popleft(items, duration=300ms)
 
 Assigning a timed result to a mutable list records a bounded state transition.
 Logical state commits at the end; seeking restores the correct snapshot without
-replaying edits. A bound `Row`/`Column` matches stable element identities, fades
+replaying edits. A bound flex Box matches stable element identities, fades
 entries/exits, and interpolates surviving items between Taffy layouts. Removed
 items are temporary overlays and do not occupy destination layout slots. Layout
 responds to the host viewport during the transition. A replacement with different
@@ -535,18 +535,24 @@ Rect(
 )
 ```
 
-Ordinary shapes default to center alignment and zero offset. Groups default to
-start/start alignment. Percentage offsets resolve against parent dimensions.
-`Row` lays children out with gaps and wraps when its available width shrinks;
-`Column` stacks them. Flow controls immediate child positions: conflicting position
-motions fail explicitly. Groups used as flow children need explicit dimensions.
-Rotated shapes need explicit placement when their flow extent is unavailable.
+Ordinary shapes default to center alignment and zero offset. Box defaults to
+start/start alignment, transparent fill and no border or radius. Its width fills
+the available parent width; its automatic height measures children in vertical
+block flow, like an unstyled div. Empty boxes have zero natural height. Percentage
+offsets resolve against parent dimensions. An automatic-height parent with a
+percentage-height child fails with a constraint-cycle diagnostic.
+
+Opt into flex layout with `<Box flex flex-row>` or `<Box flex flex-col>`.
+Padding, gaps, wrapping, justification, alignment and flex factors share the same
+layout boundary. Flow controls immediate child positions: conflicting position
+motions fail explicitly. Intrinsic leaves keep their geometry inside allocated
+layout boxes; allocating more width does not stretch a circle or enlarge a font.
 
 Canvas dimensions, frame rate and DPI belong to the host, never to the script.
 CLI `--width`, `--height`, `--fps` and `--dpi` supply that viewport; logical pt size
 is pixels × 72 / DPI. Browser/CSS reference DPI is 96, so `96px` equals `72pt`.
 Scripts can set `bg(color)`. A host can call `Animation::layout` with new
-logical dimensions without reparsing. `Row`/`Column` use Taffy flexbox with padding,
+logical dimensions without reparsing. Box layout uses Taffy with padding,
 gaps, wrapping, `Justify` and independent cross-axis `Align`; Taffy layout uses f32
 geometry while timeline arithmetic remains exact.
 
@@ -871,38 +877,37 @@ Native element notation lowers to the same constructors and render state:
 
 ```sanim
 let name = reflect("Sanim")
-let card = <Rect design="w-60% h-40% card col items-center justify-center gap-16">
-    <Label design="text-xl text-light1">Hello {name}</Label>
-    <Rect design="w-200 h-44 pill" fill={LinearGradient(from=Color("blue3"),to=Color("purple3"))}>
+let card = <Box w-60% h-40% card flex flex-col items-center justify-center gap-16>
+    <Label text-xl text-light1>Hello {name}</Label>
+    <Box w-200 h-44 pill fill={LinearGradient(from=Color("blue3"),to=Color("purple3"))}>
         <Label font_size={16pt}>Native gradient</Label>
-    </Rect>
-</Rect>
+    </Box>
+</Box>
 add(card)
 wait(2s)
 ```
 
 `Label` is `Text`. Attributes use quoted strings, `{typed_expression}`, or bare
-boolean flags. Literal color attributes use the registered parameter type to
+boolean flags or native utilities such as `<Box w-180 flex flex-col>`. Literal color attributes use the registered parameter type to
 lower `fill="blue3"` to `Color("blue3")`. Text supports the same interpolation,
 Python format specifications, `{{`/`}}` escapes and reactive snapshots as strings.
 Nested elements are ordinary `List<Element>` children with stable source/binding
 identities; rectangles remain painted shapes whose root properties animate.
 
-`design` accepts bounded native utilities: `card`, `raised`, `pill`, `suggested`,
-`destructive`, `row`/`col`, `items-start/center/end`, `justify-start/center/end/between/around`,
-`wrap`, `gap-N`, `p-N`, `w-N`, `h-N`, `rounded[-sm/lg/xl/full/none]`, `rounded-N`,
+Bare opening-tag attributes supply bounded native utilities: `card`, `raised`, `pill`, `suggested`,
+`destructive`, `flex`, `flex-row`/`flex-col`, `items-start/center/end`, `justify-start/center/end/between/around`,
+`flex-wrap`, `grow`, `shrink`, `flex-1`, `flex-none`, `basis-N`, `gap-N`, `p-N`, `w-N`, `h-N`, `rounded[-sm/lg/xl/full/none]`, `rounded-N`,
 `bg-COLOR`, `text-COLOR` on labels, and `border[-N]`/`border-COLOR`.
 Numbers are logical pt. Width and height also accept percentages and `full`,
 resolved against the external parent viewport after signal/animation sampling.
 Pill corners remain fully round when resized. Explicit constructor arguments
-win over design defaults; unknown or incompatible utilities fail with guidance.
+win over utility defaults; unknown or incompatible utilities fail with guidance.
 
 Native fills accept `Color` or `LinearGradient(from=Color("blue3"),
 to=Color("purple3"), angle=0deg)`. A gradient may instead provide an explicit typed
 `stops=[{offset=0,color=Color("blue3")}, {offset=1,color=Color("purple3")}]` list.
 Gradients support 2–64 ordered stops covering 0–1; 0deg points right, 90deg down.
-Gradients are typed `fill` values; `design` does not encode directions or color
-stops. Skia shaders paint the existing native path directly. Gradient stop
+Gradients are typed `fill` values; utilities do not encode gradient directions or color stops. Skia shaders paint the existing native path directly. Gradient stop
 interpolation currently fails explicitly; opacity and transform animations work.
 See [the complete native markup animation](examples/native_markup.sanim).
 `make markup-bench` verifies identical native IR and measures rendering against
@@ -917,7 +922,7 @@ syntax scopes and scrolling through native Pango/Skia. Actual syntax trees are
 cached by source and grammar and shared across views and timeline revisions.
 See [CodeView](docs/code-view.md) and [the example](examples/code_view.sanim).
 
-`ScrollView` provides the same clipped viewport for ordinary element trees.
+A container with `overflow="auto"` provides the same clipped viewport for ordinary element trees.
 Animate its `scroll` signal or call `scroll_to(y=100%, duration=600ms)`; percentages
 stay relative to the current overflow after resizing. CodeView additionally
 accepts source-line and syntax-scope targets. See [scrolling](docs/scrolling.md)

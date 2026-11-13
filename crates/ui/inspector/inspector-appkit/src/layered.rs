@@ -24,6 +24,7 @@ pub(super) fn view(
         "Toggle keyframes",
         control.layered.keyframes,
         move |requested| {
+            editing.end_editing();
             let result =
                 editing
                     .controller
@@ -49,6 +50,7 @@ pub(super) fn view(
         "Toggle expression",
         control.layered.expression,
         move |requested| {
+            editing.end_editing();
             let result =
                 editing
                     .controller
@@ -124,6 +126,7 @@ pub(super) fn view(
                                 choices,
                                 menu.value,
                                 move |value| {
+                                    selected_context.end_editing();
                                     let selected = value
                                         .parse()
                                         .expect("text interpolation choice is an index");
@@ -144,6 +147,9 @@ pub(super) fn view(
                             action,
                             FrameGraphAction::KeysMoved(_) | FrameGraphAction::PlayheadChanged(_)
                         );
+                        if !live {
+                            editing.end_editing();
+                        }
                         let result = editing.controller.apply_control_graph_action(
                             &editing.target,
                             &edited,

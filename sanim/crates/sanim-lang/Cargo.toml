@@ -8,6 +8,7 @@ license.workspace = true
 imbl.workspace = true
 sanim-core.workspace = true
 sanim-data.workspace = true
+shrimply-asset.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

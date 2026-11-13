@@ -29,7 +29,8 @@ fn tile(id: &str) -> Element {
 fn nested_future_views_keep_their_clock_and_sample_their_actual_transition() {
     let mut animation = animation(&[]);
     let mut inner = tile("inner_view");
-    inner.geometry = Arc::new(Geometry::Group {
+    inner.geometry = Arc::new(Geometry::Box {
+        radius: Default::default(),
         children: Default::default(),
     });
     inner.layout = Layout {
@@ -66,7 +67,7 @@ fn nested_future_views_keep_their_clock_and_sample_their_actual_transition() {
         middle
     );
     let outer_children = children(&animation, middle, 100);
-    let Geometry::Group { children } = outer_children[0].geometry.as_ref() else {
+    let Geometry::Box { children, .. } = outer_children[0].geometry.as_ref() else {
         unreachable!()
     };
     assert_eq!(children[0].id, "nested_child");
@@ -78,7 +79,8 @@ fn populated_nested_views_keep_independent_ownership_and_cycles_fail_before_comm
     let mut animation = animation(&[]);
     let initial = items(&["nested_initial"]);
     let mut inner = tile("populated_inner");
-    inner.geometry = Arc::new(Geometry::Group {
+    inner.geometry = Arc::new(Geometry::Box {
+        radius: Default::default(),
         children: initial
             .values
             .iter()
@@ -109,7 +111,7 @@ fn populated_nested_views_keep_independent_ownership_and_cycles_fail_before_comm
         .write_list_edit(1, 0.into(), 0.into(), &edit, Easing::Linear)
         .unwrap();
     let outer = children(&animation, 0.into(), 100);
-    let Geometry::Group { children } = outer[0].geometry.as_ref() else {
+    let Geometry::Box { children, .. } = outer[0].geometry.as_ref() else {
         unreachable!()
     };
     assert_eq!(children[0].id, "nested_initial");
@@ -119,7 +121,8 @@ fn populated_nested_views_keep_independent_ownership_and_cycles_fail_before_comm
 
     let mut cyclic = Animation::default();
     let mut a = tile("a_view");
-    a.geometry = Arc::new(Geometry::Group {
+    a.geometry = Arc::new(Geometry::Box {
+        radius: Default::default(),
         children: Default::default(),
     });
     a.layout = Layout {
@@ -163,7 +166,8 @@ fn dynamic_view_nesting_is_bounded_before_sampling_can_recurse() {
     let mut views = Vec::new();
     for index in 0..=sanim_core::reactive::MAX_REACTIVE_DEPTH {
         let mut view = tile(&format!("depth_{index}"));
-        view.geometry = Arc::new(Geometry::Group {
+        view.geometry = Arc::new(Geometry::Box {
+            radius: Default::default(),
             children: Default::default(),
         });
         view.layout = Layout {
@@ -206,7 +210,8 @@ fn entry_and_exit_scaling_keep_rect_and_group_slot_centers_fixed() {
     for grouped in [false, true] {
         let mut item = tile("fixed_center");
         if grouped {
-            item.geometry = Arc::new(Geometry::Group {
+            item.geometry = Arc::new(Geometry::Box {
+                radius: Default::default(),
                 children: vec![tile("face")].into(),
             });
             item.layout.width = Some(sanim_core::Number {
@@ -378,7 +383,8 @@ fn items(names: &[&str]) -> List {
 fn animation(names: &[&str]) -> Animation {
     let initial = items(names);
     let mut view = tile("view");
-    view.geometry = Arc::new(Geometry::Group {
+    view.geometry = Arc::new(Geometry::Box {
+        radius: Default::default(),
         children: names.iter().map(|name| tile(name)).collect(),
     });
     view.layout = Layout {
@@ -400,7 +406,7 @@ fn animation(names: &[&str]) -> Animation {
 }
 fn children(animation: &Animation, time: Fraction, width: u32) -> Vec<Element> {
     let roots = animation.layout(time, width.into(), 100.into()).unwrap();
-    let Geometry::Group { children } = roots[0].geometry.as_ref() else {
+    let Geometry::Box { children, .. } = roots[0].geometry.as_ref() else {
         unreachable!()
     };
     children.iter().cloned().collect()

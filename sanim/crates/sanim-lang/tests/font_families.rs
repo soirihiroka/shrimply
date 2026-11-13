@@ -113,7 +113,7 @@ fn axis_labels_share_the_same_optional_font_default() {
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
     assert_eq!(prepared.dependencies.len(), 1);
-    let Geometry::Group { children } = prepared.animation.layers[0].element.geometry.as_ref()
+    let Geometry::Box { children, .. } = prepared.animation.layers[0].element.geometry.as_ref()
     else {
         panic!("axis")
     };

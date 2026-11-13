@@ -55,9 +55,6 @@ pub(crate) fn register(output: &mut Vec<Builtin>, common: Vec<Parameter>) {
         p("line_numbers", Type::Bool, false),
         p("theme", theme_type(), false),
         p("spans", Type::List(Box::new(span_type())), false),
-        p("width", Layout::dimension_type(), false),
-        p("height", Layout::dimension_type(), false),
-        p("scroll", Type::Vector(2, None), false),
     ];
     parameters.extend(common);
     output.push(Builtin {
@@ -346,12 +343,23 @@ fn execute(
                     .unwrap_or_default(),
             });
             let mut group_args = args.clone();
+            if !group_args.contains_key("overflow")
+                && args.contains_key("width")
+                && args.contains_key("height")
+            {
+                group_args.insert("overflow".into(), Value::String("auto".into()));
+            }
             group_args.remove("font");
             group_args.insert(
                 "children".into(),
                 Value::List(List::typed(Type::Element, vec![])),
             );
-            let Value::Element(mut root) = crate::native::element("Group", &group_args, context)?
+            let Value::Element(mut root) = crate::native::composition(
+                &group_args,
+                context.module,
+                context.identity,
+                context.span,
+            )?
             else {
                 unreachable!()
             };
@@ -372,23 +380,6 @@ fn execute(
                 Some(Value::Variant { tag, .. }) => Align::from_name(tag)?,
                 _ => Align::Center,
             };
-            let viewport = args.contains_key("width") && args.contains_key("height");
-            if args.contains_key("width") != args.contains_key("height") {
-                return Err("CodeView viewport requires both width= and height=".into());
-            }
-            if args.contains_key("scroll") && !viewport {
-                return Err(
-                    "CodeView scroll requires width= and height= viewport dimensions".into(),
-                );
-            }
-            if viewport {
-                element.layout.scroll = Some(
-                    args.get("scroll")
-                        .map(Value::vec2)
-                        .transpose()?
-                        .unwrap_or_else(|| Vec2::zero(Unit::Length)),
-                );
-            }
             Ok(Value::Element(root))
         }
         "CodeView.scopes" => {

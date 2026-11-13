@@ -12,6 +12,7 @@ pub(super) fn select(
     selection: FileSelection,
     mtm: MainThreadMarker,
 ) {
+    context.end_editing();
     let context = context.clone();
     choose(
         selection,

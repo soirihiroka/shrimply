@@ -124,9 +124,6 @@ pub fn evaluate_with(
             time,
             &mut native,
         )?;
-        if matches!(sampled.geometry.as_ref(), Geometry::Group { .. }) {
-            return Err("group assertions require composed layout evidence".into());
-        }
         crate::layout::resolve(
             &mut sampled,
             crate::math::to_f64(animation.logical_size().0)?,
@@ -396,7 +393,7 @@ pub(crate) fn bounds_at(
                 unit: crate::Unit::Length,
             },
         ),
-        Geometry::Rectangle { width, height, .. } => (
+        Geometry::Rectangle { width, height, .. } | Geometry::Media { width, height, .. } => (
             Vec2 {
                 values: [
                     -calc("/", to_f64(*width)?, 2.0)?,
@@ -456,7 +453,9 @@ pub(crate) fn bounds_at(
                 },
             )
         }
-        Geometry::Group { .. } | Geometry::Code { .. } if element.layout.scroll.is_some() => {
+        Geometry::Code { .. }
+            if element.layout.overflow_x.clips() && element.layout.overflow_y.clips() =>
+        {
             let viewport = crate::scrolling::viewport(element)?;
             (
                 Vec2 {
@@ -469,10 +468,42 @@ pub(crate) fn bounds_at(
                 },
             )
         }
+        Geometry::Box { children, .. } => {
+            let dimension = |number: Option<crate::Number>| -> Result<f64, String> {
+                let number = number.ok_or("Box bounds require resolved layout dimensions")?;
+                if number.unit != crate::Unit::Length {
+                    return Err("Box bounds require resolved layout dimensions".into());
+                }
+                to_f64(number.value)
+            };
+            let mut min = Vec2::zero(crate::Unit::Length);
+            let mut max = Vec2 {
+                values: [
+                    dimension(element.layout.width)?,
+                    dimension(element.layout.height)?,
+                ],
+                unit: crate::Unit::Length,
+            };
+            if !element.layout.overflow_x.clips() || !element.layout.overflow_y.clips() {
+                for child in children {
+                    let child = bounds(child)?;
+                    for (axis, overflow) in [element.layout.overflow_x, element.layout.overflow_y]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        if !overflow.clips() {
+                            min.values[axis] = min.values[axis].min(child.min.values[axis]);
+                            max.values[axis] = max.values[axis].max(child.max.values[axis]);
+                        }
+                    }
+                }
+            }
+            (min, max)
+        }
         Geometry::Code { pending: true, .. } => {
             return Err("code layout is unresolved; native layout must resolve the sampled source/styles before computing visual bounds".into());
         }
-        Geometry::Group { children } | Geometry::Code { children, .. } => {
+        Geometry::Code { children, .. } => {
             let bounds = children.iter().map(bounds).collect::<Result<Vec<_>, _>>()?;
             (
                 Vec2 {
@@ -516,6 +547,18 @@ pub(crate) fn bounds_at(
             (bounds.min, bounds.max)
         }
     };
+    if element.layout.clips() {
+        let viewport = crate::scrolling::viewport(element)?;
+        for (axis, overflow) in [element.layout.overflow_x, element.layout.overflow_y]
+            .into_iter()
+            .enumerate()
+        {
+            if overflow.clips() {
+                min.values[axis] = viewport[axis];
+                max.values[axis] = viewport[axis + 2];
+            }
+        }
+    }
     if let Some(stroke) = &element.stroke {
         let half = to_f64(stroke.width)? / 2.;
         if half < 0. {

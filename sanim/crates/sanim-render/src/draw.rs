@@ -61,8 +61,6 @@ pub(crate) fn prepared_path(
             &serde_json::to_vec(&("Rectangle", width, height, radius))
                 .map_err(|error| error.to_string())?,
         )
-    } else if let Geometry::Text { outline, .. } = element.geometry.as_ref() {
-        digest(&serde_json::to_vec(&("Text", outline)).map_err(|error| error.to_string())?)
     } else {
         digest(&serde_json::to_vec(element.geometry.as_ref()).map_err(|error| error.to_string())?)
     };
@@ -142,7 +140,7 @@ pub(crate) fn prepared_path(
                 }
                 path.detach()
             }
-            Geometry::Group { .. } | Geometry::Code { .. } => {
+            Geometry::Box { .. } | Geometry::Code { .. } | Geometry::Media { .. } => {
                 unreachable!("groups handled before geometry preparation")
             }
         };
@@ -188,6 +186,15 @@ pub(crate) trait Output {
     fn enter(&mut self, _element: &Element) {}
     fn leave(&mut self) {}
     fn clip(&mut self, _canvas: &Canvas, _bounds: &Rect) {}
+    fn media(
+        &mut self,
+        canvas: &Canvas,
+        prepared: &Arc<shrimply_drawing_skia::media::Prepared>,
+        bounds: &Rect,
+        opacity: f32,
+    ) -> Result<(), String> {
+        prepared.draw(canvas, bounds, opacity)
+    }
     fn path(
         &mut self,
         canvas: &Canvas,
@@ -197,8 +204,32 @@ pub(crate) trait Output {
         bounds: &Rect,
     ) -> Result<(), String>;
 }
-pub(crate) struct RecordingOutput;
+#[derive(Default)]
+pub(crate) struct RecordingOutput {
+    media: std::collections::BTreeMap<usize, Arc<shrimply_drawing_skia::media::Prepared>>,
+    pub media_bytes: usize,
+}
 impl Output for RecordingOutput {
+    fn media(
+        &mut self,
+        canvas: &Canvas,
+        prepared: &Arc<shrimply_drawing_skia::media::Prepared>,
+        bounds: &Rect,
+        opacity: f32,
+    ) -> Result<(), String> {
+        let identity = Arc::as_ptr(prepared) as usize;
+        if let std::collections::btree_map::Entry::Vacant(entry) = self.media.entry(identity) {
+            self.media_bytes = self
+                .media_bytes
+                .checked_add(prepared.retained_bytes())
+                .ok_or("media frame byte budget overflow")?;
+            if self.media_bytes > sanim_data::Limits::default().max_bytes {
+                return Err("native media frame exceeds its retained byte budget".into());
+            }
+            entry.insert(prepared.clone());
+        }
+        prepared.draw(canvas, bounds, opacity)
+    }
     fn path(
         &mut self,
         canvas: &Canvas,
@@ -223,10 +254,19 @@ fn clip_children<O: Output>(
     element: &Element,
     drawing: &mut Drawing<'_, O>,
 ) -> Result<(), String> {
-    if element.layout.scroll.is_some() || matches!(element.geometry.as_ref(), Geometry::Code { .. })
-    {
+    if element.layout.clips() {
         let [left, top, right, bottom] = sanim_core::scrolling::viewport(element)?;
-        let bounds = Rect::new(left as f32, top as f32, right as f32, bottom as f32);
+        let Some(mut bounds) = canvas.local_clip_bounds() else {
+            return Ok(());
+        };
+        if element.layout.overflow_x.clips() {
+            bounds.left = left as f32;
+            bounds.right = right as f32;
+        }
+        if element.layout.overflow_y.clips() {
+            bounds.top = top as f32;
+            bounds.bottom = bottom as f32;
+        }
         canvas.clip_rect(bounds, None, true);
         drawing.output.clip(canvas, &bounds);
     }
@@ -237,6 +277,112 @@ fn scroll_children(canvas: &Canvas, element: &Element) {
     if let Some(offset) = element.layout.scroll {
         canvas.translate((-offset.values[0] as f32, -offset.values[1] as f32));
     }
+}
+
+fn draw_scrollbars<O: Output>(
+    canvas: &Canvas,
+    element: &Element,
+    drawing: &mut Drawing<'_, O>,
+) -> Result<(), String> {
+    if !element.layout.clips() {
+        return Ok(());
+    }
+    let viewport = sanim_core::scrolling::viewport(element)?;
+    let bars = math::scroll::bars(
+        viewport,
+        element.layout.scroll_range,
+        element
+            .layout
+            .scroll
+            .map_or([0.; 2], |offset| offset.values),
+        [element.layout.overflow_x, element.layout.overflow_y],
+    );
+    let full = Rect::new(
+        viewport[0] as f32,
+        viewport[1] as f32,
+        viewport[2] as f32,
+        viewport[3] as f32,
+    );
+    let fill = Color::parse("light4")?;
+    for bar in bars {
+        for (bounds, opacity) in [
+            (bar.track, Fraction::new(1u64, 8u64)),
+            (bar.thumb, Fraction::new(3u64, 5u64)),
+        ] {
+            let rect = Rect::new(
+                bounds[0] as f32,
+                bounds[1] as f32,
+                bounds[2] as f32,
+                bounds[3] as f32,
+            );
+            let mut builder = PathBuilder::new();
+            builder.add_rrect(
+                skia_safe::RRect::new_rect_xy(
+                    rect,
+                    math::scroll::THICKNESS as f32 / 2.,
+                    math::scroll::THICKNESS as f32 / 2.,
+                ),
+                None,
+                None,
+            );
+            let path = builder.detach();
+            drawing.work = drawing
+                .work
+                .checked_sub(path.count_points())
+                .ok_or("scrollbar rendering exceeds render work budget")?;
+            drawing.output.path(
+                canvas,
+                &path,
+                &paint(&fill, opacity)?,
+                &fill.clone().into(),
+                &full,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn draw_box<O: Output>(
+    canvas: &Canvas,
+    element: &Element,
+    radius: &CornerRadius,
+    drawing: &mut Drawing<'_, O>,
+) -> Result<(), String> {
+    if matches!(&element.fill, sanim_core::Paint::Solid(color) if color.0[3] == Fraction::from(0))
+        && element.stroke.is_none()
+    {
+        return Ok(());
+    }
+    let edges = sanim_core::scrolling::viewport(element)?;
+    let bounds = Rect::new(
+        edges[0] as f32,
+        edges[1] as f32,
+        edges[2] as f32,
+        edges[3] as f32,
+    );
+    let radius = to_f64(radius.resolve(
+        math::from_f64(bounds.width() as f64)?,
+        math::from_f64(bounds.height() as f64)?,
+    ))? as f32;
+    let path = shape::rect_path(bounds, radius, ShapeRoundingStrategy::Circular);
+    drawing.work = drawing
+        .work
+        .checked_sub(path.count_points())
+        .ok_or("Box decoration exceeds render work budget")?;
+    let background = fill_paint(&element.fill, Fraction::from(1), &bounds)?;
+    drawing
+        .output
+        .path(canvas, &path, &background, &element.fill, &bounds)?;
+    if let Some(stroke) = &element.stroke {
+        let mut border = fill_paint(&stroke.paint, Fraction::from(1), &bounds)?;
+        border
+            .set_style(skia_safe::paint::Style::Stroke)
+            .set_stroke_width(to_f64(stroke.width)? as f32);
+        drawing
+            .output
+            .path(canvas, &path, &border, &stroke.paint, &bounds)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn element_draw<O: Output>(
@@ -307,10 +453,34 @@ pub(crate) fn element_draw<O: Output>(
                 return Ok(());
             }
         }
-        if let Geometry::Group { children } | Geometry::Code { children, .. } =
+        if let Geometry::Media {
+            asset,
+            width,
+            height,
+        } = element.geometry.as_ref()
+        {
+            let width = to_f64(*width)? as f32;
+            let height = to_f64(*height)? as f32;
+            let bounds = Rect::from_xywh(-width / 2., -height / 2., width, height);
+            if canvas.quick_reject(&bounds) {
+                return Ok(());
+            }
+            let prepared =
+                shrimply_drawing_skia::media::prepare_hashed(asset.bytes(), asset.fingerprint())?;
+            if reveal.progress < Fraction::from(1) {
+                let mut visible = bounds;
+                visible.right = visible.left + visible.width() * to_f64(reveal.progress)? as f32;
+                canvas.clip_rect(visible, None, true);
+                drawing.output.clip(canvas, &visible);
+            }
+            drawing
+                .output
+                .media(canvas, &prepared, &bounds, to_f64(element.opacity)? as f32)?;
+            return Ok(());
+        }
+        if let Geometry::Box { children, .. } | Geometry::Code { children, .. } =
             element.geometry.as_ref()
         {
-            clip_children(canvas, element, drawing)?;
             if element.opacity != Fraction::from(1) {
                 let mut local = element.clone();
                 local.position = Vec2::zero(Unit::Length);
@@ -346,11 +516,18 @@ pub(crate) fn element_draw<O: Output>(
                     .ok_or("group compositing exceeds render work budget")?;
                 canvas.save_layer_alpha_f(bounds, to_f64(element.opacity)? as f32);
             }
+            if let Geometry::Box { radius, .. } = element.geometry.as_ref() {
+                draw_box(canvas, element, radius, drawing)?;
+            }
+            clip_children(canvas, element, drawing)?;
+            let content = canvas.save();
             scroll_children(canvas, element);
             // A group reveals its children in parallel, retaining each child's own reveal limit.
             for child in children {
                 element_draw(canvas, child, reveal, drawing)?;
             }
+            canvas.restore_to_count(content);
+            draw_scrollbars(canvas, element, drawing)?;
             return Ok(());
         }
         let prepared = prepared_path(element, drawing.renderer)?;
@@ -482,10 +659,13 @@ pub(crate) fn element_draw<O: Output>(
         }
         if let Some(children) = element.geometry.children() {
             clip_children(canvas, element, drawing)?;
+            let content = canvas.save();
             scroll_children(canvas, element);
             for child in children {
                 element_draw(canvas, child, reveal, drawing)?;
             }
+            canvas.restore_to_count(content);
+            draw_scrollbars(canvas, element, drawing)?;
         }
         Ok(())
     })();

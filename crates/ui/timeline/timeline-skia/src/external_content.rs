@@ -3,7 +3,6 @@ use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::time::Duration;
 
 use imagesize::ImageType;
 use shrimply_editor_state::player_state;
@@ -13,7 +12,6 @@ use super::*;
 
 const CLIPBOARD_MEDIA_DIR: &str = "media/clipboard";
 const MAX_CLIPBOARD_IMAGE_BYTES: usize = 100 * 1024 * 1024;
-const IMAGE_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub enum ExternalText {
     Text(String),
@@ -74,32 +72,12 @@ pub fn external_files_need_remux(paths: &[PathBuf]) -> Result<bool, String> {
 }
 
 fn download_image(url: &str) -> Result<OwnedFile, String> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent(concat!("shrimply/", env!("CARGO_PKG_VERSION")))
-        .timeout(IMAGE_DOWNLOAD_TIMEOUT)
-        .build()
-        .map_err(|error| error.to_string())?;
-    let response = client
-        .get(url)
-        .header(reqwest::header::ACCEPT, "image/*")
-        .send()
-        .map_err(|error| error.to_string())?
-        .error_for_status()
-        .map_err(|error| error.to_string())?;
-    let extension = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(image_extension_for_content_type)
+    let response = shrimply_asset::remote::load(url, MAX_CLIPBOARD_IMAGE_BYTES)?;
+    let extension = response.content_type.as_deref().and_then(image_extension_for_content_type)
         .or_else(|| image_extension_for_url(url))
         .ok_or("the dropped URL did not resolve to a supported image")?;
-    let mut bytes = Vec::new();
-    response
-        .take((MAX_CLIPBOARD_IMAGE_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
-    validate_clipboard_image_length(bytes.len())?;
-    store_clipboard_image_with_extension(&bytes, extension).map(OwnedFile::new)
+    validate_clipboard_image_length(response.bytes.len())?;
+    store_clipboard_image_with_extension(&response.bytes, extension).map(OwnedFile::new)
 }
 
 pub fn store_clipboard_image(bytes: &[u8]) -> Result<PathBuf, String> {

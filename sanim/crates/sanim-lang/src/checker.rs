@@ -1412,7 +1412,7 @@ impl Checker<'_> {
                 );
                 let mut all = vec![(None, *base.clone())];
                 let method_args = if builtin.name == "DataFrame.assign" {
-                    crate::dataframe::named_assignments(args.clone(), |columns| Expr {
+                    crate::dataframe::named_assignments(args.clone(), |columns| Expr { cache_id: crate::ast::next_expr_identity(), 
                         kind: ExprKind::Record(columns),
                         span: expr.span,
                     })

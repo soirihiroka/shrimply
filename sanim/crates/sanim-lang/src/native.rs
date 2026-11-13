@@ -3,6 +3,7 @@ use sanim_core::{
     verify::{Predicate, Relation},
     *,
 };
+use std::sync::Arc;
 
 pub(crate) struct Context<'a> {
     pub module: &'a str,
@@ -463,11 +464,8 @@ pub(crate) fn relationship(
 pub(crate) fn element(
     name: &str,
     args: &imbl::OrdMap<String, Value>,
-    mut context: Context<'_>,
+    context: Context<'_>,
 ) -> Result<Value, String> {
-    if let Some(design) = args.get("design") {
-        context.charge_work(design.string()?.len())?;
-    }
     make_element(name, args, context.module, context.identity, context.span)
 }
 
@@ -478,98 +476,68 @@ pub(crate) fn make_element(
     identity: &[String],
     span: Span,
 ) -> Result<Value, String> {
-    if args.contains_key("design") {
-        let design = crate::design::resolve(name, args)?;
-        let value = make_element_raw(name, &design.args, module, identity, span)?;
-        let Value::Element(element) = value else {
-            unreachable!("native element")
-        };
-        let mut element = std::sync::Arc::unwrap_or_clone(element);
-        if let Some(direction) = design.direction {
-            if element.geometry.children().is_none() {
-                return Err(format!(
-                    "{name} does not support child layout; use Rect, Row or Column"
-                ));
-            }
-            element.layout.direction = Some(direction);
-        }
-        if design.pill {
-            let Geometry::Rectangle { radius, .. } =
-                std::sync::Arc::make_mut(&mut element.geometry)
-            else {
-                return Err("pill/rounded-full requires Rect or Rectangle".into());
-            };
-            *radius = CornerRadius::Pill;
-        }
-        if let Some(border) = design.stroke {
-            element.stroke = Some(sanim_core::paint::Stroke {
-                paint: border.color.into(),
-                width: border.width,
-            });
-        }
-        return Ok(Value::Element(element.into()));
-    }
-    make_element_raw(name, args, module, identity, span)
-}
-fn make_element_raw(
-    name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    module: &str,
-    identity: &[String],
-    span: Span,
-) -> Result<Value, String> {
     let required = |name: &str| {
         args.get(name)
             .ok_or_else(|| format!("missing argument '{name}'"))
+    };
+    let radius = || -> Result<CornerRadius, String> {
+        match args.get("radius") {
+            Some(Value::String(value)) if value.as_ref() == "full" => Ok(CornerRadius::Pill),
+            Some(Value::String(_)) => Err("radius accepts a Length or \"full\"".into()),
+            _ => {
+                let radius = number(args, "radius", Fraction::from(0))?;
+                if !math::finite(&radius) || radius < Fraction::from(0) {
+                    return Err("radius must be finite and nonnegative".into());
+                }
+                Ok(radius.into())
+            }
+        }
     };
     let geometry = match name {
         "Circle" => Geometry::Circle {
             radius: positive(args, "radius", Fraction::from(32))?,
         },
-        "Rectangle" | "Rect" => {
-            let radius = number(args, "radius", Fraction::from(0))?;
-            if !math::finite(&radius) || radius < Fraction::from(0) {
-                return Err("Rect radius must be finite and nonnegative".into());
-            }
-            Geometry::Rectangle {
-                width: positive(args, "width", Fraction::from(64))?,
-                height: positive(args, "height", Fraction::from(64))?,
-                radius: radius.into(),
-                children: args
-                    .get("children")
-                    .map(|value| {
-                        value
-                            .list()?
-                            .iter()
-                            .map(|value| {
-                                if let Value::Element(element) = value {
-                                    Ok(element.as_ref().clone())
-                                } else {
-                                    Err("Rect children must be Elements".to_string())
-                                }
-                            })
-                            .collect::<Result<imbl::Vector<_>, _>>()
-                    })
-                    .transpose()?
-                    .unwrap_or_default(),
-            }
-        }
-        "Group" | "Row" | "Column" | "ScrollView" => {
-            let children = required("children")?
-                .list()?
-                .iter()
-                .map(|v| {
-                    if let Value::Element(e) = v {
-                        Ok(e.as_ref().clone())
-                    } else {
-                        Err("Group children must be Elements")
-                    }
+        "Rectangle" | "Rect" => Geometry::Rectangle {
+            width: positive(args, "width", Fraction::from(64))?,
+            height: positive(args, "height", Fraction::from(64))?,
+            radius: radius()?,
+            children: args
+                .get("children")
+                .map(|value| {
+                    value
+                        .list()?
+                        .iter()
+                        .map(|value| {
+                            if let Value::Element(element) = value {
+                                Ok(element.as_ref().clone())
+                            } else {
+                                Err("Rect children must be Elements".to_string())
+                            }
+                        })
+                        .collect::<Result<imbl::Vector<_>, _>>()
                 })
-                .collect::<Result<Vec<_>, _>>()?;
-            Geometry::Group {
-                children: children.into(),
-            }
-        }
+                .transpose()?
+                .unwrap_or_default(),
+        },
+        "Box" => Geometry::Box {
+            children: args
+                .get("children")
+                .map(|value| {
+                    value
+                        .list()?
+                        .iter()
+                        .map(|value| {
+                            let Value::Element(child) = value else {
+                                return Err("Box children must be Elements".to_string());
+                            };
+                            Ok(child.as_ref().clone())
+                        })
+                        .collect::<Result<imbl::Vector<_>, String>>()
+                })
+                .transpose()?
+                .unwrap_or_default(),
+            radius: radius()?,
+        },
         "Line" => {
             let end = required("end")?.vec2()?;
             if end.unit != sanim_core::Unit::Length {
@@ -631,7 +599,7 @@ fn make_element_raw(
                 font: font.clone(),
                 size,
                 outline: shaped.outline.clone(),
-                bounds: shaped.bounds,
+                bounds: sanim_data::font::bounds(&shaped),
                 pending: false,
             }
         }
@@ -646,7 +614,7 @@ fn make_element_raw(
     if id.is_empty() {
         return Err("element id must be nonempty".into());
     }
-    let group = matches!(geometry, Geometry::Group { .. });
+    let group = matches!(geometry, Geometry::Box { .. });
     let position = args
         .get("position")
         .map(Value::vec2)
@@ -657,7 +625,12 @@ fn make_element_raw(
     }
     let fill = match args.get("fill") {
         Some(value) => sanim_core::Paint::from_value(value)?,
-        None => Color::parse("light1")?.into(),
+        None => Color::parse(if name == "Box" {
+            "transparent"
+        } else {
+            "light1"
+        })?
+        .into(),
     };
     let opacity = number(args, "opacity", Fraction::from(1))?;
     if !(Fraction::from(0)..=Fraction::from(1)).contains(&opacity) {
@@ -682,14 +655,24 @@ fn make_element_raw(
         None => Align::Start,
         _ => return Err("align requires an Align enum case".into()),
     };
-    let layout = Layout {
+    let mut layout = Layout {
         x_align: alignment("x_align")?,
         y_align: alignment("y_align")?,
-        direction: match name {
-            "Row" => Some(Direction::Row),
-            "Column" => Some(Direction::Column),
-            _ => None,
+        position_offset: [0.; 2],
+        direction: match args.get("flex_direction").map(Value::string).transpose()? {
+            Some("row") => Some(Direction::Row),
+            Some("column") => Some(Direction::Column),
+            Some(other) => {
+                return Err(format!(
+                    "unknown flex_direction {other:?}; use row or column"
+                ));
+            }
+            None => (name == "Box").then_some(Direction::Column),
         },
+        flex: args.contains_key("flex_direction"),
+        flex_grow: number(args, "flex_grow", Fraction::from(0))?,
+        flex_shrink: number(args, "flex_shrink", Fraction::from(1))?,
+        flex_basis: args.get("flex_basis").map(Value::number).transpose()?,
         gap: number(args, "gap", Fraction::from(0))?,
         padding: number(args, "padding", Fraction::from(0))?,
         justify,
@@ -698,28 +681,77 @@ fn make_element_raw(
             .get("wrap")
             .map(Value::boolean)
             .transpose()?
-            .unwrap_or(name == "Row"),
-        width: args.get("width").map(Value::number).transpose()?,
+            .unwrap_or(false),
+        width: if name == "Line" {
+            None
+        } else {
+            args.get("width").map(Value::number).transpose()?
+        },
         height: args.get("height").map(Value::number).transpose()?,
-        scroll: args
-            .get("scroll")
-            .map(Value::vec2)
-            .transpose()?
-            .or_else(|| (name == "ScrollView").then(|| Vec2::zero(Unit::Length))),
+        overflow_x: Overflow::Visible,
+        overflow_y: Overflow::Visible,
+        scroll: None,
+        scroll_range: [0.; 2],
     };
-    if name == "ScrollView" && (layout.width.is_none() || layout.height.is_none()) {
-        return Err("ScrollView requires width and height for its viewport".into());
+    let overflow = |name| {
+        args.get(name)
+            .map(Value::string)
+            .transpose()?
+            .map(Overflow::parse)
+            .transpose()
+    };
+    let default_overflow = overflow("overflow")?.unwrap_or_default();
+    let overflow_x = overflow("overflow_x")?.unwrap_or(default_overflow);
+    let overflow_y = overflow("overflow_y")?.unwrap_or(default_overflow);
+    if (overflow_x.clips() || overflow_y.clips()) && geometry.children().is_none() {
+        return Err(format!(
+            "{name} has no scrollable children; put it inside a container with overflow"
+        ));
+    }
+    let scroll = args.get("scroll").map(Value::vec2).transpose()?;
+    layout.configure_overflow(overflow_x, overflow_y, scroll)?;
+    if layout.flex_grow < Fraction::from(0)
+        || layout.flex_shrink < Fraction::from(0)
+        || !math::finite(&layout.flex_grow)
+        || !math::finite(&layout.flex_shrink)
+    {
+        return Err("flex_grow and flex_shrink must be finite and nonnegative".into());
     }
     if layout.width.into_iter().chain(layout.height).any(|v| {
         !matches!(v.unit, Unit::Length | Unit::Percent)
             || !math::finite(&v.value)
-            || v.value <= Fraction::from(0)
+            || v.value < Fraction::from(0)
+            || v.value == Fraction::from(0) && name != "Box"
     }) {
         return Err("layout width and height must be positive".into());
     }
     if layout.gap < Fraction::from(0) || layout.padding < Fraction::from(0) {
         return Err("layout gap and padding must be nonnegative".into());
     }
+    let border_width = number(
+        args,
+        "border_width",
+        if args.contains_key("border_color") {
+            Fraction::from(1)
+        } else {
+            Fraction::from(0)
+        },
+    )?;
+    if !math::finite(&border_width) || border_width < Fraction::from(0) {
+        return Err("border_width must be finite and nonnegative".into());
+    }
+    let stroke = (border_width > Fraction::from(0))
+        .then(|| -> Result<sanim_core::paint::Stroke, String> {
+            Ok(sanim_core::paint::Stroke {
+                paint: match args.get("border_color") {
+                    Some(Value::Color(color)) => color.clone().into(),
+                    None => Color::parse("light5")?.into(),
+                    _ => return Err("border_color requires Color".into()),
+                },
+                width: border_width,
+            })
+        })
+        .transpose()?;
     Ok(Value::Element(std::sync::Arc::new(Element {
         id,
         geometry: geometry.into(),
@@ -728,11 +760,76 @@ fn make_element_raw(
         scale: positive(args, "scale", Fraction::from(1))?,
         opacity,
         fill,
-        stroke: None,
+        stroke,
         reveal: Reveal::default(),
         horizontal: HorizontalTransform::default(),
         layout,
     })))
+}
+
+/// Native composites share the same Box representation as authored containers.
+/// Generated chart coordinates are normalized once into an intrinsic, non-flow box.
+pub(crate) fn composition(
+    args: &imbl::OrdMap<String, Value>,
+    module: &str,
+    identity: &[String],
+    span: Span,
+) -> Result<Value, String> {
+    let Value::Element(mut root) = make_element("Box", args, module, identity, span)? else {
+        unreachable!()
+    };
+    let element = Arc::make_mut(&mut root);
+    element.layout.direction = None;
+    element.layout.flex = false;
+    element.fill = Color::parse("transparent")?.into();
+    if !args.contains_key("x_align") {
+        element.layout.x_align = Align::Center;
+    }
+    if !args.contains_key("y_align") {
+        element.layout.y_align = Align::Center;
+    }
+    let Geometry::Box { children, .. } = Arc::make_mut(&mut element.geometry) else {
+        unreachable!()
+    };
+    if !children.is_empty() {
+        let mut low = [f64::INFINITY; 2];
+        let mut high = [f64::NEG_INFINITY; 2];
+        let mut bounds = Vec::with_capacity(children.len());
+        for child in children.iter_mut() {
+            sanim_core::layout::resolve(child, 0., 0.)?;
+            let b = sanim_core::verify::bounds(child)?;
+            for axis in 0..2 {
+                low[axis] = low[axis].min(b.min.values[axis]);
+                high[axis] = high[axis].max(b.max.values[axis]);
+            }
+            bounds.push(b);
+        }
+        for (child, bounds) in children.iter_mut().zip(bounds) {
+            child.position = Vec2 {
+                values: [bounds.min.values[0] - low[0], bounds.min.values[1] - low[1]],
+                unit: Unit::Length,
+            };
+            child.layout.x_align = Align::Start;
+            child.layout.y_align = Align::Start;
+        }
+        for axis in 0..2 {
+            if !args.contains_key(if axis==0 {"x_align"} else {"y_align"}) {
+                element.layout.position_offset[axis] = math::float_arithmetic("+",low[axis]/2.,high[axis]/2.)?;
+            }
+        }
+        for (axis, field) in [&mut element.layout.width, &mut element.layout.height]
+            .into_iter()
+            .enumerate()
+        {
+            if field.is_none() {
+                *field = Some(Number {
+                    value: math::from_f64(high[axis] - low[axis])?,
+                    unit: Unit::Length,
+                });
+            }
+        }
+    }
+    Ok(Value::Element(root))
 }
 
 pub(crate) fn number(
@@ -741,7 +838,7 @@ pub(crate) fn number(
     default: Fraction,
 ) -> Result<Fraction, String> {
     args.get(name)
-        .map(Value::number)
+        .map(|value| value.number().map_err(|error| format!("{name}: {error}; found {}", value.ty())))
         .transpose()
         .map(|n| n.map_or(default, |v| v.value))
 }

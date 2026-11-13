@@ -16,7 +16,7 @@ fn point(x: f32, y: f32) -> [f32; 2] {
 #[test]
 fn topmost_visible_native_path_wins_and_keeps_ancestry() {
     let mut renderer = Renderer::default();
-    let scene = renderer.prepare(animation("let base=Rect(width=60pt,height=60pt)\nlet circle=Circle(radius=20pt)\nlet hidden=Rect(width=60pt,height=60pt,opacity=0)\nlet transparent=Circle(radius=30pt,fill=Color(\"transparent\"))\nlet gradient=Rect(width=60pt,height=60pt,fill=LinearGradient(from=Color(\"transparent\"),to=Color(\"transparent\")))\nlet group=Group(children=[circle,hidden,transparent,gradient])\nadd(base)\nadd(group)\nwait(1s)")).unwrap();
+    let scene = renderer.prepare(animation("let base=Rect(width=60pt,height=60pt)\nlet circle=Circle(radius=20pt)\nlet hidden=Rect(width=60pt,height=60pt,opacity=0)\nlet transparent=Circle(radius=30pt,fill=Color(\"transparent\"))\nlet gradient=Rect(width=60pt,height=60pt,fill=LinearGradient(from=Color(\"transparent\"),to=Color(\"transparent\")))\nlet group=Box(children=[circle,hidden,transparent,gradient])\nadd(base)\nadd(group)\nwait(1s)")).unwrap();
     let options = Options::for_animation(scene.animation());
     let center = renderer
         .pick(&scene, 0.into(), &options, point(0., 0.), 0.)
@@ -45,7 +45,7 @@ fn topmost_visible_native_path_wins_and_keeps_ancestry() {
 fn transform_resize_reveal_and_stroke_match_actual_rendered_coverage() {
     let mut renderer = Renderer::default();
     let mut animation = animation(
-        "let line=Line(end=Vec2(50pt,0pt),width=0.75pt,position=Vec2(-25pt,20pt))\nlet shape=Rect(width=50pt,height=30pt,radius=8pt,rotation=30deg)\nlet group=Group(children=[shape,line],rotation=20deg,position=Vec2(10pt,-8pt))\nCreate(group,duration=1s,ease=\"linear\")",
+        "let line=Line(end=Vec2(50pt,0pt),width=0.75pt,position=Vec2(-25pt,20pt))\nlet shape=Rect(width=50pt,height=30pt,radius=8pt,rotation=30deg)\nlet group=Box(children=[shape,line],rotation=20deg,position=Vec2(10pt,-8pt))\nCreate(group,duration=1s,ease=\"linear\")",
     );
     animation.background = Color::parse("transparent").unwrap();
     let scene = renderer.prepare(animation).unwrap();

@@ -6,11 +6,11 @@ license.workspace = true
 
 [dependencies]
 shrimply-fonts.workspace = true
+shrimply-resource-pipeline.workspace = true
 imbl.workspace = true
 fraction.workspace = true
 num-traits.workspace = true
 serde.workspace = true
-sha2.workspace = true
 serde_json.workspace = true
 taffy.workspace = true
 shrimply-math-color.workspace = true

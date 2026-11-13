@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-drawing-skia.workspace = true
 shrimply-pdf = { workspace = true }
 shrimply-paint-skia = { workspace = true }
 shrimply-audio-engine = { workspace = true }

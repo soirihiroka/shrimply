@@ -1,38 +1,21 @@
 use crate::generated::GeneratedTransition;
 use shrimply_project_document::project::CanvasSize;
-use skia_safe::{Canvas, ConditionallySend, FontMgr, Sendable, svg::Dom};
-use std::sync::Mutex;
+use skia_safe::{Canvas, svg::Dom};
 
 pub struct PreparedSvg {
-    _source: String,
-    dom: Mutex<Option<Sendable<Dom>>>,
+    shared: std::sync::Arc<shrimply_drawing_skia::media::Prepared>,
 }
 
 impl PreparedSvg {
     pub fn new(source: String) -> Result<Self, String> {
-        let dom = Dom::from_str(&source, FontMgr::new())
-            .map_err(|error| format!("could not parse SVG: {error}"))?;
-        let dom = dom
-            .wrap_send()
-            .map_err(|_| "parsed SVG was not uniquely owned".to_string())?;
-        Ok(Self {
-            _source: source,
-            dom: Mutex::new(Some(dom)),
-        })
+        let shared = shrimply_drawing_skia::media::prepare(std::sync::Arc::new(source.into_bytes()))?;
+        if shared.kind() != shrimply_drawing_skia::media::Kind::Svg { return Err("SVG source decoded as a bitmap".into()); }
+        Ok(Self { shared })
     }
-
     fn with_dom<T>(&self, operation: impl FnOnce(&Dom) -> T) -> T {
-        let mut stored = self.dom.lock().expect("parsed SVG mutex poisoned");
-        let dom = stored
-            .take()
-            .expect("parsed SVG disappeared from its residency entry")
-            .into_inner();
-        let result = operation(&dom);
-        *stored = Some(
-            dom.wrap_send()
-                .unwrap_or_else(|_| panic!("parsed SVG escaped while rendering")),
-        );
-        result
+        // Private callers return only independent morph data or scalar values;
+        // no DOM/node handles escape the cached native operation.
+        unsafe { self.shared.with_svg_dom(operation) }.expect("prepared SVG native DOM")
     }
 }
 

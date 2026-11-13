@@ -15,7 +15,7 @@ fn constructor_locations_preserve_children_and_helper_call_chains() {
         "parts.sanim",
         "fn shape():Element {\n    return <Rect width={40pt}><Label>hello</Label></Rect>\n}\n",
     );
-    files.insert("main.sanim", "import \"parts.sanim\" as parts\nfn wrap():Element {\n    return parts.shape()\n}\nlet shape=wrap()\nlet group=Group(children=[shape])\nadd(group)\nwait(1s)\n");
+    files.insert("main.sanim", "import \"parts.sanim\" as parts\nfn wrap():Element {\n    return parts.shape()\n}\nlet shape=wrap()\nlet group=Box(children=[shape])\nadd(group)\nwait(1s)\n");
     let prepared = prepare(&mut Engine::default(), &files);
     let Value::Element(shape) = &prepared.bindings["shape"] else {
         panic!("shape")
@@ -107,7 +107,7 @@ fn cached_constructor_values_restore_origins_after_viewport_changes() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let marker=Group(children=[Circle(id=\"child\")])\nadd(marker)\nwait(1s)\n",
+        "let marker=Box(children=[Circle(id=\"child\")])\nadd(marker)\nwait(1s)\n",
     );
     let mut engine = Engine::default();
     let original = prepare(&mut engine, &files);

@@ -31,20 +31,191 @@ impl Animation {
         let height = to_f64(height)?;
         let mut elements = self.sample_with(time, &mut native)?;
         for element in &mut elements {
-            resolve_with_lists(element, width, height, Some((&self.list_views, time)))?;
+            let mut measured = Measurement::default();
+            measure_boxes(element, width, Some(height), &mut measured)?;
+            resolve_with_lists(
+                element,
+                width,
+                height,
+                Some((&self.list_views, time)),
+                &measured,
+            )?;
         }
         Ok(elements)
     }
 }
 
 pub fn resolve(element: &mut Element, parent_width: f64, parent_height: f64) -> Result<(), String> {
-    resolve_with_lists(element, parent_width, parent_height, None)
+    let mut measured = Measurement::default();
+    measure_boxes(element, parent_width, Some(parent_height), &mut measured)?;
+    resolve_with_lists(element, parent_width, parent_height, None, &measured)
 }
+#[derive(Default)]
+struct Measurement {
+    // Only boxes, percentages and flex items need their original constraint
+    // recipe retained during this frame's bottom-up measure pass.
+    inputs: std::collections::BTreeMap<String, [Option<crate::Number>; 2]>,
+    plans: std::collections::BTreeMap<String, Arc<flow::Plan>>,
+}
+impl Measurement {
+    fn remember(&mut self, element: &Element) {
+        self.inputs
+            .entry(element.id.clone())
+            .or_insert([element.layout.width, element.layout.height]);
+    }
+    fn restore(&self, element: &mut Element) {
+        if let Some([width, height]) = self.inputs.get(&element.id) {
+            element.layout.width = *width;
+            element.layout.height = *height;
+        }
+        if element.geometry.children().is_some()
+            && let Some(children) = Arc::make_mut(&mut element.geometry).children_mut()
+        {
+            for child in children {
+                self.restore(child);
+            }
+        }
+    }
+}
+
+/// Automatic block heights are measured bottom-up. Changed flex constraints
+/// remeasure only the affected subtree, using original percentages rather than
+/// treating an earlier resolved point size as a new source value.
+fn measure_boxes(
+    element: &mut Element,
+    parent_width: f64,
+    parent_height: Option<f64>,
+    measured: &mut Measurement,
+) -> Result<(), String> {
+    let is_box = matches!(element.geometry.as_ref(), Geometry::Box { .. });
+    if is_box
+        || [element.layout.width, element.layout.height]
+            .into_iter()
+            .flatten()
+            .any(|value| value.unit == crate::Unit::Percent)
+    {
+        measured.remember(element);
+    }
+    if parent_height.is_none()
+        && element
+            .layout
+            .height
+            .is_some_and(|height| height.unit == crate::Unit::Percent)
+    {
+        return Err(format!(
+            "{}.height is a percentage inside an automatic-height Box; set the parent's height to break the layout cycle",
+            element.id
+        ));
+    }
+    resolve_dimensions(element, parent_width, parent_height.unwrap_or(0.))?;
+    let padding = to_f64(element.layout.padding)?;
+    let physical = match element.geometry.as_ref() {
+        Geometry::Rectangle { width, height, .. } | Geometry::Media { width, height, .. } => {
+            Some([to_f64(*width)?, to_f64(*height)?])
+        }
+        _ => None,
+    };
+    let width = element
+        .layout
+        .width
+        .map(|width| to_f64(width.value))
+        .transpose()?
+        .or(physical.map(|size| size[0]))
+        .unwrap_or(parent_width);
+    let height = element
+        .layout
+        .height
+        .map(|height| to_f64(height.value))
+        .transpose()?
+        .or(physical.map(|size| size[1]))
+        .or(if is_box { None } else { parent_height });
+    let available_width = (width - 2. * padding).max(0.);
+    let available_height = height.map(|height| (height - 2. * padding).max(0.));
+    if element.geometry.children().is_some()
+        && let Some(children) = Arc::make_mut(&mut element.geometry).children_mut()
+    {
+        for child in children.iter_mut() {
+            if element.layout.flex {
+                measured.remember(child);
+            }
+            measure_boxes(child, available_width, available_height, measured)?;
+        }
+        if is_box && let Some(direction) = element.layout.direction {
+            let mut plan = flow::positions(children, &element.layout, width, height, direction)?;
+            if element.layout.flex {
+                let main_axis = usize::from(direction == crate::Direction::Column);
+                let mut changed = false;
+                for (child, item) in children.iter_mut().zip(plan.items.iter()) {
+                    let natural = extent(child)?;
+                    if [natural.0, natural.1].iter().zip(item.size).any(|(a, b)| {
+                        (a - b).abs() > f64::from(f32::EPSILON) * a.abs().max(b.abs()).max(1.)
+                    }) {
+                        measured.restore(child);
+                        let inputs = measured
+                            .inputs
+                            .get(&child.id)
+                            .copied()
+                            .unwrap_or([child.layout.width, child.layout.height]);
+                        for (axis, field) in [&mut child.layout.width, &mut child.layout.height]
+                            .into_iter()
+                            .enumerate()
+                        {
+                            if axis == main_axis || inputs[axis].is_some() {
+                                *field = Some(crate::Number {
+                                    value: crate::math::from_f64(item.size[axis])?,
+                                    unit: crate::Unit::Length,
+                                });
+                            }
+                        }
+                        measure_boxes(child, available_width, available_height, measured)?;
+                        changed = true;
+                    }
+                }
+                if changed {
+                    plan = flow::positions(children, &element.layout, width, height, direction)?;
+                }
+            }
+            element.layout.width = Some(crate::Number {
+                value: crate::math::from_f64(plan.size[0])?,
+                unit: crate::Unit::Length,
+            });
+            element.layout.height = Some(crate::Number {
+                value: crate::math::from_f64(plan.size[1])?,
+                unit: crate::Unit::Length,
+            });
+            measured.plans.insert(element.id.clone(), plan);
+        } else if is_box && (element.layout.width.is_none() || element.layout.height.is_none()) {
+            let mut low = [0.0f64; 2];
+            let mut high = [0.0f64; 2];
+            for child in children.iter() {
+                let bounds = crate::verify::bounds(child)?;
+                for axis in 0..2 {
+                    low[axis] = low[axis].min(bounds.min.values[axis]);
+                    high[axis] = high[axis].max(bounds.max.values[axis]);
+                }
+            }
+            for (axis, field) in [&mut element.layout.width, &mut element.layout.height]
+                .into_iter()
+                .enumerate()
+            {
+                if field.is_none() {
+                    *field = Some(crate::Number {
+                        value: crate::math::from_f64(high[axis] - low[axis] + 2. * padding)?,
+                        unit: crate::Unit::Length,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn resolve_with_lists(
     element: &mut Element,
     parent_width: f64,
     parent_height: f64,
     lists: Option<(&crate::list_views::ListViews, Fraction)>,
+    measured: &Measurement,
 ) -> Result<(), String> {
     resolve_dimensions(element, parent_width, parent_height)?;
     if element.horizontal.origin.unit == crate::Unit::Percent {
@@ -73,41 +244,9 @@ fn resolve_with_lists(
             unit: crate::Unit::Length,
         };
     }
-    // Alignment anchors the element's bounds to the corresponding parent edge.
-    let (own_min, own_max) = if matches!(
-        element.geometry.as_ref(),
-        Geometry::Group { .. } | Geometry::Code { .. }
-    ) {
-        (
-            [0.0; 2],
-            [
-                calc(
-                    "*",
-                    element
-                        .layout
-                        .width
-                        .map(|number| to_f64(number.value))
-                        .transpose()?
-                        .unwrap_or(parent_width),
-                    to_f64(element.scale)?,
-                )?,
-                calc(
-                    "*",
-                    element
-                        .layout
-                        .height
-                        .map(|number| to_f64(number.value))
-                        .transpose()?
-                        .unwrap_or(parent_height),
-                    to_f64(element.scale)?,
-                )?,
-            ],
-        )
-    } else {
-        let b =
-            crate::verify::bounds_at(element, Vec2::zero(crate::Unit::Length), Fraction::from(0))?;
-        (b.min.values, b.max.values)
-    };
+    // The layout box can exceed intrinsic paint bounds without stretching a
+    // leaf shape. Padding belongs inside containers and outside intrinsic leaves.
+    let (own_min, own_max) = frame_bounds(element, Some([parent_width, parent_height]))?;
     for (axis, parent) in [parent_width, parent_height].into_iter().enumerate() {
         let anchor = if axis == 0 {
             element.layout.x_align
@@ -124,7 +263,11 @@ fn resolve_with_lists(
         element.position.values[axis] = calc(
             "+",
             element.position.values[axis],
-            calc("-", calc("*", parent, anchor)?, own)?,
+            calc(
+                "+",
+                calc("-", calc("*", parent, anchor)?, own)?,
+                element.layout.position_offset[axis],
+            )?,
         )?;
     }
     let rectangle = match element.geometry.as_ref() {
@@ -154,14 +297,6 @@ fn resolve_with_lists(
                 .transpose()?)
             .unwrap_or(parent_height);
         if let Some(direction) = element.layout.direction {
-            let padding = to_f64(element.layout.padding)?;
-            for child in children.iter_mut() {
-                resolve_dimensions(
-                    child,
-                    (width - 2. * padding).max(0.),
-                    (height - 2. * padding).max(0.),
-                )?;
-            }
             let transition = lists
                 .map(|(lists, time)| lists.selection(&element.id, time))
                 .transpose()?
@@ -180,21 +315,32 @@ fn resolve_with_lists(
                     None
                 };
             let positions = if animated.is_none() {
-                Some(flow::positions(
-                    children,
-                    &element.layout,
-                    width,
-                    height,
-                    direction,
-                )?)
+                Some(if let Some(plan) = measured.plans.get(&element.id) {
+                    plan.clone()
+                } else {
+                    flow::positions(children, &element.layout, width, Some(height), direction)?
+                })
             } else {
                 None
             };
             for (index, child) in children.iter_mut().enumerate() {
+                if element.layout.flex
+                    && let Some(plan) = &positions
+                {
+                    let size = plan.items[index].size;
+                    child.layout.width = Some(crate::Number {
+                        value: crate::math::from_f64(size[0])?,
+                        unit: crate::Unit::Length,
+                    });
+                    child.layout.height = Some(crate::Number {
+                        value: crate::math::from_f64(size[1])?,
+                        unit: crate::Unit::Length,
+                    });
+                }
                 let mut position = if let Some(animated) = &animated {
                     animated[index].position
                 } else {
-                    positions.as_ref().expect("static flow positions")[index]
+                    positions.as_ref().expect("static flow positions").items[index].position
                 };
                 if let Some(animated) = &animated {
                     let visibility = animated[index].opacity;
@@ -222,7 +368,7 @@ fn resolve_with_lists(
                 };
                 child.layout.x_align = crate::Align::Start;
                 child.layout.y_align = crate::Align::Start;
-                resolve_with_lists(child, width, height, lists)?;
+                resolve_with_lists(child, width, height, lists, measured)?;
             }
         } else {
             let padding = to_f64(element.layout.padding)?;
@@ -232,6 +378,7 @@ fn resolve_with_lists(
                     (width - 2. * padding).max(0.),
                     (height - 2. * padding).max(0.),
                     lists,
+                    measured,
                 )?;
                 child.position.values[0] = calc("+", child.position.values[0], padding)?;
                 child.position.values[1] = calc("+", child.position.values[1], padding)?;
@@ -251,51 +398,68 @@ fn resolve_with_lists(
     Ok(())
 }
 
-pub fn extent(element: &Element) -> Result<(f64, f64), String> {
-    let (w, h) = match element.geometry.as_ref() {
-        Geometry::Circle { radius } => (
-            calc("*", to_f64(*radius)?, 2.0)?,
-            calc("*", to_f64(*radius)?, 2.0)?,
-        ),
-        Geometry::Rectangle { width, height, .. } => (to_f64(*width)?, to_f64(*height)?),
-        Geometry::Group { .. } => (
-            to_f64(
-                element
-                    .layout
-                    .width
-                    .ok_or("flow child Group requires width")?
-                    .value,
-            )?,
-            to_f64(
-                element
-                    .layout
-                    .height
-                    .ok_or("flow child Group requires height")?
-                    .value,
-            )?,
-        ),
-        _ => {
-            let bounds = crate::verify::bounds_at(
-                element,
-                Vec2::zero(crate::Unit::Length),
-                element.rotation,
-            )?;
-            return Ok((
-                calc("-", bounds.max.values[0], bounds.min.values[0])?,
-                calc("-", bounds.max.values[1], bounds.min.values[1])?,
-            ));
+fn frame_bounds(
+    element: &Element,
+    parent: Option<[f64; 2]>,
+) -> Result<([f64; 2], [f64; 2]), String> {
+    let scale = to_f64(element.scale)?;
+    if matches!(
+        element.geometry.as_ref(),
+        Geometry::Code { .. } | Geometry::Box { .. }
+    ) {
+        let mut size = [0.; 2];
+        for (axis, dimension) in [element.layout.width, element.layout.height]
+            .into_iter()
+            .enumerate()
+        {
+            size[axis] = dimension
+                .map(|number| to_f64(number.value))
+                .transpose()?
+                .or_else(|| parent.map(|parent| parent[axis]))
+                .ok_or("flow child Box requires resolved dimensions")?
+                * scale;
         }
+        return Ok(([0.; 2], size));
+    }
+    let rotation = if parent.is_none()
+        && !matches!(
+            element.geometry.as_ref(),
+            Geometry::Circle { .. } | Geometry::Rectangle { .. } | Geometry::Media { .. }
+        ) {
+        element.rotation
+    } else {
+        Fraction::from(0)
     };
-    let stroke = element
-        .stroke
-        .as_ref()
-        .map(|stroke| to_f64(stroke.width))
-        .transpose()?
-        .unwrap_or(0.);
-    Ok((
-        calc("*", calc("+", w, stroke)?, to_f64(element.scale)?)?,
-        calc("*", calc("+", h, stroke)?, to_f64(element.scale)?)?,
-    ))
+    let bounds = crate::verify::bounds_at(element, Vec2::zero(crate::Unit::Length), rotation)?;
+    let mut low = bounds.min.values;
+    let mut high = bounds.max.values;
+    let padding = if element.geometry.children().is_none() {
+        to_f64(element.layout.padding)? * scale
+    } else {
+        0.
+    };
+    let dimensions = if matches!(
+        element.geometry.as_ref(),
+        Geometry::Rectangle { .. } | Geometry::Media { .. }
+    ) {
+        [None, None]
+    } else {
+        [element.layout.width, element.layout.height]
+    };
+    for (axis, dimension) in dimensions.into_iter().enumerate() {
+        low[axis] = calc("-", low[axis], padding)?;
+        high[axis] = if let Some(dimension) = dimension {
+            calc("+", low[axis], calc("*", to_f64(dimension.value)?, scale)?)?
+        } else {
+            calc("+", high[axis], padding)?
+        };
+    }
+    Ok((low, high))
+}
+
+pub fn extent(element: &Element) -> Result<(f64, f64), String> {
+    let (low, high) = frame_bounds(element, None)?;
+    Ok((calc("-", high[0], low[0])?, calc("-", high[1], low[1])?))
 }
 
 /// Resolve both endpoint flows through the same Taffy cache. Removed children are
@@ -331,18 +495,18 @@ fn list_positions(
                     .clone()
             })
             .collect();
-        let positions = flow::positions(&elements, style, width, height, direction)?;
+        let positions = flow::positions(&elements, style, width, Some(height), direction)?;
         Ok::<_, String>(positions)
     };
     let from_positions = endpoint(selection.from)?;
     let to_positions = endpoint(selection.to)?;
     let from: std::collections::BTreeMap<_, _> = crate::list_views::elements(selection.from)?
-        .zip(from_positions.iter())
-        .map(|(element, position)| (element.id.as_str(), *position))
+        .zip(from_positions.items.iter())
+        .map(|(element, item)| (element.id.as_str(), item.position))
         .collect();
     let to: std::collections::BTreeMap<_, _> = crate::list_views::elements(selection.to)?
-        .zip(to_positions.iter())
-        .map(|(element, position)| (element.id.as_str(), *position))
+        .zip(to_positions.items.iter())
+        .map(|(element, item)| (element.id.as_str(), item.position))
         .collect();
     children
         .iter()
@@ -399,7 +563,7 @@ fn resolve_dimensions(
             }
             if number.unit != crate::Unit::Length
                 || !crate::math::finite(&number.value)
-                || number.value <= Fraction::from(0)
+                || number.value < Fraction::from(0)
             {
                 return Err(format!(
                     "{}.{} must resolve to a positive finite length inside its parent",
@@ -407,11 +571,13 @@ fn resolve_dimensions(
                     if axis == 0 { "width" } else { "height" }
                 ));
             }
-            if let Geometry::Rectangle { width, height, .. } = element.geometry.as_ref() {
+            if let Geometry::Rectangle { width, height, .. }
+            | Geometry::Media { width, height, .. } = element.geometry.as_ref()
+            {
                 let current = if axis == 0 { *width } else { *height };
                 if current != number.value {
-                    let Geometry::Rectangle { width, height, .. } =
-                        Arc::make_mut(&mut element.geometry)
+                    let (Geometry::Rectangle { width, height, .. }
+                    | Geometry::Media { width, height, .. }) = Arc::make_mut(&mut element.geometry)
                     else {
                         unreachable!()
                     };
@@ -422,6 +588,29 @@ fn resolve_dimensions(
                     }
                 }
             }
+        }
+    }
+    if let Geometry::Media {
+        asset,
+        width,
+        height,
+    } = element.geometry.as_ref()
+    {
+        let wanted = if element.layout.width.is_some() && element.layout.height.is_none() {
+            let [width,height]=crate::math::media::aspect_size([asset.width,asset.height],0,*width)?;
+            Some((width,height))
+        } else if element.layout.height.is_some() && element.layout.width.is_none() {
+            let [width,height]=crate::math::media::aspect_size([asset.width,asset.height],1,*height)?;
+            Some((width,height))
+        } else {None};
+        if let Some((wanted_width, wanted_height)) = wanted
+            && (*width != wanted_width || *height != wanted_height)
+        {
+            let Geometry::Media { width, height, .. } = Arc::make_mut(&mut element.geometry) else {
+                unreachable!()
+            };
+            *width = wanted_width;
+            *height = wanted_height;
         }
     }
     Ok(())

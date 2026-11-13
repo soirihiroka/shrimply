@@ -82,7 +82,7 @@ fn invalid_signal_content_fails_only_its_frame_and_preserves_previous_cached_tex
 #[test]
 fn changing_text_bounds_reflows_siblings_before_recording_and_picking() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "mut words=\"short\"\nlet title=Label(words)\nlet marker=Circle(radius=5pt)\nlet row=Row(children=[title,marker],gap=10pt)\nadd(row)\nwait(1s)\nwords=\"much longer text\"\nwait(1s)\n");
+    files.insert("main.sanim", "mut words=\"short\"\nlet title=Label(words)\nlet marker=Circle(radius=5pt)\nlet row=Box(flex_direction=\"row\",children=[title,marker],gap=10pt)\nadd(row)\nwait(1s)\nwords=\"much longer text\"\nwait(1s)\n");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();

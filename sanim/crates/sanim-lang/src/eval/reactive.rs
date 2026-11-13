@@ -615,7 +615,7 @@ impl Runtime<'_, '_> {
             }
             _ => {}
         }
-        sanim_core::value_budget::charge_with_fonts(
+        sanim_core::value_budget::charge_with_budget(
             value,
             &mut self.retained_bytes,
             &mut self.retained_items,

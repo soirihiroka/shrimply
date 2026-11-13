@@ -258,13 +258,14 @@ pub fn resolve_pending(element: &mut Element, _time: Fraction) -> Result<(), Str
             }
         }
     }
-    if element.layout.scroll.is_none() {
-        for (target, size) in [
-            (&mut element.layout.width, size[0]),
-            (&mut element.layout.height, size[1]),
-        ] {
+    let padding = 2. * math::to_f64(element.layout.padding)?;
+    for (target, size) in [
+        (&mut element.layout.width, size[0]),
+        (&mut element.layout.height, size[1]),
+    ] {
+        if target.is_none() {
             *target = Some(Number {
-                value: math::from_f64(size)?,
+                value: math::from_f64(size + padding)?,
                 unit: Unit::Length,
             });
         }

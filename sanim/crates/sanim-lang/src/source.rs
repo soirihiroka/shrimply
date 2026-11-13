@@ -1,4 +1,5 @@
 use sanim_core::digest;
+pub use shrimply_asset::remote::{is_url as is_remote,invalidate as invalidate_remote};
 use std::{
     collections::BTreeMap,
     path::{Component, Path, PathBuf},
@@ -58,7 +59,16 @@ impl crate::Prepared {
 /// Hosts supply bytes; Sanim itself has no network or ambient filesystem access.
 pub trait Sources {
     fn read(&self, path: &str) -> Result<Vec<u8>, String>;
+    /// One immutable resource revision and its content fingerprint. Event-driven
+    /// hosts may retain these together until that resource is invalidated.
+    /// Plain/strict providers deliberately read fresh bytes on every request.
+    fn read_snapshot(&self, path: &str) -> Result<(Arc<Vec<u8>>, String), String> {
+        let bytes = Arc::new(self.read(path)?);
+        let fingerprint = digest(&bytes);
+        Ok((bytes, fingerprint))
+    }
 }
+
 
 #[derive(Clone, Debug, Default)]
 pub struct MemorySources {
@@ -122,6 +132,17 @@ impl Sources for FileSources {
         }
         Ok(bytes)
     }
+    fn read_snapshot(&self,path:&str)->Result<(Arc<Vec<u8>>,String),String> {
+        if is_remote(path) {
+            let download=shrimply_asset::remote::load(path,self.max_bytes)?;
+            Ok((download.bytes.clone(),download.fingerprint.clone()))
+        } else {
+            let bytes=Arc::new(self.read(path)?);
+            let fingerprint=digest(&bytes);
+            Ok((bytes,fingerprint))
+        }
+    }
+
 }
 
 pub fn resolve(module: &str, path: &str) -> Result<String, String> {
@@ -156,8 +177,11 @@ pub(crate) struct Snapshot<'a> {
 impl Snapshot<'_> {
     pub fn read(&mut self, path: &str) -> Result<Arc<Vec<u8>>, String> {
         if !self.reads.contains_key(path) {
-            self.reads
-                .insert(path.into(), self.provider.read(path).map(Arc::new));
+            let read = self.provider.read_snapshot(path).map(|(bytes, fingerprint)| {
+                self.hashes.borrow_mut().insert(path.into(), fingerprint);
+                bytes
+            });
+            self.reads.insert(path.into(), read);
         }
         self.reads[path].clone()
     }

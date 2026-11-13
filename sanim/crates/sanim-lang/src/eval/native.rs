@@ -82,6 +82,15 @@ impl Runtime<'_, '_> {
             .map(|v| v.name.to_string())
             .collect::<Vec<_>>();
         let mut args = order_values(&arguments, &params);
+        if name == "Image"
+            && let Some(src) = args.get("src")
+        {
+            let value = self.read_media_resource(
+                src.string().map_err(|e| self.error("S305", e, span))?,
+                span,
+            )?;
+            args.insert("asset".into(), value);
+        }
         if matches!(name, "CodeView" | "CodeView.patch")
             && let Some(src) = args.get("src")
         {

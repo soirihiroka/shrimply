@@ -2,9 +2,9 @@
 use super::*;
 
 fn call(name: &str, args: Vec<(Option<String>, Expr)>, span: Span) -> Expr {
-    Expr {
+    Expr { cache_id: crate::ast::next_expr_identity(), 
         kind: ExprKind::Call {
-            callee: Box::new(Expr {
+            callee: Box::new(Expr { cache_id: crate::ast::next_expr_identity(), 
                 kind: ExprKind::Name(name.into()),
                 span: Span {
                     end: span.start,
@@ -25,7 +25,7 @@ fn tagged_call(name: &str, args: Vec<(Option<String>, Expr)>, span: Span, tag_sp
     expression
 }
 fn string(value: String, span: Span) -> Expr {
-    Expr {
+    Expr { cache_id: crate::ast::next_expr_identity(), 
         kind: ExprKind::String(value),
         span,
     }
@@ -81,6 +81,21 @@ fn dedent_literal(text: &str) -> String {
         .collect()
 }
 
+fn merge_utilities(
+    mut args: Vec<(Option<String>, Expr)>,
+    defaults: Vec<(String, Expr)>,
+) -> Vec<(Option<String>, Expr)> {
+    for (key, value) in defaults {
+        if !args
+            .iter()
+            .any(|(name, _)| name.as_deref() == Some(key.as_str()))
+        {
+            args.push((Some(key), value));
+        }
+    }
+    args
+}
+
 impl Parser<'_> {
     pub(super) fn markup_expression(&mut self) -> Result<Expr, Diagnostic> {
         self.depth += 1;
@@ -109,6 +124,7 @@ impl Parser<'_> {
         self.highlight(tag_span.start, tag_span.end, "tag");
         let constructor = tag.as_str();
         let mut args: Vec<(Option<String>, Expr)> = Vec::new();
+        let mut utilities: Vec<(String, Expr)> = Vec::new();
         loop {
             self.trivia();
             self.skip_lines();
@@ -116,7 +132,12 @@ impl Parser<'_> {
                 self.highlight(self.offset, self.offset + 2, "punctuation");
                 self.advance(2);
                 span.end = self.offset;
-                return Ok(tagged_call(constructor, args, span, tag_span));
+                return Ok(tagged_call(
+                    constructor,
+                    merge_utilities(args, utilities),
+                    span,
+                    tag_span,
+                ));
             }
             if self.rest().starts_with('>') {
                 self.highlight(self.offset, self.offset + 1, "punctuation");
@@ -128,13 +149,46 @@ impl Parser<'_> {
                     "unterminated <{tag}> opening tag; expected '>' or '/>'"
                 )));
             }
-            let attribute_span = self.span();
-            let attribute = self.name()?;
-            self.highlight(
-                attribute_span.start,
-                attribute_span.start + attribute.len(),
-                "property",
-            );
+            let mut attribute_span = self.span();
+            if !self.name_start() {
+                return Err(self.error("expected a property or utility after the element name"));
+            }
+            let count = self
+                .rest()
+                .bytes()
+                .take_while(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'%')
+                })
+                .count();
+            let attribute = self.rest()[..count].to_owned();
+            self.highlight(self.offset, self.offset + count, "property");
+            if let Some(sink) = &mut self.formatting {
+                sink.token(&attribute);
+            }
+            self.charge();
+            self.advance(count);
+            attribute_span.end = self.offset;
+            self.trivia();
+            let assigned = self.rest().starts_with('=');
+            let boolean = crate::prelude::builtin(constructor).is_some_and(|builtin| {
+                builtin.parameters.iter().any(|parameter| {
+                    parameter.name == attribute && parameter.ty == sanim_core::Type::Bool
+                })
+            });
+            if !assigned && !boolean {
+                let lowered = crate::utilities::lower(constructor, &attribute, attribute_span)
+                    .map_err(|message| {
+                        Diagnostic::new("S002", message, self.source, attribute_span)
+                    })?;
+                for (key, value) in lowered {
+                    utilities.retain(|(previous, _)| *previous != key);
+                    utilities.push((key, value));
+                }
+                continue;
+            }
+            if attribute == "design" {
+                return Err(self.error("design= has been removed; put native utilities directly on the opening tag, such as <Box w-180 flex flex-col>"));
+            }
             if args
                 .iter()
                 .any(|(name, _)| name.as_deref() == Some(attribute.as_str()))
@@ -152,7 +206,7 @@ impl Parser<'_> {
                     return Err(self.error(format!("attribute '{attribute}' requires a quoted string or {{expression}}; write {attribute}={{value}}")));
                 }
             } else {
-                Expr {
+                Expr { cache_id: crate::ast::next_expr_identity(), 
                     kind: ExprKind::Bool(true),
                     span: attribute_span,
                 }
@@ -219,7 +273,12 @@ impl Parser<'_> {
             );
             self.advance(closing.len());
             span.end = self.offset;
-            return Ok(tagged_call(constructor, args, span, tag_span));
+            return Ok(tagged_call(
+                constructor,
+                merge_utilities(args, utilities),
+                span,
+                tag_span,
+            ));
         }
         let text_element = crate::prelude::builtin(constructor).is_some_and(|builtin| {
             builtin.result == sanim_core::Type::Element
@@ -255,7 +314,9 @@ impl Parser<'_> {
             }
             if self.rest().starts_with('<') {
                 if text_element {
-                    return Err(self.error(format!("<{tag}> contains text, not nested elements; put labels inside a Row, Column or Rect")));
+                    return Err(self.error(format!(
+                        "<{tag}> contains text, not nested elements; put labels inside a Box"
+                    )));
                 }
                 children.push(self.markup_expression()?);
                 continue;
@@ -340,7 +401,7 @@ impl Parser<'_> {
             if !text.is_empty() {
                 args.push((
                     Some("text".into()),
-                    Expr {
+                    Expr { cache_id: crate::ast::next_expr_identity(), 
                         kind: ExprKind::Template(text),
                         span: body_span,
                     },
@@ -357,12 +418,17 @@ impl Parser<'_> {
             }
             args.push((
                 Some("children".into()),
-                Expr {
+                Expr { cache_id: crate::ast::next_expr_identity(), 
                     kind: ExprKind::List(children),
                     span,
                 },
             ));
         }
-        Ok(tagged_call(constructor, args, span, tag_span))
+        Ok(tagged_call(
+            constructor,
+            merge_utilities(args, utilities),
+            span,
+            tag_span,
+        ))
     }
 }

@@ -250,7 +250,7 @@ fn parser_limits_are_enforced_on_cached_modules() {
 }
 #[test]
 fn flow_position_conflicts_fail_explicitly() {
-    assert!(run("let child = Circle(id= \"child\")\nadd(Row(children= [child]))\nMoveTo(child, Vec2(10pt,0pt), duration=1s, ease=\"linear\")\n").unwrap_err().message.contains("flow layout controls"));
+    assert!(run("let child = Circle(id= \"child\")\nadd(Box(flex_direction=\"row\",children= [child]))\nMoveTo(child, Vec2(10pt,0pt), duration=1s, ease=\"linear\")\n").unwrap_err().message.contains("flow layout controls"));
 }
 
 #[test]

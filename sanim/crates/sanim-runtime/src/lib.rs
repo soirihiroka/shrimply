@@ -43,6 +43,7 @@ struct Configuration {
 }
 enum Command {
     Changed,
+    Refresh,
     FontsChanged,
     WatchError(String),
     Inputs(u64, Configuration),
@@ -191,7 +192,7 @@ impl Runtime {
     }
     pub fn reload(&self) -> Result<(), String> {
         self.commands
-            .send(Command::Changed)
+            .send(Command::Refresh)
             .map_err(|_| "Sanim runtime stopped".into())
     }
     /// Replace the complete reflected override snapshot. Missing keys reset to defaults.
@@ -468,6 +469,10 @@ fn worker(
                 dirty = true;
             }
             Ok(Command::Changed) => dirty = true,
+            Ok(Command::Refresh) => {
+                sources.invalidate_all();
+                dirty = true;
+            }
             Ok(Command::FontsChanged) => dirty |= session.font_environment_changed(),
         }
         // Coalesce already-queued writes and parameter updates into one revision.
@@ -475,6 +480,10 @@ fn worker(
             match command {
                 Command::Stop => return,
                 Command::Changed => dirty = true,
+                Command::Refresh => {
+                    sources.invalidate_all();
+                    dirty = true;
+                }
                 Command::FontsChanged => dirty |= session.font_environment_changed(),
                 Command::WatchError(error) => {
                     watch_error = Some(error);
@@ -506,6 +515,9 @@ fn worker(
                 match receiver.recv_timeout(timeout) {
                     Ok(Command::Stop) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
                     Ok(Command::Changed) => {}
+                    Ok(Command::Refresh) => {
+                        sources.invalidate_all();
+                    }
                     Ok(Command::FontsChanged) => dirty |= session.font_environment_changed(),
                     Ok(Command::WatchError(error)) => {
                         watch_error = Some(error);

@@ -932,9 +932,14 @@ impl ColorPicker {
         action::attach(
             &well,
             move |control| {
-                let color = control
+                let well = control
                     .downcast_ref::<NSColorWell>()
-                    .expect("color sender")
+                    .expect("color sender");
+                if well.window().is_none() || well.isHiddenOrHasHiddenAncestor() {
+                    well.deactivate();
+                    return;
+                }
+                let color = well
                     .color()
                     .colorUsingColorSpace(&objc2_app_kit::NSColorSpace::sRGBColorSpace())
                     .expect("convert color to sRGB");

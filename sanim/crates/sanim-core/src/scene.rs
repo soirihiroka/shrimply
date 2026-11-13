@@ -7,6 +7,11 @@ use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Geometry {
+    Media {
+        asset: Arc<crate::media::Asset>,
+        width: Fraction,
+        height: Fraction,
+    },
     Circle {
         radius: Fraction,
     },
@@ -39,8 +44,11 @@ pub enum Geometry {
         /// A sampled text/font/size changed and requires native shaping before layout.
         pending: bool,
     },
-    Group {
+    Box {
+        #[serde(default)]
         children: Vector<Element>,
+        #[serde(default)]
+        radius: CornerRadius,
     },
     Code {
         document: Arc<crate::code::Document>,
@@ -81,7 +89,7 @@ impl CornerRadius {
 impl Geometry {
     pub fn children(&self) -> Option<&Vector<Element>> {
         match self {
-            Self::Group { children }
+            Self::Box { children, .. }
             | Self::Rectangle { children, .. }
             | Self::Code { children, .. } => Some(children),
             _ => None,
@@ -89,7 +97,7 @@ impl Geometry {
     }
     pub fn children_mut(&mut self) -> Option<&mut Vector<Element>> {
         match self {
-            Self::Group { children }
+            Self::Box { children, .. }
             | Self::Rectangle { children, .. }
             | Self::Code { children, .. } => Some(children),
             _ => None,
@@ -97,14 +105,7 @@ impl Geometry {
     }
 }
 
-/// Prepared Pango outlines, replayed by Skia without retaining platform font objects.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum TextSegment {
-    Move([f64; 2]),
-    Line([f64; 2]),
-    Curve([f64; 2], [f64; 2], [f64; 2]),
-    Close,
-}
+pub use shrimply_fonts::TextSegment;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Element {
@@ -168,6 +169,9 @@ pub enum RevealKind {
 pub struct Layout {
     pub x_align: Align,
     pub y_align: Align,
+    /// Fixed native-composition translation added after the relative position.
+    #[serde(default)]
+    pub position_offset: [f64; 2],
     pub direction: Option<Direction>,
     pub gap: Fraction,
     pub width: Option<crate::Number>,
@@ -176,11 +180,72 @@ pub struct Layout {
     pub justify: Justify,
     pub align: Align,
     pub wrap: bool,
+    #[serde(default)]
+    pub flex: bool,
+    #[serde(default)]
+    pub flex_grow: Fraction,
+    #[serde(default)]
+    pub flex_shrink: Fraction,
+    #[serde(default)]
+    pub flex_basis: Option<crate::Number>,
+    #[serde(default)]
+    pub overflow_x: Overflow,
+    #[serde(default)]
+    pub overflow_y: Overflow,
     /// Content offset inside the element's fixed viewport. Percentages use its overflow range.
     #[serde(default)]
     pub scroll: Option<Vec2>,
+    #[serde(skip)]
+    pub scroll_range: [f64; 2],
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Overflow {
+    #[default]
+    Visible,
+    Hidden,
+    Auto,
+    Scroll,
+}
+impl Overflow {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "visible" => Ok(Self::Visible),
+            "hidden" => Ok(Self::Hidden),
+            "auto" => Ok(Self::Auto),
+            "scroll" => Ok(Self::Scroll),
+            _ => Err(format!(
+                "unknown overflow {value:?}; use visible, hidden, auto or scroll"
+            )),
+        }
+    }
+    pub fn clips(self) -> bool {
+        self != Self::Visible
+    }
 }
 impl Layout {
+    pub fn clips(&self) -> bool {
+        self.overflow_x.clips() || self.overflow_y.clips()
+    }
+    pub fn configure_overflow(
+        &mut self,
+        overflow_x: Overflow,
+        overflow_y: Overflow,
+        scroll: Option<Vec2>,
+    ) -> Result<(), String> {
+        if !overflow_x.clips() && !overflow_y.clips() && scroll.is_some() {
+            return Err(
+                "scroll requires overflow=\"auto\", \"scroll\" or \"hidden\" on its container"
+                    .into(),
+            );
+        }
+        self.overflow_x = overflow_x;
+        self.overflow_y = overflow_y;
+        self.scroll = self
+            .clips()
+            .then(|| scroll.unwrap_or_else(|| Vec2::zero(crate::Unit::Length)));
+        Ok(())
+    }
     pub fn dimension_type() -> crate::Type {
         crate::Type::union([
             crate::Type::Numeric(crate::Unit::Length),
@@ -423,6 +488,9 @@ impl Element {
                 Geometry::Rectangle {
                     radius: CornerRadius::Pill,
                     ..
+                } | Geometry::Box {
+                    radius: CornerRadius::Pill,
+                    ..
                 }
             )
             && self
@@ -438,12 +506,7 @@ impl Element {
             Property::Width => self.layout.width,
             Property::Height => self.layout.height,
             _ => None,
-        } && (number.unit == crate::Unit::Percent
-            || matches!(
-                self.geometry.as_ref(),
-                Geometry::Group { .. } | Geometry::Code { .. }
-            ))
-        {
+        } {
             return Ok(Value::Number(number));
         }
         Ok(match property {
@@ -511,11 +574,12 @@ impl Element {
                 let value = match (property, self.geometry.as_ref()) {
                     (Property::Radius, Geometry::Circle { radius }) => *radius,
                     (Property::Radius, Geometry::Rectangle {width,height,radius,..})=>radius.resolve(*width,*height),
-                    (Property::Width, Geometry::Rectangle { width, .. }) => *width,
+                    (Property::Radius, Geometry::Box {radius,..})=>radius.resolve(self.layout.width.ok_or("Box radius needs resolved width")?.value,self.layout.height.ok_or("Box radius needs resolved height")?.value),
+                    (Property::Width, Geometry::Rectangle { width, .. } | Geometry::Media { width, .. }) => *width,
                     (Property::Width, Geometry::Line { width, .. } | Geometry::Polyline { width, .. }) => *width,
-                    (Property::Height, Geometry::Rectangle { height, .. }) => *height,
-                    (Property::Width, Geometry::Group { .. } | Geometry::Code { .. }) => self.layout.width.map(|number|number.value).ok_or_else(|| format!("{}.width is automatic; provide an explicit width before reading it",self.id))?,
-                    (Property::Height, Geometry::Group { .. } | Geometry::Code { .. }) => self.layout.height.map(|number|number.value).ok_or_else(|| format!("{}.height is automatic; provide an explicit height before reading it",self.id))?,
+                    (Property::Height, Geometry::Rectangle { height, .. } | Geometry::Media { height, .. }) => *height,
+                    (Property::Width, Geometry::Box { .. } | Geometry::Code { .. }) => self.layout.width.map(|number|number.value).ok_or_else(|| format!("{}.width is automatic; provide an explicit width before reading it",self.id))?,
+                    (Property::Height, Geometry::Box { .. } | Geometry::Code { .. }) => self.layout.height.map(|number|number.value).ok_or_else(|| format!("{}.height is automatic; provide an explicit height before reading it",self.id))?,
                     _ => {
                         return Err(format!(
                             "{} does not have a {property:?} geometry property",
@@ -690,13 +754,16 @@ impl Element {
             }
             Property::Radius | Property::Width | Property::Height => {
                 let number = value.number()?;
-                let positive = property != Property::Radius
-                    || matches!(self.geometry.as_ref(), Geometry::Circle { .. });
-                let relative = matches!(property, Property::Width | Property::Height)
+                let positive = !matches!(self.geometry.as_ref(), Geometry::Box { .. })
+                    && (property != Property::Radius
+                        || matches!(self.geometry.as_ref(), Geometry::Circle { .. }));
+                let stroke_width = property == Property::Width
                     && matches!(
                         self.geometry.as_ref(),
-                        Geometry::Rectangle { .. } | Geometry::Group { .. } | Geometry::Code { .. }
+                        Geometry::Line { .. } | Geometry::Polyline { .. }
                     );
+                let relative =
+                    matches!(property, Property::Width | Property::Height) && !stroke_width;
                 if !(number.unit == crate::Unit::Length
                     || relative && number.unit == crate::Unit::Percent)
                     || !math::finite(&number.value)
@@ -708,51 +775,77 @@ impl Element {
                         "{property:?} requires a finite {requirement} Length"
                     ));
                 }
-                match (property, self.geometry.as_ref()) {
-                    (Property::Radius, Geometry::Circle { .. } | Geometry::Rectangle { .. })
-                    | (Property::Width | Property::Height, Geometry::Rectangle { .. }) => {}
-                    (
-                        Property::Width | Property::Height,
-                        Geometry::Group { .. } | Geometry::Code { .. },
-                    ) => {}
-                    (Property::Width, Geometry::Line { .. } | Geometry::Polyline { .. }) => {}
-                    _ => {
-                        return Err(format!(
-                            "{} does not have a {property:?} geometry property",
-                            self.id
-                        ));
-                    }
+                if property == Property::Radius
+                    && !matches!(
+                        self.geometry.as_ref(),
+                        Geometry::Circle { .. } | Geometry::Rectangle { .. } | Geometry::Box { .. }
+                    )
+                {
+                    return Err(format!(
+                        "{} does not have a Radius geometry property",
+                        self.id
+                    ));
                 }
-                if matches!(
-                    self.geometry.as_ref(),
-                    Geometry::Group { .. } | Geometry::Code { .. }
-                ) {
+                if relative {
                     match property {
                         Property::Width => self.layout.width = Some(number),
                         Property::Height => self.layout.height = Some(number),
-                        _ => unreachable!("validated group layout property"),
+                        _ => unreachable!("layout dimension"),
                     }
-                    return Ok(());
-                }
-                if matches!(self.geometry.as_ref(), Geometry::Rectangle { .. }) {
-                    match property {
-                        Property::Width => self.layout.width = Some(number),
-                        Property::Height => self.layout.height = Some(number),
-                        _ => {}
+                    if !matches!(
+                        self.geometry.as_ref(),
+                        Geometry::Rectangle { .. } | Geometry::Media { .. }
+                    ) {
+                        return Ok(());
                     }
                 }
                 match (property, Arc::make_mut(&mut self.geometry)) {
                     (Property::Radius, Geometry::Circle { radius }) => *radius = number.value,
                     (Property::Width, Geometry::Rectangle { width, .. }) => *width = number.value,
-                    (Property::Radius, Geometry::Rectangle { radius, .. }) => {
-                        *radius = CornerRadius::Fixed(number.value)
+                    (
+                        Property::Width,
+                        Geometry::Media {
+                            asset,
+                            width,
+                            height,
+                        },
+                    ) => {
+                        *width = number.value;
+                        if self.layout.height.is_none() {
+                            *height = math::arithmetic(
+                                "*",
+                                *width,
+                                Fraction::new(u64::from(asset.height), u64::from(asset.width)),
+                            )?;
+                        }
                     }
+                    (
+                        Property::Radius,
+                        Geometry::Rectangle { radius, .. } | Geometry::Box { radius, .. },
+                    ) => *radius = CornerRadius::Fixed(number.value),
                     (
                         Property::Width,
                         Geometry::Line { width, .. } | Geometry::Polyline { width, .. },
                     ) => *width = number.value,
                     (Property::Height, Geometry::Rectangle { height, .. }) => {
                         *height = number.value
+                    }
+                    (
+                        Property::Height,
+                        Geometry::Media {
+                            asset,
+                            width,
+                            height,
+                        },
+                    ) => {
+                        *height = number.value;
+                        if self.layout.width.is_none() {
+                            *width = math::arithmetic(
+                                "*",
+                                *height,
+                                Fraction::new(u64::from(asset.width), u64::from(asset.height)),
+                            )?;
+                        }
                     }
                     _ => unreachable!("validated geometry property"),
                 }
@@ -915,7 +1008,13 @@ impl Animation {
             }
         }
         if let Some(children) = self.list_views.visual_children(&out.id, time)? {
-            *Arc::make_mut(&mut out.geometry) = Geometry::Group { children };
+            let Geometry::Box {
+                children: current, ..
+            } = Arc::make_mut(&mut out.geometry)
+            else {
+                return Err("list view requires a Box container".into());
+            };
+            *current = children;
         }
         native(out, time)?;
         if out

@@ -72,7 +72,8 @@ fn animation(batched: bool) -> Result<Animation, String> {
     };
     let mut group = element(
         "curve".into(),
-        Geometry::Group {
+        Geometry::Box {
+            radius: Default::default(),
             children: children.into(),
         },
         Vec2::zero(Unit::Length),

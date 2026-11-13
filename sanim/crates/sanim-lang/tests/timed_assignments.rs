@@ -5,14 +5,14 @@ use std::collections::BTreeMap;
 #[test]
 fn list_transition_starts_after_timed_arguments_finish() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "mut items:List<Element>=[]\nlet row=Row(children=items,width=100pt,height=100pt)\nadd(row)\nitems=append(items,Rect(width=10pt,height=10pt,duration=1s,ease=\"linear\"),duration=500ms,ease=\"linear\")\nwait(1s)");
+    files.insert("main.sanim", "mut items:List<Element>=[]\nlet row=Box(flex_direction=\"row\",children=items,width=100pt,height=100pt)\nadd(row)\nitems=append(items,Rect(width=10pt,height=10pt,duration=1s,ease=\"linear\"),duration=500ms,ease=\"linear\")\nwait(1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
     let (width, height) = prepared.animation.logical_size();
     let at = |time| {
         let elements = prepared.animation.layout(time, width, height).unwrap();
-        let Geometry::Group { children } = elements[0].geometry.as_ref() else {
+        let Geometry::Box { children, .. } = elements[0].geometry.as_ref() else {
             panic!("row")
         };
         children.clone()
@@ -65,7 +65,7 @@ fn imported_call_provenance_and_timed_assignment_use_the_caller_span() {
 #[test]
 fn duration_planning_skips_animated_list_geometry_but_preserves_needed_mutations() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let font=read<Font>(\"missing.ttf\")\nfn tile():Element{return Text(\"test\",font=font)}\nmut items:List<Element>=[]\nlet row=Row(children=items,width=100pt,height=100pt)\nadd(row)\nitems=append(items,tile(),duration=500ms,ease=\"linear\")\nwait(1s)");
+    files.insert("main.sanim", "let font=read<Font>(\"missing.ttf\")\nfn tile():Element{return Text(\"test\",font=font)}\nmut items:List<Element>=[]\nlet row=Box(flex_direction=\"row\",children=items,width=100pt,height=100pt)\nadd(row)\nitems=append(items,tile(),duration=500ms,ease=\"linear\")\nwait(1s)");
     let planned = Engine::default()
         .duration("main.sanim", &files, &BTreeMap::new())
         .unwrap();

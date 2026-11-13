@@ -98,9 +98,10 @@ impl Serialize for TextKey<'_> {
 }
 #[derive(Serialize)]
 enum GeometryKey<'a> {
+    Media(&'a str, &'a Fraction, &'a Fraction),
+    Box(&'a crate::CornerRadius, Vec<&'a str>),
     Leaf(&'a Geometry),
     Text(TextKey<'a>),
-    Group(Vec<&'a str>),
     Code(Vec<&'a str>, String),
     Rectangle(
         &'a Fraction,
@@ -127,9 +128,15 @@ impl Serialize for CatalogEntry<'_> {
             layout,
         } = self.0;
         let geometry = match geometry.as_ref() {
-            Geometry::Group { children } => {
-                GeometryKey::Group(children.iter().map(|child| child.id.as_str()).collect())
-            }
+            Geometry::Media {
+                asset,
+                width,
+                height,
+            } => GeometryKey::Media(asset.fingerprint(), width, height),
+            Geometry::Box { children, radius } => GeometryKey::Box(
+                radius,
+                children.iter().map(|child| child.id.as_str()).collect(),
+            ),
             Geometry::Code {
                 children,
                 document,
@@ -168,9 +175,10 @@ impl Serialize for CatalogEntry<'_> {
 struct VisualElement<'a>(&'a Element, &'a Signatures);
 #[derive(Serialize)]
 enum VisualGeometry<'a> {
+    Media(&'a str, &'a Fraction, &'a Fraction),
+    Box(&'a crate::CornerRadius, Vec<VisualElement<'a>>),
     Leaf(&'a Geometry),
     Text(TextKey<'a>),
-    Group(Vec<VisualElement<'a>>),
     Code(Vec<VisualElement<'a>>, String),
     Rectangle(
         &'a Fraction,
@@ -195,7 +203,13 @@ impl Serialize for VisualElement<'_> {
             layout,
         } = self.0;
         let geometry = match geometry.as_ref() {
-            Geometry::Group { children } => VisualGeometry::Group(
+            Geometry::Media {
+                asset,
+                width,
+                height,
+            } => VisualGeometry::Media(asset.fingerprint(), width, height),
+            Geometry::Box { children, radius } => VisualGeometry::Box(
+                radius,
                 children
                     .iter()
                     .map(|child| VisualElement(child, self.1))

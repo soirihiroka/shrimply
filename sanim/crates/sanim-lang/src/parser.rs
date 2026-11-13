@@ -570,7 +570,7 @@ impl Parser<'_> {
         self.depth -= 1;
         literal_span.end = self.offset;
         if parts.is_empty() {
-            return Ok(Expr {
+            return Ok(Expr { cache_id: crate::ast::next_expr_identity(), 
                 kind: ExprKind::String(value),
                 span: literal_span,
             });
@@ -578,7 +578,7 @@ impl Parser<'_> {
         if !value.is_empty() {
             parts.push(sanim_core::TemplatePart::Text(value.into()));
         }
-        Ok(Expr {
+        Ok(Expr { cache_id: crate::ast::next_expr_identity(), 
             kind: ExprKind::Template(parts),
             span: Span {
                 end: self.offset,
@@ -838,7 +838,7 @@ impl Parser<'_> {
             ));
         };
         let options = self.reflection_options(args.collect())?;
-        Ok(Expr {
+        Ok(Expr { cache_id: crate::ast::next_expr_identity(), 
             kind: ExprKind::Reflect {
                 value: Box::new(value),
                 options,
@@ -1273,7 +1273,7 @@ impl Parser<'_> {
                 sink.role(crate::formatter::Role::Unary);
             }
             self.expect(&op)?;
-            Expr {
+            Expr { cache_id: crate::ast::next_expr_identity(), 
                 kind: ExprKind::Unary(op, Box::new(self.expr(7)?)),
                 span,
             }
@@ -1295,7 +1295,7 @@ impl Parser<'_> {
             }
             if self.eat(".") {
                 let member = self.name()?;
-                left = Expr {
+                left = Expr { cache_id: crate::ast::next_expr_identity(), 
                     kind: ExprKind::Member(Box::new(left), member),
                     span: Span {
                         end: self.offset,
@@ -1307,7 +1307,7 @@ impl Parser<'_> {
             if self.eat("[") {
                 let index = self.expr(0)?;
                 self.expect("]")?;
-                left = Expr {
+                left = Expr { cache_id: crate::ast::next_expr_identity(), 
                     kind: ExprKind::Index(Box::new(left), Box::new(index)),
                     span: Span {
                         end: self.offset,
@@ -1348,7 +1348,7 @@ impl Parser<'_> {
                 };
             if self.eat("(") {
                 let args = self.arguments(Some(&left))?;
-                left = Expr {
+                left = Expr { cache_id: crate::ast::next_expr_identity(), 
                     kind: ExprKind::Call {
                         callee: Box::new(left),
                         types,
@@ -1403,7 +1403,7 @@ impl Parser<'_> {
             } else {
                 precedence + 1
             })?;
-            left = Expr {
+            left = Expr { cache_id: crate::ast::next_expr_identity(), 
                 kind: ExprKind::Binary(op, Box::new(left), Box::new(right)),
                 span,
             };
@@ -1504,7 +1504,7 @@ impl Parser<'_> {
                     }
                 }
                 span.end = self.offset;
-                return Ok(Expr {
+                return Ok(Expr { cache_id: crate::ast::next_expr_identity(), 
                     kind: ExprKind::Dict(entries),
                     span,
                 });
@@ -1531,6 +1531,6 @@ impl Parser<'_> {
             return Err(self.error("expected an expression"));
         };
         span.end = self.offset;
-        Ok(Expr { kind, span })
+        Ok(Expr { cache_id: crate::ast::next_expr_identity(),  kind, span })
     }
 }

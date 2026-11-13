@@ -478,12 +478,8 @@ fn load(
             }
             Kind::Image => {
                 let bytes = entry.snapshot.read()?;
-                let image =
-                    Image::from_encoded(Data::new_copy(&bytes)).ok_or("image cannot be decoded")?;
-                // Force codec work off the UI thread rather than deferring lazy image decoding to draw_image.
-                let image = image
-                    .make_raster_image(None, CachingHint::Allow)
-                    .ok_or("image cannot be rasterized")?;
+                let prepared = shrimply_drawing_skia::media::prepare(Arc::new(bytes))?;
+                let image = prepared.bitmap().ok_or("image source is SVG; use the SVG media path")?.clone();
                 if let Some(modifier) = &source.vectorize {
                     let width = u32::try_from(image.width())
                         .map_err(|_| "Vectorize image width is negative")?;

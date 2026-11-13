@@ -3,6 +3,7 @@ pub mod code;
 mod csv;
 pub mod dataframe;
 pub mod font;
+pub mod media;
 mod numpy;
 pub mod sqlite;
 mod yaml;

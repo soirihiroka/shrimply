@@ -1,8 +1,6 @@
 use std::fmt;
 
-use cairo::PathSegment;
 use glam::{Vec2, Vec3};
-use glib::translate::from_glib;
 use hashbrown::HashSet;
 use lyon_tessellation::{
     FillOptions, FillRule, FillTessellator, VertexBuffers,
@@ -10,7 +8,7 @@ use lyon_tessellation::{
     math::{Point, point},
     path::Path as LyonPath,
 };
-use pango::{Alignment, FontDescription, Gravity, GravityHint};
+use pango::Alignment;
 use serde::{Deserialize, Deserializer, Serialize};
 use shrimply_fonts::native as fonts;
 pub use shrimply_fonts::native::register_application_font;
@@ -316,94 +314,38 @@ pub fn generate_mesh(geometry: &Geometry<'_>) -> Result<ObjMesh, Text3dError> {
 }
 
 fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
-    let surface = cairo::RecordingSurface::create(cairo::Content::Alpha, None)
-        .map_err(|error| Text3dError(format!("create 3D text path surface: {error}")))?;
-    let cairo = cairo::Context::new(&surface)
-        .map_err(|error| Text3dError(format!("create 3D text layout context: {error}")))?;
-    if geometry.direction == TextDirection::Vertical {
-        cairo.rotate(std::f64::consts::FRAC_PI_2);
-    }
-    let mut font = FontDescription::new();
-    fonts::set_families(
-        &mut font,
-        geometry.font_families.iter().map(FontFamily::name),
-    )
-    .map_err(Text3dError)?;
-    font.set_style(match geometry.font_style {
-        TextFontStyle::Normal => pango::Style::Normal,
-        TextFontStyle::Italic => pango::Style::Italic,
-        TextFontStyle::Oblique => pango::Style::Oblique,
-    });
-    font.set_absolute_size(LAYOUT_EM_SIZE * pango::SCALE as f64);
-    let weight = geometry.font_weight.round().clamp(1.0, 1000.0);
-    font.set_weight(unsafe { from_glib(weight as i32) });
-    let mut variations = geometry
-        .font_variations
-        .iter()
-        .filter(|variation| {
-            variation.value.is_finite()
-                && variation.axis.len() == 4
-                && variation.axis.bytes().all(|byte| byte.is_ascii_graphic())
-                && variation.axis != "wght"
-                && variation.axis != "ital"
-        })
-        .map(|variation| format!("{}={}", variation.axis, variation.value))
-        .collect::<Vec<_>>();
-    variations.push(format!("wght={weight}"));
-    if geometry.font_style == TextFontStyle::Italic {
-        variations.push("ital=1".to_string());
-    }
-    font.set_variations(Some(&variations.join(",")));
-    let layout = fonts::layout(&font).map_err(Text3dError)?;
-    let context = layout.context();
-    pangocairo::functions::update_context(&cairo, &context);
-    context.set_base_gravity(match geometry.direction {
-        TextDirection::Horizontal => Gravity::South,
-        TextDirection::Vertical => Gravity::East,
-    });
-    context.set_gravity_hint(GravityHint::Natural);
-    layout.context_changed();
-    layout.set_text(geometry.text);
-    let (_, natural) = layout.extents();
-    layout.set_width(natural.width().max(1));
-    layout.set_alignment(match geometry.direction {
-        TextDirection::Horizontal => match geometry.h_align {
-            TextHorizontalAlign::Left | TextHorizontalAlign::Fill => Alignment::Left,
-            TextHorizontalAlign::Center => Alignment::Center,
-            TextHorizontalAlign::Right => Alignment::Right,
+    let native = fonts::shaping::layout(
+        &geometry.font_families.iter().map(|font|font.name().to_owned()).collect::<Vec<_>>().into(),
+        geometry.text,
+        &fonts::shaping::Options {
+            weight: geometry.font_weight.round().clamp(1.,1000.) as i32,
+            style:match geometry.font_style {
+                TextFontStyle::Normal=>pango::Style::Normal,
+                TextFontStyle::Italic=>pango::Style::Italic,
+                TextFontStyle::Oblique=>pango::Style::Oblique,
+            },
+            variations:geometry.font_variations.iter().filter(|variation| variation.value.is_finite() && variation.axis.len()==4 && variation.axis.bytes().all(|byte|byte.is_ascii_graphic()) && variation.axis!="wght" && variation.axis!="ital")
+                .map(|variation|(variation.axis.clone(),variation.value)).collect(),
+            vertical:geometry.direction==TextDirection::Vertical,
+            alignment:match geometry.direction {
+                TextDirection::Horizontal=>match geometry.h_align {
+                    TextHorizontalAlign::Left|TextHorizontalAlign::Fill=>Alignment::Left,
+                    TextHorizontalAlign::Center=>Alignment::Center,
+                    TextHorizontalAlign::Right=>Alignment::Right,
+                },
+                TextDirection::Vertical=>match geometry.v_align {
+                    VerticalAlign::Top=>Alignment::Left,
+                    VerticalAlign::Middle=>Alignment::Center,
+                    VerticalAlign::Bottom=>Alignment::Right,
+                },
+            },
+            justify:geometry.direction==TextDirection::Horizontal && geometry.h_align==TextHorizontalAlign::Fill,
+            ..fonts::shaping::Options::new(LAYOUT_EM_SIZE)
         },
-        TextDirection::Vertical => match geometry.v_align {
-            VerticalAlign::Top => Alignment::Left,
-            VerticalAlign::Middle => Alignment::Center,
-            VerticalAlign::Bottom => Alignment::Right,
-        },
-    });
-    let justify = geometry.direction == TextDirection::Horizontal
-        && geometry.h_align == TextHorizontalAlign::Fill;
-    layout.set_justify(justify);
-    layout.set_justify_last_line(justify);
-
-    cairo.move_to(0.0, 0.0);
-    pangocairo::functions::layout_path(&cairo, &layout);
-    cairo.identity_matrix();
-    let (ink_x1, ink_y1, ink_x2, ink_y2) = cairo
-        .path_extents()
-        .map_err(|error| Text3dError(format!("measure 3D text outline: {error}")))?;
-    let (_, logical) = layout.extents();
-    let scale = pango::SCALE as f64;
-    let x = logical.x() as f64 / scale;
-    let y = logical.y() as f64 / scale;
-    let width = logical.width() as f64 / scale;
-    let height = logical.height() as f64 / scale;
-    let (lx1, ly1, lx2, ly2) = match geometry.direction {
-        TextDirection::Horizontal => (x, y, x + width, y + height),
-        TextDirection::Vertical => (-(y + height), x, -y, x + width),
-    };
-    let min = Vec2::new(lx1.min(ink_x1) as f32, ly1.min(ink_y1) as f32);
-    let size = Vec2::new(
-        (lx2.max(ink_x2) - lx1.min(ink_x1)) as f32,
-        (ly2.max(ink_y2) - ly1.min(ink_y1)) as f32,
-    );
+    ).map_err(Text3dError)?;
+    let shaped=&native.shaped;
+    let min=Vec2::new((shaped.bounds[0]-shaped.origin[0]) as f32,(shaped.bounds[1]-shaped.origin[1]) as f32);
+    let size=Vec2::new((shaped.bounds[2]-shaped.bounds[0]) as f32,(shaped.bounds[3]-shaped.bounds[1]) as f32);
     let anchor = Vec2::new(
         match geometry.h_align {
             TextHorizontalAlign::Left => 0.0,
@@ -416,33 +358,30 @@ fn outline(geometry: &Geometry<'_>) -> Result<LyonPath, Text3dError> {
             VerticalAlign::Bottom => size.y,
         },
     );
-    let convert = |(x, y): (f64, f64)| {
+    let convert = |[x, y]: [f64; 2]| {
         point(
-            (x as f32 - min.x - anchor.x) / LAYOUT_EM_SIZE as f32,
-            -(y as f32 - min.y - anchor.y) / LAYOUT_EM_SIZE as f32,
+            ((x-shaped.origin[0]) as f32 - min.x - anchor.x) / LAYOUT_EM_SIZE as f32,
+            -((y-shaped.origin[1]) as f32 - min.y - anchor.y) / LAYOUT_EM_SIZE as f32,
         )
     };
-    let path = cairo
-        .copy_path()
-        .map_err(|error| Text3dError(format!("copy 3D text outline: {error}")))?;
     let mut output = LyonPath::builder();
     let mut open = false;
-    for segment in path.iter() {
+    for segment in shaped.outline.iter() {
         match segment {
-            PathSegment::MoveTo(to) => {
+            shrimply_fonts::TextSegment::Move(to) => {
                 if open {
                     output.end(false);
                 }
-                output.begin(convert(to));
+                output.begin(convert(*to));
                 open = true;
             }
-            PathSegment::LineTo(to) => {
-                output.line_to(convert(to));
+            shrimply_fonts::TextSegment::Line(to) => {
+                output.line_to(convert(*to));
             }
-            PathSegment::CurveTo(a, b, to) => {
-                output.cubic_bezier_to(convert(a), convert(b), convert(to));
+            shrimply_fonts::TextSegment::Curve(a, b, to) => {
+                output.cubic_bezier_to(convert(*a), convert(*b), convert(*to));
             }
-            PathSegment::ClosePath => {
+            shrimply_fonts::TextSegment::Close => {
                 output.end(true);
                 open = false;
             }

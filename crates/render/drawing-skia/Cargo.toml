@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 glam.workspace = true
-skia-safe.workspace = true
+skia-safe = { workspace = true, features = ["svg"] }
+shrimply-resource-pipeline.workspace = true
+shrimply-fonts = { workspace = true, features = ["native"] }
 shrimply-math-color = { workspace = true, features = ["skia"] }
 shrimply-math-geometry = { workspace = true, features = ["skia"] }

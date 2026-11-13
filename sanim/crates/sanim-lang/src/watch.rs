@@ -97,21 +97,26 @@ impl Session {
             ))
             .expect("serializable overrides"),
         );
-        let mut observed = BTreeMap::new();
-        for path in self.observed.keys() {
-            let value = match sources.read(path) {
-                Ok(bytes) => digest(&bytes),
-                Err(e) => format!("error:{e}"),
-            };
-            observed.insert(path.clone(), value);
+        let mut changed=self.observed.is_empty()
+            || self.font_environment_changed()
+            || overrides!=self.previous_overrides;
+        if !changed {
+            // Source/input changes can remove an old dependency entirely. Probe
+            // the entry and local resources first, stopping as soon as a change
+            // is known; never fetch an obsolete remote asset before preparing
+            // the new program that no longer references it.
+            let paths=std::iter::once(self.entry.as_str())
+                .chain(self.observed.keys().map(String::as_str).filter(|path|*path!=self.entry && !crate::source::is_remote(path)))
+                .chain(self.observed.keys().map(String::as_str).filter(|path|crate::source::is_remote(path)));
+            changed=paths.into_iter().any(|path| {
+                let current=match sources.read_snapshot(path) {
+                    Ok((_,fingerprint))=>fingerprint,
+                    Err(error)=>format!("error:{error}"),
+                };
+                self.observed.get(path)!=Some(&current)
+            });
         }
-        if !self.font_environment_changed()
-            && !observed.is_empty()
-            && observed == self.observed
-            && overrides == self.previous_overrides
-        {
-            return Reload::Unchanged;
-        }
+        if !changed {return Reload::Unchanged;}
         self.previous_overrides = overrides;
         let mut planning_performance = vec![];
         let mut planning_micros = 0;
@@ -249,8 +254,7 @@ impl Session {
             Err(diagnostic) => {
                 self.last_error = Some(diagnostic.clone());
                 // Keep old dependencies too: a failed edit may stop before reading them.
-                observed.extend(self.engine.attempted.clone());
-                self.observed = observed;
+                self.observed.extend(self.engine.attempted.clone());
                 Reload::Failed {
                     diagnostic,
                     last_good_revision: self.current.as_ref().map(|_| self.revision),

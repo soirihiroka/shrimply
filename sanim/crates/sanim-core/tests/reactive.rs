@@ -7,22 +7,22 @@ use std::sync::Arc;
 
 #[test]
 fn font_budget_shares_checkpoints_without_retaining_assets_or_confusing_cow_updates() {
-    use sanim_core::value_budget::{FontBudget, charge_with_fonts};
+    use sanim_core::value_budget::{Budget, charge_with_budget};
     let mut bytes = Arc::new(vec![0u8; 1024]);
     let weak = Arc::downgrade(&bytes);
     let original = Value::Font(sanim_core::Font::Asset(bytes.clone()));
-    let mut budget = FontBudget::default();
+    let mut budget = Budget::default();
     let (mut remaining, mut items) = (8192usize, 64usize);
-    charge_with_fonts(&original, &mut remaining, &mut items, 8, &mut budget).unwrap();
+    charge_with_budget(&original, &mut remaining, &mut items, 8, &mut budget).unwrap();
     let after_first = remaining;
     let checkpoint = budget.clone();
     let metadata = checkpoint.metadata_bytes();
-    charge_with_fonts(&original, &mut remaining, &mut items, 8, &mut budget).unwrap();
+    charge_with_budget(&original, &mut remaining, &mut items, 8, &mut budget).unwrap();
     assert_eq!(after_first - remaining, std::mem::size_of::<Value>());
     Arc::make_mut(&mut bytes)[0] = 1;
     let changed = Value::Font(sanim_core::Font::Asset(bytes));
     let before_change = remaining;
-    charge_with_fonts(&changed, &mut remaining, &mut items, 8, &mut budget).unwrap();
+    charge_with_budget(&changed, &mut remaining, &mut items, 8, &mut budget).unwrap();
     assert!(before_change - remaining >= 1024);
     assert!(budget.metadata_bytes() > metadata);
     assert_eq!(checkpoint.metadata_bytes(), metadata);
@@ -35,14 +35,14 @@ fn font_budget_shares_checkpoints_without_retaining_assets_or_confusing_cow_upda
 
 #[test]
 fn failed_font_charges_cannot_register_unpaid_payloads() {
-    use sanim_core::value_budget::{FontBudget, charge_with_fonts};
+    use sanim_core::value_budget::{Budget, charge_with_budget};
     let font = Value::Font(sanim_core::Font::Asset(Arc::new(vec![0u8; 1024])));
-    let mut budget = FontBudget::default();
+    let mut budget = Budget::default();
     let (mut bytes, mut items) = (std::mem::size_of::<Value>(), 4);
-    assert!(charge_with_fonts(&font, &mut bytes, &mut items, 8, &mut budget).is_err());
+    assert!(charge_with_budget(&font, &mut bytes, &mut items, 8, &mut budget).is_err());
     assert_eq!(budget.metadata_bytes(), 0);
     let (mut bytes, mut items) = (4096usize, 4usize);
-    charge_with_fonts(&font, &mut bytes, &mut items, 8, &mut budget).unwrap();
+    charge_with_budget(&font, &mut bytes, &mut items, 8, &mut budget).unwrap();
     assert!(4096 - bytes >= 1024);
 }
 
@@ -780,7 +780,8 @@ fn typed_vector_nodes_and_components_share_cells_and_validate_serialized_indices
 fn group_dimensions_are_layout_properties_with_clear_automatic_value_errors() {
     let mut group = element(
         "group",
-        Geometry::Group {
+        Geometry::Box {
+            radius: Default::default(),
             children: imbl::Vector::new(),
         },
     );

@@ -1,0 +1,77 @@
+# A normal Box owns overflow. Its code child keeps its natural content height.
+mut scroll = Vec2(0%, 0%)
+
+let heading = <Label font_size={28pt} position={Vec2(0%, -43%)}>Code, inside a box.</Label>
+let subtitle = <Label font_size={14pt} fill="light4" position={Vec2(0%, -36%)}>Native syntax trees · normal layout · one animated scroll value</Label>
+
+let panel = <Box w-84% h-70% p-24 gap-16 rounded-xl bg-card_bg_dark position={Vec2(8%, 20%)}>
+    <Box flex flex-row gap-12 h-28 items-center>
+        <Circle radius={5pt} fill="green3" />
+        <Label font_size={17pt}>work_queue.py</Label>
+    </Box>
+    <Box w-full h-360 p-12 rounded-lg bg-view_bg_dark overflow-x-hidden overflow-y-scroll scroll={scroll}>
+        <CodeView lang="python" font_size={15pt} line_height={24pt} width={100%}>
+            from collections import deque
+            from dataclasses import dataclass
+
+
+            @dataclass(frozen=True)
+            class Job:
+                name: str
+                priority: int = 0
+
+
+            class WorkQueue:
+                """A small FIFO queue with explicit, readable operations."""
+
+                def __init__(self):
+                    self.pending = deque()
+                    self.completed = []
+
+                def push(self, job):
+                    self.pending.append(job)
+
+                def pop(self):
+                    if not self.pending:
+                        raise IndexError("the queue is empty")
+                    return self.pending.popleft()
+
+                def run_next(self):
+                    job = self.pop()
+                    print(f"Running {job.name}")
+                    self.completed.append(job)
+                    return job
+
+                def drain(self):
+                    while self.pending:
+                        self.run_next()
+
+
+            def main():
+                queue = WorkQueue()
+                queue.push(Job("Read source"))
+                queue.push(Job("Build syntax tree"))
+                queue.push(Job("Resolve layout"))
+                queue.push(Job("Record draw calls"))
+                queue.drain()
+                print(f"Completed {len(queue.completed)} jobs")
+
+
+            if __name__ == "__main__":
+                main()
+        </CodeView>
+    </Box>
+    <Box flex flex-row items-center justify-between>
+        <Label font_size={13pt} fill="light4">One scroll value. Native syntax and clipping.</Label>
+        <Label font_size={13pt} fill="blue2">overflow-y-scroll</Label>
+    </Box>
+</Box>
+
+add(heading)
+add(subtitle)
+add(panel)
+wait(800ms)
+animate(scroll, to=Vec2(0%, 100%), duration=3s, ease="smooth")
+wait(800ms)
+animate(scroll, to=Vec2(0%, 0%), duration=2s, ease="smooth")
+wait(800ms)

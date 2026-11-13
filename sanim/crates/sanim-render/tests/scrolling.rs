@@ -4,7 +4,8 @@ use sanim_render::{Options, Renderer};
 const SOURCE: &str = r#"bg(Color("transparent"))
 let first=Rect(width=20pt,height=20pt,fill=Color("blue3"),x_align=Align.Start,y_align=Align.Start)
 let last=Rect(width=20pt,height=20pt,position=Vec2(0pt,80pt),fill=Color("orange3"),x_align=Align.Start,y_align=Align.Start)
-let clip=ScrollView(width=100pt,height=60pt,children=[first,last])
+let spacer=Box(width=20pt,height=3*20pt)
+let clip=Box(overflow="auto",width=100pt,height=60pt,children=[first,spacer,last])
 add(clip)
 clip.scroll_to(to=Vec2(0pt,40pt),duration=1s,ease="linear")
 wait(1s)
@@ -87,7 +88,7 @@ fn offscreen_code_glyphs_do_not_prepare_native_paths() {
 
 #[test]
 fn percent_axis_targets_remain_relative_after_external_resize() {
-    let source = "let content=Rect(width=20pt,height=20pt,position=Vec2(0pt,400pt),x_align=Align.Start,y_align=Align.Start)\nlet view=ScrollView(width=100pt,height=50%,children=[content])\nadd(view)\nview.scroll_to(y=100%,duration=1s,ease=\"linear\")\nwait(1s)";
+    let source = "let content=Box(width=20pt,height=420pt)\nlet view=Box(overflow=\"auto\",width=100pt,height=50%,children=[content])\nadd(view)\nview.scroll_to(y=100%,duration=1s,ease=\"linear\")\nwait(1s)";
     let mut renderer = Renderer::default();
     let axis = renderer.prepare(animation(source)).unwrap();
     let vector = renderer
@@ -173,4 +174,17 @@ fn scroll_benchmark() {
             "native scroll {name}, 60 frames: cold={cold:?}, cached reverse={warm:?}, paths={paths}"
         );
     }
+}
+
+#[test]
+fn a_zero_height_hidden_box_clips_every_child_pixel() {
+    let mut renderer=Renderer::default();
+    let scene=renderer.prepare(animation(r#"bg(Color("transparent"))
+let pane=<Box w-100 h-0 overflow-hidden><Rect width={20pt} height={20pt} fill="blue3"/></Box>
+add(pane)
+wait(1s)"#)).unwrap();
+    let mut options=Options::for_animation(scene.animation());
+    options.encode_png=false;
+    let frame=renderer.render(&scene,0.into(),&options).unwrap();
+    assert!(frame.rgba.chunks_exact(4).all(|pixel|pixel[3]==0));
 }

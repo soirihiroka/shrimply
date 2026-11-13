@@ -25,6 +25,14 @@ struct Editor {
 
 impl Editor {
     fn edit(&self, key: &str, edit: TtsInputEdit) -> bool {
+        match &edit {
+            TtsInputEdit::Text(_) | TtsInputEdit::Number(_) | TtsInputEdit::TableCell { .. } => {}
+            TtsInputEdit::Select(_)
+            | TtsInputEdit::Toggle(_)
+            | TtsInputEdit::Audio(_)
+            | TtsInputEdit::AddTableRow
+            | TtsInputEdit::RemoveTableRow(_) => self.context.end_editing(),
+        }
         let result =
             self.context
                 .controller
@@ -73,6 +81,7 @@ pub(super) fn view(
             })
             .collect(),
         move |id| {
+            model_context.end_editing();
             let result = model_context.controller.select_tts_model(
                 &model_context.target,
                 &model_context.server_url.borrow(),
@@ -97,6 +106,7 @@ pub(super) fn view(
         let retry = ActionButton::new(
             "Retry",
             move || {
+                retry_context.end_editing();
                 retry_context
                     .controller
                     .retry_tts_models(&retry_context.server_url.borrow());
@@ -122,6 +132,7 @@ pub(super) fn view(
                 "Generate"
             },
             move || {
+                generating.context.end_editing();
                 let was_running = generating
                     .context
                     .controller
@@ -368,6 +379,7 @@ fn audio(
     let choose = ActionButton::new(
         "Choose audio…",
         move || {
+            chosen.context.end_editing();
             let chosen = chosen.clone();
             let key = chosen_key.clone();
             super::files::choose(

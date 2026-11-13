@@ -9,6 +9,8 @@ license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 shrimply-fonts = { path = "../crates/media/fonts" }
+shrimply-resource-pipeline = { path = "../crates/resource-pipeline" }
+shrimply-asset = { path = "../crates/media/asset" }
 shrimply-math-color = { path = "../crates/math/color" }
 shrimply-drawing-skia = { path = "../crates/render/drawing-skia" }
 glam = "0.34"

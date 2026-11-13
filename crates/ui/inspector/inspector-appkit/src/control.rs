@@ -1,5 +1,5 @@
 use objc2::ClassType;
-use objc2::rc::Retained;
+use objc2::rc::{Retained, Weak};
 use objc2_app_kit::{NSAlert, NSAlertFirstButtonReturn, NSStackView, NSView, NSWorkspace};
 use objc2_foundation::{MainThreadMarker, NSArray, NSString, NSURL};
 use shrimply_components_appkit::{
@@ -23,6 +23,7 @@ pub(super) type Polls = Rc<RefCell<Vec<Box<dyn Fn()>>>>;
 
 #[derive(Clone)]
 pub(super) struct Context {
+    pub root: Weak<NSView>,
     pub focus: Rc<super::focus::FocusMap>,
     pub preferences: shrimply_editor_state::preferences::SharedPreferences,
     pub server_url: Rc<RefCell<String>>,
@@ -35,12 +36,21 @@ pub(super) struct Context {
 
 impl Context {
     pub fn apply(&self, action: &BasicInspectorAction) {
+        self.end_editing();
         self.refresh(self.controller.apply_basic_action(&self.target, action));
     }
 
     pub(super) fn finish(&self, result: Result<(), String>) {
         if let Err(error) = result {
             show_error(&error);
+        }
+    }
+
+    pub(super) fn end_editing(&self) {
+        // Finish before a discrete action mutates the model: numeric field
+        // editors publish their value when they resign first responder.
+        if let Some(root) = self.root.load() {
+            super::editing::finish(&root);
         }
     }
 
@@ -169,6 +179,7 @@ fn editor_view(
                 tooltip(control),
                 parse_bool(&control.value),
                 move |value| {
+                    context.end_editing();
                     if context.set_text(&edited_control, &value.to_string()) {
                         context.commit(&edited_control);
                     }
@@ -220,6 +231,7 @@ fn editor_view(
                 )
                 .with_keywords(control.search_terms.clone()),
                 move |kind| {
+                    context.end_editing();
                     let result =
                         context
                             .controller
@@ -284,6 +296,7 @@ fn editor_view(
                     &control.value
                 });
             let on_action = move || {
+                context.end_editing();
                 if let Some(action) = edited.action
                     && let Some(selection) = action.file_selection()
                 {
@@ -500,6 +513,7 @@ fn selector(
         &control.value,
         choices,
         move |value| {
+            editing_context.end_editing();
             if editing_context.set_text(&editing, &value) {
                 committing.commit(&committed_control);
             }
@@ -706,11 +720,11 @@ fn project_settings(
     let discard = ActionButton::new(
         "Discard",
         {
-            let dirty = context.dirty.clone();
-            let force_rebuild = context.force_rebuild.clone();
+            let context = context.clone();
             move || {
-                force_rebuild.set(true);
-                dirty.set(true);
+                context.end_editing();
+                context.force_rebuild.set(true);
+                context.dirty.set(true);
             }
         },
         mtm,
@@ -721,6 +735,7 @@ fn project_settings(
         {
             let context = context.clone();
             move || {
+                context.end_editing();
                 if !confirm_project_settings() {
                     return;
                 }
@@ -853,6 +868,7 @@ fn beat_detection(
         parse_bool(&control.value),
         Some(&control.subtitle),
         move |value| {
+            editing.end_editing();
             if editing.set_text(&edited, &value.to_string()) {
                 editing.commit(&edited);
             }
@@ -897,11 +913,15 @@ fn cache_button(
     let button = ProgressButton::new(&control.value, mtm);
     // The polling callback owns the button, so its action must not retain the
     // Context's polling collection and form a cycle.
+    let root = context.root.clone();
     let controller = context.controller.clone();
     let target = context.target.clone();
     let dirty = context.dirty.clone();
     button.connect_action(
         move || {
+            if let Some(root) = root.load() {
+                super::editing::finish(&root);
+            }
             let result = match kind {
                 ControlKind::AudioCache => controller.toggle_audio_cache(&target, id),
                 ControlKind::VisualCache => controller.toggle_visual_cache(&target, id),

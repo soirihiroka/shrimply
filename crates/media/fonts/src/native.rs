@@ -1,4 +1,5 @@
 //! One application registry and one synchronized Pango map per render thread.
+pub mod shaping;
 use crate::{Font, descriptor::validate_family};
 use pango::prelude::*;
 use serde::{Deserialize, Serialize};

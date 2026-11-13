@@ -2,6 +2,15 @@
 mod descriptor;
 pub use descriptor::Font;
 
+/// Native outline commands shared by Sanim and the editor's 2D/3D text paths.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum TextSegment {
+    Move([f64; 2]),
+    Line([f64; 2]),
+    Curve([f64; 2], [f64; 2], [f64; 2]),
+    Close,
+}
+
 #[cfg(feature = "native")]
 pub mod native;
 

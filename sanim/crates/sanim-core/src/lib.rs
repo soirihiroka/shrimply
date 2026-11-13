@@ -11,6 +11,7 @@ pub mod layout;
 pub mod list_views;
 pub use duration::{NodeDuration, TimelineEffect};
 pub mod math;
+pub mod media;
 pub mod paint;
 pub use paint::{GradientStop, Paint};
 pub mod reactive;
@@ -34,7 +35,7 @@ pub use scene::*;
 pub use types::*;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+pub use shrimply_resource_pipeline::fingerprint::{digest, digest_bytes};
 
 pub const SEMANTICS_VERSION: &str = "sanim-0.1";
 
@@ -75,18 +76,6 @@ impl std::fmt::Display for Diagnostic {
     }
 }
 impl std::error::Error for Diagnostic {}
-
-pub fn digest(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut result = String::with_capacity(64);
-    for byte in digest_bytes(bytes) {
-        write!(result, "{byte:02x}").expect("writing to String");
-    }
-    result
-}
-pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
-}
 
 pub mod template;
 pub use template::{Template, TemplatePart};

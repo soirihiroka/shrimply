@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-asset.workspace = true
 shrimply-media-import.workspace = true
 shrimply-trust-core.workspace = true
 async-channel.workspace = true
@@ -13,7 +14,6 @@ ffmpeg-next.workspace = true
 glam.workspace = true
 hashbrown.workspace = true
 imagesize.workspace = true
-reqwest = { workspace = true, features = ["default", "blocking"] }
 shrimply-3dgs-core = { workspace = true }
 shrimply-blender-core = { workspace = true }
 shrimply-property-model = { workspace = true }

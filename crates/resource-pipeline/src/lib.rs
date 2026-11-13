@@ -1,3 +1,6 @@
+pub mod cache;
+pub mod fingerprint;
+
 use std::any::Any;
 use std::collections::HashMap;
 use std::hash::Hash;

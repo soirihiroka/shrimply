@@ -385,6 +385,21 @@ qt-components-showcase: qt-native-deps
 check: sanim-check sanim-integration-check
 
 .PHONY: font-system-check font-system-bench
+.PHONY: media-system-check
+check: media-system-check
+media-system-check:
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-asset remote --lib
+.PHONY: font-shaping-check font-shaping-bench
+.PHONY: resource-cache-check
+check: resource-cache-check
+resource-cache-check:
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-resource-pipeline --lib cache::tests
+font-shaping-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-fonts --features native --all-targets -- -D warnings
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-fonts --features native
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-visual-core -p shrimply-text-3d --lib
+font-shaping-bench: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-fonts --features native shared_font_shaping_benchmark -- --ignored --nocapture
 .PHONY: sanim-dev-cli-check
 check: sanim-dev-cli-check
 sanim-dev-cli-check: native-deps cuda-artifacts

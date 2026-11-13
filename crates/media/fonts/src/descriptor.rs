@@ -12,6 +12,12 @@ impl Default for Font {
         Self::Family(vec![Self::DEFAULT_FAMILY.to_owned()].into())
     }
 }
+/// An absent editor family list selects the application's default family.
+impl From<Vec<String>> for Font {
+    fn from(families: Vec<String>) -> Self {
+        if families.is_empty() { Self::default() } else { Self::Family(families.into()) }
+    }
+}
 impl Font {
     pub const DEFAULT_FAMILY: &'static str = "sans-serif";
     pub fn family(preferred: &str, fallback: &str) -> Result<Self, String> {

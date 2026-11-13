@@ -39,7 +39,7 @@ ExpandX(interval_box,duration=400ms,ease="smootherstep")
 "#
     ));
     let dots = p.animation.find("dots").unwrap();
-    let Geometry::Group { children } = dots.geometry.as_ref() else {
+    let Geometry::Box { children, .. } = dots.geometry.as_ref() else {
         panic!()
     };
     assert_eq!(children.len(), 3);

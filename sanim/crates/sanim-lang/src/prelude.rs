@@ -62,12 +62,56 @@ pub fn builtins() -> &'static [Builtin] {
     BUILTINS.get_or_init(build_builtins)
 }
 
+/// Shared element layout and visual inputs. Specialized arguments declared later
+/// override a shared name (for example Line.width remains stroke thickness).
+pub(crate) fn element_parameters() -> Vec<Parameter> {
+    use Type::*;
+    let p = |name, ty| Parameter {
+        name,
+        ty,
+        required: false,
+    };
+    vec![
+        p("id", String),
+        p("position", Vector(2, None)),
+        p("x_align", sanim_core::Align::ty()),
+        p("y_align", sanim_core::Align::ty()),
+        p("fill", sanim_core::Paint::ty()),
+        p("opacity", Numeric(Dimension::Number)),
+        p("rotation", Numeric(Dimension::Angle)),
+        p("scale", Numeric(Dimension::Number)),
+        p("width", sanim_core::Layout::dimension_type()),
+        p("height", sanim_core::Layout::dimension_type()),
+        p("padding", Numeric(Dimension::Length)),
+        p("gap", Numeric(Dimension::Length)),
+        p("justify", sanim_core::Justify::ty()),
+        p("align", sanim_core::Align::ty()),
+        p("wrap", Bool),
+        p("flex_direction", String),
+        p("flex_grow", Numeric(Dimension::Number)),
+        p("flex_shrink", Numeric(Dimension::Number)),
+        p("flex_basis", sanim_core::Layout::dimension_type()),
+        p("border_color", Color),
+        p("border_width", Numeric(Dimension::Length)),
+        p("overflow", String),
+        p("overflow_x", String),
+        p("overflow_y", String),
+        p(
+            "scroll",
+            Type::union([
+                Vector(2, Some(Dimension::Length)),
+                Vector(2, Some(Dimension::Percent)),
+            ])
+            .expect("scroll units"),
+        ),
+    ]
+}
+
 fn build_builtins() -> Vec<Builtin> {
     use Type::*;
     let num = Numeric(Dimension::Number);
     let length = Numeric(Dimension::Length);
     let duration = Numeric(Dimension::Duration);
-    let angle = Numeric(Dimension::Angle);
     let p = |name, ty, required| Parameter { name, ty, required };
     let mut out = vec![];
     crate::dataframe::register(&mut out);
@@ -156,19 +200,7 @@ fn build_builtins() -> Vec<Builtin> {
             native_types::fixed,
         );
     }
-    let common = || {
-        vec![
-            p("id", String, false),
-            p("position", Vector(2, None), false),
-            p("x_align", sanim_core::Align::ty(), false),
-            p("y_align", sanim_core::Align::ty(), false),
-            p("fill", sanim_core::Paint::ty(), false),
-            p("design", String, false),
-            p("opacity", num.clone(), false),
-            p("rotation", angle.clone(), false),
-            p("scale", num.clone(), false),
-        ]
-    };
+    let common = element_parameters;
     let mut params = common();
     params.push(p("radius", length.clone(), false));
     add(
@@ -182,24 +214,12 @@ fn build_builtins() -> Vec<Builtin> {
     for name in ["Rectangle", "Rect"] {
         let mut params = common();
         params.extend([
-            p("width", sanim_core::Layout::dimension_type(), false),
-            p("height", sanim_core::Layout::dimension_type(), false),
-            p("radius", length.clone(), false),
+            p(
+                "radius",
+                Type::union([length.clone(), String]).expect("corner radius"),
+                false,
+            ),
             p("children", List(Box::new(Element)), false),
-            p("padding", length.clone(), false),
-            p("gap", length.clone(), false),
-            p("justify", sanim_core::Justify::ty(), false),
-            p("align", sanim_core::Align::ty(), false),
-            p("wrap", Bool, false),
-            p(
-                "scroll",
-                Type::union([
-                    Vector(2, Some(Dimension::Length)),
-                    Vector(2, Some(Dimension::Percent)),
-                ])
-                .expect("scroll units"),
-                false,
-            ),
         ]);
         add(
             name,
@@ -210,40 +230,23 @@ fn build_builtins() -> Vec<Builtin> {
             native_types::fixed,
         );
     }
-    for name in ["Group", "Row", "Column", "ScrollView"] {
-        let mut params = common();
-        params.extend([
-            p("children", List(Box::new(Element)), true),
-            p("padding", length.clone(), false),
-            p("width", sanim_core::Layout::dimension_type(), false),
-            p("height", sanim_core::Layout::dimension_type(), false),
-            p(
-                "scroll",
-                Type::union([
-                    Vector(2, Some(Dimension::Length)),
-                    Vector(2, Some(Dimension::Percent)),
-                ])
-                .expect("scroll units"),
-                false,
-            ),
-        ]);
-        if !matches!(name, "Group" | "ScrollView") {
-            params.extend([
-                p("gap", length.clone(), false),
-                p("justify", sanim_core::Justify::ty(), false),
-                p("align", sanim_core::Align::ty(), false),
-                p("wrap", Bool, false),
-            ]);
-        }
-        add(
-            name,
-            params,
-            Element,
+    let mut params = common();
+    params.extend([
+        p("children", List(Box::new(Element)), false),
+        p(
+            "radius",
+            Type::union([length.clone(), String]).expect("corner radius"),
             false,
-            Execution::Native(native::element),
-            native_types::fixed,
-        );
-    }
+        ),
+    ]);
+    add(
+        "Box",
+        params,
+        Element,
+        false,
+        Execution::Native(native::element),
+        native_types::fixed,
+    );
     let mut params = common();
     params.extend([
         p("end", Vector(2, Some(Dimension::Length)), true),
@@ -475,7 +478,8 @@ fn build_builtins() -> Vec<Builtin> {
     }
     out.extend(crate::charts::builtins(common()));
     crate::code_view::register(&mut out, common());
-    out.extend(crate::design::builtins());
+    crate::media::register(&mut out);
+    out.extend(crate::utilities::builtins());
     crate::lists::register(&mut out);
     crate::animations::register(&mut out);
     for builtin in &mut out {
@@ -485,6 +489,13 @@ fn build_builtins() -> Vec<Builtin> {
 }
 
 pub(crate) fn finalize(builtin: &mut Builtin) {
+    let mut names = std::collections::BTreeSet::new();
+    builtin.parameters.reverse();
+    builtin
+        .parameters
+        .retain(|parameter| names.insert(parameter.name));
+    builtin.parameters.reverse();
+
     if !builtin.parameters.iter().any(|p| p.name == "duration") {
         builtin.parameters.push(Parameter {
             name: "duration",
@@ -513,13 +524,11 @@ pub fn builtin(name: &str) -> Option<&'static Builtin> {
         .or_else(|| crate::dataframe::builtin(name))
         .or_else(|| crate::code_view::builtin(name))
         .or_else(|| crate::scrolling::builtin(name))
-        .or_else(|| crate::scrolling::builtin(name))
 }
 
 pub fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
     crate::dataframe::methods_for(receiver)
         .chain(crate::code_view::methods_for(receiver))
-        .chain(crate::scrolling::methods_for(receiver))
         .chain(crate::scrolling::methods_for(receiver))
 }
 

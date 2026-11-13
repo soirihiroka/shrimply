@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-drawing-skia.workspace = true
 glam.workspace = true
 skia-safe.workspace = true
 shrimply-asset = { workspace = true }

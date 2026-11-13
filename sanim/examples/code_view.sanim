@@ -4,16 +4,16 @@ let python_title = <Label font_size={18pt} fill="blue2">Python · parsed patch �
 let sanim_title = <Label font_size={18pt} fill="green2">Sanim · native parser · live styles</Label>
 let python_view = <CodeView src="code_view_sample.py" font_size={15pt} />
 let sanim_view = <CodeView src="code_view_sample.sanim" font_size={12pt} />
-let panels = <Row width={90%} height={70%} gap={50pt} align={Align.Start} x_align={Align.Center} y_align={Align.Center} position={Vec2(0%, 3%)}>
-    <Column width={45%} height={100%} gap={18pt} align={Align.Start}>
+let panels = <Box flex flex-row width={90%} height={70%} gap={50pt} align={Align.Start} x_align={Align.Center} y_align={Align.Center} position={Vec2(0%, 3%)}>
+    <Box flex flex-col width={45%} height={100%} gap={18pt} align={Align.Start}>
         {python_title}
         {python_view}
-    </Column>
-    <Column width={45%} height={100%} gap={18pt} align={Align.Start}>
+    </Box>
+    <Box flex flex-col width={45%} height={100%} gap={18pt} align={Align.Start}>
         {sanim_title}
         {sanim_view}
-    </Column>
-</Row>
+    </Box>
+</Box>
 
 add(title)
 add(panels)

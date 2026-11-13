@@ -22,7 +22,7 @@ pub struct ExecutionState {
     retained_bytes: usize,
     retained_items: usize,
     retained_frames: imbl::OrdSet<String>,
-    retained_fonts: sanim_core::value_budget::FontBudget,
+    retained_fonts: sanim_core::value_budget::Budget,
     logical_operations: u64,
     overhead: usize,
     payload: usize,
@@ -201,6 +201,9 @@ impl Store {
                 }
             }
             for (path, (version, first_use)) in &saved.resources {
+                if invalid_at.is_some_and(|cutoff| *first_use >= cutoff) {
+                    continue;
+                }
                 let current = if runtime.snapshot.reads.contains_key(path) {
                     runtime.snapshot.fingerprint(path)
                 } else {

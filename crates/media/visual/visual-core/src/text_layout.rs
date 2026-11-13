@@ -1,9 +1,7 @@
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
-use cached::{Cached, stores::LruCache};
-use cairo::PathSegment;
-use glib::translate::from_glib;
-use pango::{Alignment, FontColor, FontDescription, Gravity, GravityHint};
+use shrimply_resource_pipeline::cache::Cache;
+use pango::Alignment;
 pub use shrimply_fonts::native::register_application_font;
 use shrimply_fonts::native::{self as fonts, FontEpoch};
 use skia_safe::{
@@ -28,6 +26,8 @@ pub struct TextMaskUnit {
 }
 
 const MAX_LAYOUT_CACHE_ENTRIES: usize = 1024;
+const MAX_LAYOUT_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_COLOR_GLYPH_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_COLOR_GLYPH_CACHE_ENTRIES: usize = 8;
 
 struct ColorGlyphLayout {
@@ -39,7 +39,7 @@ struct ColorGlyphLayout {
     offset: glam::Vec2,
     size: glam::Vec2,
     silhouette: Path,
-    images: RefCell<LruCache<u32, Rc<Image>>>,
+    images: RefCell<Cache<u32, Image, Rc<Image>>>,
 }
 
 pub struct ColorGlyphImage {
@@ -65,7 +65,7 @@ impl TextLayout {
 impl ColorGlyphLayout {
     fn image(&self, color: Color<u8>) -> Rc<Image> {
         let key = color.to_rgba_u32();
-        if let Some(image) = self.images.borrow_mut().cache_get(&key).map(Rc::clone) {
+        if let Some(image) = self.images.borrow_mut().get(&key) {
             return image;
         }
 
@@ -83,7 +83,7 @@ impl ColorGlyphLayout {
             )
             .expect("create native color glyph image"),
         );
-        self.images.borrow_mut().cache_set(key, Rc::clone(&image));
+        self.images.borrow_mut().insert(key, Rc::clone(&image), width as usize * height as usize * 4);
         image
     }
 
@@ -178,12 +178,8 @@ impl ColorGlyphLayout {
 }
 
 thread_local! {
-    static LAYOUTS: RefCell<LruCache<Key, Rc<TextLayout>>> = RefCell::new(
-        LruCache::builder()
-            .max_size(MAX_LAYOUT_CACHE_ENTRIES)
-            .build()
-            .expect("valid Pango text layout cache size"),
-    );
+    static LAYOUTS: RefCell<Cache<Key, TextLayout, Rc<TextLayout>>> = RefCell::new(
+        Cache::new(MAX_LAYOUT_CACHE_BYTES, MAX_LAYOUT_CACHE_ENTRIES));
 }
 
 pub fn layout(
@@ -197,7 +193,7 @@ pub fn layout(
 ) -> Rc<TextLayout> {
     let mut key = Key {
         font_epoch: fonts::system_font_epoch().expect("load shared native font map"),
-        text: content.to_string(),
+        text: content.into(),
         h_align: text.h_align.value_at(time),
         v_align: text.v_align.value_at(time),
         direction: text.direction.value_at(time),
@@ -210,7 +206,7 @@ pub fn layout(
         line_height: line_height.to_bits(),
     };
     if let Some(layout) =
-        LAYOUTS.with(|layouts| layouts.borrow_mut().cache_get(&key).map(Rc::clone))
+        LAYOUTS.with(|layouts| layouts.borrow_mut().get(&key))
     {
         return layout;
     }
@@ -226,7 +222,12 @@ pub fn layout(
     ));
     key.font_epoch = fonts::system_font_epoch().expect("load shared native font map");
     LAYOUTS.with(|layouts| {
-        layouts.borrow_mut().cache_set(key, Rc::clone(&layout));
+        let bytes = std::mem::size_of::<TextLayout>() + std::mem::size_of::<Key>() + key.text.len()
+            + layout.path.approximate_bytes_used()
+            + layout.subpaths.iter().map(Path::approximate_bytes_used).sum::<usize>()
+            + layout.word_subpaths.iter().map(Path::approximate_bytes_used).sum::<usize>()
+            + layout.mask_units.iter().map(|unit|unit.path.approximate_bytes_used()).sum::<usize>();
+        layouts.borrow_mut().insert(key, Rc::clone(&layout), bytes);
     });
     layout
 }
@@ -234,7 +235,7 @@ pub fn layout(
 #[derive(Clone, Eq, Hash, PartialEq)]
 struct Key {
     font_epoch: FontEpoch,
-    text: String,
+    text: Arc<str>,
     h_align: TextHorizontalAlign,
     v_align: VerticalAlign,
     direction: TextDirection,
@@ -260,78 +261,38 @@ fn build(
     let h_align = text.h_align.value_at(time);
     let v_align = text.v_align.value_at(time);
     let font_style = text.font_style.value_at(time);
-    let surface = cairo::RecordingSurface::create(cairo::Content::Alpha, None)
-        .expect("create text path surface");
-    let cairo = cairo::Context::new(&surface).expect("create text layout context");
-    if direction == TextDirection::Vertical {
-        cairo.rotate(std::f64::consts::FRAC_PI_2);
-    }
-
-    let mut font = FontDescription::new();
-    fonts::set_families(&mut font, text.font_families.iter().map(FontFamily::name))
-        .expect("valid text font family fallback list");
-    font.set_color(FontColor::DontCare);
-    font.set_style(match font_style {
-        TextFontStyle::Normal => pango::Style::Normal,
-        TextFontStyle::Italic => pango::Style::Italic,
-        TextFontStyle::Oblique => pango::Style::Oblique,
-    });
-    font.set_absolute_size(font_size.max(1.0) as f64 * pango::SCALE as f64);
-    font.set_weight(unsafe { from_glib(font_weight.round().clamp(1.0, 1000.0) as i32) });
-    let mut variations = normalized_variations(text)
-        .into_iter()
-        .map(|(axis, value)| format!("{axis}={}", f32::from_bits(value)))
-        .collect::<Vec<_>>();
-    variations.push(format!("wght={}", font_weight.clamp(1.0, 1000.0)));
-    if font_style == TextFontStyle::Italic
-        && !variations
-            .iter()
-            .any(|variation| variation.starts_with("ital="))
-    {
-        variations.push("ital=1".to_string());
-    }
-    font.set_variations(Some(&variations.join(",")));
-    let layout = fonts::layout(&font).expect("create shared native text layout");
-    let context = layout.context();
-    pangocairo::functions::update_context(&cairo, &context);
-    context.set_base_gravity(match direction {
-        TextDirection::Horizontal => Gravity::South,
-        TextDirection::Vertical => Gravity::East,
-    });
-    context.set_gravity_hint(GravityHint::Natural);
-    layout.context_changed();
-    layout.set_text(if content.is_empty() { " " } else { content });
-    if tracking != 0.0 {
-        let attrs = layout.attributes().unwrap_or_default();
-        attrs.insert(pango::AttrInt::new_letter_spacing(
-            (tracking * pango::SCALE as f32).round() as i32,
-        ));
-        layout.set_attributes(Some(&attrs));
-    }
-    if line_height != 1.0 {
-        layout.set_line_spacing(line_height.max(f32::EPSILON));
-    }
-
-    let (_, natural) = layout.extents();
-    layout.set_width(natural.width().max(1));
-    let alignment = match direction {
-        TextDirection::Horizontal => match h_align {
-            TextHorizontalAlign::Left | TextHorizontalAlign::Fill => Alignment::Left,
-            TextHorizontalAlign::Center => Alignment::Center,
-            TextHorizontalAlign::Right => Alignment::Right,
+    let native = fonts::shaping::layout(
+        &text.font_families.iter().map(|font| font.name().to_owned()).collect::<Vec<_>>().into(),
+        if content.is_empty() { " " } else { content },
+        &fonts::shaping::Options {
+            weight: font_weight.round().clamp(1.0, 1000.0) as i32,
+            style: match font_style {
+                TextFontStyle::Normal => pango::Style::Normal,
+                TextFontStyle::Italic => pango::Style::Italic,
+                TextFontStyle::Oblique => pango::Style::Oblique,
+            },
+            variations: normalized_variations(text).into_iter().map(|(axis,value)|(axis,f32::from_bits(value))).collect(),
+            vertical: direction == TextDirection::Vertical,
+            alignment: match direction {
+                TextDirection::Horizontal => match h_align {
+                    TextHorizontalAlign::Left | TextHorizontalAlign::Fill => Alignment::Left,
+                    TextHorizontalAlign::Center => Alignment::Center,
+                    TextHorizontalAlign::Right => Alignment::Right,
+                },
+                TextDirection::Vertical => match v_align {
+                    VerticalAlign::Top => Alignment::Left,
+                    VerticalAlign::Middle => Alignment::Center,
+                    VerticalAlign::Bottom => Alignment::Right,
+                },
+            },
+            justify: direction == TextDirection::Horizontal && h_align == TextHorizontalAlign::Fill,
+            tracking: f64::from(tracking),
+            line_spacing: f64::from(line_height.max(f32::EPSILON)),
+            ..fonts::shaping::Options::new(f64::from(font_size.max(1.0)))
         },
-        TextDirection::Vertical => match v_align {
-            VerticalAlign::Top => Alignment::Left,
-            VerticalAlign::Middle => Alignment::Center,
-            VerticalAlign::Bottom => Alignment::Right,
-        },
-    };
-    layout.set_alignment(alignment);
-    let justify = direction == TextDirection::Horizontal && h_align == TextHorizontalAlign::Fill;
-    layout.set_justify(justify);
-    layout.set_justify_last_line(justify);
-
-    let color_ranges = color_glyph_ranges(&layout);
+    ).expect("shape shared native text layout");
+    let layout = native.layout();
+    let color_ranges = color_glyph_ranges(layout);
     let is_color = |index: usize| color_ranges.iter().any(|range| range.contains(&index));
     let mut color_cluster_rects = Vec::new();
     let mut cluster_iter = layout.iter();
@@ -381,38 +342,23 @@ fn build(
         }
     }
 
-    let (ink, logical) = layout.extents();
-    cairo.move_to(0.0, 0.0);
-    pangocairo::functions::layout_path(&cairo, &layout);
-    cairo.identity_matrix();
-    let path_bounds = cairo.path_extents().expect("measure text path");
-    let logical_bounds = pango_rect_bounds(&logical, direction);
-    let ink_bounds = pango_rect_bounds(&ink, direction);
-    let min_x = logical_bounds.0.min(ink_bounds.0).min(path_bounds.0);
-    let min_y = logical_bounds.1.min(ink_bounds.1).min(path_bounds.1);
-    let max_x = logical_bounds.2.max(ink_bounds.2).max(path_bounds.2);
-    let max_y = logical_bounds.3.max(ink_bounds.3).max(path_bounds.3);
-
-    let cairo_path = cairo.copy_path().expect("copy text path");
+    let shaped = &native.shaped;
+    let [min_x, min_y, max_x, max_y] = [
+        shaped.bounds[0] - shaped.origin[0],
+        shaped.bounds[1] - shaped.origin[1],
+        shaped.bounds[2] - shaped.origin[0],
+        shaped.bounds[3] - shaped.origin[1],
+    ];
     let mut path = PathBuilder::new();
-    let point = |(x, y): (f64, f64)| ((x - min_x) as f32, (y - min_y) as f32);
-    for segment in cairo_path.iter() {
+    let point = |[x,y]:[f64;2]| ((x - shaped.origin[0] - min_x) as f32, (y - shaped.origin[1] - min_y) as f32);
+    for segment in shaped.outline.iter() {
         match segment {
-            PathSegment::MoveTo(to) => {
-                path.move_to(point(to));
-            }
-            PathSegment::LineTo(to) => {
-                path.line_to(point(to));
-            }
-            PathSegment::CurveTo(control_1, control_2, to) => {
-                path.cubic_to(point(control_1), point(control_2), point(to));
-            }
-            PathSegment::ClosePath => {
-                path.close();
-            }
+            shrimply_fonts::TextSegment::Move(to) => {path.move_to(point(*to));}
+            shrimply_fonts::TextSegment::Line(to) => {path.line_to(point(*to));}
+            shrimply_fonts::TextSegment::Curve(a,b,to) => {path.cubic_to(point(*a),point(*b),point(*to));}
+            shrimply_fonts::TextSegment::Close => {path.close();}
         }
     }
-
     let base_path: Path = path.into();
     let character_rects = character_rects
         .into_iter()
@@ -449,12 +395,7 @@ fn build(
         offset: glam::Vec2::new(bounds.left, bounds.top),
         size: glam::Vec2::new(bounds.width(), bounds.height()),
         silhouette: Path::default(),
-        images: RefCell::new(
-            LruCache::builder()
-                .max_size(MAX_COLOR_GLYPH_CACHE_ENTRIES)
-                .build()
-                .expect("valid native color glyph cache size"),
-        ),
+        images: RefCell::new(Cache::new(MAX_COLOR_GLYPH_CACHE_BYTES,MAX_COLOR_GLYPH_CACHE_ENTRIES)),
     });
 
     let mut subpaths = character_rects

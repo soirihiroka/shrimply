@@ -32,7 +32,7 @@ fn run(font: &Font, size: Fraction, text: &str, style: &Style) -> Result<Arc<Run
             font: font.clone(),
             size,
             outline: shaped.outline.clone(),
-            bounds: shaped.bounds,
+            bounds: crate::font::bounds(&shaped),
             pending: false,
         }),
         advance: shaped.advance,
@@ -263,18 +263,29 @@ pub fn prepare(
                         ));
                     }
                 }
-                let geometry = Arc::new(Geometry::Group { children });
-                let token = element(
+                let geometry = Arc::new(Geometry::Box {
+                    children,
+                    radius: Default::default(),
+                });
+                let mut token = element(
                     identity,
                     geometry,
                     position,
-                    Color::parse("light1")?,
+                    Color::parse("transparent")?,
                     style.opacity.unwrap_or(1.into()),
                 );
+                token.layout.width = Some(sanim_core::Number {
+                    value: math::from_f64(shaped.advance)?,
+                    unit: Unit::Length,
+                });
+                token.layout.height = Some(sanim_core::Number {
+                    value: options.line_height,
+                    unit: Unit::Length,
+                });
                 Arc::new(token)
             }
         };
-        let position = if matches!(glyph.geometry.as_ref(), Geometry::Group { .. }) {
+        let position = if matches!(glyph.geometry.as_ref(), Geometry::Box { .. }) {
             position
         } else {
             local_position(&glyph.geometry, position)?

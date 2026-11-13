@@ -59,6 +59,7 @@ pub(super) fn view(
                 symbol,
                 label,
                 move || {
+                    context.end_editing();
                     context.refresh(context.controller.edit_control_font_family(
                         &context.target,
                         &control,
@@ -91,6 +92,7 @@ fn picker_button(
     ActionButton::new(
         title,
         move || {
+            context.end_editing();
             if let Some(window) = root.load().and_then(|root| root.window()) {
                 picker::show(&window, selected.clone(), &control, &context, mtm);
             }

@@ -373,7 +373,7 @@ fn malformed_host_union_list_payloads_are_fully_validated() {
 #[test]
 fn retained_dimensions_reflow_rows_but_row_owned_positions_are_rejected() {
     let p = run(
-        "mut amount=10pt\nsig extent=amount\nlet first=Rect(id=\"first\",width=extent,height=10pt)\nlet second=Rect(id=\"second\",width=10pt,height=10pt)\nadd(Row(id=\"row\",children=[first,second],gap=5pt))\nbackground {animate(amount,to=20pt,duration=2s,ease=\"linear\")}\nwait(2s)",
+        "mut amount=10pt\nsig extent=amount\nlet first=Rect(id=\"first\",width=extent,height=10pt)\nlet second=Rect(id=\"second\",width=10pt,height=10pt)\nadd(Box(flex_direction=\"row\",id=\"row\",children=[first,second],gap=5pt))\nbackground {animate(amount,to=20pt,duration=2s,ease=\"linear\")}\nwait(2s)",
     );
     let (width, height) = p.animation.logical_size();
     let before = p
@@ -384,15 +384,21 @@ fn retained_dimensions_reflow_rows_but_row_owned_positions_are_rejected() {
         .animation
         .layout(Fraction::from(2), width, height)
         .unwrap();
-    let sanim_core::Geometry::Group { children: before } = before[0].geometry.as_ref() else {
+    let sanim_core::Geometry::Box {
+        children: before, ..
+    } = before[0].geometry.as_ref()
+    else {
         panic!("row group expected")
     };
-    let sanim_core::Geometry::Group { children: after } = after[0].geometry.as_ref() else {
+    let sanim_core::Geometry::Box {
+        children: after, ..
+    } = after[0].geometry.as_ref()
+    else {
         panic!("row group expected")
     };
     assert!((after[1].position.values[0] - before[1].position.values[0] - 10.).abs() < 1e-6);
     let mut files = MemorySources::default();
-    files.insert("main.sanim","mut offset=Vec2(0pt,0pt)\nsig place=offset\nlet child=Circle(id=\"child\",position=place)\nadd(Row(id=\"row\",children=[child]))");
+    files.insert("main.sanim","mut offset=Vec2(0pt,0pt)\nsig place=offset\nlet child=Circle(id=\"child\",position=place)\nadd(Box(flex_direction=\"row\",id=\"row\",children=[child]))");
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
@@ -490,10 +496,10 @@ fn property_getters_follow_the_current_cursor_and_temporal_signals_refresh() {
 #[test]
 fn structural_group_children_allow_independently_retained_child_properties() {
     let prepared = run(
-        "mut radius=10pt\nlet group=Group(children=[Circle(id=\"child\",radius=radius)])\nadd(group)\nbackground{animate(radius,to=20pt,duration=2s,ease=\"linear\")}\nwait(2s)\n",
+        "mut radius=10pt\nlet group=Box(children=[Circle(id=\"child\",radius=radius)])\nadd(group)\nbackground{animate(radius,to=20pt,duration=2s,ease=\"linear\")}\nwait(2s)\n",
     );
     let elements = prepared.animation.sample(Fraction::from(1)).unwrap();
-    let sanim_core::Geometry::Group { children } = elements[0].geometry.as_ref() else {
+    let sanim_core::Geometry::Box { children, .. } = elements[0].geometry.as_ref() else {
         panic!("group geometry")
     };
     let sanim_core::Geometry::Circle { radius } = children[0].geometry.as_ref() else {
@@ -601,7 +607,7 @@ fn retained_record_xy_fields_and_imported_scalar_x_are_not_vector_components() {
 fn literal_children_reject_reactive_elements_and_topology_factories() {
     for child in ["child", "make()"] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim",format!("mut choose_circle=true\nfn make():Element{{if choose_circle{{return Circle()}}else{{return Rect()}}}}\nsig child=make()\nlet group=Group(children=[{child}])\nadd(group)\nchoose_circle=false\nwait(1s)"));
+        files.insert("main.sanim",format!("mut choose_circle=true\nfn make():Element{{if choose_circle{{return Circle()}}else{{return Rect()}}}}\nsig child=make()\nlet group=Box(children=[{child}])\nadd(group)\nchoose_circle=false\nwait(1s)"));
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap_err();
@@ -609,7 +615,7 @@ fn literal_children_reject_reactive_elements_and_topology_factories() {
         assert!(error.message.contains("topology"), "{error}");
     }
     let prepared = run(
-        "mut choose_circle=true\nfn make():Element{if choose_circle{return Circle()}else{return Rect()}}\nlet snapshot=make()\nlet group=Group(children=[snapshot])\nadd(group)\nchoose_circle=false\nwait(1s)",
+        "mut choose_circle=true\nfn make():Element{if choose_circle{return Circle()}else{return Rect()}}\nlet snapshot=make()\nlet group=Box(children=[snapshot])\nadd(group)\nchoose_circle=false\nwait(1s)",
     );
     assert_eq!(prepared.animation.layers.len(), 1);
 }

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
+pub mod remote;
 use std::fmt;
 use std::fs;
 use std::hash::{Hash, Hasher};

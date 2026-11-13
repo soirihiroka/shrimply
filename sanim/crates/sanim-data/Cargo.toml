@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+shrimply-drawing-skia.workspace = true
 shrimply-fonts = { workspace = true, features = ["native"] }
 sanim-core.workspace = true
 imbl.workspace = true

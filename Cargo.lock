@@ -5239,6 +5239,7 @@ dependencies = [
  "sha2",
  "shrimply-fonts",
  "shrimply-math-color",
+ "shrimply-resource-pipeline",
  "taffy",
 ]
 
@@ -5256,6 +5257,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "shrimply-drawing-skia",
  "shrimply-fonts",
  "toml 0.8.23",
  "tree-sitter",
@@ -6024,8 +6026,11 @@ name = "shrimply-drawing-skia"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
+ "sha2",
+ "shrimply-fonts",
  "shrimply-math-color",
  "shrimply-math-geometry",
+ "shrimply-resource-pipeline",
  "skia-safe",
 ]
 
@@ -6340,6 +6345,7 @@ dependencies = [
  "pango",
  "pangocairo",
  "serde",
+ "shrimply-resource-pipeline",
  "skia-safe",
  "tempfile",
 ]
@@ -7018,6 +7024,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
  "shrimply-asset",
+ "shrimply-drawing-skia",
  "shrimply-math-color",
  "shrimply-math-geometry",
  "shrimply-paint-geometry",
@@ -7239,6 +7246,7 @@ dependencies = [
  "glam 0.34.1",
  "shrimply-audio-engine",
  "shrimply-background",
+ "shrimply-drawing-skia",
  "shrimply-i18n",
  "shrimply-layered-image-loader",
  "shrimply-loading-screen-skia",

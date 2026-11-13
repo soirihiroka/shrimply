@@ -5,8 +5,10 @@ pub mod chart;
 pub mod format;
 pub mod functions;
 pub mod linear;
+pub mod media;
 pub mod operations;
 pub mod paint;
+pub mod scroll;
 
 const MAX_VISUAL_DENOMINATOR: u64 = 1_000_000;
 

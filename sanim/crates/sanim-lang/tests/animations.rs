@@ -76,7 +76,7 @@ fn center_growth_preserves_original_scale_and_anchoring() {
             .contains("Align.Center")
     );
     assert!(
-        prepare("let shape=Rect()\nadd(Row(children=[shape]))\nGrowFromCenter(shape, duration=1s, ease=\"linear\")")
+        prepare("let shape=Rect()\nadd(Box(flex_direction=\"row\",children=[shape]))\nGrowFromCenter(shape, duration=1s, ease=\"linear\")")
             .unwrap_err()
             .to_string()
             .contains("flow layout controls")
@@ -86,7 +86,7 @@ fn center_growth_preserves_original_scale_and_anchoring() {
 #[test]
 fn group_reveals_keep_child_geometry_and_layout_unchanged() {
     let prepared =
-        prepare("let row=Row(children=[Circle(),Rect()],gap=10pt)\nWrite(row, duration=1s, ease=\"linear\")")
+        prepare("let row=Box(flex_direction=\"row\",children=[Circle(),Rect()],gap=10pt)\nWrite(row, duration=1s, ease=\"linear\")")
             .unwrap();
     let start = prepared
         .animation
@@ -96,10 +96,10 @@ fn group_reveals_keep_child_geometry_and_layout_unchanged() {
         .animation
         .layout(Fraction::from(1), Fraction::from(300), Fraction::from(200))
         .unwrap();
-    let Geometry::Group { children: a } = start[0].geometry.as_ref() else {
+    let Geometry::Box { children: a, .. } = start[0].geometry.as_ref() else {
         panic!("group")
     };
-    let Geometry::Group { children: b } = end[0].geometry.as_ref() else {
+    let Geometry::Box { children: b, .. } = end[0].geometry.as_ref() else {
         panic!("group")
     };
     assert_eq!(a, b);
@@ -127,7 +127,7 @@ fn ambiguous_hierarchical_reveals_and_rotated_growth_fail_cleanly() {
         "background { Uncreate(child,duration=1s,ease=\"linear\") }; Write(group,duration=1s,ease=\"linear\")",
     ] {
         let error = prepare(&format!(
-            "let child=Rect()\nlet group=Group(children=[child])\nadd(group)\n{motions}"
+            "let child=Rect()\nlet group=Box(children=[child])\nadd(group)\n{motions}"
         ))
         .unwrap_err();
         assert!(
@@ -151,7 +151,7 @@ fn parent_child_parallel_writes_are_independent_of_argument_order() {
     for targets in ["[group,child]", "[child,group]"] {
         let prepared = prepare(&format!(
             r#"let child=Circle(id="child")
-let group=Group(id="group",children=[child])
+let group=Box(id="group",children=[child])
 FadeIn({targets},duration=1s,ease="linear")"#
         ))
         .unwrap();

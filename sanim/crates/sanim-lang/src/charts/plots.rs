@@ -385,7 +385,7 @@ fn evaluate(
         }));
     }
     let max_values = context.limits.data.max_values;
-    let mut chart = Chart::new(args, context)?;
+    let mut chart = Chart::new(name, args, context)?;
     if matches!(kind, Kind::Legend) {
         legend(&mut chart, args)?;
         return chart.finish();

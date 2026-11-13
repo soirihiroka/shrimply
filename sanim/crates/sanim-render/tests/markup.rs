@@ -27,7 +27,7 @@ fn pixel(frame: &sanim_render::Frame, x: usize, y: usize) -> &[u8] {
 #[test]
 fn markup_gradients_rounding_borders_and_labels_render_natively() {
     let source = r#"bg(Color("transparent"))
-let card=<Rect width={100pt} height={50pt} design="pill border-2 border-light1" fill={LinearGradient(from=Color("blue3"),to=Color("orange3"))}><Label font_size={12pt}>native</Label></Rect>
+let card=<Rect width={100pt} height={50pt} pill border-2 border-light1 fill={LinearGradient(from=Color("blue3"),to=Color("orange3"))}><Label font_size={12pt}>native</Label></Rect>
 add(card)
 wait(1s)"#;
     let image = frame(source, 160, 100);
@@ -48,7 +48,7 @@ wait(1s)"#;
 #[test]
 fn relative_sizes_resolve_under_external_resizing_and_pills_remain_round() {
     let source = r#"bg(Color("transparent"))
-let card=<Rect design="w-50% h-50% pill bg-blue3"/>
+let card=<Rect w-50% h-50% pill bg-blue3/>
 add(card)
 wait(1s)"#;
     let small = frame(source, 200, 100);
@@ -74,7 +74,7 @@ wait(1s)"#;
 #[test]
 fn native_content_layout_and_container_opacity_are_shared() {
     let source = r#"bg(Color("transparent"))
-let card=<Rect opacity={0.5} design="w-160 h-70 rounded-lg row items-center justify-between p-10 bg-blue3"><Circle radius={8pt} fill="orange3"/><Label font_size={16pt}>native</Label></Rect>
+let card=<Rect opacity={0.5} w-160 h-70 rounded-lg flex flex-row items-center justify-between p-10 bg-blue3><Circle radius={8pt} fill="orange3"/><Label font_size={16pt}>native</Label></Rect>
 add(card)
 wait(1s)"#;
     let animation = animation(source, 240, 140);
@@ -99,7 +99,7 @@ wait(1s)"#;
 #[test]
 fn percentage_signal_sizes_resolve_after_sampling_at_each_viewport() {
     let source = r#"mut width=25%
-let shape=<Rect width={width} height={40pt} design="pill bg-blue3"/>
+let shape=<Rect width={width} height={40pt} pill bg-blue3/>
 add(shape)
 animate(width,to=75%,duration=1s,ease="linear")"#;
     let animation = animation(source, 200, 100);
@@ -120,7 +120,7 @@ animate(width,to=75%,duration=1s,ease="linear")"#;
 #[test]
 fn borders_are_included_in_scaled_verification_and_flow_extents() {
     let animation = animation(
-        "let shape=<Rect width={20pt} height={10pt} scale={2} design=\"border-4\"/>\nadd(shape)\nwait(1s)",
+        "let shape=<Rect width={20pt} height={10pt} scale={2} border-4/>\nadd(shape)\nwait(1s)",
         100,
         100,
     );

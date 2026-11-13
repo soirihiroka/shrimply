@@ -8,6 +8,7 @@ native = ["dep:pango", "dep:pangocairo", "dep:cairo", "dep:skia-safe", "dep:temp
 
 [dependencies]
 serde = { workspace = true, features = ["derive", "rc"] }
+shrimply-resource-pipeline.workspace = true
 pango = { workspace = true, optional = true, features = ["v1_57"] }
 pangocairo = { workspace = true, optional = true }
 cairo = { workspace = true, optional = true }

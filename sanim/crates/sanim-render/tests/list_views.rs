@@ -41,7 +41,8 @@ fn animation() -> Animation {
         ..Default::default()
     });
     let mut view = tile("view");
-    view.geometry = Arc::new(Geometry::Group {
+    view.geometry = Arc::new(Geometry::Box {
+        radius: Default::default(),
         children: Default::default(),
     });
     view.layout = Layout {

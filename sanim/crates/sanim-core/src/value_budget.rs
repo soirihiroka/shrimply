@@ -1,15 +1,16 @@
 use crate::{Element, Geometry, Value};
 use std::sync::{Arc, Weak};
 
-/// COW allocation guards for shared native font payloads. A guard never keeps
+/// COW allocation guards for shared native font and encoded-media payloads. A guard never keeps
 /// the font bytes alive and cannot confuse a reused address with an older asset.
 #[derive(Clone, Debug, Default)]
-pub struct FontBudget {
+pub struct Budget {
     assets: imbl::OrdMap<usize, Weak<Vec<u8>>>,
+    media: imbl::OrdMap<usize, Weak<crate::media::Asset>>,
 }
-impl FontBudget {
+impl Budget {
     pub fn metadata_bytes(&self) -> usize {
-        self.assets.len() * FONT_ENTRY_BYTES
+        self.assets.len() * FONT_ENTRY_BYTES + self.media.len() * MEDIA_ENTRY_BYTES
     }
     fn contains(&self, bytes: &Arc<Vec<u8>>) -> bool {
         self.assets
@@ -18,6 +19,9 @@ impl FontBudget {
             .is_some_and(|existing| Arc::ptr_eq(&existing, bytes))
     }
 }
+const MEDIA_ENTRY_BYTES: usize =
+    std::mem::size_of::<imbl::OrdMap<usize, Weak<crate::media::Asset>>>()
+        + std::mem::size_of::<(usize, Weak<crate::media::Asset>)>();
 const FONT_ENTRY_BYTES: usize = std::mem::size_of::<imbl::OrdMap<usize, Weak<Vec<u8>>>>()
     + std::mem::size_of::<(usize, Weak<Vec<u8>>)>()
     + std::mem::size_of::<Vec<u8>>()
@@ -31,17 +35,17 @@ pub fn charge(
     items: &mut usize,
     max_depth: usize,
 ) -> Result<(), String> {
-    charge_with_fonts(value, bytes, items, max_depth, &mut FontBudget::default())
+    charge_with_budget(value, bytes, items, max_depth, &mut Budget::default())
 }
 
 /// Charge several independently retained roots against one shared font budget.
 /// Reuse the context for a frame or execution prefix; clone it to checkpoint COW state.
-pub fn charge_with_fonts(
+pub fn charge_with_budget(
     value: &Value,
     bytes: &mut usize,
     items: &mut usize,
     max_depth: usize,
-    fonts: &mut FontBudget,
+    fonts: &mut Budget,
 ) -> Result<(), String> {
     fn take(bytes: &mut usize, items: &mut usize, size: usize) -> Result<(), String> {
         *bytes = bytes
@@ -90,7 +94,7 @@ pub fn charge_with_fonts(
         bytes: &mut usize,
         items: &mut usize,
         depth: usize,
-        fonts: &mut FontBudget,
+        fonts: &mut Budget,
     ) -> Result<(), String> {
         visit(
             &Value::Font(options.font.clone()),
@@ -114,7 +118,7 @@ pub fn charge_with_fonts(
         bytes: &mut usize,
         items: &mut usize,
         depth: usize,
-        fonts: &mut FontBudget,
+        fonts: &mut Budget,
     ) -> Result<(), String> {
         if depth == 0 {
             return Err("generated element nesting limit exceeded".into());
@@ -184,7 +188,26 @@ pub fn charge_with_fonts(
             }
         }
         match value.geometry.as_ref() {
-            Geometry::Group { children }
+            Geometry::Media { asset, .. } => {
+                let id = Arc::as_ptr(asset) as usize;
+                if !fonts
+                    .media
+                    .get(&id)
+                    .and_then(Weak::upgrade)
+                    .is_some_and(|existing| Arc::ptr_eq(&existing, asset))
+                {
+                    take(
+                        bytes,
+                        items,
+                        MEDIA_ENTRY_BYTES
+                            + std::mem::size_of_val(asset.as_ref())
+                            + asset.bytes().len()
+                            + asset.fingerprint().len(),
+                    )?;
+                    fonts.media.insert(id, Arc::downgrade(asset));
+                }
+            }
+            Geometry::Box { children, .. }
             | Geometry::Rectangle { children, .. }
             | Geometry::Code { children, .. } => {
                 for child in children {
@@ -218,7 +241,7 @@ pub fn charge_with_fonts(
         bytes: &mut usize,
         items: &mut usize,
         depth: usize,
-        fonts: &mut FontBudget,
+        fonts: &mut Budget,
     ) -> Result<(), String> {
         if depth == 0 {
             return Err("generated value nesting limit exceeded".into());

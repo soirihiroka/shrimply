@@ -99,9 +99,9 @@ fn execute(
     let Some(Value::Element(view)) = args.get("view") else {
         return Err("scroll_to requires a scrollable element receiver".into());
     };
-    if view.layout.scroll.is_none() {
+    if !view.layout.clips() {
         return Err(format!(
-            "{}.scroll_to requires ScrollView or CodeView with explicit width and height",
+            "{}.scroll_to requires a container with overflow=\"auto\", \"scroll\" or \"hidden\" and explicit width and height",
             view.id
         ));
     }
@@ -143,7 +143,7 @@ fn execute(
         .iter()
         .find_map(|element| element.find(&view.id))
         .ok_or("scroll target is not visible at this timeline time")?;
-    let maximum = sanim_core::scrolling::range(rendered)?;
+    let maximum = rendered.layout.scroll_range;
     let from = rendered
         .layout
         .scroll

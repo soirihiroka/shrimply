@@ -304,7 +304,7 @@ impl Renderer {
         fn visit(element: &Element, renderer: &mut Renderer) -> Result<(), String> {
             if !matches!(
                 element.geometry.as_ref(),
-                Geometry::Group { .. } | Geometry::Code { .. }
+                Geometry::Box { .. } | Geometry::Code { .. } | Geometry::Media { .. }
             ) {
                 draw::prepared_path(element, renderer)?;
             }
@@ -348,7 +348,7 @@ impl Renderer {
         let limits = sanim_data::Limits::default();
         let mut generated_bytes = limits.max_bytes;
         let mut generated_items = limits.max_values;
-        let mut fonts = sanim_core::value_budget::FontBudget::default();
+        let mut fonts = sanim_core::value_budget::Budget::default();
         let elements =
             scene
                 .animation
@@ -359,7 +359,7 @@ impl Renderer {
                     );
                     sanim_data::resolve_pending(element, time)?;
                     if pending {
-                        sanim_core::value_budget::charge_with_fonts(
+                        sanim_core::value_budget::charge_with_budget(
                             &Value::Element(Arc::new(element.clone())),
                             &mut generated_bytes,
                             &mut generated_items,
@@ -406,6 +406,7 @@ impl Renderer {
             return Ok(recording);
         }
         let state = self.frame_state(scene, time, options)?;
+        let mut media_bytes = 0;
         let mut recording = Recording::capture(options.width, options.height, |canvas| {
             let logical_width = to_f64(options.logical_width)? as f32;
             let logical_height = to_f64(options.logical_height)? as f32;
@@ -419,16 +420,19 @@ impl Renderer {
                 renderer: self,
                 pixels,
                 work: options.max_work,
-                output: draw::RecordingOutput,
+                output: draw::RecordingOutput::default(),
             };
             for element in &state.elements {
                 draw::element_draw(canvas, element, Reveal::default(), &mut drawing)?;
             }
+            media_bytes = drawing.output.media_bytes;
             Ok(())
         })?;
         recording.record_micros = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
         let recording = Arc::new(recording);
-        let bytes = recording.picture.approximate_bytes_used() + std::mem::size_of::<Recording>();
+        let bytes = recording.picture.approximate_bytes_used()
+            + std::mem::size_of::<Recording>()
+            + media_bytes;
         self.recordings.insert(key, recording.clone(), bytes);
         Ok(recording)
     }
@@ -504,9 +508,9 @@ fn record_key(scene: &Scene, time: Fraction, options: &Options) -> Result<Record
 fn state_bytes(elements: &Vec<Element>, max_depth: usize) -> Result<usize, String> {
     let mut bytes = usize::MAX;
     let mut items = usize::MAX;
-    let mut fonts = sanim_core::value_budget::FontBudget::default();
+    let mut fonts = sanim_core::value_budget::Budget::default();
     for element in elements {
-        sanim_core::value_budget::charge_with_fonts(
+        sanim_core::value_budget::charge_with_budget(
             &Value::Element(Arc::new(element.clone())),
             &mut bytes,
             &mut items,

@@ -81,7 +81,7 @@ fn same_frame_reuses_cache() {
 
 #[test]
 fn render_work_limits_apply_to_compositing() {
-    let scene = scene_in("add(Group(children= [Circle()], opacity= 0.5))\n", 64, 64);
+    let scene = scene_in("add(Box(children= [Circle()], opacity= 0.5))\n", 64, 64);
     let mut options = Options::for_animation(scene.animation());
     options.max_work = 10;
     assert!(
@@ -94,7 +94,7 @@ fn render_work_limits_apply_to_compositing() {
 #[test]
 fn cached_frames_respect_changed_work_limits() {
     let scene = scene_in(
-        "add(Group(children= [Circle(radius= 2pt)], opacity= 0.5))\n",
+        "add(Box(children= [Circle(radius= 2pt)], opacity= 0.5))\n",
         16,
         16,
     );
@@ -113,7 +113,7 @@ fn cached_frames_respect_changed_work_limits() {
 #[test]
 fn group_opacity_applies_after_children_composite() {
     let scene = scene_in(
-        "let a = Rect(width= 16pt, height= 16pt, fill= Color(\"red\"))\nlet b = Rect(width= 16pt, height= 16pt, fill= Color(\"blue\"))\nadd(Group(children= [a,b], opacity= 0.5))\n",
+        "let a = Rect(width= 16pt, height= 16pt, fill= Color(\"red\"))\nlet b = Rect(width= 16pt, height= 16pt, fill= Color(\"blue\"))\nadd(Box(children= [a,b], opacity= 0.5))\n",
         16,
         16,
     );
@@ -294,7 +294,7 @@ fn write_traces_then_fills_and_inverse_returns_to_empty() {
 #[test]
 fn group_write_reveals_children_without_changing_their_layout() {
     let scene = scene_in(
-        "let group=Row(children=[Rect(width=16pt,height=16pt),Circle(radius=8pt)],gap=8pt)\nWrite(group, duration=1s, ease=\"linear\")",
+        "let group=Box(flex_direction=\"row\",children=[Rect(width=16pt,height=16pt),Circle(radius=8pt)],gap=8pt)\nWrite(group, duration=1s, ease=\"linear\")",
         64,
         64,
     );

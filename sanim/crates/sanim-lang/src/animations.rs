@@ -231,7 +231,7 @@ fn motion(
                     value: number(
                         args,
                         "origin",
-                        if matches!(element.geometry.as_ref(), Geometry::Group { .. }) {
+                        if matches!(element.geometry.as_ref(), Geometry::Box { .. }) {
                             if element.horizontal == HorizontalTransform::default() {
                                 Fraction::new(1u64, 2u64)
                             } else {

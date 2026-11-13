@@ -6,7 +6,7 @@ mod charts;
 mod checker;
 mod code_view;
 pub mod dataframe;
-mod design;
+mod utilities;
 mod effects;
 mod eval;
 #[cfg(test)]
@@ -14,6 +14,7 @@ mod font_tests;
 pub mod formatter;
 mod lint;
 mod lists;
+mod media;
 mod native;
 mod native_types;
 pub mod parser;
@@ -172,7 +173,7 @@ impl Prepared {
     ) -> Result<(), Diagnostic> {
         let total = self.dependencies.len() as u64;
         for (index, (path, expected)) in self.dependencies.iter().enumerate() {
-            let current=sources.read(path).map(|bytes|digest(&bytes)).map_err(|error|Diagnostic::new("S203",format!("dependency '{path}' changed or disappeared: {error}; refresh the source before using this revision"),&self.source,Span::default()))?;
+            let current=sources.read_snapshot(path).map(|(_,fingerprint)|fingerprint).map_err(|error|Diagnostic::new("S203",format!("dependency '{path}' changed or disappeared: {error}; refresh the source before using this revision"),&self.source,Span::default()))?;
             if &current != expected {
                 return Err(Diagnostic::new(
                     "S203",
