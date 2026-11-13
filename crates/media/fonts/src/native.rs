@@ -20,8 +20,10 @@ static SUBSCRIBERS: OnceLock<Subscribers> = OnceLock::new();
 /// Keep the returned handle alive to receive registry changes. Dropped hosts
 /// disappear on the next subscription/change, with no worker thread or polling.
 pub fn subscribe(callback: FontChange) -> FontChange {
-    let mut subscribers = SUBSCRIBERS.get_or_init(Default::default)
-        .lock().expect("font change subscribers lock died");
+    let mut subscribers = SUBSCRIBERS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("font change subscribers lock died");
     subscribers.retain(|callback| callback.strong_count() > 0);
     subscribers.push(Arc::downgrade(&callback));
     callback
@@ -29,11 +31,16 @@ pub fn subscribe(callback: FontChange) -> FontChange {
 
 fn notify_subscribers() {
     let callbacks = {
-        let mut subscribers = SUBSCRIBERS.get_or_init(Default::default)
-            .lock().expect("font change subscribers lock died");
+        let mut subscribers = SUBSCRIBERS
+            .get_or_init(Default::default)
+            .lock()
+            .expect("font change subscribers lock died");
         let mut callbacks = Vec::new();
         subscribers.retain(|callback| match callback.upgrade() {
-            Some(callback) => { callbacks.push(callback); true }
+            Some(callback) => {
+                callbacks.push(callback);
+                true
+            }
             None => false,
         });
         callbacks
@@ -173,7 +180,11 @@ pub fn layout(description: &pango::FontDescription) -> Result<pango::Layout, Str
     Ok(layout_for(&system_map()?, description, true))
 }
 
-fn layout_for(map: &pango::FontMap, description: &pango::FontDescription, fallback: bool) -> pango::Layout {
+fn layout_for(
+    map: &pango::FontMap,
+    description: &pango::FontDescription,
+    fallback: bool,
+) -> pango::Layout {
     let context = map.create_context();
     context.set_round_glyph_positions(false);
     context.set_language(Some(&pango::Language::from_string("und")));
