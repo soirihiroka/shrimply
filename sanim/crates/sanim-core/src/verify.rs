@@ -200,15 +200,22 @@ pub fn evaluate(animation: &Animation, predicate: &Predicate, time: Fraction) ->
         );
     }
     for element in std::iter::once(&predicate.left).chain(predicate.right.iter()) {
-        if animation.tracks.get(&element.id).is_some_and(|v| {
-            v.contains_key(&Property::Rotation)
-                || v.contains_key(&Property::Scale)
-                || v.contains_key(&Property::StretchX)
-                || v.get(&Property::Position).is_some_and(|tracks| {
-                    tracks
-                        .iter()
-                        .any(|track| track.easing == crate::Easing::Overshoot)
-                })
+        let mut ids = Vec::new();
+        element.ids(&mut ids);
+        if ids.iter().any(|id| {
+            animation.tracks.get(id).is_some_and(|v| {
+                v.contains_key(&Property::Rotation)
+                    || v.contains_key(&Property::Scale)
+                    || v.contains_key(&Property::StretchX)
+                    || v.get(&Property::Position).is_some_and(|tracks| {
+                        tracks.iter().any(|track| {
+                            matches!(
+                                track.easing,
+                                crate::Easing::Overshoot | crate::Easing::SpringBouncy
+                            )
+                        })
+                    })
+            })
         }) {
             return result(
                 Evidence::Unknown,

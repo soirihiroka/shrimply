@@ -294,7 +294,8 @@ impl Engine {
             )
         })
     }
-    /// Resolve timeline length without creating animation layers or rendering pixels.
+    /// Resolve timeline length without rendering pixels. Data-only timing skips scene
+    /// construction; timing that reads scene state uses normal preparation and emits P004.
     pub fn duration_json(
         &mut self,
         entry: &str,
@@ -366,6 +367,11 @@ impl Engine {
                 &mut vec![],
                 (&mut statistics, &type_budget, reporter),
             )?;
+            let duration_needed = duration_only.then(|| eval::duration::duration_needs(&loaded));
+            let scene_timing = duration_needed
+                .as_ref()
+                .and_then(|needed| eval::duration::scene_dependency(&loaded, needed));
+            let duration_only = duration_only && scene_timing.is_none();
             let family_fonts = !duration_only
                 && loaded.iter().any(|module| {
                     module.ast.statements.iter().any(|statement| {
@@ -414,10 +420,24 @@ impl Engine {
                 &loaded,
                 &mut snapshot,
                 &converted,
-                (&self.limits, &self.viewport, duration_only, reporter),
+                (
+                    &self.limits,
+                    &self.viewport,
+                    duration_needed.filter(|_| duration_only),
+                    reporter,
+                ),
                 (&mut self.values, &mut self.assets, &mut self.states),
                 &mut statistics,
             )?;
+            if let Some((source, span)) = scene_timing {
+                prepared.performance.push(PerformanceWarning {
+                    code: "P004".into(),
+                    message: "timeline duration depends on scene state; prepared animation tracks and layout to sample it accurately. Use data-only duration expressions to keep duration discovery independent of scene preparation".into(),
+                    source,
+                    span,
+                    operations: prepared.statistics.operations,
+                });
+            }
             if family_fonts {
                 self.font_environment = sanim_data::font::system_font_epoch();
             }

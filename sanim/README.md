@@ -265,6 +265,8 @@ construct immutable elements. `MoveTo`, `Shift`, `FadeIn`, `FadeOut`, `RotateTo`
 cursor. They return `Unit`, with a default duration of 300ms. Give a list of targets
 to animate them together: `FadeIn([heading, subtitle], duration=400ms)`. Sequential
 calls advance in order; use `background { ... }` for independent concurrent work.
+When animating a group and its children in separate calls, `add(group)` first to
+establish the hierarchy before scheduling child animations.
 `wait` advances time without changing the scene.
 `add` inserts a still element. Functions may schedule animation. There is no
 per-frame script execution.
@@ -370,6 +372,9 @@ be confused with dimensionless numbers or angles.
 and CLI `duration` resolve exact total length without building unrelated geometry.
 Timing-dependent reads are evaluated; unrelated data and visual validation can be
 skipped, so a duration report does not replace full preparation before rendering.
+If timing observes scene state, the canonical full evaluator is selected upfront
+and a `P004` performance message explains the extra preparation. There is no
+speculative execution followed by a second interpreter pass.
 All animations are finite: resolved duration above two hours is an error;
 exactly two hours is valid. Overflow uses structured diagnostics, never an unbounded loop.
 

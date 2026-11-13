@@ -8,27 +8,20 @@ use sanim_core::{Fraction, Number, TimelineEffect, Unit, Value};
 #[derive(Clone, Copy, Debug)]
 pub struct Timing {
     pub default: Fraction,
-    pub positive: bool,
     pub parameter: usize,
 }
 impl Default for Timing {
     fn default() -> Self {
         Self {
             default: Fraction::from(0),
-            positive: false,
             parameter: 0,
         }
     }
 }
 impl Timing {
     pub(crate) fn validate(self, duration: Fraction) -> Result<Fraction, String> {
-        if duration < Fraction::from(0) || self.positive && duration == Fraction::from(0) {
-            return Err(if self.positive {
-                "timeline duration must be positive"
-            } else {
-                "timeline duration must be nonnegative"
-            }
-            .into());
+        if duration < Fraction::from(0) {
+            return Err("timeline duration must be nonnegative".into());
         }
         sanim_core::math::timeline_end(Fraction::from(0), duration)?;
         Ok(duration)

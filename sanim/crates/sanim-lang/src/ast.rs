@@ -206,6 +206,31 @@ pub fn referenced_names(expr: &Expr, names: &mut std::collections::BTreeSet<Stri
     });
 }
 impl Statement {
+    /// Visit every declaration and executable statement, including function bodies.
+    pub fn visit(&self, visitor: &mut impl FnMut(&Statement)) {
+        visitor(self);
+        match &self.kind {
+            StatementKind::Background { body }
+            | StatementKind::Function { body, .. }
+            | StatementKind::For { body, .. }
+            | StatementKind::Repeat { body, .. } => {
+                for statement in body {
+                    statement.visit(visitor);
+                }
+            }
+            StatementKind::If { yes, no, .. } => {
+                for statement in yes.iter().chain(no) {
+                    statement.visit(visitor);
+                }
+            }
+            StatementKind::Match { cases, .. } => {
+                for statement in cases.iter().flat_map(|case| &case.body) {
+                    statement.visit(visitor);
+                }
+            }
+            _ => {}
+        }
+    }
     /// Visit executable expressions, excluding nested function declarations.
     pub fn visit_expressions(&self, visitor: &mut impl FnMut(&Expr)) {
         match &self.kind {

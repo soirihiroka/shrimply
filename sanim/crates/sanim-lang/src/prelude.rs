@@ -37,7 +37,11 @@ pub struct Builtin {
 }
 impl Builtin {
     pub(crate) fn uses_font_environment(&self) -> bool {
-        self.result == Type::Font || self.parameters.iter().any(|parameter| parameter.ty == Type::Font)
+        self.result == Type::Font
+            || self
+                .parameters
+                .iter()
+                .any(|parameter| parameter.ty == Type::Font)
     }
 }
 

@@ -6,6 +6,8 @@ pub mod functions;
 pub mod linear;
 pub mod operations;
 
+const MAX_VISUAL_DENOMINATOR: u64 = 1_000_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Unit {
     Number,
@@ -382,7 +384,7 @@ pub fn visual_polynomial(progress: Fraction, coefficients: &[i64]) -> Result<Fra
         .iter()
         .rev()
         .fold(0., |value, coefficient| value * p + *coefficient as f64);
-    functions::approximate_to(value, 1_000_000)
+    functions::approximate_to(value, MAX_VISUAL_DENOMINATOR)
 }
 
 /// Closed-form unit-mass damped spring, evaluated directly for arbitrary seeks.
@@ -424,14 +426,19 @@ fn spring_response(progress: Fraction, damping_ratio: f64) -> Result<Fraction, S
     } else {
         1.
     };
-    functions::approximate_to(1. - residual * window, 1_000_000)
+    functions::approximate_to(1. - residual * window, MAX_VISUAL_DENOMINATOR)
 }
 
 /// Visual composition may approximate if multiplying valid rational inputs
 /// would overflow their representation. Timeline and ordinary math stay exact.
 pub fn visual_product(a: Fraction, b: Fraction) -> Result<Fraction, String> {
     a.checked_mul(&b).filter(finite).map_or_else(
-        || functions::approximate_to(float_arithmetic("*", to_f64(a)?, to_f64(b)?)?, 1_000_000),
+        || {
+            functions::approximate_to(
+                float_arithmetic("*", to_f64(a)?, to_f64(b)?)?,
+                MAX_VISUAL_DENOMINATOR,
+            )
+        },
         Ok,
     )
 }
@@ -446,7 +453,7 @@ pub fn visual_lerp(a: Fraction, b: Fraction, progress: Fraction) -> Result<Fract
     lerp(a, b, progress).or_else(|_| {
         let value = functions::approximate_to(
             motion_lerp(to_f64(a)?, to_f64(b)?, progress, true)?,
-            1_000_000,
+            MAX_VISUAL_DENOMINATOR,
         )?;
         Ok(
             if progress >= Fraction::zero() && progress <= Fraction::from(1) {

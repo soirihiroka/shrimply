@@ -165,3 +165,28 @@ fn user_function_easing_control_reaches_timed_value_assignment() {
         })
     );
 }
+
+#[test]
+fn fade_in_preserves_declared_opacity_after_fade_out() {
+    let prepared = prepare(
+        "let marker=Circle(opacity=0.35)\nFadeIn(marker,duration=1s,ease=\"linear\")\nFadeOut(marker,duration=1s,ease=\"linear\")\nFadeIn(marker,duration=1s,ease=\"linear\")",
+    );
+    let marker = prepared.animation.find("marker").unwrap();
+    for (time, expected) in [
+        (Fraction::new(1u64, 2u64), Fraction::new(7u64, 40u64)),
+        (Fraction::from(1), Fraction::new(7u64, 20u64)),
+        (Fraction::from(2), Fraction::from(0)),
+        (Fraction::from(3), Fraction::new(7u64, 20u64)),
+    ] {
+        assert_eq!(
+            prepared
+                .animation
+                .sample_property(marker, Property::Opacity, time)
+                .unwrap()
+                .number()
+                .unwrap()
+                .value,
+            expected
+        );
+    }
+}

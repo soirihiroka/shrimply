@@ -150,7 +150,10 @@ fn motion(
         }
         "FadeIn" => (
             Property::Opacity,
-            Value::Number(Number::scalar(1)),
+            Value::Number(Number {
+                value: element.opacity,
+                unit: Unit::Number,
+            }),
             Some(Value::Number(Number::scalar(0))),
         ),
         "FadeOut" => (Property::Opacity, Value::Number(Number::scalar(0)), None),

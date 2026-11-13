@@ -1,4 +1,4 @@
-mod duration;
+pub(crate) mod duration;
 mod lists;
 mod plans;
 mod reactive;
@@ -26,6 +26,7 @@ use std::{
 // Arithmetic is centralized in sanim-core::math; the evaluator only dispatches operators.
 type Values = imbl::OrdMap<String, Value>;
 type Env = imbl::OrdMap<String, Binding>;
+type DurationDemand = BTreeMap<String, BTreeSet<String>>;
 
 #[derive(serde::Serialize)]
 enum CacheDependency<'a> {
@@ -47,7 +48,12 @@ pub(crate) fn evaluate(
     loaded: &[Loaded],
     snapshot: &mut Snapshot<'_>,
     overrides: &BTreeMap<String, Value>,
-    (limits, viewport, duration_only, progress): (&Limits, &Viewport, bool, &Reporter),
+    (limits, viewport, duration_needed, progress): (
+        &Limits,
+        &Viewport,
+        Option<DurationDemand>,
+        &Reporter,
+    ),
     (values, assets, states): (
         &mut crate::cache::ValueCache,
         &mut crate::cache::ValueCache,
@@ -55,6 +61,7 @@ pub(crate) fn evaluate(
     ),
     statistics: &mut Statistics,
 ) -> Result<Prepared, Diagnostic> {
+    let duration_only = duration_needed.is_some();
     let total_statements = loaded
         .iter()
         .flat_map(|module| &module.ast.statements)
@@ -110,7 +117,7 @@ pub(crate) fn evaluate(
         root_active: false,
         duration_only,
         result_needed: false,
-        duration_needed: duration::duration_needs(loaded),
+        duration_needed: duration_needed.unwrap_or_default(),
         type_bindings: BTreeMap::new(),
         hotspots: imbl::OrdMap::new(),
         performance: Vec::new(),
@@ -835,7 +842,10 @@ impl Runtime<'_, '_> {
                         fingerprint,
                         plan.names
                             .iter()
-                            .any(|name| prelude::builtin(name).is_some_and(prelude::Builtin::uses_font_environment))
+                            .any(|name| {
+                                prelude::builtin(name)
+                                    .is_some_and(prelude::Builtin::uses_font_environment)
+                            })
                             .then(sanim_data::font::system_font_epoch),
                         deps,
                     ))

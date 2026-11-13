@@ -144,12 +144,32 @@ impl Type {
         }
     }
     pub fn contains_function(&self) -> bool {
+        self.contains(&|ty| matches!(ty, Self::Function(_)))
+    }
+    pub fn contains_element(&self) -> bool {
+        self.contains(&|ty| matches!(ty, Self::Element))
+    }
+    fn contains(&self, predicate: &impl Fn(&Type) -> bool) -> bool {
+        if predicate(self) {
+            return true;
+        }
         match self {
-            Self::Function(_) => true,
-            Self::List(t) | Self::Option(t) | Self::Array(t) => t.contains_function(),
-            Self::Record(fields) => fields.values().any(Self::contains_function),
-            Self::Union(alternatives) => alternatives.iter().any(Self::contains_function),
-            Self::Enum { variants, .. } => variants.values().flatten().any(Self::contains_function),
+            Self::List(t) | Self::Option(t) | Self::Array(t) => t.contains(predicate),
+            Self::Record(fields) => fields.values().any(|ty| ty.contains(predicate)),
+            Self::Union(alternatives) => alternatives.iter().any(|ty| ty.contains(predicate)),
+            Self::Enum { variants, .. } => {
+                variants.values().flatten().any(|ty| ty.contains(predicate))
+            }
+            Self::Function(signature) => {
+                signature.result.contains(predicate)
+                    || signature
+                        .parameters
+                        .iter()
+                        .any(|(_, ty)| ty.contains(predicate))
+            }
+            Self::BoundedVariable(_, bound) => {
+                matches!(bound.as_ref(), TypeBound::Type(ty) if ty.contains(predicate))
+            }
             _ => false,
         }
     }

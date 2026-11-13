@@ -249,7 +249,7 @@ impl Runtime<'_, '_> {
 }
 
 /// Propagate demanded exports and helper return dependencies through module aliases.
-pub(super) fn duration_needs(loaded: &[Loaded]) -> BTreeMap<String, BTreeSet<String>> {
+pub(crate) fn duration_needs(loaded: &[Loaded]) -> BTreeMap<String, BTreeSet<String>> {
     let mut needed = loaded
         .iter()
         .map(|module| (module.id.clone(), module.checked.duration_needed.clone()))
@@ -292,4 +292,44 @@ pub(super) fn duration_needs(loaded: &[Loaded]) -> BTreeMap<String, BTreeSet<Str
         }
     }
     needed
+}
+
+/// Timing that observes scene values needs the canonical track/layout evaluator.
+/// Select that evaluator before execution instead of retrying a partial run.
+pub(crate) fn scene_dependency(
+    loaded: &[Loaded],
+    needed: &BTreeMap<String, BTreeSet<String>>,
+) -> Option<(String, Span)> {
+    for module in loaded {
+        let names = &needed[&module.id];
+        let mut found = None;
+        for statement in &module.ast.statements {
+            statement.visit(&mut |statement| {
+                if let StatementKind::Bind { name, .. } = &statement.kind
+                    && names.contains(name)
+                    && module
+                        .checked
+                        .binding_types
+                        .get(&statement.span.start)
+                        .is_some_and(Type::contains_element)
+                {
+                    found.get_or_insert(statement.span);
+                }
+            });
+        }
+        if let Some(span) = found {
+            return Some((module.id.clone(), span));
+        }
+        if names.iter().any(|name| {
+            module
+                .checked
+                .exports
+                .get(name)
+                .is_some_and(Type::contains_element)
+                || prelude::builtin(name).is_some_and(|builtin| builtin.result.contains_element())
+        }) {
+            return Some((module.id.clone(), Span::default()));
+        }
+    }
+    None
 }

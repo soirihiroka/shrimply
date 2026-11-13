@@ -90,7 +90,7 @@ fn text_without_font_uses_the_sans_default_without_asset_dependencies() {
 #[test]
 fn axis_labels_share_the_same_optional_font_default() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let scale=LinearScale(domain=Vec2(0,10),range=Vec2(0pt,100pt))\nlet axis=Axis(scale=scale)\nadd(axis)\nwait(1s)");
+    files.insert("main.sanim","let scale=LinearScale(domain=Vec2(0,10),range=Vec2(0pt,300pt))\nlet axis=Axis(scale=scale)\nadd(axis)\nwait(1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
