@@ -58,6 +58,8 @@ fn build_builtins() -> Vec<Builtin> {
     let angle = Numeric(Dimension::Angle);
     let p = |name, ty, required| Parameter { name, ty, required };
     let mut out = vec![];
+    crate::dataframe::register(&mut out);
+    crate::templates::register(&mut out);
     let mut add = |name, parameters, result, schedule, execute, check| {
         out.push(Builtin {
             name,
@@ -146,7 +148,8 @@ fn build_builtins() -> Vec<Builtin> {
             p("position", Vector(2, None), false),
             p("x_align", sanim_core::Align::ty(), false),
             p("y_align", sanim_core::Align::ty(), false),
-            p("fill", Color, false),
+            p("fill", sanim_core::Paint::ty(), false),
+            p("design", String, false),
             p("opacity", num.clone(), false),
             p("rotation", angle.clone(), false),
             p("scale", num.clone(), false),
@@ -165,9 +168,15 @@ fn build_builtins() -> Vec<Builtin> {
     for name in ["Rectangle", "Rect"] {
         let mut params = common();
         params.extend([
-            p("width", length.clone(), false),
-            p("height", length.clone(), false),
+            p("width", sanim_core::Layout::dimension_type(), false),
+            p("height", sanim_core::Layout::dimension_type(), false),
             p("radius", length.clone(), false),
+            p("children", List(Box::new(Element)), false),
+            p("padding", length.clone(), false),
+            p("gap", length.clone(), false),
+            p("justify", sanim_core::Justify::ty(), false),
+            p("align", sanim_core::Align::ty(), false),
+            p("wrap", Bool, false),
         ]);
         add(
             name,
@@ -183,8 +192,8 @@ fn build_builtins() -> Vec<Builtin> {
         params.extend([
             p("children", List(Box::new(Element)), true),
             p("padding", length.clone(), false),
-            p("width", length.clone(), false),
-            p("height", length.clone(), false),
+            p("width", sanim_core::Layout::dimension_type(), false),
+            p("height", sanim_core::Layout::dimension_type(), false),
         ]);
         if name != "Group" {
             params.extend([
@@ -233,14 +242,16 @@ fn build_builtins() -> Vec<Builtin> {
     let mut params = vec![p("text", String, true), p("font", Font, false)];
     params.extend(common());
     params.push(p("font_size", length.clone(), false));
-    add(
-        "Text",
-        params,
-        Element,
-        false,
-        Execution::Native(native::element),
-        native_types::fixed,
-    );
+    for name in ["Text", "Label"] {
+        add(
+            name,
+            params.clone(),
+            Element,
+            false,
+            Execution::Native(native::element),
+            native_types::fixed,
+        );
+    }
     add(
         "wait",
         vec![p("duration", duration, true)],
@@ -292,9 +303,12 @@ fn build_builtins() -> Vec<Builtin> {
     add(
         "query",
         vec![
-            p("sql", String, true),
-            p("tables", Unknown, true),
-            p("params", Unknown, false),
+            p(
+                "sql",
+                Type::union([Template, Sql]).expect("distinct query inputs"),
+                true,
+            ),
+            p("tables", Unknown, false),
         ],
         Unknown,
         false,
@@ -355,7 +369,11 @@ fn build_builtins() -> Vec<Builtin> {
     );
     add(
         "str",
-        vec![p("value", Unknown, true)],
+        vec![
+            p("value", Unknown, true),
+            p("format", String, false),
+            p("conversion", String, false),
+        ],
         String,
         false,
         Execution::Native(native::str),
@@ -424,28 +442,42 @@ fn build_builtins() -> Vec<Builtin> {
         );
     }
     out.extend(crate::charts::builtins(common()));
+    out.extend(crate::design::builtins());
     crate::lists::register(&mut out);
     crate::animations::register(&mut out);
     for builtin in &mut out {
-        if !builtin.parameters.iter().any(|p| p.name == "duration") {
-            builtin
-                .parameters
-                .push(p("duration", Numeric(Dimension::Duration), false));
-        }
-        if !builtin.parameters.iter().any(|p| p.name == "ease") {
-            builtin.parameters.push(p("ease", Type::String, false));
-        }
-        builtin.timing.parameter = builtin
-            .parameters
-            .iter()
-            .position(|p| p.name == "duration")
-            .expect("registered duration parameter");
+        finalize(builtin);
     }
     out
 }
 
+pub(crate) fn finalize(builtin: &mut Builtin) {
+    if !builtin.parameters.iter().any(|p| p.name == "duration") {
+        builtin.parameters.push(Parameter {
+            name: "duration",
+            ty: Type::Numeric(Dimension::Duration),
+            required: false,
+        });
+    }
+    if !builtin.parameters.iter().any(|p| p.name == "ease") {
+        builtin.parameters.push(Parameter {
+            name: "ease",
+            ty: Type::String,
+            required: false,
+        });
+    }
+    builtin.timing.parameter = builtin
+        .parameters
+        .iter()
+        .position(|p| p.name == "duration")
+        .expect("registered duration parameter");
+}
+
 pub fn builtin(name: &str) -> Option<&'static Builtin> {
-    builtins().iter().find(|v| v.name == name)
+    builtins()
+        .iter()
+        .find(|v| v.name == name)
+        .or_else(|| crate::dataframe::builtin(name))
 }
 
 #[derive(Clone)]
@@ -484,6 +516,9 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
             ("Percent", Type::Numeric(Dimension::Percent)),
             ("Bool", Type::Bool),
             ("String", Type::String),
+            ("Template", Type::Template),
+            ("Sql", Type::Sql),
+            ("SqlIdent", Type::SqlIdent),
             ("Color", Type::Color),
             ("Align", sanim_core::Align::ty()),
             ("Justify", sanim_core::Justify::ty()),
@@ -501,12 +536,28 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
         for builtin in builtins().iter().filter(|b| b.result == Type::Element) {
             out.insert(builtin.name, Plain(Type::Element));
         }
+        // Record-valued constructors also provide usable structural type names.
+        // Keep these aliases derived from the constructor registry.
+        for builtin in builtins().iter().filter(|builtin| {
+            builtin.name.starts_with(char::is_uppercase)
+                && matches!(builtin.result, Type::Record(_))
+        }) {
+            out.insert(builtin.name, Plain(builtin.result.clone()));
+        }
         for builtin in builtins() {
             if let Type::Vector(n, _) = builtin.result {
                 out.insert(builtin.name, Vector(n));
             }
         }
         out.insert("List", Container(Type::List));
+        out.insert(
+            "DataFrame",
+            Container(|row| Type::DataFrame {
+                row,
+                groups: Vec::new(),
+            }),
+        );
+        out.insert("Series", Container(Type::Series));
         out.insert("Array", Container(Type::Array));
         out.insert("Option", Container(Type::Option));
         for (name, bound) in [

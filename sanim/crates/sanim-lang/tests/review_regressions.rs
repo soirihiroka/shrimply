@@ -8,7 +8,7 @@ fn run(text: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic> {
 }
 #[test]
 fn repeated_shift_uses_current_timeline_state() {
-    let p=run("let marker = Circle(id: \"marker\")\nrepeat 4 { Shift(marker, Vec2(10pt,0pt), duration=1s, ease=\"linear\") }\n").unwrap();
+    let p=run("let marker = Circle(id= \"marker\")\nrepeat 4 { Shift(marker, Vec2(10pt,0pt), duration=1s, ease=\"linear\") }\n").unwrap();
     for (index, track) in p.animation.tracks["marker"][&Property::Position]
         .iter()
         .enumerate()
@@ -21,7 +21,7 @@ fn repeated_shift_uses_current_timeline_state() {
 }
 #[test]
 fn enum_named_arguments_follow_payload_parameter_order() {
-    run("enum Pair { Both(String, Number) }\nlet pair = Pair.Both(value1: 2, value0: \"hello\")\nmatch pair { case Pair.Both(text,count) { assert(text == \"hello\"); assert(count == 2) } }\n").unwrap();
+    run("enum Pair { Both(String, Number) }\nlet pair = Pair.Both(value1= 2, value0= \"hello\")\nmatch pair { case Pair.Both(text,count) { assert(text == \"hello\"); assert(count == 2) } }\n").unwrap();
 }
 #[test]
 fn default_elements_have_per_call_identity() {
@@ -36,11 +36,11 @@ fn empty_list_concatenation_preserves_concrete_types() {
 #[test]
 fn hot_reload_birth_time_marks_layer_and_children_changed() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let delay: Duration=reflect(1s)\nwait(delay)\nadd(Group(id: \"parent\", children: [Circle(id: \"child\")]))\n");
+    files.insert("main.sanim","let delay: Duration=reflect(1s)\nwait(delay)\nadd(Group(id= \"parent\", children= [Circle(id= \"child\")]))\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(
-        "delay",
+        "main.sanim::delay",
         Value::Number(sanim_core::Number {
             value: Fraction::from(2),
             unit: sanim_core::Unit::Duration,
@@ -59,13 +59,13 @@ fn hot_reload_paint_order_marks_changed_layers() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let a = Circle(id: \"a\")\nlet b = Rect(id: \"b\")\nadd(a)\nadd(b)\n",
+        "let a = Circle(id= \"a\")\nlet b = Rect(id= \"b\")\nadd(a)\nadd(b)\n",
     );
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     files.insert(
         "main.sanim",
-        "let a = Circle(id: \"a\")\nlet b = Rect(id: \"b\")\nadd(b)\nadd(a)\n",
+        "let a = Circle(id= \"a\")\nlet b = Rect(id= \"b\")\nadd(b)\nadd(a)\n",
     );
     let Reload::Updated {
         changed_elements, ..
@@ -127,7 +127,7 @@ fn flow_position_conflicts_in_same_play_fail_before_scheduling() {
         "background { MoveTo(child,Vec2(10pt,0pt),duration=1s) }; FadeIn(row,duration=1s)",
     ] {
         let e = run(&format!(
-            "let child=Circle(id: \"child\")\nlet row=Row(children: [child])\nadd(row)\n{motions}\n"
+            "let child=Circle(id= \"child\")\nlet row=Row(children= [child])\nadd(row)\n{motions}\n"
         ))
         .unwrap_err();
         assert!(e.message.contains("flow layout controls"), "{e}");
@@ -137,10 +137,13 @@ fn flow_position_conflicts_in_same_play_fail_before_scheduling() {
 #[test]
 fn changed_flow_child_tracks_invalidate_sibling_layout() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let factor=reflect(2)\nlet a=Rect(id: \"a\")\nlet b=Rect(id: \"b\")\nadd(Row(id: \"row\", children: [a,b]))\nScaleTo(a, factor, duration=1s, ease=\"linear\")\n");
+    files.insert("main.sanim","let factor=reflect(2)\nlet a=Rect(id= \"a\")\nlet b=Rect(id= \"b\")\nadd(Row(id= \"row\", children= [a,b]))\nScaleTo(a, factor, duration=1s, ease=\"linear\")\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
-    session.set("factor", Value::Number(sanim_core::Number::scalar(3)));
+    session.set(
+        "main.sanim::factor",
+        Value::Number(sanim_core::Number::scalar(3)),
+    );
     let Reload::Updated {
         changed_elements, ..
     } = session.poll(&files)

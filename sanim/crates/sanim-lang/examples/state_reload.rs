@@ -1,6 +1,6 @@
 //! Read-only benchmark: change the final hold in memory, then measure actual prefix restoration.
 use sanim_core::Viewport;
-use sanim_lang::{Engine, FileSources, Sources};
+use sanim_lang::{Engine, FileSources, Preparation, Sources};
 use std::{collections::BTreeMap, path::Path, time::Instant};
 
 struct Edit<'a> {
@@ -18,9 +18,18 @@ impl Sources for Edit<'_> {
     }
 }
 fn main() -> Result<(), String> {
-    let file = std::env::args()
-        .nth(1)
+    let mut arguments = std::env::args().skip(1);
+    let file = arguments
+        .next()
         .ok_or("expected a .sanim path with a final wait(3s)")?;
+    let preparation = match arguments.next().as_deref() {
+        None => Preparation::Full,
+        Some("--demand") => Preparation::Demand,
+        Some(other) => return Err(format!("unexpected option '{other}'; expected --demand")),
+    };
+    if arguments.next().is_some() {
+        return Err("too many benchmark arguments".into());
+    }
     let path = Path::new(&file);
     let sources = FileSources::new(path.parent().unwrap_or(Path::new(".")))?;
     let entry = path
@@ -32,6 +41,7 @@ fn main() -> Result<(), String> {
         height: 1920,
         ..Viewport::default()
     });
+    engine.preparation = preparation;
     let started = Instant::now();
     let cold = engine
         .prepare(entry, &sources, &BTreeMap::new())
@@ -51,7 +61,7 @@ fn main() -> Result<(), String> {
         .prepare(entry, &edit, &BTreeMap::new())
         .map_err(|error| error.to_string())?;
     println!(
-        "cold_ms={cold_ms} hot_ms={} cold_operations={} hot_operations={} restored_statements={} checkpoints={} checkpoint_bytes={} queries={} decodes={} duration={}",
+        "mode={preparation:?} cold_ms={cold_ms} hot_ms={} cold_operations={} hot_operations={} restored_statements={} checkpoints={} checkpoint_bytes={} queries={} decodes={} duration={}",
         started.elapsed().as_millis(),
         cold.statistics.operations,
         hot.statistics.operations,

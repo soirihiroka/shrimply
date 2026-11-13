@@ -16,7 +16,7 @@ fn variable_names_become_readable_labels_without_rewriting_acronyms() {
     }
 }
 #[test]
-fn hosts_share_canonical_and_legacy_key_resolution() {
+fn hosts_resolve_only_canonical_keys() {
     let root = Options::default()
         .resolve("scene.sanim", "tint", Type::Color, Span::default())
         .unwrap();
@@ -25,7 +25,7 @@ fn hosts_share_canonical_and_legacy_key_resolution() {
         .unwrap();
     let schema = Schema::new("scene.sanim", [root.clone(), imported.clone()]).unwrap();
     assert!(std::sync::Arc::ptr_eq(
-        schema.declaration("tint").unwrap(),
+        schema.declaration("scene.sanim::tint").unwrap(),
         &root
     ));
     assert!(std::sync::Arc::ptr_eq(
@@ -34,10 +34,52 @@ fn hosts_share_canonical_and_legacy_key_resolution() {
     ));
     assert!(
         schema
-            .declaration("missing")
+            .declaration("tint")
             .unwrap_err()
             .message
             .contains("scene.sanim::tint")
+    );
+    assert!(
+        schema
+            .declaration("tint")
+            .unwrap_err()
+            .message
+            .contains("unknown reflected input")
+    );
+}
+
+#[test]
+#[ignore = "measured by make reflection-schema-bench"]
+fn canonical_registry_lookup_benchmark() {
+    const INPUTS: usize = 1000;
+    const LOOKUPS: usize = 100_000;
+    let declarations = (0..INPUTS)
+        .map(|index| {
+            Options::default()
+                .resolve(
+                    "scene.sanim",
+                    &format!("input_{index}"),
+                    Type::Color,
+                    Span::default(),
+                )
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let started = std::time::Instant::now();
+    let schema = Schema::new("scene.sanim", declarations.clone()).unwrap();
+    let build_us = started.elapsed().as_micros();
+    let started = std::time::Instant::now();
+    for index in 0..LOOKUPS {
+        std::hint::black_box(
+            schema
+                .declaration(std::hint::black_box(&declarations[index % INPUTS].key))
+                .unwrap(),
+        );
+    }
+    eprintln!(
+        "canonical reflection schema: inputs={INPUTS} build_us={build_us} lookups={LOOKUPS} lookup_total_us={} ns_per_lookup={}",
+        started.elapsed().as_micros(),
+        started.elapsed().as_nanos() / LOOKUPS as u128
     );
 }
 

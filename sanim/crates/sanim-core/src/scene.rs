@@ -14,7 +14,9 @@ pub enum Geometry {
         width: Fraction,
         height: Fraction,
         #[serde(default)]
-        radius: Fraction,
+        radius: CornerRadius,
+        #[serde(default)]
+        children: Vector<Element>,
     },
     Line {
         end: Vec2,
@@ -22,6 +24,11 @@ pub enum Geometry {
     },
     Polygon {
         points: Arc<Vec<Vec2>>,
+    },
+    /// A single open, stroked path; dense plots do not create one element per segment.
+    Polyline {
+        points: Arc<Vec<Vec2>>,
+        width: Fraction,
     },
     Text {
         text: String,
@@ -32,6 +39,44 @@ pub enum Geometry {
     Group {
         children: Vector<Element>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CornerRadius {
+    Fixed(Fraction),
+    Pill,
+}
+impl Default for CornerRadius {
+    fn default() -> Self {
+        Self::Fixed(Fraction::from(0))
+    }
+}
+impl From<Fraction> for CornerRadius {
+    fn from(radius: Fraction) -> Self {
+        Self::Fixed(radius)
+    }
+}
+impl CornerRadius {
+    pub fn resolve(&self, width: Fraction, height: Fraction) -> Fraction {
+        match self {
+            Self::Fixed(radius) => *radius,
+            Self::Pill => width.min(height) / Fraction::from(2),
+        }
+    }
+}
+impl Geometry {
+    pub fn children(&self) -> Option<&Vector<Element>> {
+        match self {
+            Self::Group { children } | Self::Rectangle { children, .. } => Some(children),
+            _ => None,
+        }
+    }
+    pub fn children_mut(&mut self) -> Option<&mut Vector<Element>> {
+        match self {
+            Self::Group { children } | Self::Rectangle { children, .. } => Some(children),
+            _ => None,
+        }
+    }
 }
 
 /// Prepared Pango outlines, replayed by Skia without retaining platform font objects.
@@ -51,7 +96,9 @@ pub struct Element {
     pub rotation: Fraction,
     pub scale: Fraction,
     pub opacity: Fraction,
-    pub fill: Color,
+    pub fill: crate::Paint,
+    #[serde(default)]
+    pub stroke: Option<crate::paint::Stroke>,
     #[serde(default)]
     pub reveal: Reveal,
     #[serde(default)]
@@ -105,12 +152,21 @@ pub struct Layout {
     pub y_align: Align,
     pub direction: Option<Direction>,
     pub gap: Fraction,
-    pub width: Option<Fraction>,
-    pub height: Option<Fraction>,
+    pub width: Option<crate::Number>,
+    pub height: Option<crate::Number>,
     pub padding: Fraction,
     pub justify: Justify,
     pub align: Align,
     pub wrap: bool,
+}
+impl Layout {
+    pub fn dimension_type() -> crate::Type {
+        crate::Type::union([
+            crate::Type::Numeric(crate::Unit::Length),
+            crate::Type::Numeric(crate::Unit::Percent),
+        ])
+        .expect("layout dimension units")
+    }
 }
 macro_rules! native_enum {
     ($name:ident {$($(#[$attribute:meta])* $variant:ident),* $(,)?})=>{
@@ -318,6 +374,32 @@ impl Animation {
 
 impl Element {
     pub fn property(&self, property: Property) -> Result<Value, String> {
+        if property == Property::Radius
+            && matches!(
+                self.geometry.as_ref(),
+                Geometry::Rectangle {
+                    radius: CornerRadius::Pill,
+                    ..
+                }
+            )
+            && self
+                .layout
+                .width
+                .into_iter()
+                .chain(self.layout.height)
+                .any(|number| number.unit == crate::Unit::Percent)
+        {
+            return Err("a relative pill's radius depends on its parent and is resolved during layout; provide an explicit fixed radius when reading .radius in source".into());
+        }
+        if let Some(number) = match property {
+            Property::Width => self.layout.width,
+            Property::Height => self.layout.height,
+            _ => None,
+        } && (number.unit == crate::Unit::Percent
+            || matches!(self.geometry.as_ref(), Geometry::Group { .. }))
+        {
+            return Ok(Value::Number(number));
+        }
         Ok(match property {
             Property::Position => Value::Vec2(self.position),
             Property::Rotation => Value::Number(crate::Number {
@@ -340,15 +422,16 @@ impl Element {
                 value: self.reveal.progress,
                 unit: crate::Unit::Number,
             }),
-            Property::Fill => Value::Color(self.fill.clone()),
+            Property::Fill => self.fill.value(),
             Property::Radius | Property::Width | Property::Height => {
                 let value = match (property, self.geometry.as_ref()) {
-                    (Property::Radius, Geometry::Circle { radius } | Geometry::Rectangle { radius, .. }) => *radius,
+                    (Property::Radius, Geometry::Circle { radius }) => *radius,
+                    (Property::Radius, Geometry::Rectangle {width,height,radius,..})=>radius.resolve(*width,*height),
                     (Property::Width, Geometry::Rectangle { width, .. }) => *width,
-                    (Property::Width, Geometry::Line { width, .. }) => *width,
+                    (Property::Width, Geometry::Line { width, .. } | Geometry::Polyline { width, .. }) => *width,
                     (Property::Height, Geometry::Rectangle { height, .. }) => *height,
-                    (Property::Width, Geometry::Group { .. }) => self.layout.width.ok_or_else(|| format!("{}.width is automatic; provide an explicit width before reading it",self.id))?,
-                    (Property::Height, Geometry::Group { .. }) => self.layout.height.ok_or_else(|| format!("{}.height is automatic; provide an explicit height before reading it",self.id))?,
+                    (Property::Width, Geometry::Group { .. }) => self.layout.width.map(|number|number.value).ok_or_else(|| format!("{}.width is automatic; provide an explicit width before reading it",self.id))?,
+                    (Property::Height, Geometry::Group { .. }) => self.layout.height.map(|number|number.value).ok_or_else(|| format!("{}.height is automatic; provide an explicit height before reading it",self.id))?,
                     _ => {
                         return Err(format!(
                             "{} does not have a {property:?} geometry property",
@@ -416,17 +499,19 @@ impl Element {
                 self.reveal.progress = number.value;
             }
             Property::Fill => {
-                if let Value::Color(color) = value {
-                    self.fill = color
-                } else {
-                    return Err("expected Color".into());
-                }
+                self.fill = crate::Paint::from_value(&value)?;
             }
             Property::Radius | Property::Width | Property::Height => {
                 let number = value.number()?;
                 let positive = property != Property::Radius
                     || matches!(self.geometry.as_ref(), Geometry::Circle { .. });
-                if number.unit != crate::Unit::Length
+                let relative = matches!(property, Property::Width | Property::Height)
+                    && matches!(
+                        self.geometry.as_ref(),
+                        Geometry::Rectangle { .. } | Geometry::Group { .. }
+                    );
+                if !(number.unit == crate::Unit::Length
+                    || relative && number.unit == crate::Unit::Percent)
                     || !math::finite(&number.value)
                     || number.value < Fraction::from(0)
                     || positive && number.value == Fraction::from(0)
@@ -440,7 +525,7 @@ impl Element {
                     (Property::Radius, Geometry::Circle { .. } | Geometry::Rectangle { .. })
                     | (Property::Width | Property::Height, Geometry::Rectangle { .. }) => {}
                     (Property::Width | Property::Height, Geometry::Group { .. }) => {}
-                    (Property::Width, Geometry::Line { .. }) => {}
+                    (Property::Width, Geometry::Line { .. } | Geometry::Polyline { .. }) => {}
                     _ => {
                         return Err(format!(
                             "{} does not have a {property:?} geometry property",
@@ -450,19 +535,29 @@ impl Element {
                 }
                 if matches!(self.geometry.as_ref(), Geometry::Group { .. }) {
                     match property {
-                        Property::Width => self.layout.width = Some(number.value),
-                        Property::Height => self.layout.height = Some(number.value),
+                        Property::Width => self.layout.width = Some(number),
+                        Property::Height => self.layout.height = Some(number),
                         _ => unreachable!("validated group layout property"),
                     }
                     return Ok(());
                 }
+                if matches!(self.geometry.as_ref(), Geometry::Rectangle { .. }) {
+                    match property {
+                        Property::Width => self.layout.width = Some(number),
+                        Property::Height => self.layout.height = Some(number),
+                        _ => {}
+                    }
+                }
                 match (property, Arc::make_mut(&mut self.geometry)) {
-                    (
-                        Property::Radius,
-                        Geometry::Circle { radius } | Geometry::Rectangle { radius, .. },
-                    ) => *radius = number.value,
+                    (Property::Radius, Geometry::Circle { radius }) => *radius = number.value,
                     (Property::Width, Geometry::Rectangle { width, .. }) => *width = number.value,
-                    (Property::Width, Geometry::Line { width, .. }) => *width = number.value,
+                    (Property::Radius, Geometry::Rectangle { radius, .. }) => {
+                        *radius = CornerRadius::Fixed(number.value)
+                    }
+                    (
+                        Property::Width,
+                        Geometry::Line { width, .. } | Geometry::Polyline { width, .. },
+                    ) => *width = number.value,
                     (Property::Height, Geometry::Rectangle { height, .. }) => {
                         *height = number.value
                     }
@@ -476,7 +571,7 @@ impl Element {
         if self.id == id {
             return Some(self);
         }
-        if let Geometry::Group { children } = self.geometry.as_ref() {
+        if let Some(children) = self.geometry.children() {
             children.iter().find_map(|v| v.find(id))
         } else {
             None
@@ -484,7 +579,7 @@ impl Element {
     }
     pub fn ids(&self, ids: &mut Vec<String>) {
         ids.push(self.id.clone());
-        if let Geometry::Group { children } = self.geometry.as_ref() {
+        if let Some(children) = self.geometry.children() {
             for child in children {
                 child.ids(ids);
             }
@@ -598,8 +693,11 @@ impl Animation {
         if let Some(children) = self.list_views.visual_children(&out.id, time)? {
             out.geometry = Arc::new(Geometry::Group { children });
         }
-        if matches!(out.geometry.as_ref(), Geometry::Group { .. })
-            && let Geometry::Group { children } = Arc::make_mut(&mut out.geometry)
+        if out
+            .geometry
+            .children()
+            .is_some_and(|children| !children.is_empty())
+            && let Some(children) = Arc::make_mut(&mut out.geometry).children_mut()
         {
             for child in children {
                 self.sample_in_place(child, time, sampler)?;
@@ -616,9 +714,7 @@ impl Animation {
         }
         let mut element = &self.layers.get(*path.front()?)?.element;
         for index in path.iter().skip(1) {
-            let Geometry::Group { children } = element.geometry.as_ref() else {
-                return None;
-            };
+            let children = element.geometry.children()?;
             element = children.get(*index)?;
         }
         Some(element)
@@ -656,7 +752,7 @@ impl Animation {
         }
         fn index(element: &Element, path: Vec<usize>, map: &mut OrdMap<String, Vector<usize>>) {
             map.insert(element.id.clone(), path.iter().copied().collect());
-            if let Geometry::Group { children } = element.geometry.as_ref() {
+            if let Some(children) = element.geometry.children() {
                 for (i, child) in children.iter().enumerate() {
                     let mut path = path.clone();
                     path.push(i);
@@ -689,7 +785,7 @@ impl Animation {
         let mut descendants = std::collections::BTreeSet::new();
         for motion in motions {
             collect_flow_positions(&motion.element, &mut pending_flow);
-            if let Geometry::Group { children } = motion.element.geometry.as_ref() {
+            if let Some(children) = motion.element.geometry.children() {
                 let mut ids = vec![];
                 for child in children {
                     child.ids(&mut ids);
@@ -957,7 +1053,7 @@ impl Animation {
 }
 
 pub(crate) fn collect_flow_positions(element: &Element, ids: &mut OrdSet<String>) {
-    if let Geometry::Group { children } = element.geometry.as_ref() {
+    if let Some(children) = element.geometry.children() {
         if element.layout.direction.is_some() {
             ids.extend(children.iter().map(|child| child.id.clone()));
         }

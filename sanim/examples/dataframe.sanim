@@ -1,0 +1,23 @@
+# DataFrames are immutable typed query plans over the same COW List storage.
+# Reading a CSV is equally valid: DataFrame(read<List<Measurement>>("samples.csv")).
+type Measurement = {algorithm: String, before: Number, after: Number}
+let measurements: List<Measurement> = [
+    {algorithm="stack", before=12, after=8},
+    {algorithm="stack", before=10, after=9},
+    {algorithm="queue", before=15, after=11},
+    {algorithm="queue", before=13, after=10}
+]
+let df = DataFrame(measurements)
+let improved = df[df["after"] < df["before"]]
+let with_speedup = improved.assign({speedup=improved["before"] / improved["after"]})
+let summary = with_speedup.groupby("algorithm").agg({before="mean", after="mean", speedup="mean"})
+
+# SQLite executes only when values are requested. Native plots consume typed Lists.
+let values = with_speedup["speedup"].to_list()
+let distribution = Histogram(values=values, bins=8, fill=Color("blue3"))
+let title = Text("Measured speedups", position=Vec2(0%, -38%))
+add(distribution)
+FadeIn(title, duration=400ms)
+wait(2s)
+FadeOut(title, duration=400ms)
+FadeOut(distribution, duration=400ms)

@@ -385,6 +385,10 @@ qt-components-showcase: qt-native-deps
 check: sanim-check sanim-integration-check
 
 .PHONY: font-system-check font-system-bench
+.PHONY: sanim-dev-cli-check
+check: sanim-dev-cli-check
+sanim-dev-cli-check: native-deps cuda-artifacts
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-cli --lib
 check: font-system-check
 font-system-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-fonts --features native --all-targets -- -D warnings

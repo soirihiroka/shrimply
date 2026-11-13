@@ -121,7 +121,10 @@ fn initial_inputs_and_resets_are_acknowledged_atomically() {
     f.write("main.sanim", "let count=reflect(1)\nwait(count*1s)\n");
     let runtime = f.open();
     runtime
-        .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(3))]))
+        .set_inputs(BTreeMap::from([(
+            "main.sanim::count".into(),
+            serde_json::json!(3),
+        )]))
         .unwrap();
     let changed = until(&runtime, |s| {
         s.requested_inputs == s.applied_inputs && !s.preparing && s.prepared.is_some()
@@ -144,12 +147,18 @@ fn failed_input_keeps_last_good_until_corrected() {
     let runtime = f.open();
     let first = until(&runtime, |s| s.prepared.is_some());
     runtime
-        .set_inputs(BTreeMap::from([("count".into(), serde_json::json!("bad"))]))
+        .set_inputs(BTreeMap::from([(
+            "main.sanim::count".into(),
+            serde_json::json!("bad"),
+        )]))
         .unwrap();
     let failed = until(&runtime, |s| s.diagnostic.is_some());
     assert_eq!(failed.revision, first.revision);
     runtime
-        .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(2))]))
+        .set_inputs(BTreeMap::from([(
+            "main.sanim::count".into(),
+            serde_json::json!(2),
+        )]))
         .unwrap();
     until(&runtime, |s| {
         s.revision > first.revision && s.diagnostic.is_none()
@@ -160,11 +169,11 @@ fn missing_data_creation_recovers() {
     let f = Fixture::new();
     f.write(
         "main.sanim",
-        "let d=read<Dict>(\"missing.json\")\nwait(1s)\n",
+        "let d=read<Dict>(\"missing.json\")\nassert(decode<Number>(d[\"count\"])==1)\nwait(1s)\n",
     );
     let runtime = f.open();
     until(&runtime, |s| s.diagnostic.is_some());
-    f.write("missing.json", "{}\n");
+    f.write("missing.json", "{\"count\":1}\n");
     until(&runtime, |s| s.prepared.is_some() && s.diagnostic.is_none());
 }
 
@@ -188,14 +197,17 @@ fn reflected_schema_changes_can_recover_with_matching_inputs() {
     let runtime = f.open();
     until(&runtime, |s| s.prepared.is_some());
     runtime
-        .set_inputs(BTreeMap::from([("amount".into(), serde_json::json!(2))]))
+        .set_inputs(BTreeMap::from([(
+            "main.sanim::amount".into(),
+            serde_json::json!(2),
+        )]))
         .unwrap();
     until(&runtime, |s| s.applied_inputs == 1 && !s.preparing);
     f.write("main.sanim", "let amount=reflect(\"new\")\nwait(1s)\n");
     until(&runtime, |s| s.diagnostic.is_some());
     runtime
         .set_inputs(BTreeMap::from([(
-            "amount".into(),
+            "main.sanim::amount".into(),
             serde_json::json!("accepted"),
         )]))
         .unwrap();
@@ -348,13 +360,19 @@ fn wake_observer_can_read_and_request_another_revision() {
                 && !requested.swap(true, Ordering::Relaxed)
             {
                 runtime
-                    .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(3))]))
+                    .set_inputs(BTreeMap::from([(
+                        "main.sanim::count".into(),
+                        serde_json::json!(3),
+                    )]))
                     .unwrap();
             }
         }
     })));
     runtime
-        .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(2))]))
+        .set_inputs(BTreeMap::from([(
+            "main.sanim::count".into(),
+            serde_json::json!(2),
+        )]))
         .unwrap();
     let ready = until(&runtime, |s| !s.preparing && s.applied_inputs == 2);
     assert_eq!(ready.progress.state, sanim_runtime::State::Ready);
@@ -391,7 +409,10 @@ fn last_runtime_owner_can_be_dropped_inside_worker_observer() {
         }
     })));
     runtime
-        .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(2))]))
+        .set_inputs(BTreeMap::from([(
+            "main.sanim::count".into(),
+            serde_json::json!(2),
+        )]))
         .unwrap();
     assert!(!receive.recv_timeout(Duration::from_secs(8)).unwrap());
     drop(runtime);
@@ -525,4 +546,35 @@ fn editor_font_activation_reloads_text_without_source_edits_or_polling() {
     let idle = data_runtime.wait_for_change(unchanged.generation, Duration::from_millis(200));
     assert_eq!(idle.generation, unchanged.generation);
     assert!(!idle.preparing);
+}
+
+#[test]
+fn text_resources_reload_as_strings_without_interpreting_their_contents() {
+    let files = Fixture::new();
+    files.write("title.txt", "Original {literal}\n");
+    files.write(
+        "main.sanim",
+        "let words=read<String>(\"title.txt\")\nlet label=Text(words)\nadd(label)\nwait(1s)",
+    );
+    let runtime = files.open();
+    let first = until(&runtime, |state| {
+        !state.preparing && state.prepared.is_some()
+    });
+    assert_eq!(
+        first.prepared.as_ref().unwrap().bindings["words"]
+            .string()
+            .unwrap(),
+        "Original {literal}\n"
+    );
+    files.write("title.txt", "Updated {still literal}\n");
+    let next = until(&runtime, |state| {
+        !state.preparing && state.revision > first.revision
+    });
+    let prepared = next.prepared.unwrap();
+    assert_eq!(
+        prepared.bindings["words"].string().unwrap(),
+        "Updated {still literal}\n"
+    );
+    assert!(prepared.dependencies.contains_key("title.txt"));
+    assert_eq!(prepared.statistics.decoded_assets, 1);
 }

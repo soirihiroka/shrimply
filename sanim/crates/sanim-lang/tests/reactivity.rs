@@ -363,7 +363,7 @@ fn malformed_host_union_list_payloads_are_fully_validated() {
         .prepare(
             "main.sanim",
             &files,
-            &BTreeMap::from([("editable_rows".into(), malformed)]),
+            &BTreeMap::from([("main.sanim::editable_rows".into(), malformed)]),
         )
         .unwrap_err();
     assert_eq!(error.code, "S302");
@@ -523,14 +523,19 @@ fn retaining_an_ordinary_motion_getter_fails_instead_of_freezing() {
 }
 
 #[test]
-fn reactive_shape_factory_arguments_fail_clearly_instead_of_losing_provenance() {
-    let mut files = MemorySources::default();
-    files.insert("main.sanim","mut size=10pt\nfn disk(radius:Length):Element{return Circle(radius=radius)}\nlet shape=disk(size)");
-    let error = Engine::default()
-        .prepare("main.sanim", &files, &BTreeMap::new())
-        .unwrap_err();
-    assert_eq!(error.code, "S140");
-    assert!(error.message.contains("snapshot"), "{error}");
+fn ordinary_shape_factory_parameters_are_value_snapshots() {
+    let prepared = run(
+        "mut size=10pt\nfn disk(radius:Length):Element{return Circle(radius=radius)}\nlet shape=disk(size)\nadd(shape)\nanimate(size,to=20pt,duration=1s,ease=\"linear\")",
+    );
+    for time in [Fraction::from(0), Fraction::from(1)] {
+        let sampled = prepared
+            .animation
+            .layout(time, 1920.into(), 1080.into())
+            .unwrap();
+        assert!(
+            matches!(sampled[0].geometry.as_ref(), sanim_core::Geometry::Circle { radius } if *radius == Fraction::from(10))
+        );
+    }
 }
 
 #[test]

@@ -1,0 +1,265 @@
+{
+  "name": "Sanim",
+  "scopeName": "source.sanim",
+  "fileTypes": [
+    "sanim"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#calls"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.sanim",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.double.raw.sanim",
+          "begin": "\\br\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.double.sanim",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "patterns": [
+            {
+              "include": "#escapes"
+            },
+            {
+              "include": "#interpolation"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.single.raw.sanim",
+          "begin": "\\br'''",
+          "end": "'''",
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.triple.single.sanim",
+          "begin": "'''",
+          "end": "'''",
+          "patterns": [
+            {
+              "include": "#escapes"
+            },
+            {
+              "include": "#interpolation"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.raw.sanim",
+          "begin": "\\br\"",
+          "end": "\"|$",
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.raw.sanim",
+          "begin": "\\br'",
+          "end": "'|$",
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.sanim",
+          "begin": "\"",
+          "end": "\"|$",
+          "patterns": [
+            {
+              "include": "#escapes"
+            },
+            {
+              "include": "#interpolation"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.sanim",
+          "begin": "'",
+          "end": "'|$",
+          "patterns": [
+            {
+              "include": "#escapes"
+            },
+            {
+              "include": "#interpolation"
+            }
+          ]
+        }
+      ]
+    },
+    "escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.sanim",
+          "match": "\\\\(?:[\\\\\\'\"nrt0]|u\\{[a-fA-F0-9]+\\})"
+        }
+      ]
+    },
+    "interpolation": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.brace.sanim",
+          "match": "\\{\\{|\\}\\}"
+        },
+        {
+          "name": "meta.interpolation.sanim",
+          "begin": "\\{(?!\\{)",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.section.interpolation.begin.sanim"
+            }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.section.interpolation.end.sanim"
+            }
+          },
+          "patterns": [
+            {
+              "include": "$self"
+            }
+          ]
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.function.sanim"
+            },
+            "2": {
+              "name": "entity.name.function.sanim"
+            }
+          }
+        },
+        {
+          "match": "\\b(type|enum)\\s+([A-Za-z_]\\w*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.type.sanim"
+            },
+            "2": {
+              "name": "entity.name.type.sanim"
+            }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.sanim",
+          "match": "\\b(?:let|mut|sig|reflect|background|animate|import|as|if|else|for|in|return|match|case|and|or|not|repeat|every|timer)\\b"
+        },
+        {
+          "name": "constant.language.sanim",
+          "match": "\\b(?:true|false|None)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.duration.sanim",
+          "match": "(?<![\\w.])(?:\\d+(?:\\.\\d+)?(?:ms|s|m))+(?!\\w)"
+        },
+        {
+          "name": "constant.numeric.unit.sanim",
+          "match": "(?<![\\w.])\\d+(?:\\.\\d+)?(?:pt|px|deg|fps|%)(?!\\w)"
+        },
+        {
+          "name": "constant.numeric.sanim",
+          "match": "(?<![\\w.])\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?(?!\\w)"
+        }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "support.function.sanim",
+          "match": "\\b[A-Za-z_]\\w*(?=\\s*(?:<[^>\\n]+>)?\\s*\\()"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "constant.other.sanim",
+          "match": "\\b[A-Z][A-Z0-9_]+\\b"
+        },
+        {
+          "name": "entity.name.type.sanim",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.sanim",
+          "match": "\\*\\*|->|[+*/%=!<>|&-]+"
+        },
+        {
+          "name": "punctuation.separator.sanim",
+          "match": "[:,.;]"
+        },
+        {
+          "name": "punctuation.section.sanim",
+          "match": "[{}\\[\\]()]"
+        }
+      ]
+    }
+  }
+}

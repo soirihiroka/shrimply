@@ -95,7 +95,7 @@ pub fn set(
         None => patch(item, prepared, &BTreeMap::new(), &[key.to_owned()]),
     }
 }
-/// Validate and canonicalize an atomic override patch; null is a value, reset is explicit.
+/// Validate an atomic override patch; null is a value, reset is explicit.
 pub fn patch(
     item: &mut VideoItem,
     prepared: &sanim_runtime::sanim_lang::Prepared,
@@ -126,19 +126,12 @@ pub fn patch(
             ));
         }
         if !resets.insert(canonical) {
-            return Err(format!(
-                "reflected input '{key}' was reset more than once through aliases"
-            ));
+            return Err(format!("reflected input '{key}' was reset more than once"));
         }
     }
     let mut changed = false;
-    settings.parameters.retain(|provided, _| {
-        let canonical = schema
-            .declaration(provided)
-            .map(|v| v.key.as_str())
-            .unwrap_or(provided);
-        let keep = !resets.contains(canonical)
-            && (provided == canonical || !encoded.contains_key(canonical));
+    settings.parameters.retain(|key, _| {
+        let keep = !resets.contains(key);
         changed |= !keep;
         keep
     });

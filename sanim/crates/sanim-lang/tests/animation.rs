@@ -21,7 +21,7 @@ fn prepare_in(text: &str, width: u32, height: u32, rate: Fraction) -> Prepared {
 #[test]
 fn direct_seek_has_no_playback_history() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\", position: Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=2s, ease=\"linear\")\n",
+        "let marker = Circle(id= \"marker\", position= Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=2s, ease=\"linear\")\n",
     );
     let later = p.animation.sample(Fraction::from(2)).unwrap();
     let middle = p.animation.sample(Fraction::from(1)).unwrap();
@@ -33,7 +33,7 @@ fn direct_seek_has_no_playback_history() {
 #[test]
 fn final_values_hold_past_motion_end() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\", position: Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"linear\")\nwait(2s)\n",
+        "let marker = Circle(id= \"marker\", position= Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"linear\")\nwait(2s)\n",
     );
     assert_eq!(
         p.animation.sample(Fraction::from(2)).unwrap()[0]
@@ -45,7 +45,7 @@ fn final_values_hold_past_motion_end() {
 #[test]
 fn multiple_tracks_run_together() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\")\nbackground { FadeIn(marker, duration=1s, ease=\"linear\") }; MoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"linear\")\n",
+        "let marker = Circle(id= \"marker\")\nbackground { FadeIn(marker, duration=1s, ease=\"linear\") }; MoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"linear\")\n",
     );
     assert_eq!(p.animation.tracks["marker"].len(), 2);
     assert_eq!(p.animation.duration, Fraction::from(1));
@@ -134,7 +134,7 @@ fn not_visible_before_added() {
 #[test]
 fn parent_relative_positions_resize() {
     let p =
-        prepare("let marker = Circle(id: \"marker\", position: Vec2(-25%, 25%))\nadd(marker)\n");
+        prepare("let marker = Circle(id= \"marker\", position= Vec2(-25%, 25%))\nadd(marker)\n");
     let a = p
         .animation
         .layout(Fraction::from(0), Fraction::from(400), Fraction::from(200))
@@ -150,7 +150,7 @@ fn parent_relative_positions_resize() {
 #[test]
 fn row_layout_wraps_when_parent_shrinks() {
     let p = prepare(
-        "let a = Rect(id: \"a\", width: 60pt, height: 20pt)\nlet b = Rect(id: \"b\", width: 60pt, height: 20pt)\nadd(Row(children: [a, b], gap: 10pt))\n",
+        "let a = Rect(id= \"a\", width= 60pt, height= 20pt)\nlet b = Rect(id= \"b\", width= 60pt, height= 20pt)\nadd(Row(children= [a, b], gap= 10pt))\n",
     );
     let rows = p
         .animation
@@ -164,7 +164,7 @@ fn row_layout_wraps_when_parent_shrinks() {
 #[test]
 fn nested_group_positions_remain_local() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\", position: Vec2(0%, 0%))\nadd(Group(children: [marker], width: 200pt, height: 100pt, position: Vec2(20pt, 30pt)))\n",
+        "let marker = Circle(id= \"marker\", position= Vec2(0%, 0%))\nadd(Group(children= [marker], width= 200pt, height= 100pt, position= Vec2(20pt, 30pt)))\n",
     );
     let group = p
         .animation
@@ -187,7 +187,7 @@ fn rational_frame_rate_is_exact() {
 #[test]
 fn visual_assertions_name_objects() {
     let p = prepare(
-        "let circle = Circle(id: \"circle\", radius: 10pt, position: Vec2(0%, -30%))\nlet rect = Rect(id: \"rect\", position: Vec2(0%, 30%))\nassert(circle.above(rect))\n",
+        "let circle = Circle(id= \"circle\", radius= 10pt, position= Vec2(0%, -30%))\nlet rect = Rect(id= \"rect\", position= Vec2(0%, 30%))\nassert(circle.above(rect))\n",
     );
     assert_eq!(p.checks[0].evidence, Evidence::Proved);
     assert!(p.checks[0].message.contains("circle"));
@@ -195,7 +195,7 @@ fn visual_assertions_name_objects() {
 #[test]
 fn continuous_inside_proof_covers_translation() {
     let p = prepare_in(
-        "let marker = Circle(id: \"marker\", radius: 5pt, position: Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"cubic_out\")\nassert(always(inside_canvas(marker)))\n",
+        "let marker = Circle(id= \"marker\", radius= 5pt, position= Vec2(-40%, 0%))\nMoveTo(marker, Vec2(40%, 0%), duration=1s, ease=\"cubic_out\")\nassert(always(inside_canvas(marker)))\n",
         200,
         100,
         Fraction::from(30),
@@ -205,14 +205,14 @@ fn continuous_inside_proof_covers_translation() {
 #[test]
 fn unsupported_continuous_proof_is_unknown() {
     let p = prepare(
-        "let marker = Rect(id: \"marker\")\nRotateTo(marker, 90deg, duration=1s, ease=\"linear\")\ncheck(always(inside_canvas(marker)))\n",
+        "let marker = Rect(id= \"marker\")\nRotateTo(marker, 90deg, duration=1s, ease=\"linear\")\ncheck(always(inside_canvas(marker)))\n",
     );
     assert_eq!(p.checks[0].evidence, Evidence::Unknown);
 }
 #[test]
 fn failed_visual_assertion_has_counterexample() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let circle = Circle(id: \"circle\", position: Vec2(0%, 40%))\nlet rect = Rect(id: \"rect\", position: Vec2(0%, -40%))\nassert(circle.above(rect))\n");
+    files.insert("main.sanim","let circle = Circle(id= \"circle\", position= Vec2(0%, 40%))\nlet rect = Rect(id= \"rect\", position= Vec2(0%, -40%))\nassert(circle.above(rect))\n");
     let e = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
@@ -225,7 +225,7 @@ fn overlapping_writers_fail_atomically() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let marker = Circle(id: \"marker\")\nbackground { FadeIn(marker, duration=1s, ease=\"linear\") }; FadeOut(marker, duration=1s, ease=\"linear\")\n",
+        "let marker = Circle(id= \"marker\")\nbackground { FadeIn(marker, duration=1s, ease=\"linear\") }; FadeOut(marker, duration=1s, ease=\"linear\")\n",
     );
     let e = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -236,7 +236,7 @@ fn overlapping_writers_fail_atomically() {
 #[test]
 fn sequential_properties_have_indexed_tracks() {
     let p = prepare(
-        "let marker = Circle(id: \"marker\")\nrepeat 4 { FadeIn(marker, duration=1s, ease=\"linear\") }\n",
+        "let marker = Circle(id= \"marker\")\nrepeat 4 { FadeIn(marker, duration=1s, ease=\"linear\") }\n",
     );
     assert_eq!(p.animation.tracks["marker"][&Property::Opacity].len(), 4);
     assert!(matches!(p.bindings["marker"], Value::Element(_)));
@@ -245,7 +245,7 @@ fn sequential_properties_have_indexed_tracks() {
 #[test]
 fn external_viewports_revalidate_required_contracts() {
     let p = prepare_in(
-        "let marker=Circle(id: \"marker\",radius: 20pt)\nadd(marker)\nassert(inside_canvas(marker))\n",
+        "let marker=Circle(id= \"marker\",radius= 20pt)\nadd(marker)\nassert(inside_canvas(marker))\n",
         200,
         100,
         Fraction::from(30),
@@ -259,7 +259,7 @@ fn external_viewports_revalidate_required_contracts() {
 #[test]
 fn taffy_flex_layout_aligns_distributes_and_resizes() {
     let p = prepare(
-        "let a=Circle(id:\"a\",radius:10pt)\nlet b=Rect(id:\"b\",width:40pt,height:40pt)\nadd(Row(children:[a,b],height:100pt,padding:10pt,justify:Justify.SpaceBetween,align:Align.Center,wrap:false))",
+        "let a=Circle(id=\"a\",radius=10pt)\nlet b=Rect(id=\"b\",width=40pt,height=40pt)\nadd(Row(children=[a,b],height=100pt,padding=10pt,justify=Justify.SpaceBetween,align=Align.Center,wrap=false))",
     );
     for (width, expected) in [(200, 170.), (300, 270.)] {
         let layout = p
@@ -280,7 +280,7 @@ fn taffy_flex_layout_aligns_distributes_and_resizes() {
 #[test]
 fn column_layout_supports_spacing_and_cross_axis_alignment() {
     let p = prepare(
-        "let a=Rect(width:20pt,height:20pt)\nlet b=Rect(width:40pt,height:40pt)\nadd(Column(children:[a,b],width:100pt,height:200pt,padding:10pt,justify:Justify.SpaceEvenly,align:Align.Center))",
+        "let a=Rect(width=20pt,height=20pt)\nlet b=Rect(width=40pt,height=40pt)\nadd(Column(children=[a,b],width=100pt,height=200pt,padding=10pt,justify=Justify.SpaceEvenly,align=Align.Center))",
     );
     let layout = p
         .animation
@@ -295,7 +295,7 @@ fn column_layout_supports_spacing_and_cross_axis_alignment() {
 #[test]
 fn non_flow_groups_apply_padding_to_the_child_viewport() {
     let p = prepare(
-        "let marker=Circle(radius:5pt,position:Vec2(0%,0%),x_align:Align.End,y_align:Align.End)\nadd(Group(children:[marker],width:100pt,height:100pt,padding:10pt))",
+        "let marker=Circle(radius=5pt,position=Vec2(0%,0%),x_align=Align.End,y_align=Align.End)\nadd(Group(children=[marker],width=100pt,height=100pt,padding=10pt))",
     );
     let layout = p
         .animation

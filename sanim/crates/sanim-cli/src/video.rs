@@ -11,7 +11,11 @@ use std::{
 const MAX_VIDEO_FRAMES: u64 = 1_000_000;
 const MAX_ENCODER_DIAGNOSTIC: u64 = 16_384;
 
-pub(super) fn render(prepared: &Prepared, args: &Args) -> Result<(), String> {
+pub(super) fn render(
+    prepared: &Prepared,
+    args: &Args,
+    lint: &sanim_lang::LintReport,
+) -> Result<(), String> {
     if args.time.is_some() || args.frame != 0 {
         return Err(
             "video renders the whole timeline; --time and --frame select a single PNG with render"
@@ -129,7 +133,7 @@ pub(super) fn render(prepared: &Prepared, args: &Args) -> Result<(), String> {
         .map_err(|e| format!("cannot publish video: {e}"))?;
     println!(
         "{}",
-        serde_json::json!({"ok":true,"output":output,"frames":frames,"rate":scene.animation().rate.to_string(),"duration":scene.animation().duration.to_string(),"render_micros":started.elapsed().as_micros(),"width":options.width,"height":options.height})
+        serde_json::json!({"ok":true,"output":output,"frames":frames,"rate":scene.animation().rate.to_string(),"duration":scene.animation().duration.to_string(),"render_micros":started.elapsed().as_micros(),"width":options.width,"height":options.height,"statistics":prepared.statistics,"performance":crate::performance_diagnostics(&prepared.performance),"diagnostics":lint.diagnostics})
     );
     Ok(())
 }

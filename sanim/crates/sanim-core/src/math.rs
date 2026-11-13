@@ -2,9 +2,11 @@ use fraction::{Fraction, Sign};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 pub mod chart;
+pub mod format;
 pub mod functions;
 pub mod linear;
 pub mod operations;
+pub mod paint;
 
 const MAX_VISUAL_DENOMINATOR: u64 = 1_000_000;
 

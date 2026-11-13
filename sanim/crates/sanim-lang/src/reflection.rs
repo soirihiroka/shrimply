@@ -76,7 +76,8 @@ pub(crate) fn identities(
             StatementKind::Function {
                 parameters, body, ..
             } => {
-                for (_, _, default) in parameters {
+                for parameter in parameters {
+                    let default = &parameter.default;
                     if let Some(default) = default {
                         reject(source, default, PLACEMENT)?;
                     }
@@ -109,7 +110,8 @@ fn reject_block(source: &str, body: &[Statement]) -> Result<(), Diagnostic> {
             parameters, body, ..
         } = &statement.kind
         {
-            for (_, _, default) in parameters {
+            for parameter in parameters {
+                let default = &parameter.default;
                 if let Some(default) = default {
                     reject(source, default, PLACEMENT)?;
                 }

@@ -98,7 +98,17 @@ impl Runtime<'_, '_> {
         }
         match &expr.kind {
             ExprKind::Call { callee, args, .. } => {
-                if let Some(call) = crate::timing::builtin_call(callee, args) {
+                if let Some(call) = crate::timing::builtin_call(
+                    callee,
+                    args,
+                    &self
+                        .loaded
+                        .iter()
+                        .find(|module| module.id == self.module)
+                        .expect("checked module")
+                        .checked
+                        .native_methods,
+                ) {
                     if let Some(receiver) = call.receiver {
                         self.duration_effects(receiver, env)?;
                     }
@@ -158,7 +168,12 @@ impl Runtime<'_, '_> {
                 let parameters = function
                     .parameters
                     .iter()
-                    .map(|(name, _, _)| (name.clone(), mutates || needed.contains(name)))
+                    .map(|parameter| {
+                        (
+                            parameter.name.clone(),
+                            mutates || needed.contains(&parameter.name),
+                        )
+                    })
                     .collect::<Vec<_>>();
                 let mut evaluated = vec![];
                 let mut provided = BTreeSet::new();
@@ -184,7 +199,15 @@ impl Runtime<'_, '_> {
                             .iter()
                             .any(|(name, needed)| name == &parameter && *needed)
                     {
-                        evaluated.push((Some(parameter), self.expression(value, env)?));
+                        let input = if function.parameters.iter().any(|declaration| {
+                            declaration.name == parameter && declaration.kind == BindingKind::Sig
+                        }) {
+                            let ty = self.parameter_type(&key, &parameter, expr.span)?;
+                            self.capture_signal(value, env, &ty)?
+                        } else {
+                            self.expression(value, env)?
+                        };
+                        evaluated.push((Some(parameter), input));
                     } else {
                         self.duration_effects(value, env)?;
                     }
@@ -210,6 +233,16 @@ impl Runtime<'_, '_> {
             ExprKind::Binary(_, left, right) | ExprKind::Index(left, right) => {
                 self.duration_effects(left, env)?;
                 self.duration_effects(right, env)?;
+            }
+            ExprKind::Template(parts) => {
+                for part in parts {
+                    if let sanim_core::TemplatePart::Hole { value, format, .. } = part {
+                        self.duration_effects(value, env)?;
+                        if let Some(format) = format {
+                            self.duration_effects(format, env)?;
+                        }
+                    }
+                }
             }
             ExprKind::List(values) => {
                 for value in values {

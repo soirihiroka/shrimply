@@ -1,5 +1,6 @@
 use crate::ast::*;
 use sanim_core::{Diagnostic, GenericParameter, Span};
+mod markup;
 
 macro_rules! keywords {
     ($($variant:ident => $text:literal),* $(,)?) => {
@@ -15,30 +16,103 @@ keywords! { Let=>"let",Mut=>"mut",Sig=>"sig",Reflect=>"reflect",Background=>"bac
 
 /// Parse source directly into the AST. No token list or intermediate syntax tree.
 pub fn parse(source: &str, text: &str, max_steps: usize) -> Result<Module, Diagnostic> {
-    let mut parser = Parser {
-        source,
-        text,
-        offset: 0,
-        line: 1,
-        column: 1,
-        depth: 0,
-        delimiters: vec![],
-        remaining: max_steps,
-        failure: None,
-    };
+    let mut parser = Parser::new(source, text, max_steps, false);
     parser.trivia();
     let statements = parser.statements(false)?;
     if let Some(error) = parser.failure {
         return Err(error);
     }
-    Ok(Module { statements })
+    Ok(Module {
+        statements,
+        comments: parser.comments,
+    })
 }
+/// The ordinary grammar emits layout directly only when source formatting is requested.
+pub(crate) fn format(
+    source: &str,
+    text: &str,
+    options: crate::formatter::FormatOptions,
+    max_steps: usize,
+) -> Result<String, Diagnostic> {
+    let mut parser = Parser::new(source, text, max_steps, false);
+    parser.formatting = Some(crate::formatter::Sink::new(options));
+    parser.trivia();
+    parser.statements(false)?;
+    if let Some(error) = parser.failure {
+        return Err(error);
+    }
+    parser
+        .formatting
+        .take()
+        .expect("active source formatter")
+        .finish()
+        .map_err(|message| Diagnostic::new("F002", message, source, Span::default()))
+}
+
+/// A complete call prefix retained by the canonical parser during an edit.
+#[derive(Clone, Debug)]
+pub struct PendingCall {
+    pub callee: Expr,
+    pub span: Span,
+    pub argument: usize,
+    pub argument_name: Option<String>,
+}
+
+/// Completed declarations and the unfinished call context, without executing or
+/// fabricating values. Editors can keep useful help while a call is incomplete.
+#[derive(Clone, Debug)]
+pub struct Recovery {
+    pub module: Module,
+    pub diagnostic: Option<Diagnostic>,
+    pub pending_calls: Vec<PendingCall>,
+    pub prefix_end: usize,
+}
+
+pub fn parse_recovering(source: &str, text: &str, max_steps: usize) -> Recovery {
+    let mut parser = Parser::new(source, text, max_steps, true);
+    parser.trivia();
+    let result = parser.statements(false);
+    let (mut module, error) = match result {
+        Ok(statements) => (
+            Module {
+                statements,
+                comments: vec![],
+            },
+            None,
+        ),
+        Err(error) => (
+            parser.recovered.take().unwrap_or(Module {
+                statements: vec![],
+                comments: vec![],
+            }),
+            Some(error),
+        ),
+    };
+    let mut pending_calls = parser.pending_calls.take().unwrap_or_default();
+    for call in &mut pending_calls {
+        call.span.end = parser.offset;
+    }
+    let prefix_end = module
+        .statements
+        .last()
+        .map_or(0, |statement| statement.span.end);
+    module.comments = parser.comments;
+    Recovery {
+        module,
+        diagnostic: parser.failure.or(error),
+        pending_calls,
+        prefix_end,
+    }
+}
+
 #[derive(Clone)]
 struct Mark {
     offset: usize,
     line: usize,
     column: usize,
     delimiters: Vec<u8>,
+    formatting: Option<crate::formatter::Checkpoint>,
+    comments: usize,
 }
 struct Parser<'a> {
     source: &'a str,
@@ -50,6 +124,29 @@ struct Parser<'a> {
     delimiters: Vec<u8>,
     remaining: usize,
     failure: Option<Diagnostic>,
+    recovered: Option<Module>,
+    pending_calls: Option<Vec<PendingCall>>,
+    formatting: Option<crate::formatter::Sink>,
+    comments: Vec<Span>,
+}
+impl<'a> Parser<'a> {
+    fn new(source: &'a str, text: &'a str, max_steps: usize, recovery: bool) -> Self {
+        Self {
+            source,
+            text,
+            offset: 0,
+            line: 1,
+            column: 1,
+            depth: 0,
+            delimiters: vec![],
+            remaining: max_steps,
+            failure: None,
+            recovered: None,
+            pending_calls: recovery.then(Vec::new),
+            formatting: None,
+            comments: vec![],
+        }
+    }
 }
 impl Parser<'_> {
     fn span(&self) -> Span {
@@ -69,6 +166,11 @@ impl Parser<'_> {
             line: self.line,
             column: self.column,
             delimiters: self.delimiters.clone(),
+            comments: self.comments.len(),
+            formatting: self
+                .formatting
+                .as_ref()
+                .map(crate::formatter::Sink::checkpoint),
         }
     }
     fn restore(&mut self, mark: Mark) {
@@ -76,6 +178,12 @@ impl Parser<'_> {
         self.line = mark.line;
         self.column = mark.column;
         self.delimiters = mark.delimiters;
+        self.comments.truncate(mark.comments);
+        if let Some(checkpoint) = mark.formatting
+            && let Some(sink) = &mut self.formatting
+        {
+            sink.restore(checkpoint);
+        }
     }
     fn error(&self, message: impl Into<String>) -> Diagnostic {
         self.failure
@@ -111,21 +219,6 @@ impl Parser<'_> {
             self.remaining -= 1;
         }
     }
-    fn color_len(&self) -> Option<usize> {
-        let bytes = self.rest().as_bytes();
-        if bytes.first() != Some(&b'#') {
-            return None;
-        }
-        let count = bytes[1..]
-            .iter()
-            .take_while(|c| c.is_ascii_hexdigit())
-            .count();
-        (matches!(count, 6 | 8)
-            && !bytes
-                .get(count + 1)
-                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_'))
-        .then_some(count + 1)
-    }
     fn trivia(&mut self) {
         loop {
             let horizontal = self
@@ -134,14 +227,19 @@ impl Parser<'_> {
                 .take_while(|c| matches!(c, b' ' | b'\t'))
                 .count();
             self.advance(horizontal);
-            if self.rest().starts_with("//")
-                || self.rest().starts_with('#') && self.color_len().is_none()
-            {
+            if self.rest().starts_with('#') {
                 let count = self
                     .rest()
                     .bytes()
                     .take_while(|c| !matches!(c, b'\n' | b'\r'))
                     .count();
+                self.comments.push(Span {
+                    end: self.offset + count,
+                    ..self.span()
+                });
+                if let Some(sink) = &mut self.formatting {
+                    sink.comment(&self.text[self.offset..self.offset + count]);
+                }
                 self.advance(count);
                 continue;
             }
@@ -159,6 +257,9 @@ impl Parser<'_> {
         self.offset == self.text.len()
     }
     fn consume_line(&mut self) {
+        if let Some(sink) = &mut self.formatting {
+            sink.source_line();
+        }
         self.advance(if self.rest().starts_with("\r\n") {
             2
         } else {
@@ -209,6 +310,9 @@ impl Parser<'_> {
                 self.delimiters.pop();
             }
         }
+        if let Some(sink) = &mut self.formatting {
+            sink.token(text);
+        }
         self.advance(text.len());
         self.trivia();
         true
@@ -216,6 +320,9 @@ impl Parser<'_> {
     fn expect(&mut self, text: &str) -> Result<(), Diagnostic> {
         if text == ">" && self.rest().starts_with('>') {
             self.charge();
+            if let Some(sink) = &mut self.formatting {
+                sink.token(">");
+            }
             self.advance(1);
             self.trivia();
             if self.failure.is_some() {
@@ -237,6 +344,10 @@ impl Parser<'_> {
     }
     fn quoted(&self) -> bool {
         self.rest().starts_with(['\'', '"'])
+            || self
+                .rest()
+                .strip_prefix('r')
+                .is_some_and(|rest| rest.starts_with(['\'', '"']))
     }
     fn name(&mut self) -> Result<String, Diagnostic> {
         if !self.name_start() {
@@ -248,34 +359,133 @@ impl Parser<'_> {
             .take_while(|c| c.is_ascii_alphanumeric() || *c == b'_')
             .count();
         let name = self.rest()[..count].to_owned();
+        if let Some(sink) = &mut self.formatting {
+            sink.token(&name);
+        }
         self.charge();
         self.advance(count);
         self.trivia();
         Ok(name)
     }
     fn string(&mut self) -> Result<String, Diagnostic> {
+        let expression = self.string_expression()?;
+        if let ExprKind::String(value) = expression.kind {
+            Ok(value)
+        } else {
+            Err(Diagnostic::new(
+                "S002",
+                "an import path must be a literal string; interpolation is not allowed in module paths",
+                self.source,
+                expression.span,
+            ))
+        }
+    }
+    fn string_expression(&mut self) -> Result<Expr, Diagnostic> {
         if !self.quoted() {
             return Err(self.error("expected a quoted string"));
         }
         self.charge();
-        let start = self.span();
-        let quote = self.rest().as_bytes()[0];
-        self.advance(1);
+        let mut span = self.span();
+        if let Some(sink) = &mut self.formatting {
+            sink.pause();
+        }
+        let raw = self.rest().starts_with('r');
+        if raw {
+            self.advance(1);
+        }
+        let quote = if self.rest().starts_with("\"\"\"") {
+            "\"\"\""
+        } else if self.rest().starts_with("'''") {
+            "'''"
+        } else if self.rest().starts_with('"') {
+            "\""
+        } else {
+            "'"
+        };
+        self.advance(quote.len());
+        let mut expression = self.string_template(Some(quote), raw, span)?;
+        if self.eof() {
+            return Err(Diagnostic::new(
+                "S002",
+                format!("unterminated string; expected closing {quote}"),
+                self.source,
+                span,
+            ));
+        }
+        self.advance(quote.len());
+        span.end = self.offset;
+        expression.span = span;
+        if let Some(sink) = &mut self.formatting {
+            sink.literal(&self.text[span.start..span.end]);
+        }
+        self.trivia();
+        Ok(expression)
+    }
+    /// Quoted strings and nested format specifications share one expression
+    /// parser and escape implementation. None terminates at an interpolation's }.
+    fn string_template(
+        &mut self,
+        quote: Option<&str>,
+        raw: bool,
+        span: Span,
+    ) -> Result<Expr, Diagnostic> {
+        self.depth += 1;
+        if self.depth > 96 {
+            return Err(self.error("string interpolation nesting limit exceeded"));
+        }
         let mut value = String::new();
-        while !self.eof() && self.rest().as_bytes()[0] != quote {
-            if self.line_break() {
-                return Err(Diagnostic::new(
-                    "S002",
-                    "newline in string literal",
-                    self.source,
-                    start,
-                ));
+        let mut parts = Vec::new();
+        let mut literal_span = self.span();
+        while !self.eof()
+            && !quote.map_or_else(
+                || self.rest().starts_with('}'),
+                |quote| self.rest().starts_with(quote),
+            )
+        {
+            self.charge();
+            if self.failure.is_some() {
+                return Err(self.error("parser work limit exceeded"));
             }
+            if self.line_break() {
+                if quote.is_none_or(|quote| quote.len() == 1) {
+                    return Err(Diagnostic::new(
+                        "S002",
+                        "newline in string literal; use triple quotes (\"\"\"…\"\"\") for multiline text or \\n for a line break",
+                        self.source,
+                        span,
+                    ));
+                }
+                let count = if self.rest().starts_with("\r\n") {
+                    2
+                } else {
+                    1
+                };
+                value.push_str(&self.rest()[..count]);
+                self.advance(count);
+                continue;
+            }
+            let character_span = self.span();
             let ch = self.rest().chars().next().expect("nonempty source");
             self.advance(ch.len_utf8());
-            if ch == '\\' {
+            if !raw && matches!(ch, '{' | '}') {
+                if self.rest().starts_with(ch) {
+                    self.advance(1);
+                    value.push(ch);
+                    continue;
+                }
+                if ch == '}' {
+                    return Err(self.error("unmatched '}' in formatted string; use '}}' for a literal brace, or prefix the string with r"));
+                }
+                if !value.is_empty() {
+                    parts.push(sanim_core::TemplatePart::Text(
+                        std::mem::take(&mut value).into(),
+                    ));
+                }
+                parts.push(self.string_interpolation(character_span)?);
+                literal_span = self.span();
+            } else if ch == '\\' {
                 let Some(escape) = self.rest().chars().next() else {
-                    return Err(self.error("unterminated escape"));
+                    return Err(self.error("unterminated string escape"));
                 };
                 self.advance(escape.len_utf8());
                 value.push(match escape {
@@ -291,17 +501,64 @@ impl Parser<'_> {
                 value.push(ch);
             }
         }
-        if self.eof() {
-            return Err(Diagnostic::new(
-                "S002",
-                "unterminated string",
-                self.source,
-                start,
-            ));
+        self.depth -= 1;
+        literal_span.end = self.offset;
+        if parts.is_empty() {
+            return Ok(Expr {
+                kind: ExprKind::String(value),
+                span: literal_span,
+            });
+        }
+        if !value.is_empty() {
+            parts.push(sanim_core::TemplatePart::Text(value.into()));
+        }
+        Ok(Expr {
+            kind: ExprKind::Template(parts),
+            span: Span {
+                end: self.offset,
+                ..span
+            },
+        })
+    }
+    fn string_interpolation(
+        &mut self,
+        _span: Span,
+    ) -> Result<sanim_core::TemplatePart<Expr>, Diagnostic> {
+        // Synthetic parentheses permit multiline expression trivia. Closing an
+        // interpolation must not consume trivia: following spaces are text.
+        self.delimiters.push(b'(');
+        self.trivia();
+        if self.rest().starts_with('}') {
+            return Err(self.error("empty string interpolation; put an expression between '{' and '}', or use '{{}}' for literal braces"));
+        }
+        let expression = self.expr(0)?;
+        let mut conversion = None;
+        if self.rest().starts_with('!') {
+            self.advance(1);
+            let Some(label @ ('s' | 'r' | 'a')) = self.rest().chars().next() else {
+                return Err(self
+                    .error("unknown string conversion; supported conversions are !s, !r and !a"));
+            };
+            self.advance(1);
+            self.trivia();
+            conversion = Some(label);
+        }
+        let format = if self.rest().starts_with(':') {
+            self.advance(1);
+            Some(self.string_template(None, false, self.span())?)
+        } else {
+            None
+        };
+        if !self.rest().starts_with('}') {
+            return Err(self.error("expected '}' to close string interpolation; use '{{' for a literal opening brace, or prefix the string with r"));
         }
         self.advance(1);
-        self.trivia();
-        Ok(value)
+        self.delimiters.pop();
+        Ok(sanim_core::TemplatePart::Hole {
+            value: expression,
+            format,
+            conversion,
+        })
     }
     fn newline(&mut self) -> Result<(), Diagnostic> {
         if self.eat(";") || self.is("}") || self.eof() {
@@ -338,7 +595,18 @@ impl Parser<'_> {
                 }
                 return Err(self.error("unexpected closing block"));
             }
-            out.push(self.statement()?);
+            match self.statement() {
+                Ok(statement) => out.push(statement),
+                Err(error) => {
+                    if !block {
+                        self.recovered = Some(Module {
+                            statements: out,
+                            comments: vec![],
+                        });
+                    }
+                    return Err(error);
+                }
+            }
         }
         if block && out.is_empty() {
             return Err(self.error("empty blocks are forbidden"));
@@ -383,15 +651,39 @@ impl Parser<'_> {
         }
         Ok(names)
     }
-    fn arguments(&mut self) -> Result<Vec<(Option<String>, Expr)>, Diagnostic> {
+    fn arguments(
+        &mut self,
+        callee: Option<&Expr>,
+    ) -> Result<Vec<(Option<String>, Expr)>, Diagnostic> {
+        let frame = if let (Some(callee), Some(calls)) = (callee, &mut self.pending_calls) {
+            calls.push(PendingCall {
+                callee: callee.clone(),
+                span: callee.span,
+                argument: 0,
+                argument_name: None,
+            });
+            Some(calls.len() - 1)
+        } else {
+            None
+        };
         let mut args = vec![];
         if !self.eat(")") {
             loop {
+                if let (Some(frame), Some(calls)) = (frame, &mut self.pending_calls) {
+                    calls[frame].argument = args.len();
+                    calls[frame].argument_name = None;
+                }
                 let candidate = self.expr(0)?;
-                let (named, value) = if self.eat("=") || self.eat(":") {
+                if self.is(":") {
+                    return Err(self.error("named arguments use '='; write name=value. ':' is reserved for type annotations and dictionary entries"));
+                }
+                let (named, value) = if self.eat("=") {
                     let ExprKind::Name(name) = candidate.kind else {
                         return Err(self.error("named argument label must be a name"));
                     };
+                    if let (Some(frame), Some(calls)) = (frame, &mut self.pending_calls) {
+                        calls[frame].argument_name = Some(name.clone());
+                    }
                     (Some(name), self.expr(0)?)
                 } else {
                     (None, candidate)
@@ -405,6 +697,9 @@ impl Parser<'_> {
                 }
             }
             self.expect(")")?;
+        }
+        if let (Some(_), Some(calls)) = (frame, &mut self.pending_calls) {
+            calls.pop();
         }
         Ok(args)
     }
@@ -485,11 +780,21 @@ impl Parser<'_> {
             span,
         })
     }
+    fn declared_name(&mut self, location: &mut Option<Span>) -> Result<String, Diagnostic> {
+        let start = self.span();
+        let name = self.name()?;
+        *location = Some(Span {
+            end: start.start + name.len(),
+            ..start
+        });
+        Ok(name)
+    }
     fn statement(&mut self) -> Result<Statement, Diagnostic> {
         if self.failure.is_some() {
             return Err(self.error("parser work limit exceeded"));
         }
         let span = self.span();
+        let mut name_span = None;
         let binding = if self.eat(Keyword::Let.text()) {
             Some(BindingKind::Let)
         } else if self.eat(Keyword::Mut.text()) {
@@ -500,7 +805,7 @@ impl Parser<'_> {
             None
         };
         let kind = if let Some(kind) = binding {
-            let name = self.name()?;
+            let name = self.declared_name(&mut name_span)?;
             let annotation = if self.eat(":") {
                 Some(self.ty()?)
             } else {
@@ -526,7 +831,7 @@ impl Parser<'_> {
             }
         } else if self.eat(Keyword::Animate.text()) {
             self.expect("(")?;
-            let mut args = self.arguments()?.into_iter();
+            let mut args = self.arguments(None)?.into_iter();
             let Some((
                 None,
                 Expr {
@@ -579,14 +884,14 @@ impl Parser<'_> {
                 easing,
             }
         } else if self.eat(Keyword::Type.text()) {
-            let name = self.name()?;
+            let name = self.declared_name(&mut name_span)?;
             let generics = self.generics()?;
             self.expect("=")?;
             let ty = self.ty()?;
             self.newline()?;
             StatementKind::Alias { name, generics, ty }
         } else if self.eat(Keyword::Enum.text()) {
-            let name = self.name()?;
+            let name = self.declared_name(&mut name_span)?;
             self.expect("{")?;
             let mut variants = vec![];
             while !self.eat("}") {
@@ -615,13 +920,21 @@ impl Parser<'_> {
             self.newline()?;
             StatementKind::Enum { name, variants }
         } else if self.eat(Keyword::Fn.text()) {
-            let name = self.name()?;
+            let name = self.declared_name(&mut name_span)?;
             let generics = self.generics()?;
             self.expect("(")?;
             let mut parameters = vec![];
             if !self.eat(")") {
                 loop {
-                    let name = self.name()?;
+                    let kind = if self.eat(Keyword::Sig.text()) {
+                        BindingKind::Sig
+                    } else if self.eat(Keyword::Mut.text()) {
+                        BindingKind::Mut
+                    } else {
+                        BindingKind::Let
+                    };
+                    let mut location = None;
+                    let name = self.declared_name(&mut location)?;
                     self.expect(":")?;
                     let ty = self.ty()?;
                     let default = if self.eat("=") {
@@ -629,7 +942,13 @@ impl Parser<'_> {
                     } else {
                         None
                     };
-                    parameters.push((name, ty, default));
+                    parameters.push(Parameter {
+                        kind,
+                        name,
+                        name_span: location.expect("parsed parameter identifier"),
+                        ty,
+                        default,
+                    });
                     if !self.eat(",") {
                         break;
                     }
@@ -652,7 +971,7 @@ impl Parser<'_> {
         } else if self.eat(Keyword::Import.text()) {
             let path = self.string()?;
             self.expect(Keyword::As.text())?;
-            let alias = self.name()?;
+            let alias = self.declared_name(&mut name_span)?;
             self.newline()?;
             StatementKind::Import { path, alias }
         } else if self.eat(Keyword::Return.text()) {
@@ -670,7 +989,7 @@ impl Parser<'_> {
             };
             StatementKind::If { condition, yes, no }
         } else if self.eat(Keyword::For.text()) {
-            let name = self.name()?;
+            let name = self.declared_name(&mut name_span)?;
             self.expect(Keyword::In.text())?;
             let iterable = self.expr(0)?;
             let body = self.block()?;
@@ -759,6 +1078,10 @@ impl Parser<'_> {
                         value.span,
                     ));
                 };
+                name_span = Some(Span {
+                    end: value.span.start + name.len(),
+                    ..value.span
+                });
                 StatementKind::Assign {
                     name,
                     value: self.expr(0)?,
@@ -771,7 +1094,11 @@ impl Parser<'_> {
         };
         let mut span = span;
         span.end = self.offset;
-        Ok(Statement { kind, span })
+        Ok(Statement {
+            kind,
+            span,
+            name_span,
+        })
     }
     fn ty(&mut self) -> Result<TypeExpr, Diagnostic> {
         self.type_expression(0)
@@ -781,7 +1108,9 @@ impl Parser<'_> {
         if self.depth > 64 {
             return Err(self.error("type nesting limit exceeded"));
         }
-        let mut out = if self.eat("(") {
+        let mut out = if self.eat(Keyword::Sig.text()) {
+            TypeExpr::Signal(Box::new(self.type_expression(3)?))
+        } else if self.eat("(") {
             let value = self.ty()?;
             self.expect(")")?;
             value
@@ -872,6 +1201,9 @@ impl Parser<'_> {
                 .find(|op| self.is(op))
                 .expect("unary operator")
                 .to_owned();
+            if let Some(sink) = &mut self.formatting {
+                sink.role(crate::formatter::Role::Unary);
+            }
             self.expect(&op)?;
             Expr {
                 kind: ExprKind::Unary(op, Box::new(self.expr(7)?)),
@@ -897,7 +1229,10 @@ impl Parser<'_> {
                 let member = self.name()?;
                 left = Expr {
                     kind: ExprKind::Member(Box::new(left), member),
-                    span,
+                    span: Span {
+                        end: self.offset,
+                        ..span
+                    },
                 };
                 continue;
             }
@@ -906,7 +1241,10 @@ impl Parser<'_> {
                 self.expect("]")?;
                 left = Expr {
                     kind: ExprKind::Index(Box::new(left), Box::new(index)),
-                    span,
+                    span: Span {
+                        end: self.offset,
+                        ..span
+                    },
                 };
                 continue;
             }
@@ -941,14 +1279,17 @@ impl Parser<'_> {
                     vec![]
                 };
             if self.eat("(") {
-                let args = self.arguments()?;
+                let args = self.arguments(Some(&left))?;
                 left = Expr {
                     kind: ExprKind::Call {
                         callee: Box::new(left),
                         types,
                         args,
                     },
-                    span,
+                    span: Span {
+                        end: self.offset,
+                        ..span
+                    },
                 };
                 continue;
             }
@@ -985,6 +1326,9 @@ impl Parser<'_> {
                 break;
             }
             let op = op.to_string();
+            if let Some(sink) = &mut self.formatting {
+                sink.role(crate::formatter::Role::Binary);
+            }
             self.expect(&op)?;
             let right = self.expr(if op == "**" {
                 precedence
@@ -996,7 +1340,11 @@ impl Parser<'_> {
                 span,
             };
         }
-        left.span.end = self.offset;
+        // A plain string already records its closing quote. Consuming trivia
+        // must not make semantic highlighting include a following comment.
+        if !matches!(left.kind, ExprKind::String(_)) {
+            left.span.end = self.offset;
+        }
         Ok(left)
     }
     fn atom(&mut self) -> Result<Expr, Diagnostic> {
@@ -1009,18 +1357,26 @@ impl Parser<'_> {
         {
             let count = sanim_core::math::number_literal_len(self.rest());
             let value = self.rest()[..count].to_owned();
+            if let Some(sink) = &mut self.formatting {
+                sink.token(&value);
+            }
             self.charge();
             self.advance(count);
             self.trivia();
             ExprKind::Number(value)
-        } else if self.quoted() {
-            ExprKind::String(self.string()?)
-        } else if let Some(count) = self.color_len() {
-            let value = self.rest()[..count].to_owned();
-            self.charge();
-            self.advance(count);
+        } else if self.is("<") {
+            let start = self.offset;
+            if let Some(sink) = &mut self.formatting {
+                sink.pause();
+            }
+            let expression = self.markup_expression()?;
+            if let Some(sink) = &mut self.formatting {
+                sink.literal(&self.text[start..expression.span.end]);
+            }
             self.trivia();
-            ExprKind::Color(value)
+            return Ok(expression);
+        } else if self.quoted() {
+            return self.string_expression();
         } else if self.eat(Keyword::Reflect.text()) {
             if !self.eat("(") {
                 return Err(Diagnostic::new(
@@ -1030,7 +1386,7 @@ impl Parser<'_> {
                     span,
                 ));
             }
-            let args = self.arguments()?;
+            let args = self.arguments(None)?;
             return self.reflected_value(
                 args,
                 Span {

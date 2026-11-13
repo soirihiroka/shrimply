@@ -1162,6 +1162,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sanim-lsp"
+version = "0.1.0"
+dependencies = [
+ "sanim-lang",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "sanim-render"
 version = "0.1.0"
 dependencies = [

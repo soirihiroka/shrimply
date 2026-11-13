@@ -1,0 +1,58 @@
+# Native XML-style elements, shared scales, and Adwaita colors.
+fn Panel(caption: String, xs: LinearScale, ys: LinearScale, plots: List<Element>): Element {
+    return <Group>
+        <Grid scale={xs} ticks={[-3,-2,-1,0,1,2,3]} spans={[Vec2(-45pt,45pt)]}
+            fill="light5" grid_opacity={0.12} highlight={[0]} />
+        <Axis scale={xs} ticks={[-3,-2,-1,0,1,2,3]} position={Vec2(0pt,60pt)}
+            font_size={10pt} label_gap={3pt} tick_length={4pt} fill="light4" />
+        <Axis scale={ys} tick_count={5} vertical position={Vec2(-174pt,0pt)}
+            font_size={10pt} label_gap={3pt} tick_length={4pt} format=".1f" fill="light4" />
+        <Label position={Vec2(0pt,-78pt)} font_size={18pt} fill="light1">{caption}</Label>
+        <Group children={plots} />
+    </Group>
+}
+
+let xs = LinearScale(domain=Vec2(-3.5,3.5),range=Vec2(-160pt,160pt))
+let waves_y = LinearScale(domain=Vec2(-1.2,1.2),range=Vec2(45pt,-45pt))
+let density_y = LinearScale(domain=Vec2(0,0.65),range=Vec2(45pt,-45pt))
+let probability_y = LinearScale(domain=Vec2(0,1),range=Vec2(45pt,-45pt))
+let samples = [-2.7,-2.1,-1.8,-1.5,-1.2,-1.0,-0.8,-0.6,-0.4,-0.3,-0.2,0,0.1,0.2,0.4,0.7,0.9,1.1,1.4,1.8,2.3,2.7]
+let wave = [{x=-3,y=-0.1},{x=-2,y=-0.9},{x=-1,y=-0.75},{x=0,y=0},{x=1,y=0.75},{x=2,y=0.9},{x=3,y=0.1}]
+let confidence = [{x=-3,low=-0.3,high=0.1},{x=-2,low=-1.1,high=-0.7},{x=-1,low=-0.95,high=-0.55},{x=0,low=-0.2,high=0.2},{x=1,low=0.55,high=0.95},{x=2,low=0.7,high=1.1},{x=3,low=-0.1,high=0.3}]
+
+let curve = <LinePlot data={wave} x_scale={xs} y_scale={waves_y}
+    interpolation="monotone" fill="blue3" width={2.5pt} />
+let interval = <BandPlot data={confidence} x_scale={xs} y_scale={waves_y} fill="blue3" />
+let histogram = <Histogram values={samples} bins={14} normalization="density"
+    x_scale={xs} y_scale={density_y} fill="blue3" opacity={0.60} />
+let estimated = <DensityPlot values={samples} bandwidth={0.55}
+    x_scale={xs} y_scale={density_y} fill="orange3" shade={false} />
+let empirical = <ECDFPlot values={samples} x_scale={xs} y_scale={probability_y} fill="green3" />
+let normal = <NormalCurve x_scale={xs} y_scale={density_y} fill="blue3" std_dev={0.7} shade />
+let wide = <NormalCurve x_scale={xs} y_scale={density_y} fill="purple3" std_dev={1.3} shade />
+let shifted = <NormalCurve x_scale={xs} y_scale={density_y} fill="orange3" mean={1.1}
+    std_dev={0.8} shade={false} />
+
+let top_left = <Group position={Vec2(-24%,-12%)}>
+    <Panel caption="Shape-preserving curves & bands" xs={xs} ys={waves_y} plots={[interval,curve]} />
+</Group>
+let top_right = <Group position={Vec2(24%,-12%)}>
+    <Panel caption="Histogram & Gaussian density" xs={xs} ys={density_y} plots={[histogram,estimated]} />
+    <Legend labels={["Density histogram","Gaussian KDE"]} colors={[Color("blue3"),Color("orange3")]}
+        position={Vec2(-110pt,86pt)} font_size={10pt} gap={14pt} swatch_width={12pt} />
+</Group>
+let bottom_left = <Group position={Vec2(-24%,28%)}>
+    <Panel caption="Empirical cumulative distribution" xs={xs} ys={probability_y} plots={[empirical]} />
+</Group>
+let bottom_right = <Group position={Vec2(24%,28%)}>
+    <Panel caption="Normal distribution families" xs={xs} ys={density_y} plots={[normal,wide,shifted]} />
+    <Legend labels={["σ=0.7","σ=1.3","μ=1.1"]} colors={[Color("blue3"),Color("purple3"),Color("orange3")]}
+        position={Vec2(-108pt,86pt)} font_size={10pt} gap={14pt} swatch_width={12pt} />
+</Group>
+let title = <Label position={Vec2(0%,-44%)} font_size={27pt} fill="light1">Native plots. Adwaita colors.</Label>
+let subtitle = <Label position={Vec2(0%,-36%)} font_size={13pt} fill="light4">Typed data • shared scales • bounded statistics • cached vector paths</Label>
+
+FadeIn([title,subtitle],duration=300ms)
+Create([top_left,top_right,bottom_left,bottom_right],duration=1s,ease="smooth")
+wait(2s)
+FadeOut([top_left,top_right,bottom_left,bottom_right,title,subtitle],duration=400ms)

@@ -1,0 +1,19 @@
+# Live parameters and escaping signal returns share one retained animation DAG.
+fn twice(sig value: Length): sig Length {
+    return value * 2
+}
+
+let base_size = reflect(32pt, label="Base Size", key="shapes.size")
+mut phase = 0deg
+sig radius = base_size + 8pt * sin(phase)
+let diameter = twice(radius)
+
+let circle = Circle(radius=diameter / 2, fill=Color("blue3"), position=Vec2(-20%, 0%))
+let rectangle = Rect(width=diameter, height=diameter, radius=diameter / 6, fill=Color("orange3"), position=Vec2(20%, 0%))
+add(circle)
+add(rectangle)
+
+background {
+    animate(phase, to=1800deg, duration=10s, ease="linear")
+}
+wait(10s)

@@ -2,6 +2,7 @@
 pub mod cache;
 mod collection;
 pub use collection::{List, ListEdit, ListEditResult};
+pub mod dataframe;
 pub mod duration;
 pub mod font;
 pub use font::Font;
@@ -9,6 +10,8 @@ pub mod layout;
 pub mod list_views;
 pub use duration::{NodeDuration, TimelineEffect};
 pub mod math;
+pub mod paint;
+pub use paint::{GradientStop, Paint};
 pub mod reactive;
 pub mod reflection;
 pub mod scene;
@@ -82,3 +85,7 @@ pub fn digest(bytes: &[u8]) -> String {
 pub fn digest_bytes(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
 }
+
+pub mod template;
+pub use template::{Template, TemplatePart};
+pub mod sql;

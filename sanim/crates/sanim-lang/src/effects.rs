@@ -25,6 +25,7 @@ pub(crate) fn analyze(
     module: &Module,
     env: &Environment,
     _imports: &BTreeMap<String, Arc<Checked>>,
+    native_methods: &BTreeMap<(usize, usize), crate::NativeMethod>,
     budget: &Cell<usize>,
     limits: &Limits,
 ) -> Result<Analysis, Diagnostic> {
@@ -60,7 +61,9 @@ pub(crate) fn analyze(
                         }
                     });
                 }
-                for (parameter, _, default) in parameters {
+                for declaration in parameters {
+                    let parameter = &declaration.name;
+                    let default = &declaration.default;
                     names.remove(parameter);
                     if let Some(expr) = default {
                         value_references(expr, &mut names);
@@ -80,6 +83,7 @@ pub(crate) fn analyze(
     }
     let mut analyzer = Analyzer {
         source,
+        native_methods,
         env,
         functions,
         captures,
@@ -117,6 +121,7 @@ pub(crate) fn analyze(
     })
 }
 struct Analyzer<'a> {
+    native_methods: &'a BTreeMap<(usize, usize), crate::NativeMethod>,
     source: &'a str,
     env: &'a Environment,
     functions: BTreeMap<String, &'a Statement>,
@@ -184,7 +189,9 @@ impl Analyzer<'_> {
                     parameters,
                     ..
                 } => {
-                    for (parameter, _, default) in parameters {
+                    for declaration in parameters {
+                        let parameter = &declaration.name;
+                        let default = &declaration.default;
                         if let Some(default) = default {
                             self.edge(parameter, default);
                         }
@@ -245,7 +252,8 @@ impl Analyzer<'_> {
             self.captures.get(name).cloned().unwrap_or_default(),
         );
         let mut effect = self.block(body)?;
-        for (_, _, default) in parameters {
+        for parameter in parameters {
+            let default = &parameter.default;
             if let Some(default) = default
                 && !self.expression(default)?.is_zero()
             {
@@ -473,8 +481,11 @@ impl Analyzer<'_> {
             .parameters
             .iter()
             .enumerate()
-            .map(|(index, (name, _))| {
-                (name.clone(), signature.duration_parameters.contains(&index))
+            .map(|(index, parameter)| {
+                (
+                    parameter.name.clone(),
+                    signature.duration_parameters.contains(&index),
+                )
             })
             .collect::<Vec<_>>();
         let imported = matches!(callee.kind, ExprKind::Member(..));
@@ -547,7 +558,7 @@ impl Analyzer<'_> {
                     let next = self.expression(value)?;
                     effect = self.sum(effect, next, expr.span)?;
                 }
-                if let Some(call) = crate::timing::builtin_call(callee, args) {
+                if let Some(call) = crate::timing::builtin_call(callee, args, self.native_methods) {
                     let timing = self.call_duration(
                         call.duration_argument(),
                         call.builtin.timing,
@@ -557,7 +568,7 @@ impl Analyzer<'_> {
                 } else if let ExprKind::Name(name) = &callee.kind {
                     if self.functions.contains_key(name) {
                         let called = self.function(name)?;
-                        let called = if matches!(lookup(callee,self.env),Some(Type::Function(signature)) if !signature.parameters.iter().any(|(name,_)| name=="duration"))
+                        let called = if matches!(lookup(callee,self.env),Some(Type::Function(signature)) if !signature.parameters.iter().any(|parameter|parameter.name=="duration"))
                         {
                             self.envelope(called, crate::timing::envelope(args), expr.span)?
                         } else {
@@ -573,7 +584,7 @@ impl Analyzer<'_> {
                         let called = if !signature
                             .parameters
                             .iter()
-                            .any(|(name, _)| name == "duration")
+                            .any(|parameter| parameter.name == "duration")
                         {
                             self.envelope(
                                 signature.duration,
@@ -589,7 +600,7 @@ impl Analyzer<'_> {
                     let called = if !signature
                         .parameters
                         .iter()
-                        .any(|(name, _)| name == "duration")
+                        .any(|parameter| parameter.name == "duration")
                     {
                         self.envelope(signature.duration, crate::timing::envelope(args), expr.span)?
                     } else {
@@ -635,6 +646,20 @@ impl Analyzer<'_> {
                 let a = self.expression(a)?;
                 let b = self.expression(b)?;
                 self.sum(a, b, expr.span)?
+            }
+            ExprKind::Template(parts) => {
+                let mut out = Effect::default();
+                for part in parts {
+                    if let sanim_core::TemplatePart::Hole { value, format, .. } = part {
+                        let next = self.expression(value)?;
+                        out = self.sum(out, next, expr.span)?;
+                        if let Some(format) = format {
+                            let next = self.expression(format)?;
+                            out = self.sum(out, next, expr.span)?;
+                        }
+                    }
+                }
+                out
             }
             ExprKind::List(values) => {
                 let mut out = Effect::default();

@@ -1,4 +1,4 @@
-//! Read-only benchmark of reflection patches and canonical/legacy key resolution.
+//! Read-only benchmark of reflection patches and canonical key resolution.
 use sanim_core::{Color, Type, Viewport};
 use sanim_lang::{Engine, FileSources};
 use std::{collections::BTreeMap, path::Path, time::Instant};
@@ -57,16 +57,16 @@ fn main() -> Result<(), String> {
         sanim_core::Value::Color(Color::parse("blue3")?)
     );
     let started = Instant::now();
-    let legacy = engine
+    let repeated = engine
         .prepare_json(
             entry,
             &sources,
-            &BTreeMap::from([(input.name.clone(), value)]),
+            &BTreeMap::from([(input.key.clone(), value)]),
         )
         .map_err(|e| e.to_string())?;
-    let legacy_us = started.elapsed().as_micros();
-    assert_eq!(legacy.fingerprint, patched.fingerprint);
-    assert_eq!(legacy.animation, patched.animation);
+    let repeated_us = started.elapsed().as_micros();
+    assert_eq!(repeated.fingerprint, patched.fingerprint);
+    assert_eq!(repeated.animation, patched.animation);
     println!(
         "patch_cache_key_us={} patch_native_us={} patch_validation_us={} reused_expressions={} rebuilt_expressions={}",
         patched.statistics.cache_key_micros,
@@ -84,11 +84,11 @@ fn main() -> Result<(), String> {
         );
     }
     println!(
-        "cold_us={cold_us} color_patch_us={patch_us} color_patch_operations={} color_patch_queries={} color_patch_decodes={} legacy_equivalent_us={legacy_us} legacy_operations={} lookups=100000 lookup_total_us={} key={} label={}",
+        "cold_us={cold_us} color_patch_us={patch_us} color_patch_operations={} color_patch_queries={} color_patch_decodes={} canonical_repeat_us={repeated_us} repeat_operations={} lookups=100000 lookup_total_us={} key={} label={}",
         patched.statistics.operations,
         patched.statistics.executed_queries,
         patched.statistics.decoded_assets,
-        legacy.statistics.operations,
+        repeated.statistics.operations,
         started.elapsed().as_micros(),
         input.key,
         input.label

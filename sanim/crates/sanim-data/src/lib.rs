@@ -1,5 +1,6 @@
 //! Bounded, schema-driven decoding. No filesystem or network access.
 mod csv;
+pub mod dataframe;
 pub mod font;
 mod numpy;
 pub mod sqlite;
@@ -8,7 +9,7 @@ mod yaml;
 use sanim_core::{Color, Number, Type, Unit, Value};
 use serde_json::Value as Json;
 
-#[derive(Clone, Copy, Debug, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Limits {
     pub max_bytes: usize,
     pub max_values: usize,
@@ -38,6 +39,16 @@ pub fn decode(path: &str, bytes: &[u8], ty: &Type, limits: Limits) -> Result<Val
         return Ok(Value::Font(sanim_core::Font::Asset(std::sync::Arc::new(
             bytes.to_vec(),
         ))));
+    }
+    // An explicit String request reads the UTF-8 source verbatim, independently
+    // of extension. Structured JSON strings remain available via read<Data>/decode.
+    if *ty == Type::String {
+        if limits.max_values == 0 {
+            return Err("text asset exceeds value limit".into());
+        }
+        return std::str::from_utf8(bytes)
+            .map(|text| Value::String(text.into()))
+            .map_err(|error| format!("text resource '{path}' is not valid UTF-8: {error}"));
     }
     let extension = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match extension.as_str() {

@@ -2,6 +2,7 @@ RUSTUP ?= rustup
 RUST_TOOLCHAIN ?= nightly-2026-04-03
 CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
+LSP_INSTALL_DIR ?= $(HOME)/.local/bin
 
 .PHONY: core-data-check list-bench
 core-data-check:
@@ -28,12 +29,28 @@ state-cache-bench:
 	$(CARGO) run -p sanim-lang --example state_reload -- $(ARGS)
 reflection-bench:
 	$(CARGO) run -p sanim-lang --example reflection_reload -- $(ARGS)
+.PHONY: reflection-schema-bench
+reflection-schema-bench:
+	$(CARGO) test $(ARGS) -p sanim-core --test reflection canonical_registry_lookup_benchmark -- --ignored --nocapture
 runtime-hot-bench:
 	$(CARGO) run -p sanim-runtime --example hot_reload -- $(ARGS)
 run:
 	$(CARGO) run -p sanim-cli -- $(ARGS)
 build:
-	$(CARGO) build --workspace --release
+	$(CARGO) build --workspace --exclude sanim-lsp --release
+
+.PHONY: lsp-build lsp-check lsp-bench lsp-install
+lsp-install: lsp-build
+	mkdir -p "$(LSP_INSTALL_DIR)"
+	install -m 755 "$(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)/release/sanim-lsp" "$(LSP_INSTALL_DIR)/.sanim-lsp.new"
+	mv -f "$(LSP_INSTALL_DIR)/.sanim-lsp.new" "$(LSP_INSTALL_DIR)/sanim-lsp"
+lsp-bench:
+	$(CARGO) test -p sanim-lsp --test protocol incremental_analysis_benchmark -- --ignored --nocapture
+lsp-build:
+	$(CARGO) build -p sanim-lsp --release
+lsp-check:
+	$(CARGO) clippy -p sanim-lsp --all-targets -- -D warnings
+	$(CARGO) test -p sanim-lsp --no-fail-fast
 
 .PHONY: reactive-bench
 reactive-bench:
@@ -76,3 +93,71 @@ animation-call-check:
 .PHONY: spring-bench
 spring-bench:
 	$(CARGO) test -p sanim-core --test spring spring_sampling_benchmark -- --ignored --nocapture
+
+.PHONY: demand-check demand-bench render-lazy-check render-lazy-bench dev-cli-check
+demand-check:
+	$(CARGO) test -p sanim-lang --test demand
+demand-bench:
+	$(CARGO) run -p sanim-lang --example demand
+render-lazy-check:
+	$(CARGO) clippy -p sanim-render --all-targets -- -D warnings
+	$(CARGO) test -p sanim-render --no-fail-fast
+render-lazy-bench:
+	$(CARGO) run -p sanim-render --example lazy_geometry
+dev-cli-check:
+	$(CARGO) test -p sanim-cli --no-fail-fast
+
+.PHONY: format-check format-differential format-bench strings-check lint-check
+.PHONY: plot-check plot-bench
+.PHONY: dataframe-check dataframe-bench
+dataframe-check:
+	$(CARGO) clippy -p sanim-core -p sanim-data -p sanim-lang --all-targets -- -D warnings
+	$(CARGO) test -p sanim-data --test dataframe
+	$(CARGO) test -p sanim-lang --test dataframe
+dataframe-bench:
+	$(CARGO) test $(ARGS) -p sanim-data --test dataframe dataframe_benchmark -- --ignored --nocapture
+	$(CARGO) test $(ARGS) -p sanim-lang --test dataframe dataframe_hot_reload_benchmark -- --ignored --nocapture
+plot-check:
+	$(CARGO) test -p sanim-core --test plots
+	$(CARGO) test -p sanim-lang --test plots
+	$(CARGO) test -p sanim-render --test plots
+plot-bench:
+	$(CARGO) run --release -p sanim-render --example plots
+format-bench:
+	$(CARGO) test -p sanim-core --test format formatter_microbenchmark -- --ignored --nocapture
+strings-check:
+	$(CARGO) test -p sanim-lang --test strings
+lint-check:
+	$(CARGO) test -p sanim-lang --test lint
+	$(CARGO) test -p sanim-data --test text
+format-check:
+	$(CARGO) test -p sanim-core --test format
+	$(CARGO) test -p sanim-lang --test format
+format-differential:
+	$(CARGO) test -p sanim-core --test format python_differential_reference_formats -- --ignored --nocapture
+
+.PHONY: source-format-check source-format-bench markup-check markup-bench sql-template-check sql-template-bench
+sql-template-check:
+	$(CARGO) clippy -p sanim-core -p sanim-data -p sanim-lang --all-targets -- -D warnings
+	$(CARGO) test -p sanim-core --test templates
+	$(CARGO) test -p sanim-lang --test sql_templates
+sql-template-bench:
+	$(CARGO) test $(ARGS) -p sanim-core --test templates template_benchmark -- --ignored --nocapture
+.PHONY: signal-function-check signal-function-bench
+signal-function-check:
+	$(CARGO) clippy -p sanim-lang -p sanim-lsp --all-targets -- -D warnings
+	$(CARGO) test -p sanim-lang --test signal_functions
+	$(CARGO) test -p sanim-lsp
+signal-function-bench:
+	$(CARGO) test --release -p sanim-lang --test signal_functions signal_function_benchmark -- --ignored --nocapture
+source-format-check:
+	$(CARGO) clippy -p sanim-lang --all-targets -- -D warnings
+	$(CARGO) test -p sanim-lang --test source_formatter
+source-format-bench:
+	$(CARGO) test -p sanim-lang --test source_formatter source_formatter_benchmark -- --ignored --nocapture
+markup-check:
+	$(CARGO) clippy -p sanim-lang -p sanim-render --all-targets -- -D warnings
+	$(CARGO) test -p sanim-lang --test markup
+	$(CARGO) test -p sanim-render --test markup
+markup-bench:
+	$(CARGO) run --release -p sanim-render --example markup

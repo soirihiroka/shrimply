@@ -37,11 +37,19 @@ pub(crate) fn dot(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> 
     Ok(Type::Numeric(Unit::Number))
 }
 pub(crate) fn len(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
+    if matches!(&actuals[0],Type::DataFrame{groups,..} if !groups.is_empty()) {
+        return Err("aggregate a grouped DataFrame before requesting its length".into());
+    }
     if !matches!(
         &actuals[0],
-        Type::Dict | Type::Data | Type::List(_) | Type::Array(_)
+        Type::Dict
+            | Type::Data
+            | Type::List(_)
+            | Type::Array(_)
+            | Type::DataFrame { .. }
+            | Type::Series(_)
     ) {
-        return Err("len requires Dict, Data, List or Array".into());
+        return Err("len requires Dict, Data, List, Array, DataFrame, or Series".into());
     }
     Ok(Type::Numeric(Unit::Number))
 }

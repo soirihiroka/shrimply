@@ -1,13 +1,13 @@
-bg(#121826)
+bg(Color("#121826"))
 type Sample = { id: String, rank: Number, value: Number }
 let settings = read<Dict>("query.yaml")
 let samples = read<List<Sample>>("samples.csv")
 let tint: Color = reflect(decode<Color>(settings["appearance"]["fill"]))
 
+let minimum = decode<Number>(settings["minimum"])
 let rows = query(
-    "SELECT id, rank, value FROM samples WHERE value >= :minimum ORDER BY rank",
+    "SELECT id, rank, value FROM samples WHERE value >= {minimum} ORDER BY rank",
     tables= {samples= samples},
-    params= {"minimum": decode<Number>(settings["minimum"])},
 )
 
 for row in rows {

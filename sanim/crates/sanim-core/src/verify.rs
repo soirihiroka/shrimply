@@ -363,7 +363,7 @@ pub(crate) fn bounds_at(
         return Err("rotated bounds require renderer evidence".into());
     }
     let zero = 0.0_f64;
-    let (min, max) = match element.geometry.as_ref() {
+    let (mut min, mut max) = match element.geometry.as_ref() {
         Geometry::Circle { radius } => (
             Vec2 {
                 values: [-to_f64(*radius)?, -to_f64(*radius)?],
@@ -409,38 +409,31 @@ pub(crate) fn bounds_at(
                 },
             )
         }
-        Geometry::Polygon { points } => (
-            Vec2 {
-                values: [
-                    points
-                        .iter()
-                        .map(|p| p.values[0])
-                        .min_by(f64::total_cmp)
-                        .ok_or("empty polygon")?,
-                    points
-                        .iter()
-                        .map(|p| p.values[1])
-                        .min_by(f64::total_cmp)
-                        .ok_or("empty polygon")?,
-                ],
-                unit: crate::Unit::Length,
-            },
-            Vec2 {
-                values: [
-                    points
-                        .iter()
-                        .map(|p| p.values[0])
-                        .max_by(f64::total_cmp)
-                        .ok_or("empty polygon")?,
-                    points
-                        .iter()
-                        .map(|p| p.values[1])
-                        .max_by(f64::total_cmp)
-                        .ok_or("empty polygon")?,
-                ],
-                unit: crate::Unit::Length,
-            },
-        ),
+        Geometry::Polygon { points } | Geometry::Polyline { points, .. } => {
+            let half = if let Geometry::Polyline { width, .. } = element.geometry.as_ref() {
+                calc("/", to_f64(*width)?, 2.)?
+            } else {
+                0.
+            };
+            let first = points.first().ok_or("empty path")?;
+            let (mut low, mut high) = (first.values, first.values);
+            for point in points.iter().skip(1) {
+                for axis in 0..2 {
+                    low[axis] = low[axis].min(point.values[axis]);
+                    high[axis] = high[axis].max(point.values[axis]);
+                }
+            }
+            (
+                Vec2 {
+                    values: [calc("-", low[0], half)?, calc("-", low[1], half)?],
+                    unit: crate::Unit::Length,
+                },
+                Vec2 {
+                    values: [calc("+", high[0], half)?, calc("+", high[1], half)?],
+                    unit: crate::Unit::Length,
+                },
+            )
+        }
         Geometry::Group { children } => {
             let bounds = children.iter().map(bounds).collect::<Result<Vec<_>, _>>()?;
             (
@@ -478,6 +471,16 @@ pub(crate) fn bounds_at(
         }
         Geometry::Text { bounds, .. } => (bounds.min, bounds.max),
     };
+    if let Some(stroke) = &element.stroke {
+        let half = to_f64(stroke.width)? / 2.;
+        if half < 0. {
+            return Err("stroke width must be nonnegative".into());
+        }
+        for axis in 0..2 {
+            min.values[axis] = calc("-", min.values[axis], half)?;
+            max.values[axis] = calc("+", max.values[axis], half)?;
+        }
+    }
     let x1 = calc(
         "+",
         calc("*", min.values[0], to_f64(element.scale)?)?,

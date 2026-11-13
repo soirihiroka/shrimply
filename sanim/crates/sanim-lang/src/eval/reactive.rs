@@ -5,7 +5,16 @@ pub(super) type Id = u64;
 pub(super) enum Binding {
     Value(Value),
     Reactive(Id),
+    Deferred(Id),
     Module(String),
+}
+impl Binding {
+    pub(super) fn is_dynamic(&self) -> bool {
+        match self {
+            Self::Reactive(_) | Self::Deferred(_) | Self::Module(_) => true,
+            Self::Value(value) => value.ty().contains_signal(),
+        }
+    }
 }
 impl From<Value> for Binding {
     fn from(value: Value) -> Self {
@@ -24,6 +33,7 @@ pub(super) struct Cell {
 }
 #[derive(Clone, serde::Serialize)]
 pub(super) struct Signal {
+    pub frozen_at: Option<Fraction>,
     pub expression: Arc<Expr>,
     pub scope: Env,
     pub module: String,
@@ -80,9 +90,22 @@ impl Store {
     }
     pub fn retain(&mut self, id: Id) {
         self.touch();
-        self.retained.insert(id);
-        if let Some(Node::Signal(signal)) = self.nodes.get(&id) {
-            self.retained.extend(signal.dependencies.iter().copied());
+        let mut pending = vec![id];
+        while let Some(id) = pending.pop() {
+            if self.retained.contains(&id) {
+                continue;
+            }
+            self.retained.insert(id);
+            if let Some(Node::Signal(signal)) = self.nodes.get(&id) {
+                pending.extend(signal.dependencies.iter().copied());
+                for binding in signal.scope.values() {
+                    match binding {
+                        Binding::Reactive(id) | Binding::Deferred(id) => pending.push(*id),
+                        Binding::Value(Value::Signal(signal)) => pending.push(signal.id),
+                        _ => {}
+                    }
+                }
+            }
         }
     }
     pub fn touch(&mut self) {
@@ -132,7 +155,7 @@ impl Store {
             }
         }
     }
-    fn remove_since(&mut self, first: Id) {
+    pub(super) fn remove_since(&mut self, first: Id) {
         let dead = self
             .nodes
             .range(first..)
@@ -161,8 +184,8 @@ impl Runtime<'_, '_> {
         span: Span,
     ) -> Result<Value, Diagnostic> {
         match binding {
-            Binding::Value(value) => Ok(value.clone()),
-            Binding::Reactive(id) => self.read_reactive(*id, span),
+            Binding::Value(value) => self.sample_signal(value.clone(), span),
+            Binding::Reactive(id) | Binding::Deferred(id) => self.read_reactive(*id, span),
             Binding::Module(module) => {
                 let scope = self
                     .globals
@@ -180,7 +203,7 @@ impl Runtime<'_, '_> {
         }
         Ok(values)
     }
-    fn read_reactive(&mut self, id: Id, span: Span) -> Result<Value, Diagnostic> {
+    pub(super) fn read_reactive(&mut self, id: Id, span: Span) -> Result<Value, Diagnostic> {
         let node = self.reactive.nodes.get(&id).cloned().ok_or_else(|| {
             self.error("S140", "reactive binding escaped its lexical scope", span)
         })?;
@@ -248,7 +271,12 @@ impl Runtime<'_, '_> {
                 let previous_name = self
                     .named_constructor
                     .replace((signal.expression.span.start, signal.name.clone()));
+                let previous_time = self.cursor;
+                if let Some(time) = signal.frozen_at {
+                    self.cursor = time;
+                }
                 let result = self.expression(&signal.expression, &signal.scope);
+                self.cursor = previous_time;
                 self.module = previous_module;
                 self.type_bindings = previous_types;
                 self.identity = previous_identity;
@@ -282,7 +310,11 @@ impl Runtime<'_, '_> {
                     parent.temporal |= frame.temporal;
                 }
                 self.reactive.touch();
-                self.statistics.signal_evaluations += 1;
+                if signal.frozen_at.is_some() {
+                    self.statistics.forced_values += 1;
+                } else {
+                    self.statistics.signal_evaluations += 1;
+                }
                 Ok(value)
             }
         }
@@ -299,6 +331,11 @@ impl Runtime<'_, '_> {
             return Err(self.error("S303","live reactive bindings exceed the configured data-value limit; reduce retained signals/cells or loop output",span));
         }
         let ty = self.binding_type(span)?;
+        if kind==BindingKind::Sig && let ExprKind::Call{callee,..}=&expr.kind
+            && self.loaded.iter().find(|module|module.id==self.module).and_then(|module|crate::effects::lookup(callee,&module.checked.exports)).is_some_and(|ty|matches!(ty,Type::Function(signature) if matches!(signature.result.as_ref(),Type::Signal(_)))) {
+            let Value::Signal(signal)=self.capture_signal(expr,env,&ty)? else{unreachable!("checked signal factory")};
+            return Ok(Binding::Reactive(signal.id));
+        }
         let node = if kind == BindingKind::Mut {
             let value = self
                 .expression(expr, env)?
@@ -317,9 +354,18 @@ impl Runtime<'_, '_> {
                 creation_background_depth: self.background_depth,
             })
         } else {
+            let mut names = BTreeSet::new();
+            dependencies(expr, &mut names);
+            let scope = env
+                .iter()
+                .filter(|(name, _)| names.contains(*name))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            self.charge_signal_metadata(name, expr, &scope, &ty, span)?;
             Node::Signal(Signal {
+                frozen_at: None,
                 expression: Arc::new(expr.clone()),
-                scope: env.clone(),
+                scope,
                 module: self.module.clone(),
                 name: name.into(),
                 span,
@@ -525,6 +571,44 @@ impl Runtime<'_, '_> {
         value: &Value,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        match value {
+            Value::Signal(signal) => {
+                self.reactive.retain(signal.id);
+            }
+            Value::DataFrame(frame) => {
+                return frame
+                    .retain(
+                        &mut self.retained_frames,
+                        &mut self.retained_bytes,
+                        &mut self.retained_items,
+                    )
+                    .map_err(|message| self.error("S303", message, span));
+            }
+            Value::Series(series) => {
+                series
+                    .frame
+                    .retain(
+                        &mut self.retained_frames,
+                        &mut self.retained_bytes,
+                        &mut self.retained_items,
+                    )
+                    .map_err(|message| self.error("S303", message, span))?;
+                self.retained_bytes = self
+                    .retained_bytes
+                    .checked_sub(series.expression_bytes)
+                    .ok_or_else(|| {
+                        self.error("S303", "retained Series byte budget exceeded", span)
+                    })?;
+                self.retained_items =
+                    self.retained_items
+                        .checked_sub(series.nodes)
+                        .ok_or_else(|| {
+                            self.error("S303", "retained Series value budget exceeded", span)
+                        })?;
+                return Ok(());
+            }
+            _ => {}
+        }
         sanim_core::value_budget::charge(
             value,
             &mut self.retained_bytes,
@@ -600,7 +684,9 @@ pub(super) fn instance_paths(module: &Module) -> BTreeMap<usize, String> {
                     ..
                 } => {
                     let path = format!("fn.{name}");
-                    for (name, _, value) in parameters {
+                    for parameter in parameters {
+                        let name = &parameter.name;
+                        let value = &parameter.default;
                         if let Some(value) = value {
                             expression(value, &format!("{path}.{name}"), out);
                         }
@@ -651,7 +737,13 @@ impl Runtime<'_, '_> {
             return true;
         };
         let mut mutates = false;
-        expr.visit_while(&mut |expr|{if let ExprKind::Call {callee,..}=&expr.kind {mutates|=matches!(crate::effects::lookup(callee,&module.checked.exports),Some(Type::Function(signature)) if signature.mutates);}!mutates});
+        expr.visit_while(&mut |expr| {
+            if self.observed_signal(expr).is_some() {return false;}
+            if let ExprKind::Call {callee,..}=&expr.kind {
+                mutates |= matches!(crate::effects::lookup(callee,&module.checked.exports),Some(Type::Function(signature)) if signature.mutates);
+            }
+            !mutates
+        });
         mutates
     }
     pub(super) fn statement_stateful(&self, statement: &Statement) -> bool {
@@ -711,9 +803,22 @@ impl Runtime<'_, '_> {
         };
         let mut schedules = false;
         expr.visit_while(&mut |expr| {
+            if self.observed_signal(expr).is_some() {
+                return false;
+            }
             if let ExprKind::Call { callee, args, .. } = &expr.kind {
-                schedules |=
-                    crate::timing::builtin_call(callee, args).is_some_and(|call| call.schedules());
+                schedules |= crate::timing::builtin_call(
+                    callee,
+                    args,
+                    &self
+                        .loaded
+                        .iter()
+                        .find(|module| module.id == self.module)
+                        .expect("checked module")
+                        .checked
+                        .native_methods,
+                )
+                .is_some_and(|call| call.schedules());
                 if let Some(Type::Function(signature)) =
                     crate::effects::lookup(callee, &module.checked.exports)
                 {
@@ -721,7 +826,7 @@ impl Runtime<'_, '_> {
                         || !signature
                             .parameters
                             .iter()
-                            .any(|(name, ..)| name == "duration")
+                            .any(|parameter| parameter.name == "duration")
                             && crate::timing::envelope(args)
                                 .is_some_and(|duration| !crate::timing::known_zero(duration));
                 }

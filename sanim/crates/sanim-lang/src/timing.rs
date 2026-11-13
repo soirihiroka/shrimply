@@ -95,7 +95,11 @@ impl Builtin {
     pub(crate) fn call_schedules(&self, args: &[(Option<String>, Expr)]) -> bool {
         self.call_schedules_after(args, 0)
     }
-    fn call_schedules_after(&self, args: &[(Option<String>, Expr)], implicit: usize) -> bool {
+    pub(crate) fn call_schedules_after(
+        &self,
+        args: &[(Option<String>, Expr)],
+        implicit: usize,
+    ) -> bool {
         self.schedule
             || self
                 .duration_argument_after(args, implicit)
@@ -132,14 +136,17 @@ impl<'a> BuiltinCall<'a> {
 pub(crate) fn builtin_call<'a>(
     callee: &'a Expr,
     args: &'a [(Option<String>, Expr)],
+    native_methods: &std::collections::BTreeMap<(usize, usize), crate::NativeMethod>,
 ) -> Option<BuiltinCall<'a>> {
     let (name, receiver) = match &callee.kind {
         ExprKind::Name(name) => (name, None),
         ExprKind::Member(receiver, name) => (name, Some(receiver.as_ref())),
         _ => return None,
     };
-    let builtin = crate::prelude::builtin(name)?;
-    if receiver.is_some() && builtin.result != sanim_core::Type::Predicate {
+    let method = native_methods.get(&(callee.span.start, callee.span.end));
+    let builtin =
+        crate::prelude::builtin(method.map_or(name.as_str(), |method| method.name.as_str()))?;
+    if receiver.is_some() && method.is_none() && builtin.result != sanim_core::Type::Predicate {
         return None;
     }
     Some(BuiltinCall {

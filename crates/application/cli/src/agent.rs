@@ -34,6 +34,31 @@ pub fn run(arguments: Vec<std::ffi::OsString>) -> u8 {
         }
     };
     let (path, leaf) = leaf(&matches);
+    if let Some(tool) = path.strip_prefix("sanim ")
+        && sanim_cli::COMMANDS
+            .iter()
+            .any(|command| command.name == tool)
+    {
+        if matches.get_flag("dry-run")
+            && sanim_cli::schema(tool).is_ok_and(|schema| schema["read_only"] == false)
+        {
+            output(&failure(
+                "invalid_arguments",
+                "--dry-run does not run Sanim commands that may write files",
+                "Use sanim lint, check, or fmt --check to validate without writing.",
+            ));
+            return 2;
+        }
+        let arguments = std::iter::once(std::ffi::OsString::from(tool))
+            .chain(
+                leaf.get_many::<std::ffi::OsString>("arguments")
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            )
+            .collect();
+        return sanim_cli::run(arguments);
+    }
     match execute(&path, leaf, &matches) {
         Ok(value) => {
             output(&value);
@@ -67,6 +92,10 @@ fn leaf(matches: &ArgMatches) -> (String, &ArgMatches) {
     (parts.join(" "), current)
 }
 
+fn command_schema(definition: &commands::Command) -> Value {
+    json!({"command":format!("shrimply {}",definition.path),"summary":definition.summary,"read_only":definition.read_only,"request":(definition.schema)(),"inputs":"Named flags or --body JSON, @file, @-; complex fields accept JSON or @file","times":"Zero-based integer frames; exact numerator/denominator for frame rates"})
+}
+
 fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, String> {
     if path == "cli search" {
         return Ok(search::search(
@@ -80,10 +109,26 @@ fn execute(path: &str, leaf: &ArgMatches, root: &ArgMatches) -> Result<Value, St
             .cloned()
             .collect::<Vec<_>>()
             .join(" ");
+        if let Some(command) = path.strip_prefix("sanim ")
+            && sanim_cli::COMMANDS.iter().any(|tool| tool.name == command)
+        {
+            return sanim_cli::schema(command);
+        }
+        if path == "sanim" {
+            let mut schemas = sanim_cli::COMMANDS
+                .iter()
+                .map(|command| sanim_cli::schema(command.name))
+                .collect::<Result<Vec<_>, _>>()?;
+            schemas.extend(
+                commands::COMMANDS
+                    .iter()
+                    .filter(|definition| definition.path.starts_with("sanim "))
+                    .map(command_schema),
+            );
+            return Ok(json!({"commands":schemas}));
+        }
         let definition = commands::get(&path)?;
-        return Ok(
-            json!({"command":format!("shrimply {}",definition.path),"summary":definition.summary,"read_only":definition.read_only,"request":(definition.schema)(),"inputs":"Named flags or --body JSON, @file, @-; complex fields accept JSON or @file","times":"Zero-based integer frames; exact numerator/denominator for frame rates"}),
-        );
+        return Ok(command_schema(definition));
     }
     let positional = leaf
         .try_get_one::<String>("render_project_path")
@@ -606,6 +651,110 @@ fn output(value: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanim_namespace_contains_tools_and_project_operations_without_duplicates() {
+        let command = catalog::cli();
+        command.clone().debug_assert();
+        assert_eq!(
+            command
+                .get_subcommands()
+                .filter(|command| command.get_name() == "sanim")
+                .count(),
+            1
+        );
+        let sanim = command.find_subcommand("sanim").unwrap();
+        for tool in sanim_cli::COMMANDS {
+            assert!(sanim.find_subcommand(tool.name).is_some(), "{}", tool.name);
+        }
+        for operation in ["get", "set"] {
+            assert!(sanim.find_subcommand(operation).is_some());
+            let matches = catalog::cli()
+                .try_get_matches_from(["shrimply", "schema", "sanim", operation])
+                .unwrap();
+            let (path, leaf) = leaf(&matches);
+            assert_eq!(
+                execute(&path, leaf, &matches).unwrap()["command"],
+                format!("shrimply sanim {operation}")
+            );
+        }
+        let matches = catalog::cli()
+            .try_get_matches_from(["shrimply", "schema", "sanim"])
+            .unwrap();
+        let (path, leaf) = leaf(&matches);
+        let schemas = execute(&path, leaf, &matches).unwrap();
+        let schemas = schemas["commands"].as_array().unwrap();
+        assert_eq!(schemas.len(), sanim_cli::COMMANDS.len() + 2);
+    }
+
+    #[test]
+    fn sanim_tool_arguments_preserve_native_options_and_dispatch_before_project_lookup() {
+        let matches = catalog::cli()
+            .try_get_matches_from([
+                "shrimply",
+                "sanim",
+                "fmt",
+                "path with spaces.sanim",
+                "--check",
+                "--json",
+            ])
+            .unwrap();
+        let (path, leaf) = leaf(&matches);
+        assert_eq!(path, "sanim fmt");
+        assert_eq!(
+            leaf.get_many::<std::ffi::OsString>("arguments")
+                .unwrap()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["path with spaces.sanim", "--check", "--json"].map(std::ffi::OsString::from)
+        );
+        assert_eq!(
+            run(["shrimply", "sanim", "fmt", "--help"]
+                .map(Into::into)
+                .into()),
+            0
+        );
+        assert_eq!(
+            run([
+                "shrimply",
+                "--dry-run",
+                "sanim",
+                "fmt",
+                "missing.sanim",
+                "--write"
+            ]
+            .map(Into::into)
+            .into()),
+            2
+        );
+    }
+
+    #[test]
+    fn sanim_tools_are_discoverable_without_a_project() {
+        let search = search::search("sanim lint performance");
+        assert!(
+            search
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|result| result["command"] == "shrimply sanim lint")
+        );
+        let matches = catalog::cli()
+            .try_get_matches_from(["shrimply", "schema", "sanim", "profile"])
+            .unwrap();
+        let (path, leaf) = leaf(&matches);
+        let schema = execute(&path, leaf, &matches).unwrap();
+        assert_eq!(schema["project_required"], false);
+        assert_eq!(
+            schema["request"]["properties"]["deny_warnings"]["type"],
+            "boolean"
+        );
+        assert!(
+            sanim_cli::COMMANDS
+                .iter()
+                .all(|command| sanim_cli::schema(command.name).is_ok())
+        );
+    }
 
     #[test]
     fn replace_clip_source_is_discoverable_with_named_flags() {

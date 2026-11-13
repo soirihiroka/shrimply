@@ -1,1 +1,1 @@
-let accent: Color = #64D8CB
+let accent: Color = Color("#64D8CB")

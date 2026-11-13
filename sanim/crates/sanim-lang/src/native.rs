@@ -14,6 +14,26 @@ pub(crate) struct Context<'a> {
     pub duration: Fraction,
     pub easing: Easing,
     pub list_edit: &'a mut Option<crate::lists::EditDelta>,
+    /// Native algorithms reserve bounded work before entering their expensive loops.
+    pub native_work: &'a mut u64,
+    pub remaining_work: u64,
+}
+
+impl Context<'_> {
+    pub(crate) fn charge_work(&mut self, amount: usize) -> Result<(), String> {
+        let amount = u64::try_from(amount).map_err(|_| "native operation work count overflow")?;
+        *self.native_work = self
+            .native_work
+            .checked_add(amount)
+            .ok_or("native operation work count overflow")?;
+        if *self.native_work > self.remaining_work {
+            return Err(format!(
+                "native computation requires {} work units, but only {} remain in the preparation budget; reduce samples/resolution or increase the host operation limit",
+                self.native_work, self.remaining_work
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn font(
@@ -309,15 +329,14 @@ pub(crate) fn str(
         args.get(name)
             .ok_or_else(|| format!("missing argument '{name}'"))
     };
-    Ok(Value::String(
-        (match required("value")? {
-            Value::String(v) => v.to_string(),
-            Value::Number(n) => format!("{}", n.value),
-            Value::Bool(v) => v.to_string(),
-            other => serde_json::to_string(other).map_err(|e| e.to_string())?,
-        })
-        .into(),
-    ))
+    let format = args
+        .get("format")
+        .map(Value::string)
+        .transpose()?
+        .unwrap_or("");
+    let conversion = args.get("conversion").map(Value::string).transpose()?;
+    math::format::value(required("value")?, format, conversion)
+        .map(|text| Value::String(text.into()))
 }
 
 pub(crate) fn unit(
@@ -461,12 +480,55 @@ pub(crate) fn relationship(
 pub(crate) fn element(
     name: &str,
     args: &imbl::OrdMap<String, Value>,
-    context: Context<'_>,
+    mut context: Context<'_>,
 ) -> Result<Value, String> {
+    if let Some(design) = args.get("design") {
+        context.charge_work(design.string()?.len())?;
+    }
     make_element(name, args, context.module, context.identity, context.span)
 }
 
 pub(crate) fn make_element(
+    name: &str,
+    args: &imbl::OrdMap<String, Value>,
+    module: &str,
+    identity: &[String],
+    span: Span,
+) -> Result<Value, String> {
+    if args.contains_key("design") {
+        let design = crate::design::resolve(name, args)?;
+        let value = make_element_raw(name, &design.args, module, identity, span)?;
+        let Value::Element(element) = value else {
+            unreachable!("native element")
+        };
+        let mut element = std::sync::Arc::unwrap_or_clone(element);
+        if let Some(direction) = design.direction {
+            if element.geometry.children().is_none() {
+                return Err(format!(
+                    "{name} does not support child layout; use Rect, Row or Column"
+                ));
+            }
+            element.layout.direction = Some(direction);
+        }
+        if design.pill {
+            let Geometry::Rectangle { radius, .. } =
+                std::sync::Arc::make_mut(&mut element.geometry)
+            else {
+                return Err("pill/rounded-full requires Rect or Rectangle".into());
+            };
+            *radius = CornerRadius::Pill;
+        }
+        if let Some(border) = design.stroke {
+            element.stroke = Some(sanim_core::paint::Stroke {
+                paint: border.color.into(),
+                width: border.width,
+            });
+        }
+        return Ok(Value::Element(element.into()));
+    }
+    make_element_raw(name, args, module, identity, span)
+}
+fn make_element_raw(
     name: &str,
     args: &imbl::OrdMap<String, Value>,
     module: &str,
@@ -489,7 +551,24 @@ pub(crate) fn make_element(
             Geometry::Rectangle {
                 width: positive(args, "width", Fraction::from(64))?,
                 height: positive(args, "height", Fraction::from(64))?,
-                radius,
+                radius: radius.into(),
+                children: args
+                    .get("children")
+                    .map(|value| {
+                        value
+                            .list()?
+                            .iter()
+                            .map(|value| {
+                                if let Value::Element(element) = value {
+                                    Ok(element.as_ref().clone())
+                                } else {
+                                    Err("Rect children must be Elements".to_string())
+                                }
+                            })
+                            .collect::<Result<imbl::Vector<_>, _>>()
+                    })
+                    .transpose()?
+                    .unwrap_or_default(),
             }
         }
         "Group" | "Row" | "Column" => {
@@ -518,23 +597,44 @@ pub(crate) fn make_element(
                 width: positive(args, "width", Fraction::from(1))?,
             }
         }
-        "Polygon" => {
+        "Polygon" | "Polyline" => {
             let points = required("points")?
                 .list()?
                 .iter()
                 .map(Value::vec2)
                 .collect::<Result<Vec<_>, _>>()?;
-            if points.len() < 3 {
-                return Err("Polygon requires at least three points".into());
+            if name == "Polyline" && points.len() > math::chart::plot::MAX_POINTS {
+                return Err(format!(
+                    "Polyline supports at most {} points",
+                    math::chart::plot::MAX_POINTS
+                ));
+            }
+            let minimum = if name == "Polyline" { 2 } else { 3 };
+            if points.len() < minimum {
+                return Err(format!("{name} requires at least {minimum} points"));
             }
             if points.iter().any(|p| p.unit != sanim_core::Unit::Length) {
-                return Err("Polygon vertices must be local pt offsets".into());
+                return Err(format!("{name} vertices must be local pt offsets"));
             }
-            Geometry::Polygon {
-                points: points.into(),
+            if points
+                .iter()
+                .flat_map(|point| point.values)
+                .any(|value| !value.is_finite())
+            {
+                return Err(format!("{name} coordinates must be finite"));
+            }
+            if name == "Polyline" {
+                Geometry::Polyline {
+                    points: points.into(),
+                    width: positive(args, "width", Fraction::from(1))?,
+                }
+            } else {
+                Geometry::Polygon {
+                    points: points.into(),
+                }
             }
         }
-        "Text" => {
+        "Text" | "Label" => {
             let Value::Font(font) = required("font")? else {
                 return Err(
                     "Text requires Font(\"Family\", \"sans-serif\") or read<Font>(...)".into(),
@@ -571,9 +671,8 @@ pub(crate) fn make_element(
         return Err("position Vec2 components require pt or % units".into());
     }
     let fill = match args.get("fill") {
-        Some(Value::Color(color)) => color.clone(),
-        None => Color::parse("light1")?,
-        _ => return Err("fill must be Color".into()),
+        Some(value) => sanim_core::Paint::from_value(value)?,
+        None => Color::parse("light1")?.into(),
     };
     let opacity = number(args, "opacity", Fraction::from(1))?;
     if !(Fraction::from(0)..=Fraction::from(1)).contains(&opacity) {
@@ -615,23 +714,14 @@ pub(crate) fn make_element(
             .map(Value::boolean)
             .transpose()?
             .unwrap_or(name == "Row"),
-        width: args
-            .get("width")
-            .map(Value::number)
-            .transpose()?
-            .map(|n| n.value),
-        height: args
-            .get("height")
-            .map(Value::number)
-            .transpose()?
-            .map(|n| n.value),
+        width: args.get("width").map(Value::number).transpose()?,
+        height: args.get("height").map(Value::number).transpose()?,
     };
-    if layout
-        .width
-        .into_iter()
-        .chain(layout.height)
-        .any(|v| v <= Fraction::from(0))
-    {
+    if layout.width.into_iter().chain(layout.height).any(|v| {
+        !matches!(v.unit, Unit::Length | Unit::Percent)
+            || !math::finite(&v.value)
+            || v.value <= Fraction::from(0)
+    }) {
         return Err("layout width and height must be positive".into());
     }
     if layout.gap < Fraction::from(0) || layout.padding < Fraction::from(0) {
@@ -645,6 +735,7 @@ pub(crate) fn make_element(
         scale: positive(args, "scale", Fraction::from(1))?,
         opacity,
         fill,
+        stroke: None,
         reveal: Reveal::default(),
         horizontal: HorizontalTransform::default(),
         layout,

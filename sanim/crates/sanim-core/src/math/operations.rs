@@ -16,6 +16,25 @@ pub fn scalar_unit(ty: &Type) -> Option<Unit> {
 }
 
 pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
+    if let Type::Signal(inner) = a {
+        return binary_type(op, inner, b);
+    }
+    if let Type::Signal(inner) = b {
+        return binary_type(op, a, inner);
+    }
+    if matches!(a, Type::Series(_)) || matches!(b, Type::Series(_)) {
+        let a = if let Type::Series(inner) = a {
+            inner.as_ref()
+        } else {
+            a
+        };
+        let b = if let Type::Series(inner) = b {
+            inner.as_ref()
+        } else {
+            b
+        };
+        return crate::dataframe::binary_type(op, a, b).map(|ty| Type::Series(Box::new(ty)));
+    }
     if matches!(op, "and" | "or") && *a == Type::Bool && *b == Type::Bool {
         return Ok(Type::Bool);
     }
@@ -121,6 +140,12 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
 }
 
 pub fn unary_type(op: &str, ty: &Type) -> Result<Type, String> {
+    if let Type::Signal(inner) = ty {
+        return unary_type(op, inner);
+    }
+    if let Type::Series(inner) = ty {
+        return crate::dataframe::unary_type(op, inner).map(|ty| Type::Series(Box::new(ty)));
+    }
     if matches!(op, "not" | "!") && *ty == Type::Bool {
         return Ok(Type::Bool);
     }
@@ -133,6 +158,11 @@ pub fn unary_type(op: &str, ty: &Type) -> Result<Type, String> {
 }
 
 pub fn unary(op: &str, value: Value) -> Result<Value, String> {
+    if let Value::Series(series) = value {
+        return series
+            .unary(op)
+            .map(|series| Value::Series(std::sync::Arc::new(series)));
+    }
     unary_type(op, &value.ty())?;
     if op == "+" {
         return Ok(value);
@@ -160,6 +190,10 @@ pub fn unary(op: &str, value: Value) -> Result<Value, String> {
 }
 
 pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
+    if matches!(a, Value::Series(_)) || matches!(b, Value::Series(_)) {
+        return crate::dataframe::Series::binary(op, a, b)
+            .map(|series| Value::Series(std::sync::Arc::new(series)));
+    }
     let ty = match binary_type(op, &a.ty(), &b.ty()) {
         Ok(ty) => ty,
         // The checker proves union comparability. Different concrete alternatives

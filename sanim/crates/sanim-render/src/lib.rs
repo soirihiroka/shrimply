@@ -1,7 +1,7 @@
 //! Skia command recording and explicit headless raster output. No SVG or GUI toolkit.
 use sanim_core::{math::to_f64, *};
 use skia_safe::{Canvas, Picture, PictureRecorder, Rect};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, rc::Rc, sync::Arc};
 mod draw;
 use sanim_core::cache::Cache;
 
@@ -34,8 +34,6 @@ pub struct Scene {
     animation: Arc<Animation>,
     key: String,
     times: SampleTimes,
-    paths: BTreeMap<String, shrimply_drawing_skia::path::PreparedPath>,
-    dynamic_geometry: std::collections::BTreeSet<String>,
 }
 impl Scene {
     pub fn animation(&self) -> &Animation {
@@ -220,7 +218,12 @@ pub struct Renderer {
     pub state_cache_hits: u64,
     pub states_computed: u64,
     pub geometry_cache_hits: u64,
-    geometry_cache: BTreeMap<String, shrimply_drawing_skia::path::PreparedPath>,
+    /// Paths built only after drawing or explicit geometry validation demands them.
+    pub geometries_prepared: u64,
+    /// Stable shared geometry avoids serialization and hashing on repeated draws.
+    pub geometry_key_hits: u64,
+    geometry_cache: BTreeMap<String, Rc<shrimply_drawing_skia::path::PreparedPath>>,
+    geometry_hints: BTreeMap<usize, draw::GeometryHint>,
     geometry_cache_bytes: usize,
 }
 impl Default for Renderer {
@@ -239,55 +242,19 @@ impl Renderer {
             state_cache_hits: 0,
             states_computed: 0,
             geometry_cache_hits: 0,
+            geometries_prepared: 0,
+            geometry_key_hits: 0,
             geometry_cache: BTreeMap::new(),
+            geometry_hints: BTreeMap::new(),
             geometry_cache_bytes: 0,
         }
     }
     /// Preserve immutable path geometry across source, style, timing and viewport edits.
     pub fn prepare(&mut self, animation: Animation) -> Result<Scene, String> {
+        self.geometry_hints
+            .retain(|_, hint| hint._geometry.strong_count() > 0 && hint.path.strong_count() > 0);
         let key = digest(&animation.visual_key()?);
-        let mut paths = BTreeMap::new();
-        for layer in &animation.layers {
-            draw::prepare_paths(&layer.element, &mut paths, self)?;
-        }
-        for element in animation.list_views.elements() {
-            if !matches!(
-                element.geometry.as_ref(),
-                sanim_core::Geometry::Group { .. }
-            ) && !paths.contains_key(&element.id)
-            {
-                draw::prepare_paths(element, &mut paths, self)?;
-            }
-        }
         let times = SampleTimes::new(&animation);
-        let dynamic_geometry = animation
-            .reactive
-            .element_bindings()
-            .iter()
-            .filter(|(_, properties)| {
-                properties.keys().any(|property| {
-                    matches!(
-                        property,
-                        Property::Radius | Property::Width | Property::Height
-                    )
-                })
-            })
-            .map(|(id, _)| id.clone())
-            .chain(
-                animation
-                    .tracks
-                    .iter()
-                    .filter(|(_, properties)| {
-                        properties.keys().any(|property| {
-                            matches!(
-                                property,
-                                Property::Radius | Property::Width | Property::Height
-                            )
-                        })
-                    })
-                    .map(|(id, _)| id.clone()),
-            )
-            .collect();
         if let Some((old_key, old)) = &self.previous
             && old_key != &key
         {
@@ -318,15 +285,36 @@ impl Renderer {
             animation,
             key,
             times,
-            paths,
-            dynamic_geometry,
         })
+    }
+    /// Force every current/future path for full CLI validation. Interactive scene
+    /// preparation leaves geometry deferred until a frame actually draws it.
+    pub fn validate_geometry(&mut self, scene: &Scene) -> Result<(), String> {
+        fn visit(element: &Element, renderer: &mut Renderer) -> Result<(), String> {
+            if !matches!(element.geometry.as_ref(), Geometry::Group { .. }) {
+                draw::prepared_path(element, renderer)?;
+            }
+            if let Some(children) = element.geometry.children() {
+                for child in children {
+                    visit(child, renderer)?;
+                }
+            }
+            Ok(())
+        }
+        for layer in &scene.animation.layers {
+            visit(&layer.element, self)?;
+        }
+        for element in scene.animation.list_views.elements() {
+            visit(element, self)?;
+        }
+        Ok(())
     }
     pub fn clear_cache(&mut self) {
         self.recordings.clear();
         self.states.clear();
         self.frames.clear();
         self.geometry_cache.clear();
+        self.geometry_hints.clear();
         self.geometry_cache_bytes = 0;
         self.previous = None;
     }
@@ -377,17 +365,6 @@ impl Renderer {
             return Ok(recording);
         }
         let state = self.frame_state(scene, time, options)?;
-        let mut dynamic_paths = BTreeMap::new();
-        if !scene.dynamic_geometry.is_empty() {
-            for element in &state.elements {
-                draw::prepare_dynamic_paths(
-                    element,
-                    &scene.dynamic_geometry,
-                    &mut dynamic_paths,
-                    self,
-                )?;
-            }
-        }
         let mut recording = Recording::capture(options.width, options.height, |canvas| {
             let logical_width = to_f64(options.logical_width)? as f32;
             let logical_height = to_f64(options.logical_height)? as f32;
@@ -398,8 +375,7 @@ impl Renderer {
             let background = draw::paint(&scene.animation.background, Fraction::from(1))?;
             canvas.draw_rect(Rect::from_wh(logical_width, logical_height), &background);
             let mut drawing = draw::Drawing {
-                paths: &scene.paths,
-                dynamic_paths: &dynamic_paths,
+                renderer: self,
                 pixels,
                 work: options.max_work,
             };
@@ -487,13 +463,25 @@ fn state_bytes(elements: &Vec<Element>) -> usize {
         + elements.iter().map(element_bytes).sum::<usize>()
 }
 fn element_bytes(element: &Element) -> usize {
+    let paint_bytes = |paint: &sanim_core::Paint| match paint {
+        sanim_core::Paint::LinearGradient { stops, .. } => std::mem::size_of_val(stops.as_ref()),
+        sanim_core::Paint::Solid(_) => 0,
+    };
     element.id.capacity()
+        + paint_bytes(&element.fill)
+        + element
+            .stroke
+            .as_ref()
+            .map(|stroke| paint_bytes(&stroke.paint))
+            .unwrap_or(0)
         + match element.geometry.as_ref() {
-            Geometry::Group { children } => {
+            Geometry::Group { children } | Geometry::Rectangle { children, .. } => {
                 children.len() * std::mem::size_of::<Element>()
                     + children.iter().map(element_bytes).sum::<usize>()
             }
-            Geometry::Polygon { points } => points.capacity() * std::mem::size_of::<Vec2>(),
+            Geometry::Polygon { points } | Geometry::Polyline { points, .. } => {
+                points.capacity() * std::mem::size_of::<Vec2>()
+            }
             Geometry::Text { text, outline, .. } => {
                 text.capacity() + outline.capacity() * std::mem::size_of::<TextSegment>()
             }

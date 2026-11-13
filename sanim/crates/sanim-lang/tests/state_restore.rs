@@ -133,7 +133,7 @@ fn changed_reflection_restores_before_its_binding_and_failure_keeps_valid_prefix
         .prepare_json(
             "main.sanim",
             &files,
-            &BTreeMap::from([("delay".into(), serde_json::json!("2s"))]),
+            &BTreeMap::from([("main.sanim::delay".into(), serde_json::json!("2s"))]),
         )
         .unwrap();
     assert_eq!(edited.statistics.restored_statements, 1);
@@ -299,7 +299,7 @@ fn rejected_candidates_do_not_retain_dependencies_from_an_obsolete_branch() {
                 .prepare_json(
                     "main.sanim",
                     &files,
-                    &BTreeMap::from([("use_extra".into(), serde_json::json!(false))]),
+                    &BTreeMap::from([("main.sanim::use_extra".into(), serde_json::json!(false))]),
                 )
                 .unwrap()
         } else {

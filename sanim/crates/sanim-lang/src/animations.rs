@@ -201,7 +201,15 @@ fn motion(
             }
             (Property::StretchX, required("to")?.clone(), None)
         }
-        _ => (Property::Fill, required("to")?.clone(), None),
+        _ => {
+            if !matches!(
+                animation.sample_property(element, Property::Fill, cursor)?,
+                Value::Color(_)
+            ) {
+                return Err("FillTo currently interpolates solid Color fills; a LinearGradient can be set as a static fill, but its stops cannot be interpolated. Animate opacity or transform the gradient-filled element instead.".into());
+            }
+            (Property::Fill, required("to")?.clone(), None)
+        }
     };
     Ok(Motion {
         element: element.clone(),

@@ -1,0 +1,19 @@
+id = "sanim"
+name = "Sanim"
+version = "0.1.0"
+schema_version = 1
+authors = ["Shrimply contributors"]
+description = "Sanim diagnostics, completions, semantic highlighting, and timeline duration hints."
+repository = "https://github.com/soirihiroka/shrimply"
+languages = ["languages/sanim"]
+
+[lib]
+kind = "Rust"
+version = "0.7.0"
+
+[language_servers.sanim-lsp]
+name = "Sanim Language Server"
+languages = ["Sanim"]
+
+[language_servers.sanim-lsp.language_ids]
+Sanim = "sanim"

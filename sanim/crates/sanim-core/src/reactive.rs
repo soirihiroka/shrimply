@@ -29,6 +29,9 @@ pub enum Node {
         name: String,
         args: Vec<NodeId>,
     },
+    Template {
+        parts: std::sync::Arc<[crate::TemplatePart<NodeId>]>,
+    },
     Vector {
         values: Vec<NodeId>,
     },
@@ -138,6 +141,14 @@ impl ReactiveGraph {
                     pending.push(*right);
                 }
                 Node::Math { args, .. } => pending.extend(args),
+                Node::Template { parts } => {
+                    for part in parts.iter() {
+                        if let crate::TemplatePart::Hole { value, format, .. } = part {
+                            pending.push(*value);
+                            pending.extend(format);
+                        }
+                    }
+                }
                 Node::Vector { values } => pending.extend(values),
                 Node::Component { vector, .. } => pending.push(*vector),
             }
@@ -408,6 +419,7 @@ impl ReactiveGraph {
                     Type::Numeric(_)
                         | Type::Fraction
                         | Type::Bool
+                        | Type::String
                         | Type::Color
                         | Type::Vector(2..=4, Some(_))
                 ) {
@@ -464,6 +476,30 @@ impl ReactiveGraph {
                     return Err("retained vector component index is out of range".into());
                 }
                 Ok((Type::Numeric(*unit), vector.depth + 1))
+            }
+            Node::Template { parts } => {
+                let mut depth = 0;
+                for part in parts.iter() {
+                    if let crate::TemplatePart::Hole {
+                        value,
+                        format,
+                        conversion,
+                    } = part
+                    {
+                        depth = depth.max(child(*value)?.depth);
+                        if let Some(format) = format {
+                            let format = child(*format)?;
+                            if format.ty != Type::String {
+                                return Err("retained template format requires a String".into());
+                            }
+                            depth = depth.max(format.depth);
+                        }
+                        if conversion.is_some_and(|value| !matches!(value, 's' | 'r' | 'a')) {
+                            return Err("retained template conversion requires s, r or a".into());
+                        }
+                    }
+                }
+                Ok((Type::String, depth + 1))
             }
             Node::Math { name, args } => {
                 let function = math::functions::function(name)
@@ -669,6 +705,16 @@ fn node_bytes(node: &Node) -> usize {
             Node::Unary { op, .. } | Node::Binary { op, .. } => op.len(),
             Node::Math { name, args } => name.len() + args.len() * std::mem::size_of::<NodeId>(),
             Node::Vector { values } => values.len() * std::mem::size_of::<NodeId>(),
+            Node::Template { parts } => {
+                std::mem::size_of_val(parts.as_ref())
+                    + parts
+                        .iter()
+                        .map(|part| match part {
+                            crate::TemplatePart::Text(text) => text.len(),
+                            crate::TemplatePart::Hole { .. } => 0,
+                        })
+                        .sum::<usize>()
+            }
             _ => 0,
         }
 }
@@ -708,6 +754,14 @@ impl Sampler<'_> {
                     math::operations::binary(op, left, self.value(*right)?)?
                 }
             }
+            Node::Template { parts } => Value::String(
+                crate::template::render_with(
+                    parts,
+                    |id| self.value(*id),
+                    math::format::MAX_OUTPUT_BYTES,
+                )?
+                .into(),
+            ),
             Node::Math { name, args } => {
                 let numbers = args
                     .iter()
@@ -775,6 +829,7 @@ fn leaf_type(value: &Value) -> Result<Type, String> {
         Value::Number(number) if math::finite(&number.value) => {},
         Value::Fraction(value) if math::finite(value) => {},
         Value::Bool(_) => {},
+        Value::String(text) if text.len() <= math::format::MAX_OUTPUT_BYTES => {},
         Value::Color(color) if color.0.iter().all(|v| math::finite(v) && *v >= Fraction::from(0) && *v <= Fraction::from(1)) => {},
         Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_) if value.vector()?.0.iter().all(|v| v.is_finite()) => {},
         _ => return Err("retained expressions require finite scalar, boolean, color or vector values; materialize other data with let first".into()),
@@ -788,9 +843,11 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
         Property::Scale | Property::StretchX | Property::Opacity | Property::Reveal => {
             math::operations::scalar_unit(ty) == Some(Unit::Number)
         }
-        Property::Radius | Property::Width | Property::Height => {
-            math::operations::scalar_unit(ty) == Some(Unit::Length)
-        }
+        Property::Radius => math::operations::scalar_unit(ty) == Some(Unit::Length),
+        Property::Width | Property::Height => matches!(
+            math::operations::scalar_unit(ty),
+            Some(Unit::Length | Unit::Percent)
+        ),
         Property::Fill => *ty == Type::Color,
     };
     if valid {

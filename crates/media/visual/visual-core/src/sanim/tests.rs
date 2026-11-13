@@ -77,7 +77,7 @@ fn changed(source: &Source, old: u64) -> sanim_runtime::Snapshot {
 #[test]
 fn native_sanim_frames_reflow_with_editor_viewport() {
     let f = Fixture::new(
-        "bg(Color(\"transparent\"))\nadd(Circle(radius: 2pt,position: Vec2(25%,0%),fill: Color(\"red\")))\nwait(1s)\n",
+        "bg(Color(\"transparent\"))\nadd(Circle(radius= 2pt,position= Vec2(25%,0%),fill= Color(\"red\")))\nwait(1s)\n",
     );
     let item = f.item();
     let mut source = Source::new(&item).unwrap();
@@ -110,7 +110,7 @@ fn native_sanim_frames_reflow_with_editor_viewport() {
 #[test]
 fn native_sanim_reflected_inputs_are_applied_before_export() {
     let f = Fixture::new(
-        "let tint=reflect(Color(\"red\"))\nadd(Circle(radius: 10pt,fill: tint))\nwait(1s)\n",
+        "let tint=reflect(Color(\"red\"))\nadd(Circle(radius= 10pt,fill= tint))\nwait(1s)\n",
     );
     let mut item = f.item();
     let VideoItemContent::Sanim(settings) = &mut item.content else {
@@ -118,7 +118,7 @@ fn native_sanim_reflected_inputs_are_applied_before_export() {
     };
     settings
         .parameters
-        .insert("tint".into(), serde_json::json!("blue"));
+        .insert("scene.sanim::tint".into(), serde_json::json!("blue"));
     let mut source = Source::new(&item).unwrap();
     let frame = ready(
         &mut source,
@@ -133,7 +133,7 @@ fn native_sanim_reflected_inputs_are_applied_before_export() {
 }
 #[test]
 fn native_sanim_export_pins_one_revision_and_preview_can_resume_live() {
-    let f = Fixture::new("add(Circle(radius: 10pt,fill: Color(\"red\")))\nwait(1s)\n");
+    let f = Fixture::new("add(Circle(radius= 10pt,fill= Color(\"red\")))\nwait(1s)\n");
     let item = f.item();
     let mut source = Source::new(&item).unwrap();
     let canvas = CanvasSize {
@@ -142,7 +142,7 @@ fn native_sanim_export_pins_one_revision_and_preview_can_resume_live() {
     };
     let first = ready(&mut source, &item, canvas, true);
     let revision = source.runtime.snapshot().revision;
-    f.write("add(Circle(radius: 10pt,fill: Color(\"blue\")))\nwait(1s)\n");
+    f.write("add(Circle(radius= 10pt,fill= Color(\"blue\")))\nwait(1s)\n");
     let next = changed(&source, revision);
     assert!(next.revision > revision);
     let pinned = ready(&mut source, &item, canvas, true);
@@ -152,7 +152,7 @@ fn native_sanim_export_pins_one_revision_and_preview_can_resume_live() {
 }
 #[test]
 fn native_sanim_failed_preview_keeps_frame_but_new_export_fails() {
-    let f = Fixture::new("add(Circle(radius: 10pt,fill: Color(\"red\")))\nwait(1s)\n");
+    let f = Fixture::new("add(Circle(radius= 10pt,fill= Color(\"red\")))\nwait(1s)\n");
     let item = f.item();
     let mut source = Source::new(&item).unwrap();
     let canvas = CanvasSize {
@@ -241,7 +241,7 @@ fn native_sanim_reflection_patches_validate_aliases_and_distinguish_null_from_re
     };
     settings
         .parameters
-        .insert("count".into(), serde_json::json!(7));
+        .insert("scene.sanim::count".into(), serde_json::json!(7));
     let state = reflection::inspect(
         &item,
         Viewport::default(),
@@ -255,8 +255,8 @@ fn native_sanim_reflection_patches_validate_aliases_and_distinguish_null_from_re
             &mut item,
             &prepared,
             &BTreeMap::from([
-                ("optional".into(), serde_json::Value::Null),
-                ("count".into(), serde_json::json!(3))
+                ("scene.sanim::optional".into(), serde_json::Value::Null),
+                ("scene.sanim::count".into(), serde_json::json!(3))
             ]),
             &[]
         )
@@ -280,8 +280,8 @@ fn native_sanim_reflection_patches_validate_aliases_and_distinguish_null_from_re
             &mut item,
             &prepared,
             &BTreeMap::from([
-                ("count".into(), serde_json::json!(4)),
-                ("optional".into(), serde_json::json!("bad"))
+                ("scene.sanim::count".into(), serde_json::json!(4)),
+                ("scene.sanim::optional".into(), serde_json::json!("bad"))
             ]),
             &[]
         )
@@ -304,13 +304,27 @@ fn native_sanim_reflection_patches_validate_aliases_and_distinguish_null_from_re
         reflection::Value::None
     ));
     assert!(
-        reflection::patch(&mut item, &prepared, &BTreeMap::new(), &["optional".into()]).unwrap()
+        reflection::patch(
+            &mut item,
+            &prepared,
+            &BTreeMap::new(),
+            &["scene.sanim::optional".into()]
+        )
+        .unwrap()
     );
     let VideoItemContent::Sanim(settings) = &item.content else {
         panic!()
     };
     assert!(!settings.parameters.contains_key("scene.sanim::optional"));
-    assert!(reflection::patch(&mut item, &prepared, &BTreeMap::new(), &["count".into()]).unwrap());
+    assert!(
+        reflection::patch(
+            &mut item,
+            &prepared,
+            &BTreeMap::new(),
+            &["scene.sanim::count".into()]
+        )
+        .unwrap()
+    );
     let VideoItemContent::Sanim(settings) = &item.content else {
         unreachable!()
     };
@@ -446,9 +460,10 @@ fn native_sanim_reflection_cold_invalid_overrides_can_be_reset() {
     let VideoItemContent::Sanim(settings) = &mut item.content else {
         unreachable!()
     };
-    settings
-        .parameters
-        .insert("count".into(), serde_json::json!("invalid count"));
+    settings.parameters.insert(
+        "scene.sanim::count".into(),
+        serde_json::json!("invalid count"),
+    );
     assert!(reflection::observation(item.id, item.file.path()).is_none());
     let state = reflection::inspect(
         &item,
@@ -469,7 +484,15 @@ fn native_sanim_reflection_cold_invalid_overrides_can_be_reset() {
         .prepared
         .expect("default schema must remain available for typed repair");
     assert_eq!(prepared.reflected[0].name, "count");
-    assert!(reflection::patch(&mut item, &prepared, &BTreeMap::new(), &["count".into()]).unwrap());
+    assert!(
+        reflection::patch(
+            &mut item,
+            &prepared,
+            &BTreeMap::new(),
+            &["scene.sanim::count".into()]
+        )
+        .unwrap()
+    );
     let VideoItemContent::Sanim(settings) = &item.content else {
         unreachable!()
     };
@@ -505,7 +528,7 @@ fn native_sanim_reflection_sets_reuse_source_schema_but_gets_refresh_dependent_d
     };
     settings
         .parameters
-        .insert("count".into(), serde_json::json!(9));
+        .insert("scene.sanim::count".into(), serde_json::json!(9));
     let viewport = Viewport {
         width: 100,
         height: 100,

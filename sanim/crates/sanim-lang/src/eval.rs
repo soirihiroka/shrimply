@@ -1,8 +1,13 @@
+mod dataframe;
+mod demand;
 pub(crate) mod duration;
 mod lists;
+mod native;
 mod plans;
 mod reactive;
 mod reactive_animation;
+mod signals;
+mod templates;
 use reactive::Binding;
 pub(crate) mod state;
 use crate::ast::referenced_names as dependencies;
@@ -26,6 +31,7 @@ use std::{
 // Arithmetic is centralized in sanim-core::math; the evaluator only dispatches operators.
 type Values = imbl::OrdMap<String, Value>;
 type Env = imbl::OrdMap<String, Binding>;
+type ObservedSignals = BTreeMap<(String, usize, usize), sanim_core::SignalRef>;
 type DurationDemand = BTreeMap<String, BTreeSet<String>>;
 
 #[derive(serde::Serialize)]
@@ -38,7 +44,7 @@ enum CacheDependency<'a> {
 struct Function {
     module: String,
     name: String,
-    parameters: Vec<(String, TypeExpr, Option<Expr>)>,
+    parameters: Vec<Parameter>,
     body: Vec<Statement>,
     fingerprint: String,
     span: Span,
@@ -48,16 +54,18 @@ pub(crate) fn evaluate(
     loaded: &[Loaded],
     snapshot: &mut Snapshot<'_>,
     overrides: &BTreeMap<String, Value>,
+    preparation: crate::Preparation,
     (limits, viewport, duration_needed, progress): (
         &Limits,
         &Viewport,
         Option<DurationDemand>,
         &Reporter,
     ),
-    (values, assets, states): (
+    (values, assets, states, databases): (
         &mut crate::cache::ValueCache,
         &mut crate::cache::ValueCache,
         &mut state::Store,
+        &mut sanim_data::sqlite::Databases,
     ),
     statistics: &mut Statistics,
 ) -> Result<Prepared, Diagnostic> {
@@ -82,6 +90,7 @@ pub(crate) fn evaluate(
         limits,
         values,
         assets,
+        databases,
         font_keys: crate::cache::FontCache::new(limits.max_cache_bytes, limits.max_cache_entries),
         expression_plans: sanim_core::cache::Cache::new(
             limits.max_cache_bytes,
@@ -94,6 +103,7 @@ pub(crate) fn evaluate(
         globals: imbl::OrdMap::new(),
         reactive: reactive::Store::default(),
         signal_frames: Vec::new(),
+        signal_observations: Vec::new(),
         call_horizons: Vec::new(),
         last_call: duration::CallBoundary::default(),
         named_constructor: None,
@@ -116,13 +126,16 @@ pub(crate) fn evaluate(
         depth: 0,
         root_active: false,
         duration_only,
+        preparation,
         result_needed: false,
+        signal_return: None,
         duration_needed: duration_needed.unwrap_or_default(),
         type_bindings: BTreeMap::new(),
         hotspots: imbl::OrdMap::new(),
         performance: Vec::new(),
         retained_bytes: limits.data.max_bytes,
         retained_items: limits.data.max_values,
+        retained_frames: imbl::OrdSet::new(),
         logical_operations: 0,
         used_functions: imbl::OrdMap::new(),
         used_resources: imbl::OrdMap::new(),
@@ -312,9 +325,12 @@ pub(crate) fn evaluate(
     let reactive_revision = runtime.reactive.revision;
     let bindings = if duration_only {
         Values::new()
+    } else if preparation == crate::Preparation::Demand {
+        runtime.available_bindings(&scope)
     } else {
         runtime.materialize(&scope, Span::default())?
     };
+    let deferred_bindings = runtime.deferred_bindings(&scope);
     if !duration_only && runtime.reactive.revision != reactive_revision {
         states.save(
             &runtime,
@@ -338,6 +354,7 @@ pub(crate) fn evaluate(
             limits,
             viewport,
             duration_only,
+            preparation,
         ))
         .map_err(|e| runtime.error("S301", e.to_string(), Span::default()))?,
     );
@@ -350,6 +367,7 @@ pub(crate) fn evaluate(
         animation: runtime.animation,
         time_map: runtime.time_map,
         bindings,
+        deferred_bindings,
         reflected: runtime.reflected,
         types,
         symbols: root.checked.exports.clone(),
@@ -372,8 +390,10 @@ pub(crate) struct Runtime<'a, 's> {
     snapshot: &'a mut Snapshot<'s>,
     overrides: &'a BTreeMap<String, Value>,
     limits: &'a Limits,
+    preparation: crate::Preparation,
     values: &'a mut crate::cache::ValueCache,
     assets: &'a mut crate::cache::ValueCache,
+    databases: &'a mut sanim_data::sqlite::Databases,
     statistics: &'a mut Statistics,
     progress: &'a Reporter,
     completed_statements: u64,
@@ -383,6 +403,7 @@ pub(crate) struct Runtime<'a, 's> {
     globals: imbl::OrdMap<String, Env>,
     reactive: reactive::Store,
     signal_frames: Vec<reactive::Frame>,
+    signal_observations: Vec<(bool, ObservedSignals)>,
     // Intrinsic work observed during active calls, excluding their argument effects.
     call_horizons: Vec<Fraction>,
     last_call: duration::CallBoundary,
@@ -404,12 +425,14 @@ pub(crate) struct Runtime<'a, 's> {
     root_active: bool,
     duration_only: bool,
     result_needed: bool,
+    signal_return: Option<Type>,
     duration_needed: BTreeMap<String, BTreeSet<String>>,
     type_bindings: BTreeMap<String, Type>,
     hotspots: imbl::OrdMap<(String, usize, usize, usize), u64>,
     performance: Vec<PerformanceWarning>,
     retained_bytes: usize,
     retained_items: usize,
+    retained_frames: imbl::OrdSet<String>,
     logical_operations: u64,
     used_functions: imbl::OrdMap<String, (String, usize)>,
     used_resources: imbl::OrdMap<String, (String, usize)>,
@@ -476,8 +499,14 @@ impl Runtime<'_, '_> {
         Diagnostic::new(code, message, &self.module, span)
     }
     fn work(&mut self, span: Span) -> Result<(), Diagnostic> {
-        self.statistics.operations += 1;
-        self.logical_operations += 1;
+        self.charge_work(1, span)
+    }
+    fn charge_work(&mut self, amount: u64, span: Span) -> Result<(), Diagnostic> {
+        if amount == 0 {
+            return Ok(());
+        }
+        self.statistics.operations = self.statistics.operations.saturating_add(amount);
+        self.logical_operations = self.logical_operations.saturating_add(amount);
         const PROGRESS_WORK_INTERVAL: u64 = 256;
         if self.progress.enabled()
             && self
@@ -553,8 +582,18 @@ impl Runtime<'_, '_> {
                     let previous_name = self
                         .named_constructor
                         .replace((value.span.start, name.clone()));
-                    let binding = if *kind == BindingKind::Let {
-                        self.expression(value, env).and_then(|value| {
+                    let binding = if *kind == BindingKind::Let
+                        && self.should_defer(value, env, statement.span)
+                    {
+                        self.defer_binding(name, value, env, statement.span)
+                    } else if *kind == BindingKind::Let {
+                        let ty = self.binding_type(statement.span)?;
+                        let result = if let Type::Signal(inner) = &ty {
+                            self.capture_signal(value, env, inner)
+                        } else {
+                            self.expression(value, env)
+                        };
+                        result.and_then(|value| {
                             let value = value
                                 .with_type(&self.binding_type(statement.span)?)
                                 .map_err(|e| self.error("S140", e, statement.span))?;
@@ -602,7 +641,15 @@ impl Runtime<'_, '_> {
                 StatementKind::Expr(expr) => {
                     self.expression(expr, env)?;
                 }
-                StatementKind::Return(expr) => return self.expression(expr, env).map(Some),
+                StatementKind::Return(expr) => {
+                    return if let Some(ty) = self.signal_return.clone() {
+                        let value = self.capture_signal(expr, env, &ty)?;
+                        self.retain_binding_value(&value, expr.span)?;
+                        Ok(Some(value))
+                    } else {
+                        self.expression(expr, env).map(Some)
+                    };
+                }
                 StatementKind::If { condition, yes, no } => {
                     let selected = if self
                         .expression(condition, env)?
@@ -798,23 +845,22 @@ impl Runtime<'_, '_> {
         }
         Ok(None)
     }
-    fn expression(&mut self, expr: &Expr, env: &Env) -> Result<Value, Diagnostic> {
+    fn expression_raw(&mut self, expr: &Expr, env: &Env) -> Result<Value, Diagnostic> {
         self.work(expr.span)?;
         if matches!(expr.kind, ExprKind::Name(_)) {
             self.statistics.evaluated_expressions += 1;
-            return self.expression_inner(expr, env);
+            let value = self.expression_inner(expr, env)?;
+            return self.contextual_template(value, expr.span);
         }
         let cache_started = Instant::now();
         let key = if self.limits.max_cache_entries > 0 && self.limits.max_cache_bytes > 0 {
             let plan = self.expression_plan(expr)?;
             // Resolving reactive reads remains execution work; never hide them behind a value hit.
             if let Some(fingerprint) = &plan.fingerprint
-                && !plan.names.iter().any(|name| {
-                    matches!(
-                        env.get(name),
-                        Some(Binding::Reactive(_) | Binding::Module(_))
-                    )
-                })
+                && !plan
+                    .names
+                    .iter()
+                    .any(|name| env.get(name).is_some_and(Binding::is_dynamic))
             {
                 let identity = plan.element_identity.then_some(&self.identity);
                 let limits = plan.iteration_limit.then_some(self.limits.max_iterations);
@@ -831,6 +877,7 @@ impl Runtime<'_, '_> {
                 Some(digest(
                     &serde_json::to_vec(&(
                         SEMANTICS_VERSION,
+                        self.template_context(expr.span),
                         &self.type_bindings,
                         limits,
                         self.limits.data,
@@ -877,7 +924,15 @@ impl Runtime<'_, '_> {
         }
         let result = self.expression_inner(expr, env);
         self.depth -= 1;
-        let value = result?;
+        let value = self.contextual_template(result?, expr.span)?;
+        if let Value::Signal(signal) = &value
+            && let Some((true, observed)) = self.signal_observations.last_mut()
+        {
+            observed.insert(
+                (self.module.clone(), expr.span.start, expr.span.end),
+                signal.clone(),
+            );
+        }
         let mut bytes = self.limits.data.max_bytes;
         let mut items = self.limits.data.max_values;
         let validation_started = Instant::now();
@@ -900,7 +955,7 @@ impl Runtime<'_, '_> {
                     .try_into()
                     .unwrap_or(u64::MAX),
             );
-        if let Some(key) = key {
+        if let Some(key) = key.filter(|_| !value.ty().contains_signal()) {
             self.values
                 .insert_measured(key, value.clone(), self.limits.data.max_bytes - bytes);
         }
@@ -910,8 +965,13 @@ impl Runtime<'_, '_> {
         let bad = |e| self.error("S305", e, expr.span);
         match &expr.kind {
             ExprKind::Number(v) => Number::parse(v).map(Value::Number).map_err(bad),
-            ExprKind::Color(v) => Color::parse(v).map(Value::Color).map_err(bad),
+            ExprKind::String(v) if self.template_expected(expr.span) => {
+                Ok(Value::Template(Arc::new(sanim_core::Template {
+                    parts: vec![sanim_core::TemplatePart::Text(v.clone().into())].into(),
+                })))
+            }
             ExprKind::String(v) => Ok(Value::String(v.clone().into())),
+            ExprKind::Template(parts) => self.template(expr, parts, env),
             ExprKind::Bool(v) => Ok(Value::Bool(*v)),
             ExprKind::None => Ok(Value::None),
             ExprKind::Reflect { value, .. } => {
@@ -1020,10 +1080,10 @@ impl Runtime<'_, '_> {
             }
             ExprKind::Binary(op, a, b) => {
                 let left = self.expression(a, env)?;
-                if op == "and" && !left.boolean().map_err(|e| self.error("S305", e, a.span))? {
+                if op == "and" && matches!(left, Value::Bool(false)) {
                     return Ok(Value::Bool(false));
                 }
-                if op == "or" && left.boolean().map_err(|e| self.error("S305", e, a.span))? {
+                if op == "or" && matches!(left, Value::Bool(true)) {
                     return Ok(Value::Bool(true));
                 }
                 let right = self.expression(b, env)?;
@@ -1070,6 +1130,16 @@ impl Runtime<'_, '_> {
                 }
                 let value = self.expression(base, env)?;
                 match value {
+                    Value::DataFrame(frame) if name == "columns" => {
+                        Ok(Value::List(sanim_core::List::typed(
+                            Type::String,
+                            frame
+                                .schema
+                                .keys()
+                                .map(|name| Value::String(name.clone().into()))
+                                .collect(),
+                        )))
+                    }
                     Value::Record(fields) => fields.get(name).cloned().ok_or_else(|| {
                         self.error("S305", format!("missing field '{name}'"), expr.span)
                     }),
@@ -1177,6 +1247,10 @@ impl Runtime<'_, '_> {
             }
             ExprKind::Index(base, index) => {
                 let value = self.expression(base, env)?;
+                if let Value::DataFrame(frame) = &value {
+                    let index = self.expression(index, env)?;
+                    return self.frame_index(frame, index, expr.span);
+                }
                 if matches!(value, Value::Dict(_) | Value::Data(_)) {
                     let key = self.expression(index, env)?;
                     let result = value.lookup(&key).map_err(|e| {
@@ -1230,6 +1304,17 @@ impl Runtime<'_, '_> {
                 let mut receiver = None;
                 let native = match &callee.kind {
                     ExprKind::Name(name) if prelude::builtin(name).is_some() => Some(name.clone()),
+                    ExprKind::Member(base, _)
+                        if self.checked_native_method(callee.span).is_some() =>
+                    {
+                        let name = self
+                            .checked_native_method(callee.span)
+                            .expect("checked method")
+                            .name
+                            .clone();
+                        receiver = Some(self.expression(base, env)?);
+                        Some(name)
+                    }
                     ExprKind::Member(base, name)
                         if prelude::builtin(name).is_some_and(|v| v.result == Type::Predicate) =>
                     {
@@ -1248,21 +1333,65 @@ impl Runtime<'_, '_> {
                     if let Some(receiver) = receiver {
                         evaluated.push((None, receiver));
                     }
-                    for (name, value) in args {
-                        evaluated.push((name.clone(), self.expression(value, env)?));
+                    let retaining = prelude::builtin(&name)
+                        .is_some_and(|builtin| builtin.result == Type::Element);
+                    let mut observed = Vec::with_capacity(if retaining { args.len() } else { 0 });
+                    for (label, argument) in args {
+                        let value = if retaining {
+                            self.signal_observations
+                                .push((true, ObservedSignals::new()));
+                            let result = self.expression(argument, env);
+                            observed.push(
+                                self.signal_observations
+                                    .pop()
+                                    .expect("active argument observations")
+                                    .1,
+                            );
+                            result?
+                        } else {
+                            self.expression(argument, env)?
+                        };
+                        evaluated.push((label.clone(), value));
                     }
                     self.infer_constructor_id(&name, args, &mut evaluated, expr.span);
                     let value = self.native(&name, evaluated, expr.span)?;
-                    self.retain_constructor_signals(&name, &value, args, env, expr.span)?;
+                    if retaining {
+                        self.retain_constructor_signals(
+                            &name, &value, args, &observed, env, expr.span,
+                        )?;
+                    }
                     return Ok(value);
                 }
                 let Value::Function(key) = self.expression(callee, env)? else {
                     return Err(self.error("S305", "expected callable function", expr.span));
                 };
-                self.check_shape_helper_inputs(&key, args, env, expr.span)?;
+
+                let first_signal = self.reactive.next;
                 let mut evaluated = vec![];
-                for (name, value) in args {
-                    evaluated.push((name.clone(), self.expression(value, env)?));
+                for (index, (label, value)) in args.iter().enumerate() {
+                    let parameter = self
+                        .functions
+                        .get(&key)
+                        .and_then(|function| {
+                            if let Some(label) = label {
+                                function
+                                    .parameters
+                                    .iter()
+                                    .find(|parameter| &parameter.name == label)
+                            } else {
+                                function.parameters.get(index)
+                            }
+                        })
+                        .cloned();
+                    let value = if let Some(parameter) =
+                        parameter.filter(|parameter| parameter.kind == BindingKind::Sig)
+                    {
+                        let ty = self.parameter_type(&key, &parameter.name, expr.span)?;
+                        self.capture_signal(value, env, &ty)?
+                    } else {
+                        self.expression(value, env)?
+                    };
+                    evaluated.push((label.clone(), value));
                 }
                 if let Some(ty) = self.constructors.get(&key).cloned() {
                     let easing = if matches!(&ty,Type::Record(fields) if fields.contains_key("ease"))
@@ -1348,7 +1477,9 @@ impl Runtime<'_, '_> {
                     self.last_call.easing = easing;
                     return Ok(value);
                 }
-                self.invoke(&key, &evaluated, expr.span, true, None)
+                let result = self.invoke(&key, &evaluated, expr.span, true, None);
+                self.reactive.remove_since(first_signal);
+                result
             }
         }
     }
@@ -1368,7 +1499,7 @@ impl Runtime<'_, '_> {
         let envelope = if !function
             .parameters
             .iter()
-            .any(|(name, _, _)| name == "duration")
+            .any(|parameter| parameter.name == "duration")
         {
             crate::timing::envelope(evaluated)
                 .map(|value| crate::timing::Timing::default().value(Some(value)))
@@ -1380,7 +1511,7 @@ impl Runtime<'_, '_> {
         let easing = if function
             .parameters
             .iter()
-            .any(|(name, _, _)| name == "ease")
+            .any(|parameter| parameter.name == "ease")
         {
             Easing::default()
         } else {
@@ -1423,12 +1554,14 @@ impl Runtime<'_, '_> {
             &function
                 .parameters
                 .iter()
-                .map(|(n, _, _)| n.clone())
+                .map(|parameter| parameter.name.clone())
                 .collect::<Vec<_>>(),
         );
         self.identity
             .push(format!("{}@{}", function.name, call_site));
-        for (name, _, default) in &function.parameters {
+        for parameter in &function.parameters {
+            let name = &parameter.name;
+            let default = &parameter.default;
             if self.duration_only && !need_result && !mutates && !self.duration_binding_needed(name)
             {
                 if !ordered.contains_key(name)
@@ -1442,7 +1575,28 @@ impl Runtime<'_, '_> {
             let value = if let Some(value) = ordered.get(name) {
                 value.clone()
             } else if let Some(default) = default {
-                self.expression(default, &scope)?
+                if parameter.kind == BindingKind::Sig {
+                    let ty = self
+                        .loaded
+                        .iter()
+                        .find(|module| module.id == function.module)
+                        .and_then(|module| module.checked.exports.get(&function.name))
+                        .and_then(|ty| {
+                            if let Type::Function(signature) = ty {
+                                signature
+                                    .parameters
+                                    .iter()
+                                    .find(|param| param.name == *name)
+                                    .map(|param| param.ty.substitute(&self.type_bindings))
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| self.error("S140", "missing checked sig parameter", span))?;
+                    self.capture_signal(default, &scope, &ty)?
+                } else {
+                    self.expression(default, &scope)?
+                }
             } else {
                 return Err(self.error("S305", format!("missing argument '{name}'"), span));
             };
@@ -1456,21 +1610,54 @@ impl Runtime<'_, '_> {
                         signature
                             .parameters
                             .iter()
-                            .find(|(parameter, _)| parameter == name)
-                            .map(|(_, ty)| ty.substitute(&self.type_bindings))
+                            .find(|parameter| &parameter.name == name)
+                            .map(|parameter| parameter.ty.substitute(&self.type_bindings))
                     } else {
                         None
                     }
                 });
-            let value = if let Some(ty) = parameter_type {
+            if parameter.kind == BindingKind::Sig {
+                let Value::Signal(signal) = value else {
+                    return Err(self.error(
+                        "S140",
+                        "sig parameter requires a captured signal",
+                        span,
+                    ));
+                };
+                scope.insert(name.clone(), Binding::Reactive(signal.id));
+                continue;
+            }
+            let value = self.sample_signal(value, span)?;
+            let value = if let Some(ty) = &parameter_type {
                 value
-                    .with_type(&ty)
+                    .with_type(ty)
                     .map_err(|e| self.error("S140", e, span))?
             } else {
                 value
             };
-            scope.insert(name.clone(), value.into());
+            if parameter.kind == BindingKind::Mut {
+                let ty = parameter_type.unwrap_or_else(|| value.ty());
+                let id = self.insert_cell(name, &ty, value, span)?;
+                scope.insert(name.clone(), Binding::Reactive(id));
+            } else {
+                scope.insert(name.clone(), value.into());
+            }
         }
+        let signature = self
+            .loaded
+            .iter()
+            .find(|module| module.id == function.module)
+            .and_then(|module| module.checked.exports.get(&function.name));
+        let live_return = if let Some(Type::Function(signature)) = signature {
+            if let Type::Signal(inner) = signature.result.as_ref() {
+                Some(inner.substitute(&self.type_bindings))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let previous_signal_return = std::mem::replace(&mut self.signal_return, live_return);
         let previous_result = self.result_needed;
         self.result_needed = need_result;
         let function_start = self.cursor;
@@ -1529,6 +1716,7 @@ impl Runtime<'_, '_> {
             .max(self.cursor);
         self.depth -= 1;
         self.result_needed = previous_result;
+        self.signal_return = previous_signal_return;
         self.identity.pop();
         self.module = previous;
         self.type_bindings = previous_types;
@@ -1536,279 +1724,6 @@ impl Runtime<'_, '_> {
         self.finish_call_duration(function_start, envelope, horizon, span)?;
         self.last_call.easing = easing;
         Ok(result.unwrap_or(Value::Unit))
-    }
-    fn native(
-        &mut self,
-        name: &str,
-        arguments: Vec<(Option<String>, Value)>,
-        span: Span,
-    ) -> Result<Value, Diagnostic> {
-        self.list_edit = None;
-        let builtin = prelude::builtin(name).expect("checked builtin");
-        let duration = builtin
-            .timing
-            .value(builtin.duration_argument(&arguments))
-            .map_err(|e| self.error("S304", e, span))?;
-        if duration > Fraction::from(0) && !self.root_active {
-            return Err(self.error(
-                "S115",
-                "imported modules cannot schedule animation while being imported",
-                span,
-            ));
-        }
-        let start = self.cursor;
-        let easing = crate::timing::easing(builtin.easing_argument(&arguments))
-            .map_err(|error| self.error("S304", error, span))?;
-        let mut controls = [
-            builtin.duration_argument(&arguments),
-            builtin.easing_argument(&arguments),
-        ]
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            arguments
-                .iter()
-                .position(|(_, candidate)| std::ptr::eq(value, candidate))
-        })
-        .collect::<Vec<_>>();
-        controls.sort_unstable();
-        controls.dedup();
-        let mut arguments = arguments;
-        for index in controls.into_iter().rev() {
-            arguments.remove(index);
-        }
-        let value = self.native_inner(builtin, arguments, duration, easing, span)?;
-        self.finish_call_duration(start, Some(duration), self.cursor, span)?;
-        self.last_call.easing = easing;
-        Ok(value)
-    }
-    fn native_inner(
-        &mut self,
-        builtin: &prelude::Builtin,
-        arguments: Vec<(Option<String>, Value)>,
-        duration: Fraction,
-        easing: Easing,
-        span: Span,
-    ) -> Result<Value, Diagnostic> {
-        let name = builtin.name;
-        if builtin.schedule && !self.root_active {
-            return Err(self.error("S115","imported modules cannot schedule or assert while being imported; call a helper from the root script instead",span));
-        }
-        let params = builtin
-            .parameters
-            .iter()
-            .map(|v| v.name.to_string())
-            .collect::<Vec<_>>();
-        let mut args = order_values(&arguments, &params);
-        for parameter in builtin.parameters.iter().filter(|parameter| {
-            parameter.name == "font" && parameter.ty == Type::Font && !parameter.required
-        }) {
-            args.entry(parameter.name.to_owned())
-                .or_insert_with(|| Value::Font(sanim_core::Font::default()));
-        }
-        if matches!(builtin.execute, prelude::Execution::Read) {
-            let path = args
-                .get("path")
-                .ok_or_else(|| self.error("S305", "missing path", span))?
-                .string()
-                .map_err(|e| self.error("S305", e, span))?;
-            let path =
-                source::resolve(&self.module, path).map_err(|e| self.error("S201", e, span))?;
-            let bytes = self
-                .snapshot
-                .read(&path)
-                .map_err(|e| self.error("S201", e, span))?;
-            let resource_version = self.snapshot.fingerprint(&path);
-            self.used_resources
-                .entry(path.clone())
-                .or_insert((resource_version.clone(), self.root_statement));
-            let ty = self
-                .loaded
-                .iter()
-                .find(|v| v.id == self.module)
-                .and_then(|v| v.checked.read_types.get(&span.start))
-                .ok_or_else(|| self.error("S301", "missing read schema", span))?
-                .substitute(&self.type_bindings);
-            let key = digest(
-                &serde_json::to_vec(&(
-                    SEMANTICS_VERSION,
-                    &path,
-                    &ty,
-                    self.limits.data,
-                    resource_version,
-                ))
-                .map_err(|e| self.error("S301", e.to_string(), span))?,
-            );
-            if let Some(value) = self.assets.get(&key) {
-                self.statistics.reused_assets += 1;
-                return Ok(value.clone());
-            }
-            self.progress.emit(Phase::Decoding, None, None, Some(&path));
-            let value = sanim_data::decode(&path, &bytes, &ty, self.limits.data).map_err(|e| {
-                self.error("S306", format!("reading '{path}' as {ty:?}: {e}"), span)
-            })?;
-            self.statistics.decoded_assets += 1;
-            self.assets.insert(key, value.clone());
-            self.report_evaluation(Some(span));
-            return Ok(value);
-        }
-        if matches!(
-            builtin.execute,
-            prelude::Execution::Decode | prelude::Execution::Query
-        ) {
-            let ty = self
-                .loaded
-                .iter()
-                .find(|v| v.id == self.module)
-                .and_then(|v| v.checked.read_types.get(&span.start))
-                .ok_or_else(|| self.error("S301", "missing prepared data schema", span))?
-                .substitute(&self.type_bindings);
-            return if matches!(builtin.execute, prelude::Execution::Decode) {
-                let resource = format!("{}:{}", self.module, span.line);
-                self.progress
-                    .emit(Phase::Decoding, None, None, Some(&resource));
-                let data =
-                    sanim_data::to_json(&args["value"]).map_err(|e| self.error("S306", e, span))?;
-                let value = sanim_data::validate(&data, &ty, self.limits.data)
-                    .map_err(|e| self.error("S306", format!("decode as {ty}: {e}"), span))?;
-                self.report_evaluation(Some(span));
-                Ok(value)
-            } else {
-                let key = digest(
-                    &serde_json::to_vec(&(
-                        "sqlite",
-                        SEMANTICS_VERSION,
-                        &ty,
-                        self.limits.data,
-                        &args,
-                    ))
-                    .map_err(|e| self.error("S301", e.to_string(), span))?,
-                );
-                if let Some(value) = self.assets.get(&key) {
-                    self.statistics.reused_queries += 1;
-                    return Ok(value.clone());
-                }
-                let resource = format!("{}:{}", self.module, span.line);
-                self.progress
-                    .emit(Phase::Querying, None, None, Some(&resource));
-                let started = std::time::Instant::now();
-                let value = sanim_data::sqlite::query(
-                    args["sql"]
-                        .string()
-                        .map_err(|e| self.error("S306", e, span))?,
-                    &args["tables"],
-                    args.get("params"),
-                    &ty,
-                    self.limits.data,
-                )
-                .map_err(|e| self.error("S309", e, span))?;
-                let elapsed = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
-                self.statistics.query_micros = self.statistics.query_micros.saturating_add(elapsed);
-                if elapsed > self.limits.warn_prepare_micros {
-                    self.performance.push(PerformanceWarning{code:"P003".into(),message:format!("SQLite query took {elapsed}us (warning budget {}us), returning {} rows. Filter before joining or grouping, reduce input tables, or reuse a prepared result outside loops.",self.limits.warn_prepare_micros,value.list().map_or(0,|rows|rows.len())),source:self.module.clone(),span,operations:0});
-                }
-                self.statistics.executed_queries += 1;
-                self.assets.insert(key, value.clone());
-                self.report_evaluation(Some(span));
-                Ok(value)
-            };
-        }
-        if self.duration_only && builtin.schedule {
-            return Ok(Value::Unit);
-        }
-        if matches!(name, "assert" | "check") {
-            let condition = args
-                .remove("condition")
-                .ok_or_else(|| self.error("S305", "missing assertion condition", span))?;
-            let message = args
-                .get("message")
-                .map(Value::string)
-                .transpose()
-                .map_err(|e| self.error("S305", e, span))?
-                .map(str::to_string);
-            match condition {
-                Value::Bool(value) => {
-                    let verification = Verification {
-                        evidence: if value {
-                            verify::Evidence::Proved
-                        } else {
-                            verify::Evidence::Refuted
-                        },
-                        message: message.unwrap_or_else(|| "boolean assertion must be true".into()),
-                        time: Some(self.cursor),
-                    };
-                    if !value && name == "assert" {
-                        return Err(self.error("S350", verification.message, span));
-                    }
-                    self.checks.push_back(verification);
-                }
-                Value::Predicate(predicate) => self.assertions.push_back(Assertion {
-                    predicate: predicate.as_ref().clone(),
-                    time: self.cursor,
-                    required: name == "assert",
-                    module: self.module.clone(),
-                    span,
-                    message,
-                }),
-                _ => {
-                    return Err(self.error(
-                        "S305",
-                        "assert/check requires a boolean or relationship",
-                        span,
-                    ));
-                }
-            }
-            return Ok(Value::Unit);
-        }
-        let (prelude::Execution::Native(evaluate) | prelude::Execution::Access(evaluate)) =
-            builtin.execute
-        else {
-            unreachable!("registered host operation was handled above")
-        };
-        if name == "Text" {
-            let resource = format!("{}:{}", self.module, span.line);
-            self.progress
-                .emit(Phase::Shaping, None, None, Some(&resource));
-        }
-        let native_started = Instant::now();
-        let mut list_edit = None;
-        let result = evaluate(
-            name,
-            &args,
-            crate::native::Context {
-                module: &self.module,
-                identity: &self.identity,
-                span,
-                animation: &mut self.animation,
-                cursor: &mut self.cursor,
-                limits: self.limits,
-                duration,
-                easing,
-                list_edit: &mut list_edit,
-            },
-        )
-        .map_err(|e| self.error("S305", e, span));
-        if result.is_ok() {
-            if builtin.schedule {
-                self.check_elements(span)?;
-            }
-            self.list_edit = list_edit.map(|delta| crate::lists::EditReceipt {
-                module: self.module.clone(),
-                span,
-                delta,
-            });
-        }
-        self.statistics.native_micros = self.statistics.native_micros.saturating_add(
-            native_started
-                .elapsed()
-                .as_micros()
-                .try_into()
-                .unwrap_or(u64::MAX),
-        );
-        if name == "Text" && result.is_ok() {
-            self.report_evaluation(Some(span));
-        }
-        result
     }
     fn check_elements(&self, span: Span) -> Result<(), Diagnostic> {
         let count = self.animation.element_count();
@@ -1852,6 +1767,12 @@ fn cacheable(expr: &Expr) -> bool {
         ExprKind::Reflect { .. } | ExprKind::Member(_, _) | ExprKind::Index(_, _) => false,
         ExprKind::Unary(_, a) => cacheable(a),
         ExprKind::Binary(_, a, b) => cacheable(a) && cacheable(b),
+        ExprKind::Template(parts) => parts.iter().all(|part| match part {
+            sanim_core::TemplatePart::Text(_) => true,
+            sanim_core::TemplatePart::Hole { value, format, .. } => {
+                cacheable(value) && format.as_ref().is_none_or(cacheable)
+            }
+        }),
         ExprKind::List(values) => values.iter().all(cacheable),
         ExprKind::Record(values) => values.iter().all(|(_, v)| cacheable(v)),
         ExprKind::Dict(values) => values.iter().all(|(k, v)| cacheable(k) && cacheable(v)),

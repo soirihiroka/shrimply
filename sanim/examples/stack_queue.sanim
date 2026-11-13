@@ -1,4 +1,4 @@
-// The same persistent list API drives both the data and the animated views.
+# The same persistent list API drives both the data and the animated views.
 let step = reflect(450ms, label="Operation Time", key="lists.step")
 
 fn caption(words: String, position: Vec2<Percent>, size: Length, tint: Color): Element {

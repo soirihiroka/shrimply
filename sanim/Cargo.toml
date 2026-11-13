@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/sanim-core", "crates/sanim-data", "crates/sanim-lang", "crates/sanim-render", "crates/sanim-runtime", "crates/sanim-cli"]
+members = ["crates/sanim-core", "crates/sanim-data", "crates/sanim-lang", "crates/sanim-render", "crates/sanim-runtime", "crates/sanim-cli", "crates/sanim-lsp"]
 
 [workspace.package]
 version = "0.1.0"

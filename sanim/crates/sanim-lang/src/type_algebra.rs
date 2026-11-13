@@ -94,6 +94,7 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
             }
             Type::union(fields)
         }
+        Type::DataFrame { .. } if name == "columns" => Ok(Type::List(Box::new(Type::String))),
         Type::Dict | Type::Data => Err(format!(
             "dictionary values use brackets: write value[\"{name}\"] instead of value.{name}"
         )),
@@ -124,8 +125,9 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
             ]),
             "opacity" | "scale" => Ok(Type::Numeric(Unit::Number)),
             "rotation" => Ok(Type::Numeric(Unit::Angle)),
-            "radius" | "width" | "height" => Ok(Type::Numeric(Unit::Length)),
-            "fill" => Ok(Type::Color),
+            "radius" => Ok(Type::Numeric(Unit::Length)),
+            "width" | "height" => Ok(sanim_core::Layout::dimension_type()),
+            "fill" => Ok(sanim_core::Paint::ty()),
             "id" => Ok(Type::String),
             _ => Err(format!("unknown element property '{name}'")),
         },

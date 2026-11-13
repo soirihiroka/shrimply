@@ -1,7 +1,12 @@
 let base_size = reflect(64pt, label="Base Size", key="shapes.size")
 let amplitude = reflect(16pt, label="Pulse Amount", key="shapes.pulse")
+
+fn pulse(sig phase: Angle, base: Length, amount: Length): sig Length {
+    return base + amount * sin(phase)
+}
+
 mut phase = 0deg
-sig size = base_size + amplitude * sin(phase)
+let size = pulse(phase, base_size, amplitude)
 
 let circle = Circle(radius=size / 2, fill=Color("blue3"), position=Vec2(-20%, 0%))
 let rectangle = Rect(width=size, height=size, radius=size / 6, fill=Color("orange3"), position=Vec2(20%, 0%))

@@ -10,13 +10,15 @@ fn tile(id: &str) -> Element {
         geometry: Arc::new(Geometry::Rectangle {
             width: 10.into(),
             height: 10.into(),
-            radius: 0.into(),
+            children: Default::default(),
+            radius: Default::default(),
         }),
         position: Vec2::zero(Unit::Length),
         rotation: 0.into(),
         scale: 1.into(),
         opacity: 1.into(),
-        fill: Color::parse("blue3").unwrap(),
+        fill: Color::parse("blue3").unwrap().into(),
+        stroke: None,
         reveal: Default::default(),
         horizontal: Default::default(),
         layout: Layout::default(),
@@ -32,8 +34,14 @@ fn nested_future_views_keep_their_clock_and_sample_their_actual_transition() {
     });
     inner.layout = Layout {
         direction: Some(Direction::Row),
-        width: Some(40.into()),
-        height: Some(20.into()),
+        width: Some(sanim_core::Number {
+            value: 40.into(),
+            unit: sanim_core::Unit::Length,
+        }),
+        height: Some(sanim_core::Number {
+            value: 20.into(),
+            unit: sanim_core::Unit::Length,
+        }),
         ..Default::default()
     };
     animation.bind_list(2, &inner, items(&[])).unwrap();
@@ -82,8 +90,14 @@ fn populated_nested_views_keep_independent_ownership_and_cycles_fail_before_comm
     });
     inner.layout = Layout {
         direction: Some(Direction::Row),
-        width: Some(40.into()),
-        height: Some(20.into()),
+        width: Some(sanim_core::Number {
+            value: 40.into(),
+            unit: sanim_core::Unit::Length,
+        }),
+        height: Some(sanim_core::Number {
+            value: 20.into(),
+            unit: sanim_core::Unit::Length,
+        }),
         ..Default::default()
     };
     animation.bind_list(2, &inner, initial).unwrap();
@@ -110,8 +124,14 @@ fn populated_nested_views_keep_independent_ownership_and_cycles_fail_before_comm
     });
     a.layout = Layout {
         direction: Some(Direction::Row),
-        width: Some(40.into()),
-        height: Some(20.into()),
+        width: Some(sanim_core::Number {
+            value: 40.into(),
+            unit: sanim_core::Unit::Length,
+        }),
+        height: Some(sanim_core::Number {
+            value: 20.into(),
+            unit: sanim_core::Unit::Length,
+        }),
         ..Default::default()
     };
     let mut b = a.clone();
@@ -148,8 +168,14 @@ fn dynamic_view_nesting_is_bounded_before_sampling_can_recurse() {
         });
         view.layout = Layout {
             direction: Some(Direction::Row),
-            width: Some(40.into()),
-            height: Some(20.into()),
+            width: Some(sanim_core::Number {
+                value: 40.into(),
+                unit: sanim_core::Unit::Length,
+            }),
+            height: Some(sanim_core::Number {
+                value: 20.into(),
+                unit: sanim_core::Unit::Length,
+            }),
             ..Default::default()
         };
         animation
@@ -183,8 +209,14 @@ fn entry_and_exit_scaling_keep_rect_and_group_slot_centers_fixed() {
             item.geometry = Arc::new(Geometry::Group {
                 children: vec![tile("face")].into(),
             });
-            item.layout.width = Some(10.into());
-            item.layout.height = Some(10.into());
+            item.layout.width = Some(sanim_core::Number {
+                value: 10.into(),
+                unit: sanim_core::Unit::Length,
+            });
+            item.layout.height = Some(sanim_core::Number {
+                value: 10.into(),
+                unit: sanim_core::Unit::Length,
+            });
         }
         let mut animation = animation(&[]);
         let edit = items(&[])
@@ -351,8 +383,14 @@ fn animation(names: &[&str]) -> Animation {
     });
     view.layout = Layout {
         direction: Some(Direction::Row),
-        width: Some(100.into()),
-        height: Some(20.into()),
+        width: Some(sanim_core::Number {
+            value: 100.into(),
+            unit: sanim_core::Unit::Length,
+        }),
+        height: Some(sanim_core::Number {
+            value: 20.into(),
+            unit: sanim_core::Unit::Length,
+        }),
         ..Layout::default()
     };
     let mut animation = Animation::default();
@@ -495,7 +533,7 @@ fn timed_lists_preserve_prefix_cache_and_reject_overlapping_or_redefined_items_t
     );
     assert_eq!(animation, before);
     let mut replacement = tile("a");
-    replacement.fill = Color::parse("red3").unwrap();
+    replacement.fill = Color::parse("red3").unwrap().into();
     assert!(
         animation
             .write_list(

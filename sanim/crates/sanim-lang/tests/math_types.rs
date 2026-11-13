@@ -26,7 +26,7 @@ fn native_vector_dimensions_and_components() {
 }
 #[test]
 fn vector_defaults_use_the_supplied_unit() {
-    let p = run("let value = Vec3(x: 10pt)\n").unwrap();
+    let p = run("let value = Vec3(x= 10pt)\n").unwrap();
     let (v, unit) = p.bindings["value"].vector().unwrap();
     assert_eq!(unit, Unit::Length);
     assert_eq!(v, &[10.0, 0.0, 0.0]);
@@ -143,12 +143,12 @@ fn matrix_requires_explicit_homogeneous_component() {
 }
 #[test]
 fn native_math_types_are_reflectable() {
-    let p=run("type Parameters = { direction: Vec3, transform: Matrix4, ratio: Fraction }\nlet parameters: Parameters=reflect({ direction: Vec3(1,0,0), transform: Matrix4(), ratio: Fraction(1,3) })\n").unwrap();
+    let p=run("type Parameters = { direction: Vec3, transform: Matrix4, ratio: Fraction }\nlet parameters: Parameters=reflect({ direction=Vec3(1,0,0), transform=Matrix4(), ratio=Fraction(1,3) })\n").unwrap();
     assert!(p.reflected[0].ty.reflectable());
 }
 #[test]
 fn alignment_is_independent_of_vector_math() {
-    let p=run_in("add(Rect(id: \"box\", width: 20pt, height: 10pt, position: Vec2(-5pt, 3pt), x_align: Align.End, y_align: Align.Start))\n",100,100).unwrap();
+    let p=run_in("add(Rect(id= \"box\", width= 20pt, height= 10pt, position= Vec2(-5pt, 3pt), x_align= Align.End, y_align= Align.Start))\n",100,100).unwrap();
     let elements = p
         .animation
         .layout(Fraction::from(0), Fraction::from(100), Fraction::from(100))
@@ -176,8 +176,8 @@ fn lowercase_constructor_aliases_are_not_defined() {
 #[test]
 fn local_geometry_vertices_require_length_vectors() {
     for text in [
-        "let edge=Line(end: Vec2(1s,2s))\n",
-        "let shape=Polygon(points: [Vec2(0,0),Vec2(1,0),Vec2(0,1)])\n",
+        "let edge=Line(end= Vec2(1s,2s))\n",
+        "let shape=Polygon(points= [Vec2(0,0),Vec2(1,0),Vec2(0,1)])\n",
     ] {
         assert_eq!(run(text).unwrap_err().code, "S106");
     }

@@ -4,142 +4,174 @@ use shrimply_drawing_skia::{
     shape::{self, ShapeRoundingStrategy},
 };
 use skia_safe::{Canvas, Paint, PathBuilder, Rect};
-use std::collections::BTreeMap;
+use std::{
+    rc::{Rc, Weak as PathWeak},
+    sync::{Arc, Weak},
+};
 
-/// Geometry is immutable across timeline samples. Build paths and measure contours once.
-pub(crate) fn prepare_paths(
+const MAX_GEOMETRY_CACHE_BYTES: usize = 64 * 1024 * 1024;
+// Many elements share a small number of paths (for example chart dots).
+// Weak identity hints therefore have a separate, still bounded entry budget.
+const MAX_GEOMETRY_CACHE_ENTRIES: usize = 1024;
+const MAX_GEOMETRY_HINT_ENTRIES: usize = 8192;
+
+pub(crate) struct GeometryHint {
+    // A weak allocation guard prevents pointer reuse, without retaining scene data.
+    pub(super) _geometry: Weak<Geometry>,
+    pub(super) path: PathWeak<PreparedPath>,
+}
+
+/// Prepare a leaf only when it survives drawing's visibility/reveal gates.
+/// The bounded weak hint avoids rehashing immutable text outlines each frame.
+pub(crate) fn prepared_path(
     element: &Element,
-    paths: &mut BTreeMap<String, PreparedPath>,
     renderer: &mut crate::Renderer,
-) -> Result<(), String> {
-    if let Geometry::Group { children } = element.geometry.as_ref() {
-        for child in children {
-            prepare_paths(child, paths, renderer)?;
-        }
-        return Ok(());
-    }
-    let key =
-        digest(&serde_json::to_vec(element.geometry.as_ref()).map_err(|error| error.to_string())?);
-    if let Some(path) = renderer.geometry_cache.get(&key) {
-        if paths.insert(element.id.clone(), path.clone()).is_some() {
-            return Err(format!("duplicate element identity '{}'", element.id));
-        }
+) -> Result<Rc<PreparedPath>, String> {
+    let identity = Arc::as_ptr(&element.geometry) as usize;
+    if let Some(path) = renderer
+        .geometry_hints
+        .get(&identity)
+        .and_then(|hint| hint.path.upgrade())
+    {
+        renderer.geometry_key_hits += 1;
         renderer.geometry_cache_hits += 1;
-        return Ok(());
+        return Ok(path);
     }
-    let path = match element.geometry.as_ref() {
-        Geometry::Circle { radius } => {
-            let radius = to_f64(*radius)? as f32;
-            shape::ellipse_path(
-                glam::Vec2::splat(radius * 2.),
-                0.,
-                360.,
+    // Rectangle child state does not change its surface path.
+    let key = if let Geometry::Rectangle {
+        width,
+        height,
+        radius,
+        ..
+    } = element.geometry.as_ref()
+    {
+        digest(
+            &serde_json::to_vec(&("Rectangle", width, height, radius))
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        digest(&serde_json::to_vec(element.geometry.as_ref()).map_err(|error| error.to_string())?)
+    };
+    let prepared = if let Some(path) = renderer.geometry_cache.get(&key) {
+        renderer.geometry_cache_hits += 1;
+        path.clone()
+    } else {
+        let path = match element.geometry.as_ref() {
+            Geometry::Circle { radius } => {
+                let radius = to_f64(*radius)? as f32;
+                shape::ellipse_path(
+                    glam::Vec2::splat(radius * 2.),
+                    0.,
+                    360.,
+                    0.,
+                    ShapeRoundingStrategy::Circular,
+                )
+                .with_transform(&skia_safe::Matrix::translate((-radius, -radius)))
+            }
+            Geometry::Rectangle {
+                width,
+                height,
+                radius,
+                ..
+            } => {
+                let w = to_f64(*width)? as f32;
+                let h = to_f64(*height)? as f32;
+                shape::rect_path(
+                    Rect::from_xywh(-w / 2., -h / 2., w, h),
+                    to_f64(radius.resolve(*width, *height))? as f32,
+                    ShapeRoundingStrategy::Circular,
+                )
+            }
+            Geometry::Line { end, .. } => {
+                let mut path = PathBuilder::new();
+                path.move_to((0., 0.));
+                path.line_to((end.values[0] as f32, end.values[1] as f32));
+                path.detach()
+            }
+            Geometry::Polyline { points, .. } => {
+                let mut path = PathBuilder::new();
+                let first = points
+                    .first()
+                    .ok_or("Polyline requires at least two points")?;
+                path.move_to((first.values[0] as f32, first.values[1] as f32));
+                for point in points.iter().skip(1) {
+                    path.line_to((point.values[0] as f32, point.values[1] as f32));
+                }
+                path.detach()
+            }
+            Geometry::Polygon { points } => shape::polygon_path(
+                points
+                    .iter()
+                    .map(|p| glam::Vec2::new(p.values[0] as f32, p.values[1] as f32))
+                    .collect(),
                 0.,
                 ShapeRoundingStrategy::Circular,
-            )
-            .with_transform(&skia_safe::Matrix::translate((-radius, -radius)))
-        }
-        Geometry::Rectangle {
-            width,
-            height,
-            radius,
-        } => {
-            let w = to_f64(*width)? as f32;
-            let h = to_f64(*height)? as f32;
-            shape::rect_path(
-                Rect::from_xywh(-w / 2., -h / 2., w, h),
-                to_f64(*radius)? as f32,
-                ShapeRoundingStrategy::Circular,
-            )
-        }
-        Geometry::Line { end, .. } => {
-            let mut path = PathBuilder::new();
-            path.move_to((0., 0.));
-            path.line_to((end.values[0] as f32, end.values[1] as f32));
-            path.detach()
-        }
-        Geometry::Polygon { points } => shape::polygon_path(
-            points
-                .iter()
-                .map(|p| glam::Vec2::new(p.values[0] as f32, p.values[1] as f32))
-                .collect(),
-            0.,
-            ShapeRoundingStrategy::Circular,
-        ),
-        Geometry::Text { outline, .. } => {
-            let mut path = PathBuilder::new();
-            let point = |p: [f64; 2]| (p[0] as f32, p[1] as f32);
-            for segment in outline.iter() {
-                match segment {
-                    TextSegment::Move(p) => {
-                        path.move_to(point(*p));
-                    }
-                    TextSegment::Line(p) => {
-                        path.line_to(point(*p));
-                    }
-                    TextSegment::Curve(a, b, c) => {
-                        path.cubic_to(point(*a), point(*b), point(*c));
-                    }
-                    TextSegment::Close => {
-                        path.close();
+            ),
+            Geometry::Text { outline, .. } => {
+                let mut path = PathBuilder::new();
+                let point = |p: [f64; 2]| (p[0] as f32, p[1] as f32);
+                for segment in outline.iter() {
+                    match segment {
+                        TextSegment::Move(p) => {
+                            path.move_to(point(*p));
+                        }
+                        TextSegment::Line(p) => {
+                            path.line_to(point(*p));
+                        }
+                        TextSegment::Curve(a, b, c) => {
+                            path.cubic_to(point(*a), point(*b), point(*c));
+                        }
+                        TextSegment::Close => {
+                            path.close();
+                        }
                     }
                 }
+                path.detach()
             }
-            path.detach()
+            Geometry::Group { .. } => unreachable!("groups handled before geometry preparation"),
+        };
+        if !path.is_finite() {
+            return Err(format!(
+                "geometry '{}' exceeds Skia numeric range",
+                element.id
+            ));
         }
-        Geometry::Group { .. } => unreachable!("groups handled before geometry preparation"),
+        let prepared = PreparedPath::new(path)
+            .map_err(|error| format!("geometry '{}': {error}", element.id))?;
+        renderer.geometries_prepared += 1;
+        let prepared = Rc::new(prepared);
+        let bytes = prepared.approximate_bytes_used();
+        if bytes <= MAX_GEOMETRY_CACHE_BYTES {
+            if renderer.geometry_cache.len() >= MAX_GEOMETRY_CACHE_ENTRIES
+                || renderer.geometry_cache_bytes.saturating_add(bytes) > MAX_GEOMETRY_CACHE_BYTES
+            {
+                renderer.geometry_cache.clear();
+                renderer.geometry_hints.clear();
+                renderer.geometry_cache_bytes = 0;
+            }
+            renderer.geometry_cache.insert(key, prepared.clone());
+            renderer.geometry_cache_bytes += bytes;
+        }
+        prepared
     };
-    if !path.is_finite() {
-        return Err(format!(
-            "geometry '{}' exceeds Skia numeric range",
-            element.id
-        ));
+    // Keep admitted hot identities when a larger scene exceeds the hint budget.
+    // Clearing everything here makes every subsequent frame rehash every leaf.
+    if renderer.geometry_hints.len() < MAX_GEOMETRY_HINT_ENTRIES {
+        renderer.geometry_hints.insert(
+            identity,
+            GeometryHint {
+                _geometry: Arc::downgrade(&element.geometry),
+                path: Rc::downgrade(&prepared),
+            },
+        );
     }
-    let prepared =
-        PreparedPath::new(path).map_err(|error| format!("geometry '{}': {error}", element.id))?;
-    let bytes = prepared.approximate_bytes_used();
-    const MAX_GEOMETRY_CACHE_BYTES: usize = 64 * 1024 * 1024;
-    const MAX_GEOMETRY_CACHE_ENTRIES: usize = 1024;
-    if bytes <= MAX_GEOMETRY_CACHE_BYTES {
-        if renderer.geometry_cache.len() >= MAX_GEOMETRY_CACHE_ENTRIES
-            || renderer.geometry_cache_bytes.saturating_add(bytes) > MAX_GEOMETRY_CACHE_BYTES
-        {
-            renderer.geometry_cache.clear();
-            renderer.geometry_cache_bytes = 0;
-        }
-        renderer.geometry_cache.insert(key, prepared.clone());
-        renderer.geometry_cache_bytes += bytes;
-    }
-    if paths.insert(element.id.clone(), prepared).is_some() {
-        return Err(format!("duplicate element identity '{}'", element.id));
-    }
-    Ok(())
+    Ok(prepared)
 }
 
 pub(crate) struct Drawing<'a> {
-    pub paths: &'a BTreeMap<String, PreparedPath>,
-    pub dynamic_paths: &'a BTreeMap<String, PreparedPath>,
+    pub renderer: &'a mut crate::Renderer,
     pub pixels: usize,
     pub work: usize,
-}
-
-/// Only changed primitive dimensions need new paths. Stable geometry keeps its prepared contours.
-pub(crate) fn prepare_dynamic_paths(
-    element: &Element,
-    dynamic: &std::collections::BTreeSet<String>,
-    paths: &mut BTreeMap<String, PreparedPath>,
-    renderer: &mut crate::Renderer,
-) -> Result<(), String> {
-    if let Geometry::Group { children } = element.geometry.as_ref() {
-        for child in children {
-            prepare_dynamic_paths(child, dynamic, paths, renderer)?;
-        }
-    } else if dynamic.contains(&element.id)
-        && !matches!(element.geometry.as_ref(), Geometry::Line { .. })
-    {
-        prepare_paths(element, paths, renderer)?;
-    }
-    Ok(())
 }
 
 pub(crate) fn element_draw(
@@ -196,21 +228,36 @@ pub(crate) fn element_draw(
             }
             return Ok(());
         }
-        let prepared = drawing
-            .dynamic_paths
-            .get(&element.id)
-            .or_else(|| drawing.paths.get(&element.id))
-            .ok_or_else(|| format!("missing prepared path for '{}'", element.id))?;
+        let prepared = prepared_path(element, drawing.renderer)?;
         drawing.work = drawing
             .work
             .checked_sub(prepared.path.count_points())
             .ok_or("path rendering exceeds render work budget")?;
-        let mut paint = paint(&element.fill, element.opacity)?;
+        let container = element
+            .geometry
+            .children()
+            .is_some_and(|children| !children.is_empty());
+        if container && element.opacity != Fraction::from(1) {
+            drawing.work = drawing
+                .work
+                .checked_sub(drawing.pixels)
+                .ok_or("container compositing exceeds render work budget")?;
+            canvas.save_layer_alpha_f(None, to_f64(element.opacity)? as f32);
+        }
+        let own_opacity = if container {
+            Fraction::from(1)
+        } else {
+            element.opacity
+        };
+        let mut paint = fill_paint(&element.fill, own_opacity, prepared.path.bounds())?;
         let progress = to_f64(reveal.progress)? as f32;
-        if let Geometry::Line { width, .. } = element.geometry.as_ref() {
+        if let Geometry::Line { width, .. } | Geometry::Polyline { width, .. } =
+            element.geometry.as_ref()
+        {
             paint
                 .set_style(skia_safe::paint::Style::Stroke)
-                .set_stroke_width(to_f64(*width)? as f32);
+                .set_stroke_width(to_f64(*width)? as f32)
+                .set_stroke_join(skia_safe::PaintJoin::Round);
             canvas.draw_path(&prepared.partial(progress, false), &paint);
         } else if progress >= 1.0 {
             canvas.draw_path(&prepared.path, &paint);
@@ -259,6 +306,23 @@ pub(crate) fn element_draw(
             paint.set_alpha_f(paint.alpha_f() * trace_opacity);
             canvas.draw_path(&trace_path, &paint);
         }
+        if let Some(stroke) = &element.stroke {
+            let mut border = fill_paint(&stroke.paint, own_opacity, prepared.path.bounds())?;
+            border
+                .set_style(skia_safe::paint::Style::Stroke)
+                .set_stroke_width(to_f64(stroke.width)? as f32);
+            let border_path = prepared.partial(progress, false);
+            drawing.work = drawing
+                .work
+                .checked_sub(border_path.count_points())
+                .ok_or("border rendering exceeds render work budget")?;
+            canvas.draw_path(&border_path, &border);
+        }
+        if let Some(children) = element.geometry.children() {
+            for child in children {
+                element_draw(canvas, child, reveal, drawing)?;
+            }
+        }
         Ok(())
     })();
     canvas.restore_to_count(save);
@@ -278,4 +342,62 @@ pub(crate) fn paint(color: &Color, opacity: Fraction) -> Result<Paint, String> {
         skia_safe::Color4f::new(channels[0], channels[1], channels[2], channels[3]),
         1.,
     ))
+}
+
+fn fill_paint(fill: &sanim_core::Paint, opacity: Fraction, bounds: &Rect) -> Result<Paint, String> {
+    match fill {
+        sanim_core::Paint::Solid(color) => paint(color, opacity),
+        sanim_core::Paint::LinearGradient { angle, stops } => {
+            let points = math::paint::gradient_endpoints(
+                [
+                    bounds.left as f64,
+                    bounds.top as f64,
+                    bounds.right as f64,
+                    bounds.bottom as f64,
+                ],
+                *angle,
+            )?;
+            let colors = stops
+                .iter()
+                .map(|stop| {
+                    let values = stop
+                        .color
+                        .0
+                        .map(|channel| to_f64(channel).map(|channel| channel as f32));
+                    Ok(skia_safe::Color4f::new(
+                        values[0].clone()?,
+                        values[1].clone()?,
+                        values[2].clone()?,
+                        values[3].clone()?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let offsets = stops
+                .iter()
+                .map(|stop| to_f64(stop.offset).map(|offset| offset as f32))
+                .collect::<Result<Vec<_>, _>>()?;
+            let gradient_colors = skia_safe::gradient::Colors::new(
+                &colors,
+                Some(&offsets),
+                skia_safe::TileMode::Clamp,
+                None,
+            );
+            let gradient = skia_safe::gradient::Gradient::new(
+                gradient_colors,
+                skia_safe::gradient::Interpolation::default(),
+            );
+            let shader = skia_safe::gradient::shaders::linear_gradient(
+                (
+                    (points[0][0] as f32, points[0][1] as f32),
+                    (points[1][0] as f32, points[1][1] as f32),
+                ),
+                &gradient,
+                None,
+            )
+            .ok_or("Skia could not create the linear gradient shader")?;
+            let mut paint = paint(&Color::parse("white")?, opacity)?;
+            paint.set_shader(shader);
+            Ok(paint)
+        }
+    }
 }

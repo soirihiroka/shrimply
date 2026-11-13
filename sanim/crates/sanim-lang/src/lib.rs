@@ -4,10 +4,14 @@ pub mod ast;
 mod cache;
 mod charts;
 mod checker;
+pub mod dataframe;
+mod design;
 mod effects;
 mod eval;
 #[cfg(test)]
 mod font_tests;
+pub mod formatter;
+mod lint;
 mod lists;
 mod native;
 mod native_types;
@@ -20,7 +24,9 @@ mod timing;
 mod type_algebra;
 pub mod watch;
 
+pub use checker::{Checked as CheckedModule, NativeMethod};
 pub use eval::state::ExecutionState;
+pub use lint::{AnalyzedModule, LintDiagnostic, LintReport, LintSeverity};
 pub use sanim_core as core;
 use sanim_core::{Animation, Diagnostic, ReflectedInput, Span, Type, Value, digest};
 use serde::Serialize;
@@ -69,6 +75,8 @@ impl Default for Limits {
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Statistics {
+    pub deferred_values: u64,
+    pub forced_values: u64,
     pub parsed_modules: u64,
     pub reused_modules: u64,
     pub evaluated_expressions: u64,
@@ -88,6 +96,8 @@ pub struct Statistics {
     pub prepare_micros: u64,
     pub executed_queries: u64,
     pub reused_queries: u64,
+    pub reused_databases: u64,
+    pub sql_instructions: u64,
     pub query_micros: u64,
     pub cache_key_micros: u64,
     pub native_micros: u64,
@@ -109,6 +119,8 @@ pub struct Prepared {
     pub animation: Animation,
     pub time_map: sanim_core::TimeMap,
     pub bindings: imbl::OrdMap<String, Value>,
+    /// Values intentionally left unevaluated by demand preparation.
+    pub deferred_bindings: Vec<DeferredBinding>,
     pub reflected: imbl::Vector<ReflectedInput>,
     pub types: BTreeMap<String, Type>,
     pub symbols: BTreeMap<String, Type>,
@@ -120,6 +132,23 @@ pub struct Prepared {
     pub fingerprint: String,
     pub statistics: Statistics,
     pub performance: Vec<PerformanceWarning>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DeferredBinding {
+    pub name: String,
+    pub ty: Type,
+    pub source: String,
+    pub span: Span,
+}
+
+/// Full preparation validates every published binding. Demand preparation
+/// evaluates only values needed to construct and verify the animation.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum Preparation {
+    #[default]
+    Full,
+    Demand,
 }
 
 impl Prepared {
@@ -218,10 +247,12 @@ impl DurationReport {
 #[derive(Default)]
 pub struct Engine {
     pub limits: Limits,
+    pub preparation: Preparation,
     pub viewport: sanim_core::Viewport,
     parsed: BTreeMap<String, Arc<ast::Module>>,
     values: cache::ValueCache,
     assets: cache::ValueCache,
+    databases: sanim_data::sqlite::Databases,
     pub(crate) attempted: BTreeMap<String, String>,
     progress_observer: Option<progress::Observer>,
     states: eval::state::Store,
@@ -264,6 +295,7 @@ impl Engine {
         self.parsed.clear();
         self.values.clear();
         self.assets.clear();
+        self.databases.clear();
         self.states.clear();
         self.font_environment = None;
     }
@@ -346,6 +378,8 @@ impl Engine {
             .configure(self.limits.max_cache_bytes, self.limits.max_cache_entries);
         self.assets
             .configure(self.limits.max_cache_bytes, self.limits.max_cache_entries);
+        self.databases
+            .configure(self.limits.max_cache_bytes, self.limits.max_cache_entries);
         let mut snapshot = Snapshot {
             provider: sources,
             reads: BTreeMap::new(),
@@ -420,13 +454,19 @@ impl Engine {
                 &loaded,
                 &mut snapshot,
                 &converted,
+                self.preparation,
                 (
                     &self.limits,
                     &self.viewport,
                     duration_needed.filter(|_| duration_only),
                     reporter,
                 ),
-                (&mut self.values, &mut self.assets, &mut self.states),
+                (
+                    &mut self.values,
+                    &mut self.assets,
+                    &mut self.states,
+                    &mut self.databases,
+                ),
                 &mut statistics,
             )?;
             if let Some((source, span)) = scene_timing {
@@ -632,3 +672,5 @@ impl Engine {
         Ok(())
     }
 }
+
+mod templates;

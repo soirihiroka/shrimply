@@ -1,0 +1,87 @@
+{
+  "name": "sanim",
+  "displayName": "Sanim",
+  "description": "Sanim syntax highlighting and the native static Sanim language server.",
+  "version": "0.1.0",
+  "publisher": "shrimply",
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:sanim"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "sanim.restartServer",
+        "title": "Sanim: Restart Language Server"
+      }
+    ],
+    "languages": [
+      {
+        "id": "sanim",
+        "aliases": [
+          "Sanim",
+          "sanim"
+        ],
+        "extensions": [
+          ".sanim"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sanim",
+        "scopeName": "source.sanim",
+        "path": "./syntaxes/sanim.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Sanim",
+      "properties": {
+        "sanim.server.path": {
+          "type": "string",
+          "default": "sanim-lsp",
+          "scope": "machine-overridable",
+          "description": "Path to the separately built native sanim-lsp executable. Defaults to PATH lookup. No Shrimply GUI or animation runtime is launched."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./ && esbuild src/extension.ts --bundle --platform=node --target=node20 --external:vscode --outfile=out/extension.js",
+    "check": "tsc -p ./ --noEmit",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --no-dependencies",
+    "test": "npm run compile && node out/test/grammar.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.100.0",
+    "typescript": "^5.9.0",
+    "@vscode/vsce": "^3.0.0",
+    "vscode-textmate": "^9.2.0",
+    "vscode-oniguruma": "^2.0.1",
+    "esbuild": "^0.25.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/soirihiroka/shrimply.git",
+    "directory": "sanim/editors/vscode"
+  }
+}

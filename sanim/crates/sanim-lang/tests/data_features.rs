@@ -61,22 +61,22 @@ fn dynamic_conversion_checks_actual_values() {
 }
 #[test]
 fn sql_default_result_is_dictionary_rows() {
-    let p=run("type Sample = {name: String, value: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet grouped = query(\"SELECT name, SUM(value) AS total FROM samples GROUP BY name ORDER BY name\", tables: {samples: samples})\nfor row in grouped { let total = decode<Number>(row[\"total\"]); assert(total >= 2) }\n").unwrap();
+    let p=run("type Sample = {name: String, value: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet grouped = query(\"SELECT name, SUM(value) AS total FROM samples GROUP BY name ORDER BY name\", tables= {samples=samples})\nfor row in grouped { let total = decode<Number>(row[\"total\"]); assert(total >= 2) }\n").unwrap();
     assert_eq!(p.bindings["grouped"].ty(), Type::List(Box::new(Type::Dict)));
     assert_eq!(p.bindings["grouped"].list().unwrap().len(), 2);
 }
 #[test]
 fn sql_can_validate_typed_rows_and_named_parameters() {
-    run("type Sample = {name: String, value: Number}\ntype Summary = {name: String, total: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet result = query<Summary>(\"SELECT name, SUM(value) AS total FROM samples WHERE value >= :minimum GROUP BY name\", tables: {samples: samples}, params: {\"minimum\": 2})\nassert(len(result) == 2)\n").unwrap();
+    run("type Sample = {name: String, value: Number}\ntype Summary = {name: String, total: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet minimum=2\nlet result = query<Summary>(\"SELECT name, SUM(value) AS total FROM samples WHERE value >= {minimum} GROUP BY name\", tables= {samples=samples})\nassert(len(result) == 2)\n").unwrap();
 }
 #[test]
 fn sql_null_requires_optional_typed_result() {
-    let e=run("type Sample = {name: String, value: Number}\ntype Result = {total: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet result = query<Result>(\"SELECT NULL AS total FROM samples LIMIT 1\", tables: {samples: samples})\n").unwrap_err();
+    let e=run("type Sample = {name: String, value: Number}\ntype Result = {total: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet result = query<Result>(\"SELECT NULL AS total FROM samples LIMIT 1\", tables= {samples=samples})\n").unwrap_err();
     assert!(e.message.contains("Option<"));
 }
 #[test]
 fn sql_rejects_bad_columns_even_when_result_is_empty() {
-    let e=run("type Sample = {name: String, value: Number}\ntype Result = {wrong: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet result = query<Result>(\"SELECT value FROM samples WHERE 0\", tables: {samples: samples})\n").unwrap_err();
+    let e=run("type Sample = {name: String, value: Number}\ntype Result = {wrong: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet result = query<Result>(\"SELECT value FROM samples WHERE 0\", tables= {samples=samples})\n").unwrap_err();
     assert!(e.message.contains("do not match"));
 }
 #[test]
@@ -87,7 +87,7 @@ fn sql_rejects_mutation_and_ambient_functions() {
         "SELECT random() AS value FROM samples",
         "SELECT datetime('now') AS value FROM samples",
     ] {
-        let e=run(&format!("type Sample = {{name: String, value: Number}}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet result = query({sql:?}, tables: {{samples: samples}})\n")).unwrap_err();
+        let e=run(&format!("type Sample = {{name: String, value: Number}}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet result = query({sql:?}, tables= {{samples=samples}})\n")).unwrap_err();
         assert_eq!(e.code, "S309");
     }
 }
@@ -138,7 +138,7 @@ fn dictionary_data_accepts_heterogeneous_arrays_and_null() {
 #[test]
 fn sql_preserves_large_integer_inputs() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","type Sample={value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nlet result=query(\"SELECT value FROM samples\",tables: {samples: samples})\nfor row in result { assert(decode<Number>(row[\"value\"]) == 9007199254740993) }\n");
+    files.insert("main.sanim","type Sample={value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nlet result=query(\"SELECT value FROM samples\",tables= {samples=samples})\nfor row in result { assert(decode<Number>(row[\"value\"]) == 9007199254740993) }\n");
     files.insert("data.csv", "value\n9007199254740993\n");
     Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -151,14 +151,14 @@ fn sql_clock_keywords_are_rejected() {
         "SELECT CURRENT_DATE AS today FROM samples",
         "SELECT CURRENT_TIME AS now FROM samples",
     ] {
-        let e=run(&format!("type Sample = {{name: String, value: Number}}\nlet samples=read<List<Sample>>(\"rows.csv\")\nlet result=query({sql:?},tables: {{samples: samples}})\n")).unwrap_err();
+        let e=run(&format!("type Sample = {{name: String, value: Number}}\nlet samples=read<List<Sample>>(\"rows.csv\")\nlet result=query({sql:?},tables= {{samples=samples}})\n")).unwrap_err();
         assert_eq!(e.code, "S309");
     }
 }
 #[test]
 fn warm_query_cache_reuses_results_but_data_changes_invalidate() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","type Sample = {value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nlet result=query(\"SELECT SUM(value) AS total FROM samples\",tables: {samples: samples})\n");
+    files.insert("main.sanim","type Sample = {value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nlet result=query(\"SELECT SUM(value) AS total FROM samples\",tables= {samples=samples})\n");
     files.insert("data.csv", "value\n1\n");
     let mut engine = Engine::default();
     let first = engine
@@ -182,7 +182,7 @@ fn warm_query_cache_reuses_results_but_data_changes_invalidate() {
 
 #[test]
 fn typed_sql_real_results_accept_normalized_measurements_without_rounding() {
-    let prepared=run("type Sample={name:String,value:Number}\ntype Ratio={ratio:Number}\nlet samples=read<List<Sample>>(\"rows.csv\")\nlet ratios=query<Ratio>(\"SELECT 0.9644630372551779 AS ratio FROM samples LIMIT 1\",tables:{samples:samples})\nlet result=unwrap(get(ratios,0),{ratio:0})\nlet actual=result.ratio").unwrap();
+    let prepared=run("type Sample={name:String,value:Number}\ntype Ratio={ratio:Number}\nlet samples=read<List<Sample>>(\"rows.csv\")\nlet ratios=query<Ratio>(\"SELECT 0.9644630372551779 AS ratio FROM samples LIMIT 1\",tables={samples=samples})\nlet result=unwrap(get(ratios,0),{ratio=0})\nlet actual=result.ratio").unwrap();
     let actual = prepared.bindings["actual"].number().unwrap().value;
     assert_eq!(
         sanim_core::math::to_f64(actual).unwrap(),

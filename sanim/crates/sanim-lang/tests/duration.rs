@@ -136,7 +136,7 @@ fn match_payloads_and_early_returns_match() {
 #[test]
 fn duration_analysis_skips_unneeded_geometry_and_assets() {
     let files = sources(
-        "let font=read<Font>(\"unused.ttf\")\nfn caption():Element{return Text(\"x\",font:font)}\nrepeat 100000{let marker=Circle();FadeIn(marker, duration=1ms, ease=\"linear\")}",
+        "let font=read<Font>(\"unused.ttf\")\nfn caption():Element{return Text(\"x\",font=font)}\nrepeat 100000{let marker=Circle();FadeIn(marker, duration=1ms, ease=\"linear\")}",
         &[],
     );
     let report = Engine::default()
@@ -301,7 +301,7 @@ fn unused_reflected_overrides_are_validated_without_loading_defaults() {
         .duration_json(
             "main.sanim",
             &files,
-            &BTreeMap::from([("tint".into(), serde_json::json!("blue"))]),
+            &BTreeMap::from([("main.sanim::tint".into(), serde_json::json!("blue"))]),
         )
         .unwrap();
     assert_eq!(report.duration, Fraction::from(1));
@@ -310,7 +310,7 @@ fn unused_reflected_overrides_are_validated_without_loading_defaults() {
             .duration_json(
                 "main.sanim",
                 &files,
-                &BTreeMap::from([("tint".into(), serde_json::json!(12))])
+                &BTreeMap::from([("main.sanim::tint".into(), serde_json::json!(12))])
             )
             .is_err()
     );

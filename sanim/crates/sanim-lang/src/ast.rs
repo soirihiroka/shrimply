@@ -4,20 +4,27 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Module {
     pub statements: Vec<Statement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<Span>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Statement {
     pub kind: StatementKind,
     pub span: Span,
+    /// Exact identifier location for editor navigation and inferred-type hints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_span: Option<Span>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BindingKind {
-    #[default]
-    Let,
-    Mut,
-    Sig,
+pub use sanim_core::BindingKind;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Parameter {
+    pub kind: BindingKind,
+    pub name: String,
+    pub name_span: Span,
+    pub ty: TypeExpr,
+    pub default: Option<Expr>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -53,7 +60,7 @@ pub enum StatementKind {
     Function {
         name: String,
         generics: Vec<GenericParameter<TypeExpr>>,
-        parameters: Vec<(String, TypeExpr, Option<Expr>)>,
+        parameters: Vec<Parameter>,
         result: TypeExpr,
         body: Vec<Statement>,
     },
@@ -96,6 +103,7 @@ pub struct Case {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeExpr {
     Named(String, Vec<TypeExpr>),
+    Signal(Box<TypeExpr>),
     Record(Vec<(String, TypeExpr)>),
     Intersection(Vec<TypeExpr>),
     Union(Vec<TypeExpr>),
@@ -112,9 +120,9 @@ pub struct Expr {
 pub enum ExprKind {
     Number(String),
     String(String),
+    Template(Vec<sanim_core::TemplatePart<Expr>>),
     Bool(bool),
     None,
-    Color(String),
     Name(String),
     Reflect {
         value: Box<Expr>,
@@ -157,6 +165,16 @@ impl Expr {
                 callee.visit_while(visitor);
                 for (_, value) in args {
                     value.visit_while(visitor);
+                }
+            }
+            ExprKind::Template(parts) => {
+                for part in parts {
+                    if let sanim_core::TemplatePart::Hole { value, format, .. } = part {
+                        value.visit_while(visitor);
+                        if let Some(format) = format {
+                            format.visit_while(visitor)
+                        }
+                    }
                 }
             }
             ExprKind::List(values) => {

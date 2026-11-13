@@ -18,8 +18,20 @@ fn retained_row_width_reflows_its_children_and_supports_current_width_getters() 
         .animation
         .layout(Fraction::from(2), width, height)
         .unwrap();
-    assert_eq!(before[0].layout.width, Some(Fraction::from(100)));
-    assert_eq!(after[0].layout.width, Some(Fraction::from(200)));
+    assert_eq!(
+        before[0].layout.width,
+        Some(sanim_core::Number {
+            value: Fraction::from(100),
+            unit: sanim_core::Unit::Length
+        })
+    );
+    assert_eq!(
+        after[0].layout.width,
+        Some(sanim_core::Number {
+            value: Fraction::from(200),
+            unit: sanim_core::Unit::Length
+        })
+    );
     let Geometry::Group { children: before } = before[0].geometry.as_ref() else {
         panic!("row expected")
     };

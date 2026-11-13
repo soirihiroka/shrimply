@@ -11,13 +11,15 @@ fn tile(id: &str) -> Element {
         geometry: Arc::new(Geometry::Rectangle {
             width: 10.into(),
             height: 10.into(),
-            radius: 0.into(),
+            children: Default::default(),
+            radius: Default::default(),
         }),
         position: Vec2::zero(Unit::Length),
         rotation: 0.into(),
         scale: 1.into(),
         opacity: 1.into(),
-        fill: Color::parse("blue3").unwrap(),
+        fill: Color::parse("blue3").unwrap().into(),
+        stroke: None,
         reveal: Default::default(),
         horizontal: Default::default(),
         layout: Layout::default(),
@@ -44,8 +46,14 @@ fn animation() -> Animation {
     });
     view.layout = Layout {
         direction: Some(Direction::Row),
-        width: Some(80.into()),
-        height: Some(20.into()),
+        width: Some(sanim_core::Number {
+            value: 80.into(),
+            unit: sanim_core::Unit::Length,
+        }),
+        height: Some(sanim_core::Number {
+            value: 20.into(),
+            unit: sanim_core::Unit::Length,
+        }),
         ..Default::default()
     };
     animation.bind_list(1, &view, items(&[])).unwrap();
@@ -62,7 +70,7 @@ fn animation() -> Animation {
     animation
 }
 #[test]
-fn future_items_prepare_paths_and_render_then_removed_items_disappear() {
+fn future_items_prepare_paths_on_demand_then_removed_items_disappear() {
     let mut animation = animation();
     animation
         .write_list(1, 3.into(), 4.into(), items(&["second"]), Easing::Linear)
@@ -71,8 +79,11 @@ fn future_items_prepare_paths_and_render_then_removed_items_disappear() {
     let scene = renderer.prepare(animation).unwrap();
     let mut options = Options::for_animation(scene.animation());
     options.encode_png = false;
+    assert_eq!(renderer.geometries_prepared, 0);
     let initial = renderer.render(&scene, 0.into(), &options).unwrap();
+    assert_eq!(renderer.geometries_prepared, 0);
     let filled = renderer.render(&scene, 2.into(), &options).unwrap();
+    assert_eq!(renderer.geometries_prepared, 1);
     assert_ne!(initial.rgba, filled.rgba);
     let removed = renderer.render(&scene, 4.into(), &options).unwrap();
     assert_ne!(filled.rgba, removed.rgba);

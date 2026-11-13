@@ -45,6 +45,23 @@ pub fn cli() -> Command {
             .about("Inspect a command's typed request schema")
             .arg(Arg::new("command").num_args(1..).required(true)),
     );
+    root = root.mut_subcommand("sanim", |mut command| {
+        for tool in sanim_cli::COMMANDS {
+            command = command.subcommand(
+                Command::new(tool.name)
+                    .about(tool.summary)
+                    .disable_help_flag(true)
+                    .arg(
+                        Arg::new("arguments")
+                            .num_args(0..)
+                            .trailing_var_arg(true)
+                            .allow_hyphen_values(true)
+                            .value_parser(clap::builder::OsStringValueParser::new()),
+                    ),
+            );
+        }
+        command
+    });
     root = root.version(env!("CARGO_PKG_VERSION"));
     root
 }

@@ -1,4 +1,5 @@
 //! Typed chart constructors lower to the same elements used by every other Sanim shape.
+mod plots;
 use crate::{
     native::{self, Context},
     native_types,
@@ -125,8 +126,13 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
         }
         add(name, params, Type::Element);
     }
+    out.extend(plots::builtins(&common));
     out
 }
+pub(crate) fn expensive(name: &str) -> Option<&'static str> {
+    plots::expensive(name)
+}
+
 fn field<'a>(value: &'a Value, name: &str) -> Result<&'a Value, String> {
     let Value::Record(fields) = value else {
         return Err("chart configuration must be a typed record".into());
@@ -183,7 +189,10 @@ struct Chart<'a> {
     max_elements: usize,
 }
 impl<'a> Chart<'a> {
-    fn new(args: &'a OrdMap<String, Value>, context: Context<'a>) -> Result<Self, String> {
+    fn new(args: &'a OrdMap<String, Value>, mut context: Context<'a>) -> Result<Self, String> {
+        if let Some(design) = args.get("design") {
+            context.charge_work(design.string()?.len())?;
+        }
         let id = args
             .get("id")
             .map(Value::string)
@@ -596,11 +605,6 @@ fn axis(
         .map(Value::string)
         .transpose()?
         .unwrap_or("number");
-    if !matches!(format, "number" | "percent") {
-        return Err(
-            "Axis format must be 'number' or 'percent'; provide labels for custom text".into(),
-        );
-    }
     let mut intervals = vec![];
     let mut across_extent: f64 = 0.;
     for (index, &value) in values.iter().enumerate() {
@@ -620,7 +624,11 @@ fn axis(
         let label = labels
             .map(|v| v[index].string().map(str::to_owned))
             .transpose()?
-            .unwrap_or_else(|| number_label(value, format == "percent"));
+            .map(Ok)
+            .unwrap_or_else(|| match format {
+                "number" | "percent" => Ok(number_label(value, format == "percent")),
+                spec => math::format::value(&scalar(value, Unit::Number)?, spec, None),
+            })?;
         chart.shape(
             "Text",
             &format!("label/{key}"),

@@ -93,6 +93,7 @@ impl Session {
                 &self.json_overrides,
                 &self.engine.limits,
                 &self.engine.viewport,
+                self.engine.preparation,
             ))
             .expect("serializable overrides"),
         );
@@ -214,7 +215,7 @@ impl Session {
                     .collect();
                 fn expand(element: &sanim_core::Element, dirty: &mut BTreeSet<String>) -> bool {
                     let mut dependent = false;
-                    if let sanim_core::Geometry::Group { children } = element.geometry.as_ref() {
+                    if let Some(children) = element.geometry.children() {
                         for child in children {
                             dependent |= expand(child, dirty);
                         }

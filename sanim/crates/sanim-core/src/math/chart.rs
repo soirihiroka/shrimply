@@ -1,4 +1,5 @@
 //! Checked chart mathematics, independent of language and rendering.
+pub mod plot;
 use super::float_arithmetic as calc;
 
 #[derive(Clone, Copy, Debug)]

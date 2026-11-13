@@ -1,0 +1,11 @@
+name = "Sanim"
+path_suffixes = ["sanim"]
+line_comments = ["# "]
+tab_size = 4
+increase_indent_pattern = '\{\s*$'
+decrease_indent_pattern = '^\s*\}'
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+]

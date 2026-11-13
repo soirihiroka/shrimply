@@ -11,6 +11,12 @@ struct CatalogEntry<'a>(&'a Element);
 enum GeometryKey<'a> {
     Leaf(&'a Geometry),
     Group(Vec<&'a str>),
+    Rectangle(
+        &'a Fraction,
+        &'a Fraction,
+        &'a crate::CornerRadius,
+        Vec<&'a str>,
+    ),
 }
 impl Serialize for CatalogEntry<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -24,6 +30,7 @@ impl Serialize for CatalogEntry<'_> {
             scale,
             opacity,
             fill,
+            stroke,
             reveal,
             horizontal,
             layout,
@@ -32,10 +39,22 @@ impl Serialize for CatalogEntry<'_> {
             Geometry::Group { children } => {
                 GeometryKey::Group(children.iter().map(|child| child.id.as_str()).collect())
             }
+            Geometry::Rectangle {
+                width,
+                height,
+                radius,
+                children,
+            } => GeometryKey::Rectangle(
+                width,
+                height,
+                radius,
+                children.iter().map(|child| child.id.as_str()).collect(),
+            ),
             geometry => GeometryKey::Leaf(geometry),
         };
         (
-            id, geometry, position, rotation, scale, opacity, fill, reveal, horizontal, layout,
+            id, geometry, position, rotation, scale, opacity, fill, stroke, reveal, horizontal,
+            layout,
         )
             .serialize(serializer)
     }

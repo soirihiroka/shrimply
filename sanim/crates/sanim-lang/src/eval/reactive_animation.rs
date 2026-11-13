@@ -161,7 +161,10 @@ impl Runtime<'_, '_> {
             env: &Env,
             visited: &mut BTreeSet<String>,
         ) -> bool {
-            if matches!(binding(runtime, expr, env), Some(Binding::Reactive(_))) {
+            if matches!(
+                binding(runtime, expr, env),
+                Some(Binding::Reactive(_) | Binding::Value(Value::Signal(_)))
+            ) {
                 return true;
             }
             if let ExprKind::Call { callee, .. } = &expr.kind
@@ -197,42 +200,12 @@ impl Runtime<'_, '_> {
         }
         inspect(self, expr, env, &mut BTreeSet::new())
     }
-    pub(super) fn check_shape_helper_inputs(
-        &self,
-        key: &str,
-        args: &[(Option<String>, Expr)],
-        env: &Env,
-        span: Span,
-    ) -> Result<(), Diagnostic> {
-        fn shape(ty: &Type) -> bool {
-            match ty {
-                Type::Element => true,
-                Type::List(inner) | Type::Option(inner) | Type::Array(inner) => shape(inner),
-                Type::Record(fields) => fields.values().any(shape),
-                Type::Union(types) => types.iter().any(shape),
-                _ => false,
-            }
-        }
-        let Some(function) = self.functions.get(key) else {
-            return Ok(());
-        };
-        let result = self
-            .loaded
-            .iter()
-            .find(|module| module.id == function.module)
-            .and_then(|module| module.checked.exports.get(&function.name));
-        if matches!(result,Some(Type::Function(signature)) if shape(&signature.result))
-            && args.iter().any(|(_, expr)| self.signal_in(expr, env))
-        {
-            return Err(self.error("S140","shape-helper parameters are value snapshots and cannot retain reactive arguments; construct the shape directly, capture the mut/sig in the helper, or snapshot the input with let before calling the helper",span));
-        }
-        Ok(())
-    }
     pub(super) fn retain_constructor_signals(
         &mut self,
         name: &str,
         value: &Value,
         args: &[(Option<String>, Expr)],
+        observed: &[ObservedSignals],
         env: &Env,
         span: Span,
     ) -> Result<(), Diagnostic> {
@@ -242,7 +215,7 @@ impl Runtime<'_, '_> {
         let Some(builtin) = prelude::builtin(name) else {
             return Ok(());
         };
-        for (index, (label, expr)) in args.iter().enumerate() {
+        for (index, ((label, expr), observed)) in args.iter().zip(observed).enumerate() {
             let label = label
                 .as_deref()
                 .or_else(|| {
@@ -270,14 +243,20 @@ impl Runtime<'_, '_> {
                     continue;
                 }
             }
-            if !self.signal_in(expr, env) {
+            if !self.signal_in(expr, env) && observed.is_empty() {
                 continue;
             }
             let property=property_name(label).ok_or_else(||self.error("S140",format!("'{label}' is not a retained animation property; snapshot dynamic topology/metadata with let, and retain scalar properties such as radius, width, position or fill"),expr.span))?;
-            if self.expression_mutates(expr) || self.expression_schedules(expr) {
-                return Err(self.error("S140","retained properties require pure expressions; snapshot scheduling or mutating helper results with let first",expr.span));
-            }
-            let node = self.lower_expression(expr, env, &BTreeMap::new(), 0)?;
+            self.signal_observations.push((false, observed.clone()));
+            let result = if self.expression_mutates(expr) || self.expression_schedules(expr) {
+                Err(self.error("S140","retained properties require pure expressions; snapshot scheduling or mutating helper results with let first",expr.span))
+            } else {
+                self.lower_expression(expr, env, &BTreeMap::new(), 0)
+            };
+            self.signal_observations
+                .pop()
+                .expect("active retained argument observations");
+            let node = result?;
             self.animation
                 .reactive
                 .bind(element.id.clone(), property, node)
@@ -298,7 +277,14 @@ impl Runtime<'_, '_> {
         depth: usize,
     ) -> Result<NodeId, Diagnostic> {
         match binding {
+            Binding::Value(Value::Signal(signal)) => {
+                self.lower_binding(&Binding::Reactive(signal.id), span, depth)
+            }
             Binding::Value(value) => self.graph_node(Node::Constant(value.clone()), span),
+            Binding::Deferred(_) => {
+                let value = self.binding_value(binding, span)?;
+                self.graph_node(Node::Constant(value), span)
+            }
             Binding::Module(_) => Err(self.error(
                 "S140",
                 "a module namespace cannot be retained as an animated property",
@@ -355,7 +341,23 @@ impl Runtime<'_, '_> {
                 expr.span,
             ));
         }
+        if let Some(signal) = self.observed_signal(expr) {
+            return self.lower_binding(&Binding::Reactive(signal.id), expr.span, depth + 1);
+        }
         match &expr.kind {
+            ExprKind::Template(parts) => {
+                let parts = parts.iter().map(|part| {
+                    Ok(match part {
+                        sanim_core::TemplatePart::Text(text) => sanim_core::TemplatePart::Text(text.clone()),
+                        sanim_core::TemplatePart::Hole { value, format, conversion } => sanim_core::TemplatePart::Hole {
+                            value: self.lower_expression(value, env, locals, depth + 1)?,
+                            format: format.as_ref().map(|format| self.lower_expression(format, env, locals, depth + 1)).transpose()?,
+                            conversion: *conversion,
+                        },
+                    })
+                }).collect::<Result<Vec<_>, Diagnostic>>()?;
+                self.graph_node(Node::Template { parts: parts.into() }, expr.span)
+            }
             ExprKind::Name(name)=>{
                 if let Some(node)=locals.get(name){return Ok(*node);}
                 if let Some(value)=prelude::values().get(name.as_str()){return self.graph_node(Node::Constant(value.clone()),expr.span);}
@@ -390,14 +392,14 @@ impl Runtime<'_, '_> {
             }
             ExprKind::Call{callee,args,..}=>{
                 // Zero-time call envelopes are effects, not inputs to retained value math.
-                let controls = if let Some(call) = crate::timing::builtin_call(callee, args) {
+                let controls = if let Some(call) = crate::timing::builtin_call(callee, args, &self.loaded.iter().find(|module| module.id == self.module).expect("checked module").checked.native_methods) {
                     [call.duration_argument(), call.easing_argument()]
                 } else {
                     let declared = self.loaded.iter().find(|module| module.id == self.module)
                         .and_then(|module| crate::effects::lookup(callee, &module.checked.exports));
                     [
-                        if matches!(&declared,Some(Type::Function(signature)) if signature.parameters.iter().any(|(name,_)|name=="duration")) {None} else {crate::timing::envelope(args)},
-                        if matches!(&declared,Some(Type::Function(signature)) if signature.parameters.iter().any(|(name,_)|name=="ease")) {None} else {crate::timing::ease_argument(args)},
+                        if matches!(&declared,Some(Type::Function(signature)) if signature.parameters.iter().any(|parameter|parameter.name=="duration")) {None} else {crate::timing::envelope(args)},
+                        if matches!(&declared,Some(Type::Function(signature)) if signature.parameters.iter().any(|parameter|parameter.name=="ease")) {None} else {crate::timing::ease_argument(args)},
                     ]
                 };
                 let args = args.iter().filter(|(_, value)| !controls.iter().flatten().any(|control|std::ptr::eq(*control, value)));
@@ -412,7 +414,7 @@ impl Runtime<'_, '_> {
                     }
                     if math::functions::function(name).is_none(){
                         let mut names=BTreeSet::new();dependencies(expr,&mut names);
-                        if names.iter().all(|name|!locals.contains_key(name)&&!matches!(env.get(name),Some(Binding::Reactive(_)|Binding::Module(_)))) {let value=self.expression(expr,env)?;return self.graph_node(Node::Constant(value),expr.span);}
+                        if !self.has_live_observation(expr) && names.iter().all(|name|!locals.contains_key(name)&&!env.get(name).is_some_and(Binding::is_dynamic)) {let value=self.expression(expr,env)?;return self.graph_node(Node::Constant(value),expr.span);}
                     }
                     let builtin=prelude::builtin(name).expect("known native");
                     let mut supplied=BTreeMap::new();let mut positional=0;
@@ -423,11 +425,11 @@ impl Runtime<'_, '_> {
                 let Value::Function(key)=self.expression(callee,env)? else{return Err(self.error("S140","retained signals require direct pure helper calls",expr.span));};
                 let function=self.functions.get(&key).cloned().ok_or_else(||self.error("S140","retained constructor/data calls must be snapshotted with let first",expr.span))?;
                 let mut inputs=BTreeMap::new();
-                for (index,(label,value)) in args.enumerate(){let name=label.as_ref().or_else(||function.parameters.get(index).map(|(name,..)|name)).ok_or_else(||self.error("S140","invalid retained helper argument",value.span))?;inputs.insert(name.clone(),self.lower_expression(value,env,locals,depth+1)?);}
+                for (index,(label,value)) in args.enumerate(){let name=label.as_ref().or_else(||function.parameters.get(index).map(|parameter| &parameter.name)).ok_or_else(||self.error("S140","invalid retained helper argument",value.span))?;inputs.insert(name.clone(),self.lower_expression(value,env,locals,depth+1)?);}
                 let scope=self.globals.get(&function.module).cloned().unwrap_or_default();
                 let previous=std::mem::replace(&mut self.module,function.module.clone());
                 let result=(||{
-                    for (name,_,default) in &function.parameters {if !inputs.contains_key(name){let default=default.as_ref().ok_or_else(||self.error("S140",format!("retained helper is missing argument '{name}'"),expr.span))?;inputs.insert(name.clone(),self.lower_expression(default,&scope,&inputs,depth+1)?);}}
+                    for parameter in &function.parameters {let name=&parameter.name; let default=&parameter.default;if !inputs.contains_key(name){let default=default.as_ref().ok_or_else(||self.error("S140",format!("retained helper is missing argument '{name}'"),expr.span))?;inputs.insert(name.clone(),self.lower_expression(default,&scope,&inputs,depth+1)?);}}
                     for statement in &function.body {
                         match &statement.kind {
                             StatementKind::Bind{kind:BindingKind::Let|BindingKind::Mut,name,value,..}=>{let node=self.lower_expression(value,&scope,&inputs,depth+1)?;inputs.insert(name.clone(),node);},
@@ -439,7 +441,7 @@ impl Runtime<'_, '_> {
                     Err(self.error("S140","retained helper must return a supported scalar/vector/color value",expr.span))
                 })();self.module=previous;result
             }
-            ExprKind::Number(_)|ExprKind::String(_)|ExprKind::Bool(_)|ExprKind::Color(_)=>{let value=self.expression(expr,env)?;self.graph_node(Node::Constant(value),expr.span)},
+            ExprKind::Number(_)|ExprKind::String(_)|ExprKind::Bool(_)=>{let value=self.expression(expr,env)?;self.graph_node(Node::Constant(value),expr.span)},
             _=>Err(self.error("S140","this signal operation cannot be retained for native playback; use scalar math, vectors, colors, and straight-line pure helpers, or snapshot it with let",expr.span)),
         }
     }

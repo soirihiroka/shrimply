@@ -1,0 +1,16 @@
+[package]
+name = "sanim-lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "sanim-lsp"
+path = "src/main.rs"
+
+[dependencies]
+sanim-lang.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

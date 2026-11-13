@@ -108,11 +108,11 @@ fn source_comments_publish_new_provenance_without_visual_changes() {
 #[test]
 fn reflected_patch_reports_changed_elements() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let tint: Color=reflect(Color(\"red\"))\nlet marker = Circle(id: \"marker\", fill: tint)\nadd(marker)\n");
+    files.insert("main.sanim","let tint: Color=reflect(Color(\"red\"))\nlet marker = Circle(id= \"marker\", fill= tint)\nadd(marker)\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(
-        "tint",
+        "main.sanim::tint",
         Value::Color(sanim_core::Color::parse("blue").unwrap()),
     );
     let Reload::Updated {
@@ -157,13 +157,13 @@ fn invalid_override_is_transactional() {
     );
     let mut session = Session::new("main.sanim");
     session.poll(&files);
-    session.set("count", Value::String("bad".into()));
+    session.set("main.sanim::count", Value::String("bad".into()));
     assert!(matches!(session.poll(&files), Reload::Failed { .. }));
     assert_eq!(
         session.current().unwrap().animation.duration,
         Fraction::from(1)
     );
-    session.set("count", Value::Number(Number::scalar(2)));
+    session.set("main.sanim::count", Value::Number(Number::scalar(2)));
     assert!(matches!(session.poll(&files), Reload::Updated { .. }));
 }
 #[test]
@@ -210,7 +210,7 @@ fn imported_helpers_can_schedule_when_called() {
 #[test]
 fn viewport_changes_report_all_affected_elements() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "add(Circle(id: \"a\"))\n");
+    files.insert("main.sanim", "add(Circle(id= \"a\"))\n");
     let mut session = Session::new("main.sanim");
     session.engine.viewport.width = 100;
     session.engine.viewport.height = 100;
@@ -227,11 +227,11 @@ fn viewport_changes_report_all_affected_elements() {
 #[test]
 fn parent_changes_report_descendant_dependencies() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let offset: Length=reflect(0pt)\nlet child = Circle(id: \"child\")\nadd(Group(id: \"parent\", children: [child], position: Vec2(offset, 0pt)))\n");
+    files.insert("main.sanim","let offset: Length=reflect(0pt)\nlet child = Circle(id= \"child\")\nadd(Group(id= \"parent\", children= [child], position= Vec2(offset, 0pt)))\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(
-        "offset",
+        "main.sanim::offset",
         Value::Number(Number {
             value: Fraction::from(10),
             unit: sanim_core::Unit::Length,

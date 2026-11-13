@@ -1,7 +1,7 @@
-bg(#121826)
+bg(Color("#121826"))
 let cycles: Number = reflect(4)
 
-let pulse = Circle(id= "pulse", radius= 24pt, fill= #64D8CB)
+let pulse = Circle(id= "pulse", radius= 24pt, fill= Color("#64D8CB"))
 timer cycles every 500ms {
     FadeIn(pulse, duration=100ms)
     FadeOut(pulse, duration=100ms)

@@ -39,8 +39,8 @@ make -C sanim run ARGS='video examples/animations.sanim --output /tmp/animations
 Reflected inputs accept typed JSON overrides. For example:
 
 ```sh
-make -C sanim run ARGS='check examples/hello.sanim --set repetitions=4'
-make -C sanim run ARGS='check examples/data.sanim --set bar_color="\"#FF8800\""'
+make -C sanim run ARGS='check examples/hello.sanim --set hello.sanim::repetitions=4'
+make -C sanim run ARGS='check examples/data.sanim --set data.sanim::bar_color="\"#FF8800\""'
 ```
 
 The CLI has `check`, `inspect`, `duration`, `render`, `video`, and `watch` commands.
@@ -71,8 +71,8 @@ Statements end with a newline or semicolon. Functions use
 `fn name(argument: Type = default): ReturnType { ... }`. Defaulted parameters
 follow required parameters. Arguments use `name = value`; record values use `{ field = value }`.
 Colons declare types (`name: Type`) and separate Python-style dictionary entries
-(`{"key": value}`). Older colon-style call/record value syntax remains readable
-for source compatibility, but new source uses `=`.
+(`{"key": value}`). Named arguments and record values require `=`; colon-style
+calls are rejected with a migration diagnostic.
 
 `let` stores an immutable value snapshot. `mut` declares a writable binding, and
 `sig` declares a read-only derived value:
@@ -85,6 +85,36 @@ a = 2
 assert(b == 4)
 assert(saved == 2)
 ```
+
+Ordinary strings interpolate expressions and Python-style format specifications;
+no `f` prefix is needed. Raw `r"..."` strings disable interpolation while retaining
+normal escapes such as `\n` and `\"`. Double braces write literal braces.
+
+```sanim
+let num = 42
+let binary = "bits={num:08b}"
+let fraction = "share={0.125:.1%}"
+let literal = r"{this is literal text}"
+mut count = 1
+sig caption = "count={count}"
+count = 2
+assert(caption == "count=2")
+```
+
+`let` captures the current value; `sig` tracks the interpolation's dependencies.
+Nested format widths and precisions (`"{value:{width}.{precision}f}"`) and
+`!s`, `!r`, and `!a` conversions use the same bounded formatter as `str`.
+
+Triple quotes (`"""…"""` or `'''…'''`) preserve multiline text, indentation,
+and line endings. They use the same interpolation and escape rules. Prefix
+with `r` to keep braces literal, such as `r"""{literal text}"""`.
+The source formatter leaves string contents unchanged.
+
+`read<String>("notes.txt")` reads verbatim UTF-8 with any filename extension,
+including newlines. File contents are never interpreted as string interpolation.
+Demanded text files become watched hot-reload dependencies like CSV/JSON inputs.
+Use `read<Data>` followed by `decode<String>` to decode a structured JSON string
+instead of reading its source text verbatim.
 
 Only `mut` bindings accept assignment, and their inferred or declared type stays
 fixed. Use an annotation for defaults such as `mut maybe:Option<Number> = None`.
@@ -180,12 +210,8 @@ boundaries and numeric suffixes (`grid_line_width` → “Grid Line Width”, `c
 → “Color 1”). Labels can change without changing config identity. Explicit keys
 are used exactly as written and remain stable when the variable is renamed.
 Duplicate keys anywhere in the import graph fail with both declaration locations.
-Explicit keys also cannot capture a different input's legacy root name, preventing old configs from silently targeting another input.
-Existing bare entry-variable override keys remain readable for compatibility;
-metadata and editor controls always report canonical keys. Supplying an override
-under both its canonical key and its legacy name is an error.
-If several explicitly keyed inputs share an inferred name, that name is an
-ambiguous alias: use their distinct canonical keys to address them.
+Overrides accept only the canonical keys reported by reflection metadata. Bare
+variable names do not act as aliases; explicit keys are used exactly as written.
 
 Reflection metadata includes the variable name, label, source span, complete type,
 default and current value. The compiler and hosts share `reflection::Schema` for
@@ -343,6 +369,62 @@ all whiskers and caps, and give `ExpandX` a median anchor. `BoxSummary(values)`
 uses linear empirical quantiles; quartiles describe sample spread, not confidence
 intervals. Colors default to the shared Adwaita palette.
 
+
+Native curves and distributions use those same scales and Adwaita defaults:
+
+```sanim
+let xs = LinearScale(domain=Vec2(-4, 4), range=Vec2(-240pt, 240pt))
+let ys = LinearScale(domain=Vec2(0, 0.7), range=Vec2(100pt, -100pt))
+let measured = [-2, -1.5, -1, -0.4, 0, 0.2, 0.7, 1, 1.7, 2]
+let bars = Histogram(values=measured, bins=16, normalization="density", x_scale=xs, y_scale=ys)
+let estimate = DensityPlot(values=measured, bandwidth=0.5, x_scale=xs, y_scale=ys, fill=Color("orange3"))
+let model = NormalCurve(mean=0, std_dev=1, x_scale=xs, y_scale=ys, shade=false)
+Create([bars, estimate, model], duration=1s)
+wait(2s)
+```
+
+- `LinePlot(data=List<{x:Number,y:Number}>, ...)` draws a single open path.
+  Linear interpolation preserves data order; `interpolation="monotone"` requires
+  increasing x and adds a bounded, shape-preserving cubic interpolation. It does
+  not invent extrema between measurements. `subdivisions` controls resolution.
+- `AreaPlot` fills a curve to `baseline=0`; `BandPlot` fills explicit
+  `List<{x:Number,low:Number,high:Number}>` bounds. Bands require increasing x
+  and `low <= high`; they do not infer a statistical confidence interval.
+- `Histogram` accepts a bin count or explicit increasing `edges`. Bins are
+  left-inclusive/right-exclusive, with the final right edge included. `count`
+  gives sample counts, `probability` gives bin probabilities, and `density`
+  divides by each bin's width so the area is one. Empty inputs give empty bars.
+  Every sample must lie inside the bin edges; no measurements silently disappear.
+- `DensityPlot` is an exact Gaussian kernel density estimate, with optional
+  positive `bandwidth`. The automatic rule is Silverman's robust rule using the
+  smaller of sample standard deviation and IQR/1.34. Constant datasets need an
+  explicit bandwidth. The estimate is normalized over the real line; cropping
+  its displayed domain does not renormalize it. `points` and host operation
+  limits bound the sample-by-grid work.
+- `NormalCurve` samples the analytic normal density with explicit `mean` and
+  `std_dev`; it shares `points`, `shade`, and `fill_opacity` with `DensityPlot`.
+- `ECDFPlot` produces right-continuous empirical steps and merges duplicate
+  values. `DataRange(values, padding=0.05, include_zero=false)` computes a finite
+  scale domain, including a sensible nonzero range for constant data.
+- `Legend(labels=[...], colors=[...])` uses the shared native font, theme colors,
+  and line swatches. Omitting colors cycles through Adwaita colors; `vertical`
+  switches its flow. Axis `format` also accepts the shared Python-style formatter,
+  such as `.2f` or `.0%`, alongside the `number` and `percent` presets.
+
+`Polyline(points=List<Vec2<Length>>, width=2pt)` is the same batched, stroked
+primitive used by curves. It supports native reveal animations and animated line
+width. Plot positions remain parent-relative, and a plot's group can be animated
+without rebuilding its path. Changing measured data creates new immutable
+geometry that participates in the same hot-reload diff and path caches.
+DataFrame/Series inputs materialize explicitly at the plot boundary: use
+`Histogram(values=df["value"].to_list(), ...)` or
+`LinePlot(data=df.select(["x", "y"]).to_list(), ...)`. Those conversions use the
+existing typed list representation, not another plotting-specific table type.
+
+See [`examples/adwaita_plots.sanim`](examples/adwaita_plots.sanim), and run
+`make plot-bench` to compare a 1,000-point path with separate line elements and
+measure 10,000-sample histogram/density work.
+
 `for item in collection` traverses finite collections. `range(end, start: 0,
 step: 1)` constructs a bounded nonnegative integer range. `repeat count { ... }`
 executes sequentially. `timer count every period { ... }` starts iterations at
@@ -455,7 +537,7 @@ geometry while timeline arithmetic remains exact.
 import "./theme" as theme
 type Sample = { id: String, value: Number }
 let samples = read<List<Sample>>("samples.csv")
-// Equivalent contextual inference:
+# Equivalent contextual inference:
 let other: List<Sample> = read("samples.csv")
 ```
 
@@ -509,6 +591,32 @@ failures identify objects, expected relation, bounds and counterexample time
 where available. CLI `--json` preserves structured diagnostics.
 
 ## Caching, hot reload and performance
+
+`Engine::preparation` selects `Preparation::Full` (the headless API default) or
+`Preparation::Demand` (interactive runtime). Full preparation evaluates every
+published binding so `check` and inspection expose data errors even in unused
+values. Demand preparation defers expensive, zero-time immutable data expressions
+such as `read`, `decode`, and `query` until their values are needed, and leaves
+unread signals untouched. `Prepared::bindings` then contains available values;
+`Prepared::deferred_bindings` explicitly lists unforced names with their types and
+source locations. Ordinary cheap values, timeline effects, reflection, and scene
+identity retain their source ordering. Deferred `let` expressions snapshot any
+referenced mutable/signal values at declaration; later assignments cannot change
+their results. User-function calls remain ordered because they may capture globals.
+Demanded results live in persistent execution state, so prefix restoration and
+resource-version invalidation also apply to deferred values. The statistics expose
+`deferred_values` and `forced_values`; `make demand-bench` compares a disabled detail
+view against the same view enabled, with full and demand preparation.
+
+`str(value, format="08b")` uses the same bounded numeric/string formatter as
+interpolation. Supported numeric presentations are `b`, `o`, `x`, `X`, `d`, `c`,
+`f`, `F`, `e`, `E`, `g`, `G`, and `%`, with alignment/fill, sign, alternate prefixes,
+zero padding, comma/underscore grouping, and precision. Strings support width,
+alignment/fill and character-count precision. `conversion="s"`, `"r"`, or `"a"`
+converts before string formatting. Width is limited to 16,384 characters, precision
+to 1,024, and formatted output to 1 MiB. Locale-specific `n` and fractional-digit
+grouping are rejected with explicit diagnostics. `str(value)` keeps its existing
+representation; an explicit empty format uses decimal numeric presentation.
 
 `Session::poll` compares content hashes for all source/data dependencies, including
 failed reads, so creating a previously missing resource recovers automatically.
@@ -634,15 +742,24 @@ an explicit row type opts into result-column and value validation.
 ```text
 type Sample = { category: String, amount: Number }
 let samples = read<List<Sample>>("samples.csv")
+let minimum = 10
 let totals = query(
-    "SELECT category, SUM(amount) AS total FROM samples WHERE amount >= :minimum GROUP BY category ORDER BY category",
+    "SELECT category, SUM(amount) AS total FROM samples WHERE amount >= {minimum} GROUP BY category ORDER BY category",
     tables= {samples= samples},
-    params= {"minimum": 10},
 )
 for row in totals {
     let total = decode<Number>(row["total"])
 }
 ```
+
+Quoted SQL arguments are contextually typed `Template`: literal SQL stays literal
+and `{value}` holes are bound SQLite parameters. Use `SqlIdent(name)` explicitly
+for a quoted table/column identifier. Ordinary String aliases and concatenated
+Strings are rejected; preserve holes using `let statement:Template="..."` or
+`let statement=Sql("...")`. There is no public `params` argument.
+`tables` is optional for statements that do not read imported lists. Templates
+also render automatically when passed to a `String` parameter; converting an
+already rendered String back into a SQL template is intentionally unsupported.
 
 `query<Summary>(...)` returns `List<Summary>` and checks exact column names,
 including empty results, and every returned cell. Nullable columns need
@@ -699,3 +816,63 @@ use a Pango build with Fontconfig/FreeType enabled; Homebrew's Pango provides
 this. CoreText's Pango font map cannot load private font files. Shaping stays
 asset-based with fallback disabled; unsupported builds fail with a diagnostic
 instead of substituting an installed font.
+
+Source formatting uses the canonical Sanim parser without executing data reads or
+loading imported modules:
+
+```sh
+shrimply sanim fmt scene.sanim
+shrimply sanim fmt scene.sanim --check
+shrimply sanim fmt scene.sanim --write
+shrimply sanim lint scene.sanim --check-format --deny-warnings
+```
+
+`fmt` preserves comments and raw/formatted string contents. `--write` atomically
+replaces an existing `.sanim` file and preserves its permissions; the default
+prints to standard output. Use `-` as the source path to format standard input.
+`--indent-width`, `--line-width`, and `--tabs` control layout. The standalone
+LSP offers the same formatter through the editor's Format Document action.
+
+Comments begin with `#` outside strings and continue to the end of the line.
+Hexadecimal colors use `Color("#3584e4")`; `#abcdef` is a comment.
+
+Native element notation lowers to the same constructors and render state:
+
+```sanim
+let name = reflect("Sanim")
+let card = <Rect design="w-60% h-40% card col items-center justify-center gap-16">
+    <Label design="text-xl text-light1">Hello {name}</Label>
+    <Rect design="w-200 h-44 pill bg-gradient-to-r from-blue3 to-purple3">
+        <Label font_size={16pt}>Native gradient</Label>
+    </Rect>
+</Rect>
+add(card)
+wait(2s)
+```
+
+`Label` is `Text`. Attributes use quoted strings, `{typed_expression}`, or bare
+boolean flags. Literal color attributes use the registered parameter type to
+lower `fill="blue3"` to `Color("blue3")`. Text supports the same interpolation,
+Python format specifications, `{{`/`}}` escapes and reactive snapshots as strings.
+Nested elements are ordinary `List<Element>` children with stable source/binding
+identities; rectangles remain painted shapes whose root properties animate.
+
+`design` accepts bounded native utilities: `card`, `raised`, `pill`, `suggested`,
+`destructive`, `row`/`col`, `items-start/center/end`, `justify-start/center/end/between/around`,
+`wrap`, `gap-N`, `p-N`, `w-N`, `h-N`, `rounded[-sm/lg/xl/full/none]`, `rounded-N`,
+`bg-COLOR`, `text-COLOR` on labels, and `border[-N]`/`border-COLOR`.
+Numbers are logical pt. Width and height also accept percentages and `full`,
+resolved against the external parent viewport after signal/animation sampling.
+Pill corners remain fully round when resized. Explicit constructor arguments
+win over design defaults; unknown or incompatible utilities fail with guidance.
+
+Native fills accept `Color` or `LinearGradient(from=Color("blue3"),
+to=Color("purple3"), angle=0deg)`. A gradient may instead provide an explicit typed
+`stops=[{offset=0,color=Color("blue3")}, {offset=1,color=Color("purple3")}]` list.
+Gradients support 2–64 ordered stops covering 0–1; 0deg points right, 90deg down.
+`bg-gradient-to-r/br/b/bl/l/tl/t/tr from-COLOR to-COLOR` is equivalent design
+notation. Skia shaders paint the existing native path directly. Gradient stop
+interpolation currently fails explicitly; opacity and transform animations work.
+See [the complete native markup animation](examples/native_markup.sanim).
+`make markup-bench` verifies identical native IR and measures rendering against
+the ordinary constructor form for 100 gradient cards and labels.

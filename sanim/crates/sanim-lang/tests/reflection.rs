@@ -52,20 +52,22 @@ fn default_keys_use_normalized_relative_paths_for_root_and_imports() {
     assert_eq!(p.reflected[1].label, "Primary Color 1");
 }
 #[test]
-fn canonical_and_legacy_root_overrides_have_identical_semantics() {
+fn canonical_overrides_work_and_bare_root_names_are_rejected() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
         "let count=reflect(2)\nrepeat count {wait(1s)}\n",
     );
     let mut engine = Engine::default();
-    let legacy = engine
+    let rejected = engine
         .prepare_json(
             "main.sanim",
             &files,
             &BTreeMap::from([("count".into(), serde_json::json!(4))]),
         )
-        .unwrap();
+        .unwrap_err();
+    assert!(rejected.message.contains("unknown reflected input 'count'"));
+    assert!(rejected.message.contains("main.sanim::count"));
     let canonical = engine
         .prepare_json(
             "main.sanim",
@@ -73,11 +75,18 @@ fn canonical_and_legacy_root_overrides_have_identical_semantics() {
             &BTreeMap::from([("main.sanim::count".into(), serde_json::json!(4))]),
         )
         .unwrap();
-    assert_eq!(legacy.fingerprint, canonical.fingerprint);
-    assert_eq!(legacy.animation, canonical.animation);
+    let repeated = engine
+        .prepare_json(
+            "main.sanim",
+            &files,
+            &BTreeMap::from([("main.sanim::count".into(), serde_json::json!(4))]),
+        )
+        .unwrap();
+    assert_eq!(repeated.fingerprint, canonical.fingerprint);
+    assert_eq!(repeated.animation, canonical.animation);
     assert_eq!(canonical.animation.duration, Fraction::from(4));
     assert_eq!(canonical.reflected[0].key, "main.sanim::count");
-    assert!(canonical.statistics.restored_statements > 0);
+    assert!(repeated.statistics.restored_statements > 0);
     let report = engine
         .duration_json(
             "main.sanim",
@@ -203,15 +212,15 @@ fn metadata_and_override_errors_explain_how_to_fix_the_declaration() {
     }
     let mut files = MemorySources::default();
     files.insert("main.sanim", "let count=reflect(1)\n");
-    let duplicate = BTreeMap::from([
+    let unknown_alias = BTreeMap::from([
         ("count".into(), serde_json::json!(2)),
         ("main.sanim::count".into(), serde_json::json!(3)),
     ]);
     let error = Engine::default()
-        .prepare_json("main.sanim", &files, &duplicate)
+        .prepare_json("main.sanim", &files, &unknown_alias)
         .unwrap_err();
-    assert!(error.message.contains("provided twice"));
-    assert!(error.message.contains("canonical config key"));
+    assert!(error.message.contains("unknown reflected input 'count'"));
+    assert!(error.message.contains("main.sanim::count"));
     let error = Engine::default()
         .prepare_json(
             "main.sanim",
@@ -247,7 +256,7 @@ fn compound_types_keep_full_schema_and_validate_all_nested_values() {
 }
 
 #[test]
-fn explicit_keys_cannot_redirect_existing_legacy_root_overrides_to_another_input() {
+fn explicit_keys_are_independent_of_other_inputs_variable_names() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
@@ -255,26 +264,28 @@ fn explicit_keys_cannot_redirect_existing_legacy_root_overrides_to_another_input
     );
     files.insert(
         "theme.sanim",
-        "let accent=reflect(Color(\"blue3\"), key=\"tint\")\n",
+        "let accent=reflect(Color(\"blue3\"),key=\"tint\")\n",
     );
-    let error = Engine::default()
+    let prepared = Engine::default()
         .prepare_json(
             "main.sanim",
             &files,
             &BTreeMap::from([("tint".into(), serde_json::json!("green3"))]),
         )
-        .unwrap_err();
-    assert!(
-        error
-            .message
-            .contains("conflicts with the legacy root name"),
-        "{error}"
+        .unwrap();
+    assert_eq!(
+        prepared.bindings["tint"],
+        Value::Color(Color::parse("red3").unwrap())
     );
-    assert!(error.message.contains("theme.sanim::accent"));
-    assert!(error.message.contains("main.sanim::tint"));
-    assert_eq!(error.source, "theme.sanim");
-    // An explicit key matching its own variable name is safe and remains supported.
-    run("let tint=reflect(Color(), key=\"tint\")\n");
+    assert_eq!(
+        prepared
+            .reflected
+            .iter()
+            .find(|input| input.key == "tint")
+            .unwrap()
+            .value,
+        Value::Color(Color::parse("green3").unwrap())
+    );
 }
 
 #[test]
@@ -292,7 +303,7 @@ fn null_is_an_optional_value_and_omission_resets_to_the_default() {
         .prepare_json(
             "main.sanim",
             &files,
-            &BTreeMap::from([("maybe_value".into(), serde_json::json!(4))]),
+            &BTreeMap::from([("main.sanim::maybe_value".into(), serde_json::json!(4))]),
         )
         .unwrap();
     assert!(
@@ -307,7 +318,7 @@ fn null_is_an_optional_value_and_omission_resets_to_the_default() {
         .prepare_json(
             "main.sanim",
             &files,
-            &BTreeMap::from([("count".into(), serde_json::Value::Null)]),
+            &BTreeMap::from([("main.sanim::count".into(), serde_json::Value::Null)]),
         )
         .unwrap_err();
     assert!(error.message.contains("expected Number"), "{error}");
@@ -394,7 +405,7 @@ fn expression_reflection_accepts_native_values_and_stable_explicit_keys() {
     );
     assert_eq!(
         p.animation.layers[0].element.fill,
-        Color::parse("blue3").unwrap()
+        sanim_core::Paint::Solid(Color::parse("blue3").unwrap())
     );
 }
 
@@ -476,7 +487,7 @@ fn nested_record_and_constructor_arguments_infer_distinct_field_keys() {
     );
     assert_eq!(
         p.animation.layers[0].element.fill,
-        Color::parse("blue3").unwrap()
+        sanim_core::Paint::Solid(Color::parse("blue3").unwrap())
     );
     let Value::Record(style) = &p.bindings["style"] else {
         panic!("expected style record")
@@ -503,7 +514,7 @@ fn inline_constructor_reflection_uses_an_explicit_key_without_a_binding() {
     assert_eq!(p.reflected[0].key, "dot.fill");
     assert_eq!(
         p.animation.layers[0].element.fill,
-        Color::parse("blue3").unwrap()
+        sanim_core::Paint::Solid(Color::parse("blue3").unwrap())
     );
 }
 
@@ -633,11 +644,11 @@ fn reflection_in_repeated_or_conditional_execution_is_rejected_before_evaluation
 }
 
 #[test]
-fn expression_reflection_reports_duplicate_and_ambiguous_keys() {
+fn expression_reflection_reports_duplicate_canonical_keys() {
     for source in [
         "let first=reflect(1,key=\"shared\")\nlet second=reflect(2,key=\"shared\")",
-        "let first=reflect(1,key=\"second\")\nlet second=reflect(2)",
-        "let condition=reflect(true)\nif reflect(true,key=\"condition\") {wait(1s)}",
+        "let first=reflect(1,key=\"main.sanim::second\")\nlet second=reflect(2)",
+        "let condition=reflect(true)\nif reflect(true,key=\"main.sanim::condition\") {wait(1s)}",
     ] {
         let mut files = MemorySources::default();
         files.insert("main.sanim", source);
@@ -673,7 +684,7 @@ fn multiple_operator_inputs_and_anonymous_constructor_fields_have_semantic_keys(
     );
     assert_eq!(
         p.animation.layers[0].element.fill,
-        Color::parse("red3").unwrap()
+        sanim_core::Paint::Solid(Color::parse("red3").unwrap())
     );
 }
 
@@ -704,7 +715,7 @@ fn expression_reflection_has_one_canonical_ast_node() {
 }
 
 #[test]
-fn explicit_keys_disambiguate_anonymous_fields_without_redirecting_legacy_aliases() {
+fn anonymous_fields_accept_only_their_explicit_config_keys() {
     let mut files = MemorySources::default();
     files.insert("main.sanim", "add(Circle(id=\"first\",fill=reflect(Color(),key=\"palette.first\")))\nadd(Circle(id=\"second\",fill=reflect(Color(),key=\"palette.second\")))\n");
     let inputs = BTreeMap::from([
@@ -718,11 +729,11 @@ fn explicit_keys_disambiguate_anonymous_fields_without_redirecting_legacy_aliase
     assert_eq!(p.reflected[1].name, "Circle.fill");
     assert_eq!(
         p.animation.layers[0].element.fill,
-        Color::parse("blue3").unwrap()
+        sanim_core::Paint::Solid(Color::parse("blue3").unwrap())
     );
     assert_eq!(
         p.animation.layers[1].element.fill,
-        Color::parse("green3").unwrap()
+        sanim_core::Paint::Solid(Color::parse("green3").unwrap())
     );
     let error = engine
         .prepare_json(
@@ -732,7 +743,7 @@ fn explicit_keys_disambiguate_anonymous_fields_without_redirecting_legacy_aliase
         )
         .unwrap_err();
     assert_eq!(error.code, "S302");
-    assert!(error.message.contains("ambiguous"), "{error}");
+    assert!(error.message.contains("unknown reflected input"), "{error}");
     assert!(error.message.contains("palette.first"), "{error}");
     assert!(error.message.contains("palette.second"), "{error}");
 }

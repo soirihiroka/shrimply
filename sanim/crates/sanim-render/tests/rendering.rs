@@ -31,7 +31,7 @@ fn renders_actual_circle_pixels_and_png() {
         sanim_core::Animation::default().background,
         sanim_core::Color::parse("window_bg_dark").unwrap()
     );
-    let scene = scene_in("add(Circle(radius: 10pt, fill: Color(\"red\")))\n", 64, 64);
+    let scene = scene_in("add(Circle(radius= 10pt, fill= Color(\"red\")))\n", 64, 64);
     let frame = Renderer::default()
         .render(
             &scene,
@@ -49,7 +49,7 @@ fn renders_actual_circle_pixels_and_png() {
 #[test]
 fn output_resizing_preserves_relative_position() {
     let scene = scene_in(
-        "add(Circle(radius: 5pt, fill: Color(\"blue\"), position: Vec2(-25%, 0%)))\n",
+        "add(Circle(radius= 5pt, fill= Color(\"blue\"), position= Vec2(-25%, 0%)))\n",
         64,
         64,
     );
@@ -81,7 +81,7 @@ fn same_frame_reuses_cache() {
 
 #[test]
 fn render_work_limits_apply_to_compositing() {
-    let scene = scene_in("add(Group(children: [Circle()], opacity: 0.5))\n", 64, 64);
+    let scene = scene_in("add(Group(children= [Circle()], opacity= 0.5))\n", 64, 64);
     let mut options = Options::for_animation(scene.animation());
     options.max_work = 10;
     assert!(
@@ -94,7 +94,7 @@ fn render_work_limits_apply_to_compositing() {
 #[test]
 fn cached_frames_respect_changed_work_limits() {
     let scene = scene_in(
-        "add(Group(children: [Circle(radius: 2pt)], opacity: 0.5))\n",
+        "add(Group(children= [Circle(radius= 2pt)], opacity= 0.5))\n",
         16,
         16,
     );
@@ -113,7 +113,7 @@ fn cached_frames_respect_changed_work_limits() {
 #[test]
 fn group_opacity_applies_after_children_composite() {
     let scene = scene_in(
-        "let a = Rect(width: 16pt, height: 16pt, fill: Color(\"red\"))\nlet b = Rect(width: 16pt, height: 16pt, fill: Color(\"blue\"))\nadd(Group(children: [a,b], opacity: 0.5))\n",
+        "let a = Rect(width= 16pt, height= 16pt, fill= Color(\"red\"))\nlet b = Rect(width= 16pt, height= 16pt, fill= Color(\"blue\"))\nadd(Group(children= [a,b], opacity= 0.5))\n",
         16,
         16,
     );
@@ -144,7 +144,7 @@ fn pixel_budget_rejects_large_surfaces() {
 #[test]
 fn later_motion_frame_changes_pixels() {
     let scene = scene_in(
-        "let marker = Circle(radius: 4pt, position: Vec2(-25%, 0%))\nMoveTo(marker, Vec2(25%, 0%), duration=1s, ease=\"linear\")\n",
+        "let marker = Circle(radius= 4pt, position= Vec2(-25%, 0%))\nMoveTo(marker, Vec2(25%, 0%), duration=1s, ease=\"linear\")\n",
         64,
         64,
     );
@@ -162,7 +162,7 @@ fn later_motion_frame_changes_pixels() {
 #[test]
 fn skia_recording_clips_overflow_when_replayed_after_a_host_transform() {
     let scene = scene_in(
-        "add(Rect(width:100pt,height:100pt,fill:Color(\"red\")))",
+        "add(Rect(width=100pt,height=100pt,fill=Color(\"red\")))",
         16,
         16,
     );
@@ -188,7 +188,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
         "font.ttf",
         include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf").as_slice(),
     );
-    files.insert("main.sanim","bg(Color(\"transparent\"))\nlet font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font:font,font_size:24pt,fill:Color(\"white\"))\nWrite(label, duration=1s, ease=\"linear\")");
+    files.insert("main.sanim","bg(Color(\"transparent\"))\nlet font=read<Font>(\"font.ttf\")\nlet label=Text(\"AV ffi السلام\",font=font,font_size=24pt,fill=Color(\"white\"))\nWrite(label, duration=1s, ease=\"linear\")");
     let prepared = Engine::new(sanim_core::Viewport {
         width: 240,
         height: 96,
@@ -224,7 +224,7 @@ fn pango_shaped_outlines_render_without_retaining_font_objects() {
 #[test]
 fn create_draws_a_line_segment_instead_of_fading_the_whole_line() {
     let scene = scene_in(
-        "let line=Line(end:Vec2(40pt,0pt),width:4pt,fill:Color(\"red\"))\nCreate(line, duration=1s, ease=\"linear\")",
+        "let line=Line(end=Vec2(40pt,0pt),width=4pt,fill=Color(\"red\"))\nCreate(line, duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -254,7 +254,7 @@ fn write_traces_then_fills_and_inverse_returns_to_empty() {
     for (forward, reverse) in [("Create", "Uncreate"), ("Write", "Unwrite")] {
         let scene = scene_in(
             &format!(
-                "let shape=Rect(width:32pt,height:32pt,fill:Color(\"red\"))\n{forward}(shape,duration:1s,ease:\"linear\")\n{reverse}(shape,duration:1s,ease:\"linear\")"
+                "let shape=Rect(width=32pt,height=32pt,fill=Color(\"red\"))\n{forward}(shape,duration=1s,ease=\"linear\")\n{reverse}(shape,duration=1s,ease=\"linear\")"
             ),
             64,
             64,
@@ -294,7 +294,7 @@ fn write_traces_then_fills_and_inverse_returns_to_empty() {
 #[test]
 fn group_write_reveals_children_without_changing_their_layout() {
     let scene = scene_in(
-        "let group=Row(children:[Rect(width:16pt,height:16pt),Circle(radius:8pt)],gap:8pt)\nWrite(group, duration=1s, ease=\"linear\")",
+        "let group=Row(children=[Rect(width=16pt,height=16pt),Circle(radius=8pt)],gap=8pt)\nWrite(group, duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -320,7 +320,7 @@ fn group_write_reveals_children_without_changing_their_layout() {
 #[test]
 fn grow_and_shrink_render_centered_without_zero_scale_artifacts() {
     let scene = scene_in(
-        "let shape=Rect(width:32pt,height:32pt)\nGrowFromCenter(shape, duration=1s, ease=\"linear\")\nShrinkToCenter(shape, duration=1s, ease=\"linear\")",
+        "let shape=Rect(width=32pt,height=32pt)\nGrowFromCenter(shape, duration=1s, ease=\"linear\")\nShrinkToCenter(shape, duration=1s, ease=\"linear\")",
         64,
         64,
     );
@@ -343,7 +343,7 @@ fn grow_and_shrink_render_centered_without_zero_scale_artifacts() {
 
 #[test]
 fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
-    let original = scene_in("add(Rect(width:32pt,height:24pt))", 64, 64);
+    let original = scene_in("add(Rect(width=32pt,height=24pt))", 64, 64);
     let mut renderer = Renderer::default();
     let animation = original.animation().clone();
     let first = renderer.prepare(animation.clone()).unwrap();
@@ -355,10 +355,12 @@ fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
         Fraction::from(0),
         Fraction::from(0),
         Fraction::from(1),
-    ]);
+    ])
+    .into();
     edited.duration = Fraction::from(2);
     let second = renderer.prepare(edited).unwrap();
-    assert_eq!(renderer.geometry_cache_hits, 1);
+    assert_eq!(renderer.geometry_cache_hits, 0);
+    assert_eq!(renderer.geometries_prepared, 0);
     let a = renderer
         .render(
             &first,
@@ -374,14 +376,29 @@ fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
         )
         .unwrap();
     assert_ne!(a.rgba, b.rgba);
+    assert_eq!(renderer.geometries_prepared, 1);
+    assert_eq!(renderer.geometry_cache_hits, 1);
     let mut geometry_edit = animation;
-    geometry_edit.layers[0].element.geometry = sanim_core::Geometry::Rectangle {
-        width: Fraction::from(16),
-        height: Fraction::from(24),
-        radius: Fraction::from(0),
-    }
-    .into();
-    renderer.prepare(geometry_edit).unwrap();
+    geometry_edit.layers[0]
+        .element
+        .set(
+            sanim_core::Property::Width,
+            sanim_core::Value::Number(sanim_core::Number {
+                value: Fraction::from(16),
+                unit: sanim_core::Unit::Length,
+            }),
+        )
+        .unwrap();
+    let changed = renderer.prepare(geometry_edit).unwrap();
+    assert_eq!(renderer.geometries_prepared, 1);
+    renderer
+        .record(
+            &changed,
+            0.into(),
+            &Options::for_animation(changed.animation()),
+        )
+        .unwrap();
+    assert_eq!(renderer.geometries_prepared, 2);
     assert_eq!(renderer.geometry_cache_hits, 1);
     renderer.clear_cache();
     renderer.prepare(first.animation().clone()).unwrap();
@@ -389,8 +406,8 @@ fn style_timing_and_viewport_hot_edits_reuse_paths_but_geometry_edits_do_not() {
 }
 
 #[test]
-fn nonfinite_path_measurements_fail_before_recording() {
-    let mut animation = scene_in("add(Line(end:Vec2(1pt,1pt)))", 64, 64)
+fn full_geometry_validation_rejects_nonfinite_path_measurements() {
+    let mut animation = scene_in("add(Line(end=Vec2(1pt,1pt)))", 64, 64)
         .animation()
         .clone();
     animation.layers[0].element.geometry = sanim_core::Geometry::Line {
@@ -401,10 +418,8 @@ fn nonfinite_path_measurements_fail_before_recording() {
         width: Fraction::from(1),
     }
     .into();
-    let error = match Scene::new(animation) {
-        Ok(_) => panic!("overflowing length accepted"),
-        Err(error) => error,
-    };
+    let scene = Scene::new(animation).unwrap();
+    let error = Renderer::default().validate_geometry(&scene).unwrap_err();
     assert!(error.contains("path contour length"), "{error}");
 }
 
@@ -413,7 +428,7 @@ fn overlapping_trace_and_fill_preserve_element_opacity() {
     for kind in ["Create", "Write"] {
         let scene = scene_in(
             &format!(
-                "let shape=Rect(width:32pt,height:32pt,opacity:0.5)\n{kind}(shape,duration:1s,ease:\"linear\")"
+                "let shape=Rect(width=32pt,height=32pt,opacity=0.5)\n{kind}(shape,duration=1s,ease=\"linear\")"
             ),
             64,
             64,

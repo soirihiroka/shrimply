@@ -275,6 +275,7 @@ fn worker(
     (shared, waker, progress_changes): (Shared, Waker, mpsc::SyncSender<()>),
 ) {
     let mut session = Session::new(&entry);
+    session.engine.preparation = sanim_lang::Preparation::Demand;
     session.engine.limits = limits;
     session.engine.viewport = viewport.clone();
     let mut raw = Configuration {

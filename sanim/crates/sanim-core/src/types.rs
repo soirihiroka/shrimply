@@ -9,6 +9,10 @@ pub enum Type {
     Unit,
     Bool,
     String,
+    Template,
+    Signal(Box<Type>),
+    Sql,
+    SqlIdent,
     Numeric(Unit),
     Fraction,
     Vector(usize, Option<Unit>),
@@ -19,6 +23,11 @@ pub enum Type {
     Font,
     Data,
     Dict,
+    DataFrame {
+        row: Box<Type>,
+        groups: Vec<String>,
+    },
+    Series(Box<Type>),
     List(Box<Type>),
     Union(Vec<Type>),
     Option(Box<Type>),
@@ -80,6 +89,25 @@ impl TypeBound {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BindingKind {
+    #[default]
+    Let,
+    Mut,
+    Sig,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FunctionParameter {
+    pub name: String,
+    pub ty: Type,
+    pub kind: BindingKind,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SignalRef {
+    pub id: u64,
+    pub ty: Arc<Type>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature {
     pub duration: crate::TimelineEffect,
@@ -89,7 +117,7 @@ pub struct Signature {
     pub duration_parameters: std::collections::BTreeSet<usize>,
     pub generics: Vec<GenericParameter<Type, TypeBound>>,
     pub default_count: usize,
-    pub parameters: Vec<(String, Type)>,
+    pub parameters: Vec<FunctionParameter>,
     pub result: Box<Type>,
 }
 
@@ -131,7 +159,12 @@ impl Type {
         match self {
             Self::Unknown | Self::Vector(_, None) => true,
             Self::Variable(_) | Self::BoundedVariable(..) => !symbolic_parameters,
-            Self::List(t) | Self::Option(t) | Self::Array(t) => t.incomplete(symbolic_parameters),
+            Self::List(t)
+            | Self::Option(t)
+            | Self::Array(t)
+            | Self::Series(t)
+            | Self::Signal(t) => t.incomplete(symbolic_parameters),
+            Self::DataFrame { row, .. } => row.incomplete(symbolic_parameters),
             Self::Record(fields) => fields.values().any(|ty| ty.incomplete(symbolic_parameters)),
             Self::Union(alternatives) => alternatives
                 .iter()
@@ -146,6 +179,9 @@ impl Type {
     pub fn contains_function(&self) -> bool {
         self.contains(&|ty| matches!(ty, Self::Function(_)))
     }
+    pub fn contains_signal(&self) -> bool {
+        self.contains(&|ty| matches!(ty, Self::Signal(_)))
+    }
     pub fn contains_element(&self) -> bool {
         self.contains(&|ty| matches!(ty, Self::Element))
     }
@@ -154,7 +190,12 @@ impl Type {
             return true;
         }
         match self {
-            Self::List(t) | Self::Option(t) | Self::Array(t) => t.contains(predicate),
+            Self::List(t)
+            | Self::Option(t)
+            | Self::Array(t)
+            | Self::Series(t)
+            | Self::Signal(t) => t.contains(predicate),
+            Self::DataFrame { row, .. } => row.contains(predicate),
             Self::Record(fields) => fields.values().any(|ty| ty.contains(predicate)),
             Self::Union(alternatives) => alternatives.iter().any(|ty| ty.contains(predicate)),
             Self::Enum { variants, .. } => {
@@ -165,7 +206,7 @@ impl Type {
                     || signature
                         .parameters
                         .iter()
-                        .any(|(_, ty)| ty.contains(predicate))
+                        .any(|parameter| parameter.ty.contains(predicate))
             }
             Self::BoundedVariable(_, bound) => {
                 matches!(bound.as_ref(), TypeBound::Type(ty) if ty.contains(predicate))
@@ -185,9 +226,15 @@ impl Type {
             || matches!(self, Type::Unknown)
             || match (self, actual) {
                 (Self::Vector(n, None), Self::Vector(m, _)) => n == m,
+                (Self::Signal(a), Self::Signal(b)) => a.accepts(b),
                 (Self::List(a), Self::List(b))
                 | (Self::Option(a), Self::Option(b))
-                | (Self::Array(a), Self::Array(b)) => **b == Self::Unknown || a.accepts(b),
+                | (Self::Array(a), Self::Array(b))
+                | (Self::Series(a), Self::Series(b)) => **b == Self::Unknown || a.accepts(b),
+                (
+                    Self::DataFrame { row: a, groups: ga },
+                    Self::DataFrame { row: b, groups: gb },
+                ) => ga == gb && a.accepts(b),
                 (Self::Record(a), Self::Record(b)) => {
                     a.len() == b.len()
                         && a.iter()
@@ -266,6 +313,12 @@ impl Type {
             Self::List(t) => Self::List(Box::new(t.substitute(bindings))),
             Self::Option(t) => Self::Option(Box::new(t.substitute(bindings))),
             Self::Array(t) => Self::Array(Box::new(t.substitute(bindings))),
+            Self::Signal(t) => Self::Signal(Box::new(t.substitute(bindings))),
+            Self::Series(t) => Self::Series(Box::new(t.substitute(bindings))),
+            Self::DataFrame { row, groups } => Self::DataFrame {
+                row: Box::new(row.substitute(bindings)),
+                groups: groups.clone(),
+            },
             Self::Union(alternatives) => {
                 Self::union(alternatives.iter().map(|ty| ty.substitute(bindings)))
                     .expect("nonempty checked union")
@@ -288,6 +341,10 @@ impl std::fmt::Display for Type {
             Self::Unit => write!(f, "Unit"),
             Self::Bool => write!(f, "Bool"),
             Self::String => write!(f, "String"),
+            Self::Template => write!(f, "Template"),
+            Self::Signal(t) => write!(f, "sig {t}"),
+            Self::Sql => write!(f, "Sql"),
+            Self::SqlIdent => write!(f, "SqlIdent"),
             Self::Numeric(unit) => write!(
                 f,
                 "{}",
@@ -310,6 +367,14 @@ impl std::fmt::Display for Type {
             Self::Font => write!(f, "Font"),
             Self::Data => write!(f, "Data"),
             Self::Dict => write!(f, "Dict"),
+            Self::DataFrame { row, groups } => {
+                write!(f, "DataFrame<{row}>")?;
+                if !groups.is_empty() {
+                    write!(f, " grouped by {}", groups.join(", "))?;
+                }
+                Ok(())
+            }
+            Self::Series(t) => write!(f, "Series<{t}>"),
             Self::List(t) => write!(f, "List<{t}>"),
             Self::Union(alternatives) => {
                 for (index, ty) in alternatives.iter().enumerate() {
@@ -337,9 +402,22 @@ impl std::fmt::Display for Type {
             }
             Self::Function(sig) => {
                 write!(f, "fn(")?;
-                for (i, (name, ty)) in sig.parameters.iter().enumerate() {
+                for (i, parameter) in sig.parameters.iter().enumerate() {
+                    let name = &parameter.name;
+                    let ty = &parameter.ty;
                     if i > 0 {
                         write!(f, ", ")?;
+                    }
+                    if parameter.kind != BindingKind::Let {
+                        write!(
+                            f,
+                            "{} ",
+                            if parameter.kind == BindingKind::Sig {
+                                "sig"
+                            } else {
+                                "mut"
+                            }
+                        )?;
                     }
                     write!(f, "{name}: {ty}")?;
                 }
@@ -450,6 +528,12 @@ pub enum Value {
     Font(crate::Font),
     Data(Arc<serde_json::Value>),
     Dict(imbl::OrdMap<String, serde_json::Value>),
+    Template(Arc<crate::Template>),
+    Signal(SignalRef),
+    Sql(Arc<crate::sql::Sql>),
+    SqlIdent(Arc<str>),
+    DataFrame(Arc<crate::dataframe::Frame>),
+    Series(Arc<crate::dataframe::Series>),
 }
 
 impl Value {
@@ -458,6 +542,10 @@ impl Value {
             Self::Unit => Type::Unit,
             Self::Bool(_) => Type::Bool,
             Self::String(_) => Type::String,
+            Self::Template(_) => Type::Template,
+            Self::Signal(signal) => Type::Signal(Box::new(signal.ty.as_ref().clone())),
+            Self::Sql(_) => Type::Sql,
+            Self::SqlIdent(_) => Type::SqlIdent,
             Self::Number(n) => Type::Numeric(n.unit),
             Self::Fraction(_) => Type::Fraction,
             Self::Vec2(v) => Type::Vector(2, Some(v.unit)),
@@ -479,6 +567,8 @@ impl Value {
             Self::Font(_) => Type::Font,
             Self::Data(_) => Type::Data,
             Self::Dict(_) => Type::Dict,
+            Self::DataFrame(frame) => frame.ty(),
+            Self::Series(series) => Type::Series(Box::new(series.ty.as_ref().clone())),
         }
     }
     /// Refine contextual collection schemas without changing shared source payloads.

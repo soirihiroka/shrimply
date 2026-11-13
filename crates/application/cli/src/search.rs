@@ -23,11 +23,34 @@ pub fn search(query: &str) -> Value {
                         + usize::from(arguments.contains(term)) * ARGUMENT_WEIGHT
                 })
                 .sum();
-            (score > 0).then_some((score, command))
+            (score > 0).then_some((score, command.path.to_owned(), command.summary.to_owned()))
         })
         .collect();
-    matches.sort_by(|(score_a, a), (score_b, b)| score_b.cmp(score_a).then(a.path.cmp(b.path)));
-    Value::Array(matches.into_iter().take(MAX_MATCHES).map(|(_, command)| json!({"command":format!("shrimply {}",command.path),"summary":command.summary})).collect())
+    let option_terms = terms_for(
+        &sanim_cli::OPTIONS
+            .iter()
+            .map(|option| format!("{} {}", option.name, option.summary))
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    matches.extend(sanim_cli::COMMANDS.iter().filter_map(|command| {
+        let path = format!("sanim {}", command.name);
+        let path_terms = terms_for(&path);
+        let summary = terms_for(command.summary);
+        let score = terms
+            .iter()
+            .map(|term| {
+                usize::from(path_terms.contains(term)) * PATH_WEIGHT
+                    + usize::from(summary.contains(term)) * SUMMARY_WEIGHT
+                    + usize::from(option_terms.contains(term)) * ARGUMENT_WEIGHT
+            })
+            .sum::<usize>();
+        (score > 0).then_some((score, path, command.summary.to_owned()))
+    }));
+    matches.sort_by(|(score_a, path_a, _), (score_b, path_b, _)| {
+        score_b.cmp(score_a).then(path_a.cmp(path_b))
+    });
+    Value::Array(matches.into_iter().take(MAX_MATCHES).map(|(_, path, summary)| json!({"command":format!("shrimply {path}"),"summary":summary})).collect())
 }
 
 fn terms_for(text: &str) -> std::collections::BTreeSet<String> {

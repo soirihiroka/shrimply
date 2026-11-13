@@ -26,13 +26,13 @@ fn constrained_numeric_helpers_preserve_concrete_types() {
 }
 #[test]
 fn structural_constraints_expose_only_guaranteed_fields() {
-    let p=run("fn amount<T:{value:Number}>(row:T):Number{return row.value}\nlet result=amount({value:7,label:\"extra\"})").unwrap();
+    let p=run("fn amount<T:{value:Number}>(row:T):Number{return row.value}\nlet result=amount({value=7,label=\"extra\"})").unwrap();
     assert_eq!(
         p.bindings["result"].number().unwrap().value,
         Fraction::from(7)
     );
     assert!(run("fn amount<T:{value:Number}>(row:T):Number{return row.other}").is_err());
-    assert!(run("fn amount<T:{value:Number}>(row:T):Number{return row.value}\nlet result=amount({other:1})").is_err());
+    assert!(run("fn amount<T:{value:Number}>(row:T):Number{return row.value}\nlet result=amount({other=1})").is_err());
 }
 #[test]
 fn generic_reads_use_call_specific_schemas_and_track_dependencies() {
@@ -58,14 +58,14 @@ fn generic_defaults_constraints_and_parameter_order_fail_cleanly() {
 }
 #[test]
 fn type_aliases_support_defaults_and_constraints() {
-    let p=run("type Box<T:Readable=Number> ={value:T}\nlet a:Box={value:3}\nlet b:Box<String> ={value:\"ok\"}").unwrap();
+    let p=run("type Box<T:Readable=Number> ={value:T}\nlet a:Box={value=3}\nlet b:Box<String> ={value=\"ok\"}").unwrap();
     assert!(matches!(p.bindings["a"], Value::Record(_)));
     assert!(matches!(p.bindings["b"], Value::Record(_)));
 }
 
 #[test]
 fn dependent_constraints_are_checked_after_substitution() {
-    let p=run("fn pick<T,U:T>(a:T,b:U):T{return b}\nlet result=pick(1,2)\ntype Pair<T,U:T=T>={a:T,b:U}\nlet pair:Pair<Number>={a:1,b:2}").unwrap();
+    let p=run("fn pick<T,U:T>(a:T,b:U):T{return b}\nlet result=pick(1,2)\ntype Pair<T,U:T=T>={a:T,b:U}\nlet pair:Pair<Number>={a=1,b=2}").unwrap();
     assert_eq!(
         p.bindings["result"].number().unwrap().value,
         Fraction::from(2)

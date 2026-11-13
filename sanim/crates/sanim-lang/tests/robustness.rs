@@ -53,7 +53,7 @@ fn enum_case_qualifier_must_match() {
 }
 #[test]
 fn floating_layout_supports_values_beyond_fraction_products() {
-    let p = run("let marker = Circle(position: Vec2(18446744073709551565%, 0%))\nadd(marker)\n")
+    let p = run("let marker = Circle(position= Vec2(18446744073709551565%, 0%))\nadd(marker)\n")
         .unwrap();
     assert!(
         p.animation
@@ -67,7 +67,7 @@ fn floating_layout_supports_values_beyond_fraction_products() {
 }
 #[test]
 fn assertion_overflow_is_not_a_proof() {
-    let p=run("let marker = Circle(position: Vec2(18446744073709551615pt, 10pt))\ncheck(inside_canvas(marker))\n").unwrap();
+    let p=run("let marker = Circle(position= Vec2(18446744073709551615pt, 10pt))\ncheck(inside_canvas(marker))\n").unwrap();
     assert_ne!(p.checks[0].evidence, sanim_core::verify::Evidence::Proved);
 }
 #[test]
@@ -159,7 +159,7 @@ fn reflected_nonfinite_coordinates_are_rejected() {
     let mut files = MemorySources::default();
     files.insert("main.sanim", "let location=reflect(Vec2(10pt, 20pt))\n");
     let input = BTreeMap::from([(
-        "location".into(),
+        "main.sanim::location".into(),
         Value::Vec2(sanim_core::Vec2 {
             values: [f64::NAN, 0.0],
             unit: sanim_core::Unit::Length,
@@ -250,14 +250,14 @@ fn parser_limits_are_enforced_on_cached_modules() {
 }
 #[test]
 fn flow_position_conflicts_fail_explicitly() {
-    assert!(run("let child = Circle(id: \"child\")\nadd(Row(children: [child]))\nMoveTo(child, Vec2(10pt,0pt), duration=1s, ease=\"linear\")\n").unwrap_err().message.contains("flow layout controls"));
+    assert!(run("let child = Circle(id= \"child\")\nadd(Row(children= [child]))\nMoveTo(child, Vec2(10pt,0pt), duration=1s, ease=\"linear\")\n").unwrap_err().message.contains("flow layout controls"));
 }
 
 #[test]
 fn shallow_multiline_source_does_not_recurse_per_newline() {
     let source = format!(
         "let values: List<Number> = [\n{}1\n]\n",
-        "\n // blank\n".repeat(20_000)
+        "\n # blank\n".repeat(20_000)
     );
     let mut files = MemorySources::default();
     files.insert("main.sanim", source);
@@ -297,7 +297,7 @@ fn functions_cannot_bypass_static_call_graph_in_temporary_values() {
     for source in [
         "fn identity<T>(value:T):T{return value}\nfn recurse():Number{return identity(recurse)()}\nlet x=recurse()",
         "fn recurse():Number{return unwrap(Some(recurse),recurse)()}\nlet x=recurse()",
-        "fn recurse():Number{return ({callback:recurse}).callback()}\nlet x=recurse()",
+        "fn recurse():Number{return ({callback=recurse}).callback()}\nlet x=recurse()",
         "fn identity<T>(value:T):T{return value}\nfn number_value():Number{return 1}\nidentity(number_value)",
     ] {
         let mut files = MemorySources::default();

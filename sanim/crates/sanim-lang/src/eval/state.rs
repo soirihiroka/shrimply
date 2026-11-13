@@ -20,6 +20,7 @@ pub struct ExecutionState {
     declarations: imbl::OrdSet<String>,
     retained_bytes: usize,
     retained_items: usize,
+    retained_frames: imbl::OrdSet<String>,
     logical_operations: u64,
     overhead: usize,
     payload: usize,
@@ -30,8 +31,12 @@ impl ExecutionState {
     /// Snapshot value without executing code: dirty or unread signals have no cached value.
     pub fn binding(&self, name: &str) -> Option<&Value> {
         match self.scope.get(name)? {
+            Binding::Value(Value::Signal(signal)) => {
+                self.reactive
+                    .cached(signal.id, self.cursor, &self.animation.reactive)
+            }
             Binding::Value(value) => Some(value),
-            Binding::Reactive(id) => {
+            Binding::Reactive(id) | Binding::Deferred(id) => {
                 self.reactive
                     .cached(*id, self.cursor, &self.animation.reactive)
             }
@@ -108,6 +113,7 @@ impl Store {
                 &runtime.reflected,
                 &runtime.reactive,
                 runtime.limits,
+                runtime.preparation,
                 runtime.animation.dpi,
                 runtime.animation.width,
                 runtime.animation.height,
@@ -244,6 +250,7 @@ impl Store {
             runtime.used_functions = saved.functions.clone();
             runtime.retained_bytes = saved.retained_bytes;
             runtime.retained_items = saved.retained_items;
+            runtime.retained_frames = saved.retained_frames.clone();
             runtime.logical_operations = saved.logical_operations;
             runtime.completed_statements += index as u64;
             runtime.statistics.restored_statements = index as u64;
@@ -327,6 +334,7 @@ impl Store {
             declarations: self.declarations.clone(),
             retained_bytes: runtime.retained_bytes,
             retained_items: runtime.retained_items,
+            retained_frames: runtime.retained_frames.clone(),
             logical_operations: runtime.logical_operations,
             overhead,
             payload,

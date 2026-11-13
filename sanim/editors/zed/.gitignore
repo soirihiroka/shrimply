@@ -1,0 +1,4 @@
+/target/
+/extension.wasm
+/tests/__pycache__/
+!/Cargo.lock

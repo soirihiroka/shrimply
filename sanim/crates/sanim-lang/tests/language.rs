@@ -34,7 +34,7 @@ fn semicolons_work() {
 #[test]
 fn typed_defaults_and_named_arguments() {
     let p = prepare(
-        "fn greet(prefix: String, suffix: String = \"!\"): String { return prefix + suffix }\nlet a = greet(\"hi\")\nlet b = greet(suffix: \"?\", prefix: \"hey\")\n",
+        "fn greet(prefix: String, suffix: String = \"!\"): String { return prefix + suffix }\nlet a = greet(\"hi\")\nlet b = greet(suffix= \"?\", prefix= \"hey\")\n",
     );
     assert_eq!(p.bindings["a"], Value::String("hi!".into()));
     assert_eq!(p.bindings["b"], Value::String("hey?".into()));
@@ -57,14 +57,14 @@ fn nested_generic_arguments() {
 #[test]
 fn structural_records_and_constructor() {
     let p = prepare(
-        "type Style = { fill: Color, size: Length }\nfn tile(style: Style): Length { return style.size }\nlet size = tile({ fill: Color(\"red\"), size: 12pt })\nlet style = Style(size: 16pt, fill: #00FF00)\n",
+        "type Style = { fill: Color, size: Length }\nfn tile(style: Style): Length { return style.size }\nlet size = tile({ fill=Color(\"red\"), size=12pt })\nlet style = Style(size= 16pt, fill= Color(\"#00FF00\"))\n",
     );
     assert_eq!(number(&p, "size"), Fraction::from(12));
     assert_eq!(p.types["Style"], p.bindings["style"].ty());
 }
 #[test]
 fn generic_record_alias() {
-    let p = prepare("type Boxed<T> = { value: T }\nlet item: Boxed<Number> = { value: 7 }\n");
+    let p = prepare("type Boxed<T> = { value: T }\nlet item: Boxed<Number> = { value=7 }\n");
     assert!(matches!(p.bindings["item"], Value::Record(_)));
 }
 #[test]
@@ -120,7 +120,7 @@ fn reflected_values_are_known_loop_bounds() {
 #[test]
 fn reflection_describes_nested_types() {
     let p = prepare(
-        "type Style = { fill: Color, width: Length, outline: Option<Color> }\nlet style: Style=reflect({ fill: Color(\"red\"), width: 16pt, outline: None })\n",
+        "type Style = { fill: Color, width: Length, outline: Option<Color> }\nlet style: Style=reflect({ fill=Color(\"red\"), width=16pt, outline=None })\n",
     );
     assert!(matches!(p.reflected[0].ty.as_ref(), Type::Record(_)));
     assert_eq!(p.reflected[0].default, p.reflected[0].value);
@@ -132,7 +132,8 @@ fn reflection_overrides_validate_before_use() {
         "main.sanim",
         "let count: Number=reflect(2)\nrepeat count { wait(1s) }\n",
     );
-    let overrides = BTreeMap::from([("count".into(), Value::Number(Number::scalar(3)))]);
+    let overrides =
+        BTreeMap::from([("main.sanim::count".into(), Value::Number(Number::scalar(3)))]);
     let p = Engine::default()
         .prepare("main.sanim", &sources, &overrides)
         .unwrap();
@@ -156,8 +157,9 @@ fn short_circuit_avoids_division_by_zero() {
 }
 #[test]
 fn utf8_strings_and_comments() {
-    let p =
-        prepare("# comment\nlet label = \"日本語\\nhello\" // comment\nlet color = #12345678\n");
+    let p = prepare(
+        "# comment\nlet label = \"日本語\\nhello\" # comment\nlet color = Color(\"#12345678\")\n",
+    );
     assert_eq!(p.bindings["label"], Value::String("日本語\nhello".into()));
 }
 #[test]
@@ -199,22 +201,22 @@ reject!(immutable_assignment, "let item = 1\nitem = 2\n", "S130");
 reject!(wrong_units, "let value = 1pt + 1s\n", "S106");
 reject!(
     wrong_field_type,
-    "type Style = { fill: Color }\nlet style: Style = { fill: \"red\" }\n",
+    "type Style = { fill: Color }\nlet style: Style = { fill=\"red\" }\n",
     "S106"
 );
 reject!(
     misspelled_field,
-    "type Style = { width: Length }\nlet style: Style = { widht: 1pt }\n",
+    "type Style = { width: Length }\nlet style: Style = { widht=1pt }\n",
     "S106"
 );
 reject!(
     unknown_argument,
-    "let marker = Circle(raduis: 4pt)\n",
+    "let marker = Circle(raduis= 4pt)\n",
     "S124"
 );
 reject!(
     duplicate_argument,
-    "let marker = Circle(radius: 1pt, radius: 2pt)\n",
+    "let marker = Circle(radius= 1pt, radius= 2pt)\n",
     "S124"
 );
 reject!(unknown_name, "let marker = Circel()\n", "S120");
@@ -269,7 +271,7 @@ reject!(
     "let color = Color(\"not-a-color\")\n",
     "S305"
 );
-reject!(invalid_opacity, "let marker = Circle(opacity: 2)\n", "S305");
+reject!(invalid_opacity, "let marker = Circle(opacity= 2)\n", "S305");
 reject!(
     unsupported_unbounded_loop,
     "while true { wait(1s) }\n",
@@ -327,7 +329,7 @@ fn reflection_checks_every_list_item() {
     let mut sources = MemorySources::default();
     sources.insert("main.sanim", "let values: List<Number>=reflect([1])\n");
     let input = BTreeMap::from([(
-        "values".into(),
+        "main.sanim::values".into(),
         Value::List(
             vec![
                 Value::Number(Number::scalar(1)),
@@ -359,7 +361,7 @@ fn powers_are_right_associative_and_integral_powers_exact() {
 #[test]
 fn common_math_functions_have_clear_units_and_constants() {
     let p = prepare(
-        "let a=log(8,base:2)\nlet b=sin(90deg)\nlet c=cos(PI)\nlet d=sqrt(9)\nlet e=floor(1.9pt)\nlet f=hypot(3pt,4pt)\nlet g=abs(sin(PI)) < 0.000001\nlet h=TAU > PI and E > 2\n",
+        "let a=log(8,base=2)\nlet b=sin(90deg)\nlet c=cos(PI)\nlet d=sqrt(9)\nlet e=floor(1.9pt)\nlet f=hypot(3pt,4pt)\nlet g=abs(sin(PI)) < 0.000001\nlet h=TAU > PI and E > 2\n",
     );
     for (name, value) in [("a", 3), ("b", 1), ("c", -1), ("d", 3), ("e", 1), ("f", 5)] {
         assert_eq!(number(&p, name), Fraction::from(value));
@@ -373,7 +375,7 @@ fn common_math_functions_have_clear_units_and_constants() {
 fn math_errors_do_not_publish_nan_or_implicitly_drop_units() {
     for source in [
         "let x=log(0)",
-        "let x=log(8,base:1)",
+        "let x=log(8,base=1)",
         "let x=sqrt(-1)",
         "let x=asin(2)",
         "let x=exp(1000)",
@@ -431,7 +433,7 @@ fn math_helpers_preserve_angle_units_and_fraction_values() {
 #[test]
 fn adwaita_colors_work_in_reflection_and_typed_data_loading() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let tint:Color=reflect(Color(\"BLUE3\"))\nlet loaded=read<Color>(\"color.json\")\nlet default_color=Color()\nadd(Circle(fill:tint))");
+    files.insert("main.sanim", "let tint:Color=reflect(Color(\"BLUE3\"))\nlet loaded=read<Color>(\"color.json\")\nlet default_color=Color()\nadd(Circle(fill=tint))");
     files.insert("color.json", "\"orange3\"");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -457,7 +459,10 @@ fn equals_names_arguments_and_record_values_while_colons_declare_types() {
     );
     let element = &p.animation.layers[0].element;
     assert_eq!(element.position.values, [10.0, 20.0]);
-    assert_eq!(element.fill, sanim_core::Color::parse("blue3").unwrap());
+    assert_eq!(
+        element.fill,
+        sanim_core::Paint::Solid(sanim_core::Color::parse("blue3").unwrap())
+    );
 }
 
 #[test]

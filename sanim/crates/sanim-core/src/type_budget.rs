@@ -41,8 +41,16 @@ pub fn charge_substitution(
         }
         take(remaining, std::mem::size_of::<Type>())?;
         match ty {
-            Type::List(t) | Type::Option(t) | Type::Array(t) => {
-                walk(t, remaining, bindings, depth - 1)?
+            Type::List(t)
+            | Type::Option(t)
+            | Type::Array(t)
+            | Type::Series(t)
+            | Type::Signal(t) => walk(t, remaining, bindings, depth - 1)?,
+            Type::DataFrame { row, groups } => {
+                walk(row, remaining, bindings, depth - 1)?;
+                for name in groups {
+                    take(remaining, name.len() + std::mem::size_of::<String>())?;
+                }
             }
             Type::Union(alternatives) => {
                 if alternatives.is_empty() {
@@ -82,9 +90,9 @@ pub fn charge_substitution(
                         bound(b, remaining, bindings, depth - 1)?;
                     }
                 }
-                for (name, ty) in &sig.parameters {
-                    take(remaining, name.len())?;
-                    walk(ty, remaining, bindings, depth - 1)?;
+                for parameter in &sig.parameters {
+                    take(remaining, parameter.name.len())?;
+                    walk(&parameter.ty, remaining, bindings, depth - 1)?;
                 }
                 walk(&sig.result, remaining, bindings, depth - 1)?;
             }

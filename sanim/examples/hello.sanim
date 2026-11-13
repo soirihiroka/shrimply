@@ -1,4 +1,4 @@
-bg(#121826)
+bg(Color("#121826"))
 type DotStyle = {
     fill: Color,
     radius: Length,

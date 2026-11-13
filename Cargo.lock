@@ -5215,6 +5215,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sanim-cli"
+version = "0.1.0"
+dependencies = [
+ "sanim-core",
+ "sanim-data",
+ "sanim-lang",
+ "sanim-render",
+ "sanim-runtime",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "sanim-core"
 version = "0.1.0"
 dependencies = [
@@ -5709,6 +5722,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "clap 4.6.7",
+ "sanim-cli",
  "schemars",
  "serde",
  "serde_json",

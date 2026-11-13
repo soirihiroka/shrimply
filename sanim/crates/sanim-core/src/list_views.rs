@@ -132,7 +132,7 @@ impl ListViews {
         fn visit(element: &Element, views: &OrdMap<String, u64>, ids: &mut OrdSet<String>) {
             ids.insert(element.id.clone());
             if !views.contains_key(&element.id)
-                && let Geometry::Group { children } = element.geometry.as_ref()
+                && let Some(children) = element.geometry.children()
             {
                 for child in children {
                     visit(child, views, ids);
@@ -171,7 +171,7 @@ impl ListViews {
                     pending.extend(children.iter().copied());
                 }
             }
-            if let Geometry::Group { children } = element.geometry.as_ref() {
+            if let Some(children) = element.geometry.children() {
                 pending.extend(children.iter());
             }
         }
@@ -340,7 +340,7 @@ impl ListViews {
                 return Err(format!("duplicate list element identity '{}'", element.id));
             }
             if !state.views.contains_key(&element.id)
-                && let Geometry::Group { children } = element.geometry.as_ref()
+                && let Some(children) = element.geometry.children()
             {
                 for child in children {
                     visit(cell, child, state, additions)?

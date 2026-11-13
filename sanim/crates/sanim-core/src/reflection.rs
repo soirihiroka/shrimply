@@ -91,12 +91,11 @@ pub fn display_name(name: &str) -> String {
     }
 }
 
-/// Canonical identity and legacy-key compatibility for compilers, editors and headless hosts.
+/// Canonical reflection identity shared by compilers, editors and headless hosts.
 #[derive(Clone, Debug)]
 pub struct Schema {
     entry: String,
     declarations: std::collections::BTreeMap<String, Arc<Declaration>>,
-    legacy_root_names: std::collections::BTreeMap<String, Option<String>>,
 }
 impl Schema {
     pub fn new(
@@ -106,7 +105,6 @@ impl Schema {
         let mut schema = Self {
             entry: entry.into(),
             declarations: Default::default(),
-            legacy_root_names: Default::default(),
         };
         for declaration in declarations {
             if let Some(previous) = schema
@@ -129,65 +127,12 @@ impl Schema {
                     declaration.span,
                 ));
             }
-            if declaration.source == entry {
-                schema
-                    .legacy_root_names
-                    .entry(declaration.name.clone())
-                    .and_modify(|key| *key = None)
-                    .or_insert_with(|| Some(declaration.key.clone()));
-            }
-        }
-        for (name, legacy_key) in &schema.legacy_root_names {
-            let Some(canonical) = schema.declarations.get(name) else {
-                continue;
-            };
-            let legacy = legacy_key
-                .as_ref()
-                .map(|key| &schema.declarations[key])
-                .or_else(|| {
-                    schema
-                        .declarations
-                        .values()
-                        .find(|v| v.source == entry && v.name == *name && v.key != canonical.key)
-                });
-            if let Some(legacy) = legacy
-                && canonical.key != legacy.key
-            {
-                return Err(crate::Diagnostic::new(
-                    "S113",
-                    format!(
-                        "reflection key '{name}' for '{}::{}' conflicts with the legacy root name of '{}::{}'. Existing overrides would target the wrong input. Choose a distinct key such as key=\"palette.{name}\", or omit the explicit key.",
-                        canonical.source, canonical.name, legacy.source, legacy.name
-                    ),
-                    &canonical.source,
-                    canonical.span,
-                ));
-            }
         }
         Ok(schema)
     }
     pub fn declaration(&self, provided: &str) -> Result<&Arc<Declaration>, crate::Diagnostic> {
         if let Some(declaration) = self.declarations.get(provided) {
             return Ok(declaration);
-        }
-        if let Some(alias) = self.legacy_root_names.get(provided) {
-            if let Some(key) = alias {
-                return Ok(&self.declarations[key]);
-            }
-            return Err(crate::Diagnostic::new(
-                "S302",
-                format!(
-                    "ambiguous reflected input name '{provided}': several inline inputs share this inferred name. Supply one of their canonical config keys: {}",
-                    self.declarations
-                        .values()
-                        .filter(|v| v.source == self.entry && v.name == provided)
-                        .map(|v| v.key.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                &self.entry,
-                Span::default(),
-            ));
         }
         Err(crate::Diagnostic::new(
             "S302",
@@ -209,20 +154,9 @@ impl Schema {
         convert: impl Fn(&Type, &T) -> Result<crate::Value, String>,
     ) -> Result<std::collections::BTreeMap<String, crate::Value>, crate::Diagnostic> {
         let mut normalized = std::collections::BTreeMap::new();
-        let mut originals = std::collections::BTreeMap::new();
         for (provided, value) in supplied {
             let declaration = self.declaration(provided)?;
             let key = &declaration.key;
-            if let Some(previous) = originals.insert(key, provided) {
-                return Err(crate::Diagnostic::new(
-                    "S302",
-                    format!(
-                        "reflected input '{key}' was provided twice, as '{previous}' and '{provided}'; supply only the canonical config key '{key}'"
-                    ),
-                    &declaration.source,
-                    declaration.span,
-                ));
-            }
             let value = convert(&declaration.ty, value).map_err(|message| {
                 crate::Diagnostic::new(
                     "S302",

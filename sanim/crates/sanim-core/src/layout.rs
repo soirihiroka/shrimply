@@ -35,11 +35,12 @@ fn resolve_with_lists(
     parent_height: f64,
     lists: Option<(&crate::list_views::ListViews, Fraction)>,
 ) -> Result<(), String> {
+    resolve_dimensions(element, parent_width, parent_height)?;
     if element.horizontal.origin.unit == crate::Unit::Percent {
         let width = element
             .layout
             .width
-            .map(to_f64)
+            .map(|number| to_f64(number.value))
             .transpose()?
             .unwrap_or(parent_width);
         element.horizontal.origin = crate::Number {
@@ -71,7 +72,7 @@ fn resolve_with_lists(
                     element
                         .layout
                         .width
-                        .map(to_f64)
+                        .map(|number| to_f64(number.value))
                         .transpose()?
                         .unwrap_or(parent_width),
                     to_f64(element.scale)?,
@@ -81,7 +82,7 @@ fn resolve_with_lists(
                     element
                         .layout
                         .height
-                        .map(to_f64)
+                        .map(|number| to_f64(number.value))
                         .transpose()?
                         .unwrap_or(parent_height),
                     to_f64(element.scale)?,
@@ -112,22 +113,41 @@ fn resolve_with_lists(
             calc("-", calc("*", parent, anchor)?, own)?,
         )?;
     }
-    if matches!(element.geometry.as_ref(), Geometry::Group { .. })
-        && let Geometry::Group { children } = Arc::make_mut(&mut element.geometry)
+    let rectangle = match element.geometry.as_ref() {
+        Geometry::Rectangle { width, height, .. } => Some((to_f64(*width)?, to_f64(*height)?)),
+        _ => None,
+    };
+    if element
+        .geometry
+        .children()
+        .is_some_and(|children| !children.is_empty())
+        && let Some(children) = Arc::make_mut(&mut element.geometry).children_mut()
     {
-        let width = element
-            .layout
-            .width
-            .map(to_f64)
-            .transpose()?
+        let width = rectangle
+            .map(|size| size.0)
+            .or(element
+                .layout
+                .width
+                .map(|number| to_f64(number.value))
+                .transpose()?)
             .unwrap_or(parent_width);
-        let height = element
-            .layout
-            .height
-            .map(to_f64)
-            .transpose()?
+        let height = rectangle
+            .map(|size| size.1)
+            .or(element
+                .layout
+                .height
+                .map(|number| to_f64(number.value))
+                .transpose()?)
             .unwrap_or(parent_height);
         if let Some(direction) = element.layout.direction {
+            let padding = to_f64(element.layout.padding)?;
+            for child in children.iter_mut() {
+                resolve_dimensions(
+                    child,
+                    (width - 2. * padding).max(0.),
+                    (height - 2. * padding).max(0.),
+                )?;
+            }
             let transition = lists
                 .map(|(lists, time)| lists.selection(&element.id, time))
                 .transpose()?
@@ -192,7 +212,7 @@ fn resolve_with_lists(
             }
         } else {
             let padding = to_f64(element.layout.padding)?;
-            for child in children {
+            for child in children.iter_mut() {
                 resolve_with_lists(
                     child,
                     (width - 2. * padding).max(0.),
@@ -201,6 +221,12 @@ fn resolve_with_lists(
                 )?;
                 child.position.values[0] = calc("+", child.position.values[0], padding)?;
                 child.position.values[1] = calc("+", child.position.values[1], padding)?;
+            }
+        }
+        if rectangle.is_some() {
+            for child in children {
+                child.position.values[0] = calc("-", child.position.values[0], width / 2.)?;
+                child.position.values[1] = calc("-", child.position.values[1], height / 2.)?;
             }
         }
     }
@@ -222,13 +248,15 @@ pub fn extent(element: &Element) -> Result<(f64, f64), String> {
                 element
                     .layout
                     .width
-                    .ok_or("flow child Group requires width")?,
+                    .ok_or("flow child Group requires width")?
+                    .value,
             )?,
             to_f64(
                 element
                     .layout
                     .height
-                    .ok_or("flow child Group requires height")?,
+                    .ok_or("flow child Group requires height")?
+                    .value,
             )?,
         ),
         _ => {
@@ -243,9 +271,15 @@ pub fn extent(element: &Element) -> Result<(f64, f64), String> {
             ));
         }
     };
+    let stroke = element
+        .stroke
+        .as_ref()
+        .map(|stroke| to_f64(stroke.width))
+        .transpose()?
+        .unwrap_or(0.);
     Ok((
-        calc("*", w, to_f64(element.scale)?)?,
-        calc("*", h, to_f64(element.scale)?)?,
+        calc("*", calc("+", w, stroke)?, to_f64(element.scale)?)?,
+        calc("*", calc("+", h, stroke)?, to_f64(element.scale)?)?,
     ))
 }
 
@@ -330,4 +364,50 @@ fn list_positions(
             })
         })
         .collect()
+}
+
+fn resolve_dimensions(
+    element: &mut Element,
+    parent_width: f64,
+    parent_height: f64,
+) -> Result<(), String> {
+    for (axis, parent) in [parent_width, parent_height].into_iter().enumerate() {
+        let number = if axis == 0 {
+            &mut element.layout.width
+        } else {
+            &mut element.layout.height
+        };
+        if let Some(number) = number {
+            if number.unit == crate::Unit::Percent {
+                number.value = crate::math::from_f64(calc("*", to_f64(number.value)?, parent)?)?;
+                number.unit = crate::Unit::Length;
+            }
+            if number.unit != crate::Unit::Length
+                || !crate::math::finite(&number.value)
+                || number.value <= Fraction::from(0)
+            {
+                return Err(format!(
+                    "{}.{} must resolve to a positive finite length inside its parent",
+                    element.id,
+                    if axis == 0 { "width" } else { "height" }
+                ));
+            }
+            if let Geometry::Rectangle { width, height, .. } = element.geometry.as_ref() {
+                let current = if axis == 0 { *width } else { *height };
+                if current != number.value {
+                    let Geometry::Rectangle { width, height, .. } =
+                        Arc::make_mut(&mut element.geometry)
+                    else {
+                        unreachable!()
+                    };
+                    if axis == 0 {
+                        *width = number.value
+                    } else {
+                        *height = number.value
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }

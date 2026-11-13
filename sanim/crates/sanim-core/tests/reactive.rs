@@ -19,7 +19,8 @@ fn element(id: &str, geometry: Geometry) -> Element {
         rotation: Fraction::from(0),
         scale: Fraction::from(1),
         opacity: Fraction::from(1),
-        fill: Color::parse("blue3").unwrap(),
+        fill: Color::parse("blue3").unwrap().into(),
+        stroke: None,
         reveal: Reveal::default(),
         horizontal: Default::default(),
         layout: Layout::default(),
@@ -105,6 +106,61 @@ fn shared_signal_is_evaluated_once_per_sample_and_seek_order_is_irrelevant() {
 }
 
 #[test]
+fn retained_templates_format_shared_values_and_seek_without_source_evaluation() {
+    use sanim_core::TemplatePart;
+    let mut graph = ReactiveGraph::default();
+    graph.set_cell(1, numeric(1, Unit::Number)).unwrap();
+    graph.set_cell(2, Value::String("03d".into())).unwrap();
+    let value = graph.insert_node(Node::Cell(1), 100).unwrap();
+    let format = graph.insert_node(Node::Cell(2), 100).unwrap();
+    let parts = vec![
+        TemplatePart::Text("value=".into()),
+        TemplatePart::Hole {
+            value,
+            format: Some(format),
+            conversion: None,
+        },
+        TemplatePart::Text("\n# literal".into()),
+    ];
+    let text = graph
+        .insert_node(
+            Node::Template {
+                parts: parts.into(),
+            },
+            100,
+        )
+        .unwrap();
+    graph
+        .animate_cell(
+            1,
+            0.into(),
+            1.into(),
+            numeric(3, Unit::Number),
+            Easing::Linear,
+        )
+        .unwrap();
+    graph
+        .write_cell(2, 1.into(), Value::String("b".into()))
+        .unwrap();
+    let restored: ReactiveGraph =
+        serde_json::from_slice(&serde_json::to_vec(&graph).unwrap()).unwrap();
+    for (time, expected) in [
+        (Fraction::new(1u64, 2u64), "value=002\n# literal"),
+        (1.into(), "value=11\n# literal"),
+        (0.into(), "value=001\n# literal"),
+    ] {
+        let mut sampler = restored.sampler(time).unwrap();
+        assert_eq!(sampler.value(text).unwrap().string().unwrap(), expected);
+        let evaluated = sampler.evaluated_nodes();
+        sampler.value(text).unwrap();
+        assert_eq!(sampler.evaluated_nodes(), evaluated);
+    }
+    let dependencies = restored.cell_dependencies(text).unwrap();
+    assert_eq!(dependencies.len(), 2);
+    assert!(dependencies.contains(&1) && dependencies.contains(&2));
+}
+
+#[test]
 fn retained_properties_share_scene_sampling_and_preserve_static_geometry() {
     let (mut graph, size) = oscillator();
     graph.bind("circle".into(), Property::Scale, size).unwrap();
@@ -131,7 +187,8 @@ fn retained_properties_share_scene_sampling_and_preserve_static_geometry() {
                 Geometry::Rectangle {
                     width: Fraction::from(20),
                     height: Fraction::from(10),
-                    radius: Fraction::from(0),
+                    children: Default::default(),
+                    radius: Fraction::from(0).into(),
                 },
             ),
             Fraction::from(0),
@@ -196,7 +253,8 @@ fn retained_lengths_update_geometry_without_mutating_original_definitions() {
                 Geometry::Rectangle {
                     width: Fraction::from(10),
                     height: Fraction::from(10),
-                    radius: Fraction::from(0),
+                    children: Default::default(),
+                    radius: Fraction::from(0).into(),
                 },
             ),
             Fraction::from(0),
@@ -444,7 +502,8 @@ fn retained_frame_benchmark() {
                 Geometry::Rectangle {
                     width: Fraction::from(20),
                     height: Fraction::from(10),
-                    radius: Fraction::from(0),
+                    children: Default::default(),
+                    radius: Fraction::from(0).into(),
                 },
             ),
             Fraction::from(0),
@@ -495,7 +554,8 @@ fn rounded_rectangle_radius_samples_are_nonnegative_and_keep_the_same_outer_boun
                 Geometry::Rectangle {
                     width: Fraction::from(20),
                     height: Fraction::from(20),
-                    radius: Fraction::from(0),
+                    children: Default::default(),
+                    radius: Fraction::from(0).into(),
                 },
             ),
             Fraction::from(0),
