@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Flat foreground from the bundled Shrimply mark, inside the adaptive safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="24.56" android:translateY="26.4" android:scaleX="0.46" android:scaleY="0.46">
+        <path android:pathData="M12 18H78C99 18 116 37 116 60C116 83 100 102 80 102C91 102 99 92 99 81C99 69 91 61 80 61H48C28 61 12 42 12 18Z M12 77L80 102H34C21 102 12 92 12 77Z M48 77H59C71 77 80 88 80 102Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:type="linear" android:startX="22" android:startY="18" android:endX="91" android:endY="102">
+                    <item android:offset="0" android:color="#F6A054" />
+                    <item android:offset="0.48" android:color="#FA745A" />
+                    <item android:offset="1" android:color="#F8468D" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:fillColor="#302527" android:pathData="M38 34A4.5 4.5 0 1 1 29 34A4.5 4.5 0 1 1 38 34Z" />
+    </group>
+</vector>
