@@ -6100,6 +6100,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-editor-android"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "jni",
+ "ndk",
+ "shrimply-cross-ui-theme",
+ "shrimply-math-core",
+ "shrimply-timeline-paint-skia",
+ "skia-safe",
+]
+
+[[package]]
 name = "shrimply-editor-appkit"
 version = "0.1.0"
 dependencies = [
@@ -7776,6 +7789,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shrimply-timeline-paint-skia"
+version = "0.1.0"
+dependencies = [
+ "shrimply-components-skia",
+ "shrimply-cross-ui-theme",
+ "shrimply-math-core",
+]
+
+[[package]]
 name = "shrimply-timeline-qt"
 version = "0.1.0"
 dependencies = [
@@ -7829,6 +7851,7 @@ dependencies = [
  "shrimply-resource-pipeline",
  "shrimply-scene-3d",
  "shrimply-timeline-edit",
+ "shrimply-timeline-paint-skia",
  "shrimply-timeline-snap",
  "shrimply-transcription",
  "shrimply-trust-core",

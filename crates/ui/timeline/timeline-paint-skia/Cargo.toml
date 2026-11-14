@@ -1,0 +1,9 @@
+[package]
+name = "shrimply-timeline-paint-skia"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shrimply-components-skia.workspace = true
+shrimply-cross-ui-theme.workspace = true
+shrimply-math-core.workspace = true

@@ -41,3 +41,5 @@ shrimply-i18n = { workspace = true }
 tracing.workspace = true
 skia-safe.workspace = true
 shrimply-timeline-snap = { workspace = true }
+
+shrimply-timeline-paint-skia.workspace = true

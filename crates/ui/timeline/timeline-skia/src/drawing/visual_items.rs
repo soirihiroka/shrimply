@@ -78,25 +78,12 @@ pub(in crate::drawing) fn draw_comment_item(
         selected,
         border_color,
     );
-    if !item.text.is_empty() {
-        let font_id = FontId::proportional(10.0);
-        let color = crate::theme::current().view_fg;
-        let max_width = (clip_width - ITEM_PADDING_X * 2.0 - 4.0).max(0.0) as f32;
-        painter
-            .with_clip_rect(rect(
-                clip_x + ITEM_PADDING_X,
-                y,
-                (clip_width - ITEM_PADDING_X * 2.0).max(1.0),
-                TRACK_HEIGHT,
-            ))
-            .system_text_ellipsized(
-                vec2((clip_x + ITEM_PADDING_X + 2.0) as f32, (y + 12.0) as f32),
-                &item.text,
-                font_id,
-                color,
-                max_width,
-            );
-    }
+    shrimply_timeline_paint_skia::draw_clip_label(
+        painter,
+        rect(clip_x, y, clip_width, TRACK_HEIGHT),
+        &item.text,
+        crate::theme::current().view_fg,
+    );
 }
 
 pub(in crate::drawing) fn draw_caption_item(
@@ -116,25 +103,12 @@ pub(in crate::drawing) fn draw_caption_item(
         selected,
         Color::YELLOW1,
     );
-    if !item.text.is_empty() {
-        let font_id = FontId::proportional(10.0);
-        let color = crate::theme::current().view_fg;
-        let max_width = (clip_width - ITEM_PADDING_X * 2.0 - 4.0).max(0.0) as f32;
-        painter
-            .with_clip_rect(rect(
-                clip_x + ITEM_PADDING_X,
-                y,
-                (clip_width - ITEM_PADDING_X * 2.0).max(1.0),
-                TRACK_HEIGHT,
-            ))
-            .system_text_ellipsized(
-                vec2((clip_x + ITEM_PADDING_X + 2.0) as f32, (y + 12.0) as f32),
-                &item.text,
-                font_id,
-                color,
-                max_width,
-            );
-    }
+    shrimply_timeline_paint_skia::draw_clip_label(
+        painter,
+        rect(clip_x, y, clip_width, TRACK_HEIGHT),
+        &item.text,
+        crate::theme::current().view_fg,
+    );
 }
 
 pub(in crate::drawing) fn video_natural_end_marker(

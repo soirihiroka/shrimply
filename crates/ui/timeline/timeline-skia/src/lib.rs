@@ -201,7 +201,7 @@ use project::{
     generated_item_natural_span, media_item_natural_end_position, media_natural_end_interval,
     media_real_span, scaled_time_delta, video_natural_end_interval,
 };
-use renderer::{Align2, FontId, Rect, Stroke, StrokeKind, TimelinePainter, Vec2, vec2};
+use renderer::{FontId, Rect, Stroke, StrokeKind, TimelinePainter, Vec2, vec2};
 pub use shrimply_cross_ui_theme as theme;
 use shrimply_playback_performance as playback_performance;
 use shrimply_timeline_edit::TrackGap;
@@ -218,7 +218,7 @@ mod import_placement;
 pub mod items;
 pub mod metrics;
 mod performance;
-pub mod ruler;
+pub use shrimply_timeline_paint_skia::ruler;
 pub mod timeline_operation;
 pub mod track_controls;
 pub mod view;

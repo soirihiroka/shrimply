@@ -68,7 +68,10 @@ pub fn horizontal_scrollbar(
 }
 
 pub fn ruler_scale(view: TimelineViewState) -> ruler::TimelineScale {
-    ruler::TimelineScale::new(view.scroll_seconds, view.seconds_per_pixel)
+    ruler::TimelineScale::new(
+        Time::from_seconds_f64(view.scroll_seconds),
+        Fraction::from(view.seconds_per_pixel),
+    )
 }
 
 pub fn scrollbar_bounds(timeline_width: f64, height: f64) -> shrimply_components_skia::Rect {
@@ -84,9 +87,7 @@ pub fn x_to_time(x: f64, scroll_seconds: f64, seconds_per_pixel: f64) -> f64 {
     scroll_seconds + (x - timeline_x()) * seconds_per_pixel
 }
 
-pub fn time_to_x(time_seconds: f64, x: f64, view: TimelineViewState) -> f64 {
-    ruler_scale(view).time_to_x(time_seconds, x)
-}
+pub use crate::math::{frame_width, time_to_x};
 
 pub fn frame_step_seconds(project: &Project) -> f64 {
     frame_step(project).as_secs_f64()
@@ -108,10 +109,6 @@ pub fn waveform_chunks_per_second_from_frame_step(frame_step_seconds: f64) -> u3
 
 pub fn min_seconds_per_pixel(frame_step_seconds: f64) -> f64 {
     (frame_step_seconds / MAX_FRAME_PIXEL_WIDTH).clamp(MIN_SECONDS_PER_PIXEL, MAX_SECONDS_PER_PIXEL)
-}
-
-pub fn frame_width(view: TimelineViewState, frame_step_seconds: f64) -> f64 {
-    ruler_scale(view).frame_width(frame_step_seconds)
 }
 
 pub fn rect(x: f64, y: f64, width: f64, height: f64) -> Rect {

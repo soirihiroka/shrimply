@@ -1,0 +1,22 @@
+[package]
+name = "shrimply-editor-android"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "shrimply_android"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shrimply-timeline-paint-skia.workspace = true
+shrimply-math-core.workspace = true
+shrimply-cross-ui-theme.workspace = true
+
+# Linux also type-checks the portable Vulkan host without an Android device.
+[target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
+ash.workspace = true
+skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22.4"
+ndk = { version = "0.9.0", default-features = false }

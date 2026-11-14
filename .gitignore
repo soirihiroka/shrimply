@@ -52,3 +52,11 @@ TODO.md
 TODO-appkit-components.md
 .DS_Store
 話はまだ途中.wav
+
+# Android build products and local SDK configuration
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+/android/app/build/
+/android/app/src/main/jniLibs/
+/android/build/

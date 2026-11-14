@@ -135,7 +135,7 @@ pub fn draw_timeline(input: TimelineInput<'_, '_>) {
             timeline_x,
             timeline_width,
             content_height,
-            frame_step_seconds,
+            frame_step_seconds: project.frame_step(),
             frame_rate: project.fps,
             hide_zero_label: timeline_empty,
             style: ruler::RulerStyle {
@@ -461,19 +461,5 @@ fn draw_playhead(
     height: f64,
     color: Color,
 ) {
-    cursor::draw_playhead(
-        painter,
-        playhead_x,
-        frame_width,
-        height,
-        color,
-        cursor::PlayheadStyle {
-            ruler_height: RULER_HEIGHT,
-            frame_y: Some(RULER_HEIGHT - 4.0),
-            handle_width: PLAYHEAD_HANDLE_WIDTH,
-            handle_height: PLAYHEAD_HANDLE_HEIGHT,
-            handle_top: PLAYHEAD_HANDLE_TOP,
-            triangle_height: PLAYHEAD_HANDLE_TRIANGLE_HEIGHT,
-        },
-    );
+    shrimply_timeline_paint_skia::draw_playhead(painter, playhead_x, frame_width, height, color);
 }

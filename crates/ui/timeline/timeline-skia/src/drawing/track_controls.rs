@@ -50,42 +50,23 @@ pub fn draw_track_label_pane(
             return;
         };
 
-        if selected_tracks.contains(&track_row.address) {
-            row_painter.rect_filled(
-                rect(0.0, y, LABEL_WIDTH, TRACK_HEIGHT - 1.0),
-                0,
-                crate::theme::current()
-                    .view_fg
-                    .alpha_multiply(TRACK_SELECTION_LABEL_ALPHA),
-            );
-        }
-
-        row_painter.rect_filled(
-            rect(0.0, y, 3.0, (TRACK_HEIGHT - 1.0).max(1.0)),
-            0,
-            track_kind_label_color(key.kind),
-        );
-        row_painter.rect_filled(
-            rect(0.0, y + TRACK_HEIGHT - 1.0, LABEL_WIDTH, 1.0),
-            0,
-            crate::theme::current().sidebar_shade,
-        );
-
         let prefix = match key.kind {
             TrackKind::Comment => 'C',
             TrackKind::Caption => 'S',
             TrackKind::Video => 'V',
             TrackKind::Audio => 'A',
         };
-        row_painter.text(
-            vec2(
-                (TRACK_INDEX_COLUMN_WIDTH / 2.0) as f32,
-                (y + TRACK_HEIGHT / 2.0) as f32,
-            ),
-            Align2::CENTER_CENTER,
-            format!("{prefix}{}", key.track_index),
-            FontId::proportional(12.0),
-            track_kind_label_color(key.kind),
+        shrimply_timeline_paint_skia::draw_track_label(
+            &row_painter,
+            shrimply_timeline_paint_skia::TrackLabel {
+                y,
+                width: LABEL_WIDTH,
+                index_x: TRACK_INDEX_COLUMN_WIDTH / 2.0,
+                text: &format!("{prefix}{}", key.track_index),
+                accent: track_kind_label_color(key.kind),
+                selected: selected_tracks.contains(&track_row.address),
+                theme: &crate::theme::current(),
+            },
         );
 
         let button_y = track_label_button_y(y);

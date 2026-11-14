@@ -96,6 +96,8 @@ members = [
     "crates/project/recent-projects",
     "crates/project/timeline/timeline-edit",
     "crates/ui/timeline/timeline-skia",
+    "crates/ui/timeline/timeline-paint-skia",
+    "crates/binaries/editor-android",
     "crates/ui/timeline/timeline-gtk",
     "crates/ui/timeline/timeline-qt",
     "crates/project/timeline/timeline-snap",
@@ -289,6 +291,7 @@ shrimply-text-3d = { path = "crates/media/visual/3d/text-3d" }
 shrimply-timeline-edit = { path = "crates/project/timeline/timeline-edit" }
 shrimply-timeline-gtk = { path = "crates/ui/timeline/timeline-gtk" }
 shrimply-timeline-qt = { path = "crates/ui/timeline/timeline-qt" }
+shrimply-timeline-paint-skia = { path = "crates/ui/timeline/timeline-paint-skia" }
 shrimply-timeline-skia = { path = "crates/ui/timeline/timeline-skia" }
 shrimply-timeline-snap = { path = "crates/project/timeline/timeline-snap" }
 shrimply-timeline-value = { path = "crates/project/timeline/timeline-value" }

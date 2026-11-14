@@ -86,3 +86,16 @@ pub(crate) fn track_row_at_y(y: f64) -> Option<usize> {
         ((y - crate::metrics::RULER_HEIGHT) / crate::metrics::TRACK_HEIGHT).floor() as usize
     })
 }
+
+// Drawing coordinates retain the desktop's existing arithmetic and cost.
+pub fn time_to_x(time_seconds: f64, x: f64, view: crate::TimelineViewState) -> f64 {
+    x + (time_seconds - view.scroll_seconds) / view.seconds_per_pixel
+}
+
+pub fn frame_width(view: crate::TimelineViewState, frame_step_seconds: f64) -> f64 {
+    if view.seconds_per_pixel <= 0.0 {
+        1.0
+    } else {
+        frame_step_seconds / view.seconds_per_pixel
+    }
+}

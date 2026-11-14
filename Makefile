@@ -680,3 +680,62 @@ gtk-gpu-preferences-validation: native-deps cuda-artifacts
 .PHONY: cuda-peer-copy-validation
 cuda-peer-copy-validation:
 	$(DEV_BUILD_ENV) $(CARGO) run -p shrimply-gpu-cuda --example peer_copy -- "$(or $(SOURCE_GPU),0)" "$(or $(DESTINATION_GPU),0)"
+
+# Android's native graph intentionally excludes the desktop editor and media backends.
+ANDROID_SDK_ROOT ?= $(HOME)/Android/Sdk
+ANDROID_NDK_VERSION ?= 28.2.13676358
+ANDROID_NDK_HOME ?= $(ANDROID_SDK_ROOT)/ndk/$(ANDROID_NDK_VERSION)
+ANDROID_TOOLCHAIN := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64
+ANDROID_ABI ?= arm64-v8a
+ANDROID_TARGET = $(if $(filter arm64-v8a,$(ANDROID_ABI)),aarch64-linux-android,x86_64-linux-android)
+ANDROID_CLANG = $(if $(filter arm64-v8a,$(ANDROID_ABI)),aarch64-linux-android,x86_64-linux-android)33-clang
+ANDROID_PROFILE ?= debug
+ANDROID_DEV_SIGN ?= false
+ANDROID_GRADLE ?= $(CURDIR)/android/gradlew
+ANDROID_ENV = ANDROID_HOME="$(ANDROID_SDK_ROOT)" ANDROID_NDK_HOME="$(ANDROID_NDK_HOME)" ANDROID_NDK_ROOT="$(ANDROID_NDK_HOME)" ANDROID_NDK="$(ANDROID_NDK_HOME)" PATH="$(ANDROID_TOOLCHAIN)/bin:$(PATH)" CC="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)" CXX="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)++" AR="$(ANDROID_TOOLCHAIN)/bin/llvm-ar" RUSTFLAGS="-C linker=$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG) -C link-arg=-Wl,-z,max-page-size=16384"
+.PHONY: android-native android-build android-install android-check android-benchmark android-host-check
+android-native:
+	@test "$(ANDROID_ABI)" = arm64-v8a -o "$(ANDROID_ABI)" = x86_64 || { echo "Unsupported Android ABI" >&2; exit 1; }
+	@test "$(ANDROID_PROFILE)" = debug -o "$(ANDROID_PROFILE)" = release || { echo "Use ANDROID_PROFILE=debug or release" >&2; exit 1; }
+	@test "$(ANDROID_PROFILE)" != release -o "$(ANDROID_ABI)" = arm64-v8a || { echo "Android releases require arm64-v8a" >&2; exit 1; }
+	$(RUSTUP) target add --toolchain $(RUST_TOOLCHAIN) $(ANDROID_TARGET)
+	$(ANDROID_ENV) $(CARGO) build -p shrimply-editor-android --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release)
+	mkdir -p android/app/src/main/jniLibs/$(ANDROID_ABI)
+	cp $(CARGO_TARGET_DIR)/$(ANDROID_TARGET)/$(ANDROID_PROFILE)/libshrimply_android.so android/app/src/main/jniLibs/$(ANDROID_ABI)/
+
+android-build: android-native
+	@test -n "$(ANDROID_GRADLE)" || { echo "Set ANDROID_GRADLE to Gradle 9.8.0's executable" >&2; exit 1; }
+	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) -PdevSigning=$(ANDROID_DEV_SIGN) assemble$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
+
+android-install: ANDROID_DEV_SIGN = true
+android-install: android-build
+	adb install -r android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk
+
+android-host-check:
+	$(BUILD_ENV) $(CARGO) check -p shrimply-timeline-paint-skia -p shrimply-editor-android
+	$(BUILD_ENV) $(CARGO) clippy -p shrimply-timeline-paint-skia -p shrimply-editor-android -- -D warnings
+
+android-check: android-build
+	$(ANDROID_ENV) $(CARGO) clippy -p shrimply-editor-android --target $(ANDROID_TARGET) -- -D warnings
+	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) lint$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
+	python3 packaging/android-check.py android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk "$(ANDROID_TOOLCHAIN)/bin/llvm-readelf" "$(ANDROID_SDK_ROOT)"
+
+android-benchmark:
+	python3 packaging/android-benchmark.py $(or $(STRESS),false)
+
+.PHONY: android-layout-check android-dependency-check
+android-layout-check:
+	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) compileDebugKotlin lintDebug
+
+android-dependency-check:
+	mkdir -p $(CARGO_TARGET_DIR)
+	@$(CARGO) tree -p shrimply-editor-android --target $(ANDROID_TARGET) --prefix none --edges normal > $(CARGO_TARGET_DIR)/android-dependencies.txt
+	@if rg '^(ffmpeg[^ ]*|pango[^ ]*|cairo[^ ]*|gtk4[^ ]*|gio[^ ]*|glib[^ ]*|shrimply-editor-state|shrimply-editing-runtime|shrimply-project-document) ' $(CARGO_TARGET_DIR)/android-dependencies.txt; then echo "Desktop dependency leaked into Android" >&2; exit 1; fi
+
+android-check: android-dependency-check
+
+# Locally signed release APKs are for device benchmarks, not distribution.
+.PHONY: android-benchmark-install
+android-benchmark-install:
+	$(MAKE) android-build ANDROID_PROFILE=release ANDROID_ABI=arm64-v8a ANDROID_DEV_SIGN=true
+	adb install -r android/app/build/outputs/apk/release/app-release.apk
