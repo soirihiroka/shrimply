@@ -63,3 +63,15 @@ Clipping and offset transforms are shared by Skia drawing and item picking. Glyp
 Rendered scrollbars use libadwaita's idle overlay proportions: a narrow rounded thumb, inset ends, and no persistent trough. They remain inside the viewport clip. Hover and dragging belong to the host editor, rather than the headless animation.
 
 All drawables have the same layout metadata and common alignment, box-size and padding inputs. Intrinsic leaves such as Circle, Polygon and Label keep their geometry: a wider layout box does not stretch a circle or change a font size. Rect and media width/height retain their normal geometry-sizing behavior. ``Line.width`` remains stroke thickness. Box children use normal vertical block flow. Opt into flex flow with ``flex flex-row`` or ``flex flex-col``; flex items accept ``flex_grow``, ``flex_shrink`` and ``flex_basis``. An automatic-height parent with a percentage-height child fails with a clear constraint-cycle error.
+
+Use ``absolute`` for a child that should retain its authored ``position`` and alignment instead of taking space in block or flex flow. Its points and percentages remain relative to its parent. Absolute children do not determine an automatic container height, but their painted bounds still contribute to scroll overflow. Give a full-canvas composition an explicit containing box:
+
+.. code-block:: text
+
+   let marker = <Circle absolute radius={12pt} position={Vec2(-20%,10%)}/>
+   let stage = <Box w-full h-full x_align={Align.Center} y_align={Align.Center}>
+       {marker}
+   </Box>
+   add(stage)
+
+``relative`` is the default flow participation. The corresponding ordinary constructor argument is ``position_mode="absolute"`` or ``"relative"``; explicit arguments override utilities. A typed signal may switch modes. A constant absolute mode supports ordinary position animations. A mode signal that can become relative reserves position ownership for flow throughout the timeline, so combining it with a position signal or a manual position animation fails with an actionable error. A percentage height inside an automatic-height parent still requires a definite parent height.

@@ -1201,6 +1201,7 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
         Property::Overflow | Property::OverflowX | Property::OverflowY => {
             crate::Overflow::ty().accepts(ty)
         }
+        Property::PositionMode => crate::PositionMode::ty().accepts(ty),
         Property::Text => Type::String.accepts(ty),
         Property::WhiteSpace => crate::text::WhiteSpace::ty().accepts(ty),
         Property::OverflowWrap => crate::text::OverflowWrap::ty().accepts(ty),

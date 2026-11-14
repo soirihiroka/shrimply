@@ -223,7 +223,7 @@ pub(crate) fn callback_argument<'a>(
 }
 pub(crate) fn callback_type<'a>(
     call: &crate::timing::BuiltinCall<'_>,
-    env: &'a crate::checker::Environment,
+    env: &'a impl crate::checker::TypeScope,
 ) -> Option<&'a Type> {
     crate::effects::lookup(callback_argument(call)?, env)
 }

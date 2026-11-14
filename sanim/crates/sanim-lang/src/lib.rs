@@ -37,7 +37,7 @@ use serde::Serialize;
 use source::Snapshot;
 pub use source::{ElementSource, SourceLocation};
 pub use source::{FileSources, MemorySources, Sources};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 pub use watch::{Reload, Session};
 
 #[derive(Clone, Debug, Serialize)]
@@ -84,6 +84,11 @@ pub struct Statistics {
     pub forced_values: u64,
     pub parsed_modules: u64,
     pub reused_modules: u64,
+    pub checked_modules: u64,
+    pub reused_checks: u64,
+    pub parse_micros: u64,
+    pub check_micros: u64,
+    pub compiler_cache_micros: u64,
     pub evaluated_expressions: u64,
     pub reused_expressions: u64,
     pub signal_evaluations: u64,
@@ -260,6 +265,7 @@ pub struct Engine {
     pub preparation: Preparation,
     pub viewport: sanim_core::Viewport,
     parsed: sanim_core::cache::Cache<String, ast::Module>,
+    checked: sanim_core::cache::Cache<String, cache::checked::Module>,
     values: cache::ValueCache,
     assets: cache::ValueCache,
     databases: sanim_data::sqlite::Databases,
@@ -275,6 +281,7 @@ pub(crate) struct Loaded {
     pub ast: Arc<ast::Module>,
     pub imports: BTreeMap<String, String>,
     pub checked: Arc<checker::Checked>,
+    pub interface_key: String,
 }
 
 impl Engine {
@@ -298,6 +305,12 @@ impl Engine {
                 .max_cache_entries
                 .min(self.limits.max_modules.saturating_mul(2)),
         );
+        self.checked.configure(
+            self.limits.max_cache_bytes,
+            self.limits
+                .max_cache_entries
+                .min(self.limits.max_modules.saturating_mul(2)),
+        );
         let reporter = progress::Reporter::new(self.progress_observer.clone(), entry);
         let result = prepare(self, &reporter);
         reporter.finish(result.as_ref().err());
@@ -309,6 +322,7 @@ impl Engine {
     }
     pub fn clear_cache(&mut self) {
         self.parsed.clear();
+        self.checked.clear();
         self.values.clear();
         self.assets.clear();
         self.databases.clear();
@@ -596,7 +610,11 @@ impl Engine {
         } else {
             let text = std::str::from_utf8(&bytes)
                 .map_err(|e| Diagnostic::new("S201", e.to_string(), id, Span::default()))?;
+            let started = Instant::now();
             let module = Arc::new(parser::parse(id, text, self.limits.max_parse_steps)?);
+            statistics.parse_micros = statistics
+                .parse_micros
+                .saturating_add(started.elapsed().as_micros().try_into().unwrap_or(u64::MAX));
             if self.limits.max_cache_entries > 0
                 && let Some(retained) = cache::parsed::retained_bytes(
                     &module,
@@ -605,7 +623,7 @@ impl Engine {
                     self.limits.max_cache_bytes,
                 )
             {
-                self.parsed.insert(hash, module.clone(), retained);
+                self.parsed.insert(hash.clone(), module.clone(), retained);
             }
             statistics.parsed_modules += 1;
             module
@@ -619,6 +637,7 @@ impl Engine {
         active.push(id.into());
         let mut imports = BTreeMap::new();
         let mut checks = BTreeMap::new();
+        let mut import_keys = BTreeMap::new();
         for statement in &module.statements {
             if let ast::StatementKind::Import { path, alias } = &statement.kind {
                 if prelude::protected(alias) {
@@ -661,6 +680,7 @@ impl Engine {
                         Diagnostic::new("S201", "module resolution failed", id, statement.span)
                     })?;
                 checks.insert(path.clone(), imported.checked.clone());
+                import_keys.insert(path.clone(), imported.interface_key.clone());
                 imports.insert(alias.clone(), path_resolved);
             }
         }
@@ -670,20 +690,79 @@ impl Engine {
             None,
             Some(id),
         );
-        let checked = checker::check(
-            id,
-            &module,
-            &checks,
-            active.len() == 1,
-            type_budget,
-            &self.limits,
-        )?;
+        let root = active.len() == 1;
+        let check_key = digest(
+            &serde_json::to_vec(&(
+                sanim_core::SEMANTICS_VERSION,
+                id,
+                &hash,
+                &import_keys,
+                root,
+                &self.limits,
+            ))
+            .expect("serializable compiler inputs"),
+        );
+        let cached = self
+            .checked
+            .get(&check_key)
+            .filter(|entry| entry.type_bytes <= type_budget.get());
+        let (checked, interface_key) = if let Some(cached) = cached {
+            type_budget.set(type_budget.get() - cached.type_bytes);
+            statistics.reused_checks += 1;
+            (cached.checked.clone(), cached.interface_key.clone())
+        } else {
+            let before = type_budget.get();
+            let started = Instant::now();
+            let checked = Arc::new(checker::check(
+                id,
+                &module,
+                &checks,
+                root,
+                type_budget,
+                &self.limits,
+            )?);
+            statistics.check_micros = statistics
+                .check_micros
+                .saturating_add(started.elapsed().as_micros().try_into().unwrap_or(u64::MAX));
+            statistics.checked_modules += 1;
+            let cache_started = Instant::now();
+            let interface_key = digest(
+                &serde_json::to_vec(&(&checked.exports, &checked.schemas, &checked.effects))
+                    .expect("serializable module interface"),
+            );
+            if self.limits.max_cache_entries > 0
+                && let Some(bytes) = cache::checked::retained_bytes(
+                    &checked,
+                    &check_key,
+                    self.limits.max_cache_bytes,
+                )
+            {
+                self.checked.insert(
+                    check_key.clone(),
+                    Arc::new(cache::checked::Module {
+                        checked: checked.clone(),
+                        type_bytes: before - type_budget.get(),
+                        interface_key: interface_key.clone(),
+                    }),
+                    bytes,
+                );
+            }
+            statistics.compiler_cache_micros = statistics.compiler_cache_micros.saturating_add(
+                cache_started
+                    .elapsed()
+                    .as_micros()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            );
+            (checked, interface_key)
+        };
         active.pop();
         loaded.push(Loaded {
             id: id.into(),
             ast: module,
             imports,
-            checked: Arc::new(checked),
+            checked,
+            interface_key,
         });
         reporter.emit(
             progress::Phase::Checking,

@@ -35,6 +35,91 @@ fn exact_length_validation_shares_values_and_rejects_wrong_lengths() {
 }
 
 #[test]
+fn immutable_collection_versions_share_lazy_fingerprints_without_sharing_edits() {
+    let original: sanim_core::Values = (0..1024)
+        .map(|n| Value::Number(sanim_core::Number::scalar(n)))
+        .collect();
+    let fingerprint = original.fingerprint().to_string();
+    let same = original.clone();
+    assert!(original.ptr_eq(&same));
+    assert_eq!(original.fingerprint().as_ptr(), same.fingerprint().as_ptr());
+    let mut changed = original.clone();
+    changed[500] = Value::Bool(true);
+    assert!(!original.ptr_eq(&changed));
+    assert_eq!(original[500].number().unwrap().value, 500.into());
+    assert_eq!(original.fingerprint(), fingerprint);
+    assert_ne!(changed.fingerprint(), fingerprint);
+    changed[500] = original[500].clone();
+    assert_eq!(
+        changed.fingerprint(),
+        fingerprint,
+        "identity depends on contents, not allocation addresses"
+    );
+    assert_eq!(
+        serde_json::to_value(&original).unwrap(),
+        serde_json::to_value(original.iter().collect::<Vec<_>>()).unwrap(),
+        "storage metadata must not change the public serialized sequence"
+    );
+}
+
+#[test]
+fn all_collection_mutation_paths_invalidate_fingerprints() {
+    type Mutation = fn(&mut sanim_core::Values);
+    let operations: &[Mutation] = &[
+        |v| v.push_back(Value::Bool(true)),
+        |v| v.push_front(Value::Bool(true)),
+        |v| {
+            v.set(1, Value::Bool(true));
+        },
+        |v| v.insert(1, Value::Bool(true)),
+        |v| {
+            v.remove(1);
+        },
+        |v| *v.get_mut(1).unwrap() = Value::Bool(true),
+        |v| *v.iter_mut().next().unwrap() = Value::Bool(true),
+        |v| {
+            v.split_off(1);
+        },
+        |v| {
+            v.slice(1..3);
+        },
+        |v| v.append(vec![Value::Bool(true)].into()),
+        |v| v.retain(|value| value.number().unwrap().value != 2.into()),
+        |v| {
+            v.sort_by(|a, b| {
+                b.number()
+                    .unwrap()
+                    .value
+                    .partial_cmp(&a.number().unwrap().value)
+                    .unwrap()
+            })
+        },
+        |v| v.clear(),
+        |v| v.truncate(1),
+        |v| {
+            v.pop_front();
+        },
+        |v| {
+            v.pop_back();
+        },
+    ];
+    let original: sanim_core::Values = (0..4)
+        .map(|n| Value::Number(sanim_core::Number::scalar(n)))
+        .collect();
+    let before = original.fingerprint().to_string();
+    for operation in operations {
+        let mut changed = original.clone();
+        operation(&mut changed);
+        assert_ne!(changed.fingerprint(), before);
+        assert_eq!(original.fingerprint(), before);
+        assert_eq!(
+            changed.fingerprint(),
+            sanim_core::digest(&serde_json::to_vec(&changed).unwrap())
+        );
+    }
+}
+
+#[test]
 fn typed_list_validation_uses_schema_proofs_and_visits_unproven_refinements() {
     let value = Value::List(List::typed(
         number(),

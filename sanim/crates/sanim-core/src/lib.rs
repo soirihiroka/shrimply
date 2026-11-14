@@ -2,7 +2,7 @@
 pub mod cache;
 pub mod code;
 mod collection;
-pub use collection::{List, ListEdit, ListEditResult};
+pub use collection::{List, ListEdit, ListEditResult, Values};
 pub mod dataframe;
 pub mod duration;
 pub mod font;
@@ -26,6 +26,7 @@ pub mod type_budget;
 pub mod types;
 pub mod validation;
 pub mod value_budget;
+pub mod value_key;
 pub use validation::validate_value;
 pub mod verify;
 

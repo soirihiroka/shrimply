@@ -1236,9 +1236,9 @@ impl Analyzer<'_> {
         self.record(expr.span, effect)
     }
 }
-pub(crate) fn lookup<'a>(expr: &Expr, env: &'a Environment) -> Option<&'a Type> {
+pub(crate) fn lookup<'a>(expr: &Expr, env: &'a impl crate::checker::TypeScope) -> Option<&'a Type> {
     match &expr.kind {
-        ExprKind::Name(name) => env.get(name),
+        ExprKind::Name(name) => env.get_type(name),
         ExprKind::Member(base, name) => {
             if let Type::Record(fields) = lookup(base, env)? {
                 fields.get(name)

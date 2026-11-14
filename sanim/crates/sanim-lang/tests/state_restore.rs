@@ -98,6 +98,130 @@ fn changed_hoisted_helper_and_default_resume_before_their_first_call() {
 }
 
 #[test]
+fn changed_retained_helper_body_default_and_transitive_calls_match_fresh_graphs() {
+    for (old_helper, new_helper, boundary) in [
+        (
+            "fn double(value:Length):Length{return value*2}",
+            "fn double(value:Length):Length{return value*3}",
+            3,
+        ),
+        (
+            "fn double(value:Length,scale:Number=2):Length{return value*scale}",
+            "fn double(value:Length,scale:Number=3):Length{return value*scale}",
+            3,
+        ),
+        (
+            "fn factor():Number{return 2}\nfn double(value:Length):Length{return value*factor()}",
+            "fn factor():Number{return 3}\nfn double(value:Length):Length{return value*factor()}",
+            3,
+        ),
+        (
+            "fn double(sig value:Length):sig Length{return value*2}",
+            "fn double(sig value:Length):sig Length{return value*3}",
+            2,
+        ),
+    ] {
+        let program = |helper| {
+            format!(
+                "wait(1s)\n{helper}\nmut size=10pt\nsig result=double(size)\nlet marker=Circle(radius=result)\nadd(marker)\nanimate(size,to=20pt,duration=1s,ease=\"linear\")\n"
+            )
+        };
+        let mut files = MemorySources::default();
+        files.insert("main.sanim", program(old_helper));
+        let mut engine = Engine::default();
+        let old = prepare(&mut engine, &files);
+        let before_use = engine.execution_state(boundary).unwrap();
+        files.insert("main.sanim", program(new_helper));
+        let edited = prepare(&mut engine, &files);
+        assert_eq!(
+            edited.statistics.restored_statements, boundary as u64,
+            "{old_helper}"
+        );
+        assert!(Arc::ptr_eq(
+            &before_use,
+            &engine.execution_state(boundary).unwrap()
+        ));
+        let fresh = prepare(&mut Engine::default(), &files);
+        for time in [
+            Fraction::from(0),
+            Fraction::new(3u64, 2u64),
+            Fraction::from(2),
+        ] {
+            assert_eq!(
+                edited.animation.sample(time).unwrap(),
+                fresh.animation.sample(time).unwrap(),
+                "{old_helper} at {time}"
+            );
+        }
+        assert_eq!(
+            edited.animation.reactive, fresh.animation.reactive,
+            "{old_helper}"
+        );
+        assert_ne!(
+            old.animation.sample(Fraction::new(3u64, 2u64)).unwrap(),
+            edited.animation.sample(Fraction::new(3u64, 2u64)).unwrap(),
+            "{old_helper}"
+        );
+    }
+}
+
+#[test]
+fn a_short_circuited_helper_lowered_for_later_playback_invalidates_its_checkpoint() {
+    for (old_helper, new_helper) in [
+        (
+            "fn gate(value:Number):Bool{return value>2}",
+            "fn gate(value:Number):Bool{return value>4}",
+        ),
+        (
+            "fn gate(value:Number,limit:Number=2):Bool{return value>limit}",
+            "fn gate(value:Number,limit:Number=4):Bool{return value>limit}",
+        ),
+        (
+            "fn threshold(value:Number):Bool{return value>2}\nfn gate(value:Number):Bool{return threshold(value)}",
+            "fn threshold(value:Number):Bool{return value>4}\nfn gate(value:Number):Bool{return threshold(value)}",
+        ),
+    ] {
+        let program = |helper| {
+            format!(
+                "wait(1s)\n{helper}\nmut active=false\nmut input=3\nsig flag=active and gate(input)\nlet view=CodeView(code=r\"x=1\",lang=\"python\",line_numbers=flag)\nadd(view)\nwait(1s)\nactive=true\nwait(1s)\n"
+            )
+        };
+        let mut files = MemorySources::default();
+        files.insert("main.sanim", program(old_helper));
+        let mut engine = Engine::default();
+        let old = prepare(&mut engine, &files);
+        let before_use = engine.execution_state(4).unwrap();
+        files.insert("main.sanim", program(new_helper));
+        let edited = prepare(&mut engine, &files);
+        let fresh = prepare(&mut Engine::default(), &files);
+        assert_eq!(
+            edited.animation.reactive, fresh.animation.reactive,
+            "{old_helper}"
+        );
+        assert!(Arc::ptr_eq(
+            &before_use,
+            &engine.execution_state(4).unwrap()
+        ));
+        assert_eq!(edited.statistics.restored_statements, 4, "{old_helper}");
+        for time in [
+            Fraction::from(1),
+            Fraction::new(5u64, 2u64),
+            Fraction::from(3),
+        ] {
+            assert_eq!(
+                edited.animation.sample(time).unwrap(),
+                fresh.animation.sample(time).unwrap(),
+                "{old_helper} at {time}"
+            );
+        }
+        assert_ne!(
+            old.animation.reactive, edited.animation.reactive,
+            "{old_helper}"
+        );
+    }
+}
+
+#[test]
 fn current_hoisted_declarations_replace_obsolete_saved_bindings() {
     let mut files = MemorySources::default();
     files.insert(

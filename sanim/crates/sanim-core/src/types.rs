@@ -818,7 +818,7 @@ pub enum Value {
     Array {
         element_type: Arc<Type>,
         shape: Vec<usize>,
-        values: imbl::Vector<Value>,
+        values: crate::Values,
     },
     Record(imbl::OrdMap<String, Value>),
     Some(Arc<Value>),
@@ -1018,7 +1018,7 @@ impl Value {
             _ => return Err("vectors must have 2, 3 or 4 components".into()),
         })
     }
-    pub fn list(&self) -> Result<&imbl::Vector<Value>, String> {
+    pub fn list(&self) -> Result<&crate::Values, String> {
         match self {
             Self::List(v) => Ok(&v.values),
             Self::Array { values: v, .. } => Ok(v),

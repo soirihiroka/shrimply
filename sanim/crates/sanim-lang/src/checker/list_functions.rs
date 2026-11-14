@@ -227,7 +227,7 @@ impl Checker<'_> {
             }
             self.call_types.insert(
                 (expr.span.start, expr.span.end),
-                self.copy_environment(&substitutions.unwrap_or_default(), expr.span)?,
+                self.copy_substitutions(&substitutions.unwrap_or_default(), expr.span)?,
             );
             if let Some(function) = &self.function {
                 if schedules {

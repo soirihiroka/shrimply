@@ -61,10 +61,15 @@ impl Checker<'_> {
                     result: Box::new(result),
                 };
                 let index = if declared_functions.insert(name.clone()) {
-                    env.insert(name.clone(), Type::Function(signature));
+                    self.insert_environment(
+                        env,
+                        name.clone(),
+                        Type::Function(signature),
+                        statement.span,
+                    )?;
                     0
                 } else {
-                    let existing = env.get_mut(name).expect("previous clause");
+                    let existing = self.mutate_environment(env, name, statement.span)?;
                     for previous in existing.signatures() {
                         // Disjointness is decidable but pairwise; charge traversal
                         // work against the same finite budget as schema expansion.

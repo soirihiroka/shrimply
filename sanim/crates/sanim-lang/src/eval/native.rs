@@ -190,15 +190,18 @@ impl Runtime<'_, '_> {
                         self.limits.data,
                         &sql.text,
                         &sql.parameters,
-                        &args["tables"],
+                        sanim_core::value_key::ValueKey(&args["tables"]),
                     ))
                     .map_err(|e| self.error("S301", e.to_string(), span))?,
                 );
                 self.query_cached(
                     key,
                     digest(
-                        &serde_json::to_vec(&(&args["tables"], self.limits.data))
-                            .map_err(|error| self.error("S301", error.to_string(), span))?,
+                        &serde_json::to_vec(&(
+                            sanim_core::value_key::ValueKey(&args["tables"]),
+                            self.limits.data,
+                        ))
+                        .map_err(|error| self.error("S301", error.to_string(), span))?,
                     ),
                     sanim_data::sqlite::Request {
                         result: &ty,

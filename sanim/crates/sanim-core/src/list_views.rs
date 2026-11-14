@@ -9,11 +9,16 @@ use std::collections::BTreeSet;
 fn same_snapshot(a: &List, b: &List) -> bool {
     a.element_type == b.element_type && a.shares_values(b)
 }
-fn flow_ids(items: &List) -> Result<OrdSet<String>, String> {
+fn flow_ids(
+    items: &List,
+    reactive: &crate::reactive::ReactiveGraph,
+) -> Result<OrdSet<String>, String> {
     let mut ids = OrdSet::new();
     for element in elements(items)? {
-        ids.insert(element.id.clone());
-        crate::scene::collect_flow_positions(element, &mut ids);
+        if crate::scene::flow_controls_position(element, reactive) {
+            ids.insert(element.id.clone());
+        }
+        crate::scene::collect_flow_positions(element, reactive, &mut ids);
     }
     Ok(ids)
 }
@@ -470,11 +475,11 @@ impl Animation {
                 return Err(format!("duplicate element identity '{id}'"));
             }
         }
-        let mut flow = flow_ids(&initial)?;
+        let mut flow = flow_ids(&initial, &self.reactive)?;
         if let Some(channel) = self.list_views.channels.get(&cell) {
-            flow.extend(flow_ids(&channel.initial.items)?);
+            flow.extend(flow_ids(&channel.initial.items, &self.reactive)?);
             for event in &channel.transitions {
-                flow.extend(flow_ids(&event.to.items)?);
+                flow.extend(flow_ids(&event.to.items, &self.reactive)?);
             }
         }
         for id in &flow {
@@ -483,7 +488,7 @@ impl Animation {
                 .binding(id, crate::Property::Position)
                 .is_some()
             {
-                return Err(crate::scene::flow_position_error(id));
+                return Err(crate::scene::flow_position_error(id, &self.reactive));
             }
         }
         if !self.list_views.channels.contains_key(&cell) {
@@ -617,7 +622,7 @@ impl Animation {
             OrdMap::new()
         };
         let flow: imbl::OrdSet<String> = if bound {
-            flow_ids(&changed_items)?
+            flow_ids(&changed_items, &self.reactive)?
         } else {
             Default::default()
         };
@@ -627,7 +632,7 @@ impl Animation {
                 .binding(id, crate::Property::Position)
                 .is_some()
             {
-                return Err(crate::scene::flow_position_error(id));
+                return Err(crate::scene::flow_position_error(id, &self.reactive));
             }
         }
         for (id, element) in &additions {

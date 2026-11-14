@@ -192,6 +192,9 @@ fn measure_boxes(
                 let main_axis = usize::from(direction == crate::Direction::Column);
                 let mut changed = false;
                 for (child, item) in children.iter_mut().zip(plan.items.iter()) {
+                    if child.layout.position_mode == crate::PositionMode::Absolute {
+                        continue;
+                    }
                     let natural = extent(child)?;
                     if [natural.0, natural.1].iter().zip(item.size).any(|(a, b)| {
                         (a - b).abs() > f64::from(f32::EPSILON) * a.abs().max(b.abs()).max(1.)
@@ -378,7 +381,9 @@ fn resolve_with_lists(
                 None
             };
             for (index, child) in children.iter_mut().enumerate() {
+                let absolute = child.layout.position_mode == crate::PositionMode::Absolute;
                 if element.layout.flex
+                    && !absolute
                     && let Some(plan) = &positions
                 {
                     let size = plan.items[index].size;
@@ -404,24 +409,28 @@ fn resolve_with_lists(
                         let before = extent(child)?;
                         child.scale = crate::math::visual_product(child.scale, scale)?;
                         let after = extent(child)?;
-                        position[0] = calc(
-                            "+",
-                            position[0],
-                            calc("/", calc("-", before.0, after.0)?, 2.)?,
-                        )?;
-                        position[1] = calc(
-                            "+",
-                            position[1],
-                            calc("/", calc("-", before.1, after.1)?, 2.)?,
-                        )?;
+                        if !absolute {
+                            position[0] = calc(
+                                "+",
+                                position[0],
+                                calc("/", calc("-", before.0, after.0)?, 2.)?,
+                            )?;
+                            position[1] = calc(
+                                "+",
+                                position[1],
+                                calc("/", calc("-", before.1, after.1)?, 2.)?,
+                            )?;
+                        }
                     }
                 }
-                child.position = Vec2 {
-                    values: position,
-                    unit: crate::Unit::Length,
-                };
-                child.layout.x_align = crate::Align::Start;
-                child.layout.y_align = crate::Align::Start;
+                if !absolute {
+                    child.position = Vec2 {
+                        values: position,
+                        unit: crate::Unit::Length,
+                    };
+                    child.layout.x_align = crate::Align::Start;
+                    child.layout.y_align = crate::Align::Start;
+                }
                 resolve_with_lists(child, width, height, lists, measured)?;
             }
         } else {

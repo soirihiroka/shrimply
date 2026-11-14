@@ -154,7 +154,7 @@ impl Runtime<'_, '_> {
         let empty = || {
             List::from_values(
                 list_type.clone().expect("list output schema"),
-                imbl::Vector::new(),
+                sanim_core::Values::new(),
             )
         };
         use Operation::*;
@@ -212,7 +212,7 @@ impl Runtime<'_, '_> {
         if definition.operation == Reduce && items.is_empty() {
             return Err(self.error("S305","List.reduce cannot reduce an empty list; use items.fold(initial, callback) to supply an empty-list result",span));
         }
-        let mut output = imbl::Vector::new();
+        let mut output = sanim_core::Values::new();
         let mut bytes = self.limits.data.max_bytes;
         let mut values = self.limits.data.max_values;
         let mut shared = sanim_core::value_budget::Budget::default();

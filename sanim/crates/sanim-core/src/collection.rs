@@ -1,8 +1,9 @@
 //! Persistent homogeneous lists with structural sharing.
 use crate::{Type, Value};
-use imbl::Vector;
+mod values;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+pub use values::Values;
 
 const MAX_INLINE_COMPARISON_ITEMS: usize = 64;
 
@@ -54,7 +55,7 @@ impl ListEditResult {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct List {
     pub element_type: Arc<Type>,
-    pub values: Vector<Value>,
+    pub values: Values,
 }
 impl PartialEq for List {
     fn eq(&self, other: &Self) -> bool {
@@ -152,7 +153,7 @@ impl List {
             operation,
         })
     }
-    pub fn from_values(element_type: Arc<Type>, values: Vector<Value>) -> Self {
+    pub fn from_values(element_type: Arc<Type>, values: Values) -> Self {
         Self {
             element_type,
             values,
@@ -163,7 +164,7 @@ impl List {
     }
 }
 impl std::ops::Deref for List {
-    type Target = Vector<Value>;
+    type Target = Values;
     fn deref(&self) -> &Self::Target {
         &self.values
     }
@@ -176,7 +177,7 @@ impl From<Vec<Value>> for List {
 }
 impl FromIterator<Value> for List {
     fn from_iter<T: IntoIterator<Item = Value>>(values: T) -> Self {
-        let values: Vector<_> = values.into_iter().collect();
+        let values: Values = values.into_iter().collect();
         let element_type = values.front().map_or(Type::Unknown, Value::ty);
         Self::from_values(Arc::new(element_type), values)
     }

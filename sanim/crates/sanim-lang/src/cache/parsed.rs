@@ -1,6 +1,5 @@
 //! Estimate canonical AST payloads without a second syntax walker or a serialized buffer.
 use crate::ast::Module;
-use std::io::{self, Write};
 
 pub(crate) fn retained_bytes(
     module: &Module,
@@ -8,30 +7,6 @@ pub(crate) fn retained_bytes(
     key_bytes: usize,
     limit: usize,
 ) -> Option<usize> {
-    // Serialized nodes do not include Rust enum discriminants or spare Vec capacity.
-    // Keep a conservative accounting margin; this is an estimate, not allocator telemetry.
-    const AST_METADATA_SLACK: usize = 4;
-    struct Count {
-        bytes: usize,
-        remaining: usize,
-    }
-    impl Write for Count {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            let charged = bytes
-                .len()
-                .checked_mul(AST_METADATA_SLACK)
-                .ok_or_else(|| io::Error::other("parsed cache estimate overflow"))?;
-            self.remaining = self
-                .remaining
-                .checked_sub(charged)
-                .ok_or_else(|| io::Error::other("parsed cache byte budget reached"))?;
-            self.bytes += charged;
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
     // Source payloads plus serialized structure account for strings, types,
     // generated arguments and nested declarations without allocating a duplicate AST.
     let roots = std::mem::size_of::<Module>()
@@ -50,12 +25,7 @@ pub(crate) fn retained_bytes(
         .checked_add(source_bytes)?
         .checked_add(key_bytes.checked_mul(2)?)?
         .checked_add(2 * std::mem::size_of::<String>())?;
-    let mut count = Count {
-        bytes: roots,
-        remaining: limit.checked_sub(roots)?,
-    };
-    serde_json::to_writer(&mut count, module).ok()?;
-    Some(count.bytes)
+    super::size::retained(module, roots, limit)
 }
 
 #[cfg(test)]

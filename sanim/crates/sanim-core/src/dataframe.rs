@@ -330,7 +330,10 @@ impl Frame {
         crate::value_budget::charge(&value, &mut bytes, &mut items, MAX_PLAN_DEPTH)?;
         let source_bytes = usize::MAX - bytes;
         let source_items = usize::MAX - items;
-        let fingerprint = digest(&serde_json::to_vec(&value).map_err(|error| error.to_string())?);
+        let fingerprint = digest(
+            &serde_json::to_vec(&crate::value_key::ValueKey(&value))
+                .map_err(|error| error.to_string())?,
+        );
         let metadata_bytes = schema_bytes(&schema)?
             .saturating_add(std::mem::size_of::<Self>() + std::mem::size_of::<Plan>());
         Ok(Self {

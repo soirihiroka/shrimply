@@ -39,7 +39,7 @@ type DurationDemand = BTreeMap<String, BTreeSet<String>>;
 
 #[derive(serde::Serialize)]
 enum CacheDependency<'a> {
-    Value(&'a Value),
+    Value(sanim_core::value_key::ValueKey<'a>),
     Font(String),
 }
 
@@ -923,7 +923,7 @@ impl Runtime<'_, '_> {
                     if let Some(Binding::Value(value)) = env.get(name) {
                         let value = match value {
                             Value::Font(font) => CacheDependency::Font(self.font_keys.key(font)),
-                            _ => CacheDependency::Value(value),
+                            _ => CacheDependency::Value(sanim_core::value_key::ValueKey(value)),
                         };
                         deps.insert(name, value);
                     }
@@ -1559,6 +1559,14 @@ impl Runtime<'_, '_> {
             .and_then(|module| module.checked.exports.get(&function.name))
             .and_then(|ty| ty.signatures().get(function.clause))
     }
+    fn record_function(&mut self, key: &str, group: &FunctionGroup) {
+        if !self.used_functions.contains_key(key) {
+            self.used_functions.insert(
+                key.to_owned(),
+                (group.fingerprint.clone(), self.root_statement),
+            );
+        }
+    }
     fn call_type_bindings(&self, span: Span) -> BTreeMap<String, Type> {
         self.loaded
             .iter()
@@ -1717,9 +1725,7 @@ impl Runtime<'_, '_> {
                 span,
             ));
         }
-        self.used_functions
-            .entry(key.to_owned())
-            .or_insert((group.fingerprint.clone(), self.root_statement));
+        self.record_function(key, &group);
         let call_site = self.instance_site(span);
         let mutates = self.function_mutates(&function);
         let previous_types = std::mem::replace(&mut self.type_bindings, bindings);

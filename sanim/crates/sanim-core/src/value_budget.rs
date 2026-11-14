@@ -9,8 +9,26 @@ pub struct Budget {
     media: imbl::OrdMap<usize, Weak<crate::media::Asset>>,
     text: imbl::OrdMap<usize, Weak<str>>,
     range_origins: imbl::OrdMap<usize, Weak<crate::code::view::RangeOrigin>>,
+    shared_visits: u64,
+    minimum_depth: Option<usize>,
+}
+/// Cost independent of the caller's shared-resource receipt set.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Cost {
+    pub bytes: usize,
+    pub items: usize,
+    pub depth: usize,
 }
 impl Budget {
+    fn shared(&mut self) {
+        self.shared_visits = self
+            .shared_visits
+            .checked_add(1)
+            .expect("shared resource visit counter overflow");
+    }
+    fn observe_depth(&mut self, depth: usize) {
+        self.minimum_depth = Some(self.minimum_depth.map_or(depth, |old| old.min(depth)));
+    }
     pub fn metadata_bytes(&self) -> usize {
         self.assets.len() * FONT_ENTRY_BYTES
             + self.media.len() * MEDIA_ENTRY_BYTES
@@ -72,6 +90,7 @@ pub fn charge_with_budget(
         items: &mut usize,
         budget: &mut Budget,
     ) -> Result<(), String> {
+        budget.shared();
         let id = Arc::as_ptr(text) as *const () as usize;
         if !budget
             .text
@@ -93,10 +112,12 @@ pub fn charge_with_budget(
         bytes: &mut usize,
         items: &mut usize,
         depth: usize,
+        fonts: &mut Budget,
     ) -> Result<(), String> {
         if depth == 0 {
             return Err("generated value nesting limit exceeded".into());
         }
+        fonts.observe_depth(depth);
         take(bytes, items, std::mem::size_of_val(value))?;
         match value {
             serde_json::Value::String(s) => {
@@ -106,7 +127,7 @@ pub fn charge_with_budget(
             }
             serde_json::Value::Array(values) => {
                 for value in values {
-                    json(value, bytes, items, depth - 1)?;
+                    json(value, bytes, items, depth - 1, fonts)?;
                 }
             }
             serde_json::Value::Object(values) => {
@@ -114,7 +135,7 @@ pub fn charge_with_budget(
                     *bytes = bytes
                         .checked_sub(key.len())
                         .ok_or("generated value byte budget exceeded")?;
-                    json(value, bytes, items, depth - 1)?;
+                    json(value, bytes, items, depth - 1, fonts)?;
                 }
             }
             _ => {}
@@ -130,6 +151,7 @@ pub fn charge_with_budget(
         let Some(origin) = &range.origin else {
             return Ok(());
         };
+        budget.shared();
         let id = Arc::as_ptr(origin) as usize;
         if budget
             .range_origins
@@ -191,6 +213,7 @@ pub fn charge_with_budget(
         if depth == 0 {
             return Err("generated element nesting limit exceeded".into());
         }
+        fonts.observe_depth(depth);
         take(bytes, items, std::mem::size_of_val(value) + value.id.len())?;
         if let crate::Paint::LinearGradient { stops, .. } = &value.fill {
             *bytes = bytes
@@ -260,6 +283,7 @@ pub fn charge_with_budget(
         }
         match value.geometry.as_ref() {
             Geometry::Media { asset, .. } => {
+                fonts.shared();
                 let id = Arc::as_ptr(asset) as usize;
                 if !fonts
                     .media
@@ -316,6 +340,7 @@ pub fn charge_with_budget(
         if depth == 0 {
             return Err("generated value nesting limit exceeded".into());
         }
+        fonts.observe_depth(depth);
         take(bytes, items, std::mem::size_of_val(value))?;
         match value {
             Value::DataFrame(frame) => {
@@ -418,18 +443,48 @@ pub fn charge_with_budget(
                     }
                 }
             }
-            Value::Data(value) => json(value, bytes, items, depth - 1)?,
+            Value::Data(value) => json(value, bytes, items, depth - 1, fonts)?,
             Value::Dict(values) => {
                 for (key, value) in values.iter() {
                     *bytes = bytes
                         .checked_sub(key.len())
                         .ok_or("generated value byte budget exceeded")?;
-                    json(value, bytes, items, depth - 1)?;
+                    json(value, bytes, items, depth - 1, fonts)?;
                 }
             }
             Value::List(_) | Value::Array { .. } => {
-                for value in value.list()? {
-                    visit(value, bytes, items, depth - 1, fonts)?;
+                let values = value.list()?;
+                *bytes = bytes
+                    .checked_sub(values.metadata_bytes())
+                    .ok_or("generated collection metadata byte budget exceeded")?;
+                if let Some(cost) = values.budget_cost(depth) {
+                    *bytes = bytes
+                        .checked_sub(cost.bytes)
+                        .ok_or("generated value byte budget exceeded")?;
+                    *items = items
+                        .checked_sub(cost.items)
+                        .ok_or("generated value item budget exceeded")?;
+                    fonts.observe_depth(depth - cost.depth + 1);
+                } else {
+                    let (before_bytes, before_items, shared) =
+                        (*bytes, *items, fonts.shared_visits);
+                    let outer_depth = fonts.minimum_depth.take();
+                    let result = values
+                        .iter()
+                        .try_for_each(|value| visit(value, bytes, items, depth - 1, fonts));
+                    let nested_depth = fonts.minimum_depth.take();
+                    fonts.minimum_depth = outer_depth;
+                    if let Some(nested) = nested_depth {
+                        fonts.observe_depth(nested);
+                    }
+                    result?;
+                    if shared == fonts.shared_visits {
+                        values.remember_budget_cost(Cost {
+                            bytes: before_bytes - *bytes,
+                            items: before_items - *items,
+                            depth: nested_depth.map_or(1, |minimum| depth - minimum + 1),
+                        });
+                    }
                 }
             }
             Value::Record(values) => {
@@ -456,6 +511,7 @@ pub fn charge_with_budget(
             Value::Font(font) => {
                 let size = match font {
                     crate::Font::Asset(values) => {
+                        fonts.shared();
                         if fonts.contains(values) {
                             return Ok(());
                         }

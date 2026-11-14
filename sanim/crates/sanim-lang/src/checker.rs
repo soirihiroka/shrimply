@@ -1,4 +1,6 @@
 mod clauses;
+mod environment;
+pub(crate) use environment::{Environment, TypeScope};
 mod dataframe;
 mod list_functions;
 mod lists;
@@ -9,23 +11,22 @@ use clauses::infer;
 use sanim_core::{Diagnostic, GenericParameter, Number, Signature, Span, Type, TypeBound, Unit};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub type Environment = BTreeMap<String, Type>;
 #[derive(Clone, Debug)]
 pub struct Alias {
     pub parameters: Vec<GenericParameter<Type, TypeBound>>,
     pub body: TypeExpr,
 }
 /// Resolved once from the checked receiver, shared by runtime and editor tooling.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct NativeMethod {
     pub name: String,
     pub materializes: bool,
 }
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Checked {
     /// Statement start -> index in the named export's canonical signatures.
     pub function_clauses: BTreeMap<usize, usize>,
-    pub exports: Environment,
+    pub exports: BTreeMap<String, Type>,
     pub schemas: BTreeMap<String, Type>,
     pub result_types: BTreeMap<(usize, usize), Type>,
     pub template_expressions: BTreeMap<(usize, usize), Type>,
@@ -145,7 +146,12 @@ pub fn check(
                     };
                     namespace.insert(tag, field);
                 }
-                env.insert(name.clone(), Type::Record(namespace));
+                checker.insert_environment(
+                    &mut env,
+                    name.clone(),
+                    Type::Record(namespace),
+                    statement.span,
+                )?;
             }
             StatementKind::Import { path, alias } => {
                 checker.fresh(alias, &env, statement.span)?;
@@ -157,14 +163,19 @@ pub fn check(
                     )
                 })?;
                 imported
-                    .charge_types(type_budget)
+                    .charge_import_interface(type_budget, alias)
                     .map_err(|e| checker.error("S105", e, statement.span))?;
                 for (name, ty) in &imported.schemas {
                     checker
                         .schemas
                         .insert(format!("{alias}.{name}"), ty.clone());
                 }
-                env.insert(alias.clone(), Type::Record(imported.exports.clone()));
+                checker.insert_environment(
+                    &mut env,
+                    alias.clone(),
+                    Type::Record(imported.exports.clone()),
+                    statement.span,
+                )?;
             }
             _ => {}
         }
@@ -173,7 +184,8 @@ pub fn check(
         if alias.parameters.is_empty() {
             let ty = checker.schemas[name].clone();
             if let Type::Record(fields) = &ty {
-                env.insert(
+                checker.insert_environment(
+                    &mut env,
                     name.clone(),
                     Type::Function(Signature {
                         duration: sanim_core::TimelineEffect::default(),
@@ -192,7 +204,8 @@ pub fn check(
                             .collect(),
                         result: Box::new(ty),
                     }),
-                );
+                    Span::default(),
+                )?;
             }
         }
     }
@@ -210,7 +223,8 @@ pub fn check(
                 body,
                 ..
             } => {
-                let declaration = &env[name].signatures()[function_clauses[&statement.span.start]];
+                let declaration =
+                    &env[name.as_str()].signatures()[function_clauses[&statement.span.start]];
                 let declaration_variables = generic_variables(&declaration.generics);
                 checker.function = Some(name.clone());
                 let mut saw_default = false;
@@ -236,24 +250,27 @@ pub fn check(
                         ));
                     }
                 }
-                let signature =
-                    env[name].signatures()[function_clauses[&statement.span.start]].clone();
-                let mut scope = checker.copy_environment(&env, statement.span)?;
+                let signature = env[name.as_str()].signatures()
+                    [function_clauses[&statement.span.start]]
+                    .clone();
+                let mut scope = checker.fork_environment(&env, statement.span)?;
                 // A single-clause signal accepts the complete source schema.
                 // Overload guards prove only the sample used to dispatch.
-                let entry_guards = env[name].signatures().len() > 1;
+                let entry_guards = env[name.as_str()].signatures().len() > 1;
                 for parameter in &signature.parameters {
                     let name = &parameter.name;
                     let ty = &parameter.ty;
                     checker.fresh(name, &scope, statement.span)?;
-                    scope.insert(
+                    checker.insert_environment(
+                        &mut scope,
                         name.clone(),
                         if parameter.kind == BindingKind::Sig && entry_guards {
                             ty.clone().signal_schema()
                         } else {
                             ty.clone()
                         },
-                    );
+                        statement.span,
+                    )?;
                 }
                 checker.function = Some(name.clone());
                 let variables = generic_variables(&signature.generics);
@@ -354,8 +371,11 @@ pub fn check(
             break;
         }
     }
-    for (name, ty) in &mut env {
-        for signature in ty.signatures_mut() {
+    for name in checker.effects.union(&checker.mutations) {
+        for signature in checker
+            .mutate_environment(&mut env, name, Span::default())?
+            .signatures_mut()
+        {
             signature.schedules = checker.effects.contains(name);
             signature.mutates = checker.mutations.contains(name);
         }
@@ -417,9 +437,8 @@ pub fn check(
     )?;
     for statement in &module.statements {
         if let StatementKind::Function { name, .. } = &statement.kind {
-            let signature = &mut env
-                .get_mut(name)
-                .expect("checked function")
+            let signature = &mut checker
+                .mutate_environment(&mut env, name, statement.span)?
                 .signatures_mut()[function_clauses[&statement.span.start]];
             signature.duration = duration_analysis.clauses[&statement.span.start].clone();
             signature.schedules = checker.effects.contains(name);
@@ -438,7 +457,10 @@ pub fn check(
         durations: duration_analysis.nodes,
         duration_needed: duration_analysis.needed,
         value_dependencies: duration_analysis.value_dependencies,
-        exports: env,
+        exports: env
+            .into_iter()
+            .map(|(name, ty)| (name.to_string(), std::sync::Arc::unwrap_or_clone(ty)))
+            .collect(),
         schemas: checker.schemas,
         result_types: checker.result_types,
         template_expressions: checker.template_expressions,
@@ -653,30 +675,6 @@ impl Checker<'_> {
             out.push(parameter);
         }
         Ok(out)
-    }
-    fn copy_environment(&self, env: &Environment, span: Span) -> Result<Environment, Diagnostic> {
-        env.iter()
-            .map(|(name, ty)| self.copy_type(ty, span).map(|ty| (name.clone(), ty)))
-            .collect()
-    }
-    fn substitute(
-        &self,
-        ty: &Type,
-        bindings: &BTreeMap<String, Type>,
-        span: Span,
-    ) -> Result<Type, Diagnostic> {
-        let mut remaining = self.type_budget.get();
-        sanim_core::type_budget::charge_substitution(ty, bindings, &mut remaining)
-            .map_err(|e| self.error("S105", e, span))?;
-        self.type_budget.set(remaining);
-        Ok(ty.substitute(bindings))
-    }
-    fn copy_type(&self, ty: &Type, span: Span) -> Result<Type, Diagnostic> {
-        let mut remaining = self.type_budget.get();
-        sanim_core::type_budget::charge(ty, &mut remaining)
-            .map_err(|e| self.error("S105", e, span))?;
-        self.type_budget.set(remaining);
-        Ok(ty.clone())
     }
     // Generic aliases retain their source type expression until concrete arguments
     // are supplied. Validate names now; resolve field algebra once the fields exist.
@@ -983,7 +981,7 @@ impl Checker<'_> {
             sanim_core::type_budget::charge(&narrowed, &mut remaining)
                 .map_err(|message| self.error("S105", message, span))?;
             self.type_budget.set(remaining);
-            env.insert(name.into(), narrowed);
+            self.insert_environment(env, name.into(), narrowed, span)?;
         }
         Ok(())
     }
@@ -1072,7 +1070,7 @@ impl Checker<'_> {
                     self.binding_types
                         .insert(statement.span.start, self.copy_type(&ty, statement.span)?);
                     self.bind_kind(name, *kind);
-                    env.insert(name.clone(), ty);
+                    self.insert_environment(env, name.clone(), ty, statement.span)?;
                 }
                 StatementKind::Assign { name, value } => {
                     let expected = self.writable(name, env, statement.span)?;
@@ -1130,7 +1128,7 @@ impl Checker<'_> {
                     }
                     self.scoped_block(
                         body,
-                        &mut self.copy_environment(env, statement.span)?,
+                        &mut self.fork_environment(env, statement.span)?,
                         result,
                         variables,
                     )?;
@@ -1164,8 +1162,8 @@ impl Checker<'_> {
                 StatementKind::If { condition, yes, no } => {
                     let ty = self.expression(condition, env, Some(&Type::Bool), variables)?;
                     self.expect(&Type::Bool, &ty, condition.span)?;
-                    let mut yes_scope = self.copy_environment(env, statement.span)?;
-                    let mut no_scope = self.copy_environment(env, statement.span)?;
+                    let mut yes_scope = self.fork_environment(env, statement.span)?;
+                    let mut no_scope = self.fork_environment(env, statement.span)?;
                     self.narrow_branch(condition, true, &mut yes_scope, statement.span)?;
                     self.narrow_branch(condition, false, &mut no_scope, statement.span)?;
                     let a = self.scoped_block(yes, &mut yes_scope, result, variables)?;
@@ -1189,8 +1187,8 @@ impl Checker<'_> {
                             ));
                         }
                     };
-                    let mut scope = self.copy_environment(env, statement.span)?;
-                    scope.insert(name.clone(), inner);
+                    let mut scope = self.fork_environment(env, statement.span)?;
+                    self.insert_environment(&mut scope, name.clone(), inner, statement.span)?;
                     self.scoped_block(body, &mut scope, result, variables)?;
                 }
                 StatementKind::Repeat {
@@ -1206,7 +1204,7 @@ impl Checker<'_> {
                     }
                     self.scoped_block(
                         body,
-                        &mut self.copy_environment(env, statement.span)?,
+                        &mut self.fork_environment(env, statement.span)?,
                         result,
                         variables,
                     )?;
@@ -1254,10 +1252,15 @@ impl Checker<'_> {
                                 case.span,
                             ));
                         }
-                        let mut scope = self.copy_environment(env, statement.span)?;
+                        let mut scope = self.fork_environment(env, statement.span)?;
                         for (name, ty) in case.bindings.iter().zip(fields) {
                             self.fresh(name, &scope, case.span)?;
-                            scope.insert(name.clone(), ty.clone());
+                            self.insert_environment(
+                                &mut scope,
+                                name.clone(),
+                                ty.clone(),
+                                statement.span,
+                            )?;
                         }
                         all &= self.scoped_block(&case.body, &mut scope, result, variables)?;
                     }
@@ -1363,10 +1366,10 @@ impl Checker<'_> {
                 if let Some(value) = prelude::values().get(name.as_str()) {
                     Ok(value.ty())
                 } else {
-                    env.get(name).ok_or_else(|| {
+                    env.get(name.as_str()).ok_or_else(|| {
                         let hint=expected.and_then(Type::string_literals).filter(|values|values.contains(&name.as_str())).map(|_|format!(" Did you mean {name:?}? This argument expects a quoted string value ({expected}).",expected=expected.expect("literal context"))).unwrap_or_default();
                         self.error("S120",format!("unknown name '{name}'.{hint} Standard constructors such as Circle and Color need no import; user names are case-sensitive."),expr.span)
-                    }).and_then(|ty|self.copy_type(if let Type::Signal(inner)=ty {inner}else{ty},expr.span))
+                    }).and_then(|ty|self.copy_type(if let Type::Signal(inner)=ty.as_ref() {inner.as_ref()}else{ty.as_ref()},expr.span))
                 }
             }
             ExprKind::List(items) => self.list_literal(items, env, expected, variables),
@@ -1684,7 +1687,7 @@ impl Checker<'_> {
             }
         }
         self.complete_generics(&signature, &mut substitutions, expr.span)?;
-        let stored = self.copy_environment(&substitutions, expr.span)?;
+        let stored = self.copy_substitutions(&substitutions, expr.span)?;
         self.call_types
             .insert((expr.span.start, expr.span.end), stored);
         self.substitute(&signature.result, &substitutions, expr.span)
@@ -1809,21 +1812,24 @@ fn direct_callee(expr: &Expr) -> bool {
 }
 
 impl Checked {
-    pub(crate) fn charge_types(&self, budget: &std::cell::Cell<usize>) -> Result<(), String> {
+    pub(crate) fn charge_import_interface(
+        &self,
+        budget: &std::cell::Cell<usize>,
+        alias: &str,
+    ) -> Result<(), String> {
         let mut remaining = budget.get();
-        for ty in self
-            .exports
-            .values()
-            .chain(self.schemas.values())
-            .chain(self.result_types.values())
-            .chain(self.binding_types.values())
-            .chain(
-                self.reflected
-                    .values()
-                    .map(|declaration| declaration.ty.as_ref()),
-            )
-            .chain(self.call_types.values().flat_map(|values| values.values()))
-        {
+        // Imports clone only this interface. Private checked maps stay shared
+        // with the defining module and are charged by that module's check.
+        for (name, ty) in &self.exports {
+            remaining = remaining
+                .checked_sub(name.len() + std::mem::size_of::<String>())
+                .ok_or("resolved type budget exceeded while copying an imported interface")?;
+            sanim_core::type_budget::charge(ty, &mut remaining)?;
+        }
+        for (name, ty) in &self.schemas {
+            remaining = remaining
+                .checked_sub(alias.len() + 1 + name.len() + std::mem::size_of::<String>())
+                .ok_or("resolved type budget exceeded while qualifying an imported schema")?;
             sanim_core::type_budget::charge(ty, &mut remaining)?;
         }
         budget.set(remaining);
@@ -1892,7 +1898,7 @@ fn check_signal_purity(
                         checker,
                         body,
                         env,
-                        env.get(name).is_some_and(|ty| {
+                        env.get(name.as_str()).is_some_and(|ty| {
                             ty.signatures().iter().any(|signature| {
                                 matches!(signature.result.as_ref(), Type::Signal(_))
                             })

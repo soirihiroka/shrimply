@@ -5,7 +5,7 @@ use taffy::prelude::*;
 
 const MAX_CACHED_LAYOUTS: usize = 64;
 const MAX_CACHED_ITEMS: usize = 32_768;
-type SizeKey = (u64, u64, u64, u64, Option<(u64, bool)>);
+type SizeKey = (u64, u64, u64, u64, Option<(u64, bool)>, crate::PositionMode);
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Key {
     width: u64,
@@ -39,7 +39,15 @@ pub(super) fn positions(
 ) -> Result<Positions, String> {
     let sizes = children
         .iter()
-        .map(super::extent)
+        .map(|child| {
+            if child.layout.position_mode == crate::PositionMode::Absolute {
+                // Its paint is resolved independently; none of its dimensions
+                // may invalidate the sibling flow plan.
+                Ok((0., 0.))
+            } else {
+                super::extent(child)
+            }
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let gap = to_f64(style.gap)?;
     let padding = to_f64(style.padding)?;
@@ -76,12 +84,15 @@ pub(super) fn positions(
                         Ok((value.to_bits(), basis.unit == crate::Unit::Percent))
                     })
                     .transpose()?;
+                let flex =
+                    style.flex && child.layout.position_mode != crate::PositionMode::Absolute;
                 Ok((
                     w.to_bits(),
                     h.to_bits(),
-                    if style.flex { grow.to_bits() } else { 0 },
-                    if style.flex { shrink.to_bits() } else { 0 },
-                    if style.flex { basis } else { None },
+                    if flex { grow.to_bits() } else { 0 },
+                    if flex { shrink.to_bits() } else { 0 },
+                    if flex { basis } else { None },
+                    child.layout.position_mode,
                 ))
             })
             .collect::<Result<Vec<_>, String>>()?,
@@ -103,22 +114,28 @@ pub(super) fn positions(
         .iter()
         .zip(children.iter())
         .map(|((w, h), child)| {
+            let flex = style.flex && child.layout.position_mode != crate::PositionMode::Absolute;
             tree.new_leaf(Style {
+                position: if child.layout.position_mode == crate::PositionMode::Absolute {
+                    Position::Absolute
+                } else {
+                    Position::Relative
+                },
                 size: Size {
                     width: length(coordinate(*w)?),
                     height: length(coordinate(*h)?),
                 },
-                flex_grow: if style.flex {
+                flex_grow: if flex {
                     coordinate(to_f64(child.layout.flex_grow)?)?
                 } else {
                     0.
                 },
-                flex_shrink: if style.flex {
+                flex_shrink: if flex {
                     coordinate(to_f64(child.layout.flex_shrink)?)?
                 } else {
                     0.
                 },
-                flex_basis: if style.flex {
+                flex_basis: if flex {
                     child
                         .layout
                         .flex_basis
@@ -228,4 +245,51 @@ pub(super) fn positions(
         });
     }
     Ok(positions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absolute_geometry_and_flex_factors_reuse_the_same_flow_plan() {
+        let mut children: imbl::Vector<_> = [Element {
+            id: "overlay".into(),
+            geometry: Arc::new(crate::Geometry::Circle { radius: 10.into() }),
+            position: crate::Vec2::zero(crate::Unit::Length),
+            rotation: 0.into(),
+            scale: 1.into(),
+            opacity: 1.into(),
+            fill: crate::Color::parse("blue3").unwrap().into(),
+            stroke: None,
+            reveal: Default::default(),
+            horizontal: Default::default(),
+            layout: Layout {
+                position_mode: crate::PositionMode::Absolute,
+                ..Default::default()
+            },
+        }]
+        .into_iter()
+        .collect();
+        let style = Layout {
+            flex: true,
+            ..Default::default()
+        };
+        let first = positions(&children, &style, 100., None, Direction::Column).unwrap();
+        let overlay = children.front_mut().unwrap();
+        overlay.geometry = Arc::new(crate::Geometry::Circle { radius: 20.into() });
+        overlay.layout.flex_grow = 2.into();
+        overlay.layout.flex_shrink = 3.into();
+        overlay.layout.flex_basis = Some(crate::Number {
+            value: 80.into(),
+            unit: crate::Unit::Length,
+        });
+        let resized = positions(&children, &style, 100., None, Direction::Column).unwrap();
+        assert!(Arc::ptr_eq(&first, &resized));
+        children.front_mut().unwrap().layout.position_mode = crate::PositionMode::Relative;
+        let flowed = positions(&children, &style, 100., None, Direction::Column).unwrap();
+        assert!(!Arc::ptr_eq(&first, &flowed));
+        assert_eq!(first.size[1], 0.);
+        assert!(flowed.size[1] > 0.);
+    }
 }

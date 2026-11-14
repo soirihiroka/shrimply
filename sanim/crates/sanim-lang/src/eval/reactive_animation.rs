@@ -470,6 +470,8 @@ impl Runtime<'_, '_> {
                 let Value::Function(key)=self.expression(callee,env)? else{return Err(self.error("S140","retained signals require direct pure helper calls",expr.span));};
                 let group=self.functions.get(&key).cloned().ok_or_else(||self.error("S140","retained constructor/data calls must be snapshotted with let first",expr.span))?;
                 if group.clauses.len()!=1 {return Err(self.error("S140","retained animated helpers require one straight-line clause; snapshot a guarded helper call with let before retaining it",expr.span));}
+                // Lowering observes code even when the initial value sample short-circuits it.
+                self.record_function(&key,&group);
                 let function=group.clauses[0].clone();
                 let mut inputs=BTreeMap::new();
                 for (index,(label,value)) in args.enumerate(){let name=label.as_ref().or_else(||function.parameters.get(index).map(|parameter| &parameter.name)).ok_or_else(||self.error("S140","invalid retained helper argument",value.span))?;inputs.insert(name.clone(),self.lower_expression(value,env,locals,depth+1)?);}
@@ -503,6 +505,7 @@ pub(super) fn property_name(name: &str) -> Option<Property> {
     }
     Some(match name {
         "position" => Property::Position,
+        "position_mode" => Property::PositionMode,
         "scroll" => Property::Scroll,
         "white_space" => Property::WhiteSpace,
         "overflow_wrap" => Property::OverflowWrap,

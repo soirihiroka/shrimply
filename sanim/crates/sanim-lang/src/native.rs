@@ -672,6 +672,13 @@ pub(crate) fn make_element(
         },
         x_align: alignment("x_align")?,
         y_align: alignment("y_align")?,
+        position_mode: args
+            .get("position_mode")
+            .map(Value::string)
+            .transpose()?
+            .map(PositionMode::parse)
+            .transpose()?
+            .unwrap_or_default(),
         position_offset: [0.; 2],
         direction: match args.get("flex_direction").map(Value::string).transpose()? {
             Some("row") => Some(Direction::Row),

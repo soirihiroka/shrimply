@@ -77,6 +77,7 @@ pub(crate) fn element_parameters() -> Vec<Parameter> {
     vec![
         p("id", String),
         p("position", Vector(2, None)),
+        p("position_mode", sanim_core::PositionMode::ty()),
         p("x_align", sanim_core::Align::ty()),
         p("y_align", sanim_core::Align::ty()),
         p("fill", sanim_core::Paint::ty()),

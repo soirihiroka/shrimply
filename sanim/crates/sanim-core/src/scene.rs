@@ -5,7 +5,12 @@ use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-pub(crate) fn flow_position_error(id: &str) -> String {
+pub(crate) fn flow_position_error(id: &str, reactive: &crate::reactive::ReactiveGraph) -> String {
+    if reactive.binding(id, Property::PositionMode).is_some() {
+        return format!(
+            "flow layout controls '{id}.position' because its position_mode signal may become relative; use a constant absolute position_mode for manual position animation, or animate the containing Box or its layout properties instead"
+        );
+    }
     format!(
         "flow layout controls '{id}.position'; animate the containing Box or change its layout properties instead"
     )
@@ -177,6 +182,9 @@ pub struct Layout {
     pub text: crate::text::Layout,
     pub x_align: Align,
     pub y_align: Align,
+    /// Absolute children keep their parent-local coordinates instead of entering flow.
+    #[serde(default)]
+    pub position_mode: PositionMode,
     /// Fixed native-composition translation added after the relative position.
     #[serde(default)]
     pub position_offset: [f64; 2],
@@ -205,6 +213,39 @@ pub struct Layout {
     pub scroll: Option<Vec2>,
     #[serde(skip)]
     pub scroll_range: [f64; 2],
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PositionMode {
+    #[default]
+    Relative,
+    Absolute,
+}
+impl PositionMode {
+    pub const VALUES: &'static [(&'static str, Self)] =
+        &[("relative", Self::Relative), ("absolute", Self::Absolute)];
+    pub fn name(self) -> &'static str {
+        Self::VALUES
+            .iter()
+            .find(|(_, mode)| *mode == self)
+            .expect("registered position mode")
+            .0
+    }
+    pub fn ty() -> crate::Type {
+        crate::Type::union(
+            Self::VALUES
+                .iter()
+                .map(|(name, _)| crate::Type::StringLiteral((*name).into())),
+        )
+        .expect("registered position modes")
+    }
+    pub fn parse(value: &str) -> Result<Self, String> {
+        Self::VALUES
+            .iter()
+            .find(|(name, _)| *name == value)
+            .map(|(_, mode)| *mode)
+            .ok_or_else(|| format!("unknown position_mode {value:?}; use relative or absolute"))
+    }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -318,6 +359,7 @@ pub enum Direction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Property {
     Position,
+    PositionMode,
     Overflow,
     OverflowX,
     OverflowY,
@@ -551,6 +593,7 @@ impl Element {
         }
         Ok(match property {
             Property::Position => Value::Vec2(self.position),
+            Property::PositionMode => Value::String(self.layout.position_mode.name().into()),
             Property::WhiteSpace => Value::String(
                 self.layout
                     .text
@@ -776,6 +819,9 @@ impl Element {
                     *size = number.value;
                     *pending = true;
                 }
+            }
+            Property::PositionMode => {
+                self.layout.position_mode = PositionMode::parse(value.string()?)?
             }
             Property::Overflow | Property::OverflowX | Property::OverflowY => {
                 let mode = Overflow::parse(value.string()?)?;
@@ -1042,7 +1088,7 @@ impl Animation {
     ) -> Result<Value, String> {
         if let Some(node) = self.reactive.binding(&element.id, property) {
             if property == Property::Position && self.flow_controlled.contains(&element.id) {
-                return Err(flow_position_error(&element.id));
+                return Err(flow_position_error(&element.id, &self.reactive));
             }
             if self
                 .tracks
@@ -1086,7 +1132,7 @@ impl Animation {
         if let Some(properties) = self.reactive.properties(&out.id) {
             for (property, node) in properties {
                 if *property == Property::Position && self.flow_controlled.contains(&out.id) {
-                    return Err(flow_position_error(&out.id));
+                    return Err(flow_position_error(&out.id, &self.reactive));
                 }
                 if self
                     .tracks
@@ -1156,10 +1202,10 @@ impl Animation {
     }
     pub fn add(&mut self, element: Element, birth: Fraction) -> Result<(), String> {
         let mut flow = OrdSet::new();
-        collect_flow_positions(&element, &mut flow);
+        collect_flow_positions(&element, &self.reactive, &mut flow);
         for id in &flow {
             if self.reactive.binding(id, Property::Position).is_some() {
-                return Err(flow_position_error(id));
+                return Err(flow_position_error(id, &self.reactive));
             }
         }
         let mut ids = vec![];
@@ -1214,7 +1260,7 @@ impl Animation {
         let mut pending_flow = OrdSet::new();
         let mut descendants = std::collections::BTreeSet::new();
         for motion in motions {
-            collect_flow_positions(&motion.element, &mut pending_flow);
+            collect_flow_positions(&motion.element, &self.reactive, &mut pending_flow);
             if let Some(children) = motion.element.geometry.children() {
                 let mut ids = vec![];
                 for child in children {
@@ -1245,7 +1291,7 @@ impl Animation {
         }
         for id in &pending_flow {
             if self.reactive.binding(id, Property::Position).is_some() {
-                return Err(flow_position_error(id));
+                return Err(flow_position_error(id, &self.reactive));
             }
         }
         for motion in motions {
@@ -1262,7 +1308,7 @@ impl Animation {
             let flow_controlled = self.flow_controlled.contains(&motion.element.id)
                 || pending_flow.contains(&motion.element.id);
             if motion.property == Property::Position && flow_controlled {
-                return Err(flow_position_error(&motion.element.id));
+                return Err(flow_position_error(&motion.element.id, &self.reactive));
             }
             let centered_growth = motion.property == Property::Scale
                 && (motion.to.number()?.value == Fraction::from(0)
@@ -1481,13 +1527,33 @@ impl Animation {
     }
 }
 
-pub(crate) fn collect_flow_positions(element: &Element, ids: &mut OrdSet<String>) {
+pub(crate) fn flow_controls_position(
+    element: &Element,
+    reactive: &crate::reactive::ReactiveGraph,
+) -> bool {
+    element.layout.position_mode != PositionMode::Absolute
+        || reactive
+            .binding(&element.id, Property::PositionMode)
+            .and_then(|node| reactive.node_type(node))
+            .is_some_and(|ty| !crate::Type::StringLiteral("absolute".into()).accepts(ty))
+}
+
+pub(crate) fn collect_flow_positions(
+    element: &Element,
+    reactive: &crate::reactive::ReactiveGraph,
+    ids: &mut OrdSet<String>,
+) {
     if let Some(children) = element.geometry.children() {
         if element.layout.direction.is_some() {
-            ids.extend(children.iter().map(|child| child.id.clone()));
+            ids.extend(
+                children
+                    .iter()
+                    .filter(|child| flow_controls_position(child, reactive))
+                    .map(|child| child.id.clone()),
+            );
         }
         for child in children {
-            collect_flow_positions(child, ids);
+            collect_flow_positions(child, reactive, ids);
         }
     }
 }

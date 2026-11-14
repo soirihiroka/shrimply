@@ -57,16 +57,44 @@ fmt-check:
 bench:
 	$(CARGO) bench -p sanim-lang --bench headless
 frame-cache-bench:
-	$(CARGO) run -p sanim-render --example frame_cache -- $(ARGS)
+	$(CARGO) run --release -p sanim-render --example frame_cache -- $(ARGS)
 state-cache-bench:
-	$(CARGO) run -p sanim-lang --example state_reload -- $(ARGS)
+	$(CARGO) run --release -p sanim-lang --example state_reload -- $(ARGS)
 reflection-bench:
-	$(CARGO) run -p sanim-lang --example reflection_reload -- $(ARGS)
+	$(CARGO) run --release -p sanim-lang --example reflection_reload -- $(ARGS)
 .PHONY: reflection-schema-bench
 reflection-schema-bench:
 	$(CARGO) test $(ARGS) -p sanim-core --test reflection canonical_registry_lookup_benchmark -- --ignored --nocapture
 runtime-hot-bench:
-	$(CARGO) run -p sanim-runtime --example hot_reload -- $(ARGS)
+	$(CARGO) run --release -p sanim-runtime --example hot_reload -- $(ARGS)
+.PHONY: edit-latency-bench
+edit-latency-bench:
+	$(CARGO) run --release -p sanim-lang --example edit_latency -- $(ARGS)
+.PHONY: checker-cow-check checked-cache-check
+checker-cow-check:
+	$(CARGO) test -p sanim-lang --lib checker::environment::tests
+.PHONY: checker-cow-bench
+checker-cow-bench:
+	$(CARGO) test --release -p sanim-lang --lib checker::environment::tests::checker_environment_benchmark -- --ignored --nocapture
+.PHONY: persistent-values-bench
+persistent-values-bench:
+	$(CARGO) test --release -p sanim-core --lib collection::values::tests::persistent_values_benchmark -- --ignored --nocapture
+checked-cache-check:
+	$(CARGO) test -p sanim-lang --lib cache::
+.PHONY: hot-sharing-check
+hot-sharing-check: checker-cow-check checked-cache-check
+	$(CARGO) test -p sanim-core --lib value_key::
+	$(CARGO) test -p sanim-lang --test hot_reload_data --test hot_reload_io --test reload
+.PHONY: retained-helper-check
+retained-helper-check:
+	$(CARGO) test -p sanim-lang --test state_restore --test signal_functions
+.PHONY: absolute-layout-check
+absolute-layout-check:
+	$(CARGO) test -p sanim-lang --test absolute_layout --test scrolling --test markup
+	$(CARGO) clippy -p sanim-core -p sanim-lang --all-targets -- -D warnings
+.PHONY: absolute-layout-bench
+absolute-layout-bench:
+	$(CARGO) test --release -p sanim-lang --test absolute_layout absolute_layout_benchmark -- --ignored --nocapture
 run:
 	$(CARGO) run -p sanim-cli -- $(ARGS)
 build:
@@ -229,7 +257,7 @@ hot-reload-io-check:
 	$(CARGO) test -p sanim-runtime --lib watcher::tests
 	$(CARGO) test -p sanim-runtime --test watching scalar_hot_edits_release_old_revisions_and_preserve_glyphs_and_prefix_frames
 hot-reload-memory-bench:
-	$(CARGO) test -p sanim-runtime --test watching scalar_hot_reload_memory_plateau_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-runtime --test watching scalar_hot_reload_memory_plateau_benchmark -- --ignored --nocapture
 .PHONY: native-cache-check native-cache-bench
 native-cache-check:
 	$(CARGO) test -p sanim-render --test native_cache

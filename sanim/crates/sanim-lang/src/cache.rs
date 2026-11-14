@@ -1,6 +1,9 @@
 use sanim_core::{Font, Value, cache::Cache, value_budget};
 use std::{collections::BTreeMap, sync::Arc};
+pub(crate) mod checked;
 pub(crate) mod parsed;
+
+mod size;
 
 #[derive(Default)]
 pub(crate) struct ValueCache {
