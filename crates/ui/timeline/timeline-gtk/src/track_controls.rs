@@ -22,26 +22,26 @@ pub(super) fn timeline_sidebar(
     toolbar.set_margin_start(4);
     toolbar.set_margin_end(4);
 
-    let magnet = timeline_tool_button("magnet-tilted-symbolic");
-    magnet.set_tooltip_i18n("Magnet");
+    use shrimply_timeline_skia::TimelineTool;
+    let button = |tool: TimelineTool| {
+        let description = tool.description();
+        let button = timeline_tool_button(description.icon);
+        button.set_tooltip_i18n(description.label);
+        button
+    };
+    let magnet = button(TimelineTool::Magnet);
 
-    let beat_grid = timeline_tool_button("metronome-symbolic");
-    beat_grid.set_tooltip_i18n("Beat Grid");
+    let beat_grid = button(TimelineTool::BeatGrid);
 
-    let pointer = timeline_tool_button("pointer-left-symbolic");
-    pointer.set_tooltip_i18n("Pointer");
+    let pointer = button(TimelineTool::Pointer);
 
-    let cut = timeline_tool_button("cut-symbolic");
-    cut.set_tooltip_i18n("Cut");
+    let cut = button(TimelineTool::Cut);
 
-    let overwrite = timeline_tool_button("track-insert-symbolic");
-    overwrite.set_tooltip_i18n("Overwrite/Insert");
+    let overwrite = button(TimelineTool::Overwrite);
 
-    let block = timeline_tool_button("track-block-symbolic");
-    block.set_tooltip_i18n("Block");
+    let block = button(TimelineTool::Block);
 
-    let new_track = timeline_tool_button("track-move-above-symbolic");
-    new_track.set_tooltip_i18n("New Track");
+    let new_track = button(TimelineTool::NewTrack);
 
     let tools = TimelineTools::new(preferences.clone());
     let state = tools.state();

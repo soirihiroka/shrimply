@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- From the same bundled symbolic SVG used by the GTK timeline. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="16dp" android:viewportWidth="16" android:viewportHeight="16">
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="1" android:pathData="M 3 2.54193 L 3 12.1785 C 3 12.6321, 3.27849 13.0392, 3.70129 13.2037 C 4.12409 13.3681, 4.60448 13.2561, 4.91098 12.9217 L 6.57481 11.1061 L 7.97453 14.1509 C 8.31023 14.8811, 9.17324 15.2024, 9.90472 14.8694 L 10.0977 14.7816 C 10.8358 14.4456, 11.1753 13.5854, 10.8655 12.8358 L 9.69655 10.0069 L 11.8681 10.0069 C 12.328 10.0069, 12.7412 9.7262, 12.9107 9.29875 C 13.0802 8.87129, 12.9716 8.38368, 12.6367 8.06854 L 5.57941 1.42732 C 5.13475 1.00888, 4.48392 0.894763, 3.92342 1.13696 C 3.36292 1.37916, 3 1.93134, 3 2.54193 Z" />
+</vector>

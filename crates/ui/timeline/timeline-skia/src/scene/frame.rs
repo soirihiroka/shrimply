@@ -22,7 +22,8 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
         let project = project.borrow();
         let player = player_state::snapshot(player_state);
         (
-            folded_sequence::expanded_timeline_end(&project)
+            runtime
+                .timeline_end
                 .max(player.duration)
                 .max(player.position)
                 .max(Time::from_seconds(1))
@@ -68,8 +69,11 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
         } else {
             Vec::new()
         };
-        runtime.snap_repository = crate::snapping::repository(
+        crate::snapping::update(
             &project,
+            runtime.revision,
+            &mut runtime.snapping_cache,
+            &mut runtime.snap_repository,
             crate::snapping::Request {
                 folded_drag: runtime.folded_drag.as_ref(),
                 dragged_group: runtime.dragged_group.as_ref(),

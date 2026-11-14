@@ -85,13 +85,21 @@ pub fn labeled_string_selector(
         if callback_updating.get() {
             return;
         }
-        if let Some(choice) = callback_choices.borrow().get(dropdown.selected() as usize) {
-            changed(choice.value.clone());
+        let choice = callback_choices
+            .borrow()
+            .get(dropdown.selected() as usize)
+            .cloned();
+        if let Some(choice) = choice {
+            changed(choice.value);
         }
     });
 
     StringSelector {
-        widget: control_row(label, &dropdown),
+        widget: if label.is_empty() {
+            dropdown.clone().upcast()
+        } else {
+            control_row(label, &dropdown)
+        },
         dropdown,
         choices,
         updating,

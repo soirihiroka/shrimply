@@ -1,5 +1,6 @@
 //! Headless grammar registry. Parsing, highlights and fold scopes share one tree.
 mod cache;
+#[cfg(feature = "native-text")]
 pub mod view;
 use cache::{Identity, Parsed};
 use sanim_core::code::{Content, Document, Highlight, Language, Scope, SyntaxIssue};
@@ -10,6 +11,22 @@ use std::{
 use tree_sitter::{InputEdit, Node, Parser, Point, Query, QueryCursor, StreamingIterator, Tree};
 
 const MAX_SYNTAX_NODES: usize = 200_000;
+
+/// Code selections are portable; turning them into visual rows requires a text renderer.
+pub fn range_bounds(
+    element: &sanim_core::Element,
+    selected: &sanim_core::code::view::Range,
+) -> Result<[f64; 2], String> {
+    #[cfg(feature = "native-text")]
+    {
+        view::range_bounds(element, selected)
+    }
+    #[cfg(not(feature = "native-text"))]
+    {
+        let _ = (element, selected);
+        Err("CodeView range scrolling requires native text layout, which is unavailable in this build".into())
+    }
+}
 const MAX_SYNTAX_DEPTH: usize = 256;
 const MAX_SYNTAX_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_SYNTAX_CACHE_ENTRIES: usize = 32;

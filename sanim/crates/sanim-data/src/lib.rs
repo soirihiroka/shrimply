@@ -29,7 +29,20 @@ pub fn resolve_pending(
     element: &mut sanim_core::Element,
     time: sanim_core::Fraction,
 ) -> Result<(), String> {
+    #[cfg(feature = "native-text")]
     code::view::resolve_pending(element, time)?;
+    #[cfg(not(feature = "native-text"))]
+    {
+        let _ = time;
+        if matches!(element.geometry.as_ref(), sanim_core::Geometry::Code { .. })
+            && requires_resolution(element)
+        {
+            return Err(
+                "CodeView layout requires native text support, which is unavailable in this build"
+                    .into(),
+            );
+        }
+    }
     font::resolve_pending(element)
 }
 

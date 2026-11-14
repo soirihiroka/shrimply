@@ -1,0 +1,4 @@
+The Android drawable resources derived from Adwaita symbolic action icons are
+by the GNOME Project (https://www.gnome.org), distributed under LGPL-3.0-or-later.
+The source icon names are the drawable file names with underscores replaced by
+hyphens and the suffix -symbolic.svg, from adwaita-icon-theme.

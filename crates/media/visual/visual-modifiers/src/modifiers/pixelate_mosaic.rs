@@ -1,6 +1,7 @@
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Color, Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -14,13 +15,17 @@ pub struct PixelateMosaicModifier {
     pub block_height: TimelineValue<f32>,
 }
 
+#[cfg(feature = "preview")]
 const WIDTH_COLOR: Color = Color::new(0.35, 0.82, 1.0, 1.0);
+#[cfg(feature = "preview")]
 const HEIGHT_COLOR: Color = Color::new(1.0, 0.82, 0.24, 1.0);
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum MosaicControl {
     Width,
     Height,
 }
+#[cfg(feature = "preview")]
 struct MosaicPreview {
     target: PreviewTarget,
     original: PixelateMosaicModifier,
@@ -31,7 +36,9 @@ struct MosaicPreview {
     active: Option<MosaicControl>,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl PixelateMosaicModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -63,6 +70,7 @@ impl PixelateMosaicModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl MosaicPreview {
     fn points(&self) -> (glam::Vec2, [glam::Vec2; 2]) {
         let center = self.size * 0.5;
@@ -87,6 +95,7 @@ impl MosaicPreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for MosaicPreview {
     fn on_draw(
         &mut self,
@@ -182,6 +191,7 @@ impl PreviewProvider for MosaicPreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn scalar_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

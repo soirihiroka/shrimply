@@ -215,7 +215,14 @@ fn find_symbol(
     name: &str,
     offset: usize,
 ) -> Option<Symbol> {
-    symbols(module, length)
+    select_symbol(symbols(module, length), name, offset)
+}
+fn select_symbol(
+    symbols: impl IntoIterator<Item = Symbol>,
+    name: &str,
+    offset: usize,
+) -> Option<Symbol> {
+    symbols
         .into_iter()
         .filter(|symbol| symbol.name == name && visible(symbol, offset))
         .min_by_key(|symbol| {
@@ -259,6 +266,7 @@ fn expression_at(module: &Module, offset: usize) -> Option<Expr> {
             && expression.span.start <= offset
             && offset <= expression.span.end
             && matches!(expression.kind, ExprKind::Name(_) | ExprKind::Member(_, _))
+            && !matches!(&expression.kind, ExprKind::Member(base, _) if offset < base.span.end)
             && best.as_ref().is_none_or(|best| {
                 expression.span.end - expression.span.start < best.span.end - best.span.start
             })
@@ -268,7 +276,10 @@ fn expression_at(module: &Module, offset: usize) -> Option<Expr> {
     });
     best
 }
-fn native_signature(builtin: &prelude::Builtin, receiver: bool) -> (String, Vec<(String, String)>) {
+pub(crate) fn native_signature(
+    builtin: &prelude::Builtin,
+    receiver: bool,
+) -> (String, Vec<(String, String)>) {
     let parameters = builtin
         .parameters
         .iter()
@@ -810,106 +821,8 @@ pub(crate) fn hover(workspace: &Workspace, uri: &str, position: &Value) -> Resul
     Ok(label.map_or(Value::Null,|label|json!({"contents":{"kind":"markdown","value":format!("```sanim\n{label}\n```\nTimeline duration: **{duration}**")},"range":document.range(range)})))
 }
 
-pub(crate) fn definition(
-    workspace: &Workspace,
-    uri: &str,
-    position: &Value,
-) -> Result<Value, String> {
-    let document = &workspace
-        .documents
-        .get(uri)
-        .ok_or("document is not open")?
-        .document;
-    let offset = document.offset(position)?;
-    let Some((analysis, module)) = workspace.module(uri) else {
-        return Ok(Value::Null);
-    };
-    let Some(expression) = expression_at(&module.ast, offset) else {
-        return Ok(Value::Null);
-    };
-    let targets = match expression.kind {
-        ExprKind::Name(name) => definition_symbols(module, document.text.len(), &name, offset)
-            .into_iter()
-            .map(|symbol| (uri.to_owned(), document.range(symbol.selection)))
-            .collect::<Vec<_>>(),
-        ExprKind::Member(base, name) => {
-            if let ExprKind::Name(alias) = base.kind {
-                module
-                    .ast
-                    .statements
-                    .iter()
-                    .find_map(|statement| {
-                        let StatementKind::Import {
-                            path,
-                            alias: import_alias,
-                        } = &statement.kind
-                        else {
-                            return None;
-                        };
-                        if import_alias != &alias {
-                            return None;
-                        }
-                        let source = sanim_lang::source::resolve(&analysis.entry, path).ok()?;
-                        let imported = analysis.modules.get(&source)?;
-                        let imported_uri =
-                            workspace.uri_for_path(&analysis.root.join(&source)).ok()?;
-                        let document = Document::new(workspace.document_text(&imported_uri)?, 0);
-                        Some(
-                            definition_symbols(
-                                imported,
-                                document.text.len(),
-                                &name,
-                                document.text.len(),
-                            )
-                            .into_iter()
-                            .filter(|symbol| symbol.root)
-                            .map(|symbol| (imported_uri.clone(), document.range(symbol.selection)))
-                            .collect::<Vec<_>>(),
-                        )
-                    })
-                    .unwrap_or_default()
-            } else {
-                Vec::new()
-            }
-        }
-        _ => Vec::new(),
-    };
-    let mut targets = targets
-        .into_iter()
-        .map(|(uri, range)| json!({"uri":uri,"range":range}))
-        .collect::<Vec<_>>();
-    Ok(match targets.len() {
-        0 => Value::Null,
-        1 => targets.pop().expect("one definition"),
-        _ => json!(targets),
-    })
-}
-fn definition_symbols(
-    module: &AnalyzedModule,
-    length: usize,
-    name: &str,
-    offset: usize,
-) -> Vec<Symbol> {
-    let Some(symbol) = find_symbol(module, length, name, offset)
-        .filter(|symbol| symbol.selection.end > symbol.selection.start)
-    else {
-        return Vec::new();
-    };
-    if symbol
-        .ty
-        .as_ref()
-        .is_some_and(|ty| ty.signatures().len() > 1)
-    {
-        symbols(module, length)
-            .into_iter()
-            .filter(|candidate| {
-                candidate.kind == 12 && candidate.name == name && candidate.scope == symbol.scope
-            })
-            .collect()
-    } else {
-        vec![symbol]
-    }
-}
+mod navigation;
+pub(crate) use navigation::definition;
 
 pub(crate) fn document_symbols(workspace: &Workspace, uri: &str) -> Result<Value, String> {
     let document = &workspace
@@ -1190,8 +1103,13 @@ pub(crate) fn inlay_hints(
                 && let Some(span)=statement.name_span
                 && let Some(ty)=module.checked.binding_types.get(&statement.span.start)
                 && span.end>=start&&span.end<=end {
-                hints.insert((span.end,0),json!({"position":document.position(span.end),"label":format!(": {}",crate::type_display::compact(module,ty)),"kind":1,"paddingRight":false,
-                    "tooltip":{"kind":"markdown","value":crate::type_display::tooltip(module,ty)}}));
+                let position = document.position(span.end);
+                let mut hint = json!({"position":position,"label":format!(": {}",crate::type_display::compact(module,ty)),"kind":1,"paddingRight":false,
+                    "tooltip":{"kind":"markdown","value":crate::type_display::tooltip(module,ty)}});
+                if let Some(annotation) = crate::type_display::annotation(module,ty) {
+                    hint["textEdits"] = json!([{"range":{"start":position,"end":position},"newText":format!(": {annotation}")}]);
+                }
+                hints.insert((span.end,0),hint);
             }
             let effect=if let StatementKind::Function {name,..}=&statement.kind {
                 declaration_signature(module,name,statement.span).map(|signature|signature.duration.clone())

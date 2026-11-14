@@ -1,22 +1,16 @@
 use adw::prelude::AdwDialogExt;
 use gtk::prelude::*;
-use shrimply_components_gtk::{
-    tr,
-    ui::{I18nFileFilterExt, StringChoice, labeled_string_selector},
-};
+use shrimply_components_gtk::{tr, ui::I18nFileFilterExt};
 use shrimply_inspector_core::{
     ControlKind, InspectorControl, InspectorControlAction, InspectorSection, InspectorTarget,
-    NumberSpec, VisualModifierBodyPresentation, visual_modifier_presentations,
+    VisualModifierBodyPresentation, visual_modifier_presentations,
 };
-use shrimply_property_model::modifier_model::ModifierModel;
 use shrimply_visual_modifiers::scene_3d::Object3dModifier;
 use uuid::Uuid;
 
 use crate::InspectorContext;
 
-use super::{ScalarOptions, color_row, scalar_row, vec3_row, vec3_scale_row};
-
-pub fn add_rows(value: &Object3dModifier, out: &gtk::Box, id: Uuid, context: &InspectorContext) {
+pub fn add_rows(_value: &Object3dModifier, out: &gtk::Box, id: Uuid, context: &InspectorContext) {
     let key = context
         .selected_item
         .clone()
@@ -41,11 +35,10 @@ pub fn add_rows(value: &Object3dModifier, out: &gtk::Box, id: Uuid, context: &In
         .expect("3D object modifier must still be available");
     drop(project);
 
-    add_shared_rows(value, out, id, &target, section, context);
+    add_shared_rows(out, id, &target, section, context);
 }
 
 fn add_shared_rows(
-    value: &Object3dModifier,
     out: &gtk::Box,
     id: Uuid,
     target: &InspectorTarget,
@@ -62,141 +55,11 @@ fn add_shared_rows(
         .expect("3D object clear-model action is missing");
     out.append(&file_row(model, select, clear, id, target, context));
 
+    let native = crate::section::InspectorSection::controls();
     for control in controls.filter(|control| control.visible) {
-        assert_eq!(
-            control.target_id,
-            Some(id),
-            "3D object control modifier changed",
-        );
-        let widget = match control.kind {
-            ControlKind::LayeredVector3 => vector_row(value, id, &control, context),
-            ControlKind::LayeredColor => color_control(value, id, &control, context),
-            ControlKind::LayeredNumber => number_row(value, id, &control, context),
-            ControlKind::Selector => selector_row(id, target, control, context),
-            kind => panic!("unsupported shared 3D object control: {kind:?}"),
-        };
-        out.append(&widget);
+        crate::control::add_control(&native, context, target, control);
     }
-}
-
-fn vector_row(
-    value: &Object3dModifier,
-    id: Uuid,
-    control: &InspectorControl,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    let timeline_id = control
-        .timeline_id
-        .expect("3D object vector timeline ID is missing");
-    let timeline = value
-        .number3(timeline_id)
-        .expect("3D object vector timeline changed");
-    let defaults = NumberSpec::default();
-    assert_eq!(control.number.digits, 2);
-    assert_eq!(control.width_characters, 5);
-    assert_eq!(control.prefixes, ["X", "Y", "Z"]);
-    assert_eq!(control.number.maximum, defaults.maximum);
-    assert_eq!(control.commit_name, "edit-scene-3d-vec3");
-    let degrees = control.number.unit == "°";
-    assert_eq!(control.number.drag_step, if degrees { 1.0 } else { 0.1 });
-    let widget = if control.lock {
-        assert!(!degrees);
-        assert_eq!(control.number.minimum, 0.0);
-        vec3_scale_row(&control.label, timeline, id, context)
-    } else {
-        assert_eq!(control.number.minimum, defaults.minimum);
-        vec3_row(&control.label, timeline, id, degrees, context)
-    };
-    widget.set_sensitive(control.sensitive);
-    widget
-}
-
-fn color_control(
-    value: &Object3dModifier,
-    id: Uuid,
-    control: &InspectorControl,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    assert_eq!(
-        control.timeline_id,
-        Some(value.material.base_color.id),
-        "3D object color timeline changed",
-    );
-    assert_eq!(control.components.len(), 4);
-    assert_eq!(control.commit_name, "visual-modifier-color");
-    let widget = color_row(&control.label, &value.material.base_color, id, context);
-    widget.set_sensitive(control.sensitive);
-    widget
-}
-
-fn number_row(
-    value: &Object3dModifier,
-    id: Uuid,
-    control: &InspectorControl,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    let timeline_id = control
-        .timeline_id
-        .expect("3D object number timeline ID is missing");
-    let timeline = value
-        .number(timeline_id)
-        .expect("3D object number timeline changed");
-    let defaults = NumberSpec::default();
-    assert_eq!(control.number.drag_step, 0.01);
-    assert_eq!(control.number.digits, 2);
-    assert_eq!(control.width_characters, 8);
-    assert_eq!(control.commit_name, "visual-modifier-value");
-    assert!(!control.integer);
-    assert!(!control.lock);
-    let widget = scalar_row(
-        &control.label,
-        timeline,
-        id,
-        ScalarOptions {
-            minimum: (control.number.minimum != defaults.minimum).then_some(control.number.minimum),
-            maximum: (control.number.maximum != defaults.maximum).then_some(control.number.maximum),
-            unit: (!control.number.unit.is_empty()).then_some(control.number.unit),
-            rotating: control.prefix_icon_rotates,
-        },
-        context,
-    );
-    widget.set_sensitive(control.sensitive);
-    widget
-}
-
-fn selector_row(
-    id: Uuid,
-    target: &InspectorTarget,
-    control: InspectorControl,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    assert_eq!(control.values.len(), control.labels.len());
-    assert_eq!(control.commit_name, "edit-3d-object-normals");
-    assert!(control.commit_immediately);
-    let choices = control
-        .values
-        .iter()
-        .cloned()
-        .zip(control.labels.iter())
-        .map(|(value, label)| StringChoice {
-            value,
-            label: tr!(label).into_owned(),
-        })
-        .collect();
-    let controller = context.inspector_core.clone();
-    let target = target.clone();
-    let path = control.path.clone();
-    let commit_name = control.commit_name.clone();
-    let selector = labeled_string_selector(&control.label, &control.value, choices, move |value| {
-        let result = controller
-            .ensure_visual_modifier(&target, &path, id)
-            .and_then(|()| controller.set_video_field(&target, &path, &value, &commit_name, true));
-        if let Err(error) = result {
-            tracing::error!(%error, "Could not update GTK 3D object normals");
-        }
-    });
-    selector.widget().set_sensitive(control.sensitive);
-    selector.widget().clone()
+    out.append(&native.into_widget());
 }
 
 fn file_row(

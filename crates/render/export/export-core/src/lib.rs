@@ -1,4 +1,7 @@
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod audio;
+pub mod job;
 pub mod json;
 pub mod output;
 pub mod video;

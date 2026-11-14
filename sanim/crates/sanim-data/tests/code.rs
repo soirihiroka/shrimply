@@ -248,6 +248,7 @@ fn grammar_query_identity_and_concurrent_reuse_are_exact() {
 }
 
 #[test]
+#[cfg(feature = "native-text")]
 fn line_number_gutter_uses_native_digit_metrics_and_right_alignment() {
     use sanim_core::{
         Font, Fraction,

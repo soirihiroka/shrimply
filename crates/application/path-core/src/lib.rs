@@ -1,8 +1,35 @@
 use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-compile_error!("shrimply-path-core supports only Linux, macOS, and Windows");
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "android",
+    windows
+)))]
+compile_error!("shrimply-path-core supports only Linux, macOS, Windows, and Android");
+
+#[cfg(target_os = "android")]
+static ANDROID_DIRECTORIES: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
+
+/// Android supplies its sandbox directories; environment variables are neither
+/// present nor safe to mutate after native workers have started.
+#[cfg(target_os = "android")]
+pub fn initialize_android_directories(config: PathBuf, cache: PathBuf) -> Result<(), String> {
+    if !config.is_absolute() || !cache.is_absolute() {
+        return Err("Android application directories must be absolute".into());
+    }
+    if let Some(existing) = ANDROID_DIRECTORIES.get() {
+        return if existing == &(config, cache) {
+            Ok(())
+        } else {
+            Err("Android application directories are already initialized".into())
+        };
+    }
+    ANDROID_DIRECTORIES
+        .set((config, cache))
+        .map_err(|_| "Android application directories were initialized concurrently".into())
+}
 
 #[cfg(target_os = "linux")]
 const APPLICATION_DIRECTORY: &str = "shrimply";
@@ -13,6 +40,14 @@ const MACOS_APPLICATION_DIRECTORY: &str = "Shrimply";
 
 #[cached::proc_macro::cached]
 pub fn config_directory() -> PathBuf {
+    #[cfg(target_os = "android")]
+    {
+        ANDROID_DIRECTORIES
+            .get()
+            .expect("initialize Android application directories before using native services")
+            .0
+            .clone()
+    }
     #[cfg(target_os = "linux")]
     {
         user_directory("XDG_CONFIG_HOME", ".config")
@@ -33,6 +68,13 @@ pub fn config_directory() -> PathBuf {
 
 #[cached::proc_macro::cached]
 pub fn cache_directory() -> Result<PathBuf, String> {
+    #[cfg(target_os = "android")]
+    {
+        ANDROID_DIRECTORIES
+            .get()
+            .map(|directories| directories.1.clone())
+            .ok_or_else(|| "Android application directories are not initialized".into())
+    }
     #[cfg(target_os = "linux")]
     {
         user_directory("XDG_CACHE_HOME", ".cache")

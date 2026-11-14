@@ -1,0 +1,15 @@
+[package]
+name = "shrimply-player-core"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+audio = ["dep:shrimply-audio-engine"]
+
+[dependencies]
+shrimply-audio-engine = { workspace = true, optional = true }
+shrimply-math-core.workspace = true
+shrimply-project-document.workspace = true
+shrimply-profiling.workspace = true
+shrimply-process-reporting.workspace = true
+tracing.workspace = true

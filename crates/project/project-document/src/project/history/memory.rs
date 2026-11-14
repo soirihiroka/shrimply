@@ -26,6 +26,10 @@ pub(super) fn seed(project: &Project, base_index: usize) {
     });
 }
 
+pub(super) fn clear() {
+    HISTORY.with(|slot| *slot.borrow_mut() = None);
+}
+
 pub(super) fn commit(project: &Project, coalesce_group: Option<&str>) {
     HISTORY.with(|slot| {
         let mut slot = slot.borrow_mut();

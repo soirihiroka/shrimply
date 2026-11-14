@@ -4,7 +4,7 @@ use std::sync::{
     mpsc::{self, TryRecvError},
 };
 
-use shrimply_editor_state::player_state::{self, ProjectChange};
+use shrimply_player_core::{self as player_state, ProjectChange};
 use shrimply_transcription::{
     SAMPLE_RATE, TranscribedSegment, prepare_transcription_chunks, sanitize_transcribed_segments,
 };

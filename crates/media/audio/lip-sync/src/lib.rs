@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use hashbrown::{HashMap, HashSet};
-use shrimply_project_document::project::Time;
+use shrimply_math_core::Time;
 
 static ANALYZER: OnceLock<shrimply_rhubarb_lip_sync::Analyzer> = OnceLock::new();
 

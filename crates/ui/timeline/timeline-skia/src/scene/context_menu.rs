@@ -187,6 +187,8 @@ impl Scene {
                 self.context.at_top = y < RULER_HEIGHT;
                 self.context.menu = crate::empty_track_context_menu();
             }
+        } else {
+            self.context.menu = crate::empty_track_context_menu();
         }
         self.context.selected = selection_state::selected_item_addresses(&self.selection, &project);
         self.context.tracks = selection_state::selected_track_addresses(&self.selection, &project);
@@ -260,6 +262,17 @@ impl Scene {
         use ContextMenuAction as A;
         use ContextMenuRequest as R;
         let request = match action {
+            A::InspectProperties => {
+                player_state::refresh_project(
+                    &self.player,
+                    ProjectChange {
+                        inspector: true,
+                        ..Default::default()
+                    },
+                );
+                None
+            }
+            A::DeleteTrack => self.key_action(KeyAction::Delete { ripple: false })?,
             A::Copy | A::Cut => {
                 let project = self.project.borrow();
                 self.clipboard = items::copy_items(&project, &self.context.selected);

@@ -1,11 +1,14 @@
 use crate::device::Device;
 use ash::vk;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 
 #[derive(Clone)]
 pub struct Buffer(Arc<Storage>);
 
 struct Storage {
+    #[cfg(target_os = "linux")]
     oidn: OnceLock<Result<shrimply_denoise_oidn::SharedBuffer, String>>,
     device: Arc<Device>,
     buffer: vk::Buffer,
@@ -14,6 +17,7 @@ struct Storage {
     address: u64,
     host_visible: bool,
     exportable: bool,
+    #[cfg(target_os = "linux")]
     allocation_size: usize,
 }
 
@@ -114,6 +118,7 @@ impl Buffer {
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             );
         Ok(Self(Arc::new(Storage {
+            #[cfg(target_os = "linux")]
             oidn: OnceLock::new(),
             device,
             buffer,
@@ -122,6 +127,7 @@ impl Buffer {
             address,
             host_visible,
             exportable,
+            #[cfg(target_os = "linux")]
             allocation_size: requirements.size as usize,
         })))
     }
@@ -130,6 +136,7 @@ impl Buffer {
         self.0.exportable
     }
 
+    #[cfg(target_os = "linux")]
     pub(crate) fn oidn(
         &self,
         device: &Arc<shrimply_denoise_oidn::Device>,
@@ -216,6 +223,7 @@ impl Buffer {
 
 impl Drop for Storage {
     fn drop(&mut self) {
+        #[cfg(target_os = "linux")]
         drop(self.oidn.take());
         unsafe {
             self.device.raw.destroy_buffer(self.buffer, None);

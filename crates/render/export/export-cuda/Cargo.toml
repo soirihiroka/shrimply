@@ -16,7 +16,7 @@ shrimply-visual-cuda = { workspace = true }
 shrimply-preview-render-core.workspace = true
 shrimply-preview-render-vulkan.workspace = true
 shrimply-render-core.workspace = true
-shrimply-render-vulkan.workspace = true
+shrimply-render-vulkan = { workspace = true, default-features = true }
 shrimply-visual-frame.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]

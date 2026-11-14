@@ -358,6 +358,12 @@ impl ToolkitTimeline {
         self.scene
             .event(Event::RelativeMotion { delta: vec2(x, y) });
     }
+    pub fn touch(&mut self, changes: Vec<shrimply_components_skia::input::TouchChange>) {
+        self.scene.event(Event::Touch(changes));
+    }
+    pub fn cancel_input(&mut self) {
+        self.scene.event(Event::Cancel);
+    }
     pub fn pointer_move(&mut self, x: f32, y: f32, ctrl: bool, shift: bool) {
         self.scene.event(Event::Motion {
             point: vec2(x, y),

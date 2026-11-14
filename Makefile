@@ -424,10 +424,16 @@ sanim-reflection-bench: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import native_sanim_reflection_benchmark --lib -- --ignored --nocapture
 
 .PHONY: sanim-inspector-check sanim-inspector-bench
-.PHONY: sanim-preview-inspector-check
+.PHONY: sanim-preview-inspector-check sanim-preview-inspector-bench
 sanim-preview-inspector-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-preview-gtk --all-targets
-check: sanim-inspector-check
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-preview-gtk sanim_inspector --lib
+sanim-preview-inspector-bench: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-preview-gtk sanim_inspector_geometry_fallback_benchmark --lib -- --ignored --nocapture
+check: inspector-check
+.PHONY: inspector-check
+inspector-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-inspector-core -p shrimply-inspector-document --lib
 sanim-inspector-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-inspector-core sanim_inspector --lib
 sanim-inspector-bench: native-deps
@@ -506,7 +512,7 @@ frame-rate-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core frame_rate_is_the_reciprocal_of_the_latest_render_cost
 
 video-lifecycle-test: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-cuda continuous_playback_coalesces_until_an_explicit_discontinuity
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-preview-render-core continuous_playback_coalesces_until_an_explicit_discontinuity
 
 transparent-fill-frame-range-test: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-cuda modifiers::transparent_fill::tests::partial_first_project_frame_uses_the_item_start_mask -- --exact --test-threads=1
@@ -689,39 +695,47 @@ ANDROID_TOOLCHAIN := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64
 ANDROID_ABI ?= arm64-v8a
 ANDROID_TARGET = $(if $(filter arm64-v8a,$(ANDROID_ABI)),aarch64-linux-android,x86_64-linux-android)
 ANDROID_CLANG = $(if $(filter arm64-v8a,$(ANDROID_ABI)),aarch64-linux-android,x86_64-linux-android)33-clang
+ANDROID_SERIAL ?=
+ANDROID_ADB = adb -s "$(ANDROID_SERIAL)"
 ANDROID_PROFILE ?= debug
 ANDROID_DEV_SIGN ?= false
 ANDROID_GRADLE ?= $(CURDIR)/android/gradlew
-ANDROID_ENV = ANDROID_HOME="$(ANDROID_SDK_ROOT)" ANDROID_NDK_HOME="$(ANDROID_NDK_HOME)" ANDROID_NDK_ROOT="$(ANDROID_NDK_HOME)" ANDROID_NDK="$(ANDROID_NDK_HOME)" PATH="$(ANDROID_TOOLCHAIN)/bin:$(PATH)" CC="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)" CXX="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)++" AR="$(ANDROID_TOOLCHAIN)/bin/llvm-ar" RUSTFLAGS="-C linker=$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG) -C link-arg=-Wl,-z,max-page-size=16384"
+# rust-skia's unversioned target otherwise hides newer bionic declarations.
+ANDROID_SKIA_CFLAGS = "--target=$(ANDROID_TARGET)33","$(if $(filter release,$(ANDROID_PROFILE)),-O3,-O0)","-I$(ANDROID_MEDIA_PREFIX)/include/jpeg"
+ifeq ($(ANDROID_ABI),arm64-v8a)
+ANDROID_SKIA_CFLAGS += ,"-mno-outline-atomics"
+endif
+ANDROID_ENV = HOST_CC="$(CC)" HOST_CXX="$(CXX)" SKIA_GN_ARGS='ndk_api=33 skia_use_ndk_images=false skia_use_system_libjpeg_turbo=true extra_cflags=[] extra_cflags=[$(ANDROID_SKIA_CFLAGS)]' ANDROID_HOME="$(ANDROID_SDK_ROOT)" ANDROID_NDK_HOME="$(ANDROID_NDK_HOME)" ANDROID_NDK_ROOT="$(ANDROID_NDK_HOME)" ANDROID_NDK="$(ANDROID_NDK_HOME)" PATH="$(ANDROID_TOOLCHAIN)/bin:$(PATH)" CC="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)" CXX="$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG)++" AR="$(ANDROID_TOOLCHAIN)/bin/llvm-ar" RUSTFLAGS="-C linker=$(ANDROID_TOOLCHAIN)/bin/$(ANDROID_CLANG) -C link-arg=-Wl,-z,max-page-size=16384"
 .PHONY: android-native android-build android-install android-check android-benchmark android-host-check
-android-native:
+android-native: android-pdf-deps
 	@test "$(ANDROID_ABI)" = arm64-v8a -o "$(ANDROID_ABI)" = x86_64 || { echo "Unsupported Android ABI" >&2; exit 1; }
 	@test "$(ANDROID_PROFILE)" = debug -o "$(ANDROID_PROFILE)" = release || { echo "Use ANDROID_PROFILE=debug or release" >&2; exit 1; }
 	@test "$(ANDROID_PROFILE)" != release -o "$(ANDROID_ABI)" = arm64-v8a || { echo "Android releases require arm64-v8a" >&2; exit 1; }
 	$(RUSTUP) target add --toolchain $(RUST_TOOLCHAIN) $(ANDROID_TARGET)
-	$(ANDROID_ENV) $(CARGO) build -p shrimply-editor-android --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release)
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) build -p shrimply-editor-android --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release)
 	mkdir -p android/app/src/main/jniLibs/$(ANDROID_ABI)
 	cp $(CARGO_TARGET_DIR)/$(ANDROID_TARGET)/$(ANDROID_PROFILE)/libshrimply_android.so android/app/src/main/jniLibs/$(ANDROID_ABI)/
+	cp "$(ANDROID_TOOLCHAIN)/sysroot/usr/lib/$(ANDROID_TARGET)/libc++_shared.so" android/app/src/main/jniLibs/$(ANDROID_ABI)/
 
 android-build: android-native
 	@test -n "$(ANDROID_GRADLE)" || { echo "Set ANDROID_GRADLE to Gradle 9.8.0's executable" >&2; exit 1; }
 	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) -PdevSigning=$(ANDROID_DEV_SIGN) assemble$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
 
 android-install: ANDROID_DEV_SIGN = true
-android-install: android-build
-	adb install -r android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk
+android-install: android-device-check android-build
+	$(ANDROID_ADB) install -r android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk
 
 android-host-check:
 	$(BUILD_ENV) $(CARGO) check -p shrimply-timeline-paint-skia -p shrimply-editor-android
 	$(BUILD_ENV) $(CARGO) clippy -p shrimply-timeline-paint-skia -p shrimply-editor-android -- -D warnings
 
 android-check: android-build
-	$(ANDROID_ENV) $(CARGO) clippy -p shrimply-editor-android --target $(ANDROID_TARGET) -- -D warnings
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-editor-android -p shrimply-timeline-paint-skia --target $(ANDROID_TARGET) --no-deps -- -D warnings
 	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) lint$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
 	python3 packaging/android-check.py android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk "$(ANDROID_TOOLCHAIN)/bin/llvm-readelf" "$(ANDROID_SDK_ROOT)"
 
-android-benchmark:
-	python3 packaging/android-benchmark.py $(or $(STRESS),false)
+android-benchmark: android-device-check
+	ANDROID_SERIAL="$(ANDROID_SERIAL)" python3 packaging/android-benchmark.py $(or $(STRESS),false)
 
 .PHONY: android-layout-check android-dependency-check
 android-layout-check:
@@ -730,12 +744,83 @@ android-layout-check:
 android-dependency-check:
 	mkdir -p $(CARGO_TARGET_DIR)
 	@$(CARGO) tree -p shrimply-editor-android --target $(ANDROID_TARGET) --prefix none --edges normal > $(CARGO_TARGET_DIR)/android-dependencies.txt
-	@if rg '^(ffmpeg[^ ]*|pango[^ ]*|cairo[^ ]*|gtk4[^ ]*|gio[^ ]*|glib[^ ]*|shrimply-editor-state|shrimply-editing-runtime|shrimply-project-document) ' $(CARGO_TARGET_DIR)/android-dependencies.txt; then echo "Desktop dependency leaked into Android" >&2; exit 1; fi
+	@if rg '^(gtk4[^ ]*|gdk4[^ ]*|shrimply-visual-cuda|shrimply-preview-runtime-cuda|shrimply-editor-gtk) ' $(CARGO_TARGET_DIR)/android-dependencies.txt; then echo "Desktop dependency leaked into Android" >&2; exit 1; fi
+
+.PHONY: android-project-check
+ANDROID_PROJECT_TEST_ARGS = -p shrimply-project-document -p shrimply-timeline-edit -p shrimply-timeline-paint-skia -p shrimply-media-import -p shrimply-editor-android
+android-project-check:
+	$(BUILD_ENV) $(CARGO) test $(ANDROID_PROJECT_TEST_ARGS) --lib -- --nocapture
+	$(BUILD_ENV) $(CARGO) clippy $(ANDROID_PROJECT_TEST_ARGS) --all-targets -- -D warnings
+
+.PHONY: android-project-bench
+android-project-bench:
+	@test "$(ANDROID_PROFILE)" = debug || { echo "Android development benchmarks use debug builds; do not start a release build." >&2; exit 1; }
+	$(BUILD_ENV) $(CARGO) test $(ANDROID_PROJECT_TEST_ARGS) project::tests::project_edit_memory_benchmark --lib -- --ignored --nocapture
+	$(BUILD_ENV) $(CARGO) test $(ANDROID_PROJECT_TEST_ARGS) disjoint_viewport_lookup_benchmark --lib -- --ignored --nocapture
 
 android-check: android-dependency-check
 
-# Locally signed release APKs are for device benchmarks, not distribution.
+# Benchmark installs use the selected profile; debug is the default.
 .PHONY: android-benchmark-install
-android-benchmark-install:
-	$(MAKE) android-build ANDROID_PROFILE=release ANDROID_ABI=arm64-v8a ANDROID_DEV_SIGN=true
-	adb install -r android/app/build/outputs/apk/release/app-release.apk
+android-benchmark-install: android-device-check
+	$(MAKE) android-build ANDROID_PROFILE=$(ANDROID_PROFILE) ANDROID_ABI=arm64-v8a ANDROID_DEV_SIGN=true
+	$(ANDROID_ADB) install -r android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE).apk
+
+.PHONY: android-device-check
+android-device-check:
+	@test -n "$(ANDROID_SERIAL)" || { echo "Set ANDROID_SERIAL to the intended device (wireless IP:port or USB serial)" >&2; exit 1; }
+
+# Reuse the desktop's media libraries, cross-compiled for Android. This target
+# does not change the host's packages or the desktop dependency search paths.
+.PHONY: android-media-deps
+android-media-deps:
+	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4)
+
+ANDROID_MEDIA_PREFIX = $(abspath $(CARGO_TARGET_DIR)/android-native/$(ANDROID_ABI)/$(ANDROID_PROFILE)/install)
+ANDROID_MEDIA_ENV = SYSTEM_DEPS_LINK=static PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_LIBDIR="$(ANDROID_MEDIA_PREFIX)/lib/pkgconfig" PKG_CONFIG_PATH="$(ANDROID_MEDIA_PREFIX)/lib/pkgconfig" OPENCV_DISABLE_PROBES=cmake,vcpkg_cmake,vcpkg BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(ANDROID_TOOLCHAIN)/sysroot --target=$(ANDROID_TARGET)33"
+.PHONY: android-media-check
+android-media-check: android-media-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-video-decoder --target $(ANDROID_TARGET)
+
+.PHONY: android-text-deps
+android-text-deps: android-opencv-deps
+	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --text
+
+.PHONY: android-text-check
+android-text-check: android-text-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-fonts --features fontconfig --target $(ANDROID_TARGET) --lib -- -D warnings
+
+.PHONY: android-visual-check
+android-visual-check: android-media-deps android-text-deps android-opencv-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) check -p shrimply-visual-core --target $(ANDROID_TARGET)
+
+.PHONY: android-opencv-deps
+android-opencv-deps: android-media-deps
+	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --opencv
+
+.PHONY: android-pdf-deps android-preview-check
+android-pdf-deps: android-text-deps android-opencv-deps
+	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --pdf
+
+android-preview-check: android-pdf-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) check -p shrimply-preview-render-core -p shrimply-preview-render-vulkan --target $(ANDROID_TARGET)
+
+.PHONY: android-export-check
+android-export-check: android-pdf-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-export-core --target $(ANDROID_TARGET) --lib --no-deps -- -D warnings
+
+.PHONY: android-render-check
+android-render-check:
+	$(ANDROID_ENV) $(CARGO) check -p shrimply-render-vulkan --features renderer --target $(ANDROID_TARGET)
+
+.PHONY: android-media-render-check
+android-media-render-check: android-media-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-render-vulkan --features android-media --target $(ANDROID_TARGET)
+
+.PHONY: android-audio-check
+android-audio-check: android-media-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-audio-engine --features ffmpeg-next/static --target $(ANDROID_TARGET)
+
+.PHONY: android-timeline-check
+android-timeline-check: android-opencv-deps
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-timeline-skia -p shrimply-video-decoder --no-default-features --target $(ANDROID_TARGET)

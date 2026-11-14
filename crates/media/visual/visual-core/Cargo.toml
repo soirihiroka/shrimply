@@ -10,7 +10,7 @@ cuda-stabilization = ["dep:shrimply-affine-l1-stabilization"]
 shrimply-fonts = { workspace = true, features = ["native"] }
 sanim-runtime.workspace = true
 sanim-core.workspace = true
-sanim-data.workspace = true
+sanim-data = { workspace = true, features = ["native-text", "media"] }
 shrimply-paint-skia = { workspace = true }
 shrimply-math-geometry = { workspace = true }
 shrimply-math-core = { workspace = true }
@@ -21,7 +21,7 @@ uuid.workspace = true
 shrimply-math-media = { workspace = true }
 shrimply-render-core = { workspace = true }
 shrimply-project-evaluation = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 shrimply-math-color = { workspace = true }
 shrimply-asset = { workspace = true }
 shrimply-blender-core = { workspace = true }
@@ -38,7 +38,7 @@ pangocairo.workspace = true
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-path-core.workspace = true
 shrimply-compute-client = { workspace = true }
-shrimply-text-3d = { workspace = true }
+shrimply-text-3d = { workspace = true, default-features = true }
 shrimply-shape-3d = { workspace = true }
 shrimply-render-3d-core = { workspace = true }
 shrimply-scene-3d = { workspace = true }

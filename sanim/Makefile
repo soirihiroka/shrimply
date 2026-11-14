@@ -3,6 +3,17 @@ RUST_TOOLCHAIN ?= nightly-2026-04-03
 CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
 
+.PHONY: headless-check
+headless-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(CARGO) test -p sanim-data --no-default-features --no-fail-fast
+	$(CARGO) test -p sanim-lang --no-default-features --test headless
+	$(CARGO) tree -p sanim-lang --no-default-features --prefix none --edges normal > target/headless-dependencies.txt
+	@if rg '^(pango[^ ]*|pangocairo[^ ]*|cairo[^ ]*|skia[^ ]*|shrimply-drawing-skia) ' target/headless-dependencies.txt; then echo "Native rendering dependency leaked into the headless language" >&2; exit 1; fi
+.PHONY: headless-bench
+headless-bench:
+	$(CARGO) test --release -p sanim-lang --no-default-features --test headless headless_duration_reload_benchmark -- --ignored --nocapture
+
 .PHONY: sized-lists-check
 sized-lists-check:
 	$(CARGO) test -p sanim-core --test lists
@@ -114,6 +125,8 @@ lsp-build:
 lsp-check:
 	$(CARGO) clippy -p sanim-lsp --all-targets -- -D warnings
 	$(CARGO) test -p sanim-lsp --no-fail-fast
+	$(CARGO) tree -p sanim-lsp --prefix none --edges normal > target/lsp-dependencies.txt
+	@if rg '^(pango[^ ]*|pangocairo[^ ]*|cairo[^ ]*|skia[^ ]*|shrimply-drawing-skia) ' target/lsp-dependencies.txt; then echo "Native rendering dependency leaked into the language server" >&2; exit 1; fi
 
 .PHONY: reactive-bench
 reactive-bench:

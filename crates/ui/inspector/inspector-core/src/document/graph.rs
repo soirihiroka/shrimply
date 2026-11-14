@@ -74,6 +74,7 @@ impl InspectorController {
         control: &InspectorControl,
         owner_id: uuid::Uuid,
     ) -> Result<InspectorControl, String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
         let selected =
             self.text_keyframe_text_interpolation(target, path, timeline(control)?, owner_id)?;
@@ -95,6 +96,7 @@ impl InspectorController {
         owner_id: uuid::Uuid,
         selected: usize,
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
         self.set_text_keyframe_text_interpolation(
             target,
@@ -112,27 +114,36 @@ impl InspectorController {
         moves: &[FrameGraphKeyMove],
     ) -> Result<Vec<Time>, String> {
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        if !control.audio_modifier
-            && let Some(id) = control.timeline_id
-        {
-            self.ensure_timeline(target, path, id)?;
-        }
+        self.ensure_control_timeline(target, control)?;
         let times = moves
             .iter()
             .map(|m| (m.old_time, m.time))
             .collect::<Vec<_>>();
-        let commit = InspectorCommit::Coalesced(
-            control
-                .keyframe_commits
-                .map_or("inspector-keyframe-move", |c| c.move_keyframe),
-        );
+        let commit = InspectorCommit::Coalesced(control.keyframe_commits.map_or_else(
+            || {
+                if control.keyframe_commit_name.is_empty() {
+                    "inspector-keyframe-move"
+                } else {
+                    &control.keyframe_commit_name
+                }
+            },
+            |c| c.move_keyframe,
+        ));
         if control.kind == ControlKind::LayeredNumber {
             let changes = moves
                 .iter()
                 .map(|m| AudioModifierKeyframeMove {
                     old_time: m.old_time,
                     time: m.time,
-                    displayed_value: control.store_number(m.value),
+                    displayed_value: if control.audio_modifier || control.background_integer() {
+                        control.store_number(if control.integer {
+                            m.value.round()
+                        } else {
+                            m.value
+                        })
+                    } else {
+                        control.map_number_for_storage(m.value)
+                    },
                     store_multiplier: 1.0,
                 })
                 .collect::<Vec<_>>();
@@ -150,7 +161,10 @@ impl InspectorController {
                     target,
                     path,
                     &changes,
-                    control.number_constraint,
+                    crate::NumberConstraint {
+                        integer: control.integer || control.number_constraint.integer,
+                        ..control.number_constraint
+                    },
                     commit,
                 )
             };
@@ -187,12 +201,7 @@ impl InspectorController {
         control: &InspectorControl,
         action: FrameGraphAction,
     ) -> Result<(), String> {
-        let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        if !control.audio_modifier
-            && let Some(id) = control.timeline_id
-        {
-            self.ensure_timeline(target, path, id)?;
-        }
+        self.ensure_control_timeline(target, control)?;
         match action {
             FrameGraphAction::PlayheadChanged(time) => {
                 if control.audio_modifier {
@@ -217,12 +226,12 @@ impl InspectorController {
             FrameGraphAction::KeysDeleted(times) => {
                 self.delete_control_keyframes(target, control, &times)
             }
-            FrameGraphAction::CopyRequested(times) => {
-                self.copy_control_keyframes(target, control, &times)
-            }
-            FrameGraphAction::PasteRequested(time) => {
-                self.paste_control_keyframes(target, control, time)
-            }
+            FrameGraphAction::CopyRequested(times) => self
+                .copy_control_keyframes(target, control, &times)
+                .map(|_| ()),
+            FrameGraphAction::PasteRequested(time) => self
+                .paste_control_keyframes(target, control, time)
+                .map(|_| ()),
             FrameGraphAction::InterpolationRequested {
                 owner_id,
                 interpolation,
@@ -249,10 +258,18 @@ impl InspectorController {
         control: &InspectorControl,
         time: Time,
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        let name = control
-            .keyframe_commits
-            .map_or("inspector-keyframe-add", |c| c.add);
+        let name = control.keyframe_commits.map_or_else(
+            || {
+                if control.keyframe_commit_name.is_empty() {
+                    "inspector-keyframe-add"
+                } else {
+                    &control.keyframe_commit_name
+                }
+            },
+            |c| c.add,
+        );
         let commit = InspectorCommit::Immediate(name);
         if control.audio_modifier {
             return self.add_audio_modifier_keyframe(
@@ -305,10 +322,18 @@ impl InspectorController {
         control: &InspectorControl,
         times: &[Time],
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        let name = control
-            .keyframe_commits
-            .map_or("inspector-keyframe-delete", |c| c.delete);
+        let name = control.keyframe_commits.map_or_else(
+            || {
+                if control.keyframe_commit_name.is_empty() {
+                    "inspector-keyframe-delete"
+                } else {
+                    &control.keyframe_commit_name
+                }
+            },
+            |c| c.delete,
+        );
         let commit = InspectorCommit::Immediate(name);
         if control.audio_modifier {
             return self.delete_audio_modifier_keyframes(
@@ -358,43 +383,35 @@ impl InspectorController {
         target: &InspectorTarget,
         control: &InspectorControl,
         times: &[Time],
-    ) -> Result<(), String> {
+    ) -> Result<usize, String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
         if control.audio_modifier {
-            return self
-                .copy_audio_modifier_keyframes(target, owner(control)?, timeline(control)?, times)
-                .map(|_| ());
+            return self.copy_audio_modifier_keyframes(
+                target,
+                owner(control)?,
+                timeline(control)?,
+                times,
+            );
         }
         if control.scalar_storage == crate::section::ScalarStorage::UnsignedInteger {
-            return self
-                .copy_background_integer_keyframes(target, path, timeline(control)?, times)
-                .map(|_| ());
+            return self.copy_background_integer_keyframes(target, path, timeline(control)?, times);
         }
         match control.kind {
-            ControlKind::LayeredNumber => {
-                self.copy_scalar_keyframes(target, path, times).map(|_| ())
+            ControlKind::LayeredNumber => self.copy_scalar_keyframes(target, path, times),
+            ControlKind::LayeredVector2 => self.copy_vector2_keyframes(target, path, times),
+            ControlKind::LayeredVector3 => self.copy_vector3_keyframes(target, path, times),
+            ControlKind::LayeredColor => {
+                self.copy_color_keyframes(target, path, timeline(control)?, times)
             }
-            ControlKind::LayeredVector2 => {
-                self.copy_vector2_keyframes(target, path, times).map(|_| ())
+            ControlKind::LayeredText => {
+                self.copy_text_keyframes(target, path, timeline(control)?, times)
             }
-            ControlKind::LayeredVector3 => {
-                self.copy_vector3_keyframes(target, path, times).map(|_| ())
+            ControlKind::LayeredDrawing => {
+                self.copy_paint_drawing_keyframes(target, timeline(control)?, times)
             }
-            ControlKind::LayeredColor => self
-                .copy_color_keyframes(target, path, timeline(control)?, times)
-                .map(|_| ()),
-            ControlKind::LayeredText => self
-                .copy_text_keyframes(target, path, timeline(control)?, times)
-                .map(|_| ()),
-            ControlKind::LayeredDrawing => self
-                .copy_paint_drawing_keyframes(target, timeline(control)?, times)
-                .map(|_| ()),
-            ControlKind::LayeredBoolean => {
-                self.copy_bool_keyframes(target, path, times).map(|_| ())
-            }
-            ControlKind::LayeredSelector => {
-                self.copy_step_keyframes(target, path, times).map(|_| ())
-            }
+            ControlKind::LayeredBoolean => self.copy_bool_keyframes(target, path, times),
+            ControlKind::LayeredSelector => self.copy_step_keyframes(target, path, times),
             _ => Err("control does not support this keyframe operation".into()),
         }
     }
@@ -404,53 +421,52 @@ impl InspectorController {
         target: &InspectorTarget,
         control: &InspectorControl,
         time: Time,
-    ) -> Result<(), String> {
+    ) -> Result<usize, String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        let name = control
-            .keyframe_commits
-            .map_or("inspector-keyframe-paste", |c| c.paste);
+        let name = control.keyframe_commits.map_or_else(
+            || {
+                if control.keyframe_commit_name.is_empty() {
+                    "inspector-keyframe-paste"
+                } else {
+                    &control.keyframe_commit_name
+                }
+            },
+            |c| c.paste,
+        );
         let commit = InspectorCommit::Immediate(name);
         if control.audio_modifier {
-            return self
-                .paste_audio_modifier_keyframes(target, owner(control)?, timeline(control)?, time)
-                .map(|_| ());
+            return self.paste_audio_modifier_keyframes(
+                target,
+                owner(control)?,
+                timeline(control)?,
+                time,
+            );
         }
         if control.scalar_storage == crate::section::ScalarStorage::UnsignedInteger {
-            return self
-                .paste_background_integer_keyframes(target, path, timeline(control)?, time)
-                .map(|_| ());
+            return self.paste_background_integer_keyframes(target, path, timeline(control)?, time);
         }
         match control.kind {
-            ControlKind::LayeredNumber => self
-                .paste_scalar_keyframes(target, path, time, control.number_constraint, commit)
-                .map(|_| ()),
-            ControlKind::LayeredVector2 => self
-                .paste_vector2_keyframes(target, path, time, commit)
-                .map(|_| ()),
-            ControlKind::LayeredVector3 => self
-                .paste_vector3_keyframes(target, path, time, commit)
-                .map(|_| ()),
-            ControlKind::LayeredColor => self
-                .paste_color_keyframes(target, path, timeline(control)?, time, commit)
-                .map(|_| ()),
-            ControlKind::LayeredText => self
-                .paste_text_keyframes(
-                    target,
-                    path,
-                    timeline(control)?,
-                    time,
-                    text_commits(control)?,
-                )
-                .map(|_| ()),
-            ControlKind::LayeredDrawing => self
-                .paste_paint_drawing_keyframes(target, timeline(control)?, time)
-                .map(|_| ()),
-            ControlKind::LayeredBoolean => {
-                self.paste_bool_keyframes(target, path, time).map(|_| ())
+            ControlKind::LayeredNumber => {
+                self.paste_scalar_keyframes(target, path, time, control.number_constraint, commit)
             }
-            ControlKind::LayeredSelector => self
-                .paste_step_keyframes(target, path, time, commit)
-                .map(|_| ()),
+            ControlKind::LayeredVector2 => self.paste_vector2_keyframes(target, path, time, commit),
+            ControlKind::LayeredVector3 => self.paste_vector3_keyframes(target, path, time, commit),
+            ControlKind::LayeredColor => {
+                self.paste_color_keyframes(target, path, timeline(control)?, time, commit)
+            }
+            ControlKind::LayeredText => self.paste_text_keyframes(
+                target,
+                path,
+                timeline(control)?,
+                time,
+                text_commits(control)?,
+            ),
+            ControlKind::LayeredDrawing => {
+                self.paste_paint_drawing_keyframes(target, timeline(control)?, time)
+            }
+            ControlKind::LayeredBoolean => self.paste_bool_keyframes(target, path, time),
+            ControlKind::LayeredSelector => self.paste_step_keyframes(target, path, time, commit),
             _ => Err("control does not support this keyframe operation".into()),
         }
     }
@@ -462,10 +478,18 @@ impl InspectorController {
         owner_id: uuid::Uuid,
         index: usize,
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        let name = control
-            .keyframe_commits
-            .map_or("inspector-keyframe-interpolation", |c| c.interpolation);
+        let name = control.keyframe_commits.map_or_else(
+            || {
+                if control.keyframe_commit_name.is_empty() {
+                    "inspector-keyframe-interpolation"
+                } else {
+                    &control.keyframe_commit_name
+                }
+            },
+            |c| c.interpolation,
+        );
         let commit = InspectorCommit::Immediate(name);
         if control.audio_modifier {
             return self.set_audio_modifier_keyframe_interpolation(
@@ -509,7 +533,7 @@ impl InspectorController {
                 timeline(control)?,
                 owner_id,
                 index,
-                name,
+                text_commits(control)?.interpolation,
             ),
             ControlKind::LayeredDrawing => {
                 self.set_paint_drawing_interpolation(target, timeline(control)?, owner_id, index)
@@ -523,4 +547,18 @@ fn text_commits(control: &InspectorControl) -> Result<crate::TextKeyframeCommits
     control
         .text_keyframe_commits
         .ok_or_else(|| "text keyframe commits are unavailable".into())
+}
+
+/// Localized feedback for native keyframe clipboard operations.
+pub fn confirmation(count: usize, pasted: bool) -> Option<String> {
+    (count > 0).then(|| match (count, pasted) {
+        (1, false) => shrimply_i18n::text("1 keyframe copied").into_owned(),
+        (1, true) => shrimply_i18n::text("1 keyframe pasted").into_owned(),
+        (_, false) => {
+            shrimply_i18n::text_args("%{count} keyframes copied", &[("count", count.to_string())])
+        }
+        (_, true) => {
+            shrimply_i18n::text_args("%{count} keyframes pasted", &[("count", count.to_string())])
+        }
+    })
 }

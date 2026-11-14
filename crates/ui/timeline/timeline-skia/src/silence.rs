@@ -1,5 +1,5 @@
-use shrimply_editor_state::player_state::{self, ProjectChange};
 use shrimply_math_core::{fraction_ceil_i64, fraction_floor_i64, fraction_from_integer};
+use shrimply_player_core::{self as player_state, ProjectChange};
 
 use crate::{
     TrackKey,

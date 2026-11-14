@@ -5,16 +5,7 @@ pub struct TimelineSoftwareCursor {
     pub cursor: shrimply_components_skia::cursor::SoftwareCursor,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum TrackLabelAction {
-    Select,
-    Toggle,
-    Add,
-    AudioRecord,
-    VideoRecord,
-}
-
-pub type TrackButtonId = (TrackKey, TrackLabelAction);
+pub use shrimply_timeline_paint_skia::{TrackButtonId, TrackLabelAction};
 
 pub struct LiveRecordingDraw {
     pub key: TrackKey,
@@ -35,32 +26,7 @@ pub enum WaveformState<'a> {
     Loaded(Option<&'a waveform::Waveform>),
 }
 
-#[derive(Clone, Copy)]
-pub struct NaturalEndMarker {
-    pub start: Time,
-    pub end: Time,
-    pub position: Option<Time>,
-    pub repeat_interval: Option<Time>,
-    pub real_start: Option<Time>,
-    pub real_end: Option<Time>,
-}
-
-#[derive(Clone, Copy)]
-pub struct TimedItemBox {
-    pub marker: NaturalEndMarker,
-    pub bounds: Rect,
-    pub fill: Color,
-    pub timeline_x: f64,
-    pub view: TimelineViewState,
-    pub selected: bool,
-    pub selected_border_color: Color,
-}
-
-#[derive(Clone, Copy)]
-pub enum PreviewTimeMode {
-    Move,
-    Resize,
-}
+pub use shrimply_timeline_paint_skia::{NaturalEndMarker, PreviewTimeMode, TimedItemBox};
 
 pub struct TimelineDraw<'a> {
     pub painter: &'a TimelinePainter,
@@ -72,12 +38,7 @@ pub struct TimelineDraw<'a> {
     pub animation_seconds: f64,
 }
 
-pub struct TrackControlDraw<'a> {
-    pub animation_active: &'a mut bool,
-    pub buttons: &'a mut HashMap<TrackButtonId, shrimply_components_skia::button::Button>,
-    pub active_audio_recording_key: Option<TrackKey>,
-    pub active_video_recording_key: Option<TrackKey>,
-}
+pub use shrimply_timeline_paint_skia::TrackControlDraw;
 
 #[derive(Clone)]
 pub struct TimelineImportPreview {

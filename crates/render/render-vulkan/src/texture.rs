@@ -1,18 +1,29 @@
 use crate::device::Device;
 use ash::{vk, vk::Handle};
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
 use std::{
     os::fd::{FromRawFd, OwnedFd},
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 #[derive(Clone)]
 pub struct Texture(Arc<Storage>);
 
+impl PartialEq for Texture {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for Texture {}
+
 struct Storage {
     device: Arc<Device>,
     image: vk::Image,
     memory: vk::DeviceMemory,
+    #[cfg(target_os = "linux")]
     exports: Mutex<Vec<(vk::Semaphore, vk::Fence)>>,
+    #[cfg(target_os = "linux")]
     allocation_size: u64,
     width: u32,
     height: u32,
@@ -25,6 +36,7 @@ impl Texture {
             return Err("Vulkan presentation dimensions must be positive".into());
         }
         let levels = width.max(height).ilog2() + 1;
+        #[cfg(target_os = "linux")]
         let mut external = vk::ExternalMemoryImageCreateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD);
         let info = vk::ImageCreateInfo::default()
@@ -47,8 +59,9 @@ impl Texture {
                     | vk::ImageUsageFlags::TRANSFER_DST,
             )
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .push_next(&mut external);
+            .initial_layout(vk::ImageLayout::UNDEFINED);
+        #[cfg(target_os = "linux")]
+        let info = info.push_next(&mut external);
         let image = unsafe { device.raw.create_image(&info, None) }
             .map_err(|e| format!("Create Intel presentation texture: {e:?}"))?;
         let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
@@ -64,14 +77,16 @@ impl Texture {
             }
             return Err("Intel texture has no device-local memory type".into());
         };
+        #[cfg(target_os = "linux")]
         let mut export = vk::ExportMemoryAllocateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD);
         let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
         let info = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
             .memory_type_index(index)
-            .push_next(&mut export)
             .push_next(&mut dedicated);
+        #[cfg(target_os = "linux")]
+        let info = info.push_next(&mut export);
         let memory = match unsafe { device.raw.allocate_memory(&info, None) } {
             Ok(memory) => memory,
             Err(e) => {
@@ -92,7 +107,9 @@ impl Texture {
             device,
             image,
             memory,
+            #[cfg(target_os = "linux")]
             exports: Mutex::new(Vec::new()),
+            #[cfg(target_os = "linux")]
             allocation_size: requirements.size,
             width,
             height,
@@ -125,6 +142,7 @@ impl Texture {
     pub(crate) fn image(&self) -> vk::Image {
         self.0.image
     }
+    #[cfg(target_os = "linux")]
     pub fn export(&self) -> Result<(OwnedFd, u64, OwnedFd), String> {
         let memory =
             ash::khr::external_memory_fd::Device::new(&self.0.device.instance, &self.0.device.raw);
@@ -194,8 +212,13 @@ impl Texture {
 
 impl Drop for Storage {
     fn drop(&mut self) {
-        let exports = self.exports.get_mut().expect("Intel export mutex poisoned");
-        for &(semaphore, fence) in exports.iter() {
+        #[cfg(target_os = "linux")]
+        for &(semaphore, fence) in self
+            .exports
+            .get_mut()
+            .expect("Intel export mutex poisoned")
+            .iter()
+        {
             unsafe {
                 if self
                     .device

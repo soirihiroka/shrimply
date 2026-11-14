@@ -12,6 +12,13 @@ pub struct SnapSources<S> {
     pub distance: Option<Time>,
 }
 
+pub struct SnapQuery {
+    pub candidates: Vec<Time>,
+    pub offsets: Vec<Time>,
+    pub distance: Option<Time>,
+    pub dynamic_time: Option<Time>,
+}
+
 #[derive(Default)]
 pub struct SnapRepo {
     times: Vec<Time>,
@@ -19,6 +26,7 @@ pub struct SnapRepo {
     offsets: Vec<Time>,
     frame_step: Time,
     distance: Option<Time>,
+    dynamic_time: Option<Time>,
 }
 
 impl SnapRepo {
@@ -46,7 +54,20 @@ impl SnapRepo {
             offsets,
             frame_step: sources.frame_step,
             distance: sources.distance,
+            dynamic_time: None,
         }
+    }
+
+    /// Update moving anchors and interaction offsets without rebuilding fixed edges.
+    pub fn update_query(&mut self, mut query: SnapQuery) {
+        query.candidates.sort_unstable();
+        query.candidates.dedup();
+        query.offsets.sort_unstable();
+        query.offsets.dedup();
+        self.candidates = query.candidates;
+        self.offsets = query.offsets;
+        self.distance = query.distance;
+        self.dynamic_time = query.dynamic_time;
     }
 
     pub fn snap(&self, time: Time) -> Option<Time> {
@@ -55,7 +76,11 @@ impl SnapRepo {
         self.offsets
             .iter()
             .filter_map(|offset| {
-                let target = nearest(&self.times, time.saturating_add(*offset))?;
+                let at = time.saturating_add(*offset);
+                let target = [nearest(&self.times, at), self.dynamic_time]
+                    .into_iter()
+                    .flatten()
+                    .min_by_key(|target| (at.abs_diff(*target), *target))?;
                 let candidate = target.signed_sub(*offset);
                 Some((time.abs_diff(candidate), candidate))
             })

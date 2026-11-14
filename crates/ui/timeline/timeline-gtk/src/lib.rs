@@ -143,6 +143,8 @@ pub fn new(
     let render_runtime = runtime.clone();
     let render_project = project.clone();
     let render_player_state = player_state.clone();
+    let render_selection_state = selection_state.clone();
+    let render_preferences = preferences.clone();
     area.connect_render(move |area, _| {
         if let Some(error) = area.error() {
             tracing::error!("Timeline GLArea error: {error}");
@@ -228,8 +230,22 @@ pub fn new(
         };
         let pending_track_add_menu = requests.track_add;
         let pending_pause_playback = requests.pause_playback;
+        let pending_context_menu = requests.context_menu;
         let track_controls_animating = runtime.scene.animating();
         drop(runtime);
+
+        if let Some((point, _)) = pending_context_menu {
+            interaction::show_timeline_item_context_menu(
+                area,
+                &render_project,
+                &render_player_state,
+                &render_selection_state,
+                &render_runtime,
+                &render_preferences,
+                f64::from(point.x),
+                f64::from(point.y),
+            );
+        }
 
         if pause_for_video_recording || pending_pause_playback {
             shrimply_process_reporting::crash::set_context(format!(

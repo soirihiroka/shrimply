@@ -10,6 +10,29 @@ pub use shrimply_project_document::project;
 
 use shrimply_math_media as math;
 
+/// Initialize the application resources used by CPAL's native AAudio host.
+///
+/// # Safety
+/// Both pointers must belong to this process and remain valid for its lifetime.
+/// `context` must be a retained global reference to the Android application.
+#[cfg(target_os = "android")]
+pub unsafe fn initialize_android_context(
+    vm: *mut std::ffi::c_void,
+    context: *mut std::ffi::c_void,
+) {
+    static INITIALIZED: std::sync::Once = std::sync::Once::new();
+    assert!(
+        !vm.is_null() && !context.is_null(),
+        "Android audio host requires live application resources"
+    );
+    INITIALIZED.call_once(|| unsafe { ndk_context::initialize_android_context(vm, context) });
+    assert_eq!(
+        ndk_context::android_context().vm(),
+        vm,
+        "Android audio VM changed"
+    );
+}
+
 pub mod beat;
 mod beat_cache;
 mod beat_math;

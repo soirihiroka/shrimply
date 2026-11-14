@@ -5,6 +5,9 @@ use std::time::{Duration, Instant};
 use hashbrown::HashMap;
 use serde::Serialize;
 
+mod render;
+pub use render::{RenderEvent, RenderObserver};
+
 const SAMPLE_LIMIT: usize = 120;
 
 #[derive(Clone, Debug)]

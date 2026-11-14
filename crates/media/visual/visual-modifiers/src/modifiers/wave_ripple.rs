@@ -1,6 +1,7 @@
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -16,12 +17,15 @@ pub struct WaveRippleModifier {
     pub phase: TimelineValue<f32>,
 }
 
+#[cfg(feature = "preview")]
 const ANGLE_HANDLE_DISTANCE: f32 = 48.0;
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum WaveControl {
     Amplitude,
     Angle,
 }
+#[cfg(feature = "preview")]
 struct WavePreview {
     target: PreviewTarget,
     original: WaveRippleModifier,
@@ -33,7 +37,9 @@ struct WavePreview {
     active: Option<WaveControl>,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl WaveRippleModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -63,6 +69,7 @@ impl WaveRippleModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl WavePreview {
     fn points(&self) -> (glam::Vec2, glam::Vec2, glam::Vec2) {
         let center = self.size * 0.5;
@@ -86,6 +93,7 @@ impl WavePreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for WavePreview {
     fn on_draw(
         &mut self,
@@ -177,6 +185,7 @@ impl PreviewProvider for WavePreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn preview_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

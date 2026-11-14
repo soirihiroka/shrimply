@@ -13,7 +13,7 @@ glam.workspace = true
 gtk.workspace = true
 shrimply-audio-engine = { workspace = true }
 shrimply-property-model = { workspace = true }
-shrimply-timeline-skia = { workspace = true }
+shrimply-timeline-skia.workspace = true
 shrimply-cross-ui-theme = { workspace = true }
 shrimply-export-core = { workspace = true, default-features = true }
 shrimply-math-media = { workspace = true }
@@ -35,7 +35,7 @@ shrimply-inspector-core = { workspace = true, default-features = true }
 shrimply-pointer-lock-wayland = { workspace = true }
 shrimply-visual-cuda = { workspace = true }
 shrimply-video-recording = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 shrimply-math-color = { workspace = true, features = ["gdk"] }
 shrimply-components-skia = { workspace = true }
 skia-safe = { workspace = true, features = ["gl", "textlayout"] }

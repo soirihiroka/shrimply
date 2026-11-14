@@ -52,7 +52,7 @@ pub use audio_cache::{
 };
 pub use audio_modifiers::{
     AudioModifierControl, AudioModifierOption, AudioModifierScalarPresentation,
-    audio_modifier_catalog, audio_modifier_controls, cached_voice_change_models,
+    audio_modifier_catalog, audio_modifier_controls, audio_title, cached_voice_change_models,
     default_audio_modifier_effect, same_audio_modifier_effect, voice_change_model_catalog,
     voice_change_models,
 };

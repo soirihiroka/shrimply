@@ -542,6 +542,54 @@ pub extern "C" fn shrimply_qt_timeline_pointer_leave() {
     });
 }
 
+/// Native Qt contact data in logical coordinates. Gesture recognition is shared.
+#[repr(C)]
+pub struct NativeTouchPoint {
+    id: i32,
+    x: f32,
+    y: f32,
+    phase: u32,
+}
+
+/// # Safety
+/// `points` must reference `count` initialized native contact records for this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shrimply_qt_timeline_touch(points: *const NativeTouchPoint, count: usize) {
+    use shrimply_components_skia::input::{TouchChange, TouchPhase};
+    assert!(!points.is_null() || count == 0);
+    let changes = if count == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(points, count) }
+            .iter()
+            .map(|point| TouchChange {
+                id: point.id as u64,
+                point: vec2(point.x, point.y),
+                phase: match point.phase {
+                    0 => TouchPhase::Begin,
+                    1 => TouchPhase::Move,
+                    2 => TouchPhase::End,
+                    _ => panic!("invalid Qt contact phase"),
+                },
+            })
+            .collect()
+    };
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
+            surfaces.timeline.touch(changes);
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_cancel_input() {
+    SURFACES.with_borrow_mut(|surfaces| {
+        if let Some(surfaces) = surfaces.as_mut() {
+            surfaces.timeline.cancel_input();
+        }
+    });
+}
+
 fn pointer_button(button: u8) -> ToolkitPointerButton {
     match button {
         0 => ToolkitPointerButton::Primary,

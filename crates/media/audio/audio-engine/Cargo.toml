@@ -27,9 +27,12 @@ shrimply-lip-sync = { workspace = true }
 shrimply-math-media = { workspace = true }
 shrimply-math-core = { workspace = true }
 shrimply-path-core.workspace = true
-shrimply-project-document = { workspace = true, default-features = true }
+shrimply-project-document = { workspace = true, features = ["editor"] }
 shrimply-resource-pipeline = { workspace = true }
 shrimply-compute-client = { workspace = true }
 tempfile.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-context = "0.1.1"

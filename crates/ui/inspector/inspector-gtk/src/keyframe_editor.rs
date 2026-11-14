@@ -381,19 +381,9 @@ fn paste_keyframes(context: &GraphActionContext, time: Time) {
 }
 
 fn show_count_toast(area: &gtk::GLArea, count: usize, pasted: bool) {
-    let message = match (count, pasted) {
-        (1, false) => tr!("1 keyframe copied").into_owned(),
-        (1, true) => tr!("1 keyframe pasted").into_owned(),
-        (_, false) => shrimply_components_gtk::i18n::text_args(
-            "%{count} keyframes copied",
-            &[("count", count.to_string())],
-        ),
-        (_, true) => shrimply_components_gtk::i18n::text_args(
-            "%{count} keyframes pasted",
-            &[("count", count.to_string())],
-        ),
-    };
-    shrimply_components_gtk::toast::show_confirmation_text_for_widget(area, &message);
+    if let Some(message) = shrimply_inspector_core::document::graph::confirmation(count, pasted) {
+        shrimply_components_gtk::toast::show_confirmation_text_for_widget(area, &message);
+    }
 }
 
 fn show_text_interpolation(context: &GraphActionContext, owner_id: Uuid, x: f64, y: f64) {

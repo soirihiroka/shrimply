@@ -10,6 +10,7 @@ impl InspectorController {
         control: &InspectorControl,
         enabled: bool,
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
         let name = control
             .keyframe_commits
@@ -27,8 +28,13 @@ impl InspectorController {
                 enabled,
             );
         }
-        if let Some(id) = control.timeline_id {
-            self.ensure_timeline(target, path, id)?;
+        if control.background_integer() {
+            return self.set_background_integer_keyframes_enabled(
+                target,
+                path,
+                timeline(control)?,
+                enabled,
+            );
         }
         match control.kind {
             ControlKind::LayeredDrawing => {
@@ -89,6 +95,7 @@ impl InspectorController {
         control: &InspectorControl,
         enabled: bool,
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
         if control.audio_modifier {
             return self.set_audio_modifier_expression_enabled(
@@ -99,8 +106,13 @@ impl InspectorController {
                 control.kind.default_expression(),
             );
         }
-        if let Some(id) = control.timeline_id {
-            self.ensure_timeline(target, path, id)?;
+        if control.background_integer() {
+            return self.set_background_integer_expression_enabled(
+                target,
+                path,
+                timeline(control)?,
+                enabled,
+            );
         }
         let name = expression_commit(control);
         let commit = InspectorCommit::Immediate(name);
@@ -125,6 +137,9 @@ impl InspectorController {
                 commit,
             );
         }
+        if control.kind == ControlKind::LayeredVector2 {
+            return self.set_vector2_expression_enabled(target, path, enabled, commit);
+        }
         self.set_timeline_mode_with_commit(
             target,
             path,
@@ -144,6 +159,7 @@ impl InspectorController {
         control: &InspectorControl,
         source: &str,
     ) -> Result<(), String> {
+        self.ensure_control_timeline(target, control)?;
         let path = control.timeline_path.as_deref().unwrap_or(&control.path);
         if control.audio_modifier {
             return self.set_audio_modifier_expression_source(
@@ -153,8 +169,13 @@ impl InspectorController {
                 source,
             );
         }
-        if let Some(id) = control.timeline_id {
-            self.ensure_timeline(target, path, id)?;
+        if control.background_integer() {
+            return self.set_background_integer_expression_source(
+                target,
+                path,
+                timeline(control)?,
+                source.to_string(),
+            );
         }
         if control.kind == ControlKind::LayeredText {
             return self.set_text_expression_source(
@@ -173,6 +194,14 @@ impl InspectorController {
                 target,
                 field,
                 timeline(control)?,
+                source.to_string(),
+                InspectorCommit::Coalesced(expression_commit(control)),
+            );
+        }
+        if control.kind == ControlKind::LayeredVector2 {
+            return self.set_vector2_expression_source(
+                target,
+                path,
                 source.to_string(),
                 InspectorCommit::Coalesced(expression_commit(control)),
             );

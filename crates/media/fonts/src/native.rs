@@ -1,55 +1,22 @@
 //! One application registry and one synchronized Pango map per render thread.
+#[cfg(feature = "fontconfig")]
+pub mod fontconfig;
 pub mod shaping;
 use crate::{Font, descriptor::validate_family};
 use pango::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock, RwLock, Weak,
+        OnceLock, RwLock,
         atomic::{AtomicU64, Ordering},
     },
 };
 
 static REVISION: AtomicU64 = AtomicU64::new(0);
 static FILES: OnceLock<RwLock<Vec<PathBuf>>> = OnceLock::new();
-pub type FontChange = Arc<dyn Fn() + Send + Sync>;
-type Subscribers = Mutex<Vec<Weak<dyn Fn() + Send + Sync>>>;
-static SUBSCRIBERS: OnceLock<Subscribers> = OnceLock::new();
-
-/// Keep the returned handle alive to receive registry changes. Dropped hosts
-/// disappear on the next subscription/change, with no worker thread or polling.
-pub fn subscribe(callback: FontChange) -> FontChange {
-    let mut subscribers = SUBSCRIBERS
-        .get_or_init(Default::default)
-        .lock()
-        .expect("font change subscribers lock died");
-    subscribers.retain(|callback| callback.strong_count() > 0);
-    subscribers.push(Arc::downgrade(&callback));
-    callback
-}
-
-fn notify_subscribers() {
-    let callbacks = {
-        let mut subscribers = SUBSCRIBERS
-            .get_or_init(Default::default)
-            .lock()
-            .expect("font change subscribers lock died");
-        let mut callbacks = Vec::new();
-        subscribers.retain(|callback| match callback.upgrade() {
-            Some(callback) => {
-                callbacks.push(callback);
-                true
-            }
-            None => false,
-        });
-        callbacks
-    };
-    for callback in callbacks {
-        callback();
-    }
-}
+use crate::changes::notify_subscribers;
+pub use crate::{FontChange, FontEpoch, subscribe};
 
 struct ThreadMap {
     map: pango::FontMap,
@@ -58,13 +25,14 @@ struct ThreadMap {
 }
 
 thread_local! {
+    #[cfg_attr(
+        target_os = "android",
+        expect(
+            clippy::missing_const_for_thread_local,
+            reason = "Android's TLS macro helper is flagged even with the const initializer below"
+        )
+    )]
     static MAP: RefCell<Option<ThreadMap>> = const { RefCell::new(None) };
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct FontEpoch {
-    pub revision: u64,
-    pub serial: u32,
 }
 
 /// File-capable backends also resolve installed native families. Prefer these so

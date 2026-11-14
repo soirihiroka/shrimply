@@ -3,6 +3,7 @@ pub mod color;
 pub mod file_picker;
 pub mod layered;
 pub mod layout;
+pub mod math;
 pub mod number;
 pub mod performance;
 pub mod project_settings;

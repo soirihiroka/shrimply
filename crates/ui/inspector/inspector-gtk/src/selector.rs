@@ -4,7 +4,7 @@ use shrimply_inspector_core::selector::complete_icons;
 use shrimply_property_model::timeline_value::TimelineStep;
 
 pub(super) use crate::ui::{
-    StringChoice, dropdown, enum_selector, labeled_string_selector, selector, string_selector,
+    StringChoice, dropdown, enum_selector, labeled_string_selector, selector,
 };
 
 pub(super) fn step_editor<T: TimelineStep>(value: T, changed: impl Fn(T) + 'static) -> gtk::Widget {

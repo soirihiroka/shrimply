@@ -1,0 +1,196 @@
+use crate::item_decoration::*;
+use crate::math::{item_rect, preview_media_time_offset};
+use crate::*;
+
+pub fn draw_video_item(
+    painter: &TimelinePainter,
+    marker: NaturalEndMarker,
+    icon: Icon,
+    x: f64,
+    y: f64,
+    view: impl Into<Viewport>,
+    selected: bool,
+) {
+    let view = view.into();
+    let (clip_x, clip_width) = item_rect(marker.start, marker.end, x, view);
+    draw_timed_item_box(
+        painter,
+        TimedItemBox {
+            marker,
+            bounds: rect(clip_x, y, clip_width, TRACK_HEIGHT),
+            fill: Color::BLUE5,
+            timeline_x: x,
+            view,
+            selected,
+            selected_border_color: Color::BLUE1,
+        },
+    );
+    draw_item_icon(
+        painter,
+        rect(clip_x, y, clip_width, TRACK_HEIGHT),
+        icon,
+        Color::BLUE1,
+    );
+    draw_natural_end_marker(painter, marker, x, y, view, Color::BLUE1);
+}
+
+pub fn video_item_icon(content: &VideoItemContent) -> Icon {
+    match content {
+        VideoItemContent::Gif => Icon("container3-symbolic"),
+        VideoItemContent::Media => Icon("video-camera-symbolic"),
+        VideoItemContent::Image => Icon("image-symbolic"),
+        VideoItemContent::Text(_) => Icon("draw-text-symbolic"),
+        VideoItemContent::Shape(_) => Icon("shapes-large-symbolic"),
+        VideoItemContent::Paint(_) => Icon("applications-graphics-symbolic"),
+        VideoItemContent::Background(_) => Icon("preferences-desktop-wallpaper-symbolic"),
+        VideoItemContent::Obj(_) => Icon("3d-object-symbolic"),
+        VideoItemContent::Gaussian(_) => Icon("3d-object-symbolic"),
+        VideoItemContent::Svg => Icon("boxy-svg-symbolic"),
+        VideoItemContent::Pdf(_) => Icon("rich-text-symbolic"),
+        VideoItemContent::Manim(_) => Icon("manim-symbolic"),
+        VideoItemContent::Sanim(_) => Icon("code-symbolic"),
+        VideoItemContent::Blender(_) => Icon("blender-symbolic"),
+        VideoItemContent::LayeredImage(_) => Icon("image-symbolic"),
+        VideoItemContent::FoldedSequence(_) => Icon("folder-symbolic"),
+    }
+}
+
+pub fn draw_comment_item(
+    painter: &TimelinePainter,
+    item: &CommentItem,
+    x: f64,
+    y: f64,
+    view: impl Into<Viewport>,
+    selected: bool,
+) {
+    let view = view.into();
+    let (clip_x, clip_width) = item_rect(item.start, item.end, x, view);
+    let (accent_color, border_color) = match item.color {
+        crate::project::CommentColor::Red => (Color::RED5, Color::RED1),
+        crate::project::CommentColor::Orange => (Color::ORANGE5, Color::ORANGE1),
+        crate::project::CommentColor::Yellow => (Color::YELLOW5, Color::YELLOW1),
+        crate::project::CommentColor::Green => (Color::GREEN5, Color::GREEN1),
+        crate::project::CommentColor::Blue => (Color::BLUE5, Color::BLUE1),
+        crate::project::CommentColor::Purple => (Color::PURPLE5, Color::PURPLE1),
+    };
+    decoration::draw_item_box(
+        painter,
+        rect(clip_x, y, clip_width, TRACK_HEIGHT),
+        accent_color,
+        selected,
+        border_color,
+        theme::current().sidebar_border,
+    );
+    crate::draw_clip_label(
+        painter,
+        rect(clip_x, y, clip_width, TRACK_HEIGHT),
+        &item.text,
+        crate::theme::current().view_fg,
+    );
+}
+
+pub fn draw_caption_item(
+    painter: &TimelinePainter,
+    item: &CaptionItem,
+    x: f64,
+    y: f64,
+    view: impl Into<Viewport>,
+    selected: bool,
+) {
+    let view = view.into();
+    let (clip_x, clip_width) = item_rect(item.start, item.end, x, view);
+    let accent_color = Color::YELLOW5;
+    decoration::draw_item_box(
+        painter,
+        rect(clip_x, y, clip_width, TRACK_HEIGHT),
+        accent_color,
+        selected,
+        Color::YELLOW1,
+        theme::current().sidebar_border,
+    );
+    crate::draw_clip_label(
+        painter,
+        rect(clip_x, y, clip_width, TRACK_HEIGHT),
+        &item.text,
+        crate::theme::current().view_fg,
+    );
+}
+
+pub fn video_natural_end_marker(item: &crate::project::VideoItem) -> Option<Time> {
+    if item.repeats_keyframes() {
+        generated_item_natural_end_position(item)
+    } else {
+        media_item_natural_end_position(
+            item.start,
+            item.time_offset,
+            item.source_duration,
+            item.playback_speed,
+            item.repeat_strategy,
+        )
+    }
+}
+
+pub fn video_real_start(item: &crate::project::VideoItem) -> Option<Time> {
+    if item.repeats_keyframes() {
+        generated_item_natural_span(item).map(|(start, _)| start)
+    } else {
+        media_real_span(
+            item.start,
+            item.time_offset,
+            item.source_duration,
+            item.playback_speed,
+            item.repeat_strategy,
+        )
+        .map(|(start, _)| start)
+    }
+}
+
+pub fn video_real_end(item: &crate::project::VideoItem) -> Option<Time> {
+    if item.repeats_keyframes() {
+        let (_, end) = generated_item_keyframe_span(item)?;
+        Some(item.start.saturating_add(Time {
+            seconds: end.seconds - item.animation_time_offset.seconds,
+        }))
+    } else {
+        media_real_span(
+            item.start,
+            item.time_offset,
+            item.source_duration,
+            item.playback_speed,
+            item.repeat_strategy,
+        )
+        .map(|(_, end)| end)
+    }
+}
+
+pub fn preview_video_marker(
+    source: &crate::project::VideoItem,
+    start: Time,
+    end: Time,
+    mode: PreviewTimeMode,
+) -> NaturalEndMarker {
+    let mut preview = source.clone();
+    preview.start = start;
+    preview.end = end;
+    if matches!(mode, PreviewTimeMode::Resize) {
+        preview.time_offset = preview_media_time_offset(
+            source.time_offset,
+            source.start,
+            start,
+            source.playback_speed,
+            source.repeat_strategy,
+            source.source_duration,
+        );
+        preview.animation_time_offset = source
+            .animation_time_offset
+            .saturating_add(start.signed_sub(source.start));
+    }
+    NaturalEndMarker {
+        start,
+        end,
+        position: video_natural_end_marker(&preview),
+        repeat_interval: video_natural_end_interval(&preview),
+        real_start: video_real_start(&preview),
+        real_end: video_real_end(&preview),
+    }
+}

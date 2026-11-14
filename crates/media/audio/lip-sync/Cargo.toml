@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 hashbrown.workspace = true
 shrimply-math-media = { workspace = true }
-shrimply-project-document = { workspace = true, default-features = true }
+shrimply-math-core.workspace = true
 shrimply-rhubarb-lip-sync.workspace = true

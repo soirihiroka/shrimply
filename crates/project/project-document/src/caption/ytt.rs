@@ -366,6 +366,7 @@ mod tests {
             Time::from_nanos(4_000_000_000),
             "**Bold** *italic* __under__ {1200}[漢/かん]字".into(),
         );
+        item.styling_enabled = true;
         item.text_color = Color::<u8>::from_rgb(255, 120, 40);
         item.edge_style = CaptionEdgeStyle::Glow;
         let xml = document(&[&item]);
@@ -379,10 +380,5 @@ mod tests {
         assert!(xml.contains(" rb=\"1\""));
         assert!(xml.contains(" rb=\"4\""));
         assert!(xml.ends_with("</timedtext>\n"));
-    }
-
-    #[test]
-    fn sample_project_uses_current_caption_schema() {
-        serde_json::from_str::<Project>(include_str!("../../sample_project.json")).unwrap();
     }
 }

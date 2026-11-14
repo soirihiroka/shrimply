@@ -874,30 +874,13 @@ impl InspectorController {
         canvas_size: shrimply_project_document::project::CanvasSize,
         frame_rate: shrimply_math_core::Fraction,
     ) -> Result<(), String> {
-        if !(crate::project::MIN_CANVAS_DIMENSION..=crate::project::MAX_CANVAS_DIMENSION)
-            .contains(&canvas_size.width)
-            || !(crate::project::MIN_CANVAS_DIMENSION..=crate::project::MAX_CANVAS_DIMENSION)
-                .contains(&canvas_size.height)
-        {
-            return Err(format!(
-                "project dimensions must be between {} and {}",
-                crate::project::MIN_CANVAS_DIMENSION,
-                crate::project::MAX_CANVAS_DIMENSION,
-            ));
-        }
-        if !shrimply_math_core::fraction_is_finite(frame_rate)
-            || shrimply_math_core::fraction_numerator(frame_rate) <= 0
-        {
-            return Err("project frame rate must be positive".to_string());
-        }
         let mut project = self.project.borrow_mut();
         let frame_rate_changed = project.fps != frame_rate;
         let resolution_changed = project.canvas_size != canvas_size;
         if !frame_rate_changed && !resolution_changed {
             return Ok(());
         }
-        project.fps = frame_rate;
-        project.canvas_size = canvas_size;
+        project.set_video_settings(canvas_size, frame_rate)?;
         shrimply_project_document::project::commit_edit(&project, "project-settings");
         drop(project);
         player_state::refresh_project(

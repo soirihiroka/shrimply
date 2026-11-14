@@ -26,17 +26,9 @@ mod intel;
 pub use shrimply_visual_cuda::gpu::{configure_gtk_backend, intel_backend_selected};
 
 pub use shrimply_export_core::video::{
-    ExportAudioEncoder, ExportContainer, ExportProgress, ExportVideoCodec, extension_for_container,
+    ExportAudioEncoder, ExportContainer, ExportProgress, ExportRateControl, ExportVideoCodec,
+    extension_for_container,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExportRateControl {
-    ConstantQp,
-    ConstantBitrate,
-    VariableBitrate,
-    VariableBitrateTargetQuality,
-    Lossless,
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExportPreset {
@@ -115,6 +107,8 @@ where
         container: settings.container,
         fps: settings.fps,
         background_alpha: settings.background_alpha,
+        rate_control: settings.rate_control,
+        constant_qp: settings.constant_qp,
         bitrate_kbps: settings.bitrate_kbps,
         keyframe_interval_seconds: settings.keyframe_interval_seconds,
         b_frames: settings.b_frames,

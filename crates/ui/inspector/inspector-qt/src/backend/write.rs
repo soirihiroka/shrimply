@@ -11,31 +11,7 @@ impl qobject::InspectorBackend {
         let Some((target, control)) = self.control_target(category, item, control) else {
             return;
         };
-        if let Err(error) = crate::ensure_control_timeline(&target, &control) {
-            self.as_mut().finish(Err(error));
-            return;
-        }
         let value = value.to_string();
-        if let Some(shrimply_inspector_core::InspectorControlAction::SetSam2Model { modifier_id }) =
-            control.action
-        {
-            self.as_mut()
-                .finish(crate::set_sam2_model(&target, modifier_id, &value));
-            return;
-        }
-        if let Some(shrimply_inspector_core::InspectorControlAction::SetSam2PointLabel {
-            modifier_id,
-            point_id,
-        }) = control.action
-        {
-            self.as_mut().finish(crate::set_sam2_point_label(
-                &target,
-                modifier_id,
-                point_id,
-                &value,
-            ));
-            return;
-        }
         if control.kind == ControlKind::AudioModifierMenu {
             if value == "__paste__" {
                 let result = crate::paste_audio_modifiers(&target).map(|count| {
@@ -78,142 +54,13 @@ impl qobject::InspectorBackend {
             }
             return;
         }
-        if control.kind == ControlKind::LayeredText {
-            let result = control
-                .timeline_id
-                .ok_or_else(|| "text timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_text_value(
-                        &target,
-                        &control.path,
-                        timeline_id,
-                        value,
-                        &control.commit_name,
-                    )
-                });
-            self.as_mut().finish(result);
-            return;
+        let result = crate::with_controller(|controller| {
+            controller.set_basic_control_value(&target, &control, &value)
+        });
+        if result.is_ok() {
+            crate::EXPRESSION_DIRTY.set(true);
+            crate::GRAPH_DIRTY.set(true);
         }
-        if let Some(result) =
-            crate::set_manim_text_field(&target, &control.path, &value, &control.commit_name)
-        {
-            self.as_mut().finish(result);
-            return;
-        }
-        if let Some(result) = crate::named_control_edit(&target, &control, value.clone()) {
-            self.as_mut().finish(result);
-            return;
-        }
-        let result = if control.kind == ControlKind::AudioCachePreset {
-            control
-                .target_id
-                .ok_or_else(|| "audio cache control has no modifier target".to_string())
-                .and_then(|id| crate::set_audio_cache_preset(&target, id, &value))
-        } else if control.kind == ControlKind::VisualCacheQuality {
-            control
-                .target_id
-                .ok_or_else(|| "visual cache control has no modifier target".to_string())
-                .and_then(|id| crate::set_visual_cache_quality(&target, id, &value))
-        } else if control.kind == ControlKind::LayeredBoolean {
-            value
-                .parse::<bool>()
-                .map_err(|_| format!("invalid timeline boolean: {value}"))
-                .and_then(|value| crate::set_bool_value(&target, &control.path, value))
-        } else if matches!(
-            control.kind,
-            ControlKind::LayeredNumber | ControlKind::LayeredSelector
-        ) {
-            control_value(&control, &value).and_then(|value| {
-                if crate::graph_backend::background_integer(&control) {
-                    let value = serde_json::from_value::<u32>(value)
-                        .map_err(|error| format!("invalid background integer: {error}"))?;
-                    crate::set_background_integer_value(
-                        &target,
-                        &control.path,
-                        control.timeline_id.ok_or_else(|| {
-                            "background integer timeline ID is unavailable".to_string()
-                        })?,
-                        value,
-                    )
-                } else if control.audio_modifier {
-                    control
-                        .target_id
-                        .ok_or_else(|| "audio modifier target is unavailable".to_string())
-                        .and_then(|id| {
-                            control
-                                .timeline_id
-                                .ok_or_else(|| {
-                                    "audio modifier timeline ID is unavailable".to_string()
-                                })
-                                .and_then(|timeline_id| {
-                                    crate::set_audio_modifier_timeline_base(
-                                        &target,
-                                        id,
-                                        timeline_id,
-                                        value,
-                                    )
-                                })
-                        })
-                } else {
-                    let commit_name = control
-                        .keyframe_commits
-                        .filter(|_| control.layered.keyframes)
-                        .map_or(control.commit_name.as_str(), |commits| commits.edit);
-                    crate::set_timeline_base(
-                        &target,
-                        &control.path,
-                        value,
-                        commit_name,
-                        control.commit_immediately,
-                    )
-                }
-            })
-        } else if control.kind == ControlKind::OptionalSelector {
-            crate::set_optional_field(
-                &target,
-                &control.path,
-                (!value.is_empty()).then_some(value.as_str()),
-            )
-        } else if control.kind == ControlKind::OptionalNumberSelector {
-            crate::set_optional_number_field(
-                &target,
-                &control.path,
-                (!value.is_empty()).then_some(value.as_str()),
-            )
-        } else {
-            let value = if control.kind == ControlKind::Number
-                && (control.store_multiplier != 1.0
-                    || control.number_mapping != shrimply_inspector_core::NumberMapping::Linear)
-            {
-                value
-                    .parse::<f64>()
-                    .map(|value| control.store_number(value).to_string())
-                    .map_err(|_| format!("invalid numeric inspector value: {value}"))
-            } else {
-                Ok(value)
-            };
-            value.and_then(|value| {
-                if control.audio_modifier {
-                    control
-                        .target_id
-                        .ok_or_else(|| "audio modifier target is unavailable".to_string())
-                        .and_then(|id| {
-                            if control.kind == ControlKind::Number {
-                                crate::set_audio_modifier_live_field(
-                                    &target,
-                                    id,
-                                    &control.path,
-                                    &value,
-                                )
-                            } else {
-                                crate::set_audio_modifier_field(&target, id, &control.path, &value)
-                            }
-                        })
-                } else {
-                    crate::set_field(&target, &control.path, &value)
-                }
-            })
-        };
         self.as_mut().finish(result);
     }
 
@@ -303,7 +150,17 @@ impl qobject::InspectorBackend {
         let Some((target, control)) = self.control_target(category, item, control) else {
             return;
         };
-        let result = crate::set_control_fraction(&target, &control, numerator, denominator);
+        let result = if denominator <= 0 {
+            Err("fraction denominator must be positive".to_string())
+        } else {
+            crate::with_controller(|controller| {
+                controller.set_basic_control_fraction(
+                    &target,
+                    &control,
+                    shrimply_math_core::fraction_new(numerator, denominator),
+                )
+            })
+        };
         self.as_mut().finish(result);
     }
 
@@ -321,65 +178,22 @@ impl qobject::InspectorBackend {
         let Some((target, control)) = self.control_target(category, item, control) else {
             return;
         };
-        if let Err(error) = crate::ensure_control_timeline(&target, &control) {
-            self.as_mut().finish(Err(error));
-            return;
-        }
-        if let Some(shrimply_inspector_core::InspectorControlAction::SetSam2PointPosition {
-            modifier_id,
-            point_id,
-        }) = control.action
-        {
-            self.as_mut().finish(crate::set_sam2_point_position(
-                &target,
-                modifier_id,
-                point_id,
-                first,
-                second,
-            ));
-            return;
-        }
-        let count = if matches!(
+        let values = if matches!(
             control.kind,
             ControlKind::Vector3 | ControlKind::LayeredVector3
         ) {
-            3
+            vec![first, second, third]
         } else {
-            2
+            vec![first, second]
         };
-        if control.kind == ControlKind::LayeredVector2 {
-            let commit_name = control
-                .keyframe_commits
-                .filter(|_| control.layered.keyframes)
-                .map_or(control.commit_name.as_str(), |commits| commits.edit);
-            self.as_mut().finish(crate::set_vector2_value(
-                &target,
-                &control.path,
-                first * control.store_multiplier,
-                second * control.store_multiplier,
-                commit_name,
-            ));
-            return;
+        let result = crate::with_controller(|controller| {
+            controller.set_basic_control_components(&target, &control, &values)
+        });
+        if result.is_ok() {
+            crate::EXPRESSION_DIRTY.set(true);
+            crate::GRAPH_DIRTY.set(true);
         }
-        if control.kind == ControlKind::LayeredVector3 {
-            self.as_mut().finish(crate::set_vector3_value(
-                &target,
-                &control.path,
-                first * control.store_multiplier,
-                second * control.store_multiplier,
-                third * control.store_multiplier,
-                &control.commit_name,
-            ));
-            return;
-        }
-        let values = [first, second, third]
-            .into_iter()
-            .take(count)
-            .enumerate()
-            .map(|(component, value)| (component, (value * control.store_multiplier).to_string()))
-            .collect::<Vec<_>>();
-        self.as_mut()
-            .finish(crate::set_components(&target, &control.path, &values));
+        self.as_mut().finish(result);
     }
 
     #[expect(clippy::too_many_arguments, reason = "QML slot signature")]
@@ -411,8 +225,9 @@ impl qobject::InspectorBackend {
 
     pub fn commit_control(mut self: Pin<&mut Self>, category: i32, item: i32, control: i32) {
         if let Some((target, control)) = self.control_target(category, item, control) {
-            self.as_mut()
-                .finish(crate::commit_control_edit(&target, &control));
+            self.as_mut().finish(crate::with_controller(|controller| {
+                controller.commit_basic_control(&target, &control)
+            }));
         }
         crate::mark_dirty();
     }
@@ -427,115 +242,13 @@ impl qobject::InspectorBackend {
         let Some((target, control)) = self.control_target(category, item, control) else {
             return;
         };
-        if let Err(error) = crate::ensure_control_timeline(&target, &control) {
-            self.as_mut().finish(Err(error));
-            return;
+        let result = crate::with_controller(|controller| {
+            controller.set_control_keyframes(&target, &control, enabled)
+        });
+        if result.is_ok() {
+            crate::EXPRESSION_DIRTY.set(true);
+            crate::GRAPH_DIRTY.set(true);
         }
-        let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        let keyframe_commit_name = control
-            .keyframe_commits
-            .map_or(control.keyframe_commit_name.as_str(), |commits| {
-                commits.toggle
-            });
-        let result = if control.kind == ControlKind::LayeredDrawing {
-            control
-                .timeline_id
-                .ok_or_else(|| "paint drawing timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_paint_drawing_keyframes_enabled(&target, timeline_id, enabled)
-                })
-        } else if control.audio_modifier {
-            control
-                .target_id
-                .ok_or_else(|| "audio modifier target is unavailable".to_string())
-                .and_then(|id| {
-                    control
-                        .timeline_id
-                        .ok_or_else(|| "audio modifier timeline ID is unavailable".to_string())
-                        .and_then(|timeline_id| {
-                            crate::set_audio_modifier_timeline_mode(
-                                &target,
-                                id,
-                                timeline_id,
-                                path,
-                                shrimply_inspector_core::TimelineModeChange {
-                                    keyframes: true,
-                                    enabled,
-                                    current: serde_json::Value::Null,
-                                    default_expression: control.kind.default_expression(),
-                                },
-                            )
-                        })
-                })
-        } else if control.kind == ControlKind::LayeredNumber {
-            if crate::graph_backend::background_integer(&control) {
-                control
-                    .timeline_id
-                    .ok_or_else(|| "background integer timeline ID is unavailable".to_string())
-                    .and_then(|timeline_id| {
-                        crate::set_background_integer_keyframes_enabled(
-                            &target,
-                            path,
-                            timeline_id,
-                            enabled,
-                        )
-                    })
-            } else {
-                crate::set_scalar_keyframes_enabled(
-                    &target,
-                    path,
-                    enabled,
-                    control.number_constraint,
-                    keyframe_commit_name,
-                )
-            }
-        } else if control.kind == ControlKind::LayeredVector2 {
-            crate::set_vector2_keyframes_enabled(&target, path, enabled, keyframe_commit_name)
-        } else if control.kind == ControlKind::LayeredVector3 {
-            crate::set_vector3_keyframes_enabled(&target, path, enabled, keyframe_commit_name)
-        } else if control.kind == ControlKind::LayeredColor {
-            control
-                .timeline_id
-                .ok_or_else(|| "timeline color ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_color_keyframes_enabled(
-                        &target,
-                        path,
-                        timeline_id,
-                        enabled,
-                        keyframe_commit_name,
-                    )
-                })
-        } else if control.kind == ControlKind::LayeredBoolean {
-            crate::set_bool_keyframes_enabled(&target, path, enabled, keyframe_commit_name)
-        } else if control.kind == ControlKind::LayeredText {
-            control
-                .timeline_id
-                .ok_or_else(|| "text timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_text_keyframes_enabled(
-                        &target,
-                        path,
-                        timeline_id,
-                        enabled,
-                        keyframe_commit_name,
-                    )
-                })
-        } else if control.kind == ControlKind::LayeredSelector {
-            crate::set_step_keyframes_enabled(&target, path, enabled, keyframe_commit_name)
-        } else {
-            timeline_value(&control).and_then(|current| {
-                crate::set_timeline_mode(
-                    &target,
-                    path,
-                    true,
-                    enabled,
-                    current,
-                    control.kind.default_expression(),
-                    keyframe_commit_name,
-                )
-            })
-        };
         self.as_mut().finish(result);
     }
 
@@ -549,98 +262,13 @@ impl qobject::InspectorBackend {
         let Some((target, control)) = self.control_target(category, item, control) else {
             return;
         };
-        if let Err(error) = crate::ensure_control_timeline(&target, &control) {
-            self.as_mut().finish(Err(error));
-            return;
+        let result = crate::with_controller(|controller| {
+            controller.set_control_expression(&target, &control, enabled)
+        });
+        if result.is_ok() {
+            crate::EXPRESSION_DIRTY.set(true);
+            crate::GRAPH_DIRTY.set(true);
         }
-        let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        let result = if control.kind == ControlKind::LayeredDrawing {
-            crate::set_timeline_mode(
-                &target,
-                path,
-                false,
-                enabled,
-                serde_json::Value::Null,
-                control.kind.default_expression(),
-                &control.expression_commit_name,
-            )
-        } else if control.audio_modifier {
-            control
-                .target_id
-                .ok_or_else(|| "audio modifier target is unavailable".to_string())
-                .and_then(|id| {
-                    control
-                        .timeline_id
-                        .ok_or_else(|| "audio modifier timeline ID is unavailable".to_string())
-                        .and_then(|timeline_id| {
-                            crate::set_audio_modifier_timeline_mode(
-                                &target,
-                                id,
-                                timeline_id,
-                                path,
-                                shrimply_inspector_core::TimelineModeChange {
-                                    keyframes: false,
-                                    enabled,
-                                    current: serde_json::Value::Null,
-                                    default_expression: control.kind.default_expression(),
-                                },
-                            )
-                        })
-                })
-        } else if crate::graph_backend::background_integer(&control) {
-            control
-                .timeline_id
-                .ok_or_else(|| "background integer timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_background_integer_expression_enabled(
-                        &target,
-                        path,
-                        timeline_id,
-                        enabled,
-                    )
-                })
-        } else if let Some(field) =
-            shrimply_inspector_core::transform::TransformField::from_path(path)
-        {
-            control
-                .timeline_id
-                .ok_or_else(|| "transform timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_transform_expression_enabled(&target, field, timeline_id, enabled)
-                })
-        } else if control.kind == ControlKind::LayeredVector2 {
-            crate::set_vector2_expression_enabled(
-                &target,
-                path,
-                enabled,
-                &control.expression_commit_name,
-            )
-        } else if control.kind == ControlKind::LayeredText {
-            control
-                .timeline_id
-                .ok_or_else(|| "text timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_text_expression_enabled(
-                        &target,
-                        path,
-                        timeline_id,
-                        enabled,
-                        &control.expression_commit_name,
-                    )
-                })
-        } else {
-            timeline_value(&control).and_then(|current| {
-                crate::set_timeline_mode(
-                    &target,
-                    path,
-                    false,
-                    enabled,
-                    current,
-                    control.kind.default_expression(),
-                    &control.expression_commit_name,
-                )
-            })
-        };
         self.as_mut().finish(result);
     }
 
@@ -654,63 +282,13 @@ impl qobject::InspectorBackend {
         let Some((target, control)) = self.control_target(category, item, control) else {
             return;
         };
-        if let Err(error) = crate::ensure_control_timeline(&target, &control) {
-            self.as_mut().finish(Err(error));
-            return;
+        let result = crate::with_controller(|controller| {
+            controller.set_control_expression_source(&target, &control, &source.to_string())
+        });
+        if result.is_ok() {
+            crate::EXPRESSION_DIRTY.set(true);
+            crate::GRAPH_DIRTY.set(true);
         }
-        let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        let source = source.to_string();
-        let result = if control.audio_modifier {
-            control
-                .target_id
-                .ok_or_else(|| "audio modifier target is unavailable".to_string())
-                .and_then(|id| {
-                    crate::set_audio_modifier_expression_source(&target, id, path, &source)
-                })
-        } else if crate::graph_backend::background_integer(&control) {
-            control
-                .timeline_id
-                .ok_or_else(|| "background integer timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_background_integer_expression_source(
-                        &target,
-                        path,
-                        timeline_id,
-                        source,
-                    )
-                })
-        } else if let Some(field) =
-            shrimply_inspector_core::transform::TransformField::from_path(path)
-        {
-            control
-                .timeline_id
-                .ok_or_else(|| "transform timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_transform_expression_source(&target, field, timeline_id, source)
-                })
-        } else if control.kind == ControlKind::LayeredVector2 {
-            crate::set_vector2_expression_source(
-                &target,
-                path,
-                source,
-                &control.expression_commit_name,
-            )
-        } else if control.kind == ControlKind::LayeredText {
-            control
-                .timeline_id
-                .ok_or_else(|| "text timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    crate::set_text_expression_source(
-                        &target,
-                        path,
-                        timeline_id,
-                        &source,
-                        &control.expression_commit_name,
-                    )
-                })
-        } else {
-            crate::set_expression_source(&target, path, &source, &control.expression_commit_name)
-        };
         self.as_mut().finish(result);
     }
 

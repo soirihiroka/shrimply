@@ -205,9 +205,6 @@ pub(crate) fn definition(name: &str) -> Option<&'static Definition> {
         .iter()
         .find(|definition| definition.builtin.name == name)
 }
-pub(crate) fn builtin(name: &str) -> Option<&'static Builtin> {
-    definition(name).map(|definition| &definition.builtin)
-}
 pub(crate) fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
     let supported = matches!(receiver, Type::List(_, _));
     definitions()

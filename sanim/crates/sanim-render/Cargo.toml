@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 sanim-core.workspace = true
-sanim-data.workspace = true
+sanim-data = { workspace = true, features = ["native-text", "media"] }
 skia-safe.workspace = true
 serde_json.workspace = true
 

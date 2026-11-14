@@ -10,14 +10,17 @@ use shrimply_property_model::{Time, timeline_value::TimelineValue};
 use uuid::Uuid;
 
 use super::{KeyframeSpan, ModifierModel, ensure_unique_id};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, Modifiers, PointerButton, PointerEvent, PreviewBuilder, PreviewContext,
     PreviewEditOutcome, PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse,
     PreviewTarget, Rect,
 };
 
+#[cfg(feature = "preview")]
 use super::preview;
 
+#[cfg(feature = "preview")]
 const BOX_DRAG_THRESHOLD: f32 = 4.0;
 
 #[derive(
@@ -263,6 +266,7 @@ impl ModifierModel for Sam2Modifier {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "preview")]
 struct Sam2Preview {
     target: PreviewTarget,
     snapshot: Sam2Modifier,
@@ -278,6 +282,7 @@ struct Sam2Preview {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 struct Sam2Pending {
     screen: Vec2,
     position: Vec2,
@@ -285,6 +290,7 @@ struct Sam2Pending {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum Sam2Drag {
     Point {
         map: glam::Mat3,
@@ -300,6 +306,7 @@ enum Sam2Drag {
 }
 
 impl Sam2Modifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -337,6 +344,7 @@ impl Sam2Modifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl Sam2Preview {
     fn box_corners(box_prompt: Sam2Box) -> [Vec2; 4] {
         [
@@ -361,6 +369,7 @@ impl Sam2Preview {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for Sam2Preview {
     fn on_draw(
         &mut self,
@@ -622,6 +631,7 @@ impl PreviewProvider for Sam2Preview {
     }
 }
 
+#[cfg(feature = "preview")]
 fn sam2_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();
@@ -634,6 +644,7 @@ fn sam2_edit(changed: bool, commit: bool) -> PreviewResponse {
     })
 }
 
+#[cfg(feature = "preview")]
 fn update_sam2(modifier: &mut Sam2Modifier, drag: &Sam2Drag, point: Vec2, time: Time) -> bool {
     let (map, size) = match *drag {
         Sam2Drag::Point { map, size, .. } | Sam2Drag::BoxCorner { map, size, .. } => (map, size),

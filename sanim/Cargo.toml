@@ -15,8 +15,8 @@ shrimply-math-color = { path = "../crates/math/color" }
 shrimply-drawing-skia = { path = "../crates/render/drawing-skia" }
 glam = "0.34"
 sanim-core = { path = "crates/sanim-core" }
-sanim-data = { path = "crates/sanim-data" }
-sanim-lang = { path = "crates/sanim-lang" }
+sanim-data = { path = "crates/sanim-data", default-features = false }
+sanim-lang = { path = "crates/sanim-lang", default-features = false }
 sanim-render = { path = "crates/sanim-render" }
 sanim-runtime = { path = "crates/sanim-runtime" }
 fraction = { version = "0.17", features = ["with-serde-support"] }

@@ -17,6 +17,45 @@ pub(super) struct InspectorCategory {
     pub(super) items: Vec<InspectorListItem>,
 }
 
+pub(super) fn render_document(
+    document: shrimply_inspector_document::InspectorDocument,
+    context: &InspectorContext,
+    controls: super::item::RenderControls,
+) -> Vec<gtk::Widget> {
+    assert_eq!(
+        document.target, context.list_target,
+        "inspector target changed during rendering"
+    );
+    let categories = document
+        .categories
+        .into_iter()
+        .map(|category| InspectorCategory {
+            key: category.key,
+            label: category.label,
+            icon: category.icon.symbolic_name(),
+            items: category
+                .items
+                .into_iter()
+                .map(|item| match item {
+                    shrimply_inspector_document::InspectorListItem::Item(item) => {
+                        InspectorListItem::Item(Box::new(super::item::DocumentItem::new(
+                            *item, context, controls,
+                        )))
+                    }
+                    shrimply_inspector_document::InspectorListItem::Flat(section) => {
+                        let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+                        for widget in controls(&section, context) {
+                            content.append(&widget);
+                        }
+                        InspectorListItem::Flat(content.upcast())
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    render_categories(categories, context)
+}
+
 pub(super) fn render_categories(
     categories: Vec<InspectorCategory>,
     context: &InspectorContext,
@@ -105,7 +144,7 @@ fn render_list(items: Vec<InspectorListItem>, context: &InspectorContext) -> gtk
                 let card = InspectorCard::with_expansion(
                     tr!(item.title()).as_ref(),
                     expanded,
-                    move || reset(),
+                    reset,
                     move |expanded| {
                         list_state
                             .borrow_mut()

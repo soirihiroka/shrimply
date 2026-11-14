@@ -6,7 +6,7 @@ use shrimply_components_gtk::ui::I18nFileFilterExt;
 use shrimply_timeline_skia::{ContextMenuControl, ContextMenuRequest, VideoFrameSelection};
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn show_timeline_item_context_menu(
+pub(crate) fn show_timeline_item_context_menu(
     area: &gtk::GLArea,
     project: &Rc<RefCell<Project>>,
     player_state: &SharedPlayerState,

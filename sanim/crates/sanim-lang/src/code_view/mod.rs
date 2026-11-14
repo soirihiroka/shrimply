@@ -108,7 +108,7 @@ fn check_edit(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
     Ok(builtin.result.clone())
 }
 
-fn methods() -> &'static [Builtin] {
+pub(crate) fn methods() -> &'static [Builtin] {
     static METHODS: std::sync::OnceLock<Vec<Builtin>> = std::sync::OnceLock::new();
     METHODS.get_or_init(|| {
         let p = |name, ty, required| Parameter { name, ty, required };
@@ -241,9 +241,6 @@ fn methods() -> &'static [Builtin] {
         }
         methods
     })
-}
-pub(crate) fn builtin(name: &str) -> Option<&'static Builtin> {
-    methods().iter().find(|method| method.name == name)
 }
 pub(crate) fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
     methods().iter().filter(move |method| {

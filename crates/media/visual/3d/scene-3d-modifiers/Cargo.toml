@@ -3,6 +3,10 @@ name = "shrimply-scene-3d-modifiers"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["text-mesh"]
+text-mesh = ["shrimply-text-3d/mesh"]
+
 [dependencies]
 hashbrown.workspace = true
 glam = { workspace = true, features = ["serde"] }
@@ -11,5 +15,5 @@ shrimply-asset = { workspace = true }
 shrimply-property-model = { workspace = true }
 shrimply-scene-3d = { workspace = true }
 shrimply-shape-3d = { workspace = true }
-shrimply-text-3d = { workspace = true }
+shrimply-text-3d.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }

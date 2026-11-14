@@ -1,6 +1,6 @@
 use crate::{VideoFrameSelection, selection_state};
-use shrimply_editor_state::player_state::{self, SharedPlayerState};
 use shrimply_math_core::Time;
+use shrimply_player_core::{self as player_state, SharedPlayerState};
 use shrimply_project_document::project::Project;
 use shrimply_timeline_edit::{TrackKind, selection_state::SharedSelectionState};
 use std::{cell::RefCell, rc::Rc};

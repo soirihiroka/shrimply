@@ -66,6 +66,23 @@ pub fn overlapping<'a, T: TimeSlice>(
         .filter(move |(_, item)| item.end() >= range_start)
 }
 
+/// Closed-boundary lookup for validated, sorted, non-overlapping tracks.
+/// Unlike `overlapping`, this also binary-searches the monotonically ordered ends.
+pub fn overlapping_disjoint<'a, T: TimeSlice>(
+    items: &'a [T],
+    start: Time,
+    end: Time,
+) -> impl Iterator<Item = (usize, &'a T)> + 'a {
+    let range_start = start.min(end);
+    let range_end = start.max(end);
+    let last = items.partition_point(|item| item.start() <= range_end);
+    let first = items[..last].partition_point(|item| item.end() < range_start);
+    items[first..last]
+        .iter()
+        .enumerate()
+        .map(move |(index, item)| (first + index, item))
+}
+
 pub fn collides<T: TimeSlice>(items: &[T], start: Time, end: Time) -> bool {
     let range_start = start.min(end);
     let range_end = start.max(end);
@@ -162,5 +179,95 @@ mod tests {
             Time::from_seconds(2),
             Time::from_seconds(4)
         ));
+    }
+
+    #[test]
+    fn disjoint_lookup_preserves_boundaries_indices_and_reversed_bounds() {
+        let items = [Slice::new(0, 2), Slice::new(3, 5), Slice::new(6, 8)];
+        for (start, end) in [(2, 6), (6, 2), (0, 0), (8, 9), (9, 10)] {
+            let start = Time::from_seconds(start);
+            let end = Time::from_seconds(end);
+            assert_eq!(
+                overlapping_disjoint(&items, start, end)
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>(),
+                overlapping(&items, start, end)
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(
+            overlapping_disjoint::<Slice>(&[], Time::ZERO, Time::ZERO).count(),
+            0
+        );
+    }
+
+    #[test]
+    fn disjoint_lookup_cost_is_logarithmic_far_into_a_large_track() {
+        use std::cell::Cell;
+        struct Measured<'a> {
+            index: i64,
+            comparisons: &'a Cell<usize>,
+        }
+        impl TimeSlice for Measured<'_> {
+            fn start(&self) -> Time {
+                self.comparisons.set(self.comparisons.get() + 1);
+                Time::from_seconds(self.index * 2)
+            }
+            fn end(&self) -> Time {
+                self.comparisons.set(self.comparisons.get() + 1);
+                Time::from_seconds(self.index * 2 + 1)
+            }
+        }
+        const ITEMS: i64 = 65_536;
+        let comparisons = Cell::new(0);
+        let items = (0..ITEMS)
+            .map(|index| Measured {
+                index,
+                comparisons: &comparisons,
+            })
+            .collect::<Vec<_>>();
+        let found = overlapping_disjoint(
+            &items,
+            Time::from_seconds(ITEMS),
+            Time::from_seconds(ITEMS + 1),
+        )
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+        assert_eq!(found, [ITEMS as usize / 2]);
+        assert!(
+            comparisons.get() <= 40,
+            "{} comparisons for {ITEMS} items",
+            comparisons.get()
+        );
+    }
+
+    #[test]
+    #[ignore = "manual benchmark: make android-project-bench"]
+    fn disjoint_viewport_lookup_benchmark() {
+        const ITEMS: i64 = 65_536;
+        const LOOKUPS: usize = 256;
+        let items = (0..ITEMS)
+            .map(|index| Slice::new(index * 2, index * 2 + 1))
+            .collect::<Vec<_>>();
+        let start = Time::from_seconds((ITEMS - 2) * 2);
+        let end = Time::from_seconds(ITEMS * 2);
+        let baseline = std::time::Instant::now();
+        let mut previous = 0;
+        for _ in 0..LOOKUPS {
+            previous += std::hint::black_box(overlapping(&items, start, end).count());
+        }
+        let baseline = baseline.elapsed();
+        let indexed = std::time::Instant::now();
+        let mut current = 0;
+        for _ in 0..LOOKUPS {
+            current += std::hint::black_box(overlapping_disjoint(&items, start, end).count());
+        }
+        let indexed = indexed.elapsed();
+        assert_eq!(previous, current);
+        assert_eq!(current, LOOKUPS * 2);
+        eprintln!(
+            "Viewport lookup: {ITEMS} clips, {LOOKUPS} lookups; general scan {baseline:?}, sorted-disjoint lookup {indexed:?}"
+        );
     }
 }

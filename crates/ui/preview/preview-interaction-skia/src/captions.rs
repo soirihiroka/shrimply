@@ -122,17 +122,29 @@ pub fn draw_captions(
     appearance: CaptionAppearance,
     split: Option<(&ItemAddress, Vec2, Color)>,
 ) {
+    let active = active_captions(project, position, appearance.background_color);
+    draw_active_captions(painter, &active, position, appearance, split);
+}
+
+/// A worker can send only the active immutable cues to its GPU surface, rather
+/// than copying the project or accessing the editing model on the draw thread.
+pub fn draw_active_captions(
+    painter: &TimelinePainter,
+    active: &[CaptionItem],
+    position: Time,
+    appearance: CaptionAppearance,
+    split: Option<(&ItemAddress, Vec2, Color)>,
+) {
     let CaptionAppearance {
         preview_rect,
         font_size,
-        background_color,
         bottom_inset,
+        ..
     } = appearance;
     if preview_rect.width() <= 1.0 || preview_rect.height() <= 1.0 {
         return;
     }
 
-    let active = active_captions(project, position, background_color);
     let mut bottom_stack = bottom_inset;
     for item in active {
         let automatic_bottom = item.h_align == HorizontalAlign::Center
@@ -140,7 +152,7 @@ pub fn draw_captions(
             && item.position_x == 50
             && item.position_y == 90;
         let layout = caption_layout(
-            &item,
+            item,
             position,
             preview_rect,
             font_size,
@@ -154,9 +166,9 @@ pub fn draw_captions(
                     address.item_id() == item.id && item.start < position && position < item.end
                 })
                 .and_then(|(_, point, color)| {
-                    split_for_layout(&item, &layout, point).map(|split| (split, color))
+                    split_for_layout(item, &layout, point).map(|split| (split, color))
                 });
-            draw_caption(painter, &item, layout, split);
+            draw_caption(painter, item, layout, split);
         }
         if automatic_bottom {
             bottom_stack += height + PREVIEW_CAPTION_PADDING_Y * 2.0;
@@ -206,7 +218,7 @@ pub fn split_at_position(
     None
 }
 
-fn active_captions(
+pub fn active_captions(
     project: &Project,
     position: Time,
     caption_background_color: Color<u8>,

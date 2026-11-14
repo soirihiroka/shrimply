@@ -58,27 +58,13 @@ pub trait TimelineOperationContext {
     }
 
     fn items(&self, project: &Project) -> Vec<ItemAddress> {
-        self.tracks(project)
-            .into_iter()
-            .flat_map(|track| {
-                let item_ids = match project.track(&track) {
-                    Some(crate::project::TrackRef::Comment(track)) => {
-                        track.items.iter().map(|item| item.id).collect()
-                    }
-                    Some(crate::project::TrackRef::Caption(track)) => {
-                        track.items.iter().map(|item| item.id).collect()
-                    }
-                    Some(crate::project::TrackRef::Video(track)) => {
-                        track.items.iter().map(|item| item.id).collect()
-                    }
-                    Some(crate::project::TrackRef::Audio(track)) => {
-                        track.items.iter().map(|item| item.id).collect()
-                    }
-                    None => Vec::new(),
-                };
-                item_ids.into_iter().map(move |item_id| track.item(item_id))
-            })
-            .collect()
+        let mut addresses = Vec::new();
+        for track in self.tracks(project) {
+            if let Some(items) = project.track(&track) {
+                addresses.extend(items.items().map(|item| track.item(item.id())));
+            }
+        }
+        addresses
     }
 
     fn timeline_item_times(

@@ -247,7 +247,9 @@ impl qobject::InspectorBackend {
 
     pub fn category_icon(&self, category: i32) -> QString {
         self.category(category)
-            .map_or_else(QString::default, |category| QString::from(category.icon))
+            .map_or_else(QString::default, |category| {
+                QString::from(category.icon.symbolic_name())
+            })
     }
 
     pub fn activate_category(mut self: Pin<&mut Self>, category: i32) {
@@ -475,7 +477,7 @@ impl qobject::InspectorBackend {
         let action = self
             .card(category, item)
             .and_then(|item| item.button_toggle.as_ref())
-            .map(|toggle| boolean_action(toggle.activate.clone(), active));
+            .map(|toggle| toggle.activate.action(active));
         self.as_mut().perform(action);
     }
 
@@ -665,7 +667,13 @@ impl qobject::InspectorBackend {
         let target = self.document().map(|document| document.target.clone());
         self.control(category, item, control)
             .map_or_else(QString::default, |control| {
-                if control.kind == ControlKind::Fraction {
+                if let Some(bytes) = &control.image_bytes {
+                    use base64::Engine;
+                    QString::from(format!(
+                        "data:application/octet-stream;base64,{}",
+                        base64::engine::general_purpose::STANDARD.encode(bytes)
+                    ))
+                } else if control.kind == ControlKind::Fraction {
                     QString::from(fraction_value(control).to_string())
                 } else if control.kind == ControlKind::LayeredNumber {
                     let cached = self
@@ -1450,7 +1458,7 @@ impl qobject::InspectorBackend {
                 .map(QString::from)
                 .collect();
         }
-        if crate::graph_backend::background_integer(control) {
+        if control.background_integer() {
             let Some(timeline_id) = control.timeline_id else {
                 return QStringList::default();
             };

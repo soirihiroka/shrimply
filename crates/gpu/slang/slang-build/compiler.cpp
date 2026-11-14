@@ -17,6 +17,7 @@ enum class Target
     Metal,
     Host,
     Vulkan,
+    VulkanPortable,
 };
 
 struct CompileRequest
@@ -218,7 +219,8 @@ static bool reflect_type(
 static int compile(const CompileRequest& request)
 {
     const bool cuda = request.target == Target::Cuda;
-    const bool spirv = request.target == Target::Spirv || request.target == Target::Vulkan;
+    const bool vulkan = request.target == Target::Vulkan || request.target == Target::VulkanPortable;
+    const bool spirv = request.target == Target::Spirv || vulkan;
 
     Slang::ComPtr<slang::IGlobalSession> global_session;
     if (SLANG_FAILED(slang::createGlobalSession(global_session.writeRef())))
@@ -234,7 +236,7 @@ static int compile(const CompileRequest& request)
         options.push_back(entry);
     };
     option(slang::CompilerOptionName::Optimization, SLANG_OPTIMIZATION_LEVEL_HIGH);
-    if (request.target == Target::Vulkan)
+    if (vulkan)
     {
         option(slang::CompilerOptionName::GLSLForceScalarLayout, 1);
         option(slang::CompilerOptionName::VulkanUseEntryPointName, 1);
@@ -251,7 +253,8 @@ static int compile(const CompileRequest& request)
     switch (request.target)
     {
     case Target::Spirv:
-    case Target::Vulkan: target.format = SLANG_SPIRV; break;
+    case Target::Vulkan:
+    case Target::VulkanPortable: target.format = SLANG_SPIRV; break;
     case Target::Cuda: target.format = SLANG_CUDA_SOURCE; break;
     case Target::Metal: target.format = SLANG_METAL; break;
     case Target::Host: target.format = SLANG_CPP_SOURCE; break;
@@ -270,13 +273,14 @@ static int compile(const CompileRequest& request)
     description.searchPaths = search_paths;
     description.targetCount = 1;
     description.targets = &target;
-    // Slang's SPIR-V emitter cannot lower UIntPtr. Vulkan device addresses
-    // use a 64-bit ABI, matching the host pitches on supported Linux targets.
-    const slang::PreprocessorMacroDesc vulkan_macros[] = {{"SHRIMPLY_VULKAN", "1"}};
-    if (request.target == Target::Vulkan)
+    // Physical pointers remain native device addresses. The portable variant
+    // uses 32-bit buffer indices on GPUs without shaderInt64.
+    const slang::PreprocessorMacroDesc vulkan_macros[] = {
+        {"SHRIMPLY_VULKAN", "1"}, {"SHRIMPLY_PORTABLE_INDICES", "1"}};
+    if (vulkan)
     {
         description.preprocessorMacros = vulkan_macros;
-        description.preprocessorMacroCount = std::size(vulkan_macros);
+        description.preprocessorMacroCount = request.target == Target::VulkanPortable ? 2 : 1;
     }
     Slang::ComPtr<slang::ISession> session;
     if (SLANG_FAILED(global_session->createSession(description, session.writeRef())))

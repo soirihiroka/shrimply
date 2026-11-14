@@ -87,6 +87,8 @@ pub struct VideoDecoderSession {
     stream_start_time: i64,
     pub(crate) frame_duration: Time,
     decoder: ffmpeg::decoder::Video,
+    #[cfg(target_os = "android")]
+    android_pool: Option<Arc<shrimply_visual_frame::android::AndroidFramePool>>,
     decoder_name: String,
     frame_index: usize,
     pub(crate) last_decoded_position: Option<Time>,
@@ -117,7 +119,7 @@ impl VideoDecoderSession {
     pub fn open(
         source: &AssetSnapshot,
         media_track_id: u32,
-        backend: impl FnOnce(ffmpeg::codec::Id) -> Result<DecoderBackend, String>,
+        backend: impl FnOnce(&ffmpeg::codec::Parameters) -> Result<DecoderBackend, String>,
         cancellation: Option<DecodeControl>,
     ) -> Result<Self, String> {
         source.verify_current()?;
@@ -162,7 +164,13 @@ impl VideoDecoderSession {
         };
 
         let decoder_open_started = Instant::now();
-        let decoder = backend(parameters.id())?.open(&parameters, stream_time_base)?;
+        let backend = backend(&parameters)?;
+        #[cfg(target_os = "android")]
+        let android_pool = match &backend {
+            DecoderBackend::Android { pool, .. } => Some(pool.clone()),
+            _ => None,
+        };
+        let decoder = backend.open(&parameters, stream_time_base)?;
         let decoder_name = decoder
             .codec()
             .ok_or("opened video decoder has no codec")?
@@ -177,6 +185,8 @@ impl VideoDecoderSession {
             stream_start_time,
             frame_duration,
             decoder,
+            #[cfg(target_os = "android")]
+            android_pool,
             decoder_name,
             frame_index: 0,
             last_decoded_position: None,
@@ -586,7 +596,15 @@ impl VideoDecoderSession {
                 self.last_decoded_position = Some(position);
                 self.frame_index += 1;
                 self.record_first_frame(&decoded);
-                let frame = Arc::new(VideoFrame::new(decoded)?);
+                #[cfg(target_os = "android")]
+                let frame = if let Some(pool) = &self.android_pool {
+                    VideoFrame::from_android(decoded, pool.clone())?
+                } else {
+                    VideoFrame::new(decoded)?
+                };
+                #[cfg(not(target_os = "android"))]
+                let frame = VideoFrame::new(decoded)?;
+                let frame = Arc::new(frame);
                 Ok(ReceiveState::Frame((position, frame)))
             }
             Err(ffmpeg::Error::Other { errno }) if errno == libc::EAGAIN => {

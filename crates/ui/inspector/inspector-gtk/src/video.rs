@@ -385,7 +385,7 @@ impl Inspectable for VideoItem {
                 .boxed(),
             );
         }
-        visual_items.extend(super::modifiers::items(self, context));
+        visual_items.extend(super::modifiers::items(context));
         list::render_categories(
             vec![
                 list::InspectorCategory {

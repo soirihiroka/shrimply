@@ -37,7 +37,11 @@ pub(super) struct Context {
 impl Context {
     pub fn apply(&self, action: &BasicInspectorAction) {
         self.end_editing();
-        self.refresh(self.controller.apply_basic_action(&self.target, action));
+        self.refresh(
+            self.controller
+                .apply_basic_action(&self.target, action)
+                .map(|_| ()),
+        );
     }
 
     pub(super) fn finish(&self, result: Result<(), String>) {

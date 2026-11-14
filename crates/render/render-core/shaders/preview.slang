@@ -58,7 +58,7 @@ float load_luma(Nv12LayerParams p, int x, int y) {
       !address_index(y, p.source_height, p.crop[0], p.crop[2], p.address_mode,
                      sy))
     return 0.0f;
-  return float(((uint8_t *)p.y_plane)[uint64_t(sy) * p.y_pitch + sx]) / 255.0f;
+  return float(((uint8_t *)p.y_plane)[BufferIndex(sy) * buffer_pitch(p.y_pitch) + sx]) / 255.0f;
 }
 float load_chroma(Nv12LayerParams p, int x, int y, uint component) {
   uint sx, sy, cw = max((p.source_width + 1u) / 2u, 1u),
@@ -66,8 +66,8 @@ float load_chroma(Nv12LayerParams p, int x, int y, uint component) {
   if (!address_index(x, cw, p.crop[3], p.crop[1], p.address_mode, sx) ||
       !address_index(y, ch, p.crop[0], p.crop[2], p.address_mode, sy))
     return 0.5f;
-  return float(((uint8_t *)p.uv_plane)[uint64_t(sy) * p.uv_pitch +
-                                       uint64_t(sx) * 2u + component]) /
+  return float(((uint8_t *)p.uv_plane)[BufferIndex(sy) * buffer_pitch(p.uv_pitch) +
+                                       BufferIndex(sx) * 2u + component]) /
          255.0f;
 }
 Color load_rgba(Nv12LayerParams p, int x, int y) {
@@ -78,7 +78,7 @@ Color load_rgba(Nv12LayerParams p, int x, int y) {
                      sy))
     return color(0.0f, 0.0f, 0.0f, 0.0f);
   return color_premultiply(color_from_rgba(
-      ((uint *)p.rgba)[uint64_t(sy) * (p.rgba_pitch / 4u) + sx]));
+      ((uint *)p.rgba)[BufferIndex(sy) * (buffer_pitch(p.rgba_pitch) / 4u) + sx]));
 }
 float filter_weight(float value, VideoSampleMethod method) {
   float x = abs(value);
@@ -828,27 +828,30 @@ uint blend_pixel(uint source_value, uint destination_value, LayerBlendMode mode,
         float(blend_noise(seed, index)) <= alpha * 4294967295.0f ? 1.0f : 0.0f;
   return color_to_rgba(blend_over(source, destination, mode, alpha, false));
 }
-[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
-composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
-                              uniform LayerCompositeParams params,
-                              uniform uint *output,
-                              uniform uint64_t output_count) {
-  uint i = id.x;
+void composite_layer_pixel(uint i, LayerCompositeParams params, uint *output,
+                           BufferIndex output_count) {
   if (i >= output_count)
     return;
   uint column = i % params.width, row = i / params.width;
   uint source =
-      params.source[uint64_t(row) * (params.source_pitch / 4u) + column];
+      params.source[BufferIndex(row) * (buffer_pitch(params.source_pitch) / 4u) + column];
   float clipping = 1.0f;
-  if (params.clipping_base != nullptr)
+  if (!buffer_is_null(params.clipping_base))
     clipping = color_from_rgba(
-                   params.clipping_base[uint64_t(row) *
-                                            (params.clipping_base_pitch / 4u) +
+                   params.clipping_base[BufferIndex(row) *
+                                            (buffer_pitch(params.clipping_base_pitch) / 4u) +
                                         column])
                    .a *
                clamp(params.clipping_base_opacity, 0.0f, 1.0f);
   output[i] = blend_pixel(source, output[i], params.mode,
                           params.opacity * clipping, params.noise_seed, i);
+}
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
+composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
+                              uniform LayerCompositeParams params,
+                              uniform uint *output,
+                              uniform BufferIndex output_count) {
+  composite_layer_pixel(id.x, params, output, output_count);
 } bool sample_layer(Nv12LayerParams p, Mat3 inverse, float canvas_x,
                     float canvas_y, out Color result) {
   result = color(0.0f, 0.0f, 0.0f, 0.0f);
@@ -872,12 +875,12 @@ composite_layered_image_layer(uint3 id : SV_DispatchThreadID,
 #endif
   return true;
 }
-uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
-                     Mat3 *transforms, uint64_t transform_count, uint x, uint y,
+uint composite_pixel(Nv12LayerParams *layers, BufferIndex layer_count,
+                     Mat3 *transforms, BufferIndex transform_count, uint x, uint y,
                      uint background) {
   float canvas_x = float(x) + 0.5f, canvas_y = float(y) + 0.5f;
   uint pixel = background;
-  for (uint64_t index = 0; index < layer_count; ++index) {
+  for (BufferIndex index = 0; index < layer_count; ++index) {
     Nv12LayerParams p = layers[index];
     bool motion = p.motion_sample_count != 0u;
     LayerBlendMode blend = p.blend_mode;
@@ -926,9 +929,9 @@ uint composite_pixel(Nv12LayerParams *layers, uint64_t layer_count,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 composite_nv12_layers(uint3 id : SV_DispatchThreadID,
                       uniform Nv12LayerParams *layers,
-                      uniform uint64_t layer_count, uniform Mat3 *transforms,
-                      uniform uint64_t transform_count, uniform uint *output,
-                      uniform uint64_t output_count, uniform uint background) {
+                      uniform BufferIndex layer_count, uniform Mat3 *transforms,
+                      uniform BufferIndex transform_count, uniform uint *output,
+                      uniform BufferIndex output_count, uniform uint background) {
   uint i = id.x;
   if (i >= output_count)
     return;
@@ -942,7 +945,7 @@ composite_nv12_layers(uint3 id : SV_DispatchThreadID,
  [numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void tone_map_hdr(
      uint3 id : SV_DispatchThreadID, uniform Color *input,
      uniform Color *background, uniform uint *output,
-     uniform uint64_t output_count, uniform float levels) {
+     uniform BufferIndex output_count, uniform float levels) {
   uint i = id.x;
   if (i >= output_count)
     return;

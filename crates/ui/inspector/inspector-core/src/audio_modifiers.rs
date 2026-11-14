@@ -553,7 +553,7 @@ pub fn same_audio_modifier_effect(left: &AudioModifierEffect, right: &AudioModif
     left == right
 }
 
-pub(crate) fn audio_title(item: &shrimply_project_document::project::AudioItem) -> &'static str {
+pub fn audio_title(item: &shrimply_project_document::project::AudioItem) -> &'static str {
     match &item.source {
         AudioSource::Media => "Audio",
         AudioSource::FoldedSequence(_) => "Folded Sequence",

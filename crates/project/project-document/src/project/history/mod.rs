@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,11 +27,30 @@ const SLOW_HISTORY_QUEUE_WAIT: Duration = Duration::from_millis(10);
 static NEXT_HISTORY_STEP: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
-    static HISTORY_WORKER: RefCell<Option<SyncSender<HistoryJob>>> = const { RefCell::new(None) };
+    static HISTORY_WORKER: RefCell<Option<HistoryWorker>> = const { RefCell::new(None) };
+}
+
+struct HistoryWorker {
+    sender: SyncSender<HistoryJob>,
+    fingerprint: Arc<Mutex<Option<String>>>,
+}
+
+/// Exact bytes last read or durably written for the current document.
+/// The receipt belongs to this history owner and is released with it.
+pub fn saved_project_fingerprint() -> Option<String> {
+    HISTORY_WORKER.with(|slot| {
+        slot.borrow()
+            .as_ref()?
+            .fingerprint
+            .lock()
+            .expect("project receipt lock poisoned")
+            .clone()
+    })
 }
 
 pub struct PreparedProject {
     project: Option<Project>,
+    fingerprint: String,
     path: PathBuf,
 }
 
@@ -69,31 +89,35 @@ pub enum ProjectPreparation {
 
 /// Read the saved project without acquiring an editor lock or starting autosave.
 pub fn load_project_snapshot(path: &Path) -> Result<Project, String> {
-    match read_project_with_frame_grid_repair(path)? {
-        ProjectValidationOutcome::Valid(project) => Ok(project),
+    load_project_snapshot_with_fingerprint(path).map(|(project, _)| project)
+}
+
+/// Return the validated project and the identity of the very bytes decoded.
+pub fn load_project_snapshot_with_fingerprint(path: &Path) -> Result<(Project, String), String> {
+    let (outcome, fingerprint) = read_project_with_frame_grid_repair(path)?;
+    match outcome {
+        ProjectValidationOutcome::Valid(project) => Ok((project, fingerprint)),
         ProjectValidationOutcome::FrameGridRepair(_) => {
             Err("Project needs frame-grid repair. Open and save it in the editor first.".into())
         }
     }
 }
 
-fn read_project_with_frame_grid_repair(path: &Path) -> Result<ProjectValidationOutcome, String> {
+fn read_project_with_frame_grid_repair(
+    path: &Path,
+) -> Result<(ProjectValidationOutcome, String), String> {
     if !is_project_path(path) {
         return Err(format!(
             "{} is not a supported project file",
             path.display()
         ));
     }
-    if has_extension(path, "sjson") || has_extension(path, "json") {
-        from_json_file_with_frame_grid_repair(path)
-    } else {
-        let project = storage::read_project(path)?;
-        let outcome = validate_with_frame_grid_repair(project)?;
-        Ok(prepare_validation_outcome(
-            outcome,
-            path.parent().unwrap_or_else(|| Path::new(".")),
-        ))
-    }
+    let (project, fingerprint) = storage::read_project(path)?;
+    let outcome = validate_with_frame_grid_repair(project)?;
+    Ok((
+        prepare_validation_outcome(outcome, path.parent().unwrap_or_else(|| Path::new("."))),
+        fingerprint,
+    ))
 }
 
 pub fn prepare_project_with_frame_grid_repair(
@@ -108,7 +132,7 @@ pub fn prepare_project_with_frame_grid_repair(
     acquire_project_lock(path).map_err(project_lock_error)?;
     let started = Instant::now();
     tracing::info!(path = %path.display(), "Loading project");
-    let outcome = read_project_with_frame_grid_repair(path).map_err(|error| {
+    let (outcome, fingerprint) = read_project_with_frame_grid_repair(path).map_err(|error| {
         release_project_lock(path);
         ProjectLoadError::Other(error)
     })?;
@@ -126,6 +150,7 @@ pub fn prepare_project_with_frame_grid_repair(
     );
     Ok(ProjectPreparation::Ready(PreparedProject {
         project: Some(project),
+        fingerprint,
         path: path.to_path_buf(),
     }))
 }
@@ -134,7 +159,11 @@ pub fn activate_project(mut prepared: PreparedProject) -> Project {
     let project = prepared.project.take().expect("prepared project exists");
     set_active_project_path(&prepared.path);
     memory::seed(&project, 0);
-    start_history_worker(project.clone(), prepared.path.clone());
+    start_history_worker(
+        project.clone(),
+        prepared.path.clone(),
+        Some(prepared.fingerprint.clone()),
+    );
     tracing::info!(path = %prepared.path.display(), "Activated project");
     project
 }
@@ -160,7 +189,7 @@ pub fn commit_edit_saved(project: &Project, message: &str) -> Result<(), String>
         .validate()
         .map_err(|error| format!("cannot commit invalid project: {error}"))?;
     let sender = HISTORY_WORKER
-        .with(|slot| slot.borrow().as_ref().cloned())
+        .with(|slot| slot.borrow().as_ref().map(|worker| worker.sender.clone()))
         .ok_or("project history is unavailable")?;
     let (response_tx, response_rx) = mpsc::channel();
     begin_commit_status(message);
@@ -179,6 +208,28 @@ pub fn commit_edit_saved(project: &Project, message: &str) -> Result<(), String>
     Ok(())
 }
 
+/// Adopt an already validated external save without writing over the file that
+/// triggered it. Both autosave's baseline and undo history advance together.
+pub fn adopt_project_snapshot(project: &Project, fingerprint: &str) -> Result<(), String> {
+    project.validate()?;
+    let sender = HISTORY_WORKER
+        .with(|slot| slot.borrow().as_ref().map(|worker| worker.sender.clone()))
+        .ok_or("project history is unavailable")?;
+    let (response_tx, response_rx) = mpsc::channel();
+    sender
+        .send(HistoryJob::Adopt {
+            project: Box::new(project.clone()),
+            fingerprint: fingerprint.to_owned(),
+            response_tx,
+        })
+        .map_err(|_| "project history worker stopped unexpectedly")?;
+    response_rx
+        .recv()
+        .map_err(|_| "project history worker dropped the adopt response")?;
+    memory::commit(project, None);
+    Ok(())
+}
+
 /// Persist a history destination before moving its cursor or exposing the project.
 pub fn change_history_saved(project: &mut Project, redo: bool) -> Result<bool, String> {
     let Some(candidate) = memory::history_destination(redo) else {
@@ -189,7 +240,7 @@ pub fn change_history_saved(project: &mut Project, redo: bool) -> Result<bool, S
     candidate.timeline_zoom = project.timeline_zoom;
     candidate.expanded_sequence_paths = project.expanded_sequence_paths.clone();
     let sender = HISTORY_WORKER
-        .with(|slot| slot.borrow().as_ref().cloned())
+        .with(|slot| slot.borrow().as_ref().map(|worker| worker.sender.clone()))
         .ok_or("project history is unavailable")?;
     let (response_tx, response_rx) = mpsc::channel();
     sender
@@ -242,12 +293,24 @@ pub fn redo(project: &mut Project) -> bool {
 }
 
 pub fn save() -> Result<(), String> {
+    save_history(false)
+}
+
+/// Flush queued edits and view changes without rewriting an unchanged document.
+pub fn flush_history() -> Result<(), String> {
+    save_history(true)
+}
+
+fn save_history(only_pending: bool) -> Result<(), String> {
     let sender = HISTORY_WORKER
-        .with(|slot| slot.borrow().as_ref().cloned())
+        .with(|slot| slot.borrow().as_ref().map(|worker| worker.sender.clone()))
         .ok_or_else(|| "project history is unavailable".to_string())?;
     let (response_tx, response_rx) = mpsc::channel();
     sender
-        .send(HistoryJob::Save { response_tx })
+        .send(HistoryJob::Save {
+            response_tx,
+            only_pending,
+        })
         .map_err(|_| "project history worker stopped unexpectedly".to_string())?;
     response_rx
         .recv()
@@ -255,7 +318,10 @@ pub fn save() -> Result<(), String> {
 }
 
 pub fn shutdown_history() -> Result<(), String> {
-    let Some(sender) = HISTORY_WORKER.with(|slot| slot.borrow_mut().take()) else {
+    let Some(sender) =
+        HISTORY_WORKER.with(|slot| slot.borrow().as_ref().map(|worker| worker.sender.clone()))
+    else {
+        memory::clear();
         return Ok(());
     };
     let (response_tx, response_rx) = mpsc::channel();
@@ -264,7 +330,10 @@ pub fn shutdown_history() -> Result<(), String> {
         .map_err(|_| "project history worker stopped unexpectedly".to_string())?;
     response_rx
         .recv()
-        .map_err(|_| "project history worker dropped the shutdown response".to_string())?
+        .map_err(|_| "project history worker dropped the shutdown response".to_string())??;
+    HISTORY_WORKER.with(|slot| slot.borrow_mut().take());
+    memory::clear();
+    Ok(())
 }
 
 pub fn save_as(path: &Path) -> Result<(), String> {
@@ -281,7 +350,7 @@ pub fn save_as(path: &Path) -> Result<(), String> {
 
     let result = (|| {
         let sender = HISTORY_WORKER
-            .with(|slot| slot.borrow().as_ref().cloned())
+            .with(|slot| slot.borrow().as_ref().map(|worker| worker.sender.clone()))
             .ok_or_else(|| "project history is unavailable".to_string())?;
         let (response_tx, response_rx) = mpsc::channel();
         sender
@@ -363,6 +432,11 @@ fn queue_project(project: &Project, action: &str) -> bool {
 }
 
 enum HistoryJob {
+    Adopt {
+        project: Box<Project>,
+        fingerprint: String,
+        response_tx: Sender<()>,
+    },
     CommitSaved {
         project: Box<Project>,
         response_tx: Sender<Result<(), String>>,
@@ -378,6 +452,7 @@ enum HistoryJob {
     },
     Save {
         response_tx: Sender<Result<(), String>>,
+        only_pending: bool,
     },
     SaveAs {
         path: PathBuf,
@@ -390,15 +465,21 @@ enum HistoryJob {
 
 fn history_worker(project: &Project) -> SyncSender<HistoryJob> {
     HISTORY_WORKER.with(|slot| {
-        if let Some(sender) = slot.borrow().as_ref().cloned() {
-            return sender;
+        if let Some(worker) = slot.borrow().as_ref() {
+            return worker.sender.clone();
         }
-        start_history_worker(project.clone(), active_project_path())
+        start_history_worker(project.clone(), active_project_path(), None)
     })
 }
 
-fn start_history_worker(mut project: Project, mut path: PathBuf) -> SyncSender<HistoryJob> {
+fn start_history_worker(
+    mut project: Project,
+    mut path: PathBuf,
+    initial_fingerprint: Option<String>,
+) -> SyncSender<HistoryJob> {
     let (sender, receiver) = mpsc::sync_channel::<HistoryJob>(HISTORY_QUEUE_CAPACITY);
+    let fingerprint = Arc::new(Mutex::new(initial_fingerprint));
+    let observed_fingerprint = fingerprint.clone();
     thread::spawn(move || {
         let mut pending_save = false;
         let mut pending_content = false;
@@ -421,9 +502,9 @@ fn start_history_worker(mut project: Project, mut path: PathBuf) -> SyncSender<H
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         let saving_content = pending_content;
                         let result = if saving_content {
-                            save_project(&path, &project)
+                            save_project(&path, &project, &observed_fingerprint)
                         } else {
-                            save_view_state_project(&path, &project)
+                            save_view_state_project(&path, &project, &observed_fingerprint)
                         };
                         pending_save = result.is_err();
                         if result.is_ok() {
@@ -440,9 +521,9 @@ fn start_history_worker(mut project: Project, mut path: PathBuf) -> SyncSender<H
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => {
                         if pending_content {
-                            let _ = save_project(&path, &project);
+                            let _ = save_project(&path, &project, &observed_fingerprint);
                         } else {
-                            let _ = save_view_state_project(&path, &project);
+                            let _ = save_view_state_project(&path, &project, &observed_fingerprint);
                         }
                         break;
                     }
@@ -455,11 +536,25 @@ fn start_history_worker(mut project: Project, mut path: PathBuf) -> SyncSender<H
             };
 
             match job {
+                HistoryJob::Adopt {
+                    project: updated,
+                    fingerprint: loaded_fingerprint,
+                    response_tx,
+                } => {
+                    project = *updated;
+                    *observed_fingerprint
+                        .lock()
+                        .expect("project receipt lock poisoned") = Some(loaded_fingerprint);
+                    pending_save = false;
+                    pending_content = false;
+                    request_save_status_update(SaveStatus::Saved);
+                    let _ = response_tx.send(());
+                }
                 HistoryJob::CommitSaved {
                     project: updated,
                     response_tx,
                 } => {
-                    let result = save_project(&path, &updated);
+                    let result = save_project(&path, &updated, &observed_fingerprint);
                     if result.is_ok() {
                         project = *updated;
                         pending_save = false;
@@ -490,8 +585,17 @@ fn start_history_worker(mut project: Project, mut path: PathBuf) -> SyncSender<H
                     pending_save = true;
                     last_update = Instant::now();
                 }
-                HistoryJob::Save { response_tx } => {
-                    let result = save_project(&path, &project);
+                HistoryJob::Save {
+                    response_tx,
+                    only_pending,
+                } => {
+                    let result = if only_pending && !pending_save {
+                        Ok(())
+                    } else if only_pending && !pending_content {
+                        save_view_state_project(&path, &project, &observed_fingerprint)
+                    } else {
+                        save_project(&path, &project, &observed_fingerprint)
+                    };
                     pending_save = result.is_err();
                     if result.is_ok() {
                         pending_content = false;
@@ -506,7 +610,7 @@ fn start_history_worker(mut project: Project, mut path: PathBuf) -> SyncSender<H
                     response_tx,
                 } => {
                     let previous_path = std::mem::replace(&mut path, new_path);
-                    let result = write_project(&path, &project);
+                    let result = write_project(&path, &project, &observed_fingerprint);
                     if result.is_err() {
                         path = previous_path;
                     } else {
@@ -519,31 +623,51 @@ fn start_history_worker(mut project: Project, mut path: PathBuf) -> SyncSender<H
                     let result = if !pending_save {
                         Ok(())
                     } else if pending_content {
-                        save_project(&path, &project)
+                        save_project(&path, &project, &observed_fingerprint)
                     } else {
-                        save_view_state_project(&path, &project)
+                        save_view_state_project(&path, &project, &observed_fingerprint)
                     };
+                    let saved = result.is_ok();
                     let _ = response_tx.send(result);
-                    break;
+                    if saved {
+                        break;
+                    }
+                    // Failed shutdown retains its owner, pending document and
+                    // undo history so the host can repair storage and retry.
+                    last_update = Instant::now();
                 }
             }
         }
     });
-    HISTORY_WORKER.with(|slot| *slot.borrow_mut() = Some(sender.clone()));
+    HISTORY_WORKER.with(|slot| {
+        *slot.borrow_mut() = Some(HistoryWorker {
+            sender: sender.clone(),
+            fingerprint,
+        })
+    });
     sender
 }
 
-fn save_project(path: &Path, project: &Project) -> Result<(), String> {
-    let result = write_project(path, project);
+fn save_project(
+    path: &Path,
+    project: &Project,
+    fingerprint: &Mutex<Option<String>>,
+) -> Result<(), String> {
+    let result = write_project(path, project, fingerprint);
     if let Err(error) = &result {
         tracing::warn!(path = %path.display(), "Could not save project: {error}");
     }
     result
 }
 
-fn save_view_state_project(path: &Path, project: &Project) -> Result<(), String> {
+fn save_view_state_project(
+    path: &Path,
+    project: &Project,
+    fingerprint: &Mutex<Option<String>>,
+) -> Result<(), String> {
     let started = Instant::now();
-    let result = storage::write_project(path, project);
+    let result = storage::write_project(path, project)
+        .map(|saved| *fingerprint.lock().expect("project receipt lock poisoned") = Some(saved));
     tracing::info!(
         elapsed_us = started.elapsed().as_micros(),
         success = result.is_ok(),
@@ -570,11 +694,16 @@ fn save_snapshot(path: &Path, project: &Project) {
     }
 }
 
-fn write_project(path: &Path, project: &Project) -> Result<(), String> {
+fn write_project(
+    path: &Path,
+    project: &Project,
+    fingerprint: &Mutex<Option<String>>,
+) -> Result<(), String> {
     request_save_status_update(SaveStatus::Saving);
     let started = Instant::now();
     tracing::info!(path = %path.display(), "Saving project");
-    let result = storage::write_project(path, project);
+    let result = storage::write_project(path, project)
+        .map(|saved| *fingerprint.lock().expect("project receipt lock poisoned") = Some(saved));
     request_save_status_update(match &result {
         Ok(()) => SaveStatus::Saved,
         Err(error) => SaveStatus::Failed(error.clone()),

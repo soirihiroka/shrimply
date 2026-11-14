@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- From the same bundled symbolic SVG used by the GTK timeline. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="16dp" android:height="16dp" android:viewportWidth="16" android:viewportHeight="16">
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="1" android:pathData="M 0 8.5 H 10 C 11.104569 8.5 12 9.395431 12 10.5 V 16 H 10 V 11 C 10 10.723858 9.776142 10.5 9.5 10.5 H 0 Z" />
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="1" android:pathData="M 10 0 V 5.0 C 10 5.276142 10.223858 5.5 10.5 5.5 H 16 V 7.5 H 10 C 8.895431 7.5 8 6.604569 8 5.5 V 0 Z" />
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="0.35" android:pathData="M 10 0 V 5.0 C 10 5.276142 10.223858 5.5 10.5 5.5 H 16 V 0 Z" />
+    <group android:translateX="0.5" android:translateY="0.5" android:scaleX="0.85" android:scaleY="0.85">
+    <path android:fillColor="#FFFFFFFF" android:fillAlpha="1" android:pathData="M 3.292969 1.292969 C 3.683594 0.902344 4.316406 0.902344 4.707031 1.292969 L 6.707031 3.292969 C 7.097656 3.683594 7.097656 4.316406 6.707031 4.707031 C 6.316406 5.097656 5.683594 5.097656 5.292969 4.707031 L 5 4.414062 V 7 C 5 7.550781 4.550781 8 4 8 C 3.449219 8 3 7.550781 3 7 V 4.414062 L 2.707031 4.707031 C 2.316406 5.097656 1.683594 5.097656 1.292969 4.707031 C 0.902344 4.316406 0.902344 3.683594 1.292969 3.292969 Z" />
+    </group>
+</vector>

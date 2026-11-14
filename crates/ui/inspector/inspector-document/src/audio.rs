@@ -49,9 +49,15 @@ pub(super) fn categories(
             "/source",
             "Text to Speech",
         ));
-        categories[0]
-            .items
-            .push(InspectorItem::new("tts", "Text to Speech", section).boxed());
+        categories[0].items.push(
+            InspectorItem::new("tts", "Text to Speech", section)
+                .reset(BasicInspectorAction::Reset {
+                    path: "/source".into(),
+                    value: serde_json::to_value(AudioSource::Tts(Default::default()))
+                        .expect("default TTS settings must serialize"),
+                })
+                .boxed(),
+        );
     }
     categories[0]
         .items
@@ -116,7 +122,7 @@ fn gain_control(
         .layered("/gain/decibels", LayeredState::from(timeline))
         .timeline(
             timeline.id,
-            super::audio_modifiers::scalar_graph(timeline, runtime, f64::from),
+            shrimply_inspector_core::keyframe_graph::scalar_graph(timeline, runtime, f64::from),
         )
         .live_commit("audio-gain")
 }

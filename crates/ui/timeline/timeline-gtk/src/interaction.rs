@@ -24,9 +24,11 @@ mod cursor;
 mod keyboard;
 mod media_import;
 mod pointer;
+mod touch;
 mod transcription;
 
-use context_actions::{add_menu_action, show_timeline_item_context_menu};
+use context_actions::add_menu_action;
+pub(crate) use context_actions::show_timeline_item_context_menu;
 pub(super) use cursor::timeline_cursor;
 pub(super) use media_import::{open_track_import_dialog, show_error_dialog};
 use pointer::{modifiers_from_state, push_modifiers};

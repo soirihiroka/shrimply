@@ -286,7 +286,7 @@ impl Renderer {
         if denoising {
             if oidn {
                 self.denoise_oidn(
-                    crate::oidn::Guides {
+                    super::oidn::Guides {
                         colors: [
                             (&beauty, &filtered),
                             (&denoise_background, &filtered_background),

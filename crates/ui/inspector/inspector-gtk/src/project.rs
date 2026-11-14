@@ -1,7 +1,4 @@
-use crate::{
-    time_format,
-    ui::{Number2Picker, SingleLineTextInput, dropdown},
-};
+use crate::ui::{Number2Picker, SingleLineTextInput, dropdown};
 use adw::prelude::*;
 use shrimply_components_gtk::{tr, ui::I18nAlertDialogExt};
 use shrimply_inspector_core::project::{MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION, presentation};
@@ -19,6 +16,7 @@ impl Inspectable for Project {
 
     fn inspect(&self, context: &InspectorContext) -> Vec<gtk::Widget> {
         let project = presentation(self);
+        let details = project.details();
         let config = InspectorSection::controls();
 
         let name_controller = context.inspector_core.clone();
@@ -166,43 +164,17 @@ impl Inspectable for Project {
         });
 
         let info = adw::PreferencesGroup::new();
-        let track_count = |count: usize, singular: &str, plural: &str| {
-            if count == 1 {
-                tr!(singular).into_owned()
-            } else {
-                shrimply_components_gtk::i18n::text_args(plural, &[("count", count.to_string())])
-            }
-        };
-        let track_counts = [
-            track_count(
-                project.video_track_count,
-                "1 video track",
-                "%{count} video tracks",
-            ),
-            track_count(
-                project.audio_track_count,
-                "1 audio track",
-                "%{count} audio tracks",
-            ),
-            track_count(
-                project.caption_track_count,
-                "1 caption track",
-                "%{count} caption tracks",
-            ),
-        ]
-        .join(", ");
-        info.add(
-            &adw::ActionRow::builder()
-                .title(tr!("Tracks").as_ref())
-                .subtitle(track_counts)
-                .build(),
-        );
-        info.add(
-            &adw::ActionRow::builder()
-                .title(tr!("Duration").as_ref())
-                .subtitle(time_format::project_duration(project.duration))
-                .build(),
-        );
+        for detail in details
+            .into_iter()
+            .filter(|detail| detail.label != "Project File")
+        {
+            info.add(
+                &adw::ActionRow::builder()
+                    .title(tr!(detail.label).as_ref())
+                    .subtitle(detail.value)
+                    .build(),
+            );
+        }
 
         let project_path = project.file;
         let file = adw::ActionRow::builder()

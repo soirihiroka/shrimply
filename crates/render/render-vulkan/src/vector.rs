@@ -106,7 +106,7 @@ impl Renderer {
                 let function = match get {
                     gpu::vk::GetProcOf::Instance(handle, name) => unsafe {
                         device
-                            ._entry
+                            .entry
                             .get_instance_proc_addr(vk::Instance::from_raw(handle as u64), name)
                     },
                     gpu::vk::GetProcOf::Device(handle, name) => unsafe {
@@ -124,7 +124,11 @@ impl Renderer {
                     device.raw.handle().as_raw() as _,
                     (device.queue.as_raw() as _, device.family as usize),
                     &get_proc,
-                    Some(gpu::vk::Version::new(1, 3, 0)),
+                    Some(gpu::vk::Version::new(
+                        vk::api_version_major(device.api_version) as usize,
+                        vk::api_version_minor(device.api_version) as usize,
+                        vk::api_version_patch(device.api_version) as usize,
+                    )),
                 )
                 .build()
             };

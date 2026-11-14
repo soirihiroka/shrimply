@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "android"))]
 
 use shrimply_render_vulkan as gpu;
 #[path = "../../preview-render-core/src/gpu_alpha_mask.rs"]
@@ -7,9 +7,11 @@ mod alpha_mask;
 mod effects;
 #[path = "../../preview-render-core/src/gpu_layered_image.rs"]
 mod layered_image;
+#[cfg(target_os = "linux")]
 mod manim;
 mod morph;
 mod sam2;
+pub mod worker;
 pub use sam2::Sam2ProxyFrameSource;
 
 use gpu::{Buffer, ImportedFrame, Renderer, Submission};
@@ -80,9 +82,13 @@ pub struct Compositor {
     used_videos: HashSet<usize>,
     sam2_proxy: Option<Buffer>,
     sam2_target: Option<shrimply_visual_core::sam2::analysis::AnalysisTarget>,
+    #[cfg(target_os = "linux")]
     manim: Option<shrimply_manim_wgpu::vulkan::Renderer>,
+    #[cfg(target_os = "linux")]
     manim_slots: HashMap<uuid::Uuid, manim::Slot>,
+    #[cfg(target_os = "linux")]
     used_manim: HashSet<uuid::Uuid>,
+    #[cfg(target_os = "linux")]
     next_manim_slot: usize,
     manim_updates: Vec<shrimply_manim_state::Update>,
 }
@@ -103,15 +109,20 @@ impl Compositor {
             used_videos: HashSet::new(),
             sam2_proxy: None,
             sam2_target: None,
+            #[cfg(target_os = "linux")]
             manim: None,
+            #[cfg(target_os = "linux")]
             manim_slots: HashMap::new(),
+            #[cfg(target_os = "linux")]
             used_manim: HashSet::new(),
+            #[cfg(target_os = "linux")]
             next_manim_slot: 0,
             manim_updates: Vec::new(),
         })
     }
     pub fn set_decoder_limit(&mut self, maximum: usize) {
         self.scene.set_decoder_limit(maximum);
+        #[cfg(target_os = "linux")]
         self.renderer.set_video_context_limit(
             maximum
                 .checked_add(1)
@@ -130,14 +141,18 @@ impl Compositor {
     pub fn invalidate(&mut self) {
         self.scene.invalidate();
         self.morphs.clear();
+        #[cfg(target_os = "linux")]
         self.renderer.clear_video_contexts();
         self.images.clear();
         self.layered_sources.clear();
         self.videos.clear();
-        self.manim_slots.clear();
-        if let Some(manim) = &mut self.manim {
-            manim.release_render_surfaces();
-            manim.release_gpu_animation_resources();
+        #[cfg(target_os = "linux")]
+        {
+            self.manim_slots.clear();
+            if let Some(manim) = &mut self.manim {
+                manim.release_render_surfaces();
+                manim.release_gpu_animation_resources();
+            }
         }
     }
     pub fn take_manim_updates(&mut self) -> Vec<shrimply_manim_state::Update> {
@@ -255,6 +270,7 @@ impl Compositor {
         self.used_morphs.clear();
         self.used_layered_sources.clear();
         self.used_videos.clear();
+        #[cfg(target_os = "linux")]
         self.used_manim.clear();
         let mut external_masks = Vec::new();
         let size = (plan.width, plan.height);
@@ -285,6 +301,7 @@ impl Compositor {
         self.layered_sources
             .retain(|key, _| self.used_layered_sources.contains(key));
         self.videos.retain(|key, _| self.used_videos.contains(key));
+        #[cfg(target_os = "linux")]
         self.manim_slots.retain(|key, slot| {
             if self.used_manim.contains(key) {
                 return true;
@@ -397,11 +414,13 @@ impl Compositor {
                     &mut self.used_layered_sources,
                     submissions,
                 )?,
+                #[cfg(target_os = "linux")]
                 Source::Gaussian(plan) => self.renderer.gaussian(
                     &plan.session,
                     (plan.width, plan.height),
                     &plan.params,
                 )?,
+                #[cfg(target_os = "linux")]
                 Source::Obj(plan) => {
                     let background = if result.is_empty() {
                         None
@@ -419,7 +438,12 @@ impl Compositor {
                         submissions,
                     )?
                 }
+                #[cfg(target_os = "linux")]
                 Source::Manim(frame) => self.manim_frame(frame)?,
+                #[cfg(target_os = "android")]
+                Source::Gaussian(_) | Source::Obj(_) | Source::Manim(_) => {
+                    return Err("3D and Manim rendering is not available on Android yet".into());
+                }
                 Source::RasterMorph(_) => unreachable!("handled before source rendering"),
             };
             let mut state = SpatialState {

@@ -1890,7 +1890,8 @@ pub(crate) fn db_gain(decibels: f32) -> f32 {
     }
 }
 
-#[link(name = "rubberband")]
+#[cfg_attr(target_os = "android", link(name = "rubberband", kind = "static"))]
+#[cfg_attr(not(target_os = "android"), link(name = "rubberband"))]
 unsafe extern "C" {
     fn rubberband_live_new(sample_rate: u32, channels: u32, options: i32) -> *mut c_void;
     fn rubberband_live_delete(state: *mut c_void);

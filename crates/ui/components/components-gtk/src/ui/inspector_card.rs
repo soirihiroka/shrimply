@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::{cell::Cell, rc::Rc};
 
 use gtk::prelude::*;
 
@@ -15,13 +15,13 @@ pub struct InspectorCard {
 
 impl InspectorCard {
     pub fn new(title: &str, expanded: bool, on_reset: impl Fn() + 'static) -> Self {
-        Self::with_expansion(title, expanded, on_reset, |_| {})
+        Self::with_expansion(title, expanded, Some(Rc::new(on_reset)), |_| {})
     }
 
     pub fn with_expansion(
         title: &str,
         expanded: bool,
-        on_reset: impl Fn() + 'static,
+        on_reset: Option<Rc<dyn Fn()>>,
         on_expanded: impl Fn(bool) + 'static,
     ) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -55,13 +55,15 @@ impl InspectorCard {
         );
         let before_reset = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         header.append(&before_reset);
-        let reset = gtk::Button::builder()
-            .icon_name("edit-undo-symbolic")
-            .tooltip_text("Reset")
-            .css_classes(["flat"])
-            .build();
-        reset.connect_clicked(move |_| on_reset());
-        header.append(&reset);
+        if let Some(on_reset) = on_reset {
+            let reset = gtk::Button::builder()
+                .icon_name("edit-undo-symbolic")
+                .tooltip_text("Reset")
+                .css_classes(["flat"])
+                .build();
+            reset.connect_clicked(move |_| on_reset());
+            header.append(&reset);
+        }
         let after_reset = gtk::Box::new(gtk::Orientation::Horizontal, 4);
         header.append(&after_reset);
 

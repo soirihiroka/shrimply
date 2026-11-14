@@ -6,8 +6,8 @@ use gtk::prelude::*;
 use crate::ui::control_row;
 
 pub(super) struct InspectorSection {
-    grid: gtk::Grid,
-    row: Cell<i32>,
+    pub(super) grid: gtk::Grid,
+    pub(super) row: Cell<i32>,
 }
 
 impl InspectorSection {

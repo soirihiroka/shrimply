@@ -11,7 +11,6 @@ gtk.workspace = true
 shrimply-export-core = { workspace = true, default-features = true }
 shrimply-export-cuda = { workspace = true }
 shrimply-math-core = { workspace = true }
-shrimply-math-media = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-editor-state = { workspace = true }
 shrimply-components-gtk = { workspace = true }

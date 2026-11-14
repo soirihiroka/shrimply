@@ -15,7 +15,7 @@ use std::{
 #[derive(Clone)]
 pub enum DecodedImage {
     Raster(Image),
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
     Video(Arc<VideoFrame>),
 }
 
@@ -23,28 +23,28 @@ impl DecodedImage {
     pub fn width(&self) -> i32 {
         match self {
             Self::Raster(image) => image.width(),
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
             Self::Video(video) => video.native().width() as i32,
         }
     }
     pub fn height(&self) -> i32 {
         match self {
             Self::Raster(image) => image.height(),
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
             Self::Video(video) => video.native().height() as i32,
         }
     }
     pub fn source(&self) -> crate::Source {
         match self {
             Self::Raster(image) => crate::Source::Image(image.clone()),
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
             Self::Video(video) => crate::Source::Video(video.clone()),
         }
     }
 }
 
 const RGBA_CHANNELS: usize = 4;
-const SCRUB_CACHE_BYTES_PER_DECODER: usize = 32 * 1024 * 1024;
+const SCRUB_CACHE_BYTES_PER_DECODER: u64 = 32 * 1024 * 1024;
 // Retained hardware surfaces also consume slots in the codec's native frame pool.
 const SCRUB_CACHE_FRAME_LIMIT: usize = 4;
 
@@ -52,7 +52,7 @@ struct CachedFrame {
     start: Time,
     end: Time,
     image: DecodedImage,
-    bytes: usize,
+    bytes: u64,
 }
 
 pub struct Decoder {
@@ -61,7 +61,7 @@ pub struct Decoder {
     current: Option<(DecodedVisual, DecodedImage)>,
     cancellation: DecodeControl,
     history: VecDeque<CachedFrame>,
-    history_bytes: usize,
+    history_bytes: u64,
 }
 
 impl Decoder {
@@ -126,6 +126,12 @@ impl Decoder {
             DecodeOutcome::Frame(None) => return Ok(None),
             DecodeOutcome::Superseded(_) => return Err("preview request superseded".into()),
         };
+        #[cfg(target_os = "android")]
+        if frame.1.native().format() == Pixel::MEDIACODEC {
+            frame
+                .1
+                .prepare_android(|| self.cancellation.superseded() || control.superseded())?;
+        }
         let image = if let Some(((_, previous), image)) = &self.current
             && Arc::ptr_eq(previous, &frame.1)
         {
@@ -136,7 +142,14 @@ impl Decoder {
         if let Some(end) = self.session.next_frame_time().filter(|end| *end > frame.0)
             && !self.history.iter().any(|cached| cached.start == frame.0)
         {
-            let bytes = image.width() as usize * image.height() as usize * RGBA_CHANNELS;
+            let bytes = u64::try_from(image.width()).expect("positive image width")
+                * u64::try_from(image.height()).expect("positive image height")
+                * RGBA_CHANNELS as u64;
+            #[cfg(target_os = "android")]
+            let bytes = match &image {
+                DecodedImage::Video(frame) => frame.bytes(),
+                DecodedImage::Raster(_) => bytes,
+            };
             if bytes <= SCRUB_CACHE_BYTES_PER_DECODER {
                 while self.history_bytes + bytes > SCRUB_CACHE_BYTES_PER_DECODER
                     || self.history.len() >= SCRUB_CACHE_FRAME_LIMIT
@@ -162,8 +175,10 @@ impl Decoder {
     }
 
     fn image_for_frame(&mut self, source: &Arc<VideoFrame>) -> Result<DecodedImage, String> {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if matches!(source.native().format(), Pixel::VAAPI | Pixel::VIDEOTOOLBOX) {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
+        if matches!(source.native().format(), Pixel::VAAPI | Pixel::VIDEOTOOLBOX)
+            || cfg!(target_os = "android") && source.native().format() == Pixel::MEDIACODEC
+        {
             return Ok(DecodedImage::Video(source.clone()));
         }
         // Raster consumers need a software image; hardware compositors never use this path.
@@ -218,7 +233,23 @@ impl Decoder {
     }
 }
 
-fn select_backend(codec: ffmpeg::codec::Id) -> Result<DecoderBackend, String> {
+fn select_backend(parameters: &ffmpeg::codec::Parameters) -> Result<DecoderBackend, String> {
+    #[cfg(not(target_os = "android"))]
+    let codec = parameters.id();
+    #[cfg(target_os = "android")]
+    {
+        // The native image pool must fit retained scrub frames and the session's
+        // current/lookahead/decode frames. All seek and cache policy stays here.
+        const DECODER_WORKING_FRAMES: usize = 4;
+        let native = unsafe { &*parameters.as_ptr() };
+        let width = u32::try_from(native.width).map_err(|_| "Invalid decoder width")?;
+        let height = u32::try_from(native.height).map_err(|_| "Invalid decoder height")?;
+        return shrimply_render_vulkan::decoder_backend(
+            width,
+            height,
+            (SCRUB_CACHE_FRAME_LIMIT + DECODER_WORKING_FRAMES) as u32,
+        );
+    }
     #[cfg(target_os = "linux")]
     if matches!(
         codec,
@@ -239,6 +270,9 @@ fn select_backend(codec: ffmpeg::codec::Id) -> Result<DecoderBackend, String> {
             tracing::info!(?codec, %error, "VideoToolbox unavailable; using software decoding")
         }
     }
-    let _ = codec;
-    Ok(DecoderBackend::Software)
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = codec;
+        Ok(DecoderBackend::Software)
+    }
 }

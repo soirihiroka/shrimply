@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-profiling.workspace = true
 glam.workspace = true
 shrimply-math-color = { workspace = true, features = ["skia"] }
 shrimply-math-geometry = { workspace = true }
@@ -20,3 +21,6 @@ skia-safe = { workspace = true, features = ["all-macos"] }
 
 [target.'cfg(windows)'.dependencies]
 skia-safe = { workspace = true, features = ["gl", "vulkan", "textlayout", "svg", "webp-decode"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }

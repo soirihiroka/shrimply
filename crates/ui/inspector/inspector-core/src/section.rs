@@ -340,6 +340,10 @@ pub struct InspectorControl {
 }
 
 impl InspectorControl {
+    pub fn background_integer(&self) -> bool {
+        let path = self.timeline_path.as_deref().unwrap_or(&self.path);
+        self.integer && (path == "/content/star_points" || path.starts_with("/content/generator/"))
+    }
     pub fn new(kind: ControlKind, path: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             path: path.into(),

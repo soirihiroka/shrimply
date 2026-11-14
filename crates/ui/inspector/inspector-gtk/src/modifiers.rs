@@ -1,28 +1,22 @@
 use gtk::prelude::*;
 use shrimply_components_gtk::tr;
-use std::rc::Rc;
 use uuid::Uuid;
 
 use super::timeline_value::color::{ColorAccess, ColorTarget, color_control};
 use super::timeline_value::scalar::{ScalarAccess, ScalarSpec, ScalarTarget, scalar_control};
 use super::timeline_value::vector::vec2::{VecAccess, VecSpec, VecTarget, vec_control};
-use super::timeline_value::vector::vec3::{Vec3Target, control as vec3_control};
 use crate::InspectedItem as SelectedItem;
 use crate::player_state::{self, ProjectChange};
-use crate::preview_focus::PreviewTarget;
-use shrimply_inspector_core::{ControlKind, InspectorControl};
 use shrimply_project_document::project::{Project, Time};
-use shrimply_project_document::project::{VisualAlphaMaskTarget, VisualItem, VisualModifier};
+use shrimply_project_document::project::{VisualAlphaMaskTarget, VisualModifier};
 use shrimply_property_model::timeline_value::{TimelineStep, TimelineValue};
-use shrimply_visual_modifiers::MODIFIER_PREVIEW_FACET;
 use shrimply_visual_modifiers::{
-    ModifierEffect, ModifierModel, RasterModifierEffect, VectorModifierEffect,
-    scene_3d::Scene3dModifierEffect,
+    ModifierEffect, ModifierModel, RasterModifierEffect, scene_3d::Scene3dModifierEffect,
 };
 
 use super::{
     InspectorContext,
-    item::{DefaultInspectorItem, HeaderAction, HeaderToggle, InspectorListItem, flat},
+    item::{InspectorListItem, flat},
 };
 
 struct ModifierStepTarget<T: TimelineStep> {
@@ -79,687 +73,103 @@ fn step_row<T: TimelineStep>(
     )
 }
 
-fn shared_step_row<T: TimelineStep>(
-    control: &InspectorControl,
-    field: &str,
-    value: &TimelineValue<T>,
-    context: &InspectorContext,
-    target: ModifierStepTarget<T>,
-) -> gtk::Widget {
-    assert_eq!(control.kind, ControlKind::LayeredSelector);
-    assert!(
-        control
-            .path
-            .ends_with(&format!("/effect/effect/config/{field}")),
-    );
-    assert_eq!(control.target_id, Some(target.modifier_id));
-    assert_eq!(control.timeline_id, Some(value.id));
-    assert_eq!(control.commit_name, target.commit_name);
-    step_row(&control.label, value, context, target)
-}
-
-fn shared_scalar_row(
-    control: &InspectorControl,
-    field: &str,
-    value: &TimelineValue<f32>,
-    modifier_id: Uuid,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    assert_eq!(control.kind, ControlKind::LayeredNumber);
-    assert!(
-        control
-            .path
-            .ends_with(&format!("/effect/effect/config/{field}")),
-    );
-    assert_eq!(control.target_id, Some(modifier_id));
-    assert_eq!(control.timeline_id, Some(value.id));
-    assert_eq!(control.commit_name, "visual-modifier-value");
-    assert_eq!(control.width_characters, 8);
-    let defaults = shrimply_inspector_core::NumberSpec::default();
-    let options = ScalarOptions {
-        minimum: (control.number.minimum != defaults.minimum).then_some(control.number.minimum),
-        maximum: (control.number.maximum != defaults.maximum).then_some(control.number.maximum),
-        unit: (!control.number.unit.is_empty()).then_some(control.number.unit),
-        rotating: control.prefix_icon_rotates,
-    };
-    if control.integer {
-        assert_eq!(control.number.drag_step, 1.0);
-        assert_eq!(control.number.digits, 0);
-        assert!(!control.prefix_icon_rotates);
-        integer_scalar_row(&control.label, value, modifier_id, options, context)
-    } else {
-        assert_eq!(
-            control.number.drag_step,
-            if control.prefix_icon_rotates {
-                1.0
-            } else {
-                0.01
-            },
-        );
-        assert_eq!(control.number.digits, 2);
-        scalar_row(&control.label, value, modifier_id, options, context)
-    }
-}
-
 #[path = "modifiers/add_menu.rs"]
 mod add_menu;
 
-#[path = "modifiers/alpha_outline.rs"]
-mod alpha_outline;
-#[path = "modifiers/bulge_pinch.rs"]
-mod bulge_pinch;
 #[path = "modifiers/cache.rs"]
 mod cache;
-#[path = "modifiers/channel_mixer.rs"]
-mod channel_mixer;
-#[path = "modifiers/chroma_key.rs"]
-mod chroma_key;
-#[path = "modifiers/chromatic_aberration.rs"]
-mod chromatic_aberration;
-#[path = "modifiers/color_correction.rs"]
-mod color_correction;
-#[path = "modifiers/colorize_duotone.rs"]
-mod colorize_duotone;
-#[path = "modifiers/corner_pin.rs"]
-mod corner_pin;
-#[path = "modifiers/crop.rs"]
-mod crop;
-#[path = "modifiers/directional_blur.rs"]
-mod directional_blur;
-#[path = "modifiers/displacement_map.rs"]
-mod displacement_map;
 #[path = "modifiers/dithering.rs"]
 mod dithering;
-#[path = "modifiers/drop_shadow.rs"]
-mod drop_shadow;
-#[path = "modifiers/edge_detection.rs"]
-mod edge_detection;
-#[path = "modifiers/emboss.rs"]
-mod emboss;
-#[path = "modifiers/erode_dilate.rs"]
-mod erode_dilate;
-#[path = "modifiers/film_grain.rs"]
-mod film_grain;
-#[path = "modifiers/fisheye.rs"]
-mod fisheye;
-#[path = "modifiers/gaussian_blur.rs"]
-mod gaussian_blur;
-#[path = "modifiers/glow_bloom.rs"]
-mod glow_bloom;
-#[path = "modifiers/ground.rs"]
-mod ground;
-#[path = "modifiers/halftone.rs"]
-mod halftone;
-#[path = "modifiers/hsv.rs"]
-mod hsv;
-#[path = "modifiers/invert.rs"]
-mod invert;
-#[path = "modifiers/kaleidoscope.rs"]
-mod kaleidoscope;
-#[path = "modifiers/kuwahara.rs"]
-mod kuwahara;
-#[path = "modifiers/lens_distortion.rs"]
-mod lens_distortion;
-#[path = "modifiers/luma_key.rs"]
-mod luma_key;
 #[path = "modifiers/mask.rs"]
 mod mask;
-#[path = "modifiers/mirror.rs"]
-mod mirror;
 #[path = "modifiers/object_3d.rs"]
 mod object_3d;
-#[path = "modifiers/opacity.rs"]
-mod opacity;
-#[path = "modifiers/path_offset.rs"]
-mod path_offset;
-#[path = "modifiers/pixelate_mosaic.rs"]
-mod pixelate_mosaic;
-#[path = "modifiers/point_light.rs"]
-mod point_light;
-#[path = "modifiers/posterize.rs"]
-mod posterize;
-#[path = "modifiers/radial_blur.rs"]
-mod radial_blur;
-#[path = "modifiers/rasterize.rs"]
-mod rasterize;
-#[path = "modifiers/repeat.rs"]
-mod repeat;
 #[path = "modifiers/sam2.rs"]
 mod sam2;
-#[path = "modifiers/sampling.rs"]
-mod sampling;
-#[path = "modifiers/scanlines_crt.rs"]
-mod scanlines_crt;
-#[path = "modifiers/shaky_path.rs"]
-mod shaky_path;
-#[path = "modifiers/shape_3d.rs"]
-mod shape_3d;
-#[path = "modifiers/sharpen.rs"]
-mod sharpen;
-#[path = "modifiers/sun_light.rs"]
-mod sun_light;
 #[path = "modifiers/text_3d.rs"]
 mod text_3d;
-#[path = "modifiers/text_mask.rs"]
-mod text_mask;
-#[path = "modifiers/texture_bounds.rs"]
-mod texture_bounds;
-#[path = "modifiers/threshold.rs"]
-mod threshold;
-#[path = "modifiers/transform.rs"]
-mod transform;
 #[path = "modifiers/transparent_fill.rs"]
 mod transparent_fill;
-#[path = "modifiers/twirl.rs"]
-mod twirl;
 #[path = "modifiers/vectorize.rs"]
 mod vectorize;
-#[path = "modifiers/vignette.rs"]
-mod vignette;
-#[path = "modifiers/wave_ripple.rs"]
-mod wave_ripple;
-#[path = "modifiers/zoom_blur.rs"]
-mod zoom_blur;
 
-pub(super) fn items(item: &VisualItem, context: &InspectorContext) -> Vec<InspectorListItem> {
-    let mut items = item
-        .modifiers
-        .iter()
-        .enumerate()
-        .map(|(index, modifier)| modifier_item(modifier, index, item.modifiers.len(), context))
+pub(super) fn items(context: &InspectorContext) -> Vec<InspectorListItem> {
+    let document = shrimply_inspector_document::basic(context.inspector_core.snapshot());
+    let mut items = document
+        .categories
+        .into_iter()
+        .find(|category| category.key == "visual")
+        .expect("visual inspector category")
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            shrimply_inspector_document::InspectorListItem::Item(item)
+                if item.presentation.key.starts_with("modifier:") =>
+            {
+                Some(InspectorListItem::Item(Box::new(
+                    super::item::DocumentItem::new(*item, context, controls),
+                )))
+            }
+            _ => None,
+        })
         .collect::<Vec<_>>();
     items.push(flat(modifier_buttons(context)));
     items
 }
 
-fn modifier_item(
-    modifier: &VisualModifier,
-    index: usize,
-    len: usize,
+fn controls(
+    section: &shrimply_inspector_core::InspectorSection,
     context: &InspectorContext,
-) -> InspectorListItem {
-    let key = format!("modifier:{}", modifier.id);
-    let display_name = modifier.effect.display_name();
-    let actions = modifier_actions(modifier.id, index, len, context);
-    let alpha_mask_target = matches!(
-        modifier.effect,
-        ModifierEffect::Raster(ref effect) if !matches!(&**effect, RasterModifierEffect::Cache(_))
-    )
-    .then_some(VisualAlphaMaskTarget::Modifier(modifier.id));
-    macro_rules! item {
-        ($value:expr, $module:ident, $wrap:expr) => {{
-            let id = modifier.id;
-            let item = DefaultInspectorItem::new(
-                key.clone(),
-                display_name,
-                $value.clone(),
-                move |value, context| {
-                    let out = gtk::Box::new(gtk::Orientation::Vertical, 8);
-                    $module::add_rows(value, &out, id, context);
-                    if let Some(target) = alpha_mask_target {
-                        out.append(&crate::alpha_mask::widget(target, context));
-                    }
-                    vec![out.upcast()]
-                },
-                move |context, value| reset_modifier(context, id, $wrap(value)),
-            );
-            let mut item = item.preview_target(PreviewTarget::new(id, MODIFIER_PREVIEW_FACET));
-            if let Some(target) = alpha_mask_target {
-                item = item.button_toggle(crate::alpha_mask::button_toggle(target, context));
-            }
-            item.toggle(modifier_toggle(modifier, context))
-                .actions(actions)
-                .boxed()
-        }};
-    }
+) -> Vec<gtk::Widget> {
+    let id = section
+        .controls
+        .iter()
+        .find_map(|control| control.target_id)
+        .expect("modifier controls have an owner");
+    let modifier = {
+        let project = context.project.borrow();
+        let item = project
+            .video_item(
+                context
+                    .selected_item
+                    .as_ref()
+                    .expect("selected visual item"),
+            )
+            .expect("visual item still exists");
+        item.modifiers
+            .iter()
+            .find(|modifier| modifier.id == id)
+            .expect("modifier still exists")
+            .clone()
+    };
+    let out = gtk::Box::new(gtk::Orientation::Vertical, 8);
     match &modifier.effect {
         ModifierEffect::Scene3d(effect) => match &**effect {
-            Scene3dModifierEffect::Object(value) => {
-                item!(value, object_3d, |value| ModifierEffect::scene_3d(
-                    Scene3dModifierEffect::Object(value)
-                ))
-            }
-            Scene3dModifierEffect::Text(value) => {
-                item!(value, text_3d, |value| ModifierEffect::scene_3d(
-                    Scene3dModifierEffect::Text(value)
-                ))
-            }
-            Scene3dModifierEffect::Shape(value) => {
-                item!(value, shape_3d, |value| ModifierEffect::scene_3d(
-                    Scene3dModifierEffect::Shape(value)
-                ))
-            }
-            Scene3dModifierEffect::Ground(value) => {
-                item!(value, ground, |value| ModifierEffect::scene_3d(
-                    Scene3dModifierEffect::Ground(value)
-                ))
-            }
-            Scene3dModifierEffect::PointLight(value) => {
-                item!(value, point_light, |value| ModifierEffect::scene_3d(
-                    Scene3dModifierEffect::PointLight(value)
-                ))
-            }
-            Scene3dModifierEffect::SunLight(value) => {
-                item!(value, sun_light, |value| ModifierEffect::scene_3d(
-                    Scene3dModifierEffect::SunLight(value)
-                ))
-            }
+            Scene3dModifierEffect::Object(value) => object_3d::add_rows(value, &out, id, context),
+            Scene3dModifierEffect::Text(value) => text_3d::add_rows(value, &out, id, context),
+            _ => return crate::control::section(section, context),
         },
-        ModifierEffect::Vector(effect) => match &**effect {
-            VectorModifierEffect::Transform(value) => {
-                item!(value, transform, |value| ModifierEffect::vector(
-                    VectorModifierEffect::Transform(value)
-                ))
-            }
-            VectorModifierEffect::Repeat(value) => {
-                item!(value, repeat, |value| ModifierEffect::vector(
-                    VectorModifierEffect::Repeat(value)
-                ))
-            }
-            VectorModifierEffect::ShakyPath(value) => {
-                item!(value, shaky_path, |value| ModifierEffect::vector(
-                    VectorModifierEffect::ShakyPath(value)
-                ))
-            }
-            VectorModifierEffect::PathOffset(value) => {
-                item!(value, path_offset, |value| ModifierEffect::vector(
-                    VectorModifierEffect::PathOffset(value)
-                ))
-            }
-            VectorModifierEffect::Opacity(value) => {
-                item!(value, opacity, |value| ModifierEffect::vector(
-                    VectorModifierEffect::Opacity(value)
-                ))
-            }
-            VectorModifierEffect::Hsv(value) => {
-                item!(value, hsv, |value| ModifierEffect::vector(
-                    VectorModifierEffect::Hsv(value)
-                ))
-            }
-            VectorModifierEffect::TextMask(value) => {
-                item!(value, text_mask, |value| ModifierEffect::vector(
-                    VectorModifierEffect::TextMask(value)
-                ))
-            }
-        },
-        ModifierEffect::Vectorize(value) => item!(value, vectorize, ModifierEffect::Vectorize),
-        ModifierEffect::Rasterize(value) => item!(value, rasterize, ModifierEffect::Rasterize),
         ModifierEffect::Raster(effect) => match &**effect {
-            RasterModifierEffect::Cache(value) => {
-                item!(value, cache, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Cache(value)
-                ))
-            }
-            RasterModifierEffect::Transform(value) => {
-                item!(value, transform, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Transform(value)
-                ))
-            }
-            RasterModifierEffect::TextureBounds(value) => {
-                item!(value, texture_bounds, |value| ModifierEffect::raster(
-                    RasterModifierEffect::TextureBounds(value)
-                ))
-            }
-            RasterModifierEffect::Sampling(value) => {
-                item!(value, sampling, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Sampling(value)
-                ))
-            }
-            RasterModifierEffect::Crop(value) => {
-                item!(value, crop, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Crop(value)
-                ))
-            }
-            RasterModifierEffect::CornerPin(value) => {
-                item!(value, corner_pin, |value| ModifierEffect::raster(
-                    RasterModifierEffect::CornerPin(value)
-                ))
-            }
-            RasterModifierEffect::Opacity(value) => {
-                item!(value, opacity, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Opacity(value)
-                ))
-            }
-            RasterModifierEffect::ChromaKey(value) => {
-                item!(value, chroma_key, |value| ModifierEffect::raster(
-                    RasterModifierEffect::ChromaKey(value)
-                ))
-            }
-            RasterModifierEffect::Kuwahara(value) => {
-                item!(value, kuwahara, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Kuwahara(value)
-                ))
-            }
-            RasterModifierEffect::GaussianBlur(value) => {
-                item!(value, gaussian_blur, |value| ModifierEffect::raster(
-                    RasterModifierEffect::GaussianBlur(value)
-                ))
-            }
-            RasterModifierEffect::Fisheye(value) => {
-                item!(value, fisheye, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Fisheye(value)
-                ))
-            }
-            RasterModifierEffect::Sharpen(value) => {
-                item!(value, sharpen, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Sharpen(value)
-                ))
-            }
-            RasterModifierEffect::Vignette(value) => {
-                item!(value, vignette, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Vignette(value)
-                ))
-            }
-            RasterModifierEffect::PixelateMosaic(value) => {
-                item!(value, pixelate_mosaic, |value| ModifierEffect::raster(
-                    RasterModifierEffect::PixelateMosaic(value)
-                ))
-            }
-            RasterModifierEffect::Posterize(value) => {
-                item!(value, posterize, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Posterize(value)
-                ))
-            }
-            RasterModifierEffect::Threshold(value) => {
-                item!(value, threshold, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Threshold(value)
-                ))
-            }
-            RasterModifierEffect::FilmGrain(value) => {
-                item!(value, film_grain, |value| ModifierEffect::raster(
-                    RasterModifierEffect::FilmGrain(value)
-                ))
-            }
-            RasterModifierEffect::ChromaticAberration(value) => {
-                item!(value, chromatic_aberration, |value| ModifierEffect::raster(
-                    RasterModifierEffect::ChromaticAberration(value)
-                ))
-            }
-            RasterModifierEffect::EdgeDetection(value) => {
-                item!(value, edge_detection, |value| ModifierEffect::raster(
-                    RasterModifierEffect::EdgeDetection(value)
-                ))
-            }
-            RasterModifierEffect::Emboss(value) => {
-                item!(value, emboss, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Emboss(value)
-                ))
-            }
-            RasterModifierEffect::DirectionalBlur(value) => {
-                item!(value, directional_blur, |value| ModifierEffect::raster(
-                    RasterModifierEffect::DirectionalBlur(value)
-                ))
-            }
-            RasterModifierEffect::Dithering(value) => {
-                item!(value, dithering, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Dithering(value)
-                ))
-            }
-            RasterModifierEffect::GlowBloom(value) => {
-                item!(value, glow_bloom, |value| ModifierEffect::raster(
-                    RasterModifierEffect::GlowBloom(value)
-                ))
-            }
-            RasterModifierEffect::Twirl(value) => {
-                item!(value, twirl, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Twirl(value)
-                ))
-            }
-            RasterModifierEffect::BulgePinch(value) => {
-                item!(value, bulge_pinch, |value| ModifierEffect::raster(
-                    RasterModifierEffect::BulgePinch(value)
-                ))
-            }
-            RasterModifierEffect::WaveRipple(value) => {
-                item!(value, wave_ripple, |value| ModifierEffect::raster(
-                    RasterModifierEffect::WaveRipple(value)
-                ))
-            }
-            RasterModifierEffect::Mirror(value) => {
-                item!(value, mirror, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Mirror(value)
-                ))
-            }
-            RasterModifierEffect::Kaleidoscope(value) => {
-                item!(value, kaleidoscope, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Kaleidoscope(value)
-                ))
-            }
-            RasterModifierEffect::ColorizeDuotone(value) => {
-                item!(value, colorize_duotone, |value| ModifierEffect::raster(
-                    RasterModifierEffect::ColorizeDuotone(value)
-                ))
-            }
-            RasterModifierEffect::Invert(value) => {
-                item!(value, invert, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Invert(value)
-                ))
-            }
-            RasterModifierEffect::ChannelMixer(value) => {
-                item!(value, channel_mixer, |value| ModifierEffect::raster(
-                    RasterModifierEffect::ChannelMixer(value)
-                ))
-            }
-            RasterModifierEffect::AlphaOutline(value) => {
-                item!(value, alpha_outline, |value| ModifierEffect::raster(
-                    RasterModifierEffect::AlphaOutline(value)
-                ))
-            }
-            RasterModifierEffect::DropShadow(value) => {
-                item!(value, drop_shadow, |value| ModifierEffect::raster(
-                    RasterModifierEffect::DropShadow(value)
-                ))
-            }
-            RasterModifierEffect::Halftone(value) => {
-                item!(value, halftone, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Halftone(value)
-                ))
-            }
-            RasterModifierEffect::ScanlinesCrt(value) => {
-                item!(value, scanlines_crt, |value| ModifierEffect::raster(
-                    RasterModifierEffect::ScanlinesCrt(value)
-                ))
-            }
-            RasterModifierEffect::LensDistortion(value) => {
-                item!(value, lens_distortion, |value| ModifierEffect::raster(
-                    RasterModifierEffect::LensDistortion(value)
-                ))
-            }
-            RasterModifierEffect::DisplacementMap(value) => {
-                item!(value, displacement_map, |value| ModifierEffect::raster(
-                    RasterModifierEffect::DisplacementMap(value)
-                ))
-            }
-            RasterModifierEffect::LumaKey(value) => {
-                item!(value, luma_key, |value| ModifierEffect::raster(
-                    RasterModifierEffect::LumaKey(value)
-                ))
-            }
-            RasterModifierEffect::Mask(value) => {
-                item!(value, mask, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Mask(value)
-                ))
-            }
-            RasterModifierEffect::Sam2(value) => {
-                item!(value, sam2, |value| ModifierEffect::raster(
-                    RasterModifierEffect::Sam2(value)
-                ))
-            }
+            RasterModifierEffect::Cache(value) => cache::add_rows(value, &out, id, context),
+            RasterModifierEffect::Dithering(value) => dithering::add_rows(value, &out, id, context),
+            RasterModifierEffect::Mask(value) => mask::add_rows(value, &out, id, context),
+            RasterModifierEffect::Sam2(value) => sam2::add_rows(value, &out, id, context),
             RasterModifierEffect::TransparentFill(value) => {
-                item!(value, transparent_fill, |value| ModifierEffect::raster(
-                    RasterModifierEffect::TransparentFill(value)
-                ))
+                transparent_fill::add_rows(value, &out, id, context)
             }
-            RasterModifierEffect::RadialBlur(value) => {
-                item!(value, radial_blur, |value| ModifierEffect::raster(
-                    RasterModifierEffect::RadialBlur(value)
-                ))
-            }
-            RasterModifierEffect::ZoomBlur(value) => {
-                item!(value, zoom_blur, |value| ModifierEffect::raster(
-                    RasterModifierEffect::ZoomBlur(value)
-                ))
-            }
-            RasterModifierEffect::ErodeDilate(value) => {
-                item!(value, erode_dilate, |value| ModifierEffect::raster(
-                    RasterModifierEffect::ErodeDilate(value)
-                ))
-            }
-            RasterModifierEffect::ColorCorrection(value) => {
-                item!(value, color_correction, |value| ModifierEffect::raster(
-                    RasterModifierEffect::ColorCorrection(value)
-                ))
-            }
+            _ => return crate::control::section(section, context),
         },
+        ModifierEffect::Vectorize(value) => vectorize::add_rows(value, &out, id, context),
+        _ => return crate::control::section(section, context),
     }
-}
-
-fn modifier_toggle(modifier: &VisualModifier, context: &InspectorContext) -> HeaderToggle {
-    let id = modifier.id;
-    let context = context.detached();
-    HeaderToggle {
-        active: modifier.enabled,
-        tooltip: if modifier.enabled {
-            "Disable modifier"
-        } else {
-            "Enable modifier"
-        },
-        activate: Rc::new(move |enabled| set_enabled(id, enabled, &context)),
+    if matches!(&modifier.effect, ModifierEffect::Raster(effect) if !matches!(&**effect, RasterModifierEffect::Cache(_)))
+    {
+        out.append(&crate::alpha_mask::widget(
+            VisualAlphaMaskTarget::Modifier(id),
+            context,
+        ));
     }
-}
-
-fn set_enabled(id: Uuid, enabled: bool, context: &InspectorContext) {
-    let Some(key) = context.selected_item.clone() else {
-        return;
-    };
-    let mut project = context.project.borrow_mut();
-    let Some(item) = project.video_item_mut(&key) else {
-        return;
-    };
-    let Some(index) = item.modifiers.iter().position(|modifier| modifier.id == id) else {
-        return;
-    };
-    if item.modifiers[index].enabled == enabled {
-        return;
-    }
-    let Some(modifiers) =
-        shrimply_inspector_core::visual_modifiers::visual_modifier_enabled_chain(item, id, enabled)
-    else {
-        drop(project);
-        (context.refresh)();
-        return;
-    };
-    item.modifiers = modifiers;
-    shrimply_project_document::project::commit_edit(&project, "toggle-visual-modifier");
-    drop(project);
-    player_state::refresh_project(
-        &context.player_state,
-        ProjectChange {
-            video: true,
-            inspector: true,
-            ..Default::default()
-        },
-    );
-}
-
-#[derive(Clone, Copy)]
-enum Action {
-    Copy,
-    Up,
-    Down,
-    Remove,
-}
-
-fn modifier_actions(
-    id: Uuid,
-    index: usize,
-    len: usize,
-    context: &InspectorContext,
-) -> Vec<HeaderAction> {
-    [
-        ("edit-copy-symbolic", "Copy", Action::Copy, true),
-        ("go-up-symbolic", "Move up", Action::Up, index > 0),
-        (
-            "go-down-symbolic",
-            "Move down",
-            Action::Down,
-            index + 1 < len,
-        ),
-        ("user-trash-symbolic", "Remove", Action::Remove, true),
-    ]
-    .into_iter()
-    .map(|(icon, tooltip, action, sensitive)| {
-        let sensitive = sensitive && action_keeps_chain_valid(id, action, context);
-        let context = context.detached();
-        HeaderAction {
-            icon,
-            tooltip,
-            sensitive,
-            activate: Rc::new(move || apply_action(id, action, &context)),
-        }
-    })
-    .collect()
-}
-
-fn action_keeps_chain_valid(id: Uuid, action: Action, context: &InspectorContext) -> bool {
-    let Some(key) = context.selected_item.clone() else {
-        return false;
-    };
-    let project = context.project.borrow();
-    let Some(item) = project.video_item(&key) else {
-        return false;
-    };
-    let action = match action {
-        Action::Copy => return item.modifiers.iter().any(|modifier| modifier.id == id),
-        Action::Up => shrimply_inspector_core::visual_modifiers::VisualModifierChainAction::MoveUp,
-        Action::Down => {
-            shrimply_inspector_core::visual_modifiers::VisualModifierChainAction::MoveDown
-        }
-        Action::Remove => {
-            shrimply_inspector_core::visual_modifiers::VisualModifierChainAction::Remove
-        }
-    };
-    shrimply_inspector_core::visual_modifiers::visual_modifier_action_valid(item, id, action)
-}
-
-fn apply_action(id: Uuid, action: Action, context: &InspectorContext) {
-    let Some(key) = context.selected_item.clone() else {
-        return;
-    };
-    let target = shrimply_inspector_core::InspectorTarget::Item(key);
-    let result = match action {
-        Action::Copy => context
-            .inspector_core
-            .copy_visual_modifier(&target, id, &context.property_clipboard)
-            .map(Some),
-        Action::Up => context
-            .inspector_core
-            .move_visual_modifier(&target, id, -1)
-            .map(|()| None),
-        Action::Down => context
-            .inspector_core
-            .move_visual_modifier(&target, id, 1)
-            .map(|()| None),
-        Action::Remove => context
-            .inspector_core
-            .remove_visual_modifier(&target, id)
-            .map(|()| None),
-    };
-    match result {
-        Ok(Some(name)) => {
-            let message =
-                shrimply_components_gtk::i18n::text_args("%{name} copied", &[("name", name)]);
-            shrimply_components_gtk::toast::show_confirmation_text_for_widget(
-                &context.category_bar,
-                &message,
-            );
-        }
-        Ok(None) => {}
-        Err(error) => shrimply_components_gtk::toast::show_confirmation_text_for_widget(
-            &context.category_bar,
-            &error,
-        ),
-    }
+    vec![out.upcast()]
 }
 
 fn modifier_buttons(context: &InspectorContext) -> gtk::Widget {
@@ -830,19 +240,6 @@ fn paste_modifiers(context: &InspectorContext) {
     );
 }
 
-fn reset_modifier(context: &InspectorContext, id: Uuid, effect: ModifierEffect) {
-    let Some(key) = context.selected_item.clone() else {
-        return;
-    };
-    if let Err(error) = context.inspector_core.reset_visual_modifier_effect(
-        &shrimply_inspector_core::InspectorTarget::Item(key),
-        id,
-        effect,
-    ) {
-        tracing::warn!(%error, "Could not reset visual modifier");
-    }
-}
-
 pub(super) fn add_effect(effect: ModifierEffect, context: &InspectorContext) {
     let Some(key) = context.selected_item.clone() else {
         return;
@@ -892,102 +289,6 @@ pub(crate) fn scalar_row(
     context: &InspectorContext,
 ) -> gtk::Widget {
     scalar_row_for::<ContinuousScalar>(label, value, modifier_id, options, context)
-}
-
-pub(crate) fn audio_item_scalar_row(
-    label: &str,
-    value: &TimelineValue<f32>,
-    get: crate::timeline_value::scalar::ScalarGet,
-    get_mut: crate::timeline_value::scalar::ScalarGetMut,
-    options: ScalarOptions,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    audio_scalar_row_with_access(
-        label,
-        value,
-        ScalarAccess::Item { get, get_mut },
-        options,
-        false,
-        context,
-    )
-}
-
-pub(crate) fn audio_item_integer_scalar_row(
-    label: &str,
-    value: &TimelineValue<f32>,
-    get: crate::timeline_value::scalar::ScalarGet,
-    get_mut: crate::timeline_value::scalar::ScalarGetMut,
-    options: ScalarOptions,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    audio_scalar_row_with_access(
-        label,
-        value,
-        ScalarAccess::Item { get, get_mut },
-        options,
-        true,
-        context,
-    )
-}
-
-fn audio_scalar_row_with_access(
-    label: &str,
-    value: &TimelineValue<f32>,
-    access: ScalarAccess,
-    options: ScalarOptions,
-    integer: bool,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    let context = deferred_context(context);
-    let percentage = options.unit == Some("%")
-        && options.minimum.is_some_and(|minimum| minimum >= 0.0)
-        && options.maximum.is_some_and(|maximum| maximum <= 1.0);
-    scalar_control(
-        label,
-        value,
-        &context,
-        ScalarTarget {
-            access,
-            scope_id: Some(value.id),
-            local_time: audio_local_time,
-            duration: audio_duration,
-            refresh: ProjectChange {
-                audio: true,
-                audio_waveforms: true,
-                ..Default::default()
-            },
-            commit_name: "audio-modifier-value",
-        },
-        ScalarSpec {
-            drag_step: if percentage || integer { 1.0 } else { 0.01 },
-            digits: if percentage || integer { 0 } else { 2 },
-            integer,
-            width_chars: 8,
-            minimum: if percentage {
-                options.minimum.map(|minimum| minimum * 100.0)
-            } else {
-                options.minimum
-            },
-            maximum: if percentage {
-                options.maximum.map(|maximum| maximum * 100.0)
-            } else {
-                options.maximum
-            },
-            unit_name: options.unit,
-            rotating_icon: None,
-            display: if percentage {
-                |value| f64::from(value) * 100.0
-            } else {
-                f64::from
-            },
-            store: if percentage {
-                |value| (value / 100.0) as f32
-            } else {
-                |value| value as f32
-            },
-            clamp: crate::timeline_value::scalar::ScalarClamp::Function(|value| value),
-        },
-    )
 }
 
 pub(crate) fn integer_scalar_row(
@@ -1086,20 +387,6 @@ fn visual_duration(p: &Project, k: SelectedItem) -> Option<Time> {
     crate::video::visual_duration(p, k)
 }
 
-fn audio_local_time(p: &Project, k: SelectedItem, t: Time) -> Option<Time> {
-    let t = p.timeline_time_to_sequence(&k.track(), t)?;
-    let item = p.audio_item(&k)?;
-    Some(t.saturating_sub(item.start))
-}
-
-fn audio_duration(p: &Project, k: SelectedItem) -> Option<Time> {
-    let (start, end) = p.projected_item_times(&k)?;
-    let track = k.track();
-    let start = p.timeline_time_to_sequence(&track, start)?;
-    let end = p.timeline_time_to_sequence(&track, end)?;
-    Some(end.saturating_sub(start).max(start.saturating_sub(end)))
-}
-
 pub(crate) fn number(modifier: &VisualModifier, id: Uuid) -> Option<&TimelineValue<f32>> {
     modifier.number(id)
 }
@@ -1117,15 +404,6 @@ pub(crate) fn number2_mut(
     id: Uuid,
 ) -> Option<&mut TimelineValue<glam::Vec2>> {
     modifier.number2_mut(id)
-}
-pub(crate) fn number3(effect: &ModifierEffect, id: Uuid) -> Option<&TimelineValue<glam::Vec3>> {
-    effect.number3(id)
-}
-pub(crate) fn number3_mut(
-    effect: &mut ModifierEffect,
-    id: Uuid,
-) -> Option<&mut TimelineValue<glam::Vec3>> {
-    effect.number3_mut(id)
 }
 pub(crate) fn color_mut(
     effect: &mut ModifierEffect,
@@ -1198,45 +476,6 @@ pub(crate) fn color_row(
             },
             commit_name: "visual-modifier-color",
         },
-    )
-}
-
-pub(crate) fn vec3_row(
-    label: &str,
-    value: &TimelineValue<glam::Vec3>,
-    modifier_id: Uuid,
-    degrees: bool,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    let context = deferred_context(context);
-    let target = Vec3Target::modifier_builder(modifier_id, value.id);
-    vec3_control(
-        label,
-        value,
-        &context,
-        if degrees {
-            target.degrees().build()
-        } else {
-            target.build()
-        },
-    )
-}
-
-pub(crate) fn vec3_scale_row(
-    label: &str,
-    value: &TimelineValue<glam::Vec3>,
-    modifier_id: Uuid,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    let context = deferred_context(context);
-    vec3_control(
-        label,
-        value,
-        &context,
-        Vec3Target::modifier_builder(modifier_id, value.id)
-            .minimum(0.0)
-            .lock()
-            .build(),
     )
 }
 

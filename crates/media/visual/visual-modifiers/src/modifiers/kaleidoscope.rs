@@ -1,6 +1,7 @@
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -15,6 +16,7 @@ pub struct KaleidoscopeModifier {
     pub rotation_degrees: TimelineValue<f32>,
 }
 
+#[cfg(feature = "preview")]
 struct KaleidoscopePreview {
     target: PreviewTarget,
     original: KaleidoscopeModifier,
@@ -24,7 +26,9 @@ struct KaleidoscopePreview {
     active: bool,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl KaleidoscopeModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -45,6 +49,7 @@ impl KaleidoscopeModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for KaleidoscopePreview {
     fn on_draw(
         &mut self,
@@ -119,6 +124,7 @@ impl PreviewProvider for KaleidoscopePreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn point_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

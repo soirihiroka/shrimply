@@ -6,7 +6,7 @@ use crate::{
 use sanim_core::*;
 use std::sync::OnceLock;
 
-fn registry() -> &'static [Builtin] {
+pub(crate) fn methods() -> &'static [Builtin] {
     static METHODS: OnceLock<Vec<Builtin>> = OnceLock::new();
     METHODS.get_or_init(|| {
         let dimension = Type::union([Type::Numeric(Unit::Length), Type::Numeric(Unit::Percent)])
@@ -68,12 +68,9 @@ fn registry() -> &'static [Builtin] {
         vec![method]
     })
 }
-pub(crate) fn builtin(name: &str) -> Option<&'static Builtin> {
-    registry().iter().find(|builtin| builtin.name == name)
-}
 pub(crate) fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
     let supported = Type::Element.accepts(receiver);
-    registry().iter().filter(move |_| supported)
+    methods().iter().filter(move |_| supported)
 }
 
 fn layout_work(elements: &[Element]) -> usize {
@@ -132,12 +129,10 @@ pub(crate) fn execute(
     }
     context.charge_work(context.animation.element_count())?;
     let (width, height) = context.animation.logical_size();
-    let sampled = context
-        .animation
-        .layout_with(start, width, height, |element, time| {
-            sanim_data::code::view::resolve_pending(element, time)?;
-            sanim_data::font::resolve_pending(element)
-        })?;
+    let sampled =
+        context
+            .animation
+            .layout_with(start, width, height, sanim_data::resolve_pending)?;
     context.charge_work(layout_work(&sampled))?;
     let rendered = sampled
         .iter()
@@ -197,7 +192,7 @@ pub(crate) fn execute(
                 origin: None,
             }
         };
-        let [top, bottom] = sanim_data::code::view::range_bounds(rendered, &selected)?;
+        let [top, bottom] = sanim_data::code::range_bounds(rendered, &selected)?;
         let viewport = sanim_core::scrolling::viewport(rendered)?;
         let viewport_height = viewport[3] - viewport[1];
         to.values[1] = match args

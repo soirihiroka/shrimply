@@ -16,6 +16,7 @@ pub(crate) fn add_input_controllers(
     runtime: Rc<RefCell<TimelineRuntime>>,
     preferences: preferences_store::SharedPreferences,
 ) {
+    super::touch::add_controller(area, &runtime);
     let cursor_grab = Rc::new(RefCell::new(None));
     let motion = gtk::EventControllerMotion::new();
     let motion_area = area.clone();

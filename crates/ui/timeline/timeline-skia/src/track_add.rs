@@ -1,20 +1,12 @@
 use crate::TrackAddAction;
-use shrimply_editor_state::player_state::{self, ProjectChange, SharedPlayerState};
-use shrimply_project_document::project::{
-    AudioItem, AudioSource, FontFamily, Project, ProjectItem, Time, VideoItem, VideoItemContent,
-};
-use shrimply_property_model::timeline_value::TimelineValue;
+use shrimply_player_core::{self as player_state, ProjectChange, SharedPlayerState};
+use shrimply_project_document::Project;
 use shrimply_timeline_edit::selection_state::SharedSelectionState;
 use shrimply_timeline_edit::{TrackKey, TrackKind, selection_state};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-const DEFAULT_GENERATOR_GAIN_DB: f32 = -12.0;
-
-pub struct TrackAddSettings<'a> {
-    pub default_visual_duration: Time,
-    pub default_text_font_family: &'a FontFamily,
-}
+pub use shrimply_timeline_edit::TrackAddSettings;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrackAddOutcome {
@@ -55,88 +47,15 @@ pub fn activate_track_add_checked(
     }
 
     let mut project_state = project.borrow().clone();
-    let Some(track_address) = selection_state::track_address(&project_state, key) else {
-        return Ok(TrackAddOutcome::Unchanged);
-    };
-    let frame_step = project_state.frame_step();
-    let start = player_state::snapshot(player_state)
-        .position
-        .snapped(frame_step);
-    let Some((occupied, next_start)) =
-        project_state
-            .track(&track_address)
-            .map(|track| match track {
-                shrimply_project_document::project::TrackRef::Comment(track) => {
-                    track_span(track.items.iter().map(|item| (item.start, item.end)), start)
-                }
-                shrimply_project_document::project::TrackRef::Caption(track) => {
-                    track_span(track.items.iter().map(|item| (item.start, item.end)), start)
-                }
-                shrimply_project_document::project::TrackRef::Video(track) => {
-                    track_span(track.items.iter().map(|item| (item.start, item.end)), start)
-                }
-                shrimply_project_document::project::TrackRef::Audio(track) => {
-                    track_span(track.items.iter().map(|item| (item.start, item.end)), start)
-                }
-            })
+    let Some((track_address, item)) = shrimply_timeline_edit::prepare_track_add(
+        &project_state,
+        key,
+        action,
+        player_state::snapshot(player_state).position,
+        settings,
+    )?
     else {
         return Ok(TrackAddOutcome::Unchanged);
-    };
-    if occupied {
-        return Ok(TrackAddOutcome::Unchanged);
-    }
-    let mut end = start
-        .saturating_add(settings.default_visual_duration)
-        .snapped(frame_step);
-    if let Some(next_start) = next_start {
-        end = end.min(next_start);
-    }
-    if end <= start {
-        return Ok(TrackAddOutcome::Unchanged);
-    }
-
-    let canvas_size = project_state.canvas_size;
-    let item = match action {
-        TrackAddAction::Comment => {
-            ProjectItem::Comment(crate::project::CommentItem::new(start, end, String::new()))
-        }
-        TrackAddAction::Text => {
-            let mut item = VideoItem::text_item(canvas_size, start, end);
-            if let VideoItemContent::Text(text) = &mut item.content {
-                text.font_families = vec![settings.default_text_font_family.clone()];
-            }
-            ProjectItem::Video(Box::new(item))
-        }
-        TrackAddAction::Shape => {
-            ProjectItem::Video(Box::new(VideoItem::shape_item(canvas_size, start, end)))
-        }
-        TrackAddAction::Paint => {
-            ProjectItem::Video(Box::new(VideoItem::paint_item(canvas_size, start, end)))
-        }
-        TrackAddAction::Background => ProjectItem::Video(Box::new(VideoItem::background_item(
-            canvas_size,
-            start,
-            end,
-        ))),
-        TrackAddAction::Scene3d => {
-            ProjectItem::Video(Box::new(VideoItem::obj_scene_item(canvas_size, start, end)))
-        }
-        TrackAddAction::VideoGeneration => ProjectItem::Video(Box::new(
-            VideoItem::video_generation_item(canvas_size, start, end),
-        )),
-        TrackAddAction::TextToSpeech => ProjectItem::Audio(Box::new(
-            AudioItem::builder(start, end)
-                .source(AudioSource::Tts(Box::default()))
-                .build(),
-        )),
-        TrackAddAction::AudioGenerator => {
-            let mut item = AudioItem::builder(start, end)
-                .source(AudioSource::Generator(Box::default()))
-                .build();
-            item.gain.decibels = TimelineValue::new_const(DEFAULT_GENERATOR_GAIN_DB);
-            ProjectItem::Audio(Box::new(item))
-        }
-        TrackAddAction::Import => unreachable!(),
     };
     let Some(item_address) = project_state.insert_item(&track_address, item) else {
         return Ok(TrackAddOutcome::Unchanged);
@@ -163,17 +82,4 @@ pub fn activate_track_add_checked(
         },
     );
     Ok(TrackAddOutcome::Changed)
-}
-
-fn track_span(items: impl Iterator<Item = (Time, Time)>, start: Time) -> (bool, Option<Time>) {
-    let items = items.collect::<Vec<_>>();
-    (
-        items
-            .iter()
-            .any(|(item_start, item_end)| start >= *item_start && start < *item_end),
-        items
-            .iter()
-            .filter_map(|(item_start, _)| (*item_start > start).then_some(*item_start))
-            .min(),
-    )
 }

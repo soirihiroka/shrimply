@@ -30,7 +30,7 @@ const DEFAULT_WINDOW_WIDTH: i32 = 1800;
 const DEFAULT_WINDOW_HEIGHT: i32 = 1100;
 const DEFAULT_INSPECTOR_WIDTH: i32 = inspector::INSPECTOR_MIN_WIDTH;
 const DEFAULT_TOP_PANEL_HEIGHT: i32 = 660;
-const PANEL_ANIMATION_DURATION_MS: u32 = 250;
+use shrimply_components_core::layout::PANEL_ANIMATION_DURATION_MS;
 const SESSION_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const LOADING_WINDOW_WIDTH: i32 = 800;
 const LOADING_WINDOW_HEIGHT: i32 = 600;
@@ -711,7 +711,6 @@ fn header_bar() -> (adw::HeaderBar, gtk::Label, gtk::Image) {
         .icon_name("network-server-symbolic")
         .pixel_size(16)
         .tooltip_text(tr!("Editing API activity (active or within the last 3 seconds)").as_ref())
-        .css_classes(["success"])
         .visible(false)
         .build();
     let title_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);

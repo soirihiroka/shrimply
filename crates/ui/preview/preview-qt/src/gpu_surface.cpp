@@ -11,6 +11,8 @@
 #include <QIcon>
 #include <QImage>
 #include <QMouseEvent>
+#include <QTouchEvent>
+#include <QPointingDevice>
 #include <QKeyEvent>
 #include <QPointer>
 #include <QOpenGLFramebufferObject>
@@ -29,6 +31,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 struct ShrimplyPaletteColor {
     float red;
@@ -65,6 +68,15 @@ extern "C" bool shrimply_qt_render_preview(std::uint32_t width, std::uint32_t he
                                             bool fullscreen);
 extern "C" bool shrimply_qt_render_audio_meter(std::uint32_t width, std::uint32_t height,
                                                 float scale, bool dark);
+struct ShrimplyTouchPoint {
+    std::int32_t id;
+    float x;
+    float y;
+    std::uint32_t phase;
+};
+static_assert(sizeof(ShrimplyTouchPoint) == 16);
+extern "C" void shrimply_qt_timeline_touch(const ShrimplyTouchPoint *points, std::size_t count);
+extern "C" void shrimply_qt_timeline_cancel_input();
 extern "C" void shrimply_qt_timeline_pointer_move(float x, float y, bool control, bool shift);
 extern "C" std::uint8_t shrimply_qt_timeline_pointer_cursor();
 extern "C" void shrimply_qt_timeline_pointer_leave();
@@ -482,6 +494,7 @@ TimelineSurface::TimelineSurface(QQuickItem *parent) : QQuickFramebufferObject(p
     setMirrorVertically(true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton | Qt::RightButton);
     setAcceptHoverEvents(true);
+    setAcceptTouchEvents(true);
 }
 
 QQuickFramebufferObject::Renderer *TimelineSurface::createRenderer() const {
@@ -771,6 +784,36 @@ void TimelineSurface::hoverLeaveEvent(QHoverEvent *event) {
     Q_UNUSED(event);
     shrimply_qt_timeline_pointer_leave();
     unsetCursor();
+    update();
+}
+
+void TimelineSurface::touchEvent(QTouchEvent *event) {
+    // Indirect trackpads retain Qt's native mouse/wheel path.
+    if (event->pointingDevice()->type() != QInputDevice::DeviceType::TouchScreen) {
+        event->ignore();
+        return;
+    }
+    if (event->type() == QEvent::TouchCancel) {
+        shrimply_qt_timeline_cancel_input();
+    } else {
+        if (event->type() == QEvent::TouchBegin) forceActiveFocus(Qt::MouseFocusReason);
+        std::vector<ShrimplyTouchPoint> points;
+        points.reserve(event->points().size());
+        for (const auto &point : event->points()) {
+            const std::uint32_t phase = point.state() == QEventPoint::State::Pressed ? 0
+                : point.state() == QEventPoint::State::Released ? 2 : 1;
+            points.push_back({ point.id(), static_cast<float>(point.position().x()),
+                static_cast<float>(point.position().y()), phase });
+        }
+        shrimply_qt_timeline_touch(points.data(), points.size());
+    }
+    // Accepting the real contacts prevents a second emulated mouse gesture.
+    event->accept();
+    update();
+}
+
+void TimelineSurface::touchUngrabEvent() {
+    shrimply_qt_timeline_cancel_input();
     update();
 }
 

@@ -7,3 +7,7 @@ edition = "2024"
 shrimply-components-skia.workspace = true
 shrimply-cross-ui-theme.workspace = true
 shrimply-math-core.workspace = true
+shrimply-project-document.workspace = true
+uuid.workspace = true
+skia-safe.workspace = true
+hashbrown.workspace = true

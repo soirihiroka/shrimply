@@ -1,0 +1,20 @@
+--- a/libavcodec/mediacodecenc.c
++++ b/libavcodec/mediacodecenc.c
+@@ -430,10 +430,13 @@
+         av_assert0(0);
+     }
+ 
+-    if (s->name)
+-        s->codec = ff_AMediaCodec_createCodecByName(s->name, s->use_ndk_codec);
+-    else
+-        s->codec = ff_AMediaCodec_createEncoderByType(codec_mime, s->use_ndk_codec);
++    /* Share the hardware-only codec enumeration with decoding. MIME-based
++     * creation may silently select a software video encoder. */
++    if (!s->name)
++        s->name = ff_AMediaCodecList_getCodecNameByType(codec_mime, -1, 1, avctx);
++    if (!s->name)
++        return AVERROR_EXTERNAL;
++    s->codec = ff_AMediaCodec_createCodecByName(s->name, s->use_ndk_codec);
+     if (!s->codec) {
+         av_log(avctx, AV_LOG_ERROR, "Failed to create encoder for type %s\n",
+                codec_mime);

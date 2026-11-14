@@ -23,11 +23,12 @@ shrimply-project-evaluation = { workspace = true }
 shrimply-discrete-keyframe-graph-skia = { workspace = true }
 shrimply-math-interpolation = { workspace = true }
 shrimply-inspector-core = { workspace = true, default-features = true }
+shrimply-inspector-document.workspace = true
 shrimply-media-info = { workspace = true }
 shrimply-property-transfer = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-resource-pipeline = { workspace = true }
-shrimply-text-3d = { workspace = true }
+shrimply-text-3d = { workspace = true, default-features = true }
 shrimply-render-core = { workspace = true }
 shrimply-scene-3d = { workspace = true }
 shrimply-compute-client = { workspace = true }
@@ -38,7 +39,7 @@ shrimply-tts-gtk = { workspace = true }
 shrimply-process-reporting = { workspace = true }
 shrimply-timeline-edit = { workspace = true }
 shrimply-components-gtk = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 shrimply-visual-core = { workspace = true }
 shrimply-video-generation = { workspace = true }
 shrimply-video-generation-gtk = { workspace = true }

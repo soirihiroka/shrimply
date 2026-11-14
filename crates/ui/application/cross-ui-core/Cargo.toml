@@ -20,7 +20,7 @@ shrimply-playback-performance = { workspace = true }
 shrimply-property-transfer = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-project-types = { workspace = true }
-shrimply-editor-state = { workspace = true }
+shrimply-editor-state = { workspace = true, features = ["audio"] }
 shrimply-recent-projects = { workspace = true }
 shrimply-timeline-edit = { workspace = true }
 tracing.workspace = true

@@ -1,5 +1,7 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContextMenuAction {
+    InspectProperties,
+    DeleteTrack,
     Copy,
     Cut,
     Paste,
@@ -54,6 +56,8 @@ pub const TIMELINE_CLIPBOARD_MARKER: &str = "shrimply timeline items";
 impl ContextMenuAction {
     pub const fn id(self) -> &'static str {
         match self {
+            Self::InspectProperties => "inspect-properties",
+            Self::DeleteTrack => "delete-track",
             Self::Copy => "copy",
             Self::Cut => "cut",
             Self::Paste => "paste",
@@ -84,6 +88,8 @@ impl ContextMenuAction {
 
     pub const fn label(self) -> &'static str {
         match self {
+            Self::InspectProperties => "Properties",
+            Self::DeleteTrack => "Delete Track",
             Self::Copy => "Copy",
             Self::Cut => "Cut",
             Self::Paste => "Paste",
@@ -237,6 +243,7 @@ pub struct ItemMenuContext {
 
 pub fn item_context_menu(context: ItemMenuContext) -> ContextMenu {
     let mut sections = vec![actions(&[
+        ContextMenuItem::new(ContextMenuAction::InspectProperties),
         ContextMenuItem::new(ContextMenuAction::Copy),
         ContextMenuItem::new(ContextMenuAction::Cut),
         ContextMenuItem::new(ContextMenuAction::Paste),
@@ -335,7 +342,7 @@ pub enum TrackMenuContext {
 }
 
 pub fn track_context_menu(context: TrackMenuContext) -> ContextMenu {
-    let sections = match context {
+    let mut sections = match context {
         TrackMenuContext::Comment => Vec::new(),
         TrackMenuContext::Caption => vec![actions(&[ContextMenuItem::new(
             ContextMenuAction::GenerateSpeech,
@@ -363,6 +370,10 @@ pub fn track_context_menu(context: TrackMenuContext) -> ContextMenu {
             ]
         }
     };
+    sections.extend(empty_track_context_menu().sections);
+    sections.push(actions(&[ContextMenuItem::new(
+        ContextMenuAction::DeleteTrack,
+    )]));
     ContextMenu { sections }
 }
 
@@ -379,6 +390,9 @@ pub fn folded_item_context_menu(context: FoldedItemMenuContext) -> ContextMenu {
     let mut sections = vec![actions(&[ContextMenuItem::new(
         ContextMenuAction::MoveOutOfSequence,
     )])];
+    sections.push(actions(&[ContextMenuItem::new(
+        ContextMenuAction::InspectProperties,
+    )]));
     let mut grouping = Vec::new();
     if context.groupable {
         grouping.push(ContextMenuItem::new(ContextMenuAction::Group));

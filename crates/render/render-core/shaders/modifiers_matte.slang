@@ -15,7 +15,7 @@ float closest_segment_distance(float2 point, float2 start, float2 end) {
 }
 
 float polygon_signed_distance(float2 point, Vec2 *vertices, uint count) {
-  if (vertices == nullptr || count < 3u)
+  if (buffer_is_null(vertices) || count < 3u)
     return 3.402823466e38f;
   bool inside = false;
   float distance_value = 3.402823466e38f;
@@ -68,13 +68,13 @@ float shape_alpha_mask_amount(float2 point, ShapeAlphaMaskParams params) {
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
            uniform AlphaMaskParams params, uniform uint *output,
-           uniform uint64_t output_count) {
+           uniform BufferIndex output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
   Color source = color_from_rgba(input[i]);
   uint *mask_pixels = (uint *)params.mask;
-  if (mask_pixels == nullptr) {
+  if (buffer_is_null(mask_pixels)) {
     output[i] = color_to_rgba(color(source.r, source.g, source.b, 0.0f));
     return;
   }
@@ -94,7 +94,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                                        uniform uint *input,
                                        uniform ShapeAlphaMaskParams params,
                                        uniform uint *output,
-                                       uniform uint64_t output_count) {
+                                       uniform BufferIndex output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
@@ -107,7 +107,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                               params);
   Color source = color_from_rgba(input[i]);
   uint *base = (uint *)params.base;
-  if (base == nullptr) {
+  if (buffer_is_null(base)) {
     output[i] =
         color_to_rgba(color(source.r, source.g, source.b, source.a * amount));
     return;
@@ -131,7 +131,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void chroma_key(uint3 id : SV_DispatchThreadID,
                              uniform uint *input, uniform uint *output,
-                             uniform uint64_t output_count,
+                             uniform BufferIndex output_count,
                              uniform ChromaKeyParams params) {
   uint i = id.x;
   if (i >= output_count)
@@ -159,7 +159,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void luma_key(uint3 id : SV_DispatchThreadID,
                                uniform uint *input, uniform uint *output,
-                               uniform uint64_t output_count,
+                               uniform BufferIndex output_count,
                                uniform float threshold, uniform float softness,
                                uniform bool invert) {
   uint i = id.x;
@@ -176,14 +176,14 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                        uniform MaskParams params, uniform uint *output,
-                       uniform uint64_t output_count) {
+                       uniform BufferIndex output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
   Color source = color_from_rgba(input[i]);
   uint *pixels = (uint *)params.mask;
   float amount = 0.0f;
-  if (pixels != nullptr) {
+  if (!buffer_is_null(pixels)) {
     uint x = i % params.input_width, y = i / params.input_width;
     float2 canvas = transform_point2(params.transform,
                                      float2(float(x) + 0.5f, float(y) + 0.5f));
@@ -229,7 +229,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 sam2_apply_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                 uniform int8_t *masks, uniform uint *output,
-                uniform uint64_t output_count, uniform Sam2MaskParams params) {
+                uniform BufferIndex output_count, uniform Sam2MaskParams params) {
   uint i = id.x;
   if (i >= output_count)
     return;
@@ -268,7 +268,7 @@ sam2_apply_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void transparent_fill_apply_mask(
         uint3 id : SV_DispatchThreadID, uniform uint *input,
         uniform uint8_t *mask_bits, uniform uint *output,
-        uniform uint64_t output_count,
+        uniform BufferIndex output_count,
         uniform TransparentFillMaskParams params) {
   uint i = id.x;
   if (i >= output_count)
@@ -398,7 +398,7 @@ uint triangular_fold_pixel(uint *input, float x, float y, uint width,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 visual_transition_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
                        uniform uint width, uniform uint height,
-                       uniform uint *output, uniform uint64_t output_count,
+                       uniform uint *output, uniform BufferIndex output_count,
                        uniform VisualTransitionMaskParams params) {
   uint i = id.x;
   if (i >= output_count)
@@ -469,7 +469,7 @@ float4 triangle_hit(float2 point, float4 a, float4 b, float4 c, float2 uv_a,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void origami_transition(uint3 id : SV_DispatchThreadID,
                                      uniform uint *input, uniform uint width,
                                      uniform uint height, uniform uint *output,
-                                     uniform uint64_t output_count,
+                                     uniform BufferIndex output_count,
                                      uniform float *vertices, uniform uint grid,
                                      uniform float visibility) {
   uint i = id.x;
@@ -520,7 +520,7 @@ float4 triangle_hit(float2 point, float4 a, float4 b, float4 c, float2 uv_a,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void transition_gaussian_blur_horizontal(
         uint3 id : SV_DispatchThreadID, uniform uint *input, uniform uint width,
-        uniform uint *output, uniform uint64_t output_count,
+        uniform uint *output, uniform BufferIndex output_count,
         uniform uint radius_u) {
   uint i = id.x;
   if (i >= output_count)
@@ -542,7 +542,7 @@ float4 triangle_hit(float2 point, float4 a, float4 b, float4 c, float2 uv_a,
 }
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void transition_gaussian_blur_vertical(
     uint3 id : SV_DispatchThreadID, uniform uint *input, uniform uint width,
-    uniform uint height, uniform uint *output, uniform uint64_t output_count,
+    uniform uint height, uniform uint *output, uniform BufferIndex output_count,
     uniform uint radius_u) {
   uint i = id.x;
   if (i >= output_count)
@@ -566,7 +566,7 @@ float4 triangle_hit(float2 point, float4 a, float4 b, float4 c, float2 uv_a,
                                        uniform uint *input, uniform uint width,
                                        uniform uint height,
                                        uniform uint *output,
-                                       uniform uint64_t output_count,
+                                       uniform BufferIndex output_count,
                                        uniform uint block_width,
                                        uniform uint block_height) {
   uint i = id.x;

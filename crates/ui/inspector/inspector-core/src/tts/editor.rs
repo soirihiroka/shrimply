@@ -12,6 +12,7 @@ pub struct EditorPresentation {
     pub model: Option<TtsModel>,
     pub controls: Vec<TtsEditorControl>,
     pub generated: bool,
+    pub loading: bool,
     pub catalog_status: String,
     pub can_retry: bool,
 }
@@ -52,6 +53,7 @@ impl InspectorController {
             .catalog
             .request(server_url, None, super::available_models);
         let can_retry = matches!(&state, Some(Err(_)));
+        let loading = state.is_none();
         let (models, mut catalog_status) = match state {
             None => (Vec::new(), "Loading text-to-speech models…".to_string()),
             Some(Err(error)) => (Vec::new(), error),
@@ -83,6 +85,7 @@ impl InspectorController {
             model,
             controls,
             generated,
+            loading,
             catalog_status,
             can_retry,
         })
@@ -149,6 +152,19 @@ impl InspectorController {
             .unwrap_or_default()
     }
 
+    pub fn cancel_tts_generation(&self, target: &InspectorTarget) -> Result<(), String> {
+        let mut runtime = self.tts_runtime.borrow_mut();
+        let job = runtime
+            .jobs
+            .get_mut(target)
+            .filter(|job| job.task.is_some())
+            .ok_or("Text-to-speech generation is not running")?;
+        job.task.as_ref().expect("active generation").cancel();
+        job.presentation.cancelling = true;
+        job.presentation.status = "Cancelling…".to_string();
+        Ok(())
+    }
+
     pub fn toggle_tts_generation(
         &self,
         target: &InspectorTarget,
@@ -156,13 +172,13 @@ impl InspectorController {
         model: &TtsModel,
     ) -> Result<(), String> {
         let mut runtime = self.tts_runtime.borrow_mut();
-        if let Some(job) = runtime.jobs.get_mut(target)
-            && let Some(task) = &job.task
+        if runtime
+            .jobs
+            .get(target)
+            .is_some_and(|job| job.task.is_some())
         {
-            task.cancel();
-            job.presentation.cancelling = true;
-            job.presentation.status = "Cancelling…".to_string();
-            return Ok(());
+            drop(runtime);
+            return self.cancel_tts_generation(target);
         }
         let settings = self.tts_model_settings(target, model)?;
         self.set_tts_settings(target, settings.clone(), false)?;

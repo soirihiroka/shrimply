@@ -9,7 +9,7 @@ use crate::{
     },
     scene::Scene,
 };
-use shrimply_editor_state::player_state::{self, ProjectChange, SharedPlayerState};
+use shrimply_player_core::{self as player_state, ProjectChange, SharedPlayerState};
 use shrimply_property_model::timeline_value::{TimelineBool, TimelineValue};
 use std::{cell::RefCell, path::PathBuf};
 

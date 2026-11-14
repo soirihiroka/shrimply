@@ -52,6 +52,10 @@ pub struct VideoSurface {
 pub struct PreviewController {
     surface: VideoSurface,
     controller: Rc<RefCell<PreviewControllerState>>,
+    project: Rc<RefCell<Project>>,
+    player_state: SharedPlayerState,
+    selection_state: SharedSelectionState,
+    preview_focus: SharedPreviewFocus,
 }
 
 impl std::ops::Deref for PreviewController {
@@ -289,7 +293,36 @@ impl PreviewController {
         Self {
             surface: VideoSurface { area, state },
             controller,
+            project,
+            player_state,
+            selection_state,
+            preview_focus,
         }
+    }
+
+    pub(crate) fn can_inspect_sanim(&self) -> bool {
+        let project = self.project.borrow();
+        !player_state::snapshot(&self.player_state).playing
+            && selection_state::focused_video_address(&self.selection_state, &project)
+                .and_then(|address| project.video_item(&address))
+                .is_some_and(|item| {
+                    matches!(item.content, crate::project::VideoItemContent::Sanim(_))
+                })
+    }
+
+    pub(crate) fn inspect_sanim(&self, point: GlamVec2) {
+        sanim_inspector::inspect(
+            ProviderDispatch {
+                area: &self.surface.area,
+                project: &self.project,
+                player_state: &self.player_state,
+                selection_state: &self.selection_state,
+                preview_focus: &self.preview_focus,
+                state: &self.surface.state,
+                controller: &self.controller,
+            },
+            point,
+        );
     }
 
     pub(crate) fn preview_state<T: 'static, R>(
@@ -813,6 +846,7 @@ fn attach_input(
     let sequence_button = Rc::new(Cell::new(0));
     let sequence_origin = Rc::new(Cell::new(None::<PointerSample>));
     let sequence_moved = Rc::new(Cell::new(false));
+    let sequence_inspect = Rc::new(Cell::new(false));
     let guide_input = Rc::new(RefCell::new(guides::GuideInput::default()));
     let ruler_hover = Cell::new(false);
     let caption_hover = Cell::new(false);
@@ -951,6 +985,7 @@ fn attach_input(
     let begin_button = sequence_button.clone();
     let begin_origin = sequence_origin.clone();
     let begin_moved = sequence_moved.clone();
+    let begin_inspect = sequence_inspect.clone();
     let begin_guides = guide_input.clone();
     pointer.connect_down(move |source, x, y| {
         if begin_controller.borrow().core.sequence != PointerSequence::Idle
@@ -968,6 +1003,7 @@ fn attach_input(
         let input = pointer_input(source, GlamVec2::new(x as f32, y as f32), button);
         begin_origin.set(Some(input.sample));
         begin_moved.set(false);
+        begin_inspect.set(false);
         if button == 1 {
             let began_guide = gtk_guides::press(
                 &begin_guides,
@@ -1007,6 +1043,23 @@ fn attach_input(
             },
             PointerEvent::Begin(input),
         );
+        if button == 1
+            && input.modifiers == Modifiers::NONE
+            && !player_state::snapshot(&begin_player).playing
+        {
+            let project = begin_project.borrow();
+            let controller = begin_controller.borrow();
+            begin_inspect.set(
+                selection_state::focused_video_address(&begin_selection, &project)
+                    .and_then(|address| project.video_item(&address))
+                    .is_some_and(|item| {
+                        matches!(item.content, crate::project::VideoItemContent::Sanim(_))
+                            && controller.core.provider.as_ref().is_none_or(|provider| {
+                                provider.target == item.default_preview_target()
+                            })
+                    }),
+            );
+        }
         if button == 2 && response.handled {
             source.set_state(gtk::EventSequenceState::Claimed);
         }
@@ -1021,6 +1074,7 @@ fn attach_input(
     let update_button = sequence_button.clone();
     let update_origin = sequence_origin.clone();
     let update_moved = sequence_moved.clone();
+    let update_inspect = sequence_inspect.clone();
     let update_guides = guide_input.clone();
     let update_pointer = move |source: &gtk::GestureStylus, x: f64, y: f64| {
         let input = pointer_input(
@@ -1046,9 +1100,14 @@ fn attach_input(
             samples.push(input.sample);
         }
         let changed = update_origin.get().is_some_and(|origin| {
-            samples
-                .iter()
-                .any(|sample| pointer_sample_changed(*sample, origin))
+            samples.iter().any(|sample| {
+                pointer_sample_changed(
+                    &update_area,
+                    *sample,
+                    origin,
+                    update_inspect.get() && !update_moved.get(),
+                )
+            })
         });
         if !changed {
             return;
@@ -1093,6 +1152,7 @@ fn attach_input(
     let end_button = sequence_button.clone();
     let end_origin = sequence_origin.clone();
     let end_moved = sequence_moved.clone();
+    let end_inspect = sequence_inspect.clone();
     let end_guides = guide_input.clone();
     pointer.connect_up(move |source, x, y| {
         let input = pointer_input(source, GlamVec2::new(x as f32, y as f32), end_button.get());
@@ -1101,9 +1161,14 @@ fn attach_input(
             samples.push(input.sample);
         }
         if end_origin.get().is_some_and(|origin| {
-            samples
-                .iter()
-                .any(|sample| pointer_sample_changed(*sample, origin))
+            samples.iter().any(|sample| {
+                pointer_sample_changed(
+                    &end_area,
+                    *sample,
+                    origin,
+                    end_inspect.get() && !end_moved.get(),
+                )
+            })
         }) {
             end_moved.set(true);
         }
@@ -1416,10 +1481,24 @@ fn pointer_backlog(pointer: &gtk::GestureStylus) -> Vec<PointerSample> {
         .collect()
 }
 
-fn pointer_sample_changed(sample: PointerSample, previous: PointerSample) -> bool {
-    sample.position != previous.position
-        || sample.pressure != previous.pressure
-        || sample.tilt != previous.tilt
+fn pointer_sample_changed(
+    area: &gtk::GLArea,
+    sample: PointerSample,
+    previous: PointerSample,
+    inspecting: bool,
+) -> bool {
+    if inspecting {
+        area.drag_check_threshold(
+            previous.position.x.round() as i32,
+            previous.position.y.round() as i32,
+            sample.position.x.round() as i32,
+            sample.position.y.round() as i32,
+        )
+    } else {
+        sample.position != previous.position
+            || sample.pressure != previous.pressure
+            || sample.tilt != previous.tilt
+    }
 }
 
 fn keyboard_event(key: gdk::Key, state: KeyState, modifiers: gdk::ModifierType) -> KeyboardEvent {

@@ -5,6 +5,7 @@ mod caption;
 mod metadata;
 mod modifiers;
 mod project;
+pub mod remote;
 mod track;
 mod video;
 
@@ -43,6 +44,21 @@ pub enum CategoryIcon {
     Info,
     Performance,
     Transition,
+}
+
+impl CategoryIcon {
+    pub const fn symbolic_name(self) -> &'static str {
+        match self {
+            Self::Project | Self::Track => "sliders-horizontal-symbolic",
+            Self::Text => "rich-text-symbolic",
+            Self::Visual => "image-symbolic",
+            Self::Audio => "audio-volume-high-symbolic",
+            Self::Playback => "media-playback-start-symbolic",
+            Self::Info => "info-outline-symbolic",
+            Self::Performance => "speedometer-symbolic",
+            Self::Transition => "select-symbolic",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

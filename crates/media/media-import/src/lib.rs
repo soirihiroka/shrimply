@@ -1,12 +1,14 @@
 use hashbrown::HashMap;
+mod av;
+#[cfg(test)]
+mod portable_tests;
 #[cfg(test)]
 mod sanim_tests;
+pub use av::{remux_mkv_to_mp4, remux_to_mp4};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use ffmpeg::{Rational, codec, encoder, format, media};
-use ffmpeg_next as ffmpeg;
 use glam::{UVec2, Vec2};
 use shrimply_math_core::Fraction;
 use shrimply_resource_pipeline::{JobContext, Pipeline, Processor, Subscription};
@@ -22,10 +24,6 @@ use shrimply_visual_modifiers::{ModifierEffect, scene_3d::Scene3dModifierEffect}
 
 use shrimply_timeline_edit::{ItemKey, TrackKind, insert_sorted, next_group_id};
 
-type VideoSizes = Vec<UVec2>;
-type VideoSizeCache = Mutex<HashMap<AssetSnapshot, VideoSizes>>;
-
-static VIDEO_SIZE_CACHE: OnceLock<VideoSizeCache> = OnceLock::new();
 static INSPECTION_CACHE: OnceLock<Mutex<HashMap<InspectionKey, MediaInfo>>> = OnceLock::new();
 static INSPECTIONS: OnceLock<Pipeline<InspectionKey, MediaInspector>> = OnceLock::new();
 static INSPECTION_WORKERS: OnceLock<std::sync::mpsc::SyncSender<shrimply_resource_pipeline::Job>> =
@@ -132,7 +130,7 @@ pub struct MediaInfo {
     pub video_streams: usize,
     pub audio_streams: usize,
     pub visual_kind: Option<VisualMediaKind>,
-    pub video_sizes: VideoSizes,
+    pub video_sizes: Vec<UVec2>,
     pub video_fps: Option<Fraction>,
     pub layered_image_layers: Vec<LayerVisibility>,
     pub caption_cues: Vec<VttCue>,
@@ -451,120 +449,7 @@ pub fn inspect(
         });
     }
 
-    let input = format::input(path)
-        .map_err(|error| format!("could not open {}: {error}", path.display()))?;
-    let mut video_streams = 0;
-    let cached_video_sizes = VIDEO_SIZE_CACHE
-        .get_or_init(Mutex::default)
-        .lock()
-        .ok()
-        .and_then(|cache| cache.get(&snapshot).cloned());
-    let mut video_sizes = Vec::new();
-    let mut video_fps = None;
-    let mut audio_streams = 0;
-    let mut stream_duration_seconds = 0.0_f64;
-
-    for stream in input.streams() {
-        // Cover art is reported as video, but has no playback timestamps.
-        if stream
-            .disposition()
-            .contains(format::stream::Disposition::ATTACHED_PIC)
-        {
-            continue;
-        }
-        match stream.parameters().medium() {
-            media::Type::Video if file_kind != FileKind::Audio => {
-                video_streams += 1;
-                if video_fps.is_none() {
-                    let mut rate = stream.avg_frame_rate();
-                    if rate.numerator() <= 0 || rate.denominator() <= 0 {
-                        rate = stream.rate();
-                    }
-                    if rate.numerator() > 0 && rate.denominator() > 0 {
-                        video_fps = Some(Fraction::new_raw(
-                            u64::try_from(rate.numerator()).expect("positive video frame rate"),
-                            u64::try_from(rate.denominator()).expect("positive video frame rate"),
-                        ));
-                    }
-                }
-                if let Some(size) = cached_video_sizes
-                    .as_ref()
-                    .and_then(|sizes| sizes.get(video_streams - 1))
-                {
-                    video_sizes.push(*size);
-                } else if let Ok(decoder) =
-                    codec::context::Context::from_parameters(stream.parameters())
-                        .and_then(|context| context.decoder().video())
-                {
-                    video_sizes.push(UVec2::new(decoder.width(), decoder.height()));
-                } else {
-                    video_sizes.push(UVec2::ZERO);
-                }
-            }
-            media::Type::Audio => audio_streams += 1,
-            _ => {}
-        }
-        if stream.duration() > 0 {
-            stream_duration_seconds = stream_duration_seconds
-                .max(stream.duration() as f64 * rational_as_f64(stream.time_base()));
-        }
-    }
-
-    if video_streams == 0 && audio_streams == 0 {
-        return Err(format!("{} has no audio or video streams", path.display()));
-    }
-
-    let container_duration_seconds = if input.duration() > 0 {
-        input.duration() as f64 / 1_000_000.0
-    } else {
-        0.0
-    };
-    if cached_video_sizes.is_none()
-        && let Ok(mut cache) = VIDEO_SIZE_CACHE.get_or_init(Mutex::default).lock()
-    {
-        cache.insert(snapshot.clone(), video_sizes.clone());
-    }
-
-    let visual_kind = match file_kind {
-        FileKind::Image => Some(VisualMediaKind::Image),
-        FileKind::Gif => Some(VisualMediaKind::Gif),
-        FileKind::Mp4 | FileKind::Mov | FileKind::Mkv | FileKind::WebM if video_streams > 0 => {
-            Some(VisualMediaKind::Video)
-        }
-        _ => None,
-    };
-    if matches!(file_kind, FileKind::Image | FileKind::Gif) {
-        audio_streams = 0;
-        video_streams = video_streams.min(1);
-        video_sizes.truncate(video_streams);
-    }
-    let duration = match file_kind {
-        FileKind::Image => default_visual_duration,
-        FileKind::Gif => {
-            let source_duration =
-                Time::from_seconds_f64(container_duration_seconds.max(stream_duration_seconds));
-            if source_duration > Time::ZERO {
-                source_duration
-            } else {
-                default_visual_duration
-            }
-        }
-        _ => Time::from_seconds_f64(container_duration_seconds.max(stream_duration_seconds)),
-    };
-
-    snapshot.verify_current()?;
-    Ok(MediaInfo {
-        source,
-        snapshot,
-        duration,
-        visual_kind,
-        video_streams,
-        video_sizes,
-        video_fps,
-        audio_streams,
-        caption_cues: Vec::new(),
-        layered_image_layers: Vec::new(),
-    })
+    av::inspect(source, snapshot, file_kind, default_visual_duration)
 }
 
 fn svg_native_size(svg: &str) -> Option<UVec2> {
@@ -684,10 +569,10 @@ pub fn apply_media_to_tracks(
         .snapped(step)
         .max(start.saturating_add(step));
     match kind {
-        TrackKind::Video => apply_video_to_tracks(project, info, track_indices, start, end),
-        TrackKind::Audio if info.visual_kind.is_some() => {
-            Err("visual files cannot be imported to audio tracks".to_string())
+        TrackKind::Caption if !info.caption_cues.is_empty() => {
+            apply_vtt_cues_to_tracks(project, &info.caption_cues, track_indices, start)
         }
+        TrackKind::Video => apply_video_to_tracks(project, info, track_indices, start, end),
         TrackKind::Audio => apply_audio_to_tracks(project, info, track_indices, start, end),
         TrackKind::Comment => {
             Err("visual and media files cannot be imported to comment tracks".to_string())
@@ -722,17 +607,27 @@ pub fn apply_vtt_cues_to_tracks(
     }
     let step = project.frame_step();
     let start = start.max(Time::ZERO).snapped(step);
+    let mut ranges = cues
+        .iter()
+        .map(|cue| {
+            let cue_start = start.saturating_add(cue.start).snapped(step);
+            let cue_end = start
+                .saturating_add(cue.end)
+                .snapped(step)
+                .max(cue_start.saturating_add(step));
+            (cue_start, cue_end, &cue.text)
+        })
+        .collect::<Vec<_>>();
+    ranges.sort_by_key(|(start, end, _)| (*start, *end));
+    if ranges.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return Err("VTT cues overlap on the project frame grid; a single caption track cannot contain overlapping cues".into());
+    }
 
     for &track_index in track_indices {
         let Some(track) = project.caption_tracks.get(track_index) else {
             return Err(format!("caption track {} does not exist", track_index + 1));
         };
-        for cue in cues {
-            let item_start = start.saturating_add(cue.start).snapped(step);
-            let item_end = start
-                .saturating_add(cue.end)
-                .snapped(step)
-                .max(item_start.saturating_add(step));
+        for &(item_start, item_end, _) in &ranges {
             if timeline_search::collides(&track.items, item_start, item_end) {
                 return Err(format!(
                     "VTT import collides with caption track {}",
@@ -748,13 +643,8 @@ pub fn apply_vtt_cues_to_tracks(
         let Some(track) = project.caption_tracks.get_mut(track_index) else {
             continue;
         };
-        for cue in cues {
-            let item_start = start.saturating_add(cue.start).snapped(step);
-            let item_end = start
-                .saturating_add(cue.end)
-                .snapped(step)
-                .max(item_start.saturating_add(step));
-            let mut item = CaptionItem::new(item_start, item_end, cue.text.clone());
+        for &(item_start, item_end, text) in &ranges {
+            let mut item = CaptionItem::new(item_start, item_end, text.clone());
             item.group_id = group_id;
             let item_index = insert_sorted(&mut track.items, item);
             selection.push(ItemKey {
@@ -778,41 +668,6 @@ pub fn vtt_ranges(path: &Path) -> Result<Vec<(Time, Time)>, String> {
         .into_iter()
         .map(|cue| (cue.start, cue.end))
         .collect())
-}
-
-pub fn remux_mkv_to_mp4(input: &Path) -> Result<PathBuf, String> {
-    let file = remux_to_mp4(input, shrimply_resource_pipeline::CancelToken::default())?;
-    let path = file.path().to_path_buf();
-    file.keep();
-    Ok(path)
-}
-
-pub fn remux_to_mp4(
-    input: &Path,
-    cancellation: shrimply_resource_pipeline::CancelToken,
-) -> Result<OwnedFile, String> {
-    let mut path = input.with_extension("mp4");
-    loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let mut name = input
-                    .file_stem()
-                    .ok_or("source has no filename")?
-                    .to_os_string();
-                name.push(format!("-{}.mp4", uuid::Uuid::new_v4()));
-                path = input.with_file_name(name);
-            }
-            Err(error) => return Err(format!("could not create {}: {error}", path.display())),
-        }
-    }
-    let output = OwnedFile::new(path);
-    remux(input, output.path(), cancellation)?;
-    Ok(output)
 }
 
 fn apply_video_to_tracks(
@@ -1149,96 +1004,6 @@ fn parse_vtt_timestamp(value: &str) -> Option<Time> {
             .saturating_mul(1_000_000_000)
             .saturating_add(fraction_nanos),
     ))
-}
-
-fn remux(
-    input: &Path,
-    output: &Path,
-    cancellation: shrimply_resource_pipeline::CancelToken,
-) -> Result<(), String> {
-    let interrupt = cancellation.clone();
-    let mut input_context =
-        format::input_with_interrupt(input, move || interrupt.is_cancelled())
-            .map_err(|error| format!("could not open {}: {error}", input.display()))?;
-    let mut output_context = format::output(output)
-        .map_err(|error| format!("could not create {}: {error}", output.display()))?;
-    let stream_count = input_context.nb_streams() as usize;
-    let mut stream_mapping = vec![-1; stream_count];
-    let mut input_time_bases = vec![Rational(0, 1); stream_count];
-    let mut output_index = 0;
-
-    for (input_index, input_stream) in input_context.streams().enumerate() {
-        let medium = input_stream.parameters().medium();
-        if !matches!(
-            medium,
-            media::Type::Audio | media::Type::Video | media::Type::Subtitle
-        ) {
-            continue;
-        }
-
-        stream_mapping[input_index] = output_index;
-        input_time_bases[input_index] = input_stream.time_base();
-        output_index += 1;
-
-        let mut output_stream = output_context
-            .add_stream(encoder::find(codec::Id::None))
-            .map_err(|error| format!("could not add output stream: {error}"))?;
-        output_stream.set_parameters(input_stream.parameters());
-        unsafe {
-            (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
-        }
-    }
-
-    output_context.set_metadata(input_context.metadata().to_owned());
-    output_context
-        .write_header()
-        .map_err(|error| format!("could not write {} header: {error}", output.display()))?;
-
-    loop {
-        if cancellation.is_cancelled() {
-            return Err("Media import was cancelled".into());
-        }
-        let mut packet = ffmpeg::Packet::empty();
-        match packet.read(&mut input_context) {
-            Ok(()) => {}
-            Err(ffmpeg::Error::Eof) => break,
-            Err(error) => {
-                return Err(format!(
-                    "could not read {} packet: {error}",
-                    input.display()
-                ));
-            }
-        }
-        let input_index = packet.stream();
-        let output_index = stream_mapping[input_index];
-        if output_index < 0 {
-            continue;
-        }
-        let output_stream = output_context
-            .stream(output_index as usize)
-            .ok_or_else(|| "remux output stream disappeared".to_string())?;
-        packet.rescale_ts(input_time_bases[input_index], output_stream.time_base());
-        packet.set_position(-1);
-        packet.set_stream(output_index as usize);
-        packet
-            .write_interleaved(&mut output_context)
-            .map_err(|error| format!("could not write {} packet: {error}", output.display()))?;
-    }
-
-    if cancellation.is_cancelled() {
-        return Err("Media import was cancelled".into());
-    }
-    output_context
-        .write_trailer()
-        .map_err(|error| format!("could not write {} trailer: {error}", output.display()))
-}
-
-fn rational_as_f64(value: Rational) -> f64 {
-    if value.denominator() == 0 {
-        0.0
-    } else {
-        value.numerator() as f64 / value.denominator() as f64
-    }
 }
 
 fn audio_extension(extension: &str) -> bool {

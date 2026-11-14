@@ -38,12 +38,12 @@ shrimply-compute-client = { workspace = true }
 shrimply-scene-3d = { workspace = true }
 shrimply-shape-3d = { workspace = true }
 shrimply-editor-state = { workspace = true }
-shrimply-text-3d = { workspace = true }
+shrimply-text-3d = { workspace = true, default-features = true }
 shrimply-timeline-edit = { workspace = true }
 shrimply-tts = { workspace = true }
 shrimply-visual-cuda = { workspace = true, optional = true }
 shrimply-visual-core = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 skia-safe = { workspace = true, features = ["textlayout"] }
 strum.workspace = true
 tempfile.workspace = true

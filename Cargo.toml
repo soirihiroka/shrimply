@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/media/fonts",
     "crates/application/cli",
+    "crates/application/player-core",
     "crates/application/local-ipc",
     "crates/gpu/vulkan/gpu-vulkan",
     "crates/gpu/denoise/denoise-metal",
@@ -163,8 +164,8 @@ sanim-cli = { path = "sanim/crates/sanim-cli" }
 sanim-lsp = { path = "sanim/crates/sanim-lsp" }
 shrimply-fonts = { path = "crates/media/fonts" }
 sanim-core = { path = "sanim/crates/sanim-core" }
-sanim-data = { path = "sanim/crates/sanim-data" }
-sanim-lang = { path = "sanim/crates/sanim-lang" }
+sanim-data = { path = "sanim/crates/sanim-data", default-features = false }
+sanim-lang = { path = "sanim/crates/sanim-lang", default-features = false }
 sanim-runtime = { path = "sanim/crates/sanim-runtime" }
 shrimply-editing-runtime = { path = "crates/application/editing-runtime" }
 shrimply-media-import = { path = "crates/media/media-import" }
@@ -205,6 +206,7 @@ shrimply-denoise-oidn = { path = "crates/gpu/denoise/denoise-oidn" }
 shrimply-discrete-keyframe-graph-skia = { path = "crates/ui/keyframe-graph/discrete-keyframe-graph-skia" }
 shrimply-drawing-skia = { path = "crates/render/drawing-skia" }
 shrimply-editor-state = { path = "crates/application/editor-state" }
+shrimply-player-core = { path = "crates/application/player-core" }
 shrimply-export-appkit = { path = "crates/ui/export/export-appkit" }
 shrimply-export-core = { path = "crates/render/export/export-core", default-features = false }
 shrimply-export-cuda = { path = "crates/render/export/export-cuda" }
@@ -279,15 +281,15 @@ shrimply-render-3d-metal = { path = "crates/media/visual/3d/render-3d-metal" }
 shrimply-render-core = { path = "crates/render/render-core" }
 shrimply-render-kernels-cuda = { path = "crates/render/render-kernels-cuda" }
 shrimply-render-metal = { path = "crates/render/render-metal" }
-shrimply-render-vulkan = { path = "crates/render/render-vulkan" }
+shrimply-render-vulkan = { path = "crates/render/render-vulkan", default-features = false }
 shrimply-resource-pipeline = { path = "crates/resource-pipeline" }
 shrimply-scene-3d = { path = "crates/media/visual/3d/scene-3d" }
-shrimply-scene-3d-modifiers = { path = "crates/media/visual/3d/scene-3d-modifiers" }
+shrimply-scene-3d-modifiers = { path = "crates/media/visual/3d/scene-3d-modifiers", default-features = false }
 shrimply-shape-3d = { path = "crates/media/visual/3d/shape-3d" }
 shrimply-slang-build = { path = "crates/gpu/slang/slang-build" }
 shrimply-surface-gl-skia = { path = "crates/ui/surface/surface-gl-skia" }
 shrimply-surface-metal-skia = { path = "crates/ui/surface/surface-metal-skia" }
-shrimply-text-3d = { path = "crates/media/visual/3d/text-3d" }
+shrimply-text-3d = { path = "crates/media/visual/3d/text-3d", default-features = false }
 shrimply-timeline-edit = { path = "crates/project/timeline/timeline-edit" }
 shrimply-timeline-gtk = { path = "crates/ui/timeline/timeline-gtk" }
 shrimply-timeline-qt = { path = "crates/ui/timeline/timeline-qt" }
@@ -307,7 +309,7 @@ shrimply-video-recording-windows = { path = "crates/media/visual/video/video-rec
 shrimply-visual-core = { path = "crates/media/visual/visual-core" }
 shrimply-visual-cuda = { path = "crates/media/visual/visual-cuda" }
 shrimply-visual-frame = { path = "crates/media/visual/visual-frame" }
-shrimply-visual-modifiers = { path = "crates/media/visual/visual-modifiers" }
+shrimply-visual-modifiers = { path = "crates/media/visual/visual-modifiers", default-features = false }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_9"] }
 anyhow = "1"
 base64 = "0.23"

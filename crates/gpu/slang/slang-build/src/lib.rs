@@ -1,5 +1,6 @@
 mod reflection;
 mod slang;
+mod spirv;
 
 pub const LIBRARY_DIR: &str = env!("SHRIMPLY_SLANG_LIBRARY_DIR");
 

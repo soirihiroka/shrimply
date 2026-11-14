@@ -16,5 +16,5 @@ shrimply-math-core = { workspace = true }
 shrimply-pdf = { workspace = true }
 shrimply-layered-image-loader = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = false }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 uuid.workspace = true

@@ -1,6 +1,7 @@
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -15,6 +16,7 @@ pub struct TwirlModifier {
     pub angle_degrees: TimelineValue<f32>,
 }
 
+#[cfg(feature = "preview")]
 struct TwirlPreview {
     target: PreviewTarget,
     original: TwirlModifier,
@@ -24,7 +26,9 @@ struct TwirlPreview {
     active: bool,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl TwirlModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -45,6 +49,7 @@ impl TwirlModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for TwirlPreview {
     fn on_draw(
         &mut self,
@@ -118,6 +123,7 @@ impl PreviewProvider for TwirlPreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn point_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

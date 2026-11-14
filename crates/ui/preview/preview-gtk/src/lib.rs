@@ -173,6 +173,7 @@ fn player(
         player_state.clone(),
         playback_performance.clone(),
         preferences.clone(),
+        shrimply_visual_cuda::compositor::spawn_worker_with_resources_and_observer,
     );
     let video_tx = media.sender();
     let video_surface = PreviewController::new(
@@ -1127,6 +1128,20 @@ fn attach_preview_context_menu(
         menu.append_i18n("Save Preview Image…", "preview.save-image");
 
         let actions = gio::SimpleActionGroup::new();
+        if surface.can_inspect_sanim() {
+            menu.append_i18n("Inspect Sanim Element", "preview.inspect-sanim");
+            let inspect = gio::SimpleAction::new("inspect-sanim", None);
+            let inspect_surface = surface.clone();
+            inspect.connect_activate(move |_, _| {
+                let surface = inspect_surface.clone();
+                glib::idle_add_local_once(move || {
+                    if surface.widget().is_mapped() {
+                        surface.inspect_sanim(vec2(x as f32, y as f32));
+                    }
+                });
+            });
+            actions.add_action(&inspect);
+        }
         let copy = gio::SimpleAction::new("copy-image", None);
         copy.set_enabled(surface.has_frame());
         let copy_area = area.clone();
@@ -1229,6 +1244,7 @@ fn attach_preview_context_menu(
             1,
             1,
         )));
+        popover.connect_closed(|popover| popover.unparent());
         popover.popup();
     });
     video_surface.widget().add_controller(click);

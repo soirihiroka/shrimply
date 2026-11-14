@@ -206,9 +206,6 @@ fn registry() -> &'static [Builtin] {
 pub(crate) fn register(output: &mut Vec<Builtin>) {
     output.push(registry()[0].clone());
 }
-pub(crate) fn builtin(canonical: &str) -> Option<&'static Builtin> {
-    registry().iter().find(|builtin| builtin.name == canonical)
-}
 pub fn methods() -> impl Iterator<Item = &'static Builtin> {
     registry().iter().skip(1)
 }

@@ -66,21 +66,23 @@ pub fn add_rows(value: &Sam2Modifier, out: &gtk::Box, id: Uuid, context: &Inspec
     out.append(&control_row(&model_control.label, &model));
 
     let threshold = controls.next().expect("SAM2 threshold control is missing");
-    out.append(&super::shared_scalar_row(
-        &threshold,
-        "threshold",
-        &value.threshold,
-        id,
+    for row in crate::control::section(
+        &shrimply_inspector_core::InspectorSection {
+            controls: vec![threshold],
+        },
         context,
-    ));
+    ) {
+        out.append(&row);
+    }
     let softness = controls.next().expect("SAM2 softness control is missing");
-    out.append(&super::shared_scalar_row(
-        &softness,
-        "softness",
-        &value.softness,
-        id,
+    for row in crate::control::section(
+        &shrimply_inspector_core::InspectorSection {
+            controls: vec![softness],
+        },
         context,
-    ));
+    ) {
+        out.append(&row);
+    }
 
     for point in &value.points {
         let position_control = controls

@@ -42,7 +42,6 @@ struct ServerSelection {
 struct ServerList {
     group: glib::WeakRef<adw::PreferencesGroup>,
     add: glib::WeakRef<adw::ButtonRow>,
-    urls: Rc<RefCell<Vec<String>>>,
     rows: Rc<RefCell<Vec<adw::ActionRow>>>,
     generation: Rc<Cell<u64>>,
     selection: ServerSelection,
@@ -60,7 +59,6 @@ pub fn page(
     preferences: store::SharedPreferences,
     blender_group: &adw::PreferencesGroup,
 ) -> adw::PreferencesPage {
-    let preference_snapshot = store::snapshot(&preferences);
     let spinner = adw::Spinner::new();
     spinner.set_size_request(18, 18);
     spinner.set_visible(false);
@@ -166,7 +164,7 @@ pub fn page(
     version.add_suffix(&spinner);
     let rows = Rows {
         spinner,
-        selected_url: Rc::new(RefCell::new(preference_snapshot.compute_server_url.clone())),
+        selected_url: Rc::new(RefCell::new(String::new())),
         version,
         protocol: row("Protocol"),
         torch: row("Torch"),
@@ -226,9 +224,6 @@ pub fn page(
     let server_list = ServerList {
         group: endpoint_group.downgrade(),
         add: add_server.downgrade(),
-        urls: Rc::new(RefCell::new(
-            preference_snapshot.compute_server_urls.clone(),
-        )),
         rows: Rc::new(RefCell::new(Vec::new())),
         generation: Rc::new(Cell::new(0)),
         selection: ServerSelection {
@@ -245,8 +240,6 @@ pub fn page(
         });
     });
     rebuild_server_rows(&server_list);
-    let initial_url = rows.selected_url.borrow().clone();
-    select_server(&server_list.selection, &initial_url);
 
     let selected_rows = rows.clone();
     let selected_revision = revision.clone();
@@ -306,8 +299,9 @@ fn rebuild_server_rows(servers: &ServerList) {
         group.remove(&row);
     }
 
+    let (urls, selected) = store::compute_servers(&servers.selection.preferences);
+    select_server(&servers.selection, &urls[selected]);
     let radio_group = gtk::CheckButton::new();
-    let urls = servers.urls.borrow().clone();
     let can_delete = urls.len() > 1;
     for url in urls {
         let widgets = create_server_row(&url);
@@ -567,7 +561,7 @@ fn check_editor_server(
         spinner.stop();
         spinner.set_visible(false);
         match result {
-            Ok(Ok(server)) => status.set_text(&server_summary(&server)),
+            Ok(Ok(server)) => status.set_text(&store::present_compute_server(&server).summary),
             Ok(Err(error)) => {
                 status.set_text(tr!("Could not reach a Shrimply server at this URL").as_ref());
                 status.remove_css_class("dim-label");
@@ -592,26 +586,17 @@ fn check_editor_server(
 fn add_server_url(servers: &ServerList, url: String) {
     store::add_compute_server(&servers.selection.preferences, &url)
         .expect("GTK only submits normalized compute server URLs");
-    let snapshot = store::snapshot(&servers.selection.preferences);
-    servers.urls.replace(snapshot.compute_server_urls);
-    select_server(&servers.selection, &snapshot.compute_server_url);
     rebuild_server_rows(servers);
 }
 
 fn edit_server_url(servers: &ServerList, old_url: &str, new_url: String) {
     store::edit_compute_server(&servers.selection.preferences, old_url, &new_url)
         .expect("GTK only edits an existing server to a normalized URL");
-    let snapshot = store::snapshot(&servers.selection.preferences);
-    servers.urls.replace(snapshot.compute_server_urls);
-    select_server(&servers.selection, &snapshot.compute_server_url);
     rebuild_server_rows(servers);
 }
 
 fn delete_server_url(servers: &ServerList, deleted_url: &str) {
     store::remove_compute_server(&servers.selection.preferences, deleted_url);
-    let snapshot = store::snapshot(&servers.selection.preferences);
-    servers.urls.replace(snapshot.compute_server_urls);
-    select_server(&servers.selection, &snapshot.compute_server_url);
     rebuild_server_rows(servers);
 }
 
@@ -653,7 +638,9 @@ fn check_server_summary(servers: &ServerList, url: String, widgets: ServerRow) {
         match result {
             Ok(Ok(status)) => {
                 widgets.warning.set_visible(false);
-                widgets.row.set_subtitle(&server_summary(&status));
+                widgets
+                    .row
+                    .set_subtitle(&store::present_compute_server(&status).summary);
                 widgets.row.set_tooltip_text(None);
             }
             Ok(Err(error)) => {
@@ -699,10 +686,6 @@ fn row(title: &str) -> adw::ActionRow {
         .title(tr!(title).as_ref())
         .subtitle(tr!("—").as_ref())
         .build()
-}
-
-fn server_summary(status: &ServerStatus) -> String {
-    store::present_compute_server(status).summary
 }
 
 fn check(url: String, rows: Rows, revision: Rc<Cell<u64>>, current_revision: u64) {

@@ -4,7 +4,7 @@ import common;
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void affine_stabilization(uniform AffineStabilizationParams params,
                                        uniform uint *out,
-                                       uniform uint64_t out_len,
+                                       uniform BufferIndex out_len,
                                        uint3 id : SV_DispatchThreadID) {
   uint i = linear_index(id);
   if (i >= out_len)

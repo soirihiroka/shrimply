@@ -13,7 +13,7 @@ use shrimply_inspector_core::InspectorTarget;
 use crate::item::{InspectorAction, InspectorListItem};
 use crate::list::{InspectorDocument, InspectorListState};
 use crate::section::{ControlKind, ControlRowRole, InspectorControl};
-use crate::value_backend::{boolean_action, control_value, fraction_value, timeline_value};
+use crate::value_backend::{boolean_action, fraction_value};
 
 mod read;
 mod write;

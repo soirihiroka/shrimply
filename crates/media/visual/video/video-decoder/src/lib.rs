@@ -1,6 +1,10 @@
 #[cfg(feature = "cuda")]
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::initialize_java_vm;
 mod backend;
 #[cfg(feature = "cuda")]
 mod cuda;
@@ -25,7 +29,6 @@ pub use session::{
 #[cfg(feature = "cuda")]
 pub use track::{VideoDecoderOwner, VideoPlane};
 
-#[cfg(feature = "cuda")]
 pub const DEFAULT_VIDEO_DECODER_POOL_SIZE: usize = 16;
 
 #[cfg(feature = "cuda")]

@@ -1,6 +1,7 @@
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Color, Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -15,17 +16,24 @@ pub struct DisplacementMapModifier {
     pub phase: TimelineValue<f32>,
 }
 
+#[cfg(feature = "preview")]
 const AMOUNT_COLOR: Color = Color::new(0.35, 0.82, 1.0, 1.0);
+#[cfg(feature = "preview")]
 const SCALE_COLOR: Color = Color::new(1.0, 0.82, 0.24, 1.0);
+#[cfg(feature = "preview")]
 const PHASE_COLOR: Color = Color::new(0.75, 0.45, 1.0, 1.0);
+#[cfg(feature = "preview")]
 const PHASE_RADIUS_RATIO: f32 = 0.18;
+#[cfg(feature = "preview")]
 const MIN_PHASE_RADIUS: f32 = 48.0;
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum DisplacementControl {
     Amount,
     Scale,
     Phase,
 }
+#[cfg(feature = "preview")]
 struct DisplacementPreview {
     target: PreviewTarget,
     original: DisplacementMapModifier,
@@ -36,7 +44,9 @@ struct DisplacementPreview {
     active: Option<DisplacementControl>,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl DisplacementMapModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -70,6 +80,7 @@ impl DisplacementMapModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl DisplacementPreview {
     fn points(&self) -> (glam::Vec2, [glam::Vec2; 3]) {
         let center = self.size * 0.5;
@@ -99,6 +110,7 @@ impl DisplacementPreview {
         })
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for DisplacementPreview {
     fn on_draw(
         &mut self,
@@ -201,6 +213,7 @@ impl PreviewProvider for DisplacementPreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn scalar_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

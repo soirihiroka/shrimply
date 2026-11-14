@@ -74,6 +74,28 @@ pub struct MarkupAttribute {
     pub utility: bool,
 }
 
+/// Exact type-use locations emitted by the grammar only for editor analysis.
+#[derive(Clone, Debug)]
+pub struct TypeReference {
+    pub name: String,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeclarationKind {
+    TypeParameter,
+    EnumVariant(std::sync::Arc<str>),
+}
+
+/// Declarations without a standalone AST node, emitted only for editor analysis.
+#[derive(Clone, Debug)]
+pub struct Declaration {
+    pub name: String,
+    pub span: Span,
+    pub scope: Span,
+    pub kind: DeclarationKind,
+}
+
 /// Completed declarations and the unfinished call context, without executing or
 /// fabricating values. Editors can keep useful help while a call is incomplete.
 #[derive(Clone, Debug)]
@@ -82,6 +104,8 @@ pub struct Recovery {
     pub diagnostic: Option<Diagnostic>,
     pub pending_calls: Vec<PendingCall>,
     pub markup: Vec<MarkupOpening>,
+    pub type_references: Vec<TypeReference>,
+    pub declarations: Vec<Declaration>,
     pub prefix_end: usize,
 }
 
@@ -105,6 +129,8 @@ fn parse_recovering_highlighted(
 ) -> (Recovery, Vec<sanim_core::code::Highlight>) {
     let mut parser = Parser::new(source, text, max_steps, true);
     parser.highlights = highlighted.then(Vec::new);
+    parser.type_references = highlighted.then(Vec::new);
+    parser.declarations = highlighted.then(Vec::new);
     parser.trivia();
     let result = parser.statements(false);
     let (mut module, error) = match result {
@@ -155,6 +181,8 @@ fn parse_recovering_highlighted(
             diagnostic: parser.failure.or(error),
             pending_calls,
             markup,
+            type_references: parser.type_references.take().unwrap_or_default(),
+            declarations: parser.declarations.take().unwrap_or_default(),
             prefix_end,
         },
         highlights,
@@ -171,6 +199,8 @@ struct Mark {
     comments: usize,
     highlights: usize,
     markup: usize,
+    type_references: usize,
+    declarations: usize,
 }
 struct Parser<'a> {
     source: &'a str,
@@ -185,6 +215,8 @@ struct Parser<'a> {
     recovered: Option<Module>,
     pending_calls: Option<Vec<PendingCall>>,
     markup: Option<Vec<MarkupOpening>>,
+    type_references: Option<Vec<TypeReference>>,
+    declarations: Option<Vec<Declaration>>,
     formatting: Option<crate::formatter::Sink>,
     comments: Vec<Span>,
     highlights: Option<Vec<sanim_core::code::Highlight>>,
@@ -204,6 +236,8 @@ impl<'a> Parser<'a> {
             recovered: None,
             pending_calls: recovery.then(Vec::new),
             markup: recovery.then(Vec::new),
+            type_references: None,
+            declarations: None,
             formatting: None,
             comments: vec![],
             highlights: None,
@@ -231,6 +265,8 @@ impl Parser<'_> {
             comments: self.comments.len(),
             highlights: self.highlights.as_ref().map_or(0, Vec::len),
             markup: self.markup.as_ref().map_or(0, Vec::len),
+            type_references: self.type_references.as_ref().map_or(0, Vec::len),
+            declarations: self.declarations.as_ref().map_or(0, Vec::len),
             formatting: self
                 .formatting
                 .as_ref()
@@ -245,6 +281,12 @@ impl Parser<'_> {
         self.comments.truncate(mark.comments);
         if let Some(markup) = &mut self.markup {
             markup.truncate(mark.markup);
+        }
+        if let Some(references) = &mut self.type_references {
+            references.truncate(mark.type_references);
+        }
+        if let Some(declarations) = &mut self.declarations {
+            declarations.truncate(mark.declarations);
         }
         if let Some(highlights) = &mut self.highlights {
             highlights.truncate(mark.highlights);
@@ -732,11 +774,23 @@ impl Parser<'_> {
         self.depth -= 1;
         out
     }
-    fn generics(&mut self) -> Result<Vec<GenericParameter<TypeExpr>>, Diagnostic> {
+    fn generics(&mut self, scope: Span) -> Result<Vec<GenericParameter<TypeExpr>>, Diagnostic> {
         let mut names = vec![];
         if self.eat("<") {
             loop {
-                let name = self.name()?;
+                let mut location = None;
+                let name = self.declared_name(&mut location)?;
+                if let Some(declarations) = &mut self.declarations {
+                    declarations.push(Declaration {
+                        name: name.clone(),
+                        span: location.expect("parsed generic identifier"),
+                        scope: Span {
+                            end: self.text.len(),
+                            ..scope
+                        },
+                        kind: DeclarationKind::TypeParameter,
+                    });
+                }
                 let constraint = if self.eat(":") {
                     Some(self.ty()?)
                 } else {
@@ -915,6 +969,7 @@ impl Parser<'_> {
             return Err(self.error("parser work limit exceeded"));
         }
         let span = self.span();
+        let declaration_start = self.declarations.as_ref().map_or(0, Vec::len);
         let mut name_span = None;
         let duration = if self.eat("@") {
             self.expect("duration")?;
@@ -1019,13 +1074,17 @@ impl Parser<'_> {
             }
         } else if self.eat(Keyword::Type.text()) {
             let name = self.declared_name(&mut name_span)?;
-            let generics = self.generics()?;
+            let generics = self.generics(span)?;
             self.expect("=")?;
             let ty = self.ty()?;
             self.newline()?;
             StatementKind::Alias { name, generics, ty }
         } else if self.eat(Keyword::Enum.text()) {
             let name = self.declared_name(&mut name_span)?;
+            let qualifier = self
+                .declarations
+                .as_ref()
+                .map(|_| std::sync::Arc::<str>::from(name.as_str()));
             self.expect("{")?;
             let mut variants = vec![];
             while !self.eat("}") {
@@ -1033,7 +1092,21 @@ impl Parser<'_> {
                 if self.eat("}") {
                     break;
                 }
-                let variant = self.name()?;
+                let mut location = None;
+                let variant = self.declared_name(&mut location)?;
+                if let Some(declarations) = &mut self.declarations {
+                    declarations.push(Declaration {
+                        name: variant.clone(),
+                        span: location.expect("parsed enum variant identifier"),
+                        scope: Span {
+                            end: self.text.len(),
+                            ..Default::default()
+                        },
+                        kind: DeclarationKind::EnumVariant(
+                            qualifier.as_ref().expect("enabled editor metadata").clone(),
+                        ),
+                    });
+                }
                 let mut fields = vec![];
                 if self.eat("(") && !self.eat(")") {
                     loop {
@@ -1055,7 +1128,7 @@ impl Parser<'_> {
             StatementKind::Enum { name, variants }
         } else if self.eat(Keyword::Fn.text()) {
             let name = self.declared_name(&mut name_span)?;
-            let generics = self.generics()?;
+            let generics = self.generics(span)?;
             self.expect("(")?;
             let mut parameters = vec![];
             if !self.eat(")") {
@@ -1229,6 +1302,15 @@ impl Parser<'_> {
         };
         let mut span = span;
         span.end = self.offset;
+        if let Some(declarations) = &mut self.declarations {
+            for declaration in &mut declarations[declaration_start..] {
+                if declaration.kind == DeclarationKind::TypeParameter
+                    && declaration.scope.start == span.start
+                {
+                    declaration.scope.end = span.end;
+                }
+            }
+        }
         Ok(Statement {
             kind,
             span,
@@ -1295,11 +1377,23 @@ impl Parser<'_> {
             TypeExpr::Record(fields)
         } else {
             let type_start = self.offset;
+            let mut type_span = self.span();
             let mut name = self.name()?;
+            type_span.end = type_start + name.len();
             self.highlight(type_start, type_start + name.len(), "type");
             while self.eat(".") {
                 name.push('.');
-                name.push_str(&self.name()?);
+                let start = self.offset;
+                let part = self.name()?;
+                type_span.end = start + part.len();
+                self.highlight(start, type_span.end, "type");
+                name.push_str(&part);
+            }
+            if let Some(references) = &mut self.type_references {
+                references.push(TypeReference {
+                    name: name.clone(),
+                    span: type_span,
+                });
             }
             let mut args = vec![];
             if self.is("<") && !self.numeric_refinement_ahead() && self.eat("<") {

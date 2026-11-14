@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 native = ["dep:pango", "dep:pangocairo", "dep:cairo", "dep:skia-safe", "dep:tempfile"]
+fontconfig = ["native"]
 
 [dependencies]
 serde = { workspace = true, features = ["derive", "rc"] }

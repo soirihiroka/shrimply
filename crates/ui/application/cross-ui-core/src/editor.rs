@@ -118,7 +118,7 @@ impl EditorSession {
             &project.borrow(),
             audio_levels.clone(),
         )?);
-        connect_audio_playback(&project, &player_state, &audio_player);
+        player_state::connect_audio_playback(&project, &player_state, &audio_player);
         let commit_status = Rc::new(RefCell::new(project::CommitStatus::Idle));
         let current_commit_status = commit_status.clone();
         let title_dirty = Rc::new(Cell::new(true));
@@ -327,71 +327,6 @@ impl Drop for EditorSession {
     fn drop(&mut self) {
         self.audio_player.stop();
     }
-}
-
-fn connect_audio_playback(
-    project: &Rc<RefCell<Project>>,
-    player_state: &player_state::SharedPlayerState,
-    audio_player: &Rc<shrimply_audio_engine::AudioPlayer>,
-) {
-    let project = project.clone();
-    let media_player = audio_player.clone();
-    let media_state = player_state.clone();
-    let last_snapshot = player_state::snapshot(player_state);
-    let last_position = Rc::new(Cell::new(last_snapshot.position));
-    let last_playing = Rc::new(Cell::new(last_snapshot.playing));
-    let last_playback_speed = Rc::new(Cell::new(last_snapshot.playback_speed));
-    player_state::connect_named(player_state, "editor audio sync", move |event| {
-        let snapshot = player_state::snapshot(&media_state);
-        let position_changed = last_position.get() != snapshot.position;
-        let playing_changed = last_playing.get() != snapshot.playing;
-        let playback_speed_changed = last_playback_speed.get() != snapshot.playback_speed;
-        let project_audio_changed = matches!(
-            event,
-            player_state::PlayerEvent::Project(change) if change.audio
-        );
-        let natural_playback = matches!(
-            event,
-            player_state::PlayerEvent::State(player_state::StateChange {
-                position: Some(player_state::PositionChange::Playback),
-                ..
-            })
-        );
-        if project_audio_changed {
-            media_player.set_project(&project.borrow());
-        }
-        if (position_changed && !natural_playback)
-            || playing_changed
-            || playback_speed_changed
-            || project_audio_changed
-        {
-            if (position_changed && !natural_playback)
-                || (playing_changed && snapshot.playing)
-                || project_audio_changed
-            {
-                media_player.seek(snapshot.position);
-            }
-            media_player.set_playback_speed(snapshot.playback_speed);
-            media_player.set_playing(snapshot.playing);
-            if position_changed
-                && !snapshot.playing
-                && matches!(
-                    event,
-                    player_state::PlayerEvent::State(player_state::StateChange {
-                        position: Some(player_state::PositionChange::Seek),
-                        ..
-                    })
-                )
-            {
-                media_player.preview_from(snapshot.position);
-            }
-        }
-        if position_changed || playing_changed || playback_speed_changed {
-            last_position.set(snapshot.position);
-            last_playing.set(snapshot.playing);
-            last_playback_speed.set(snapshot.playback_speed);
-        }
-    });
 }
 
 enum AfterSave {

@@ -248,6 +248,26 @@ pub fn frames_per_second_milli(frames: u64, elapsed: std::time::Duration) -> u64
     (u128::from(frames) * 1_000_000_000_000 / elapsed.as_nanos()).min(u128::from(u64::MAX)) as u64
 }
 
+pub fn completed_fraction(completed: u64, total: u64) -> f64 {
+    if total == 0 {
+        1.0
+    } else {
+        (completed as f64 / total as f64).clamp(0.0, 1.0)
+    }
+}
+
+/// Compare signed timestamps with distinct rational time bases without rounding.
+pub fn compare_timestamps(left: (i64, i32, i32), right: (i64, i32, i32)) -> std::cmp::Ordering {
+    let (left, left_numerator, left_denominator) = left;
+    let (right, right_numerator, right_denominator) = right;
+    assert!(
+        left_denominator > 0 && right_denominator > 0,
+        "timestamp denominators must be positive"
+    );
+    (i128::from(left) * i128::from(left_numerator) * i128::from(right_denominator))
+        .cmp(&(i128::from(right) * i128::from(right_numerator) * i128::from(left_denominator)))
+}
+
 pub fn duration_for_frames_at_millifps(frames: u64, fps_milli: u64) -> std::time::Duration {
     if fps_milli == 0 {
         return std::time::Duration::ZERO;

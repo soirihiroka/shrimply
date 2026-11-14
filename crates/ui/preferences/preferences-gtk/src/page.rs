@@ -51,7 +51,6 @@ pub fn show_preferences_dialog(
         caption_size_range.step as f64,
     );
     caption_font_size.set_title(tr!("Font Size").as_ref());
-    caption_font_size.set_value(snapshot.caption_font_size as f64);
     caption_font_size.set_digits(0);
 
     let caption_background_color_row = adw::ActionRow::builder()
@@ -69,7 +68,6 @@ pub fn show_preferences_dialog(
         duration_range.step as f64 / duration_range.scale as f64,
     );
     default_visual_duration.set_title(tr!("Default Visual Duration").as_ref());
-    default_visual_duration.set_value(snapshot.default_visual_duration.as_secs_f64());
     default_visual_duration.set_digits(1);
 
     let snap_radius = adw::SpinRow::with_range(
@@ -80,7 +78,6 @@ pub fn show_preferences_dialog(
     snap_radius.set_title(tr!("Snap Attraction Radius").as_ref());
     snap_radius
         .set_subtitle(tr!("Distance in pixels for timeline, beat, and preview snapping").as_ref());
-    snap_radius.set_value(f64::from(snapshot.timeline_snap_radius_px));
     snap_radius.set_digits(0);
 
     let timeline_group = adw::PreferencesGroup::new();
@@ -95,7 +92,6 @@ pub fn show_preferences_dialog(
     );
     preview_padding.set_title(tr!("Padding").as_ref());
     preview_padding.set_subtitle(tr!("Space around the video frame in pixels").as_ref());
-    preview_padding.set_value(f64::from(snapshot.preview_padding_px));
     preview_padding.set_digits(0);
 
     let preview_shadow_size = adw::SpinRow::with_range(
@@ -106,7 +102,6 @@ pub fn show_preferences_dialog(
     preview_shadow_size.set_title(tr!("Shadow Size").as_ref());
     preview_shadow_size
         .set_subtitle(tr!("Drop shadow extent around the video frame in pixels").as_ref());
-    preview_shadow_size.set_value(f64::from(snapshot.preview_shadow_size_px));
     preview_shadow_size.set_digits(0);
 
     let preview_upsample_method = adw::ComboRow::new();
@@ -120,10 +115,6 @@ pub fn show_preferences_dialog(
             .map(AsRef::as_ref)
             .collect::<Vec<_>>(),
     )));
-    preview_upsample_method.set_selected(match snapshot.preview_upsample_method {
-        preferences_store::PreviewUpsampleMethod::Nearest => 0,
-        preferences_store::PreviewUpsampleMethod::Bilinear => 1,
-    });
 
     let preview_downsample_method = adw::ComboRow::new();
     preview_downsample_method.set_title(tr!("Preview Downsample Method").as_ref());
@@ -136,11 +127,6 @@ pub fn show_preferences_dialog(
             .map(AsRef::as_ref)
             .collect::<Vec<_>>(),
     )));
-    preview_downsample_method.set_selected(match snapshot.preview_downsample_method {
-        preferences_store::PreviewDownsampleMethod::Nearest => 0,
-        preferences_store::PreviewDownsampleMethod::Bilinear => 1,
-        preferences_store::PreviewDownsampleMethod::Trilinear => 2,
-    });
 
     let preview_group = adw::PreferencesGroup::new();
     preview_group.set_title(tr!("Preview").as_ref());
@@ -167,7 +153,6 @@ pub fn show_preferences_dialog(
     temporal_decoder_pool_size.set_title(tr!("Temporal Decoder Pool Size").as_ref());
     temporal_decoder_pool_size
         .set_subtitle(tr!("Maximum number of active video decoder sessions").as_ref());
-    temporal_decoder_pool_size.set_value(f64::from(snapshot.temporal_decoder_pool_size));
     temporal_decoder_pool_size.set_digits(0);
 
     let gpu_host_memory = adw::SpinRow::with_range(
@@ -180,12 +165,6 @@ pub fn show_preferences_dialog(
         tr!("Maximum system RAM available for CUDA spill and reconstructible GPU resources")
             .as_ref(),
     );
-    let preferences_store::PreferenceValue::Integer(memory_quarters) =
-        preferences_store::value(&preferences, preferences_store::PreferenceId::GpuHostMemory)
-    else {
-        unreachable!("GPU host memory must have an integer UI representation")
-    };
-    gpu_host_memory.set_value(memory_quarters as f64 / memory_range.scale as f64);
     gpu_host_memory.set_digits(2);
 
     let performance_group = adw::PreferencesGroup::new();
@@ -242,16 +221,6 @@ pub fn show_preferences_dialog(
     dialog.add(&crate::trust::page());
     dialog.add(&server::page(preferences.clone(), &blender_group));
 
-    let font_preferences = preferences.clone();
-    caption_font_size.connect_value_notify(move |row| {
-        preferences_store::set_value(
-            &font_preferences,
-            preferences_store::PreferenceId::CaptionFontSize,
-            preferences_store::PreferenceValue::Integer(row.value().round() as i64),
-        )
-        .expect("caption font size has a fixed integer type");
-    });
-
     let color_store = preferences.clone();
     let color_button = ColorPicker::builder(snapshot.caption_background_color)
         .title(tr!("Caption background color").as_ref())
@@ -269,89 +238,45 @@ pub fn show_preferences_dialog(
     color_button.set_vexpand(false);
     caption_background_color_row.add_suffix(&color_button);
 
-    let duration_store = preferences.clone();
-    default_visual_duration.connect_value_notify(move |row| {
-        preferences_store::set_value(
-            &duration_store,
-            preferences_store::PreferenceId::DefaultVisualDuration,
-            preferences_store::PreferenceValue::Integer(
-                (row.value() * duration_range.scale as f64).round() as i64,
-            ),
-        )
-        .expect("visual duration has a fixed integer UI type");
-    });
-
-    let snap_radius_store = preferences.clone();
-    snap_radius.connect_value_notify(move |row| {
-        preferences_store::set_value(
-            &snap_radius_store,
-            preferences_store::PreferenceId::TimelineSnapRadius,
-            preferences_store::PreferenceValue::Integer(row.value().round() as i64),
-        )
-        .expect("timeline snap radius has a fixed integer type");
-    });
-
-    let preview_padding_store = preferences.clone();
-    preview_padding.connect_value_notify(move |row| {
-        preferences_store::set_value(
-            &preview_padding_store,
-            preferences_store::PreferenceId::PreviewPadding,
-            preferences_store::PreferenceValue::Integer(row.value().round() as i64),
-        )
-        .expect("preview padding has a fixed integer type");
-    });
-
-    let preview_shadow_store = preferences.clone();
-    preview_shadow_size.connect_value_notify(move |row| {
-        preferences_store::set_value(
-            &preview_shadow_store,
-            preferences_store::PreferenceId::PreviewShadowSize,
-            preferences_store::PreferenceValue::Integer(row.value().round() as i64),
-        )
-        .expect("preview shadow size has a fixed integer type");
-    });
-
-    let preview_upsample_store = preferences.clone();
-    preview_upsample_method.connect_selected_notify(move |row| {
-        preferences_store::set_value(
-            &preview_upsample_store,
-            preferences_store::PreferenceId::PreviewUpsampleMethod,
-            preferences_store::PreferenceValue::Integer(i64::from(row.selected())),
-        )
-        .expect("preview upsample method has a fixed integer UI type");
-    });
-
-    let preview_downsample_store = preferences.clone();
-    preview_downsample_method.connect_selected_notify(move |row| {
-        preferences_store::set_value(
-            &preview_downsample_store,
-            preferences_store::PreferenceId::PreviewDownsampleMethod,
-            preferences_store::PreferenceValue::Integer(i64::from(row.selected())),
-        )
-        .expect("preview downsample method has a fixed integer UI type");
-    });
-
-    let temporal_decoder_pool_store = preferences.clone();
-    temporal_decoder_pool_size.connect_value_notify(move |row| {
-        preferences_store::set_value(
-            &temporal_decoder_pool_store,
-            preferences_store::PreferenceId::TemporalDecoderPoolSize,
-            preferences_store::PreferenceValue::Integer(row.value().round() as i64),
-        )
-        .expect("decoder pool size has a fixed integer type");
-    });
-
-    let gpu_host_memory_store = preferences.clone();
-    gpu_host_memory.connect_value_notify(move |row| {
-        preferences_store::set_value(
-            &gpu_host_memory_store,
-            preferences_store::PreferenceId::GpuHostMemory,
-            preferences_store::PreferenceValue::Integer(
-                (row.value() * memory_range.scale as f64).round() as i64,
-            ),
-        )
-        .expect("GPU host memory has a fixed integer UI type");
-    });
+    use preferences_store::{PreferenceId as Id, PreferenceValue as Value};
+    for (row, id) in [
+        (caption_font_size, Id::CaptionFontSize),
+        (default_visual_duration, Id::DefaultVisualDuration),
+        (snap_radius, Id::TimelineSnapRadius),
+        (preview_padding, Id::PreviewPadding),
+        (preview_shadow_size, Id::PreviewShadowSize),
+        (temporal_decoder_pool_size, Id::TemporalDecoderPoolSize),
+        (gpu_host_memory, Id::GpuHostMemory),
+    ] {
+        let store = preferences.clone();
+        let range = preferences_store::integer_range(id).expect("numeric preference range");
+        let Value::Integer(current) = preferences_store::value(&store, id) else {
+            unreachable!("numeric preference value");
+        };
+        row.set_value(current as f64 / range.scale as f64);
+        row.connect_value_notify(move |row| {
+            preferences_store::set_value(
+                &store,
+                id,
+                Value::Integer((row.value() * range.scale as f64).round() as i64),
+            )
+            .expect("numeric preference has an integer UI value");
+        });
+    }
+    for (row, id) in [
+        (preview_upsample_method, Id::PreviewUpsampleMethod),
+        (preview_downsample_method, Id::PreviewDownsampleMethod),
+    ] {
+        let store = preferences.clone();
+        let Value::Integer(current) = preferences_store::value(&store, id) else {
+            unreachable!("preference choice value");
+        };
+        row.set_selected(current.try_into().expect("nonnegative preference choice"));
+        row.connect_selected_notify(move |row| {
+            preferences_store::set_value(&store, id, Value::Integer(i64::from(row.selected())))
+                .expect("preference choice has an integer UI value");
+        });
+    }
 
     let clear_store = preferences.clone();
     let clear_row = blender_row.clone();

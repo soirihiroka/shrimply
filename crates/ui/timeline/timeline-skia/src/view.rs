@@ -248,3 +248,12 @@ impl TimelineViewState {
         );
     }
 }
+
+impl From<TimelineViewState> for shrimply_timeline_paint_skia::Viewport {
+    fn from(view: TimelineViewState) -> Self {
+        Self {
+            scale: crate::geometry::ruler_scale(view),
+            scroll_y: view.scroll_y,
+        }
+    }
+}

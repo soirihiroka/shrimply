@@ -3,7 +3,7 @@ use crate::items::*;
 use crate::timeline_operation::SequenceTimeline;
 use project::FontFamily;
 use selection_state::SharedSelectionState;
-use shrimply_editor_state::player_state::{self, ProjectChange, SharedPlayerState};
+use shrimply_player_core::{self as player_state, ProjectChange, SharedPlayerState};
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -13,6 +13,9 @@ use std::{
         mpsc,
     },
 };
+const ANIMATION_FRAME_INTERVAL: std::time::Duration =
+    std::time::Duration::from_nanos(1_000_000_000 / 60);
+
 mod context_edits;
 pub use context_edits::ClipboardPaste;
 mod context_menu;
@@ -36,12 +39,18 @@ pub struct Scene {
     pub drag_collision_mode: DragCollisionMode,
     suppress_double_click_selection: bool,
     started_at: Instant,
+    last_frame_at: Instant,
     pending_scrolls: Vec<TimelineScrollEvent>,
     overscroll: Option<TimelineOverscroll>,
     horizontal_scrollbar: shrimply_components_skia::slider::Lifecycle,
     vertical_scrollbar: shrimply_components_skia::slider::Lifecycle,
     modifiers: TimelineModifiers,
     pointer_pos: Option<Vec2>,
+    touch_input: shrimply_components_skia::input::TouchInput,
+    pending_context_menu: Option<(Vec2, bool)>,
+    touch_selection: Option<selection_state::SelectionSnapshot>,
+    touch_playhead: Option<Time>,
+    touch_playing: Option<bool>,
     software_cursor: Option<TimelineSoftwareCursor>,
     pointer_press_origin: Option<Vec2>,
     pointer_release_pos: Option<Vec2>,
@@ -88,6 +97,7 @@ pub struct Scene {
     pub waveforms: WaveformMap,
     beats: BeatMap,
     pub snap_repository: crate::snapping::SnapRepo,
+    snapping_cache: crate::snapping::Cache,
     pub default_visual_duration: Time,
     pub default_text_font_family: FontFamily,
     pub(crate) project: Rc<RefCell<Project>>,
@@ -114,7 +124,10 @@ pub struct Scene {
     pub(crate) pending_errors: std::collections::VecDeque<String>,
     pending_seek: Option<Time>,
     suspended: bool,
+    wake: Option<Arc<dyn Fn() + Send + Sync>>,
     revision: u64,
+    timeline_end: Time,
+    expanded_paths: Vec<Vec<uuid::Uuid>>,
 }
 #[derive(Default)]
 struct MediaRefresh {
@@ -221,6 +234,8 @@ impl Scene {
         let snapshot = preferences::snapshot(&preferences);
         let tools = ToolState::from_preferences(&snapshot);
 
+        let timeline_end = folded_sequence::expanded_timeline_end(&project.borrow());
+        let expanded_paths = project.borrow().expanded_sequence_paths.clone();
         let revision = player_state::snapshot(&player).revision;
         let performance =
             crate::performance::State::new(project.clone(), player.clone(), playback_performance);
@@ -232,12 +247,18 @@ impl Scene {
             drag_collision_mode: tools.drag_collision,
             suppress_double_click_selection: false,
             started_at: Instant::now(),
+            last_frame_at: Instant::now(),
             pending_scrolls: Vec::new(),
             overscroll: None,
             horizontal_scrollbar: shrimply_components_skia::slider::Lifecycle::default(),
             vertical_scrollbar: shrimply_components_skia::slider::Lifecycle::default(),
             modifiers: TimelineModifiers::default(),
             pointer_pos: None,
+            touch_input: Default::default(),
+            touch_selection: None,
+            touch_playhead: None,
+            touch_playing: None,
+            pending_context_menu: None,
             software_cursor: None,
             pointer_press_origin: None,
             pointer_release_pos: None,
@@ -283,6 +304,7 @@ impl Scene {
             waveforms: WaveformMap::new(),
             beats: BeatMap::new(),
             snap_repository: crate::snapping::SnapRepo::default(),
+            snapping_cache: crate::snapping::Cache::default(),
             default_visual_duration: snapshot.default_visual_duration,
             default_text_font_family: snapshot.default_text_font_family,
             project,
@@ -306,7 +328,10 @@ impl Scene {
             pending_errors: std::collections::VecDeque::new(),
             pending_seek: None,
             suspended: false,
+            wake: None,
             revision,
+            timeline_end,
+            expanded_paths,
         }
     }
     pub fn set_stabilization_handler(&mut self, handler: fn(&project::VideoItem)) {
@@ -319,6 +344,37 @@ impl Scene {
         self.pointer_release_pos = None;
         self.middle_pressed = false;
         self.middle_released = false;
+    }
+
+    /// Event-driven native hosts use this to schedule completed media work.
+    /// GTK/Qt hosts may retain their existing frame-clock polling.
+    pub fn set_wake(&mut self, wake: Arc<dyn Fn() + Send + Sync>) {
+        self.performance.set_wake(Arc::downgrade(&wake));
+        self.wake = Some(wake);
+    }
+
+    /// Earliest UI work which needs a timer; media completion uses `set_wake`.
+    pub fn next_update(&self) -> Option<std::time::Duration> {
+        if self.media_refresh.redraw.get() || self.media_refresh.beats.get() {
+            return Some(std::time::Duration::ZERO);
+        }
+        let delayed = self
+            .media_refresh
+            .waveforms
+            .get()
+            .map(|at| WAVEFORM_RELOAD_DELAY.saturating_sub(at.elapsed()));
+        let active = self.animating()
+            || self.active_audio_recording.is_some()
+            || self.active_video_recording.is_some()
+            || self.active_caption_speech.is_some()
+            || self.active_transcription.is_some()
+            || !self.external_downloads.is_empty();
+        let frame =
+            active.then(|| ANIMATION_FRAME_INTERVAL.saturating_sub(self.last_frame_at.elapsed()));
+        match (delayed, frame) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     fn apply_preferences(&mut self, preferences: &preferences::PreferencesSnapshot) {
@@ -341,6 +397,7 @@ impl Scene {
         self.waveforms.clear();
         let snapshot = self.project.borrow().clone();
         let chunks = waveform_chunks_per_second_from_frame_step(frame_step_seconds(&snapshot));
+        let wake = self.wake.clone();
         std::thread::spawn(move || {
             waveform::load_project_waveforms_cancellable(
                 &snapshot,
@@ -348,8 +405,15 @@ impl Scene {
                 || cancel.load(Ordering::Relaxed),
                 |key, update| {
                     let _ = sender.send((key, update));
+                    if let Some(wake) = &wake {
+                        wake();
+                    }
                 },
             );
+            drop(sender);
+            if let Some(wake) = &wake {
+                wake();
+            }
         });
     }
 
@@ -362,14 +426,22 @@ impl Scene {
         let snapshot = self.project.borrow().clone();
         audio::beat::begin_loading(&snapshot);
         audio::beat::retain_enabled(&mut self.beats, &snapshot);
+        let wake = self.wake.clone();
         std::thread::spawn(move || {
             audio::beat::load_project_beats_cancellable(
                 &snapshot,
                 || cancel.load(Ordering::Relaxed),
                 |key, update| {
                     let _ = sender.send((key, update));
+                    if let Some(wake) = &wake {
+                        wake();
+                    }
                 },
             );
+            drop(sender);
+            if let Some(wake) = &wake {
+                wake();
+            }
         });
     }
 }

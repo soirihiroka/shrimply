@@ -55,7 +55,7 @@ pub(super) fn item(generator: &AudioGenerator, runtime: InspectorRuntime) -> Ins
                         .layered(&path, LayeredState::from(value))
                         .timeline(
                             value.id,
-                            super::audio_modifiers::scalar_graph(
+                            shrimply_inspector_core::keyframe_graph::scalar_graph(
                                 value,
                                 runtime,
                                 presentation.display,

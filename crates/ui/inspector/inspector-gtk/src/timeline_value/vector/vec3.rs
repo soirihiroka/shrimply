@@ -27,7 +27,6 @@ type ItemGetMut = for<'a> fn(&'a mut Project, SelectedItem) -> Option<&'a mut Ti
 enum Vec3Access {
     Scene3dScoped { value_id: Uuid },
     Item { get: ItemGet, get_mut: ItemGetMut },
-    Modifier { id: Uuid, value_id: Uuid },
 }
 
 #[derive(Clone, Copy)]
@@ -68,32 +67,11 @@ impl Vec3Target {
         })
     }
 
-    pub(crate) fn modifier_builder(id: Uuid, value_id: Uuid) -> Vec3TargetBuilder {
-        Vec3TargetBuilder(Self {
-            access: Vec3Access::Modifier { id, value_id },
-            timeline_id: Some(value_id),
-            commit_name: VECTOR_COMMIT,
-            expression_commit_name: VECTOR_EXPRESSION_COMMIT,
-            minimum: None,
-            degrees: false,
-            lock: false,
-        })
-    }
-
     fn value(self, project: &Project, key: SelectedItem) -> Option<&TimelineValue<Vec3>> {
         let value = match self.access {
             Vec3Access::Scene3dScoped { value_id } => selected_scene(project, key.clone())
                 .and_then(|scene| shrimply_inspector_core::scene_3d::vector3(scene, value_id)),
             Vec3Access::Item { get, .. } => get(project, key.clone()),
-            Vec3Access::Modifier { id, value_id } => crate::modifiers::number3(
-                &project
-                    .video_item(&key)?
-                    .modifiers
-                    .iter()
-                    .find(|modifier| modifier.id == id)?
-                    .effect,
-                value_id,
-            ),
         }?;
         if self
             .timeline_id
@@ -114,15 +92,6 @@ impl Vec3Target {
             Vec3Access::Scene3dScoped { value_id } => selected_scene_mut(project, key.clone())
                 .and_then(|scene| shrimply_inspector_core::scene_3d::vector3_mut(scene, value_id)),
             Vec3Access::Item { get_mut, .. } => get_mut(project, key.clone()),
-            Vec3Access::Modifier { id, value_id } => crate::modifiers::number3_mut(
-                &mut project
-                    .video_item_mut(&key)?
-                    .modifiers
-                    .iter_mut()
-                    .find(|modifier| modifier.id == id)?
-                    .effect,
-                value_id,
-            ),
         }?;
         if timeline_id.is_some_and(|timeline_id| value.id != timeline_id) {
             return None;

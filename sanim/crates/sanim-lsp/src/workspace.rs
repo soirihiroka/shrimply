@@ -17,6 +17,8 @@ pub(crate) struct Syntax {
     version: i64,
     pub markup: Vec<sanim_lang::parser::MarkupOpening>,
     pub highlights: Vec<sanim_lang::core::code::Highlight>,
+    pub type_references: Vec<sanim_lang::parser::TypeReference>,
+    pub declarations: Vec<sanim_lang::parser::Declaration>,
 }
 impl OpenDocument {
     pub fn syntax(&self) -> std::cell::Ref<'_, Syntax> {
@@ -41,6 +43,8 @@ impl OpenDocument {
         *self.syntax.borrow_mut() = Some(Syntax {
             version: self.document.version,
             markup: recovery.markup.clone(),
+            type_references: recovery.type_references.clone(),
+            declarations: recovery.declarations.clone(),
             highlights: sanim_lang::core::code::normalize_highlights(
                 &highlights,
                 &self.document.text,

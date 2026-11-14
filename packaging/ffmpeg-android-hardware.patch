@@ -1,0 +1,47 @@
+--- a/libavcodec/mediacodec_wrapper.c
++++ b/libavcodec/mediacodec_wrapper.c
+@@ -50,6 +50,7 @@
+     jmethodID get_supported_types_id;
+     jmethodID is_encoder_id;
+     jmethodID is_software_only_id;
++    jmethodID is_hardware_accelerated_id;
+ 
+     jclass codec_capabilities_class;
+     jfieldID color_formats_id;
+@@ -75,6 +76,7 @@
+         { "android/media/MediaCodecInfo", "getSupportedTypes", "()[Ljava/lang/String;", FF_JNI_METHOD, OFFSET(get_supported_types_id), 1 },
+         { "android/media/MediaCodecInfo", "isEncoder", "()Z", FF_JNI_METHOD, OFFSET(is_encoder_id), 1 },
+         { "android/media/MediaCodecInfo", "isSoftwareOnly", "()Z", FF_JNI_METHOD, OFFSET(is_software_only_id), 0 },
++        { "android/media/MediaCodecInfo", "isHardwareAccelerated", "()Z", FF_JNI_METHOD, OFFSET(is_hardware_accelerated_id), 1 },
+ 
+     { "android/media/MediaCodecInfo$CodecCapabilities", NULL, NULL, FF_JNI_CLASS, OFFSET(codec_capabilities_class), 1 },
+         { "android/media/MediaCodecInfo$CodecCapabilities", "colorFormats", "[I", FF_JNI_FIELD, OFFSET(color_formats_id), 1 },
+@@ -540,6 +542,15 @@
+             }
+         }
+ 
++        /* Shrimply requires hardware video codecs on its API 33+ Android path. */
++        if (!strncmp(mime, "video/", 6)) {
++            int hardware = (*env)->CallBooleanMethod(env, info, jfields.is_hardware_accelerated_id);
++            if (ff_jni_exception_check(env, 1, log_ctx) < 0)
++                goto done;
++            if (!hardware)
++                goto done_with_info;
++        }
++
+         codec_name = (*env)->CallObjectMethod(env, info, jfields.get_name_id);
+         if (ff_jni_exception_check(env, 1, log_ctx) < 0) {
+             goto done;
+--- a/libavcodec/mediacodecdec_common.c
++++ b/libavcodec/mediacodecdec_common.c
+@@ -781,7 +781,9 @@
+     if (!s->codec_name) {
+         // getCodecNameByType() can fail due to missing JVM, while NDK
+         // mediacodec can be used without JVM.
+-        if (!s->use_ndk_codec) {
++        /* A requested hardware device must not fall back to MIME selection,
++         * which can choose a software MediaCodec implementation. */
++        if (!s->use_ndk_codec || avctx->hw_device_ctx) {
+             return AVERROR_EXTERNAL;
+         }
+         av_log(avctx, AV_LOG_INFO, "Failed to getCodecNameByType\n");

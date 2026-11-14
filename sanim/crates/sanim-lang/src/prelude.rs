@@ -537,14 +537,31 @@ pub(crate) fn finalize(builtin: &mut Builtin) {
         .expect("registered duration parameter");
 }
 
-pub fn builtin(name: &str) -> Option<&'static Builtin> {
+/// All native declarations, including receiver methods, from their owning registries.
+pub fn all_builtins() -> impl Iterator<Item = &'static Builtin> {
     builtins()
         .iter()
-        .find(|v| v.name == name)
-        .or_else(|| crate::dataframe::builtin(name))
-        .or_else(|| crate::code_view::builtin(name))
-        .or_else(|| crate::scrolling::builtin(name))
-        .or_else(|| crate::list_functions::builtin(name))
+        .chain(crate::dataframe::methods())
+        .chain(crate::code_view::methods().iter())
+        .chain(crate::scrolling::methods().iter())
+        .chain(
+            crate::list_functions::definitions()
+                .iter()
+                .map(|definition| &definition.builtin),
+        )
+}
+
+pub fn builtin(name: &str) -> Option<&'static Builtin> {
+    static INDEX: std::sync::OnceLock<std::collections::BTreeMap<&'static str, &'static Builtin>> =
+        std::sync::OnceLock::new();
+    INDEX
+        .get_or_init(|| {
+            all_builtins()
+                .map(|builtin| (builtin.name, builtin))
+                .collect()
+        })
+        .get(name)
+        .copied()
 }
 
 pub fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {

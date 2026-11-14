@@ -1,5 +1,5 @@
-use shrimply_editor_state::player_state::{self, SharedPlayerState};
 use shrimply_playback_performance as playback_performance;
+use shrimply_player_core::{self as player_state, SharedPlayerState};
 use shrimply_project_document::project::Project;
 use std::{
     cell::{Cell, RefCell},
@@ -77,6 +77,21 @@ impl State {
             _lifetime: lifetime,
             player: weak_player,
         }
+    }
+
+    pub(super) fn set_wake(&self, wake: std::sync::Weak<dyn Fn() + Send + Sync>) {
+        let updates = playback_performance::subscribe(&self.collector);
+        std::thread::Builder::new()
+            .name("timeline-performance-wake".into())
+            .spawn(move || {
+                while updates.recv_blocking().is_ok() {
+                    let Some(wake) = wake.upgrade() else {
+                        break;
+                    };
+                    wake();
+                }
+            })
+            .expect("start timeline performance notification");
     }
 
     pub(super) fn snapshot(&self) -> Arc<playback_performance::Snapshot> {

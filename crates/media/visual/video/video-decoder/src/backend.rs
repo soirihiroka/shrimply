@@ -7,6 +7,11 @@ pub enum DecoderBackend {
     Software,
     Hardware(HardwareDevice),
     PreferHardware(HardwareDevice),
+    #[cfg(target_os = "android")]
+    Android {
+        device: HardwareDevice,
+        pool: Arc<shrimply_visual_frame::android::AndroidFramePool>,
+    },
 }
 
 /// Retains the exact native device used by the consuming GPU backend.
@@ -50,6 +55,9 @@ impl HardwareDevice {
         match self.kind() {
             sys::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA => Ok(sys::AVPixelFormat::AV_PIX_FMT_CUDA),
             sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI => Ok(sys::AVPixelFormat::AV_PIX_FMT_VAAPI),
+            sys::AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC => {
+                Ok(sys::AVPixelFormat::AV_PIX_FMT_MEDIACODEC)
+            }
             sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX => {
                 Ok(sys::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX)
             }
@@ -95,6 +103,11 @@ impl DecoderBackend {
         parameters: &ffmpeg::codec::Parameters,
         time_base: ffmpeg::Rational,
     ) -> Result<ffmpeg::decoder::Video, String> {
+        #[cfg(target_os = "android")]
+        if let Self::Android { device, pool } = self {
+            pool.claim_decoder()?;
+            return Self::Hardware(device.clone()).open(parameters, time_base);
+        }
         if let Self::PreferHardware(device) = self {
             return Self::Hardware(device.clone()).open(parameters, time_base).or_else(|error| {
                 tracing::info!(%error, "hardware video decoding unavailable; using software decoding");
@@ -106,6 +119,8 @@ impl DecoderBackend {
                 ffmpeg::codec::decoder::find(parameters.id()).ok_or("video decoder not found")?
             }
             Self::PreferHardware(_) => unreachable!("preferred hardware handled above"),
+            #[cfg(target_os = "android")]
+            Self::Android { .. } => unreachable!("Android hardware handled above"),
             Self::Hardware(device) => {
                 let mut iterator = ptr::null_mut();
                 'codecs: loop {
@@ -152,8 +167,13 @@ impl DecoderBackend {
                 (*context.as_mut_ptr()).get_format = Some(hardware_format);
             }
         }
+        let mut options = ffmpeg::Dictionary::new();
+        if matches!(self, Self::Hardware(device) if device.kind() == sys::AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC)
+        {
+            options.set("ndk_codec", "1");
+        }
         context
-            .open_as(codec)
+            .open_as_with(codec, options)
             .and_then(|opened| opened.video())
             .map_err(|error| format!("open {} video decoder: {error}", codec.name()))
     }
@@ -172,6 +192,9 @@ unsafe extern "C" fn hardware_format(
     let requested = match kind {
         sys::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA => sys::AVPixelFormat::AV_PIX_FMT_CUDA,
         sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI => sys::AVPixelFormat::AV_PIX_FMT_VAAPI,
+        sys::AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC => {
+            sys::AVPixelFormat::AV_PIX_FMT_MEDIACODEC
+        }
         sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX => {
             sys::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX
         }
@@ -194,7 +217,7 @@ unsafe extern "C" fn hardware_format(
         cursor = unsafe { cursor.add(1) };
     }
     // Preserve the existing macOS fallback policy. CUDA and VA-API must never
-    // silently switch to CPU frames when hardware initialization fails.
+    // silently switch to CPU frames when hardware initialization fails (including MediaCodec).
     if kind == sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX {
         software
     } else {

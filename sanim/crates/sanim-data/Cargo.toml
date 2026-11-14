@@ -4,18 +4,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["native-text", "media"]
+native-text = ["shrimply-fonts/native", "dep:pango", "dep:pangocairo", "dep:cairo-rs"]
+media = ["dep:shrimply-drawing-skia"]
+
 [dependencies]
-shrimply-drawing-skia.workspace = true
-shrimply-fonts = { workspace = true, features = ["native"] }
+shrimply-drawing-skia = { workspace = true, optional = true }
+shrimply-fonts.workspace = true
 sanim-core.workspace = true
 imbl.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 zip.workspace = true
-pango.workspace = true
-pangocairo.workspace = true
-cairo-rs.workspace = true
+pango = { workspace = true, optional = true }
+pangocairo = { workspace = true, optional = true }
+cairo-rs = { workspace = true, optional = true }
 rusqlite.workspace = true
 serde_yaml_ng.workspace = true
 num-traits.workspace = true
@@ -31,3 +36,15 @@ tree-sitter-cpp = "0.23.4"
 tree-sitter-toml-ng = "0.7.0"
 tree-sitter-yaml = "0.7.2"
 tree-sitter-sequel = "0.3.13"
+
+[[test]]
+name = "fonts"
+required-features = ["native-text"]
+
+[[test]]
+name = "code_transitions"
+required-features = ["native-text"]
+
+[[test]]
+name = "media"
+required-features = ["native-text", "media"]

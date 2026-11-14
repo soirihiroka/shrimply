@@ -1,11 +1,11 @@
 use hashbrown::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::decode::{DecodeControl, VideoPlane};
 use crate::gpu::{CompositedVideoFrame, CudaVideoCompositor, ExportGpuTiming, ExportPixelFormat};
@@ -17,7 +17,6 @@ pub const EXPORT_ASSETS_LOADING: &str = "visual assets are still loading";
 use crate::visual_source::{
     VisualElement, VisualPrepareRequest, VisualRender, VisualRenderRequest, VisualSourceCache,
 };
-use shrimply_math_core::Fraction;
 use shrimply_project_document::project::{
     Color, ItemAddress, LayerBlendMode, Project, SequenceReference, TextureAddressMode, Time,
     VideoItem, VideoItemContent, VideoSampleMethod,
@@ -41,237 +40,24 @@ macro_rules! abort_render_if_superseded {
 mod frame_rgba;
 pub use frame_rgba::{RgbaVideoFrame, render_items_rgba, render_project_rgba};
 #[cfg(target_os = "linux")]
-mod intel;
+use shrimply_preview_render_vulkan::worker as intel;
 mod preload;
 mod render;
 mod sam2;
 
 use render::{FrameItemRenderer, render_project_frame};
 
-const PREVIEW_DISPLAY_SURFACES: usize = 2;
-
-pub enum VideoCommand {
-    SetProject {
-        project: Arc<Project>,
-        revision: u64,
-    },
-    SetPreviewExclusion(Option<Uuid>),
-    ConfigureResources(RenderResourceConfig),
-    Render {
-        position: Time,
-        accuracy: CompositeAccuracy,
-    },
-    Stop,
-}
-
-impl VideoCommand {
-    pub fn set_project(project: Arc<Project>, revision: u64) -> Self {
-        Self::SetProject { project, revision }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RenderResourceConfig {
-    pub maximum_temporal_decoders: usize,
-    pub gpu_host_memory_gib: Fraction,
-}
-
-impl Default for RenderResourceConfig {
-    fn default() -> Self {
-        Self {
-            maximum_temporal_decoders: crate::decode::DEFAULT_VIDEO_DECODER_POOL_SIZE,
-            gpu_host_memory_gib: Fraction::new_raw(
-                shrimply_gpu_cuda_memory::default_host_budget_bytes(),
-                1024_u64.pow(3),
-            ),
-        }
-    }
-}
-
-type PendingProject = Arc<Mutex<Option<(Arc<Project>, u64, u64)>>>;
-
-#[derive(Clone)]
-pub struct VideoCommandSender {
-    sender: Sender<WorkerCommand>,
-    next_request_id: Arc<AtomicU64>,
-    cancel_generation: Arc<AtomicU64>,
-    last_render: Arc<Mutex<Option<CompositeAccuracy>>>,
-    latest_project_generation: Arc<AtomicU64>,
-    pending_project: PendingProject,
-    project_notification_pending: Arc<AtomicBool>,
-    playback_observer: Option<PlaybackRenderObserver>,
-}
-
-pub use shrimply_preview_provider_skia::performance::{
-    RenderEvent as PlaybackRenderEvent, RenderObserver as PlaybackRenderObserver,
+use shrimply_preview_render_core::worker::{
+    EventSender as SyncSender, PendingProjectReset, WorkerCommand, publish_render_event,
+    take_pending_project,
 };
-
-impl VideoCommandSender {
-    pub fn render_generation_is_current(&self, generation: u64) -> bool {
-        self.cancel_generation.load(Ordering::Acquire) == generation
-    }
-
-    pub fn send(&self, command: VideoCommand) -> Result<(), mpsc::SendError<Box<VideoCommand>>> {
-        let worker_command = match command {
-            VideoCommand::SetProject { project, revision } => {
-                self.cancel_generation.fetch_add(1, Ordering::AcqRel);
-                self.last_render
-                    .lock()
-                    .expect("last video render mutex poisoned")
-                    .take();
-                let mut pending = self
-                    .pending_project
-                    .lock()
-                    .expect("pending video project mutex poisoned");
-                let project_generation = self
-                    .latest_project_generation
-                    .fetch_add(1, Ordering::AcqRel)
-                    + 1;
-                let previous = pending.replace((project, revision, project_generation));
-                if self
-                    .project_notification_pending
-                    .swap(true, Ordering::AcqRel)
-                {
-                    drop(pending);
-                    drop(previous);
-                    return Ok(());
-                }
-                if self.sender.send(WorkerCommand::SetProject).is_err() {
-                    self.project_notification_pending
-                        .store(false, Ordering::Release);
-                    let (project, revision, _) = pending
-                        .take()
-                        .expect("pending video project disappeared while sending notification");
-                    *pending = previous;
-                    return Err(mpsc::SendError(Box::new(VideoCommand::SetProject {
-                        project,
-                        revision,
-                    })));
-                }
-                drop(pending);
-                drop(previous);
-                return Ok(());
-            }
-            VideoCommand::SetPreviewExclusion(item_id) => {
-                self.cancel_generation.fetch_add(1, Ordering::AcqRel);
-                WorkerCommand::SetPreviewExclusion(item_id)
-            }
-            VideoCommand::Render { position, accuracy } => {
-                let request_id = self.next_request_id.fetch_add(1, Ordering::AcqRel) + 1;
-                let mut previous = self
-                    .last_render
-                    .lock()
-                    .expect("last video render mutex poisoned");
-                let continuous = previous.is_some_and(|previous| previous == accuracy)
-                    && accuracy.continuous_playback();
-                if !continuous {
-                    self.cancel_generation.fetch_add(1, Ordering::AcqRel);
-                }
-                *previous = Some(accuracy);
-                let cancel_generation = self.cancel_generation.load(Ordering::Acquire);
-                if accuracy.continuous_playback()
-                    && let Some(observer) = &self.playback_observer
-                {
-                    observer(PlaybackRenderEvent::Requested {
-                        request_id,
-                        position,
-                    });
-                }
-                WorkerCommand::Render {
-                    position,
-                    accuracy,
-                    request_id,
-                    cancel_generation,
-                }
-            }
-            VideoCommand::ConfigureResources(config) => {
-                self.cancel_generation.fetch_add(1, Ordering::AcqRel);
-                WorkerCommand::ConfigureResources(config)
-            }
-            VideoCommand::Stop => {
-                self.cancel_generation.fetch_add(1, Ordering::AcqRel);
-                WorkerCommand::Stop
-            }
-        };
-        self.sender.send(worker_command).map_err(|error| {
-            mpsc::SendError(Box::new(match error.0 {
-                WorkerCommand::SourcesChanged => unreachable!("source notifications are internal"),
-                WorkerCommand::SetProject => {
-                    unreachable!("project notifications return before common send handling")
-                }
-                WorkerCommand::SetPreviewExclusion(item_id) => {
-                    VideoCommand::SetPreviewExclusion(item_id)
-                }
-                WorkerCommand::Render {
-                    position, accuracy, ..
-                } => VideoCommand::Render { position, accuracy },
-                WorkerCommand::ConfigureResources(config) => {
-                    VideoCommand::ConfigureResources(config)
-                }
-                WorkerCommand::ScheduleSam2Analysis => {
-                    unreachable!("SAM2 scheduling is an internal compositor command")
-                }
-                WorkerCommand::Stop => VideoCommand::Stop,
-            }))
-        })
-    }
-}
-
-enum WorkerCommand {
-    SourcesChanged,
-    SetProject,
-    SetPreviewExclusion(Option<Uuid>),
-    ConfigureResources(RenderResourceConfig),
-    ScheduleSam2Analysis,
-    Render {
-        position: Time,
-        accuracy: CompositeAccuracy,
-        request_id: u64,
-        cancel_generation: u64,
-    },
-    Stop,
-}
-
-pub enum VideoEvent {
-    Loading {
-        position: Time,
-        show_spinner: bool,
-        render_elapsed: Duration,
-        render_generation: u64,
-    },
-    Frame {
-        frame: CompositedVideoFrame,
-        audio_analysis: FrameAudioAnalysis,
-        position: Time,
-        revision: u64,
-        excluded_item_id: Option<Uuid>,
-        settled: bool,
-        render_elapsed: Duration,
-        render_generation: u64,
-    },
-    Clear {
-        audio_analysis: FrameAudioAnalysis,
-        position: Time,
-        revision: u64,
-        excluded_item_id: Option<Uuid>,
-        render_elapsed: Duration,
-        render_generation: u64,
-    },
-    Manim(shrimply_manim_state::Update),
-    Error(String),
-}
-
-fn publish_render_event(
-    event_tx: &SyncSender<VideoEvent>,
-    event: VideoEvent,
-    accuracy: CompositeAccuracy,
-) {
-    if accuracy.continuous_playback() {
-        let _ = event_tx.try_send(event);
-    } else {
-        let _ = event_tx.send(event);
-    }
-}
+pub use shrimply_preview_render_core::worker::{
+    PlaybackRenderEvent, PlaybackRenderObserver, RenderResourceConfig, VideoCommand,
+    VideoCommandSender,
+};
+pub type VideoEvent = shrimply_preview_render_core::worker::VideoEvent<CompositedVideoFrame>;
+type VideoWorkerChannels =
+    shrimply_preview_render_core::worker::VideoWorkerChannels<CompositedVideoFrame>;
 
 struct RenderedFrame {
     frame: Option<CompositedVideoFrame>,
@@ -899,73 +685,10 @@ pub fn spawn_worker_with_resources_and_observer(
     resource_config: RenderResourceConfig,
     playback_observer: Option<PlaybackRenderObserver>,
 ) -> (VideoCommandSender, Receiver<VideoEvent>) {
-    let (command_tx, command_rx) = mpsc::channel();
-    let (event_tx, event_rx) = mpsc::sync_channel(PREVIEW_DISPLAY_SURFACES);
-    let next_request_id = Arc::new(AtomicU64::new(0));
-    let cancel_generation = Arc::new(AtomicU64::new(0));
-    let last_render = Arc::new(Mutex::new(None));
-    let latest_project_generation = Arc::new(AtomicU64::new(0));
-    let pending_project = Arc::new(Mutex::new(None));
-    let project_notification_pending = Arc::new(AtomicBool::new(false));
-    let sam2_scheduler = crate::sam2_analysis::Scheduler::new({
-        let command_tx = command_tx.clone();
-        move || {
-            let _ = command_tx.send(WorkerCommand::ScheduleSam2Analysis);
-        }
-    });
-    let source_waker: shrimply_visual_core::generated::SourceWake = Arc::new({
-        let command_tx = command_tx.clone();
-        move || {
-            let _ = command_tx.send(WorkerCommand::SourcesChanged);
-        }
-    });
-    let worker_cancel_generation = cancel_generation.clone();
-    let worker_project_generation = latest_project_generation.clone();
-    let worker_project = pending_project.clone();
-    let worker_project_notification = project_notification_pending.clone();
-    let worker_playback_observer = playback_observer.clone();
-    thread::spawn(move || {
-        video_compositor_worker(
-            project,
-            resource_config,
-            VideoWorkerChannels {
-                source_waker,
-                command_rx,
-                sam2_scheduler,
-                event_tx,
-                cancel_generation: worker_cancel_generation,
-                latest_project_generation: worker_project_generation,
-                pending_project: worker_project,
-                project_notification_pending: worker_project_notification,
-                playback_observer: worker_playback_observer,
-            },
-        )
-    });
-    (
-        VideoCommandSender {
-            sender: command_tx,
-            next_request_id,
-            cancel_generation,
-            last_render,
-            latest_project_generation,
-            pending_project,
-            project_notification_pending,
-            playback_observer,
-        },
-        event_rx,
-    )
-}
-
-struct VideoWorkerChannels {
-    source_waker: shrimply_visual_core::generated::SourceWake,
-    command_rx: Receiver<WorkerCommand>,
-    sam2_scheduler: crate::sam2_analysis::Scheduler,
-    event_tx: SyncSender<VideoEvent>,
-    cancel_generation: Arc<AtomicU64>,
-    latest_project_generation: Arc<AtomicU64>,
-    pending_project: PendingProject,
-    project_notification_pending: Arc<AtomicBool>,
-    playback_observer: Option<PlaybackRenderObserver>,
+    let (sender, events, channels) =
+        shrimply_preview_render_core::worker::channels(playback_observer, None);
+    thread::spawn(move || video_compositor_worker(project, resource_config, channels));
+    (sender, events)
 }
 
 fn video_compositor_worker(
@@ -1377,33 +1100,6 @@ fn schedule_sam2_analysis(
     }
 }
 
-fn take_pending_project(
-    pending: &Mutex<Option<(Arc<Project>, u64, u64)>>,
-    notification_pending: &AtomicBool,
-) -> Option<(Arc<Project>, u64, u64)> {
-    let mut pending = pending
-        .lock()
-        .expect("pending video project mutex poisoned");
-    let project = pending.take();
-    notification_pending.store(false, Ordering::Release);
-    project
-}
-
-struct PendingProjectReset {
-    project: PendingProject,
-    notification: Arc<AtomicBool>,
-}
-
-impl Drop for PendingProjectReset {
-    fn drop(&mut self) {
-        self.project
-            .lock()
-            .expect("pending video project mutex poisoned")
-            .take();
-        self.notification.store(false, Ordering::Release);
-    }
-}
-
 fn retain_project_sessions(project: &Project, sessions: &mut RenderSessions) {
     let tracks = scoped_video_tracks(project);
     sessions.sources.retain(
@@ -1589,117 +1285,4 @@ fn scoped_video_tracks(
         }
     }
     tracks
-}
-#[cfg(test)]
-mod cancellation_tests {
-    use super::*;
-
-    #[test]
-    fn continuous_playback_coalesces_until_an_explicit_discontinuity() {
-        let (sender, receiver) = mpsc::channel();
-        let cancel_generation = Arc::new(AtomicU64::new(0));
-        let commands = VideoCommandSender {
-            sender,
-            next_request_id: Arc::new(AtomicU64::new(0)),
-            cancel_generation: cancel_generation.clone(),
-            last_render: Arc::new(Mutex::new(None)),
-            latest_project_generation: Arc::new(AtomicU64::new(0)),
-            pending_project: Arc::new(Mutex::new(None)),
-            project_notification_pending: Arc::new(AtomicBool::new(false)),
-            playback_observer: None,
-        };
-
-        commands
-            .send(VideoCommand::Render {
-                position: Time::ZERO,
-                accuracy: CompositeAccuracy::CONTINUOUS_TIME_ACCURATE,
-            })
-            .expect("send first playback render");
-        let first_generation = match receiver.recv().expect("receive first playback render") {
-            WorkerCommand::Render {
-                request_id,
-                cancel_generation,
-                ..
-            } => {
-                assert_eq!(request_id, 1);
-                cancel_generation
-            }
-            _ => panic!("first playback command was not a render"),
-        };
-        let active = DecodeControl::new(first_generation, cancel_generation.clone());
-
-        commands
-            .send(VideoCommand::Render {
-                position: Time::from_fraction(1, 30),
-                accuracy: CompositeAccuracy::CONTINUOUS_TIME_ACCURATE,
-            })
-            .expect("send adjacent playback render");
-        match receiver.recv().expect("receive adjacent playback render") {
-            WorkerCommand::Render {
-                request_id,
-                cancel_generation,
-                ..
-            } => {
-                assert_eq!(request_id, 2);
-                assert_eq!(cancel_generation, first_generation);
-            }
-            _ => panic!("adjacent playback command was not a render"),
-        }
-        assert!(
-            !active.superseded(),
-            "adjacent playback canceled active work"
-        );
-
-        commands
-            .send(VideoCommand::Render {
-                position: Time::from_seconds(1),
-                accuracy: CompositeAccuracy::CONTINUOUS_TIME_ACCURATE,
-            })
-            .expect("send accelerated playback render");
-        match receiver
-            .recv()
-            .expect("receive accelerated playback render")
-        {
-            WorkerCommand::Render {
-                request_id,
-                cancel_generation,
-                ..
-            } => {
-                assert_eq!(request_id, 3);
-                assert_eq!(cancel_generation, first_generation);
-            }
-            _ => panic!("accelerated playback command was not a render"),
-        }
-        assert!(
-            !active.superseded(),
-            "accelerated playback canceled active work"
-        );
-
-        commands
-            .send(VideoCommand::Render {
-                position: Time::from_seconds(2),
-                accuracy: CompositeAccuracy::TIME_ACCURATE,
-            })
-            .expect("send discontinuous render");
-        match receiver.recv().expect("receive discontinuous render") {
-            WorkerCommand::Render {
-                request_id,
-                cancel_generation,
-                ..
-            } => {
-                assert_eq!(request_id, 4);
-                assert!(cancel_generation > first_generation);
-            }
-            _ => panic!("discontinuous command was not a render"),
-        }
-        assert!(
-            active.superseded(),
-            "discontinuity did not cancel active work"
-        );
-        assert!(
-            !commands.render_generation_is_current(first_generation),
-            "queued output from the old playback generation remained current"
-        );
-        assert!(commands.render_generation_is_current(cancel_generation.load(Ordering::Acquire)));
-    }
 }

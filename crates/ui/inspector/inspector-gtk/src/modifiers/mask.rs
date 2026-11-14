@@ -1,9 +1,6 @@
 use gtk::prelude::*;
 use shrimply_components_gtk::tr;
-use shrimply_inspector_core::{
-    ControlKind, InspectorControlAction, InspectorTarget,
-    visual_modifiers::{MASK_MODE_COMMIT, mask_mode_value, mask_mode_value_mut},
-};
+use shrimply_inspector_core::{ControlKind, InspectorControlAction, InspectorTarget};
 use shrimply_property_model::timeline_value::TimelineStep;
 use shrimply_visual_modifiers::mask::{MaskMode, MaskModifier};
 use uuid::Uuid;
@@ -68,18 +65,14 @@ pub fn add_rows(value: &MaskModifier, out: &gtk::Box, id: Uuid, context: &Inspec
     source.append(&clear);
     out.append(&control_row(&source_control.label, &source));
 
-    out.append(&super::shared_step_row(
-        &mode_control,
-        "mode",
-        &value.mode,
-        context,
-        super::ModifierStepTarget {
-            modifier_id: id,
-            commit_name: MASK_MODE_COMMIT,
-            get: mask_mode_value,
-            get_mut: mask_mode_value_mut,
+    for row in crate::control::section(
+        &shrimply_inspector_core::InspectorSection {
+            controls: vec![mode_control.clone()],
         },
-    ));
+        context,
+    ) {
+        out.append(&row);
+    }
     assert_eq!(
         mode_control.values,
         MaskMode::variants()

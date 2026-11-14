@@ -3,11 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 android {
-    namespace = "dev.shrimply.tablet"
+    namespace = "dev.shrimply.app"
     compileSdk = 37
     ndkVersion = "28.2.13676358"
     defaultConfig {
-        applicationId = "dev.shrimply.tablet"
+        applicationId = "dev.shrimply.app"
         minSdk = 33
         targetSdk = 37
         versionCode = 1

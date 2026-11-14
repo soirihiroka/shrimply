@@ -1,6 +1,7 @@
 //! Sanim language server, with optional read-only runtime queries supplied by its host.
 mod features;
 mod runtime;
+mod stdlib;
 mod text;
 mod transport;
 mod type_display;
@@ -127,6 +128,9 @@ impl Server<'_> {
             });
         }
         match method {
+            "sanim/stdlib" => {
+                id.map_or_else(Vec::new, |id| vec![response(id, json!(stdlib::content()))])
+            }
             "sanim/runtime" => {
                 let Some(id) = id else { return Vec::new() };
                 let Some(query) = self.runtime.as_mut() else {

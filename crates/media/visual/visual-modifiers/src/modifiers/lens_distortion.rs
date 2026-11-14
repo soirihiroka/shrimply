@@ -1,6 +1,7 @@
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
 use hashbrown::HashSet;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
@@ -14,6 +15,7 @@ pub struct LensDistortionModifier {
     pub center: TimelineValue<glam::Vec2>,
 }
 
+#[cfg(feature = "preview")]
 struct LensDistortionPreview {
     target: PreviewTarget,
     original: LensDistortionModifier,
@@ -23,7 +25,9 @@ struct LensDistortionPreview {
     active: bool,
     changed: bool,
 }
+#[cfg(feature = "preview")]
 impl LensDistortionModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -44,6 +48,7 @@ impl LensDistortionModifier {
         }))
     }
 }
+#[cfg(feature = "preview")]
 impl PreviewProvider for LensDistortionPreview {
     fn on_draw(
         &mut self,
@@ -118,6 +123,7 @@ impl PreviewProvider for LensDistortionPreview {
         }
     }
 }
+#[cfg(feature = "preview")]
 fn point_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();

@@ -10,9 +10,12 @@ serde_json.workspace = true
 shrimply-property-model = { workspace = true }
 shrimply-math-core = { workspace = true }
 shrimply-media-info = { workspace = true }
+shrimply-media-import.workspace = true
+shrimply-asset.workspace = true
+shrimply-tts.workspace = true
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-timeline-edit = { workspace = true }
-shrimply-visual-modifiers = { workspace = true }
+shrimply-visual-modifiers = { workspace = true, default-features = true }
 uuid = { workspace = true, features = ["serde"] }
 shrimply-local-ipc.workspace = true
 shrimply-path-core.workspace = true

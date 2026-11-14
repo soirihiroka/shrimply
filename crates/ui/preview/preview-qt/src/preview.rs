@@ -198,6 +198,7 @@ impl ToolkitPreview {
             player_state.clone(),
             playback_performance,
             preferences.clone(),
+            shrimply_visual_cuda::compositor::spawn_worker_with_resources_and_observer,
         );
         let video_tx = media.sender();
         let mut extensions = HashMap::<_, Box<dyn Any>>::new();

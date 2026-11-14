@@ -3,8 +3,8 @@ name = "shrimply-preview-render-vulkan"
 version = "0.1.0"
 edition = "2024"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-shrimply-render-vulkan.workspace = true
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+shrimply-render-vulkan = { workspace = true, default-features = true }
 shrimply-visual-frame.workspace = true
 shrimply-render-core.workspace = true
 shrimply-profiling.workspace = true
@@ -15,6 +15,12 @@ shrimply-math-geometry.workspace = true
 shrimply-math-media.workspace = true
 shrimply-project-document.workspace = true
 shrimply-manim-state.workspace = true
-shrimply-manim-wgpu = { workspace = true, features = ["vulkan"] }
+shrimply-manim-wgpu.workspace = true
 skia-safe.workspace = true
 uuid.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+shrimply-manim-wgpu = { workspace = true, features = ["vulkan"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+shrimply-render-vulkan = { workspace = true, features = ["android-media"] }

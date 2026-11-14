@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use imagesize::ImageType;
-use shrimply_editor_state::player_state;
+use shrimply_player_core as player_state;
 use shrimply_project_document::project::project_directory;
 
 use super::*;

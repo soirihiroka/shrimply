@@ -1,13 +1,12 @@
 mod alpha_mask;
 mod audio;
 mod audio_cache;
-mod audio_generator;
-mod audio_modifiers;
 mod background;
 mod benchmarking;
 mod camera_source;
 mod caption;
 mod comment;
+mod control;
 pub(crate) use shrimply_inspector_core::font_cache;
 pub(crate) mod font_selector;
 mod gaussian_3d;
@@ -68,7 +67,8 @@ use shrimply_inspector_core::InspectorTarget;
 use shrimply_project_document::project::{ItemAddress, ItemRef, Project, Time, VideoItem};
 
 use section::InspectorSection;
-use track::TrackInspection;
+
+const DOCUMENT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 
 type KeyframeGraphViewStates =
     Rc<RefCell<HashMap<String, shrimply_components_gtk::ui::SharedFrameGraphState>>>;
@@ -180,7 +180,8 @@ pub fn new(
         player_state.clone(),
         selection_state.clone(),
     )
-    .with_default_text_font(default_font.clone());
+    .with_default_text_font(default_font.clone())
+    .with_property_clipboard(property_clipboard.clone());
     activate_project_google_fonts(&project.borrow(), &default_font, &core);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let category_bar = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -248,6 +249,35 @@ pub fn new(
             &project_player_state,
             &project_inspector_state,
         );
+    });
+
+    let poll_layout = layout.downgrade();
+    let poll_content = content.downgrade();
+    let poll_category_bar = category_bar.downgrade();
+    let poll_scrolled = scrolled.downgrade();
+    let poll_project = project.clone();
+    let poll_player_state = player_state.clone();
+    let poll_state = state.clone();
+    glib::timeout_add_local(DOCUMENT_POLL_INTERVAL, move || {
+        let (Some(layout), Some(content), Some(category_bar), Some(scrolled)) = (
+            poll_layout.upgrade(),
+            poll_content.upgrade(),
+            poll_category_bar.upgrade(),
+            poll_scrolled.upgrade(),
+        ) else {
+            return glib::ControlFlow::Break;
+        };
+        if layout.is_mapped() && shrimply_inspector_document::poll(&poll_state.core) {
+            queue_rebuild(
+                &content,
+                &category_bar,
+                &scrolled,
+                &poll_project,
+                &poll_player_state,
+                &poll_state,
+            );
+        }
+        glib::ControlFlow::Continue
     });
 
     rebuild(
@@ -435,7 +465,7 @@ fn resolve_target(
         let project = project.borrow();
         match target {
             InspectorTarget::Transition { item, side } => {
-                transition::resolve(&project, item, *side)
+                shrimply_inspector_core::transition::presentation(&project, item, *side)
                     .map(|transition| {
                         (
                             Box::new(transition) as Box<dyn Inspectable>,
@@ -471,9 +501,11 @@ fn resolve_target(
                 ),
                 None => project_target(&project),
             },
-            InspectorTarget::Track(address) => TrackInspection::resolve(&project, address.clone())
-                .map(|track| (Box::new(track) as Box<dyn Inspectable>, None, None))
-                .unwrap_or_else(|| project_target(&project)),
+            InspectorTarget::Track(address) => {
+                shrimply_inspector_core::track::presentation(&project, address.clone())
+                    .map(|track| (Box::new(track) as Box<dyn Inspectable>, None, None))
+                    .unwrap_or_else(|| project_target(&project))
+            }
             InspectorTarget::Project => project_target(&project),
         }
     };

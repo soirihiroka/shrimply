@@ -1,10 +1,28 @@
 static const uint COMPUTE_GROUP_SIZE = 256u;
 
+#if defined(SHRIMPLY_PORTABLE_INDICES)
+typedef uint BufferIndex;
+// Preserve the native 64-bit pitch fields in uploaded layer structures without
+// requiring 64-bit arithmetic. Portable allocations are bounded to UINT32_MAX.
+struct BufferPitch { uint low; uint high; };
+BufferIndex buffer_pitch(BufferPitch value) { return value.low; }
+#else
+typedef uint64_t BufferIndex;
 #if defined(SHRIMPLY_VULKAN)
 typedef uint64_t BufferPitch;
 #else
 typedef size_t BufferPitch;
 #endif
+BufferIndex buffer_pitch(BufferPitch value) { return BufferIndex(value); }
+#endif
+
+bool buffer_is_null<T>(T *value) {
+#if defined(SHRIMPLY_PORTABLE_INDICES)
+  return all(bit_cast<uint2>(value) == uint2(0u));
+#else
+  return value == nullptr;
+#endif
+}
 
 [__AttributeUsage(_AttributeTargets.Struct)]
 [__AttributeUsage(_AttributeTargets.Param)]

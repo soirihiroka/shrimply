@@ -3,6 +3,11 @@ name = "shrimply-render-vulkan"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["renderer"]
+renderer = []
+android-media = ["renderer", "dep:shrimply-video-decoder", "dep:shrimply-visual-frame"]
+
 [target.'cfg(target_os = "linux")'.dependencies]
 ash.workspace = true
 shrimply-gpu-vulkan.workspace = true
@@ -25,3 +30,13 @@ tracing.workspace = true
 pkg-config = "0.3"
 serde_json.workspace = true
 shrimply-slang-build.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+ash.workspace = true
+tracing.workspace = true
+ndk = { version = "0.9.0", default-features = false, features = ["api-level-26"] }
+shrimply-video-decoder = { workspace = true, optional = true }
+shrimply-visual-frame = { workspace = true, optional = true }
+shrimply-render-core.workspace = true
+shrimply-math-geometry.workspace = true
+skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }

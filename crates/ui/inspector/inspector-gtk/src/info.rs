@@ -100,7 +100,7 @@ pub(super) fn item(context: &InspectorContext, info: ItemInfo) -> InspectorListI
     content.append(&summary);
 
     if let Some(file) = info.file.filter(|file| !file.path().as_os_str().is_empty()) {
-        content.append(&file_row(file.path().to_path_buf()));
+        content.append(&file_row(file.path().to_path_buf(), &tr!("File Location")));
         let metadata = gtk::Box::new(gtk::Orientation::Vertical, 12);
         let loading = adw::PreferencesGroup::new();
         let loading_row = adw::ActionRow::builder()
@@ -145,10 +145,10 @@ pub(super) fn item(context: &InspectorContext, info: ItemInfo) -> InspectorListI
     flat(content)
 }
 
-fn file_row(path: PathBuf) -> adw::PreferencesGroup {
+pub(super) fn file_row(path: PathBuf, label: &str) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
     let row = adw::ActionRow::builder()
-        .title(tr!("File Location").as_ref())
+        .title(label)
         .subtitle(path.to_string_lossy())
         .build();
     let button = gtk::Button::builder()
@@ -174,17 +174,9 @@ fn file_row(path: PathBuf) -> adw::PreferencesGroup {
 
 fn render_file_info(container: &gtk::Box, info: &FileInfo, selected: SourceMetadata) {
     let presentation = shrimply_inspector_core::info::media_info_presentation(info, format_date);
-    if let Some(artwork) = presentation.artwork
-        && let Ok(texture) = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_owned(artwork.data))
+    if let Some(image) = presentation.artwork
+        && let Some(group) = artwork(image.data, &tr!("Artwork"))
     {
-        let group = adw::PreferencesGroup::builder()
-            .title(tr!("Artwork").as_ref())
-            .build();
-        let picture = gtk::Picture::for_paintable(&texture);
-        picture.set_content_fit(gtk::ContentFit::Contain);
-        picture.set_can_shrink(true);
-        picture.set_height_request(ARTWORK_HEIGHT);
-        group.add(&picture);
         container.append(&group);
     }
     for info_group in presentation.groups {
@@ -198,6 +190,20 @@ fn render_file_info(container: &gtk::Box, info: &FileInfo, selected: SourceMetad
     }
 }
 
+pub(super) fn artwork(
+    data: impl AsRef<[u8]> + Send + 'static,
+    label: &str,
+) -> Option<adw::PreferencesGroup> {
+    let texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_owned(data)).ok()?;
+    let group = adw::PreferencesGroup::builder().title(label).build();
+    let picture = gtk::Picture::for_paintable(&texture);
+    picture.set_content_fit(gtk::ContentFit::Contain);
+    picture.set_can_shrink(true);
+    picture.set_height_request(ARTWORK_HEIGHT);
+    group.add(&picture);
+    Some(group)
+}
+
 fn add_row(group: &adw::PreferencesGroup, title: &str, value: &str) {
     group.add(
         &adw::ActionRow::builder()
@@ -207,7 +213,7 @@ fn add_row(group: &adw::PreferencesGroup, title: &str, value: &str) {
     );
 }
 
-fn format_date(seconds: i64) -> Option<String> {
+pub(super) fn format_date(seconds: i64) -> Option<String> {
     glib::DateTime::from_unix_local(seconds)
         .ok()
         .and_then(|date| date.format("%x %X").ok())
@@ -224,15 +230,6 @@ pub(super) fn video_stream_count(file: &std::path::Path) -> usize {
                     .disposition()
                     .contains(format::stream::Disposition::ATTACHED_PIC)
             })
-            .count()
-    })
-}
-
-pub(super) fn audio_stream_count(file: &std::path::Path) -> usize {
-    format::input(file).map_or(0, |input| {
-        input
-            .streams()
-            .filter(|stream| stream.parameters().medium() == media::Type::Audio)
             .count()
     })
 }

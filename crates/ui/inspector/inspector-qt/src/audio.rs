@@ -1,36 +1,18 @@
 use core::pin::Pin;
-use std::{
-    cell::RefCell,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
 
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList, QUrl};
-use serde_json::{Value, json};
 use shrimply_inspector_core::{
-    InspectorDetail, InspectorRuntime, InspectorTarget,
-    tts::{TtsEditorControl, TtsGeneration, TtsInputEdit},
+    InspectorTarget,
+    tts::{TtsEditorControl, TtsInputEdit},
 };
 use shrimply_math_core::fraction_as_f64;
-use shrimply_project_document::project::{AudioItem, AudioSource};
-use shrimply_tts::{TtsModel, TtsSettings};
 
-use crate::item::{InspectorAction, InspectorItem, InspectorListItem};
-use crate::list::InspectorCategory;
-use crate::section::{ControlKind, InspectorControl, InspectorSection, LayeredState, NumberSpec};
-
-const TTS_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 type TtsTable<'a> = (
     &'a str,
     &'a [shrimply_tts::TableColumn],
     &'a [std::collections::BTreeMap<String, String>],
 );
-
-thread_local! {
-    static TTS_RUNTIME: RefCell<TtsRuntime> = RefCell::new(TtsRuntime::default());
-}
 
 #[cxx_qt::bridge]
 pub mod tts_qobject {
@@ -176,698 +158,38 @@ pub mod tts_qobject {
     impl cxx_qt::Initialize for TtsEditorBackend {}
 }
 
-pub(crate) fn categories(
-    audio: &Value,
-    details: &[InspectorDetail],
-    metadata: Option<crate::MediaMetadataState>,
-    gain_value: f32,
-    runtime: InspectorRuntime,
-    can_paste_modifiers: bool,
-) -> Vec<InspectorCategory> {
-    let source = audio
-        .get("source")
-        .and_then(Value::as_object)
-        .expect("audio source must be an object");
-    let source_kind = source
-        .get("kind")
-        .and_then(Value::as_str)
-        .expect("audio source kind must be text");
-
-    let mut audio_items = vec![output_item(audio, gain_value, runtime).boxed()];
-    if source_kind == "generator" {
-        audio_items.push(crate::audio_generator::item(source, "/source", runtime).boxed());
-    }
-    if source_kind == "tts" {
-        audio_items.push(tts_item(audio).boxed());
-    }
-    audio_items.extend(crate::audio_modifiers::items(
-        audio
-            .get("modifiers")
-            .and_then(Value::as_array)
-            .expect("audio modifiers must be an array"),
-        runtime,
-        can_paste_modifiers,
-    ));
-
-    let mut categories = vec![InspectorCategory {
-        key: "audio",
-        label: "Audio",
-        icon: "sound-symbolic",
-        items: audio_items,
-    }];
-    if source_kind != "generator" {
-        categories.push(InspectorCategory {
-            key: "playback",
-            label: "Playback",
-            icon: "playback-speed-symbolic",
-            items: playback_items(audio),
-        });
-    }
-    categories.push(InspectorCategory {
-        key: "info",
-        label: "Info",
-        icon: "info-outline-symbolic",
-        items: vec![info_item(audio, details, metadata.as_ref())],
-    });
-    categories
-}
-
-fn output_item(audio: &Value, gain_value: f32, runtime: InspectorRuntime) -> InspectorItem {
-    let mut section = InspectorSection::default();
-    section.add(
-        InspectorControl::new(ControlKind::Boolean, "/enabled", "Enabled").value(
-            audio
-                .get("enabled")
-                .and_then(Value::as_bool)
-                .expect("audio enabled must be boolean")
-                .to_string(),
-        ),
-    );
-    section.add(timeline_number(
-        audio,
-        "/gain/decibels",
-        "Level",
-        gain_value,
-        runtime,
-        NumberSpec {
-            minimum: -60.0,
-            maximum: 36.0,
-            drag_step: 0.01,
-            digits: 2,
-            unit: "dB",
-        },
-    ));
-
-    InspectorItem::new("output", "Output", section).reset(InspectorAction::ResetFields {
-        values: vec![
-            ("/enabled".to_string(), Value::Bool(true)),
-            (
-                "/gain".to_string(),
-                serde_json::to_value(shrimply_audio_modifiers::GainModifier::default())
-                    .expect("default audio gain must serialize"),
-            ),
-        ],
-    })
-}
-
-fn playback_items(audio: &Value) -> Vec<InspectorListItem> {
-    let speed = audio
-        .get("playback_speed")
-        .and_then(Value::as_object)
-        .expect("audio playback speed must be a fraction");
-    let speed_control = InspectorControl::new(ControlKind::Fraction, "/playback_speed", "Value")
-        .components(fraction_components(speed))
-        .width_characters(9)
-        .number(NumberSpec {
-            drag_step: 0.05,
-            digits: 2,
-            unit: "x",
-            ..NumberSpec::default()
-        });
-    let mut speed_section = InspectorSection::default();
-    speed_section.add(speed_control);
-
-    let mut pitch_section = InspectorSection::default();
-    pitch_section.add(crate::selector::selector(
-        "/speed_method",
-        "Method",
-        text(audio, "/speed_method"),
-        [
-            ("naive".to_string(), "Naive".to_string()),
-            ("preserve_pitch".to_string(), "Preserve pitch".to_string()),
-        ],
-    ));
-
-    let mut repeat_section = InspectorSection::default();
-    repeat_section.add(crate::selector::selector(
-        "/repeat_strategy",
-        "Strategy",
-        text(audio, "/repeat_strategy"),
-        [
-            ("repeat".to_string(), "Repeat".to_string()),
-            ("ping_pong".to_string(), "Ping Pong".to_string()),
-            ("hold".to_string(), "Hold".to_string()),
-            ("empty".to_string(), "Empty".to_string()),
-        ],
-    ));
-
-    vec![
-        InspectorItem::new("speed", "Speed", speed_section)
-            .reset(InspectorAction::Reset {
-                path: "/playback_speed".to_string(),
-                value: json!({ "numerator": 1, "denominator": 1 }),
-            })
-            .boxed(),
-        InspectorItem::new("speed-method", "Speed method", pitch_section)
-            .reset(InspectorAction::Reset {
-                path: "/speed_method".to_string(),
-                value: Value::String("preserve_pitch".to_string()),
-            })
-            .boxed(),
-        InspectorItem::new("repeat", "Repeat", repeat_section)
-            .reset(InspectorAction::Reset {
-                path: "/repeat_strategy".to_string(),
-                value: Value::String("hold".to_string()),
-            })
-            .boxed(),
-    ]
-}
-
-fn info_item(
-    audio: &Value,
-    details: &[InspectorDetail],
-    metadata: Option<&crate::MediaMetadataState>,
-) -> InspectorListItem {
-    let file_backed = metadata.is_some();
-    let audio_stream_count = match metadata {
-        Some(crate::MediaMetadataState::Ready(metadata)) => metadata.audio_stream_count,
-        _ => 0,
-    };
-    let mut section = InspectorSection::default();
-    if file_backed && audio_stream_count > 1 {
-        section.add(crate::selector::selector(
-            "/track_id",
-            "Audio Stream",
-            audio
-                .get("track_id")
-                .and_then(Value::as_u64)
-                .expect("audio stream id must be an integer")
-                .min(u64::from(audio_stream_count - 1))
-                .to_string(),
-            (0..audio_stream_count).map(|stream| {
-                (
-                    stream.to_string(),
-                    shrimply_i18n_qt::text_args(
-                        "Audio stream %{number}",
-                        &[("number", (stream + 1).to_string())],
-                    )
-                    .to_string(),
-                )
-            }),
-        ));
-    }
-    if file_backed {
-        let id = audio
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(|id| uuid::Uuid::parse_str(id).ok())
-            .expect("audio id must be a UUID");
-        section.add(
-            InspectorControl::new(
-                ControlKind::BeatDetection,
-                "/beat_detection",
-                "Beat Detection",
-            )
-            .target(id)
-            .subtitle("Analyze this clip for beat-grid snapping")
-            .value(
-                audio
-                    .get("beat_detection")
-                    .and_then(Value::as_bool)
-                    .expect("beat detection must be boolean")
-                    .to_string(),
-            ),
-        );
-    }
-    crate::info::append(
-        &mut section,
-        details,
-        metadata,
-        shrimply_inspector_core::info::SourceMetadata::Audio(
-            audio
-                .get("track_id")
-                .and_then(Value::as_u64)
-                .and_then(|track| u32::try_from(track).ok())
-                .unwrap_or_default(),
-        ),
-    );
-    InspectorListItem::Flat(section)
-}
-
-fn tts_item(audio: &Value) -> InspectorItem {
-    let id = audio
-        .get("id")
-        .and_then(Value::as_str)
-        .and_then(|id| uuid::Uuid::parse_str(id).ok())
-        .expect("audio id must be a UUID");
-    let mut section = InspectorSection::default();
-    section.add(
-        InspectorControl::new(ControlKind::TtsEditor, "", "")
-            .target(id)
-            .value(id.to_string()),
-    );
-    InspectorItem::new("tts", "Text to Speech", section).reset(InspectorAction::Reset {
-        path: "/source".to_string(),
-        value: serde_json::to_value(shrimply_project_document::project::AudioSource::Tts(
-            Box::default(),
-        ))
-        .expect("default TTS settings must serialize"),
-    })
-}
-
-fn timeline_number(
-    value: &Value,
-    path: &str,
-    label: &str,
-    current: f32,
-    runtime: InspectorRuntime,
-    number: NumberSpec,
-) -> InspectorControl {
-    let timeline = value
-        .pointer(path)
-        .and_then(Value::as_object)
-        .expect("audio timeline value must be an object");
-    let base = timeline
-        .get("base")
-        .and_then(Value::as_object)
-        .expect("audio timeline base must be an object");
-    let expression = timeline.get("expression").and_then(Value::as_object);
-    let timeline: shrimply_property_model::timeline_value::TimelineValue<f32> =
-        serde_json::from_value(Value::Object(timeline.clone()))
-            .expect("audio timeline value must be valid");
-    InspectorControl::new(ControlKind::LayeredNumber, path, label)
-        .value(current.to_string())
-        .number(number)
-        .layered(
-            path,
-            LayeredState {
-                keyframes: base.contains_key("keyframes"),
-                expression: expression
-                    .and_then(|value| value.get("enabled"))
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                expression_source: expression
-                    .and_then(|value| value.get("source"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            },
-        )
-        .timeline(
-            timeline.id,
-            crate::audio_modifiers::scalar_graph(&timeline, runtime, f64::from),
-        )
-}
-
-fn fraction_components(fraction: &serde_json::Map<String, Value>) -> Vec<String> {
-    ["numerator", "denominator"]
-        .map(|component| {
-            fraction
-                .get(component)
-                .and_then(Value::as_i64)
-                .expect("fraction component must be an integer")
-                .to_string()
-        })
-        .to_vec()
-}
-
-fn text<'a>(value: &'a Value, path: &str) -> &'a str {
-    value
-        .pointer(path)
-        .and_then(Value::as_str)
-        .expect("audio selector value must be text")
-}
-
-enum TtsMessage {
-    Models {
-        server_url: String,
-        result: Result<Vec<TtsModel>, String>,
-    },
-}
-
-struct TtsModelResult {
-    server_url: String,
-    result: Result<Vec<TtsModel>, String>,
-    completed: Instant,
-}
-
-struct TtsGenerationJob {
-    audio_id: uuid::Uuid,
-    target: InspectorTarget,
-    model: TtsModel,
-    task: Option<shrimply_inspector_core::tts::GenerationTask>,
-    status: String,
-    error: Option<String>,
-}
-
-struct TtsRuntime {
-    sender: mpsc::Sender<TtsMessage>,
-    receiver: mpsc::Receiver<TtsMessage>,
-    pending_models: Vec<String>,
-    model_results: Vec<TtsModelResult>,
-    generations: Vec<TtsGenerationJob>,
-    view_revision: u64,
-    status_revision: u64,
-}
-
-impl Default for TtsRuntime {
-    fn default() -> Self {
-        let (sender, receiver) = mpsc::channel();
-        Self {
-            sender,
-            receiver,
-            pending_models: Vec::new(),
-            model_results: Vec::new(),
-            generations: Vec::new(),
-            view_revision: 0,
-            status_revision: 0,
-        }
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct TtsEditorView {
     target: InspectorTarget,
-    audio_id: uuid::Uuid,
     server_url: String,
-    settings: TtsSettings,
-    model: Option<TtsModel>,
-    models: Vec<TtsModel>,
-    controls: Vec<TtsEditorControl>,
-    generated: bool,
-    model_status: TtsModelStatus,
-}
-
-#[derive(Clone)]
-enum TtsModelStatus {
-    Loading,
-    Ready,
-    Failed(String),
-}
-
-#[derive(Clone)]
-struct TtsGenerationStatus {
-    running: bool,
-    status: String,
-    error: Option<String>,
-}
-
-pub(crate) fn poll_tts_runtime() -> bool {
-    TTS_RUNTIME.with_borrow_mut(|runtime| {
-        let messages = runtime.receiver.try_iter().collect::<Vec<_>>();
-        let mut changed = !messages.is_empty();
-        for message in messages {
-            match message {
-                TtsMessage::Models { server_url, result } => {
-                    runtime
-                        .pending_models
-                        .retain(|pending| pending != &server_url);
-                    if let Some(cached) = runtime
-                        .model_results
-                        .iter_mut()
-                        .find(|cached| cached.server_url == server_url)
-                    {
-                        cached.result = result;
-                        cached.completed = Instant::now();
-                    } else {
-                        runtime.model_results.push(TtsModelResult {
-                            server_url,
-                            result,
-                            completed: Instant::now(),
-                        });
-                    }
-                    runtime.view_revision = runtime.view_revision.wrapping_add(1);
-                }
-            }
-        }
-        let events = runtime
-            .generations
-            .iter_mut()
-            .flat_map(|job| {
-                let mut events = Vec::new();
-                if let Some(task) = &mut job.task {
-                    while let Some(event) = task.poll() {
-                        events.push((job.audio_id, event));
-                    }
-                }
-                events
-            })
-            .collect::<Vec<_>>();
-        changed |= !events.is_empty();
-        for (audio_id, event) in events {
-            match event {
-                shrimply_inspector_core::tts::GenerationEvent::Progress(status) => {
-                    if let Some(job) = runtime
-                        .generations
-                        .iter_mut()
-                        .find(|job| job.audio_id == audio_id)
-                        && job.status != status
-                    {
-                        job.status = status;
-                        runtime.status_revision = runtime.status_revision.wrapping_add(1);
-                    }
-                }
-                shrimply_inspector_core::tts::GenerationEvent::Done(result) => {
-                    finish_generation(runtime, audio_id, result);
-                    runtime.view_revision = runtime.view_revision.wrapping_add(1);
-                    runtime.status_revision = runtime.status_revision.wrapping_add(1);
-                }
-            }
-        }
-        changed
-    })
-}
-
-fn finish_generation(
-    runtime: &mut TtsRuntime,
-    audio_id: uuid::Uuid,
-    result: Result<TtsGeneration, String>,
-) {
-    let Some(index) = runtime
-        .generations
-        .iter()
-        .position(|job| job.audio_id == audio_id && job.task.is_some())
-    else {
-        if let Ok(generation) = result {
-            let _ = std::fs::remove_file(generation.path);
-        }
-        return;
-    };
-    let cancelled = runtime.generations[index]
-        .task
-        .as_ref()
-        .expect("active TTS generation")
-        .is_cancelled();
-    let target = runtime.generations[index].target.clone();
-    let model = runtime.generations[index].model.clone();
-    let outcome = match result {
-        Ok(generation) if cancelled => {
-            let _ = std::fs::remove_file(generation.path);
-            Ok("Cancelled".to_string())
-        }
-        Ok(generation) => super::with_controller(|controller| {
-            controller.apply_tts_generation(&target, audio_id, &model, generation)
-        })
-        .map(|()| "Generated".to_string()),
-        Err(_) if cancelled => Ok("Cancelled".to_string()),
-        Err(error) => Err(error),
-    };
-    let job = &mut runtime.generations[index];
-    job.task = None;
-    match outcome {
-        Ok(status) => {
-            job.status = status;
-            job.error = None;
-        }
-        Err(error) => {
-            job.status = if error.starts_with("Compute server connection failed") {
-                "Compute server connection failed".to_string()
-            } else {
-                error.clone()
-            };
-            job.error = Some(error);
-        }
-    }
-}
-
-fn model_state(server_url: &str) -> (TtsModelStatus, Vec<TtsModel>) {
-    TTS_RUNTIME.with_borrow_mut(|runtime| {
-        if let Some(index) = runtime
-            .model_results
-            .iter()
-            .position(|cached| cached.server_url == server_url)
-        {
-            let retry = runtime.model_results[index].result.is_err()
-                && runtime.model_results[index].completed.elapsed() >= TTS_RETRY_INTERVAL;
-            if retry {
-                runtime.model_results.remove(index);
-                runtime.view_revision = runtime.view_revision.wrapping_add(1);
-            } else {
-                return match &runtime.model_results[index].result {
-                    Ok(models) => (TtsModelStatus::Ready, models.clone()),
-                    Err(error) => (TtsModelStatus::Failed(error.clone()), Vec::new()),
-                };
-            }
-        }
-        if runtime
-            .pending_models
-            .iter()
-            .all(|pending| pending != server_url)
-        {
-            runtime.pending_models.push(server_url.to_string());
-            let sender = runtime.sender.clone();
-            let request = server_url.to_string();
-            thread::spawn(move || {
-                let result = shrimply_inspector_core::tts::available_models(&request);
-                let _ = sender.send(TtsMessage::Models {
-                    server_url: request,
-                    result,
-                });
-            });
-        }
-        (TtsModelStatus::Loading, Vec::new())
-    })
-}
-
-fn model_retry_due(server_url: &str) -> bool {
-    TTS_RUNTIME.with_borrow(|runtime| {
-        runtime.model_results.iter().any(|cached| {
-            cached.server_url == server_url
-                && cached.result.is_err()
-                && cached.completed.elapsed() >= TTS_RETRY_INTERVAL
-        })
-    })
-}
-
-fn generation_status(audio_id: uuid::Uuid) -> Option<TtsGenerationStatus> {
-    TTS_RUNTIME.with_borrow(|runtime| {
-        runtime
-            .generations
-            .iter()
-            .find(|job| job.audio_id == audio_id)
-            .map(|job| TtsGenerationStatus {
-                running: job.task.is_some(),
-                status: job.status.clone(),
-                error: job.error.clone(),
-            })
-    })
-}
-
-fn runtime_revisions() -> (u64, u64) {
-    TTS_RUNTIME.with_borrow(|runtime| (runtime.view_revision, runtime.status_revision))
+    editor: shrimply_inspector_core::tts::EditorPresentation,
+    generation: shrimply_inspector_core::tts::GenerationPresentation,
 }
 
 fn build_tts_view(audio_id: uuid::Uuid) -> Result<TtsEditorView, String> {
-    TTS_RUNTIME.with_borrow_mut(|runtime| {
-        runtime
-            .generations
-            .retain(|job| job.task.is_some() || job.audio_id == audio_id);
-    });
-    let snapshot = super::CONTROLLER.with_borrow(|controller| {
-        controller
-            .as_ref()
-            .expect("Qt TTS editor requested before inspector installation")
-            .snapshot()
-    });
-    let audio: AudioItem = serde_json::from_value(snapshot.value.clone())
-        .map_err(|error| format!("invalid TTS audio item: {error}"))?;
-    if audio.id != audio_id {
-        return Err("TTS editor selection changed".to_string());
-    }
-    let AudioSource::Tts(settings) = audio.source else {
-        return Err("selected audio item no longer uses text to speech".to_string());
-    };
-    let preferences = super::PREFERENCES.with_borrow(|preferences| {
-        shrimply_editor_state::preferences::snapshot(
-            preferences
-                .as_ref()
-                .expect("Qt TTS editor requested before preference installation"),
-        )
-    });
-    let server_url = preferences.compute_server_url;
-    let (model_status, models) = model_state(&server_url);
-    let mut settings = *settings;
-    let model = shrimply_inspector_core::tts::selected_model(
-        &models,
-        &settings,
-        &preferences.last_tts_model,
-    )
-    .cloned();
-    if let Some(model) = &model {
-        let synchronized = shrimply_inspector_core::tts::synchronized_settings(&settings, model);
-        if synchronized != settings {
-            super::with_controller(|controller| {
-                controller.set_tts_settings(&snapshot.target, synchronized.clone(), false)
-            })?;
-            settings = synchronized;
-        }
-        if preferences.last_tts_model != model.id {
-            super::PREFERENCES.with_borrow(|preferences| {
-                shrimply_editor_state::preferences::set_last_tts_model(
-                    preferences
-                        .as_ref()
-                        .expect("Qt TTS editor requested before preference installation"),
-                    &model.id,
-                );
-            });
-        }
-    }
-    let controls = model.as_ref().map_or_else(Vec::new, |model| {
-        shrimply_inspector_core::tts::editor_controls(&settings, model)
-    });
-    Ok(TtsEditorView {
-        target: snapshot.target,
-        audio_id,
-        server_url,
-        settings,
-        model,
-        models,
-        controls,
-        generated: !audio.file.as_os_str().is_empty(),
-        model_status,
-    })
-}
-
-fn start_generation(view: &TtsEditorView) -> Result<(), String> {
-    let model = view
-        .model
-        .clone()
-        .ok_or_else(|| "Select a text-to-speech model".to_string())?;
-    TTS_RUNTIME.with_borrow_mut(|runtime| {
-        if runtime
-            .generations
-            .iter()
-            .any(|job| job.audio_id == view.audio_id && job.task.is_some())
+    super::with_controller(|controller| {
+        let target = controller.target();
+        if !matches!(&target, InspectorTarget::Item(address @ shrimply_project_document::project::ItemAddress::Audio {..}) if address.item_id() == audio_id)
         {
-            return Err("Text-to-speech generation is already running".to_string());
+            return Err("TTS editor selection changed".to_string());
         }
-        let job = TtsGenerationJob {
-            audio_id: view.audio_id,
-            target: view.target.clone(),
-            model: model.clone(),
-            task: Some(shrimply_inspector_core::tts::GenerationTask::start(
-                &view.server_url,
-                model.clone(),
-                view.settings.clone(),
-            )?),
-            status: "Sending request…".to_string(),
-            error: None,
-        };
-        if let Some(current) = runtime
-            .generations
-            .iter_mut()
-            .find(|job| job.audio_id == view.audio_id)
-        {
-            *current = job;
-        } else {
-            runtime.generations.push(job);
-        }
-        runtime.status_revision = runtime.status_revision.wrapping_add(1);
-        Ok(())
-    })
-}
-
-fn cancel_generation(audio_id: uuid::Uuid) -> Result<(), String> {
-    TTS_RUNTIME.with_borrow_mut(|runtime| {
-        let job = runtime
-            .generations
-            .iter_mut()
-            .find(|job| job.audio_id == audio_id && job.task.is_some())
-            .ok_or_else(|| "Text-to-speech generation is not running".to_string())?;
-        job.task.as_ref().expect("active TTS generation").cancel();
-        job.status = "Cancelling…".to_string();
-        runtime.status_revision = runtime.status_revision.wrapping_add(1);
-        Ok(())
+        let preferences = super::PREFERENCES.with_borrow(|preferences| {
+            shrimply_editor_state::preferences::snapshot(
+                preferences
+                    .as_ref()
+                    .expect("Qt TTS editor preferences are installed"),
+            )
+        });
+        Ok(TtsEditorView {
+            editor: controller.tts_editor(
+                &target,
+                &preferences.compute_server_url,
+                &preferences.last_tts_model,
+            )?,
+            generation: controller.tts_generation(&target),
+            target,
+            server_url: preferences.compute_server_url,
+        })
     })
 }
 
@@ -881,8 +203,6 @@ pub struct TtsEditorBackendRust {
     status_tooltip: QString,
     generate_label: QString,
     view: Option<TtsEditorView>,
-    runtime_view_revision: u64,
-    runtime_status_revision: u64,
 }
 
 impl Default for TtsEditorBackendRust {
@@ -893,12 +213,10 @@ impl Default for TtsEditorBackendRust {
             ready: false,
             busy: true,
             generating: false,
-            status: QString::from("Connecting to server…"),
+            status: QString::default(),
             status_tooltip: QString::default(),
-            generate_label: QString::from("Generate"),
+            generate_label: QString::default(),
             view: None,
-            runtime_view_revision: 0,
-            runtime_status_revision: 0,
         }
     }
 }
@@ -909,105 +227,60 @@ impl cxx_qt::Initialize for tts_qobject::TtsEditorBackend {
 
 impl tts_qobject::TtsEditorBackend {
     pub fn refresh(mut self: Pin<&mut Self>) {
-        poll_tts_runtime();
         let view = uuid::Uuid::parse_str(&self.audio_id().to_string())
             .map_err(|_| "TTS editor audio ID is invalid".to_string())
             .and_then(build_tts_view);
-        let (ready, busy, generating, status, tooltip, label) = match &view {
-            Ok(view) => {
-                let generation = generation_status(view.audio_id);
-                let generating = generation.as_ref().is_some_and(|state| state.running);
-                let (mut busy, mut status, mut tooltip) = match &view.model_status {
-                    TtsModelStatus::Loading => {
-                        (true, "Connecting to server…".to_string(), String::new())
-                    }
-                    TtsModelStatus::Ready => (false, "Ready".to_string(), String::new()),
-                    TtsModelStatus::Failed(error) => (false, error.clone(), error.clone()),
-                };
-                if let Some(generation) = generation {
-                    busy |= generation.running;
-                    status = generation.status;
-                    tooltip = generation.error.unwrap_or_default();
-                }
-                (
-                    view.model.is_some(),
-                    busy,
-                    generating,
-                    status,
-                    tooltip,
-                    if view.generated {
-                        "Regenerate"
-                    } else {
-                        "Generate"
-                    },
-                )
-            }
-            Err(error) => (
-                false,
-                false,
-                false,
-                error.clone(),
-                error.clone(),
-                "Generate",
+        let (ready, busy, generating, status, label) = match &view {
+            Ok(view) => (
+                view.editor.model.is_some(),
+                view.editor.loading || view.generation.running,
+                view.generation.running,
+                if view.generation.status.is_empty() {
+                    view.editor.catalog_status.clone()
+                } else {
+                    view.generation.status.clone()
+                },
+                if view.editor.generated {
+                    "Regenerate"
+                } else {
+                    "Generate"
+                },
             ),
+            Err(error) => (false, false, false, error.clone(), "Generate"),
         };
         self.as_mut().rust_mut().view = view.ok();
-        let (view_revision, status_revision) = runtime_revisions();
-        self.as_mut().rust_mut().runtime_view_revision = view_revision;
-        self.as_mut().rust_mut().runtime_status_revision = status_revision;
         self.as_mut().set_ready(ready);
         self.as_mut().set_busy(busy);
         self.as_mut().set_generating(generating);
-        self.as_mut().set_status(QString::from(status));
-        self.as_mut().set_status_tooltip(QString::from(tooltip));
-        self.as_mut().set_generate_label(QString::from(label));
+        self.as_mut().set_status(QString::from(&status));
+        self.as_mut().set_status_tooltip(QString::from(status));
+        self.as_mut()
+            .set_generate_label(shrimply_i18n_qt::text(label));
         let revision = self.revision().wrapping_add(1);
         self.as_mut().set_revision(revision);
     }
 
     pub fn poll(mut self: Pin<&mut Self>) {
-        poll_tts_runtime();
-        let retry_due = self.rust().view.as_ref().is_some_and(|view| {
-            matches!(&view.model_status, TtsModelStatus::Failed(_))
-                && model_retry_due(&view.server_url)
-        });
-        let (view_revision, status_revision) = runtime_revisions();
-        if self.rust().runtime_view_revision != view_revision || retry_due {
-            self.as_mut().refresh();
-        } else if self.rust().runtime_status_revision != status_revision {
-            self.as_mut().refresh_status();
+        if super::CONTROLLER.with_borrow(|controller| {
+            controller
+                .as_ref()
+                .is_some_and(shrimply_inspector_document::poll)
+        }) {
+            super::mark_dirty();
         }
-    }
-
-    fn refresh_status(mut self: Pin<&mut Self>) {
-        let Some(view) = self.rust().view.as_ref() else {
+        let view = uuid::Uuid::parse_str(&self.audio_id().to_string())
+            .ok()
+            .and_then(|id| build_tts_view(id).ok());
+        if view.as_ref() != self.rust().view.as_ref() {
             self.as_mut().refresh();
-            return;
-        };
-        let generation = generation_status(view.audio_id);
-        let generating = generation.as_ref().is_some_and(|state| state.running);
-        let (mut busy, mut status, mut tooltip) = match &view.model_status {
-            TtsModelStatus::Loading => (true, "Connecting to server…".to_string(), String::new()),
-            TtsModelStatus::Ready => (false, "Ready".to_string(), String::new()),
-            TtsModelStatus::Failed(error) => (false, error.clone(), error.clone()),
-        };
-        if let Some(generation) = generation {
-            busy |= generation.running;
-            status = generation.status;
-            tooltip = generation.error.unwrap_or_default();
         }
-        self.as_mut().rust_mut().runtime_status_revision = runtime_revisions().1;
-        self.as_mut().set_busy(busy);
-        self.as_mut().set_generating(generating);
-        self.as_mut().set_status(QString::from(status));
-        self.as_mut().set_status_tooltip(QString::from(tooltip));
     }
 
     pub fn model_value(&self) -> QString {
         self.rust()
             .view
             .as_ref()
-            .and_then(|view| view.model.as_ref())
+            .and_then(|view| view.editor.model.as_ref())
             .map_or_else(QString::default, |model| QString::from(model.id.as_str()))
     }
 
@@ -1016,9 +289,10 @@ impl tts_qobject::TtsEditorBackend {
             .view
             .as_ref()
             .map(|view| {
-                view.models
+                view.editor
+                    .models
                     .iter()
-                    .map(|model| QString::from(&model.id))
+                    .map(|model| QString::from(&model.value))
                     .collect()
             })
             .unwrap_or_default()
@@ -1029,7 +303,8 @@ impl tts_qobject::TtsEditorBackend {
             .view
             .as_ref()
             .map(|view| {
-                view.models
+                view.editor
+                    .models
                     .iter()
                     .map(|model| QString::from(&model.label))
                     .collect()
@@ -1042,26 +317,19 @@ impl tts_qobject::TtsEditorBackend {
         let result = self
             .rust()
             .view
-            .clone()
+            .as_ref()
             .ok_or_else(|| "TTS editor is not ready".to_string())
             .and_then(|view| {
-                let model = view
-                    .models
-                    .iter()
-                    .find(|model| model.id == value)
-                    .ok_or_else(|| "Selected TTS model is unavailable".to_string())?;
-                let settings =
-                    shrimply_inspector_core::tts::synchronized_settings(&view.settings, model);
                 super::with_controller(|controller| {
-                    controller.set_tts_settings(&view.target, settings, false)
+                    controller.select_tts_model(&view.target, &view.server_url, &value)
                 })?;
                 super::PREFERENCES.with_borrow(|preferences| {
                     shrimply_editor_state::preferences::set_last_tts_model(
                         preferences
                             .as_ref()
-                            .expect("Qt TTS editor requested before preference installation"),
-                        &model.id,
-                    );
+                            .expect("Qt TTS editor preferences are installed"),
+                        &value,
+                    )
                 });
                 Ok(())
             });
@@ -1072,7 +340,7 @@ impl tts_qobject::TtsEditorBackend {
         self.rust()
             .view
             .as_ref()
-            .and_then(|view| i32::try_from(view.controls.len()).ok())
+            .and_then(|view| i32::try_from(view.editor.controls.len()).ok())
             .unwrap_or_default()
     }
 
@@ -1337,7 +605,18 @@ impl tts_qobject::TtsEditorBackend {
             .view
             .as_ref()
             .ok_or_else(|| "TTS editor is not ready".to_string())
-            .and_then(start_generation);
+            .and_then(|view| {
+                super::with_controller(|controller| {
+                    controller.toggle_tts_generation(
+                        &view.target,
+                        &view.server_url,
+                        view.editor
+                            .model
+                            .as_ref()
+                            .ok_or_else(|| "TTS model is unavailable".to_string())?,
+                    )
+                })
+            });
         self.as_mut().finish(result);
     }
 
@@ -1346,9 +625,10 @@ impl tts_qobject::TtsEditorBackend {
             .rust()
             .view
             .as_ref()
-            .map(|view| view.audio_id)
             .ok_or_else(|| "TTS editor is not ready".to_string())
-            .and_then(cancel_generation);
+            .and_then(|view| {
+                super::with_controller(|controller| controller.cancel_tts_generation(&view.target))
+            });
         self.as_mut().finish(result);
     }
 
@@ -1356,6 +636,7 @@ impl tts_qobject::TtsEditorBackend {
         self.rust()
             .view
             .as_ref()?
+            .editor
             .controls
             .get(usize::try_from(control).ok()?)
     }
@@ -1401,20 +682,22 @@ impl tts_qobject::TtsEditorBackend {
             .as_ref()
             .ok_or_else(|| "TTS editor is not ready".to_string())?;
         let control = view
+            .editor
             .controls
             .get(usize::try_from(control).map_err(|_| "TTS control index is invalid".to_string())?)
             .ok_or_else(|| "TTS control is unavailable".to_string())?;
-        let mut settings = view.settings.clone();
-        let live = shrimply_inspector_core::tts::edit_input(
-            &mut settings,
-            view.model
-                .as_ref()
-                .ok_or_else(|| "TTS model is unavailable".to_string())?,
-            control_key(control),
-            edit,
-        )?;
         super::with_controller(|controller| {
-            controller.set_tts_settings(&view.target, settings, live)
+            controller
+                .edit_tts_input(
+                    &view.target,
+                    view.editor
+                        .model
+                        .as_ref()
+                        .ok_or_else(|| "TTS model is unavailable".to_string())?,
+                    control_key(control),
+                    edit,
+                )
+                .map(|_| ())
         })
     }
 

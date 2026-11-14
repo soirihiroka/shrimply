@@ -5,6 +5,7 @@ use shrimply_math_geometry::{ResolvedTransform2D, Transform2D};
 use uuid::Uuid;
 
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, Modifiers, PointerEvent, PreviewBuilder, PreviewContext,
     PreviewEditOutcome, PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse,
@@ -12,6 +13,7 @@ use shrimply_preview_provider_skia::{
 };
 use shrimply_property_model::timeline_value::*;
 
+#[cfg(feature = "preview")]
 use super::preview::{self, HANDLES, Handle};
 
 type AnimatedTransform2D = Transform2D<TimelineValue<glam::Vec2>, TimelineValue<f32>>;
@@ -123,6 +125,7 @@ impl ModifierModel for TransformModifier {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "preview")]
 struct TransformPreview {
     target: PreviewTarget,
     snapshot: TransformModifier,
@@ -136,6 +139,7 @@ struct TransformPreview {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum TransformDragKind {
     Move,
     Anchor,
@@ -144,6 +148,7 @@ enum TransformDragKind {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 struct TransformDrag {
     kind: TransformDragKind,
     canvas_to_screen: glam::Mat3,
@@ -153,6 +158,7 @@ struct TransformDrag {
 }
 
 impl TransformModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -188,6 +194,7 @@ impl TransformModifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl TransformPreview {
     fn bounds(&self) -> shrimply_preview_provider_skia::Rect {
         shrimply_preview_provider_skia::Rect::from_min_size(glam::Vec2::ZERO, self.size)
@@ -240,6 +247,7 @@ impl TransformPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for TransformPreview {
     fn on_draw(
         &mut self,
@@ -341,6 +349,7 @@ impl PreviewProvider for TransformPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 fn transform_cursor(kind: TransformDragKind) -> Cursor {
     match kind {
         TransformDragKind::Resize(handle) => preview::resize_cursor(handle),
@@ -349,6 +358,7 @@ fn transform_cursor(kind: TransformDragKind) -> Cursor {
     }
 }
 
+#[cfg(feature = "preview")]
 fn transform_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();
@@ -361,6 +371,7 @@ fn transform_edit(changed: bool, commit: bool) -> PreviewResponse {
     })
 }
 
+#[cfg(feature = "preview")]
 fn update_transform(
     modifier: &mut TransformModifier,
     drag: &TransformDrag,
@@ -458,6 +469,7 @@ fn update_transform(
     Some((changed, resolved))
 }
 
+#[cfg(feature = "preview")]
 fn opposite(handle: Handle) -> Handle {
     match handle {
         Handle::TopLeft => Handle::BottomRight,

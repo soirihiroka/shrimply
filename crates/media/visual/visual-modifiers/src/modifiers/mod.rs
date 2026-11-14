@@ -1,9 +1,11 @@
 use hashbrown::HashSet;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "preview")]
 use std::any::Any;
 use uuid::Uuid;
 
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{PreviewBuilder, PreviewProvider, PreviewTarget};
 
 pub use shrimply_property_model::modifier_model::*;
@@ -43,6 +45,7 @@ pub mod opacity;
 pub mod path_offset;
 pub mod pixelate_mosaic;
 pub mod posterize;
+#[cfg(feature = "preview")]
 mod preview;
 pub mod radial_blur;
 pub mod rasterize;
@@ -64,6 +67,7 @@ pub mod vignette;
 pub mod wave_ripple;
 pub mod zoom_blur;
 
+#[cfg(feature = "preview")]
 pub use preview::MODIFIER_PREVIEW_FACET;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -514,6 +518,7 @@ impl ModifierEffect {
             .find_map(|adapter| adapter(self, input))
     }
 
+    #[cfg(feature = "preview")]
     pub fn preview_target_mut(&mut self, target: PreviewTarget) -> Option<&mut dyn Any> {
         if target.facet() != MODIFIER_PREVIEW_FACET {
             return None;
@@ -527,6 +532,7 @@ impl ModifierEffect {
 }
 
 impl ModifierEffect {
+    #[cfg(feature = "preview")]
     pub fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -541,6 +547,7 @@ impl ModifierEffect {
 }
 
 impl VectorModifierEffect {
+    #[cfg(feature = "preview")]
     fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -559,6 +566,7 @@ impl VectorModifierEffect {
 }
 
 impl VectorModifierEffect {
+    #[cfg(feature = "preview")]
     fn preview_target_mut(&mut self, target: PreviewTarget) -> Option<&mut dyn Any> {
         match self {
             Self::Transform(effect) if preview::is_target(target) => Some(effect.as_mut()),
@@ -569,6 +577,7 @@ impl VectorModifierEffect {
 }
 
 impl RasterModifierEffect {
+    #[cfg(feature = "preview")]
     fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -605,6 +614,7 @@ impl RasterModifierEffect {
 }
 
 impl RasterModifierEffect {
+    #[cfg(feature = "preview")]
     fn preview_target_mut(&mut self, target: PreviewTarget) -> Option<&mut dyn Any> {
         match self {
             Self::Transform(effect) if preview::is_target(target) => Some(effect.as_mut()),

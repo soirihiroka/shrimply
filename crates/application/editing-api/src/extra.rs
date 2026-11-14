@@ -13,13 +13,14 @@ pub fn settings(
         }
         project.name = name.clone();
     }
+    let mut canvas_size = project.canvas_size;
     if let Some(width) = request.width {
-        project.canvas_size.width = width;
+        canvas_size.width = width;
     }
     if let Some(height) = request.height {
-        project.canvas_size.height = height;
+        canvas_size.height = height;
     }
-    if let Some(fps) = &request.fps {
+    let frame_rate = if let Some(fps) = &request.fps {
         if fps.numerator <= 0 || fps.denominator <= 0 {
             return Err("frame rate must be positive".into());
         }
@@ -33,8 +34,11 @@ pub fn settings(
         if fps != project.fps && project.has_timeline_items() {
             return Err("frame rate can only be changed on an empty timeline".into());
         }
-        project.fps = fps;
-    }
+        fps
+    } else {
+        project.fps
+    };
+    project.set_video_settings(canvas_size, frame_rate)?;
     project.validate()?;
     Ok(MutationResult::default())
 }

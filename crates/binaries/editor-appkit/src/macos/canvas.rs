@@ -24,6 +24,7 @@ mod context_menu;
 mod context_video;
 pub(super) mod preview;
 mod screen_recording;
+mod touch;
 mod track_actions;
 
 pub enum Content {
@@ -356,6 +357,26 @@ define_class!(
                 scene.end_pan(point);
                 Self::set_timeline_cursor(scene.pointer_cursor());
             }
+        }
+
+        #[unsafe(method(touchesBeganWithEvent:))]
+        fn touches_began(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Began, shrimply_components_skia::input::TouchPhase::Begin);
+        }
+
+        #[unsafe(method(touchesMovedWithEvent:))]
+        fn touches_moved(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Moved, shrimply_components_skia::input::TouchPhase::Move);
+        }
+
+        #[unsafe(method(touchesEndedWithEvent:))]
+        fn touches_ended(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Ended, shrimply_components_skia::input::TouchPhase::End);
+        }
+
+        #[unsafe(method(touchesCancelledWithEvent:))]
+        fn touches_cancelled(&self, event: &NSEvent) {
+            self.forward_touch(event, objc2_app_kit::NSTouchPhase::Cancelled, shrimply_components_skia::input::TouchPhase::Cancel);
         }
 
         #[unsafe(method(magnifyWithEvent:))]
@@ -1116,26 +1137,13 @@ impl CanvasView {
                             None,
                             false,
                         );
-                        use shrimply_editor_state::preferences::{
-                            PreviewDownsampleMethod, PreviewUpsampleMethod,
-                        };
-                        use skia_safe::{FilterMode, MipmapMode, SamplingOptions};
                         let downsampling = content.width() * (scale as f32) < frame.width as f32
                             || content.height() * (scale as f32) < frame.height as f32;
-                        let sampling = if downsampling {
-                            match prefs.preview_downsample_method {
-                                PreviewDownsampleMethod::Nearest => FilterMode::Nearest.into(),
-                                PreviewDownsampleMethod::Bilinear => FilterMode::Linear.into(),
-                                PreviewDownsampleMethod::Trilinear => {
-                                    SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear)
-                                }
-                            }
-                        } else {
-                            match prefs.preview_upsample_method {
-                                PreviewUpsampleMethod::Nearest => FilterMode::Nearest.into(),
-                                PreviewUpsampleMethod::Bilinear => FilterMode::Linear.into(),
-                            }
-                        };
+                        let sampling = shrimply_preview_render_core::math::preview_sampling(
+                            downsampling,
+                            prefs.preview_upsample_method,
+                            prefs.preview_downsample_method,
+                        );
                         {
                             let _timing = shrimply_process_reporting::diagnostics::timing(
                                 "Preview paint / image and mipmaps",
@@ -1336,6 +1344,7 @@ pub fn new(
         view.connect_preview_redraw();
     }
     if matches!(*view.ivars().content.borrow(), Content::Timeline(_)) {
+        view.setAllowedTouchTypes(objc2_app_kit::NSTouchTypeMask::Direct);
         let mask_type = NSString::from_str(MASK_PASTEBOARD_TYPE);
         view.registerForDraggedTypes(&NSArray::from_slice(&[
             unsafe { NSPasteboardTypeFileURL },

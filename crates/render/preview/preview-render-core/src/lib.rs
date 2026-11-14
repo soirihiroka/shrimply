@@ -5,6 +5,8 @@ mod items;
 mod layers;
 pub mod math;
 mod media;
+pub mod playback;
+pub mod worker;
 
 pub use shrimply_project_evaluation::FrameAudioAnalysis;
 
@@ -46,7 +48,7 @@ pub enum Source {
     Generated(Box<shrimply_visual_core::generated::GeneratedFrame>),
     Group(Vec<Layer>),
     Image(Image),
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
     Video(std::sync::Arc<shrimply_visual_frame::VideoFrame>),
     Background(Box<shrimply_render_core::background_spirv::BackgroundUniforms>),
     Manim(ManimFrame),

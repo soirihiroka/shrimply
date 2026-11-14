@@ -53,7 +53,7 @@ Color sample_premultiplied(uint *input, uint width, uint height, float x,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void directional_blur(uint3 id : SV_DispatchThreadID,
                                    uniform uint *input, uniform uint width,
                                    uniform uint height, uniform uint *output,
-                                   uniform uint64_t output_count,
+                                   uniform BufferIndex output_count,
                                    uniform uint radius, uniform float angle) {
   uint i = id.x;
   if (i >= output_count)
@@ -76,7 +76,7 @@ Color sample_premultiplied(uint *input, uint width, uint height, float x,
 }
 
 void morphology_horizontal(uint3 id, uint *input, uint width, float *output,
-                           uint64_t output_count, uint radius_u, bool erode) {
+                           BufferIndex output_count, uint radius_u, bool erode) {
   uint i = id.x;
   if (i >= output_count)
     return;
@@ -95,18 +95,18 @@ void morphology_horizontal(uint3 id, uint *input, uint width, float *output,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void erode_horizontal(uint3 id : SV_DispatchThreadID,
                                    uniform uint *input, uniform uint width,
                                    uniform float *output,
-                                   uniform uint64_t output_count,
+                                   uniform BufferIndex output_count,
                                    uniform uint radius) {
   morphology_horizontal(id, input, width, output, output_count, radius, true);
 }[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void dilate_horizontal(uint3 id : SV_DispatchThreadID,
                                      uniform uint *input, uniform uint width,
                                      uniform float *output,
-                                     uniform uint64_t output_count,
+                                     uniform BufferIndex output_count,
                                      uniform uint radius) {
   morphology_horizontal(id, input, width, output, output_count, radius, false);
 }
 void morphology_vertical(uint3 id, uint *source, float *horizontal, uint width,
-                         uint height, uint *output, uint64_t output_count,
+                         uint height, uint *output, BufferIndex output_count,
                          uint radius_u, bool erode) {
   uint i = id.x;
   if (i >= output_count)
@@ -126,7 +126,7 @@ void morphology_vertical(uint3 id, uint *source, float *horizontal, uint width,
                                  uniform uint *source,
                                  uniform float *horizontal, uniform uint width,
                                  uniform uint height, uniform uint *output,
-                                 uniform uint64_t output_count,
+                                 uniform BufferIndex output_count,
                                  uniform uint radius) {
   morphology_vertical(id, source, horizontal, width, height, output,
                       output_count, radius, true);
@@ -135,7 +135,7 @@ void morphology_vertical(uint3 id, uint *source, float *horizontal, uint width,
                                    uniform float *horizontal,
                                    uniform uint width, uniform uint height,
                                    uniform uint *output,
-                                   uniform uint64_t output_count,
+                                   uniform BufferIndex output_count,
                                    uniform uint radius) {
   morphology_vertical(id, source, horizontal, width, height, output,
                       output_count, radius, false);
@@ -144,7 +144,7 @@ void morphology_vertical(uint3 id, uint *source, float *horizontal, uint width,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 gaussian_blur_horizontal(uint3 id : SV_DispatchThreadID, uniform uint *input,
                          uniform uint width, uniform uint *output,
-                         uniform uint64_t output_count, uniform uint radius) {
+                         uniform BufferIndex output_count, uniform uint radius) {
   uint i = id.x;
   if (i < output_count)
     output[i] = gaussian_horizontal(input, i, width, radius);
@@ -154,7 +154,7 @@ gaussian_blur_horizontal(uint3 id : SV_DispatchThreadID, uniform uint *input,
                                           uniform uint width,
                                           uniform uint height,
                                           uniform uint *output,
-                                          uniform uint64_t output_count,
+                                          uniform BufferIndex output_count,
                                           uniform uint radius,
                                           uniform bool blur_rgb,
                                           uniform bool blur_alpha) {
@@ -172,7 +172,7 @@ gaussian_blur_horizontal(uint3 id : SV_DispatchThreadID, uniform uint *input,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void glow_bloom_horizontal(uint3 id : SV_DispatchThreadID,
                                         uniform uint *input, uniform uint width,
                                         uniform Color *output,
-                                        uniform uint64_t output_count,
+                                        uniform BufferIndex output_count,
                                         uniform float threshold,
                                         uniform uint radius_u) {
   uint i = id.x;
@@ -199,7 +199,7 @@ gaussian_blur_horizontal(uint3 id : SV_DispatchThreadID, uniform uint *input,
                                        uniform Color *horizontal,
                                        uniform uint width, uniform uint height,
                                        uniform uint *output,
-                                       uniform uint64_t output_count,
+                                       uniform BufferIndex output_count,
                                        uniform uint radius_u,
                                        uniform float intensity) {
   uint i = id.x;
@@ -233,7 +233,7 @@ void accumulate(inout float4 value, uint pixel) {
 }
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void kuwahara_horizontal_statistics(
     uint3 id : SV_DispatchThreadID, uniform uint *input, uniform uint width,
-    uniform float *output, uniform uint64_t output_count, uniform uint radius) {
+    uniform float *output, uniform BufferIndex output_count, uniform uint radius) {
   uint i = id.x;
   if (i >= output_count)
     return;
@@ -264,7 +264,7 @@ void accumulate(inout float4 value, uint pixel) {
 kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
                   uniform float *statistics, uniform uint width,
                   uniform uint height, uniform uint *output,
-                  uniform uint64_t output_count, uniform uint radius,
+                  uniform BufferIndex output_count, uniform uint radius,
                   uniform bool generalized) {
   uint i = id.x;
   if (i >= output_count)
@@ -315,7 +315,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void radial_blur(uint3 id : SV_DispatchThreadID,
                                   uniform uint *input, uniform uint width,
                                   uniform uint height, uniform uint *output,
-                                  uniform uint64_t output_count,
+                                  uniform BufferIndex output_count,
                                   uniform RadialBlurParams params) {
   uint i = id.x;
   if (i >= output_count)
@@ -340,7 +340,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
 }
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void zoom_blur(uint3 id : SV_DispatchThreadID, uniform uint *input,
                             uniform uint width, uniform uint height,
-                            uniform uint *output, uniform uint64_t output_count,
+                            uniform uint *output, uniform BufferIndex output_count,
                             uniform ZoomBlurParams params) {
   uint i = id.x;
   if (i >= output_count)
@@ -364,7 +364,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
                                            uniform uint *input,
                                            uniform uint width,
                                            uniform uint *output,
-                                           uniform uint64_t output_count,
+                                           uniform BufferIndex output_count,
                                            uniform uint radius) {
   uint i = id.x;
   if (i < output_count)
@@ -374,7 +374,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
                                         uniform uint *input, uniform uint width,
                                         uniform uint height,
                                         uniform uint *output,
-                                        uniform uint64_t output_count,
+                                        uniform BufferIndex output_count,
                                         uniform uint radius) {
   uint i = id.x;
   if (i < output_count)
@@ -382,7 +382,7 @@ kuwahara_vertical(uint3 id : SV_DispatchThreadID, uniform uint *input,
 }[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void unsharp_mask(uint3 id : SV_DispatchThreadID,
                                 uniform uint *original, uniform uint *blurred,
                                 uniform uint *output,
-                                uniform uint64_t output_count,
+                                uniform BufferIndex output_count,
                                 uniform float amount) {
   uint i = id.x;
   if (i >= output_count)

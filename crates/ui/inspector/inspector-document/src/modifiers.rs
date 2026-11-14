@@ -6,10 +6,13 @@ use shrimply_inspector_core::{
 
 pub(super) fn visual(modifier: &VisualModifierPresentation) -> InspectorListItem {
     let id = modifier.id;
-    let section = modifier
+    let mut section = modifier
         .body
         .as_ref()
         .map_or_else(InspectorSection::default, |body| body.section());
+    for control in &mut section.controls {
+        control.target_id.get_or_insert(id);
+    }
     let mut item = InspectorItem::new(format!("modifier:{id}"), modifier.title, section)
         .reset(Action::ResetModifier { id, audio: false })
         .toggle(HeaderToggle {

@@ -54,6 +54,278 @@ fn reply(replies: &[Value], id: u64) -> &Value {
 }
 
 #[test]
+fn native_definitions_cover_functions_methods_constants_types_and_both_markup_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = concat!(
+        "let marker=Circle(radius=2pt)\n",
+        "let df=DataFrame([{n=1}])\n",
+        "let rows=df[\"n\"].to_list()\n",
+        "fn twice(value:Number):Number{return value*2}\n",
+        "let doubled=[1,2].map(twice)\n",
+        "let view=<CodeView lang=\"python\">\nx=1\n</CodeView>\n",
+        "let ranges=view.ranges()\n",
+        "view.scroll_to(line=1)\n",
+        "let pi=PI\n",
+        "let alignment=Align.Center\n",
+        "let values:List<Number>=[1]\n",
+        "let chained=df.head(n=1,duration=1ms).to_list()\n",
+    );
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"version":1,"text":source}}),
+        ),
+    ];
+    let cases = [
+        (0, "Circle", "Circle"),
+        (0, "radius", "Circle"),
+        (2, "to_list", "DataFrame.to_list"),
+        (4, "map", "List.map"),
+        (5, "CodeView", "CodeView"),
+        (7, "CodeView", "CodeView"),
+        (8, "ranges", "CodeView.ranges"),
+        (9, "scroll_to", "Element.scroll_to"),
+        (10, "PI", "PI"),
+        (11, "Center", "Align.Center"),
+        (12, "List", "List"),
+        (12, "Number", "Number"),
+        (13, "head", "DataFrame.head"),
+        (13, "duration", "DataFrame.head"),
+    ];
+    for (index, (line, token, _)) in cases.iter().enumerate() {
+        let character = source.lines().nth(*line).unwrap().rfind(token).unwrap() + 1;
+        messages.push(request(
+            index as u64 + 2,
+            "textDocument/definition",
+            json!({"textDocument":{"uri":uri},"position":{"line":line,"character":character}}),
+        ));
+    }
+    messages.push(request(100, "sanim/stdlib", json!({})));
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    assert!(
+        !replies.iter().any(|reply| reply["params"]["diagnostics"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["severity"] == 1))),
+        "{replies:?}"
+    );
+    let reference = reply(&replies, 100)["result"].as_str().unwrap();
+    for (index, (_, _, name)) in cases.iter().enumerate() {
+        let target = &reply(&replies, index as u64 + 2)["result"];
+        assert_eq!(
+            target["uri"], "sanim-stdlib:/standard-library.md",
+            "{name}: {target}"
+        );
+        let line = target["range"]["start"]["line"].as_u64().unwrap() as usize;
+        assert_eq!(reference.lines().nth(line).unwrap(), format!("## {name}"));
+    }
+}
+
+#[test]
+fn definitions_resolve_local_and_imported_type_uses_import_paths_and_assignment_targets() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let helper = format!("file://{}", dir.path().join("model.sanim").display());
+    std::fs::write(
+        dir.path().join("model.sanim"),
+        "type Row={n:Number}\nfn make():Row{return {n=1}}\n",
+    )
+    .unwrap();
+    let source = "import \"model.sanim\" as model\ntype Local={n:Number}\nlet row:model.Row=model.make()\nlet local:Local={n=2}\nmut counter=1\ncounter=2\n";
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"version":1,"text":source}}),
+        ),
+    ];
+    let cases = [
+        (0, "model.sanim", helper.as_str(), 0, 0),
+        (2, "Row", helper.as_str(), 0, 5),
+        (2, "make", helper.as_str(), 1, 3),
+        (3, "Local", uri.as_str(), 1, 5),
+        (5, "counter", uri.as_str(), 4, 4),
+    ];
+    for (i, (line, token, ..)) in cases.iter().enumerate() {
+        let character = source.lines().nth(*line).unwrap().rfind(token).unwrap() + 1;
+        messages.push(request(
+            i as u64 + 2,
+            "textDocument/definition",
+            json!({"textDocument":{"uri":uri},"position":{"line":line,"character":character}}),
+        ));
+    }
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    for (i, (_, _, uri, line, character)) in cases.iter().enumerate() {
+        let target = &reply(&replies, i as u64 + 2)["result"];
+        assert_eq!(target["uri"], *uri, "{target}");
+        assert_eq!(
+            target["range"]["start"],
+            json!({"line":line,"character":character})
+        );
+    }
+}
+
+#[test]
+fn definitions_use_exact_enum_variant_and_lexically_scoped_generic_declarations() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = concat!(
+        "enum Mode {\n",
+        "    One,\n",
+        "    Two(Number)\n",
+        "}\n",
+        "let first=Mode.One\n",
+        "let second=Mode.Two(2)\n",
+        "type Wrapped<T>={value:T}\n",
+        "fn identity<T>(value:T):T{return value}\n",
+        "fn another<T>(value:T):T{return value}\n",
+        "fn scoped<T>(value:T):T{let T=1;let item:T=value;return item}\n",
+    );
+    let (metadata, _) = sanim_lang::parser::parse_highlighted("main.sanim", source, 100_000);
+    let qualifiers = metadata
+        .declarations
+        .iter()
+        .filter_map(|declaration| match &declaration.kind {
+            sanim_lang::parser::DeclarationKind::EnumVariant(qualifier) => Some(qualifier),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(qualifiers.len(), 2);
+    assert!(std::sync::Arc::ptr_eq(qualifiers[0], qualifiers[1]));
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"version":1,"text":source}}),
+        ),
+    ];
+    let cases = [
+        (4, "One", 1, 4),
+        (5, "Two", 2, 4),
+        (6, "T}", 6, 13),
+        (7, "T):", 7, 12),
+        (7, "T{return", 7, 12),
+        (8, "T):", 8, 11),
+        (9, "T=value", 9, 10),
+    ];
+    for (index, (line, token, ..)) in cases.iter().enumerate() {
+        let character = source.lines().nth(*line).unwrap().rfind(token).unwrap();
+        messages.push(request(
+            index as u64 + 2,
+            "textDocument/definition",
+            json!({"textDocument":{"uri":uri},"position":{"line":line,"character":character}}),
+        ));
+    }
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    assert!(
+        !replies.iter().any(|reply| reply["params"]["diagnostics"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["severity"] == 1))),
+        "{replies:?}"
+    );
+    for (index, (_, _, line, character)) in cases.iter().enumerate() {
+        let target = &reply(&replies, index as u64 + 2)["result"];
+        assert_eq!(target["uri"], uri, "{target}");
+        assert_eq!(
+            target["range"]["start"],
+            json!({"line":line,"character":character})
+        );
+    }
+}
+
+#[test]
+fn inferred_type_hint_edits_round_trip_through_the_actual_checker() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = concat!(
+        "let greeting=\"🚀\"\n",
+        "let delay=250ms\n",
+        "let offset=Vec2(2pt,3pt)\n",
+        "let record={distance=4pt,enabled=true}\n",
+        "let items=[1,2,3]\n",
+        "mut phase=0deg\n",
+        "sig wave=sin(phase)\n",
+        "fn live():sig Number{return wave}\n",
+        "let linked=live()\n",
+        "let xs=LinearScale(domain=Vec2(0,1),range=Vec2(0pt,100pt))\n",
+        "let annotated:Number=7\n",
+    );
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"version":1,"text":source}}),
+        ),
+        request(
+            2,
+            "textDocument/inlayHint",
+            json!({"textDocument":{"uri":uri},"range":{"start":{"line":0,"character":0},"end":{"line":11,"character":0}}}),
+        ),
+    ];
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    let hints = reply(&replies, 2)["result"].as_array().unwrap();
+    assert!(!hints.iter().any(|hint| hint["position"]["line"] == 10));
+    let mut edited = source.to_owned();
+    let mut edits = hints
+        .iter()
+        .filter_map(|hint| hint["textEdits"].as_array())
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(edits.len(), 9);
+    edits.sort_by_key(|edit| {
+        std::cmp::Reverse((
+            edit["range"]["start"]["line"].as_u64().unwrap(),
+            edit["range"]["start"]["character"].as_u64().unwrap(),
+        ))
+    });
+    for edit in edits {
+        assert_eq!(edit["range"]["start"], edit["range"]["end"]);
+        let line = edit["range"]["start"]["line"].as_u64().unwrap() as usize;
+        let character = edit["range"]["start"]["character"].as_u64().unwrap() as usize;
+        let start = edited
+            .split_inclusive('\n')
+            .take(line)
+            .map(str::len)
+            .sum::<usize>();
+        let mut utf16 = 0;
+        let byte = edited[start..]
+            .char_indices()
+            .find_map(|(byte, c)| {
+                if utf16 == character {
+                    Some(byte)
+                } else {
+                    utf16 += c.len_utf16();
+                    None
+                }
+            })
+            .unwrap();
+        edited.insert_str(start + byte, edit["newText"].as_str().unwrap());
+    }
+    assert!(edited.contains("delay: Duration"), "{edited}");
+    assert!(edited.contains("offset: Vec2<Length>"), "{edited}");
+    assert!(edited.contains("linked: sig (Number)"), "{edited}");
+    assert!(!edited.contains('…'));
+    let mut sources = sanim_lang::MemorySources::default();
+    sources.insert("main.sanim", source);
+    let original = sanim_lang::Engine::default()
+        .lint("main.sanim", &sources)
+        .unwrap();
+    sources.insert("main.sanim", edited.clone());
+    let annotated = sanim_lang::Engine::default()
+        .lint("main.sanim", &sources)
+        .unwrap_or_else(|error| panic!("{error:?}\n{edited}"));
+    assert_eq!(
+        original.modules["main.sanim"].checked.exports,
+        annotated.modules["main.sanim"].checked.exports
+    );
+}
+
+#[test]
 fn real_stdio_session_reports_types_completion_hover_definition_and_symbols() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());

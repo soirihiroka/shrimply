@@ -1,17 +1,17 @@
 import abi;
 import color;
 
-float2 video_chroma(uint8_t *plane, uint64_t pitch, uint width, uint height,
+float2 video_chroma(uint8_t *plane, BufferIndex pitch, uint width, uint height,
                     int x, int y) {
-  uint64_t offset = uint64_t(clamp(y, 0, int((height + 1u) / 2u) - 1)) * pitch +
-                    uint64_t(clamp(x, 0, int((width + 1u) / 2u) - 1)) * 2u;
+  BufferIndex offset = BufferIndex(clamp(y, 0, int((height + 1u) / 2u) - 1)) * pitch +
+                    BufferIndex(clamp(x, 0, int((width + 1u) / 2u) - 1)) * 2u;
   return float2(plane[offset], plane[offset + 1u]) / 255.0f;
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
                   uniform uint8_t *y_plane, uniform uint8_t *uv_plane,
-                  uniform uint64_t y_pitch, uniform uint64_t uv_pitch,
+                  uniform BufferIndex y_pitch, uniform BufferIndex uv_pitch,
                   uniform uint width, uniform uint height, uniform uint *output,
                   uniform int4 coefficients, uniform bool full_range,
                   uniform float2 chroma_offset) {
@@ -29,7 +29,7 @@ void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
            video_chroma(uv_plane, uv_pitch, width, height, low.x + 1, low.y + 1), amount.x),
       amount.y);
   output[i] = color_to_rgba(from_ycbcr(
-      float(y_plane[uint64_t(y) * y_pitch + x]) / 255.0f,
+      float(y_plane[BufferIndex(y) * y_pitch + x]) / 255.0f,
       chroma, coefficients, full_range));
 }
 
@@ -38,8 +38,8 @@ void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void p010_to_nv12(uint3 id : SV_DispatchThreadID,
                   uniform uint16_t *input, uniform uint8_t *output,
-                  uniform uint64_t count, uniform uint64_t y_count,
-                  uniform uint64_t uv_offset) {
+                  uniform BufferIndex count, uniform BufferIndex y_count,
+                  uniform BufferIndex uv_offset) {
   if (id.x < count)
     output[id.x] = uint8_t(input[id.x < y_count ? id.x : uv_offset + id.x - y_count] >> 8u);
 }
@@ -47,7 +47,7 @@ void p010_to_nv12(uint3 id : SV_DispatchThreadID,
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void unpremultiply_rgba(uint3 id : SV_DispatchThreadID,
                         uniform uint *input, uniform uint *output,
-                        uniform uint64_t count) {
+                        uniform BufferIndex count) {
   if (id.x < count)
     output[id.x] = color_to_rgba(color_unpremultiply(color_from_rgba(input[id.x])));
 }
@@ -147,7 +147,7 @@ void estimate_flow(uint3 id : SV_DispatchThreadID,
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
-void packed_rgba_to_float(uint3 id : SV_DispatchThreadID, uniform uint* input, uniform float4* output, uniform uint64_t count) {
+void packed_rgba_to_float(uint3 id : SV_DispatchThreadID, uniform uint* input, uniform float4* output, uniform BufferIndex count) {
   if (id.x >= count) return;
   Color value = color_from_rgba(input[id.x]);
   output[id.x] = float4(value.r, value.g, value.b, value.a);

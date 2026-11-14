@@ -2,8 +2,7 @@
 mod audio;
 #[path = "item_decoration.rs"]
 mod decoration;
-#[path = "visual_items.rs"]
-mod visual;
+use shrimply_timeline_paint_skia::visual_items as visual;
 
 pub use audio::item_rect;
 pub use audio::*;

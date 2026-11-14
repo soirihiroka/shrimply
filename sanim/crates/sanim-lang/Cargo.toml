@@ -4,11 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["native-text", "media"]
+native-text = ["sanim-data/native-text"]
+media = ["sanim-data/media"]
+
 [dependencies]
 imbl.workspace = true
 regex.workspace = true
 sanim-core.workspace = true
-sanim-data.workspace = true
+sanim-data = { workspace = true, default-features = false }
 shrimply-asset.workspace = true
 serde.workspace = true
 serde_json.workspace = true

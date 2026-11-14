@@ -1015,16 +1015,15 @@ pub(super) fn set_caption_color(store: &SharedPreferences, well: &NSColorWell) {
         well.color()
             .getRed_green_blue_alpha(&mut red, &mut green, &mut blue, &mut alpha)
     };
-    let component = |value: f64| (value.clamp(0.0, 1.0) * f64::from(u8::MAX)).round() as u8;
     preferences::set_value(
         store,
         PreferenceId::CaptionBackgroundColor,
-        PreferenceValue::Color(shrimply_project_document::Color::new(
-            component(red),
-            component(green),
-            component(blue),
-            component(alpha),
-        )),
+        PreferenceValue::Color(shrimply_project_document::Color::from_srgba([
+            red as f32,
+            green as f32,
+            blue as f32,
+            alpha as f32,
+        ])),
     )
     .expect("caption background color has a fixed color type");
 }

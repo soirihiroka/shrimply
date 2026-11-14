@@ -1,4 +1,6 @@
+use crate::InspectorRuntime;
 use shrimply_project_document::project::{ItemAddress, Time};
+use shrimply_property_model::timeline_value::{Interpolation, TimelineBase, TimelineValue};
 
 pub use shrimply_keyframe_graph_skia::*;
 
@@ -134,6 +136,49 @@ impl ScalarGraph {
     }
 }
 
+pub fn scalar_graph(
+    timeline: &TimelineValue<f32>,
+    runtime: InspectorRuntime,
+    display: fn(f32) -> f64,
+) -> Option<ScalarGraph> {
+    if !matches!(timeline.base, TimelineBase::Keyframes(_)) {
+        return None;
+    }
+    let static_value = display(timeline.value_at(runtime.local_time.unwrap_or(Time::ZERO)));
+    let KeyframeGraph::RawValue {
+        points, segments, ..
+    } = crate::keyframe_model::scalar_graph(timeline, static_value, display)
+    else {
+        unreachable!("scalar timeline must produce a raw keyframe graph")
+    };
+    Some(ScalarGraph {
+        points: points
+            .into_iter()
+            .map(|point| GraphPoint {
+                time: point.time,
+                value: point.value,
+            })
+            .collect(),
+        segments: segments
+            .into_iter()
+            .map(|segment| GraphSegment {
+                owner_id: segment.owner_id,
+                start: segment.start,
+                end: segment.end,
+                start_value: segment.start_value,
+                end_value: segment.end_value,
+                interpolation: Interpolation::KEYFRAME
+                    .iter()
+                    .position(|candidate| *candidate == segment.interpolation)
+                    .expect("scalar keyframe interpolation must be available"),
+            })
+            .collect(),
+        range: runtime.keyframe_range.unwrap_or((Time::ZERO, Time::ZERO)),
+        frame_step: runtime.frame_step,
+        playhead: runtime.keyframe_playhead.unwrap_or(Time::ZERO),
+    })
+}
+
 impl InspectorController {
     pub fn control_graph_source(
         &self,
@@ -152,6 +197,35 @@ impl InspectorController {
         target: &InspectorTarget,
         control: &InspectorControl,
     ) -> Result<Option<ScalarGraph>, String> {
+        if matches!(target, InspectorTarget::Item(ItemAddress::Audio { .. }))
+            && control.kind == ControlKind::LayeredNumber
+        {
+            let (_, runtime) = self.control_graph_source(target)?;
+            let timeline = if control.audio_modifier {
+                self.audio_modifier_timeline(
+                    target,
+                    control
+                        .target_id
+                        .ok_or("audio modifier owner is unavailable")?,
+                    control
+                        .timeline_id
+                        .ok_or("audio modifier timeline is unavailable")?,
+                )?
+            } else {
+                self.scalar_timeline(
+                    target,
+                    control.timeline_path.as_deref().unwrap_or(&control.path),
+                )?
+            };
+            if Some(timeline.id) != control.timeline_id {
+                return Err("audio timeline changed while the inspector was open".into());
+            }
+            let mut graph = scalar_graph(&timeline, runtime, f64::from);
+            if let Some(graph) = &mut graph {
+                graph.map_control_values(control);
+            }
+            return Ok(graph);
+        }
         if control.kind == ControlKind::LayeredDrawing {
             if control.path != crate::paint::DRAWING_PATH
                 || control.timeline_path.as_deref() != Some(crate::paint::DRAWING_PATH)

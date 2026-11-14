@@ -18,6 +18,7 @@ pub struct TrackAddressGap {
     pub end: Time,
 }
 
+#[derive(Clone)]
 pub struct SelectionState {
     selected_item_addresses: Vec<ItemAddress>,
     focused_item_address: Option<ItemAddress>,
@@ -40,6 +41,26 @@ pub struct SelectionState {
 struct SelectionListener {
     label: &'static str,
     callback: Rc<dyn Fn()>,
+}
+
+/// Selection data for cancelling an interaction; subscriptions remain live.
+pub struct SelectionSnapshot(SelectionState);
+
+pub fn snapshot(state: &SharedSelectionState) -> SelectionSnapshot {
+    let mut snapshot = state.borrow().clone();
+    snapshot.listeners.clear();
+    SelectionSnapshot(snapshot)
+}
+
+pub fn restore(state: &SharedSelectionState, snapshot: SelectionSnapshot) {
+    let listeners = {
+        let mut state = state.borrow_mut();
+        let listeners = std::mem::take(&mut state.listeners);
+        *state = snapshot.0;
+        state.listeners = listeners;
+        state.listeners.clone()
+    };
+    notify_listeners(listeners);
 }
 
 pub fn new() -> SharedSelectionState {
@@ -766,35 +787,7 @@ pub fn track_key(project: &Project, address: &TrackAddress) -> Option<SelectedTr
     if !address.is_root() {
         return None;
     }
-    let (kind, track_index) = match address {
-        TrackAddress::Comment { track_id } => (
-            SelectedItemKind::Comment,
-            project
-                .comment_tracks
-                .iter()
-                .position(|track| track.id == *track_id)?,
-        ),
-        TrackAddress::Caption { track_id } => (
-            SelectedItemKind::Caption,
-            project
-                .caption_tracks
-                .iter()
-                .position(|track| track.id == *track_id)?,
-        ),
-        TrackAddress::Video { track_id, .. } => (
-            SelectedItemKind::Video,
-            project
-                .video_tracks
-                .iter()
-                .position(|track| track.id == *track_id)?,
-        ),
-        TrackAddress::Audio { track_id, .. } => (
-            SelectedItemKind::Audio,
-            project
-                .audio_tracks
-                .iter()
-                .position(|track| track.id == *track_id)?,
-        ),
-    };
+    let kind = address.kind();
+    let track_index = project.root_track_index(kind, address.track_id())?;
     Some(SelectedTrack { kind, track_index })
 }

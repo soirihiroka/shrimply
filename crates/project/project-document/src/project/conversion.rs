@@ -92,6 +92,7 @@ pub(super) fn from_json(contents: &str) -> Result<Project, String> {
         .map_err(|error| format!("could not decode converted project JSON: {error}"))
 }
 
+#[cfg(feature = "editor")]
 pub(super) fn from_messagepack(bytes: &[u8]) -> Result<Project, String> {
     let value = rmp_serde::from_slice(bytes)
         .map_err(|error| format!("could not decode MessagePack project: {error}"))?;

@@ -3,9 +3,9 @@ use super::*;
 #[path = "drawing/items.rs"]
 mod clip_items;
 mod folded;
-mod icons;
+use shrimply_timeline_paint_skia::icons;
 mod previews;
-mod track_controls;
+use shrimply_timeline_paint_skia::track_controls;
 mod tracks;
 
 use clip_items::*;
@@ -158,6 +158,7 @@ pub fn draw_timeline(input: TimelineInput<'_, '_>) {
     draw_track_label_pane(
         painter,
         project,
+        &items::track_rows(project),
         selected_tracks,
         track_control_draw,
         view,

@@ -7,8 +7,6 @@ pub use shrimply_export_cuda as video;
 pub use shrimply_components_gtk::desktop_open;
 pub use shrimply_export_core::{caption, project, time_format};
 
-use shrimply_math_media as math;
-
 mod captions;
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -17,10 +15,6 @@ use shrimply_math_core::Fraction;
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::TryRecvError;
-use std::thread;
 use std::time::{Duration, Instant};
 
 pub fn build_export_button(
@@ -164,13 +158,7 @@ fn open_export_page(
         video::ExportContainer::Mp4,
     );
 
-    let mut fps_rates = project::COMMON_FRAME_RATES
-        .iter()
-        .map(|rate| (rate.value, rate.label.to_string()))
-        .collect::<Vec<_>>();
-    if !fps_rates.iter().any(|(fps, _)| *fps == project_fps) {
-        fps_rates.push((project_fps, project::fraction_as_label(project_fps)));
-    }
+    let fps_rates = shrimply_export_core::video::settings::frame_rates(project_fps);
     let fps_row = TypedComboRow::new("Frame rate", fps_rates, project_fps);
 
     let background_alpha_row = adw::SpinRow::with_range(0.0, f64::from(u8::MAX), 1.0);
@@ -215,13 +203,17 @@ fn open_export_page(
     let bitrate_row = adw::SpinRow::with_range(50.0, 250_000.0, 50.0);
     bitrate_row.set_title(tr!("Video Bitrate").as_ref());
     bitrate_row.set_subtitle(tr!("Kbps for CBR/VBR").as_ref());
-    bitrate_row.set_value(10_000.0);
+    bitrate_row.set_value(f64::from(
+        shrimply_export_core::video::settings::DEFAULT_VIDEO_BITRATE_KBPS,
+    ));
     bitrate_row.set_digits(0);
 
     let max_bitrate_row = adw::SpinRow::with_range(50.0, 250_000.0, 50.0);
     max_bitrate_row.set_title(tr!("Max Video Bitrate").as_ref());
     max_bitrate_row.set_subtitle(tr!("Kbps for VBR").as_ref());
-    max_bitrate_row.set_value(10_000.0);
+    max_bitrate_row.set_value(f64::from(
+        shrimply_export_core::video::settings::DEFAULT_VIDEO_BITRATE_KBPS,
+    ));
     max_bitrate_row.set_digits(0);
 
     let target_quality_row = adw::SpinRow::with_range(1.0, 51.0, 1.0);
@@ -328,13 +320,15 @@ fn open_export_page(
     let audio_sample_rate_row = TypedComboRow::new(
         "Audio Sample Rate",
         [(44_100, "44100"), (48_000, "48000"), (96_000, "96000")],
-        48_000,
+        shrimply_export_core::video::settings::DEFAULT_AUDIO_SAMPLE_RATE,
     );
 
     let audio_bitrate_row = adw::SpinRow::with_range(32.0, 512.0, 8.0);
     audio_bitrate_row.set_title(tr!("Audio Bitrate").as_ref());
     audio_bitrate_row.set_subtitle(tr!("Kbps").as_ref());
-    audio_bitrate_row.set_value(192.0);
+    audio_bitrate_row.set_value(f64::from(
+        shrimply_export_core::video::settings::DEFAULT_AUDIO_BITRATE_KBPS,
+    ));
     audio_bitrate_row.set_digits(0);
 
     bitrate_row.set_visible(false);
@@ -599,11 +593,6 @@ fn default_video_filename(project: &project::Project, container: video::ExportCo
     output::default_filename(project, video::extension_for_container(container))
 }
 
-enum VideoExportEvent {
-    Progress(video::ExportProgress),
-    Finished(Result<(), String>),
-}
-
 fn start_video_export(
     parent: &adw::ApplicationWindow,
     toasts: &adw::ToastOverlay,
@@ -612,45 +601,30 @@ fn start_video_export(
 ) {
     let path = settings.path.clone();
     let (progress_dialog, state_label, progress_bar) = video_export_progress_dialog(parent);
-    let (tx, rx) = std::sync::mpsc::channel();
-    let cancelled = Arc::new(AtomicBool::new(false));
+    let job = match shrimply_export_core::job::Job::spawn(
+        move |cancelled, progress| video::export_project(project, settings, cancelled, progress),
+        || {},
+    ) {
+        Ok(job) => Rc::new(RefCell::new(job)),
+        Err(error) => {
+            progress_dialog.close();
+            show_export_error(parent, "Could not export video", &error);
+            return;
+        }
+    };
     progress_dialog.connect_closed({
-        let cancelled = cancelled.clone();
-        move |_| cancelled.store(true, Ordering::Relaxed)
+        let job = job.clone();
+        move |_| job.borrow().cancel()
     });
     let started = Instant::now();
-    let worker_cancelled = cancelled.clone();
-    thread::spawn(move || {
-        let progress_tx = tx.clone();
-        let result = video::export_project(project, settings, worker_cancelled, move |progress| {
-            let _ = progress_tx.send(VideoExportEvent::Progress(progress));
-        });
-        let _ = tx.send(VideoExportEvent::Finished(result));
-    });
-
     let parent = parent.clone();
     let toasts = toasts.clone();
     glib::timeout_add_local(Duration::from_millis(100), move || {
-        let mut finished = None;
-        loop {
-            match rx.try_recv() {
-                Ok(VideoExportEvent::Progress(progress)) => {
-                    update_video_export_progress(&state_label, &progress_bar, progress);
-                }
-                Ok(VideoExportEvent::Finished(result)) => {
-                    finished = Some(result);
-                    break;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    finished = Some(Err(
-                        "The export worker stopped before reporting a result.".to_string()
-                    ));
-                    break;
-                }
-            }
+        let update = job.borrow_mut().poll();
+        if let Some(progress) = update.progress {
+            update_video_export_progress(&state_label, &progress_bar, progress);
         }
-
+        let finished = update.finished;
         match finished {
             Some(Ok(())) => {
                 progress_dialog.close();
@@ -664,7 +638,7 @@ fn start_video_export(
                 glib::ControlFlow::Break
             }
             Some(Err(error)) => {
-                let was_cancelled = cancelled.load(Ordering::Relaxed);
+                let was_cancelled = job.borrow().cancelled();
                 progress_dialog.close();
                 if !was_cancelled {
                     show_export_error(&parent, "Could not export video", &error);
@@ -723,100 +697,14 @@ fn update_video_export_progress(
     progress: &gtk::ProgressBar,
     event: video::ExportProgress,
 ) {
-    match event {
-        video::ExportProgress::MixingAudio {
-            current_frame,
-            total_frames,
-        } => {
-            state.set_label(tr!("Preparing audio").as_ref());
-            let fraction = if total_frames == 0 {
-                1.0
-            } else {
-                current_frame as f64 / total_frames as f64
-            }
-            .clamp(0.0, 1.0);
-            progress.set_fraction(fraction);
-            progress.set_text(Some(&shrimply_components_gtk::i18n::text_args(
-                "Preparing audio (%{percent}%)",
-                &[("percent", format!("{:.0}", fraction * 100.0))],
-            )));
-        }
-        video::ExportProgress::SettingUp(message) => {
-            state.set_label(tr!(message).as_ref());
-            progress.set_fraction(1.0);
-            progress.set_text(Some(tr!(message).as_ref()));
-        }
-        video::ExportProgress::EncodingAudio {
-            current_frame,
-            total_frames,
-        } => {
-            state.set_label(tr!("Encoding audio").as_ref());
-            let fraction = if total_frames == 0 {
-                1.0
-            } else {
-                current_frame as f64 / total_frames as f64
-            }
-            .clamp(0.0, 1.0);
-            progress.set_fraction(fraction);
-            progress.set_text(Some(&shrimply_components_gtk::i18n::text_args(
-                "Encoding audio (%{percent}%)",
-                &[("percent", format!("{:.0}", fraction * 100.0))],
-            )));
-        }
-        video::ExportProgress::EncodingVideo {
-            current_frame,
-            total_frames,
-            fps_milli,
-        } => {
-            state.set_label(tr!("Rendering frames").as_ref());
-            let fraction = if total_frames == 0 {
-                1.0
-            } else {
-                current_frame as f64 / total_frames as f64
-            }
-            .clamp(0.0, 1.0);
-            progress.set_fraction(fraction);
-            let eta = (fps_milli > 0).then(|| {
-                time_format::human_duration(crate::math::duration_for_frames_at_millifps(
-                    total_frames.saturating_sub(current_frame),
-                    fps_milli,
-                ))
-            });
-            let progress_text = if fps_milli > 0 {
-                shrimply_components_gtk::i18n::text_args(
-                    "%{current} of %{total} frames (%{percent}%) - %{fps} fps - %{eta} left",
-                    &[
-                        ("current", current_frame.to_string()),
-                        ("total", total_frames.to_string()),
-                        ("percent", format!("{:.0}", fraction * 100.0)),
-                        (
-                            "fps",
-                            format!("{}.{}", fps_milli / 1_000, fps_milli % 1_000 / 100),
-                        ),
-                        (
-                            "eta",
-                            eta.expect("positive frame rate produces an export ETA"),
-                        ),
-                    ],
-                )
-            } else {
-                shrimply_components_gtk::i18n::text_args(
-                    "%{current} of %{total} frames (%{percent}%)",
-                    &[
-                        ("current", current_frame.to_string()),
-                        ("total", total_frames.to_string()),
-                        ("percent", format!("{:.0}", fraction * 100.0)),
-                    ],
-                )
-            };
-            progress.set_text(Some(&progress_text));
-        }
-        video::ExportProgress::Finalizing => {
-            state.set_label(tr!("Finishing file").as_ref());
-            progress.set_fraction(1.0);
-            progress.set_text(Some(tr!("Finishing").as_ref()));
-        }
-    }
+    let event = shrimply_export_core::video::progress::presentation(event);
+    state.set_label(tr!(event.label).as_ref());
+    progress.set_fraction(event.fraction.unwrap_or(1.0));
+    let arguments = event.arguments.into_iter().collect::<Vec<_>>();
+    progress.set_text(Some(&shrimply_components_gtk::i18n::text_args(
+        event.message,
+        &arguments,
+    )));
 }
 
 fn show_export_error(parent: &adw::ApplicationWindow, heading: &str, body: &str) {

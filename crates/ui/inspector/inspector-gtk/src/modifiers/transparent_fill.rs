@@ -34,15 +34,12 @@ pub fn add_rows(
     let tolerance = controls
         .next()
         .expect("Transparent Fill tolerance control is missing");
-    let row = super::shared_scalar_row(
-        &tolerance,
-        "tolerance",
-        &value.tolerance,
-        modifier_id,
+    for row in crate::control::section(
+        &shrimply_inspector_core::InspectorSection {
+            controls: vec![tolerance],
+        },
         context,
-    );
-    row.set_sensitive(tolerance.sensitive);
-    if tolerance.visible {
+    ) {
         out.append(&row);
     }
 

@@ -33,28 +33,7 @@ pub fn track_label_action_at(
     x: f64,
     y: f64,
 ) -> Option<(TrackKey, TrackLabelAction)> {
-    if !(0.0..timeline_x()).contains(&x) || y < RULER_HEIGHT {
-        return None;
-    }
-    let content_y = y + view.scroll_y;
-    let (kind, track_index, row) = items::track_at_y(project, content_y)?;
-    let row_y = row_screen_y(row, view);
-    let button_y = track_label_button_y(row_y);
-    let key = TrackKey { kind, track_index };
-    if hit_track_label_button(x, y, TRACK_LABEL_TOGGLE_X, button_y) {
-        Some((key, TrackLabelAction::Toggle))
-    } else if hit_track_label_button(x, y, TRACK_LABEL_ADD_X, button_y) {
-        Some((key, TrackLabelAction::Add))
-    } else if hit_track_label_button(x, y, TRACK_LABEL_RECORD_X, button_y) {
-        match kind {
-            TrackKind::Audio => Some((key, TrackLabelAction::AudioRecord)),
-            TrackKind::Video => Some((key, TrackLabelAction::VideoRecord)),
-            TrackKind::Comment => Some((key, TrackLabelAction::Select)),
-            TrackKind::Caption => Some((key, TrackLabelAction::Select)),
-        }
-    } else {
-        Some((key, TrackLabelAction::Select))
-    }
+    shrimply_timeline_paint_skia::track_controls::track_label_action_at(project, view.into(), x, y)
 }
 
 pub fn track_button_at(
@@ -70,42 +49,8 @@ pub fn track_button_at(
     }
 }
 
-fn hit_track_label_button(x: f64, y: f64, button_x: f64, button_y: f64) -> bool {
-    shrimply_components_skia::button::Button::hit_test(
-        shrimply_components_skia::Rect::from_xywh(
-            button_x as f32,
-            button_y as f32,
-            TRACK_LABEL_BUTTON_SIZE as f32,
-            TRACK_LABEL_BUTTON_SIZE as f32,
-        ),
-        glam::Vec2::new(x as f32, y as f32),
-    )
-}
-
-pub fn track_label_button_y(row_y: f64) -> f64 {
-    row_y + ((TRACK_HEIGHT - TRACK_LABEL_BUTTON_SIZE) / 2.0).max(0.0)
-}
-
-pub fn track_enabled(project: &Project, key: TrackKey) -> bool {
-    match key.kind {
-        TrackKind::Comment => project
-            .comment_tracks
-            .get(key.track_index)
-            .is_some_and(|track| track.enabled),
-        TrackKind::Caption => project
-            .caption_tracks
-            .get(key.track_index)
-            .is_some_and(|track| track.enabled),
-        TrackKind::Video => project
-            .video_tracks
-            .get(key.track_index)
-            .is_some_and(|track| track.enabled),
-        TrackKind::Audio => project
-            .audio_tracks
-            .get(key.track_index)
-            .is_some_and(|track| track.enabled),
-    }
-}
+pub use shrimply_timeline_paint_skia::math::track_label_button_y;
+pub use shrimply_timeline_paint_skia::track_controls::track_enabled;
 
 pub fn toggle_track_enabled(project: &mut Project, key: TrackKey) -> bool {
     let enabled = match key.kind {

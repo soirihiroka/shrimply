@@ -1,44 +1,24 @@
 mod action_controller;
 mod audio;
-mod audio_generator;
-mod audio_modifiers;
 mod backend;
-mod caption;
 mod graph_backend;
 mod info;
 mod item;
 mod list;
-mod modifiers;
-mod project;
 mod section;
-mod selector;
 mod timeline_controller;
-mod track;
-mod transition;
 mod value_backend;
-mod video;
 
-use serde_json::Value;
 use shrimply_cross_ui_core::editor::EditorSession;
 use shrimply_editor_state::{preferences::SharedPreferences, preview_focus::SharedPreviewFocus};
-use shrimply_inspector_core::{
-    ControlKind, InspectorController, InspectorSnapshot, InspectorTarget,
-};
-use shrimply_project_document::project::{ItemAddress, Time};
-use std::{
-    cell::{Cell, RefCell},
-    path::PathBuf,
-    sync::{Arc, mpsc},
-    thread,
-    time::{Duration, Instant},
-};
+use shrimply_inspector_core::{ControlKind, InspectorController, InspectorTarget};
+use shrimply_project_document::project::ItemAddress;
+use std::cell::{Cell, RefCell};
 
 use crate::item::InspectorAction;
 use crate::list::{InspectorDocument, PreviewItem};
 use action_controller::*;
 use timeline_controller::*;
-
-const VOICE_MODEL_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 thread_local! {
     static CONTROLLER: RefCell<Option<InspectorController>> = const { RefCell::new(None) };
@@ -48,9 +28,6 @@ thread_local! {
     static PROJECT_FONTS: RefCell<Option<shrimply_inspector_core::font_cache::ProjectFontActivation>> = const { RefCell::new(None) };
     static FONT_BROWSER: RefCell<shrimply_inspector_core::font_selector::Browser> = RefCell::new(shrimply_inspector_core::font_selector::Browser::default());
     static PENDING_FONT_EDIT: RefCell<Option<PendingFontEdit>> = const { RefCell::new(None) };
-    static MEDIA_METADATA: RefCell<MediaMetadata> = RefCell::new(MediaMetadata::default());
-    static VOICE_MODELS: RefCell<VoiceModelCache> = RefCell::new(VoiceModelCache::default());
-    static CAMERA_MODELS: RefCell<CameraModelRequests> = RefCell::new(CameraModelRequests::default());
     static CACHE_STATUSES: RefCell<shrimply_inspector_core::CacheStatusTracker<CacheKind>> = RefCell::new(shrimply_inspector_core::CacheStatusTracker::default());
     static DIRTY: Cell<bool> = const { Cell::new(false) };
     static CACHE_DIRTY: Cell<bool> = const { Cell::new(false) };
@@ -74,98 +51,10 @@ struct PendingFontEdit {
 type FontEditActivation = (PendingFontEdit, Result<(), String>);
 type FontBrowserPoll = (bool, Vec<FontEditActivation>);
 
-struct MediaMetadata {
-    sender: mpsc::Sender<(MediaMetadataKey, Result<Arc<CachedMediaInfo>, String>)>,
-    receiver: mpsc::Receiver<(MediaMetadataKey, Result<Arc<CachedMediaInfo>, String>)>,
-    active: Option<MediaMetadataKey>,
-    pending: Vec<MediaMetadataKey>,
-    result: Option<(MediaMetadataKey, Result<Arc<CachedMediaInfo>, String>)>,
-}
-
-#[derive(Clone)]
-pub(crate) enum MediaMetadataState {
-    Loading,
-    Ready(Arc<CachedMediaInfo>),
-    Failed(String),
-}
-
-pub(crate) struct CachedMediaInfo {
-    presentation: shrimply_inspector_core::info::MediaInfoPresentation,
-    artwork_url: Option<String>,
-    audio_stream_count: u32,
-    video_stream_count: u32,
-}
-
-pub(crate) struct VoiceModels {
-    pub(crate) values: Vec<String>,
-    pub(crate) error: Option<String>,
-    pub(crate) loading: bool,
-}
-
 #[derive(Clone, Eq, PartialEq)]
 enum CacheKind {
     Audio,
     Visual(shrimply_project_document::project::ItemAddress),
-}
-
-#[derive(Clone, Eq, PartialEq)]
-struct VoiceModelKey {
-    server_url: String,
-}
-
-struct VoiceModelCache {
-    sender: mpsc::Sender<(VoiceModelKey, Result<Vec<String>, String>)>,
-    receiver: mpsc::Receiver<(VoiceModelKey, Result<Vec<String>, String>)>,
-    pending: Vec<VoiceModelKey>,
-    results: Vec<(VoiceModelKey, Result<Vec<String>, String>, Instant)>,
-}
-
-struct CameraModelRequests {
-    sender: mpsc::Sender<String>,
-    receiver: mpsc::Receiver<String>,
-    pending: Vec<String>,
-}
-
-impl Default for CameraModelRequests {
-    fn default() -> Self {
-        let (sender, receiver) = mpsc::channel();
-        Self {
-            sender,
-            receiver,
-            pending: Vec::new(),
-        }
-    }
-}
-
-impl Default for VoiceModelCache {
-    fn default() -> Self {
-        let (sender, receiver) = mpsc::channel();
-        Self {
-            sender,
-            receiver,
-            pending: Vec::new(),
-            results: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Eq, PartialEq)]
-struct MediaMetadataKey {
-    path: PathBuf,
-    revision: Option<u64>,
-}
-
-impl Default for MediaMetadata {
-    fn default() -> Self {
-        let (sender, receiver) = mpsc::channel();
-        Self {
-            sender,
-            receiver,
-            active: None,
-            pending: Vec::new(),
-            result: None,
-        }
-    }
 }
 
 pub fn init() {
@@ -184,7 +73,8 @@ pub fn install(session: &EditorSession) {
                 session.player_state.clone(),
                 session.selection_state.clone(),
             )
-            .with_default_text_font(default_font.clone()),
+            .with_default_text_font(default_font.clone())
+            .with_property_clipboard(session.property_clipboard.clone()),
         );
     });
     PROPERTY_CLIPBOARD.with_borrow_mut(|clipboard| {
@@ -264,147 +154,50 @@ fn target_change_pending(current: &InspectorTarget) -> bool {
 }
 
 fn take_document() -> Option<InspectorDocument> {
-    audio::poll_tts_runtime();
-    receive_pdf_pages();
     receive_project_fonts();
-    receive_media_metadata();
-    if shrimply_inspector_core::video::blender::poll_metadata() {
-        mark_dirty();
-    }
-    if shrimply_inspector_core::manim_parameters::poll_scenes() {
-        mark_dirty();
-    }
+    receive_cache_statuses();
     if CONTROLLER.with_borrow(|controller| {
         controller
             .as_ref()
-            .is_some_and(InspectorController::poll_sanim_parameters)
+            .is_some_and(shrimply_inspector_document::poll)
     }) {
         mark_dirty();
     }
-    receive_voice_models();
-    receive_camera_models();
-    receive_cache_statuses();
     if !DIRTY.replace(false) {
         return None;
     }
     CONTROLLER.with_borrow(|controller| {
-        let controller = controller
-            .as_ref()
-            .expect("Qt inspector snapshot requested before installation");
-        controller.retain_analysis_transitions();
-        let (server_url, camera_models) = PREFERENCES.with_borrow(|preferences| {
-            let server_url = shrimply_editor_state::preferences::snapshot(
+        let controller = controller.as_ref()?;
+        let preferences = PREFERENCES.with_borrow(|preferences| {
+            shrimply_editor_state::preferences::snapshot(
                 preferences
                     .as_ref()
-                    .expect("Qt inspector preferences requested before installation"),
+                    .expect("Qt inspector preferences are installed"),
             )
-            .compute_server_url;
-            let models =
-                shrimply_inspector_core::camera_source::cached_tracking_models(&server_url);
-            (server_url, models)
         });
-        let mut snapshot = controller.snapshot_with_camera_models(camera_models.as_ref());
-        if camera_models.is_none()
-            && snapshot.video.as_ref().is_some_and(|video| {
-                video.visual.iter().any(|card| {
-                    card.section.controls.iter().any(|control| {
-                        control.path == shrimply_inspector_core::camera_source::SOURCE_PATH
-                    })
-                })
-            })
-        {
-            request_camera_models(&server_url);
-        }
-        let blender_metadata = blender_metadata(snapshot.video.as_ref());
-        if let Some(shrimply_inspector_core::video::blender::MetadataState::Ready(metadata)) =
-            blender_metadata.as_ref()
-            && controller
-                .sync_blender_metadata(&snapshot.target, metadata)
-                .unwrap_or_else(|error| panic!("could not synchronize Blender metadata: {error}"))
-        {
-            snapshot = controller.snapshot_with_camera_models(camera_models.as_ref());
-        }
-        if let Some(manim) = snapshot
-            .video
-            .as_ref()
-            .and_then(|video| video.manim.as_ref())
-            && let Some(scene) = manim.main.section.controls.iter().find(|control| {
-                control.path == shrimply_inspector_core::manim_parameters::SCENE_PATH
-            })
-            && scene.sensitive
-            && scene.value != manim.current_scene
-        {
-            controller
-                .set_manim_scene(&snapshot.target, scene.value.clone(), "select-manim-scene")
-                .unwrap_or_else(|error| panic!("could not select default Manim scene: {error}"));
-            snapshot = controller.snapshot_with_camera_models(camera_models.as_ref());
-        }
-        let document = document(snapshot, blender_metadata);
+        let shared = shrimply_inspector_document::document(
+            controller,
+            info::format_date,
+            &preferences.compute_server_url,
+            &preferences.last_tts_model,
+        );
+        let preview_item = match &shared.target {
+            InspectorTarget::Item(address @ ItemAddress::Video { .. }) => Some(PreviewItem {
+                address: address.clone(),
+                id: address.item_id(),
+            }),
+            _ => None,
+        };
+        let document = InspectorDocument {
+            target: shared.target,
+            title: shared.title,
+            categories: shared.categories,
+            preview_item,
+        };
         retain_cache_statuses(&document);
+        validate_preview_focus(&document);
         Some(document)
     })
-}
-
-fn receive_pdf_pages() {
-    if !shrimply_inspector_core::video::pdf::poll_pages() {
-        return;
-    }
-    CONTROLLER.with_borrow(|controller| {
-        let controller = controller
-            .as_ref()
-            .expect("Qt PDF pages received before inspector installation");
-        controller
-            .normalize_pdf_page(&controller.target())
-            .unwrap_or_else(|error| panic!("could not normalize Qt PDF page: {error}"));
-    });
-    mark_dirty();
-}
-
-fn blender_metadata(
-    video: Option<&shrimply_inspector_core::VideoPresentation>,
-) -> Option<shrimply_inspector_core::video::blender::MetadataState> {
-    let source = video?.blender.as_ref()?;
-    let asset =
-        shrimply_project_document::project::Asset::from(std::path::Path::new(&source.asset));
-    let binary = PREFERENCES.with_borrow(|preferences| {
-        shrimply_editor_state::preferences::snapshot(
-            preferences
-                .as_ref()
-                .expect("Qt inspector preferences requested before installation"),
-        )
-        .blender_binary
-    });
-    Some(shrimply_inspector_core::video::blender::metadata(
-        &asset,
-        binary.as_deref(),
-    ))
-}
-
-fn receive_camera_models() {
-    CAMERA_MODELS.with_borrow_mut(|requests| {
-        while let Ok(server_url) = requests.receiver.try_recv() {
-            requests.pending.retain(|pending| pending != &server_url);
-            mark_dirty();
-        }
-    });
-}
-
-fn request_camera_models(server_url: &str) {
-    if shrimply_inspector_core::camera_source::cached_tracking_models(server_url).is_some() {
-        return;
-    }
-    CAMERA_MODELS.with_borrow_mut(|requests| {
-        if requests.pending.iter().any(|pending| pending == server_url) {
-            return;
-        }
-        requests.pending.push(server_url.to_string());
-        let sender = requests.sender.clone();
-        let request_url = server_url.to_string();
-        thread::spawn(move || {
-            let _ = shrimply_inspector_core::camera_source::tracking_models(&request_url);
-            let _ = sender.send(request_url);
-        });
-    });
 }
 
 fn receive_project_fonts() {
@@ -568,91 +361,6 @@ fn cancel_font_browser_edit() {
     PENDING_FONT_EDIT.with_borrow_mut(|pending| drop(pending.take()));
 }
 
-fn document(
-    snapshot: InspectorSnapshot,
-    blender_metadata: Option<shrimply_inspector_core::video::blender::MetadataState>,
-) -> InspectorDocument {
-    let preview_item = match &snapshot.target {
-        InspectorTarget::Item(address @ ItemAddress::Video { .. }) => Some(PreviewItem {
-            address: address.clone(),
-            id: snapshot
-                .value
-                .get("id")
-                .and_then(Value::as_str)
-                .expect("video inspector ID must be text")
-                .parse()
-                .expect("video inspector ID must be a UUID"),
-        }),
-        _ => None,
-    };
-    let metadata = media_metadata(snapshot.media.as_ref());
-    let categories = match &snapshot.target {
-        InspectorTarget::Project => project::categories(
-            snapshot
-                .project
-                .as_ref()
-                .expect("project inspector snapshot must include project presentation"),
-        ),
-        InspectorTarget::Track(_) => track::categories(
-            snapshot
-                .track
-                .as_ref()
-                .expect("track inspector snapshot must include track presentation"),
-        ),
-        InspectorTarget::Transition { .. } => transition::categories(
-            snapshot
-                .transition
-                .as_ref()
-                .expect("transition inspector snapshot must include transition presentation"),
-        ),
-        InspectorTarget::Item(address) => match address {
-            ItemAddress::Comment { .. } => vec![list::InspectorCategory {
-                key: "comment",
-                label: "Comment",
-                icon: "rich-text-symbolic",
-                items: vec![
-                    item::InspectorItem::new(
-                        "comment",
-                        "Comment",
-                        shrimply_inspector_core::comment::section(
-                            &serde_json::from_value(snapshot.value.clone())
-                                .expect("comment must be valid"),
-                        ),
-                    )
-                    .boxed(),
-                ],
-            }],
-            ItemAddress::Caption { .. } => caption::categories(&snapshot.value, &snapshot.details),
-            ItemAddress::Audio { .. } => audio::categories(
-                &snapshot.value,
-                &snapshot.details,
-                metadata,
-                audio_gain(&snapshot),
-                snapshot.runtime,
-                can_paste_audio_modifiers(&snapshot.target),
-            ),
-            ItemAddress::Video { .. } => video::categories(
-                snapshot
-                    .video
-                    .as_ref()
-                    .expect("video inspector snapshot must include video presentation"),
-                &snapshot.details,
-                metadata,
-                blender_metadata,
-                can_paste_visual_modifiers(&snapshot.target),
-            ),
-        },
-    };
-    let document = InspectorDocument {
-        target: snapshot.target,
-        title: snapshot.title,
-        categories,
-        preview_item,
-    };
-    validate_preview_focus(&document);
-    document
-}
-
 fn validate_preview_focus(document: &InspectorDocument) {
     let focused = PREVIEW_FOCUS.with_borrow(|preview_focus| {
         preview_focus
@@ -678,115 +386,6 @@ fn validate_preview_focus(document: &InspectorDocument) {
             );
         });
     }
-}
-
-fn receive_media_metadata() {
-    let changed = MEDIA_METADATA.with_borrow_mut(|metadata| {
-        let results = metadata.receiver.try_iter().collect::<Vec<_>>();
-        let mut changed = false;
-        for (key, result) in results {
-            metadata.pending.retain(|pending| pending != &key);
-            if metadata.active.as_ref() == Some(&key) {
-                metadata.result = Some((key, result));
-                changed = true;
-            }
-        }
-        changed
-    });
-    if changed {
-        mark_dirty();
-    }
-}
-
-fn receive_voice_models() {
-    let changed = VOICE_MODELS.with_borrow_mut(|cache| {
-        let results = cache.receiver.try_iter().collect::<Vec<_>>();
-        for (key, result) in &results {
-            cache.pending.retain(|pending| pending != key);
-            if let Some((_, cached, completed)) = cache
-                .results
-                .iter_mut()
-                .find(|(cached, _, _)| cached == key)
-            {
-                *cached = result.clone();
-                *completed = Instant::now();
-            } else {
-                cache
-                    .results
-                    .push((key.clone(), result.clone(), Instant::now()));
-            }
-        }
-        let mut changed = !results.is_empty();
-        cache.results.retain(|(_, result, completed)| {
-            let retry = result.is_err() && completed.elapsed() >= VOICE_MODEL_RETRY_INTERVAL;
-            changed |= retry;
-            !retry
-        });
-        changed
-    });
-    if changed {
-        mark_dirty();
-    }
-}
-
-pub(crate) fn voice_models(current: &str) -> VoiceModels {
-    let server_url = PREFERENCES.with_borrow(|preferences| {
-        shrimply_editor_state::preferences::snapshot(
-            preferences
-                .as_ref()
-                .expect("Qt inspector voice models requested before installation"),
-        )
-        .compute_server_url
-    });
-    let key = VoiceModelKey { server_url };
-    VOICE_MODELS.with_borrow_mut(|cache| {
-        if let Some(index) = cache
-            .results
-            .iter()
-            .position(|(cached, _, _)| cached == &key)
-        {
-            let retry = cache.results[index].1.is_err()
-                && cache.results[index].2.elapsed() >= VOICE_MODEL_RETRY_INTERVAL;
-            if retry {
-                drop(cache.results.remove(index));
-            } else {
-                return match &cache.results[index].1 {
-                    Ok(values) => VoiceModels {
-                        values: voice_models_with_current(values.clone(), current),
-                        error: None,
-                        loading: false,
-                    },
-                    Err(error) => VoiceModels {
-                        values: vec![current.to_string()],
-                        error: Some(error.clone()),
-                        loading: false,
-                    },
-                };
-            }
-        }
-        if cache.pending.iter().all(|pending| pending != &key) {
-            cache.pending.push(key.clone());
-            let sender = cache.sender.clone();
-            let request = key.clone();
-            thread::spawn(move || {
-                let result =
-                    shrimply_inspector_core::voice_change_model_catalog(&request.server_url);
-                let _ = sender.send((request, result));
-            });
-        }
-        VoiceModels {
-            values: vec![current.to_string()],
-            error: None,
-            loading: true,
-        }
-    })
-}
-
-fn voice_models_with_current(mut values: Vec<String>, current: &str) -> Vec<String> {
-    if !values.iter().any(|value| value == current) {
-        values.insert(0, current.to_string());
-    }
-    values
 }
 
 fn cache_status(kind: CacheKind, id: uuid::Uuid) -> shrimply_inspector_core::CacheStatus {
@@ -1019,110 +618,6 @@ fn keyframe_snapping() -> (bool, f64) {
     })
 }
 
-fn media_metadata(
-    media: Option<&shrimply_inspector_core::InspectorMedia>,
-) -> Option<MediaMetadataState> {
-    MEDIA_METADATA.with_borrow_mut(|metadata| {
-        let Some(media) = media else {
-            metadata.active = None;
-            metadata.result = None;
-            return None;
-        };
-        let key = MediaMetadataKey {
-            path: media.path.clone(),
-            revision: media.revision,
-        };
-        if metadata.active.as_ref() != Some(&key) {
-            metadata.active = Some(key.clone());
-            metadata.result = None;
-        }
-        if let Some((_, result)) = metadata
-            .result
-            .as_ref()
-            .filter(|(cached, _)| cached == &key)
-        {
-            return Some(match result {
-                Ok(info) => MediaMetadataState::Ready(info.clone()),
-                Err(error) => MediaMetadataState::Failed(error.clone()),
-            });
-        }
-        if metadata.pending.iter().all(|pending| pending != &key) {
-            metadata.pending.push(key.clone());
-            let sender = metadata.sender.clone();
-            thread::spawn(move || {
-                let result = shrimply_media_info::inspect(&key.path, key.revision)
-                    .map(info::cache_media_info);
-                let _ = sender.send((key, result));
-            });
-        }
-        Some(MediaMetadataState::Loading)
-    })
-}
-
-fn audio_gain(snapshot: &InspectorSnapshot) -> f32 {
-    let item: shrimply_project_document::project::AudioItem =
-        serde_json::from_value(snapshot.value.clone())
-            .expect("audio inspector value must be valid");
-    item.gain.decibels.value_at(
-        snapshot
-            .runtime
-            .local_time
-            .unwrap_or(shrimply_project_document::project::Time::ZERO),
-    )
-}
-
-fn set_field(target: &InspectorTarget, path: &str, value: &str) -> Result<(), String> {
-    with_controller(|controller| controller.set_field(target, path, value))
-}
-
-fn set_transition_field(
-    target: &InspectorTarget,
-    path: &str,
-    value: &str,
-    commit_name: &str,
-    commit_immediately: bool,
-) -> Result<(), String> {
-    with_controller(|controller| {
-        controller.set_transition_field(target, path, value, commit_name, commit_immediately)
-    })
-}
-
-fn commit_transition_field(target: &InspectorTarget, commit_name: &str) -> Result<(), String> {
-    with_controller(|controller| controller.commit_transition_field(target, commit_name))
-}
-
-fn set_video_field(
-    target: &InspectorTarget,
-    path: &str,
-    value: &str,
-    commit_name: &str,
-    commit_immediately: bool,
-) -> Result<(), String> {
-    with_controller(|controller| {
-        controller.set_video_field(target, path, value, commit_name, commit_immediately)
-    })
-}
-
-fn set_video_fraction(
-    target: &InspectorTarget,
-    path: &str,
-    numerator: i64,
-    denominator: i64,
-    commit_name: &str,
-) -> Result<(), String> {
-    if denominator <= 0 {
-        return Err("video fraction denominator must be positive".to_string());
-    }
-    with_controller(|controller| {
-        controller.set_video_fraction(
-            target,
-            path,
-            shrimply_math_core::fraction_new(numerator, denominator),
-            commit_name,
-        )
-    })
-}
-
 fn trigger_video_control_action(
     target: &InspectorTarget,
     action: shrimply_inspector_core::InspectorControlAction,
@@ -1179,395 +674,6 @@ fn video_stabilization_generating(target: &InspectorTarget) -> Option<bool> {
     })
 }
 
-fn commit_control_edit(
-    target: &InspectorTarget,
-    control: &section::InspectorControl,
-) -> Result<(), String> {
-    if crate::graph_backend::background_integer(control) {
-        let timeline_id = control
-            .timeline_id
-            .ok_or_else(|| "background integer timeline ID is unavailable".to_string())?;
-        let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-        commit_background_integer_value(target, path, timeline_id)
-    } else if matches!(
-        control.kind,
-        section::ControlKind::LayeredNumber
-            | section::ControlKind::LayeredSelector
-            | section::ControlKind::LayeredVector2
-            | section::ControlKind::LayeredVector3
-            | section::ControlKind::LayeredText
-            | section::ControlKind::LayeredDrawing
-    ) {
-        with_controller(|controller| controller.finish_live_inspector_edit(target))
-    } else if matches!(target, InspectorTarget::Transition { .. })
-        && !control.commit_name.is_empty()
-        && !control.commit_immediately
-    {
-        commit_transition_field(target, &control.commit_name)
-    } else if matches!(target, InspectorTarget::Item(ItemAddress::Video { .. }))
-        && !control.commit_name.is_empty()
-        && !control.commit_immediately
-    {
-        with_controller(|controller| controller.commit_video_field(target, &control.commit_name))
-    } else {
-        finish_live_edit();
-        Ok(())
-    }
-}
-
-fn named_control_edit(
-    target: &InspectorTarget,
-    control: &section::InspectorControl,
-    value: String,
-) -> Option<Result<(), String>> {
-    if control.commit_name.is_empty()
-        || matches!(
-            control.kind,
-            section::ControlKind::LayeredNumber
-                | section::ControlKind::LayeredBoolean
-                | section::ControlKind::LayeredSelector
-        )
-    {
-        return None;
-    }
-    if let Some(result) = alpha_mask_control_edit(target, control, &value) {
-        return Some(result);
-    }
-    let value = if control.kind == section::ControlKind::Number
-        && (control.store_multiplier != 1.0
-            || control.number_mapping != shrimply_inspector_core::NumberMapping::Linear)
-    {
-        value
-            .parse::<f64>()
-            .map(|value| control.store_number(value).to_string())
-            .map_err(|_| format!("invalid numeric inspector value: {value}"))
-    } else {
-        Ok(value)
-    };
-    if matches!(target, InspectorTarget::Transition { .. }) {
-        Some(value.and_then(|value| {
-            set_transition_field(
-                target,
-                &control.path,
-                &value,
-                &control.commit_name,
-                control.commit_immediately,
-            )
-        }))
-    } else if matches!(target, InspectorTarget::Item(ItemAddress::Video { .. })) {
-        Some(value.and_then(|value| {
-            set_video_field(
-                target,
-                &control.path,
-                &value,
-                &control.commit_name,
-                control.commit_immediately,
-            )
-        }))
-    } else {
-        None
-    }
-}
-
-fn alpha_mask_control_edit(
-    target: &InspectorTarget,
-    control: &section::InspectorControl,
-    value: &str,
-) -> Option<Result<(), String>> {
-    let field = control.path.rsplit_once("/alpha_mask/")?.1;
-    let mask_target = if control.path.starts_with("/compositing/alpha_mask/") {
-        shrimply_project_document::project::VisualAlphaMaskTarget::Compositing
-    } else if control.path.starts_with("/modifiers/") {
-        let Some(id) = control.target_id else {
-            return Some(Err("alpha-mask modifier target is unavailable".to_string()));
-        };
-        shrimply_project_document::project::VisualAlphaMaskTarget::Modifier(id)
-    } else {
-        return None;
-    };
-    match field {
-        "shape" => {
-            let Some(shape) = shrimply_inspector_core::alpha_mask::SHAPE_CHOICES
-                .iter()
-                .find_map(|(shape, key, _)| (*key == value).then_some(*shape))
-            else {
-                return Some(Err(format!("invalid alpha-mask shape: {value}")));
-            };
-            Some(with_controller(|controller| {
-                controller.set_alpha_mask_shape(target, mask_target, shape)
-            }))
-        }
-        "invert" => Some(
-            value
-                .parse::<bool>()
-                .map_err(|_| format!("invalid alpha-mask inversion: {value}"))
-                .and_then(|invert| {
-                    with_controller(|controller| {
-                        controller.set_alpha_mask_inverted(target, mask_target, invert)
-                    })
-                }),
-        ),
-        _ => None,
-    }
-}
-
-fn set_control_fraction(
-    target: &InspectorTarget,
-    control: &section::InspectorControl,
-    numerator: i64,
-    denominator: i64,
-) -> Result<(), String> {
-    if denominator <= 0 {
-        return Err("fraction denominator must be positive".to_string());
-    }
-    if let Some(result) = with_controller(|controller| {
-        Ok(controller.set_manim_fraction(
-            target,
-            &control.path,
-            shrimply_math_core::fraction_new(numerator, denominator),
-            &control.commit_name,
-        ))
-    })? {
-        return result;
-    }
-    if matches!(target, InspectorTarget::Item(ItemAddress::Video { .. }))
-        && !control.commit_name.is_empty()
-    {
-        set_video_fraction(
-            target,
-            &control.path,
-            numerator,
-            denominator,
-            &control.commit_name,
-        )
-    } else {
-        set_fraction(target, &control.path, numerator, denominator)
-    }
-}
-
-fn set_manim_text_field(
-    target: &InspectorTarget,
-    path: &str,
-    value: &str,
-    commit_name: &str,
-) -> Option<Result<(), String>> {
-    CONTROLLER.with_borrow(|controller| {
-        controller
-            .as_ref()
-            .expect("Qt Manim edit requested before installation")
-            .set_manim_text_field(target, path, value, commit_name)
-    })
-}
-
-fn set_optional_field(
-    target: &InspectorTarget,
-    path: &str,
-    value: Option<&str>,
-) -> Result<(), String> {
-    with_controller(|controller| controller.set_optional_field(target, path, value))
-}
-
-fn set_optional_number_field(
-    target: &InspectorTarget,
-    path: &str,
-    value: Option<&str>,
-) -> Result<(), String> {
-    with_controller(|controller| controller.set_optional_number_field(target, path, value))
-}
-
-fn set_components(
-    target: &InspectorTarget,
-    path: &str,
-    values: &[(usize, String)],
-) -> Result<(), String> {
-    with_controller(|controller| controller.set_components(target, path, values))
-}
-
-fn ensure_control_timeline(
-    target: &InspectorTarget,
-    control: &section::InspectorControl,
-) -> Result<(), String> {
-    let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-    let layered = matches!(
-        control.kind,
-        section::ControlKind::LayeredNumber
-            | section::ControlKind::LayeredSelector
-            | section::ControlKind::LayeredVector2
-            | section::ControlKind::LayeredVector3
-            | section::ControlKind::LayeredColor
-            | section::ControlKind::LayeredText
-            | section::ControlKind::LayeredDrawing
-    );
-    if path.starts_with("/content/generator/") {
-        if path == "/content/generator/kind" && !layered {
-            return Ok(());
-        }
-        return control
-            .timeline_id
-            .ok_or_else(|| "background timeline ID is unavailable".to_string())
-            .and_then(|timeline_id| {
-                with_controller(|controller| controller.ensure_timeline(target, path, timeline_id))
-            });
-    }
-    if path.contains("/alpha_mask/") && layered {
-        if let Some(modifier_id) = control.target_id {
-            with_controller(|controller| {
-                controller.ensure_visual_modifier(target, path, modifier_id)
-            })?;
-        }
-        return control
-            .timeline_id
-            .ok_or_else(|| "alpha-mask timeline ID is unavailable".to_string())
-            .and_then(|timeline_id| {
-                with_controller(|controller| controller.ensure_timeline(target, path, timeline_id))
-            });
-    }
-    if !path.starts_with("/modifiers/") {
-        if shrimply_inspector_core::paint::is_timeline_path(path) && layered {
-            return control
-                .timeline_id
-                .ok_or_else(|| "paint timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    with_controller(|controller| {
-                        controller.ensure_timeline(target, path, timeline_id)
-                    })
-                });
-        }
-        if shrimply_inspector_core::generated::is_timeline_control(control) {
-            return control
-                .timeline_id
-                .ok_or_else(|| "generated timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    with_controller(|controller| {
-                        controller.ensure_timeline(target, path, timeline_id)
-                    })
-                });
-        }
-        if (path.starts_with("/content/model/") || path.starts_with("/content/camera/")) && layered
-        {
-            return control
-                .timeline_id
-                .ok_or_else(|| "Gaussian timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    with_controller(|controller| {
-                        controller.ensure_timeline(target, path, timeline_id)
-                    })
-                });
-        }
-        if shrimply_inspector_core::scene_3d::is_timeline_path(path) && layered {
-            return control
-                .timeline_id
-                .ok_or_else(|| "scene 3D timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    with_controller(|controller| {
-                        controller.ensure_timeline(target, path, timeline_id)
-                    })
-                });
-        }
-        if matches!(
-            (
-                shrimply_inspector_core::transform::TransformField::from_path(path),
-                control.kind,
-            ),
-            (
-                Some(shrimply_inspector_core::transform::TransformField::Vec2(_)),
-                section::ControlKind::LayeredVector2,
-            ) | (
-                Some(shrimply_inspector_core::transform::TransformField::Scalar(
-                    _
-                )),
-                section::ControlKind::LayeredNumber,
-            )
-        ) {
-            return control
-                .timeline_id
-                .ok_or_else(|| "transform timeline ID is unavailable".to_string())
-                .and_then(|timeline_id| {
-                    with_controller(|controller| {
-                        controller.ensure_timeline(target, path, timeline_id)
-                    })
-                });
-        }
-        return Ok(());
-    }
-    if let Some(modifier_id) = control.target_id {
-        with_controller(|controller| controller.ensure_visual_modifier(target, path, modifier_id))?;
-    }
-    if !layered {
-        return Ok(());
-    }
-    let timeline_id = control
-        .timeline_id
-        .ok_or_else(|| "visual modifier timeline ID is unavailable".to_string())?;
-    with_controller(|controller| match control.kind {
-        section::ControlKind::LayeredNumber => {
-            controller.ensure_visual_modifier_number(target, path, timeline_id)
-        }
-        section::ControlKind::LayeredSelector => {
-            controller.ensure_timeline(target, path, timeline_id)
-        }
-        section::ControlKind::LayeredColor => controller.ensure_timeline(target, path, timeline_id),
-        section::ControlKind::LayeredText => {
-            controller.ensure_visual_modifier_text(target, path, timeline_id)
-        }
-        section::ControlKind::LayeredVector2 => {
-            controller.ensure_visual_modifier_vector2(target, path, timeline_id)
-        }
-        section::ControlKind::LayeredVector3 => {
-            controller.ensure_visual_modifier_vector3(target, path, timeline_id)
-        }
-        _ => Ok(()),
-    })
-}
-
-fn set_vector2_value(
-    target: &InspectorTarget,
-    path: &str,
-    first: f64,
-    second: f64,
-    commit_name: &str,
-) -> Result<(), String> {
-    let result = with_controller(|controller| {
-        controller.set_vector2_value(
-            target,
-            path,
-            first,
-            second,
-            shrimply_inspector_core::InspectorCommit::Coalesced(commit_name),
-        )
-    });
-    if result.is_ok() {
-        EXPRESSION_DIRTY.set(true);
-        GRAPH_DIRTY.set(true);
-    }
-    result
-}
-
-fn set_vector3_value(
-    target: &InspectorTarget,
-    path: &str,
-    first: f64,
-    second: f64,
-    third: f64,
-    commit_name: &str,
-) -> Result<(), String> {
-    let result = with_controller(|controller| {
-        controller.set_vector3_value(
-            target,
-            path,
-            first,
-            second,
-            third,
-            shrimply_inspector_core::InspectorCommit::Coalesced(commit_name),
-        )
-    });
-    if result.is_ok() {
-        EXPRESSION_DIRTY.set(true);
-        GRAPH_DIRTY.set(true);
-    }
-    result
-}
-
 fn control_graph(
     target: &InspectorTarget,
     control: &shrimply_inspector_core::InspectorControl,
@@ -1579,75 +685,6 @@ fn control_graph_source(
     target: &InspectorTarget,
 ) -> Result<(serde_json::Value, shrimply_inspector_core::InspectorRuntime), String> {
     with_controller(|controller| controller.control_graph_source(target))
-}
-
-fn set_paint_drawing_keyframes_enabled(
-    target: &InspectorTarget,
-    timeline_id: uuid::Uuid,
-    enabled: bool,
-) -> Result<(), String> {
-    with_controller(|controller| {
-        controller.set_paint_drawing_keyframes_enabled(target, timeline_id, enabled)
-    })
-}
-
-fn move_paint_drawing_keyframes(
-    target: &InspectorTarget,
-    timeline_id: uuid::Uuid,
-    moves: &[(Time, Time)],
-) -> Result<Vec<Time>, String> {
-    with_controller(|controller| {
-        controller.move_paint_drawing_keyframes(target, timeline_id, moves)
-    })
-}
-
-fn delete_paint_drawing_keyframe(
-    target: &InspectorTarget,
-    timeline_id: uuid::Uuid,
-    time: Time,
-) -> Result<(), String> {
-    with_controller(|controller| {
-        controller.delete_paint_drawing_keyframe(target, timeline_id, time)
-    })
-}
-
-fn add_paint_drawing_keyframe(
-    target: &InspectorTarget,
-    timeline_id: uuid::Uuid,
-    time: Time,
-) -> Result<(), String> {
-    with_controller(|controller| controller.add_paint_drawing_keyframe(target, timeline_id, time))
-}
-
-fn copy_paint_drawing_keyframes(
-    target: &InspectorTarget,
-    timeline_id: uuid::Uuid,
-    times: &[Time],
-) -> Result<usize, String> {
-    with_controller(|controller| {
-        controller.copy_paint_drawing_keyframes(target, timeline_id, times)
-    })
-}
-
-fn paste_paint_drawing_keyframes(
-    target: &InspectorTarget,
-    timeline_id: uuid::Uuid,
-    time: Time,
-) -> Result<usize, String> {
-    with_controller(|controller| {
-        controller.paste_paint_drawing_keyframes(target, timeline_id, time)
-    })
-}
-
-fn set_paint_drawing_interpolation(
-    target: &InspectorTarget,
-    timeline_id: uuid::Uuid,
-    owner_id: uuid::Uuid,
-    interpolation: usize,
-) -> Result<(), String> {
-    with_controller(|controller| {
-        controller.set_paint_drawing_interpolation(target, timeline_id, owner_id, interpolation)
-    })
 }
 
 fn finish_live_edit() {

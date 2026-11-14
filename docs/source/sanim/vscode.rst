@@ -3,6 +3,10 @@ Sanim for VS Code
 
 This extension provides ``.sanim`` syntax highlighting and launches ``shrimply sanim lsp`` for compiler diagnostics, lint warnings, completion, hover, signatures, document symbols, inferred type/timeline duration hints, semantic tokens, and jump to definition.
 
+Jump to definition follows local bindings and parameters, imported functions and types, type annotations, and XML component tags. Import paths open their source file. Native functions, receiver methods, types, constants, and enum members open a read-only standard-library reference generated from the running compiler's declaration registries. Native declarations are available even when Shrimply's Rust source is not installed.
+
+Double-click an inferred type hint to insert its explicit ``: Type`` annotation. Compact labels such as ``{…}`` insert the complete structural type; unit hints and other display-only text are never written into source. Types that have no equivalent source annotation keep their hint without an insertion edit. Existing annotations are left alone.
+
 Install Shrimply and enable its CLI in Preferences. The extension looks for ``shrimply`` on PATH, then the user CLI at ``~/.local/bin/shrimply`` and standard macOS application locations. It prefers Shrimply and falls back to ``sanim-lsp`` on PATH. No separate language-server installation is needed with Shrimply.
 
 For a custom installation, set ``sanim.server.path`` to the executable's absolute path. Shrimply gets ``sanim lsp`` arguments automatically; a standalone server gets no arguments. ``sanim.server.arguments`` overrides these arguments, for example ``["sanim", "lsp", "--project", "/path/to/project.shrimp"]`` to select a project's runtime context explicitly. The extension is disabled in untrusted workspaces.

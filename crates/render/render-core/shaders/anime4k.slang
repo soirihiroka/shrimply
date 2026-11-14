@@ -21,15 +21,15 @@ float4 image_sample(ImageDescriptor image, uint x, uint y, uint output_width,
            fx),
       fy);
 }
-float2 chroma_load(uint8_t *source, uint64_t pitch, uint width, uint height,
+float2 chroma_load(uint8_t *source, BufferIndex pitch, uint width, uint height,
                    int x, int y) {
   x = clamp(x, 0, int(width) - 1);
   y = clamp(y, 0, int(height) - 1);
-  uint64_t address = uint64_t(y) * pitch + uint64_t(x) * 2u;
+  BufferIndex address = BufferIndex(y) * pitch + BufferIndex(x) * 2u;
   return float2(float(source[address]) / 255.0f - 0.5f,
                 float(source[address + 1u]) / 255.0f - 0.5f);
 }
-float2 chroma_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
+float2 chroma_sample(uint8_t *source, BufferIndex pitch, uint width, uint height,
                      float x, float y) {
   int x0 = int(floor(x)), y0 = int(floor(y));
   float fx = x - float(x0), fy = y - float(y0);
@@ -40,13 +40,13 @@ float2 chroma_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
                    fx),
               fy);
 }
-float alpha_load(uint8_t *source, uint64_t pitch, uint width, uint height,
+float alpha_load(uint8_t *source, BufferIndex pitch, uint width, uint height,
                  int x, int y) {
   x = clamp(x, 0, int(width) - 1);
   y = clamp(y, 0, int(height) - 1);
-  return float(source[uint64_t(y) * pitch + uint64_t(x) * 4u + 3u]) / 255.0f;
+  return float(source[BufferIndex(y) * pitch + BufferIndex(x) * 4u + 3u]) / 255.0f;
 }
-float alpha_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
+float alpha_sample(uint8_t *source, BufferIndex pitch, uint width, uint height,
                    float x, float y) {
   int x0 = int(floor(x)), y0 = int(floor(y));
   float fx = x - float(x0), fy = y - float(y0);
@@ -59,14 +59,14 @@ float alpha_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void rgba_to_float(uint3 id : SV_DispatchThreadID,
-                                uniform uint8_t *source, uniform uint64_t pitch,
+                                uniform uint8_t *source, uniform BufferIndex pitch,
                                 uniform uint width, uniform float4 *output,
-                                uniform uint64_t output_count) {
+                                uniform BufferIndex output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
   uint x = i % width, y = i / width;
-  uint64_t address = uint64_t(y) * pitch + uint64_t(x) * 4u;
+  BufferIndex address = BufferIndex(y) * pitch + BufferIndex(x) * 4u;
   uint pixel = uint(source[address]) | (uint(source[address + 1u]) << 8) |
                (uint(source[address + 2u]) << 16) |
                (uint(source[address + 3u]) << 24);
@@ -75,15 +75,15 @@ float alpha_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
 }[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void nv12_to_float(uint3 id : SV_DispatchThreadID,
                                  uniform uint8_t *y_plane,
                                  uniform uint8_t *uv_plane,
-                                 uniform uint64_t y_pitch,
-                                 uniform uint64_t uv_pitch, uniform uint width,
+                                 uniform BufferIndex y_pitch,
+                                 uniform BufferIndex uv_pitch, uniform uint width,
                                  uniform uint height, uniform float4 *output,
-                                 uniform uint64_t output_count) {
+                                 uniform BufferIndex output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
   uint x = i % width, y = i / width;
-  float luma = float(y_plane[uint64_t(y) * y_pitch + x]) / 255.0f;
+  float luma = float(y_plane[BufferIndex(y) * y_pitch + x]) / 255.0f;
   float2 chroma =
       chroma_sample(uv_plane, uv_pitch, (width + 1u) / 2u, (height + 1u) / 2u,
                     (float(x) - 0.5f) * 0.5f, (float(y) - 0.5f) * 0.5f);
@@ -94,14 +94,14 @@ float alpha_sample(uint8_t *source, uint64_t pitch, uint width, uint height,
       clamp(yy + 2.1124017f * chroma.x, 0.0f, 1.0f), 1.0f);
 }
 void convolve_pixel(uint3 id, ConvolutionParams params, ConvolutionTerm *terms,
-                     uint64_t term_count, float4 *output, uint64_t output_count) {
+                     BufferIndex term_count, float4 *output, BufferIndex output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
   uint x = i % params.width, y = i / params.width;
   float4 result =
       float4(params.bias[0], params.bias[1], params.bias[2], params.bias[3]);
-  for (uint64_t t = 0; t < term_count; ++t) {
+  for (BufferIndex t = 0; t < term_count; ++t) {
     ConvolutionTerm term = terms[t];
     float4 value = image_sample(params.images[term.input], x, y, params.width,
                                 params.height, term.offset_x, term.offset_y);
@@ -115,7 +115,7 @@ void convolve_pixel(uint3 id, ConvolutionParams params, ConvolutionTerm *terms,
           term.weights[8u + row] * value.z + term.weights[12u + row] * value.w;
   }
   result *= params.result_scale;
-  if (params.residual.pixels != nullptr)
+  if (!buffer_is_null(params.residual.pixels))
     result += image_sample(params.residual, x, y, params.width, params.height,
                            0.0f, 0.0f) *
               params.residual_scale;
@@ -123,15 +123,15 @@ void convolve_pixel(uint3 id, ConvolutionParams params, ConvolutionTerm *terms,
 }
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams params,
-                  uniform ConvolutionTerm *terms, uniform uint64_t term_count,
-                  uniform float4 *output, uniform uint64_t output_count) {
+                  uniform ConvolutionTerm *terms, uniform BufferIndex term_count,
+                  uniform float4 *output, uniform BufferIndex output_count) {
   convolve_pixel(id, params, terms, term_count, output, output_count);
 }
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void depth_to_space_x2(uint3 id : SV_DispatchThreadID,
                                      uniform ImageDescriptor convolution,
                                      uniform ImageDescriptor residual,
                                      uniform uint width, uniform float4 *output,
-                                     uniform uint64_t output_count) {
+                                     uniform BufferIndex output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
@@ -144,7 +144,7 @@ void convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams param
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void float_to_rgba_opaque(uint3 id : SV_DispatchThreadID,
                                        uniform float4 *source,
                                        uniform uint *output,
-                                       uniform uint64_t output_count) {
+                                       uniform BufferIndex output_count) {
   uint i = id.x;
   if (i < output_count)
     output[i] =
@@ -152,14 +152,14 @@ void convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams param
 }[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void float_to_rgba_alpha(uint3 id : SV_DispatchThreadID,
                                        uniform AlphaParams params,
                                        uniform uint *output,
-                                       uniform uint64_t output_count) {
+                                       uniform BufferIndex output_count) {
   uint i = id.x;
   if (i >= output_count)
     return;
   uint x = i % params.width, y = i / params.width;
   float4 value = ((float4 *)params.source)[i];
   float alpha = alpha_sample(
-      (uint8_t *)params.alpha_source, params.alpha_pitch, params.alpha_width,
+      (uint8_t *)params.alpha_source, buffer_pitch(params.alpha_pitch), params.alpha_width,
       params.alpha_height,
       (float(x) + 0.5f) * float(params.alpha_width) / float(params.width) -
           0.5f,

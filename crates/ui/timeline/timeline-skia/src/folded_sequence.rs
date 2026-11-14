@@ -627,15 +627,6 @@ fn apply_audio_drag(item: &mut AudioItem, kind: FoldedDragKind, start: Time, end
     fit_audio_transitions(item);
 }
 
-pub fn track_kind(address: &ItemAddress) -> TrackKind {
-    match address.kind() {
-        ItemKind::Comment => TrackKind::Comment,
-        ItemKind::Caption => TrackKind::Caption,
-        ItemKind::Video => TrackKind::Video,
-        ItemKind::Audio => TrackKind::Audio,
-    }
-}
-
 pub fn update_drag(drag: &mut FoldedDrag, target: Time, minimum_duration: Time) {
     match drag.kind {
         FoldedDragKind::Move => {

@@ -1,4 +1,4 @@
-use shrimply_editor_state::preferences::{self, PreferencesSnapshot, SharedPreferences};
+use shrimply_preferences_core::{self as preferences, PreferencesSnapshot, SharedPreferences};
 
 mod menu;
 pub use menu::*;
@@ -12,87 +12,7 @@ pub mod transcription;
 pub mod video_selection;
 pub use track_add::*;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TrackAddAction {
-    Comment,
-    Import,
-    Text,
-    Shape,
-    Paint,
-    Background,
-    Scene3d,
-    VideoGeneration,
-    TextToSpeech,
-    AudioGenerator,
-}
-
-impl TrackAddAction {
-    pub const fn label(self, kind: shrimply_timeline_edit::TrackKind) -> &'static str {
-        match self {
-            Self::Import if matches!(kind, shrimply_timeline_edit::TrackKind::Caption) => {
-                "Import Captions…"
-            }
-            Self::Import => "Import Media…",
-            Self::Comment => "Comment",
-            Self::Text => "Text",
-            Self::Shape => "Shape",
-            Self::Paint => "Paint",
-            Self::Background => "Background",
-            Self::Scene3d => "3D Scene",
-            Self::VideoGeneration => "Video Generation",
-            Self::TextToSpeech => "Text to Speech",
-            Self::AudioGenerator => "Audio Generator",
-        }
-    }
-
-    pub const fn icon(self) -> &'static str {
-        match self {
-            Self::Import => "document-open-symbolic",
-            Self::Comment => "rich-text-symbolic",
-            Self::Text => "draw-text-symbolic",
-            Self::Shape => "shapes-large-symbolic",
-            Self::Paint => "applications-graphics-symbolic",
-            Self::Background => "preferences-desktop-wallpaper-symbolic",
-            Self::Scene3d => "3d-object-symbolic",
-            Self::VideoGeneration => "video-generation-symbolic",
-            Self::TextToSpeech => "font-x-generic-symbolic",
-            Self::AudioGenerator => "sound-symbolic",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TrackAddMenuEntry {
-    Action(TrackAddAction),
-    Separator,
-}
-
-pub const fn track_add_menu(
-    kind: shrimply_timeline_edit::TrackKind,
-) -> &'static [TrackAddMenuEntry] {
-    use TrackAddAction::*;
-    use TrackAddMenuEntry::*;
-    match kind {
-        shrimply_timeline_edit::TrackKind::Comment => &[Action(Comment)],
-        shrimply_timeline_edit::TrackKind::Caption => &[Action(Import)],
-        shrimply_timeline_edit::TrackKind::Video => &[
-            Action(Import),
-            Separator,
-            Action(Text),
-            Action(Shape),
-            Action(Paint),
-            Action(Background),
-            Action(Scene3d),
-            Action(VideoGeneration),
-        ],
-        shrimply_timeline_edit::TrackKind::Audio => &[
-            Action(Import),
-            Separator,
-            Action(TextToSpeech),
-            Action(AudioGenerator),
-        ],
-    }
-}
+pub use shrimply_timeline_edit::{TrackAddAction, TrackAddMenuEntry, track_add_menu};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
@@ -182,6 +102,79 @@ impl TimelineTools {
     }
 }
 
+/// Ordered GTK sidebar tools, shared by native shells.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TimelineTool {
+    Magnet,
+    BeatGrid,
+    Pointer,
+    Cut,
+    Overwrite,
+    Block,
+    NewTrack,
+}
+
+pub struct ToolDescription {
+    pub id: &'static str,
+    pub icon: &'static str,
+    pub label: &'static str,
+    pub section: u8,
+}
+
+impl TimelineTool {
+    pub const ALL: [Self; 7] = [
+        Self::Magnet,
+        Self::BeatGrid,
+        Self::Pointer,
+        Self::Cut,
+        Self::Overwrite,
+        Self::Block,
+        Self::NewTrack,
+    ];
+
+    pub fn description(self) -> ToolDescription {
+        let (id, icon, label, section) = match self {
+            Self::Magnet => ("magnet", "magnet-tilted-symbolic", "Magnet", 0),
+            Self::BeatGrid => ("beat-grid", "metronome-symbolic", "Beat Grid", 0),
+            Self::Pointer => ("pointer", "pointer-left-symbolic", "Pointer", 1),
+            Self::Cut => ("cut", "cut-symbolic", "Cut", 1),
+            Self::Overwrite => ("overwrite", "track-insert-symbolic", "Overwrite/Insert", 2),
+            Self::Block => ("block", "track-block-symbolic", "Block", 2),
+            Self::NewTrack => ("new-track", "track-move-above-symbolic", "New Track", 2),
+        };
+        ToolDescription {
+            id,
+            icon,
+            label,
+            section,
+        }
+    }
+
+    pub fn active(self, state: ToolState) -> bool {
+        match self {
+            Self::Magnet => state.magnet,
+            Self::BeatGrid => state.beat_grid,
+            Self::Pointer => state.cursor == CursorTool::Pointer,
+            Self::Cut => state.cursor == CursorTool::Cut,
+            Self::Overwrite => state.drag_collision == DragCollisionMode::Overwrite,
+            Self::Block => state.drag_collision == DragCollisionMode::Block,
+            Self::NewTrack => state.drag_collision == DragCollisionMode::NewTrack,
+        }
+    }
+
+    pub fn activate(self, tools: &TimelineTools) {
+        match self {
+            Self::Magnet => tools.set_magnet(!tools.state().magnet),
+            Self::BeatGrid => tools.set_beat_grid(!tools.state().beat_grid),
+            Self::Pointer => tools.set_cursor(CursorTool::Pointer),
+            Self::Cut => tools.set_cursor(CursorTool::Cut),
+            Self::Overwrite => tools.set_drag_collision(DragCollisionMode::Overwrite),
+            Self::Block => tools.set_drag_collision(DragCollisionMode::Block),
+            Self::NewTrack => tools.set_drag_collision(DragCollisionMode::NewTrack),
+        }
+    }
+}
+
 use hashbrown::HashMap;
 pub use shrimply_audio_engine as audio;
 pub use shrimply_components_skia::{canvas as renderer, cursor, skia_font, skia_system_font};
@@ -197,9 +190,8 @@ use audio::beat::BeatMap;
 use audio::waveform::{self, WaveformMap};
 use project::{
     AudioItem, CaptionItem, CommentItem, Project, RepeatStrategy, Time, TransitionSide,
-    VideoItemContent, generated_item_keyframe_span, generated_item_natural_end_position,
-    generated_item_natural_span, media_item_natural_end_position, media_natural_end_interval,
-    media_real_span, scaled_time_delta, video_natural_end_interval,
+    VideoItemContent, media_item_natural_end_position, media_natural_end_interval, media_real_span,
+    scaled_time_delta, video_natural_end_interval,
 };
 use renderer::{FontId, Rect, Stroke, StrokeKind, TimelinePainter, Vec2, vec2};
 pub use shrimply_cross_ui_theme as theme;

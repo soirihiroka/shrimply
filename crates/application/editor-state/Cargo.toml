@@ -3,11 +3,15 @@ name = "shrimply-editor-state"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+audio = ["shrimply-player-core/audio"]
+
 [dependencies]
 hashbrown.workspace = true
 shrimply-profiling = { workspace = true }
 shrimply-manim-state = { workspace = true }
 shrimply-math-core = { workspace = true }
+shrimply-player-core.workspace = true
 shrimply-preferences-core = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-preview-provider-skia = { workspace = true }

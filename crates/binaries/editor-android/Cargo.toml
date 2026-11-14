@@ -9,8 +9,31 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 shrimply-timeline-paint-skia.workspace = true
+shrimply-timeline-skia.workspace = true
+shrimply-components-skia.workspace = true
+shrimply-property-transfer.workspace = true
+shrimply-inspector-core = { workspace = true, default-features = false }
+shrimply-inspector-document.workspace = true
+shrimply-playback-performance.workspace = true
+shrimply-timeline-edit.workspace = true
+shrimply-editing-api.workspace = true
+shrimply-render-vulkan.workspace = true
 shrimply-math-core.workspace = true
+shrimply-media-import.workspace = true
+shrimply-i18n.workspace = true
+shrimply-components-core.workspace = true
+shrimply-player-core.workspace = true
 shrimply-cross-ui-theme.workspace = true
+shrimply-project-document = { workspace = true, features = ["editor"] }
+shrimply-recent-projects.workspace = true
+shrimply-path-core.workspace = true
+shrimply-preferences-core.workspace = true
+shrimply-asset.workspace = true
+shrimply-resource-pipeline.workspace = true
+serde_json.workspace = true
+hashbrown.workspace = true
+notify.workspace = true
+uuid.workspace = true
 
 # Linux also type-checks the portable Vulkan host without an Android device.
 [target.'cfg(any(target_os = "android", target_os = "linux"))'.dependencies]
@@ -18,5 +41,19 @@ ash.workspace = true
 skia-safe = { workspace = true, features = ["vulkan", "ganesh"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
+shrimply-export-core.workspace = true
+shrimply-caption-export-core.workspace = true
+shrimply-fonts = { workspace = true, features = ["fontconfig"] }
+shrimply-preview-render-core.workspace = true
+shrimply-preview-render-vulkan.workspace = true
+shrimply-preview-provider-skia.workspace = true
+shrimply-preview-interaction-skia.workspace = true
+glam.workspace = true
+shrimply-audio-engine.workspace = true
+shrimply-player-core = { workspace = true, features = ["audio"] }
+shrimply-video-decoder.workspace = true
 jni = "0.22.4"
 ndk = { version = "0.9.0", default-features = false }
+
+[dev-dependencies]
+tempfile.workspace = true

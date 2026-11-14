@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use ffmpeg_next::{frame::Video, sys};
 
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod math;
 
 #[cfg(feature = "cuda")]
@@ -13,6 +15,8 @@ pub mod cuda;
 pub struct VideoFrame {
     native: Video,
     bytes: u64,
+    #[cfg(target_os = "android")]
+    android: Option<android::DecoderOutput>,
 }
 
 impl VideoFrame {
@@ -37,7 +41,33 @@ impl VideoFrame {
         Ok(Self {
             native,
             bytes: bytes as u64,
+            #[cfg(target_os = "android")]
+            android: None,
         })
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn from_android(
+        native: Video,
+        pool: Arc<android::AndroidFramePool>,
+    ) -> Result<Self, String> {
+        if native.format() != ffmpeg_next::format::Pixel::MEDIACODEC
+            || native.width() == 0
+            || native.height() == 0
+            || unsafe { (*native.as_ptr()).data[3].is_null() }
+        {
+            return Err("Android hardware image requires a valid MediaCodec frame".into());
+        }
+        Ok(Self {
+            native,
+            bytes: 0,
+            android: Some(android::DecoderOutput::new(pool)),
+        })
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn android(&self) -> Option<&android::AndroidImage> {
+        self.android.as_ref()?.image.get()?.as_ref().ok()
     }
 
     pub fn native(&self) -> &Video {
@@ -45,6 +75,13 @@ impl VideoFrame {
     }
 
     pub fn bytes(&self) -> u64 {
+        #[cfg(target_os = "android")]
+        if self.android.is_some() {
+            return self
+                .android()
+                .expect("acquire selected decoder image before accounting its allocation")
+                .bytes();
+        }
         self.bytes
     }
 }

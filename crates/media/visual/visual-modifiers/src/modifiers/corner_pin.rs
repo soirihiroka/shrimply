@@ -4,11 +4,13 @@ use serde::{Deserialize, Serialize};
 use shrimply_property_model::timeline_value::*;
 use uuid::Uuid;
 
+#[cfg(feature = "preview")]
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome,
     PreviewEditSink, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
 };
 
+#[cfg(feature = "preview")]
 use super::preview;
 
 use super::{KeyframeSpan, ModifierModel, combine, ensure_timeline_value_ids, timeline_value_span};
@@ -93,6 +95,7 @@ impl ModifierModel for CornerPinModifier {
 }
 
 #[derive(Clone)]
+#[cfg(feature = "preview")]
 struct CornerPinPreview {
     target: PreviewTarget,
     snapshot: CornerPinModifier,
@@ -106,6 +109,7 @@ struct CornerPinPreview {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum CornerPinDrag {
     Corner {
         map: glam::Mat3,
@@ -121,12 +125,14 @@ enum CornerPinDrag {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(feature = "preview")]
 enum CornerPinValue {
     Corner { index: usize, value: glam::Vec2 },
     Perspective(f32),
 }
 
 impl CornerPinModifier {
+    #[cfg(feature = "preview")]
     pub(crate) fn preview_provider(
         &self,
         target: PreviewTarget,
@@ -161,6 +167,7 @@ impl CornerPinModifier {
     }
 }
 
+#[cfg(feature = "preview")]
 impl CornerPinPreview {
     fn local_corners(&self) -> [glam::Vec2; 4] {
         self.corners.map(|corner| corner * self.size)
@@ -170,6 +177,7 @@ impl CornerPinPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 impl PreviewProvider for CornerPinPreview {
     fn on_draw(
         &mut self,
@@ -287,6 +295,7 @@ impl PreviewProvider for CornerPinPreview {
     }
 }
 
+#[cfg(feature = "preview")]
 fn corner_edit(changed: bool, commit: bool) -> PreviewResponse {
     if !changed {
         return PreviewResponse::handled();
@@ -299,6 +308,7 @@ fn corner_edit(changed: bool, commit: bool) -> PreviewResponse {
     })
 }
 
+#[cfg(feature = "preview")]
 fn update_corner_pin(
     modifier: &mut CornerPinModifier,
     drag: &CornerPinDrag,

@@ -8,7 +8,7 @@ use ffmpeg::format::Pixel;
 use ffmpeg::sys;
 use ffmpeg_next as ffmpeg;
 use libc::EAGAIN;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use shrimply_audio_engine::streaming;
 use shrimply_math_core::{Fraction, frame_count, time_from_frame};
 use shrimply_project_document::project::{self, Project, Time};
@@ -16,22 +16,38 @@ use shrimply_project_document::project::{self, Project, Time};
 const AUDIO_CHANNELS: usize = 2;
 const DEFAULT_AUDIO_FRAME_SIZE: usize = 1024;
 const EXPORT_DEBUG_FRAME_PERIOD: u64 = 300;
+mod mux;
+pub mod progress;
+pub mod settings;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ExportVideoCodec {
     H264,
     H265,
     Gif,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ExportContainer {
     Mp4,
     Mkv,
     Gif,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportRateControl {
+    ConstantQp,
+    ConstantBitrate,
+    VariableBitrate,
+    VariableBitrateTargetQuality,
+    Lossless,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ExportAudioEncoder {
     FdkAac,
     Aac,
@@ -48,6 +64,8 @@ pub struct ExportSettings {
     pub container: ExportContainer,
     pub fps: Fraction,
     pub background_alpha: u8,
+    pub rate_control: ExportRateControl,
+    pub constant_qp: u32,
     pub bitrate_kbps: u32,
     pub keyframe_interval_seconds: u32,
     pub b_frames: u32,
@@ -56,7 +74,8 @@ pub struct ExportSettings {
     pub audio_bitrate_kbps: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "phase", content = "details", rename_all = "snake_case")]
 pub enum ExportProgress {
     MixingAudio {
         current_frame: u64,
@@ -308,40 +327,47 @@ where
         (Some(encoder), Some(stream_index))
     };
 
-    progress(ExportProgress::SettingUp("Writing media header"));
+    // Most encoders expose global headers on open. Surface encoders can only
+    // provide them with their first packet; Matroska needs that codec-private
+    // data before its header is written. Keep this policy in the shared muxer.
+    let wait_for_header = settings.container == ExportContainer::Mkv
+        && settings.video_codec != ExportVideoCodec::Gif
+        && unsafe { (*video_encoder.as_ptr()).extradata_size == 0 };
+    progress(ExportProgress::SettingUp(if wait_for_header {
+        "Preparing media header"
+    } else {
+        "Writing media header"
+    }));
     check_cancelled(cancelled)?;
-    output.write_header().map_err(|error| error.to_string())?;
-    let video_stream_time_base = output
-        .stream(video_stream_index)
-        .ok_or("Video stream disappeared after writing the header")?
-        .time_base();
-    let audio_stream_time_base = audio_stream_index
-        .map(|stream_index| {
-            output
-                .stream(stream_index)
-                .ok_or_else(|| "Audio stream disappeared after writing the header".to_string())
-                .map(|stream| stream.time_base())
-        })
-        .transpose()?;
+    let mut output = mux::Muxer::new(
+        output,
+        video_stream_index,
+        audio_stream_index.map(|index| {
+            (
+                index,
+                audio_encoder
+                    .as_ref()
+                    .expect("audio stream encoder")
+                    .time_base(),
+            )
+        }),
+        wait_for_header,
+    )?;
     let setup_ns = setup_started.elapsed().as_nanos();
 
     let audio_encode_started = Instant::now();
-    let mut audio_packets = match (
-        audio_encoder.as_mut(),
-        audio_stream_index,
-        audio_stream_time_base,
-    ) {
-        (Some(encoder), Some(stream_index), Some(stream_time_base)) => encode_audio_packets(
+    let audio_packets = match (audio_encoder.as_mut(), audio_stream_index) {
+        (Some(encoder), Some(stream_index)) => encode_audio_packets(
             encoder,
             &audio_samples,
             settings,
             stream_index,
-            stream_time_base,
             cancelled,
             &mut progress,
         )?,
         _ => VecDeque::new(),
     };
+    output.queue_audio(audio_packets);
     let audio_encode_ns = audio_encode_started.elapsed().as_nanos();
 
     let video_encode_started = Instant::now();
@@ -350,10 +376,6 @@ where
         settings,
         backend,
         &mut video_encoder,
-        video_stream_index,
-        video_stream_time_base,
-        audio_stream_index.zip(audio_stream_time_base),
-        &mut audio_packets,
         &mut output,
         cancelled,
         &assets,
@@ -363,18 +385,13 @@ where
 
     progress(ExportProgress::Finalizing);
     let finalize_started = Instant::now();
-    while let Some(mut packet) = audio_packets.pop_front() {
+    while let Some(packet) = output.audio_packets.pop_front() {
         check_cancelled(cancelled)?;
         crate::ensure_assets_current(&assets)?;
-        packet.set_stream(audio_stream_index.expect("audio packets require an audio stream"));
-        packet
-            .write_interleaved(&mut output)
-            .map_err(|error| format!("Could not write final audio packet: {error}"))?;
+        output.write_audio(packet)?;
     }
     crate::verify_assets_current(&assets)?;
-    output
-        .write_trailer()
-        .map_err(|error| format!("Could not write export trailer: {error}"))?;
+    output.finish()?;
     drop(output);
     check_cancelled(cancelled)?;
     if settings.overwrite {
@@ -418,6 +435,14 @@ pub fn extension_for_container(container: ExportContainer) -> &'static str {
         ExportContainer::Mp4 => "mp4",
         ExportContainer::Mkv => "mkv",
         ExportContainer::Gif => "gif",
+    }
+}
+
+pub fn mime_type(container: ExportContainer) -> &'static str {
+    match container {
+        ExportContainer::Mp4 => "video/mp4",
+        ExportContainer::Mkv => "video/x-matroska",
+        ExportContainer::Gif => "image/gif",
     }
 }
 
@@ -561,7 +586,6 @@ fn encode_audio_packets(
     samples: &[f32],
     settings: &ExportSettings,
     stream_index: usize,
-    stream_time_base: ffmpeg::Rational,
     cancelled: &AtomicBool,
     progress: &mut dyn FnMut(ExportProgress),
 ) -> Result<VecDeque<ffmpeg::Packet>, String> {
@@ -570,7 +594,6 @@ fn encode_audio_packets(
         current_frame: 0,
         total_frames: input_frames as u64,
     });
-    let encoder_time_base = encoder.time_base();
     let frame_size = usize::try_from(encoder.frame_size())
         .ok()
         .filter(|value| *value > 0)
@@ -598,13 +621,7 @@ fn encode_audio_packets(
         encoder
             .send_frame(&frame)
             .map_err(|error| error.to_string())?;
-        receive_audio_packets(
-            encoder,
-            stream_index,
-            encoder_time_base,
-            stream_time_base,
-            &mut packets,
-        )?;
+        receive_audio_packets(encoder, stream_index, &mut packets)?;
         start_frame += frames;
         next_pts += frame_size as i64;
         progress(ExportProgress::EncodingAudio {
@@ -613,13 +630,7 @@ fn encode_audio_packets(
         });
     }
     encoder.send_eof().map_err(|error| error.to_string())?;
-    receive_audio_packets(
-        encoder,
-        stream_index,
-        encoder_time_base,
-        stream_time_base,
-        &mut packets,
-    )?;
+    receive_audio_packets(encoder, stream_index, &mut packets)?;
     Ok(packets)
 }
 
@@ -629,18 +640,13 @@ fn encode_video_packets<B: VideoBackend>(
     settings: &ExportSettings,
     backend: &mut B,
     encoder: &mut ffmpeg::codec::encoder::video::Encoder,
-    stream_index: usize,
-    stream_time_base: ffmpeg::Rational,
-    audio_stream: Option<(usize, ffmpeg::Rational)>,
-    audio_packets: &mut VecDeque<ffmpeg::Packet>,
-    output: &mut ffmpeg::format::context::Output,
+    output: &mut mux::Muxer,
     cancelled: &AtomicBool,
     assets: &[project::AssetSnapshot],
     progress: &mut dyn FnMut(ExportProgress),
 ) -> Result<Vec<ExportFrameBenchmark>, String> {
     let total = frame_count(export_duration(project), settings.fps)
         .ok_or_else(|| "export duration and frame rate exceed the exact range".to_string())?;
-    let encoder_time_base = encoder.time_base();
     progress(ExportProgress::EncodingVideo {
         current_frame: 0,
         total_frames: total,
@@ -673,15 +679,7 @@ fn encode_video_packets<B: VideoBackend>(
             .map_err(|error| error.to_string())?;
         let encoder_send_ns = encoder_send_started.elapsed().as_nanos();
         let packet_started = Instant::now();
-        let packets_received = receive_video_packets(
-            encoder,
-            stream_index,
-            encoder_time_base,
-            stream_time_base,
-            audio_stream,
-            audio_packets,
-            output,
-        )?;
+        let packets_received = receive_video_packets(encoder, output)?;
         let current_frame = frame_index + 1;
         let completed_at = Instant::now();
         fps_window.push_back((current_frame, completed_at));
@@ -722,15 +720,7 @@ fn encode_video_packets<B: VideoBackend>(
     }
     crate::ensure_assets_current(assets)?;
     encoder.send_eof().map_err(|error| error.to_string())?;
-    receive_video_packets(
-        encoder,
-        stream_index,
-        encoder_time_base,
-        stream_time_base,
-        audio_stream,
-        audio_packets,
-        output,
-    )?;
+    receive_video_packets(encoder, output)?;
     Ok(benchmarks)
 }
 
@@ -770,11 +760,30 @@ pub fn rgba_to_gif_frame(source: &ffmpeg::frame::Video) -> Result<ffmpeg::frame:
     Ok(frame)
 }
 
+/// Package an explicit GPU readback for CPU-only image encoders such as GIF.
+pub fn rgba_frame(width: u32, height: u32, bytes: &[u8]) -> Result<ffmpeg::frame::Video, String> {
+    let row_bytes = (width as usize)
+        .checked_mul(size_of::<u32>())
+        .ok_or("RGBA row size overflow")?;
+    if row_bytes.checked_mul(height as usize) != Some(bytes.len()) || row_bytes == 0 || height == 0
+    {
+        return Err("RGBA readback does not match the frame dimensions".into());
+    }
+    let mut frame = ffmpeg::frame::Video::new(Pixel::RGBA, width, height);
+    let stride = frame.stride(0);
+    for (destination, source) in frame
+        .data_mut(0)
+        .chunks_mut(stride)
+        .zip(bytes.chunks_exact(row_bytes))
+    {
+        destination[..row_bytes].copy_from_slice(source);
+    }
+    Ok(frame)
+}
+
 fn receive_audio_packets(
     encoder: &mut ffmpeg::codec::encoder::audio::Encoder,
     stream_index: usize,
-    encoder_time_base: ffmpeg::Rational,
-    stream_time_base: ffmpeg::Rational,
     packets: &mut VecDeque<ffmpeg::Packet>,
 ) -> Result<(), String> {
     loop {
@@ -782,7 +791,6 @@ fn receive_audio_packets(
         match encoder.receive_packet(&mut packet) {
             Ok(()) => {
                 packet.set_stream(stream_index);
-                packet.rescale_ts(encoder_time_base, stream_time_base);
                 packets.push_back(packet);
             }
             Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(()),
@@ -792,39 +800,16 @@ fn receive_audio_packets(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn receive_video_packets(
     encoder: &mut ffmpeg::codec::encoder::video::Encoder,
-    stream_index: usize,
-    encoder_time_base: ffmpeg::Rational,
-    stream_time_base: ffmpeg::Rational,
-    audio_stream: Option<(usize, ffmpeg::Rational)>,
-    audio_packets: &mut VecDeque<ffmpeg::Packet>,
-    output: &mut ffmpeg::format::context::Output,
+    output: &mut mux::Muxer,
 ) -> Result<usize, String> {
     let mut written = 0;
     loop {
         let mut packet = ffmpeg::Packet::empty();
         match encoder.receive_packet(&mut packet) {
             Ok(()) => {
-                packet.set_stream(stream_index);
-                if packet.duration() == 0 {
-                    packet.set_duration(1);
-                }
-                packet.rescale_ts(encoder_time_base, stream_time_base);
-                if let Some((audio_stream_index, audio_time_base)) = audio_stream {
-                    write_audio_until(
-                        &packet,
-                        stream_time_base,
-                        audio_stream_index,
-                        audio_time_base,
-                        audio_packets,
-                        output,
-                    )?;
-                }
-                packet
-                    .write_interleaved(output)
-                    .map_err(|error| error.to_string())?;
+                output.write_video(packet, encoder)?;
                 written += 1;
             }
             Err(ffmpeg::Error::Other { errno }) if errno == EAGAIN => return Ok(written),
@@ -832,38 +817,6 @@ fn receive_video_packets(
             Err(error) => return Err(error.to_string()),
         }
     }
-}
-
-fn write_audio_until(
-    video_packet: &ffmpeg::Packet,
-    video_time_base: ffmpeg::Rational,
-    audio_stream_index: usize,
-    audio_time_base: ffmpeg::Rational,
-    audio_packets: &mut VecDeque<ffmpeg::Packet>,
-    output: &mut ffmpeg::format::context::Output,
-) -> Result<(), String> {
-    while audio_packets.front().is_some_and(|packet| {
-        packet_is_before_or_at(packet, audio_time_base, video_packet, video_time_base)
-    }) {
-        let mut packet = audio_packets.pop_front().expect("front packet exists");
-        packet.set_stream(audio_stream_index);
-        packet
-            .write_interleaved(output)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn packet_is_before_or_at(
-    left: &ffmpeg::Packet,
-    left_time_base: ffmpeg::Rational,
-    right: &ffmpeg::Packet,
-    right_time_base: ffmpeg::Rational,
-) -> bool {
-    let left_ts = left.dts().or_else(|| left.pts()).unwrap_or(0) as i128;
-    let right_ts = right.dts().or_else(|| right.pts()).unwrap_or(0) as i128;
-    left_ts * left_time_base.0 as i128 * right_time_base.1 as i128
-        <= right_ts * right_time_base.0 as i128 * left_time_base.1 as i128
 }
 
 fn fill_audio_frame(

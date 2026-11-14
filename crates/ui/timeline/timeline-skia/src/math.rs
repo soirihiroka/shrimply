@@ -36,6 +36,16 @@ pub fn time_at_x(view: crate::view::TimelineViewState, x: f64) -> Time {
     .max(Time::ZERO)
 }
 
+/// Conservative bounds include the minimum-width pixel used for subpixel clips.
+pub fn visible_item_times(view: crate::view::TimelineViewState, width: f64) -> (Time, Time) {
+    let origin = crate::geometry::timeline_x();
+    let padding = shrimply_timeline_paint_skia::MIN_ITEM_PIXEL_WIDTH;
+    (
+        time_at_x(view, origin - padding),
+        time_at_x(view, origin + width + padding),
+    )
+}
+
 pub fn snap_distance(view: crate::view::TimelineViewState, radius_pixels: f64) -> Time {
     Time::from_big_fraction(
         BigFraction::from_fraction(fraction_from_f64(view.seconds_per_pixel))
@@ -98,4 +108,27 @@ pub fn frame_width(view: crate::TimelineViewState, frame_step_seconds: f64) -> f
     } else {
         frame_step_seconds / view.seconds_per_pixel
     }
+}
+
+/// Pan and zoom in one operation, preserving the time under the moving centroid.
+pub fn touch_transform(
+    view: &mut crate::TimelineViewState,
+    previous: crate::Vec2,
+    center: crate::Vec2,
+    scale: f32,
+    minimum: f64,
+) {
+    if !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    zoom_at_x(view, previous.x.into(), scale.into(), minimum);
+    let delta = center - previous;
+    view.scroll_seconds = shrimply_math_core::Time::from_seconds_f64(view.scroll_seconds)
+        .signed_sub(
+            shrimply_math_core::Time::from_seconds_f64(view.seconds_per_pixel)
+                .scaled(shrimply_math_core::Fraction::from(delta.x)),
+        )
+        .max(shrimply_math_core::Time::ZERO)
+        .as_secs_f64();
+    view.scroll_y = (view.scroll_y - f64::from(delta.y)).max(0.0);
 }

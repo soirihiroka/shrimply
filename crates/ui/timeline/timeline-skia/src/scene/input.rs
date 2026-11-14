@@ -7,6 +7,11 @@ pub enum PointerButton {
 }
 
 pub enum Event {
+    ContextMenu {
+        point: Vec2,
+        touch: bool,
+    },
+    Touch(Vec<shrimply_components_skia::input::TouchChange>),
     Modifiers(TimelineModifiers),
     Motion {
         point: Vec2,
@@ -32,6 +37,7 @@ pub enum Event {
 }
 
 pub struct Requests {
+    pub context_menu: Option<(Vec2, bool)>,
     pub pause_playback: bool,
     pub track_add: Option<TrackAddMenuRequest>,
     pub audio_record: Option<TrackKey>,
@@ -101,6 +107,11 @@ impl Scene {
         self.media_refresh.redraw.set(true);
         self.sync_revision();
         match event {
+            Event::ContextMenu { point, touch } => {
+                self.pointer_cancelled();
+                self.pending_context_menu = Some((point, touch));
+            }
+            Event::Touch(changes) => self.touch(&changes),
             Event::Modifiers(modifiers) => self.modifiers = modifiers,
             Event::Motion { point, modifiers } => {
                 self.pointer_pos = Some(point);
@@ -150,7 +161,93 @@ impl Scene {
             }
             Event::Leave => self.pointer_exited(),
             Event::Scroll(scroll) => self.pending_scrolls.push(scroll),
-            Event::Cancel => self.pointer_cancelled(),
+            Event::Cancel => {
+                self.touch_input.cancel();
+                self.cancel_touch_drag();
+            }
+        }
+    }
+
+    fn touch(&mut self, changes: &[shrimply_components_skia::input::TouchChange]) {
+        use shrimply_components_skia::input::{TouchAction, TouchCancelReason};
+        for action in self.touch_input.update(changes) {
+            match action {
+                TouchAction::Press(point) => {
+                    self.touch_selection = Some(selection_state::snapshot(&self.selection));
+                    let player = player_state::snapshot(&self.player);
+                    self.touch_playhead = Some(player.position);
+                    self.touch_playing = Some(player.playing);
+                    self.event(Event::Press {
+                        point,
+                        button: PointerButton::Primary,
+                        double: false,
+                        modifiers: self.modifiers,
+                    });
+                    self.update_input();
+                }
+                TouchAction::Move(point) => {
+                    self.event(Event::Motion {
+                        point,
+                        modifiers: self.modifiers,
+                    });
+                    self.update_input();
+                }
+                TouchAction::Release(point) => {
+                    self.event(Event::Release {
+                        point,
+                        button: PointerButton::Primary,
+                        modifiers: self.modifiers,
+                    });
+                    self.update_input();
+                    self.touch_selection = None;
+                    self.touch_playhead = None;
+                    self.touch_playing = None;
+                }
+                TouchAction::Cancel(reason) => {
+                    // Adding a second finger rolls back the first finger's
+                    // provisional drag, including its playback pause. Native
+                    // cancellation must never resume audio.
+                    let playing = if reason == TouchCancelReason::GestureChange {
+                        self.touch_playing
+                    } else {
+                        None
+                    };
+                    self.cancel_touch_drag();
+                    if let Some(playing) = playing {
+                        player_state::set_playing(&self.player, playing);
+                    }
+                }
+                TouchAction::Transform {
+                    previous_center,
+                    center,
+                    scale,
+                } => {
+                    self.horizontal_scrollbar.cancel_scroll();
+                    self.vertical_scrollbar.cancel_scroll();
+                    let minimum = min_seconds_per_pixel(frame_step_seconds(&self.project.borrow()));
+                    crate::math::touch_transform(
+                        &mut self.view,
+                        previous_center,
+                        center,
+                        scale,
+                        minimum,
+                    );
+                    self.save_zoom();
+                }
+            }
+        }
+    }
+
+    fn cancel_touch_drag(&mut self) {
+        self.pending_pause_playback = false;
+        self.touch_playing = None;
+        let seeking = self.view.drag_mode == DragMode::Seek;
+        self.pointer_cancelled();
+        if let Some(snapshot) = self.touch_selection.take() {
+            selection_state::restore(&self.selection, snapshot);
+        }
+        if let Some(position) = self.touch_playhead.take().filter(|_| seeking) {
+            player_state::seek_time(&self.player, position);
         }
     }
 
@@ -168,6 +265,10 @@ impl Scene {
             },
         );
         self.apply_internal_actions();
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.active_audio_recording.is_some() || self.active_video_recording.is_some()
     }
 
     pub fn toggle_audio_recording(&mut self, key: TrackKey) -> Result<(), String> {
@@ -195,6 +296,7 @@ impl Scene {
     }
 
     pub fn draw_frame(&mut self, canvas: &skia_safe::Canvas, size: Vec2, mut frame: Frame<'_>) {
+        self.last_frame_at = Instant::now();
         self.media_refresh.redraw.set(false);
         self.suspended = false;
         self.sync_revision();
@@ -253,6 +355,10 @@ impl Scene {
         }
         let playing = player_state::snapshot(&self.player).playing;
         let mut changed = false;
+        if let Some(point) = self.touch_input.poll_long_press() {
+            self.event(Event::ContextMenu { point, touch: true });
+            changed = true;
+        }
         if let Some(recording) = self.active_audio_recording.as_ref() {
             if playing {
                 recording.maintain_duration(&self.player);
@@ -312,13 +418,14 @@ impl Scene {
             || player_state::snapshot(&self.player).playing
             || self.active_audio_recording.is_some()
             || self.active_video_recording.is_some()
-            || self.waveform_loading
+            || (self.waveform_loading && self.wake.is_none())
             || self.animating()
     }
 
     /// Detach from a native surface while retaining view state for a later realization.
     pub fn suspend(&mut self) {
-        self.pointer_cancelled();
+        self.touch_input.cancel();
+        self.cancel_touch_drag();
         self.finish_audio_recording();
         self.stop_video_recording();
         self.suspended = true;
@@ -346,8 +453,21 @@ impl Scene {
 
     fn sync_revision(&mut self) {
         let revision = player_state::snapshot(&self.player).revision;
+        if self.revision != revision
+            || self.expanded_paths != self.project.borrow().expanded_sequence_paths
+        {
+            let project = self.project.borrow();
+            self.timeline_end = folded_sequence::expanded_timeline_end(&project);
+            self.expanded_paths
+                .clone_from(&project.expanded_sequence_paths);
+        }
         if self.revision != revision {
             self.revision = revision;
+            // An external project edit invalidates the old selection snapshot.
+            self.touch_input.cancel();
+            self.touch_selection = None;
+            self.touch_playhead = None;
+            self.touch_playing = None;
             self.pointer_cancelled();
         }
     }
@@ -357,6 +477,7 @@ impl Scene {
             return true;
         }
         !self.pending_scrolls.is_empty()
+            || self.touch_input.waiting_long_press()
             || self.track_controls_animating
             || self.horizontal_scrollbar.animating()
             || self.vertical_scrollbar.animating()
@@ -548,6 +669,7 @@ impl Scene {
         let pause_playback = std::mem::take(&mut self.pending_pause_playback);
         self.apply_internal_actions();
         Requests {
+            context_menu: self.pending_context_menu.take(),
             pause_playback,
             track_add: self.pending_track_add_menu.take(),
             audio_record: self.pending_audio_record.take(),
@@ -565,8 +687,11 @@ impl Scene {
         let (duration, step, track_height) = {
             let project = project.borrow();
             let player = player_state::snapshot(&player);
-            self.snap_repository = crate::snapping::repository(
+            crate::snapping::update(
                 &project,
+                self.revision,
+                &mut self.snapping_cache,
+                &mut self.snap_repository,
                 crate::snapping::Request {
                     folded_drag: self.folded_drag.as_ref(),
                     dragged_group: self.dragged_group.as_ref(),
@@ -587,7 +712,7 @@ impl Scene {
                 self.import_preview.as_ref(),
             );
             (
-                folded_sequence::expanded_timeline_end(&project)
+                self.timeline_end
                     .max(player.duration)
                     .max(player.position)
                     .max(Time::from_seconds(1))

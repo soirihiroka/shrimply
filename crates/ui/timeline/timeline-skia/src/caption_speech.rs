@@ -5,7 +5,7 @@ use std::sync::{
     mpsc::{self, TryRecvError},
 };
 
-use shrimply_editor_state::player_state::{self, ProjectChange};
+use shrimply_player_core::{self as player_state, ProjectChange};
 
 use crate::{
     external_content::OwnedFile,

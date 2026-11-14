@@ -1,15 +1,27 @@
 use canvas::{Align2, Color, FontId, Rect, TimelinePainter, vec2};
+use hashbrown::HashMap;
+use icons::*;
+use math::item_rect;
+use project::*;
 pub use shrimply_components_skia::{canvas, cursor};
-use shrimply_math_core::{Fraction, Time};
+pub use shrimply_cross_ui_theme as theme;
+use shrimply_math_core::Time;
+pub use shrimply_project_document as project;
+pub mod icons;
+pub mod rows;
+pub mod track_controls;
+pub mod visual_items;
+pub use item_decoration::*;
+mod item_decoration;
 
 pub mod decoration;
-pub mod fixture;
-mod math;
+pub mod math;
 pub mod ruler;
 
 pub const RULER_HEIGHT: f64 = 44.0;
 pub const TRACK_HEIGHT: f64 = 36.0;
 pub const ITEM_BORDER_STROKE_WIDTH: f32 = 2.0;
+pub const MIN_ITEM_PIXEL_WIDTH: f64 = 1.0;
 pub const PLAYHEAD_HANDLE_WIDTH: f64 = 16.0;
 pub const PLAYHEAD_HANDLE_HEIGHT: f64 = 8.0;
 pub const PLAYHEAD_HANDLE_TOP: f64 = 21.0;
@@ -17,26 +29,21 @@ pub const PLAYHEAD_HANDLE_TRIANGLE_HEIGHT: f64 = 5.0;
 pub const FRAME_TICK_MIN_WIDTH: f64 = 8.0;
 pub const RULER_LABEL_ALPHA: f32 = 0.55;
 pub const TRACK_SELECTION_LABEL_ALPHA: f32 = 0.24;
-pub const LABEL_WIDTH: f64 = 172.0;
+pub const TRACK_LABEL_BUTTON_SIZE: f64 = 26.0;
+pub const TRACK_INDEX_COLUMN_WIDTH: f64 = 40.0;
+pub const TRACK_LABEL_PADDING_X: f64 = 14.0;
+pub const TRACK_LABEL_BUTTON_START_X: f64 = TRACK_INDEX_COLUMN_WIDTH + TRACK_LABEL_PADDING_X;
+pub const TRACK_LABEL_BUTTON_GAP: f64 = 6.0;
+pub const TRACK_LABEL_BUTTON_STRIDE: f64 = TRACK_LABEL_BUTTON_SIZE + TRACK_LABEL_BUTTON_GAP;
+pub const TRACK_LABEL_TOGGLE_X: f64 = TRACK_LABEL_BUTTON_START_X;
+pub const TRACK_LABEL_ADD_X: f64 = TRACK_LABEL_BUTTON_START_X + TRACK_LABEL_BUTTON_STRIDE;
+pub const TRACK_LABEL_RECORD_X: f64 = TRACK_LABEL_BUTTON_START_X + TRACK_LABEL_BUTTON_STRIDE * 2.0;
+pub const LABEL_WIDTH: f64 = TRACK_LABEL_RECORD_X + TRACK_LABEL_BUTTON_SIZE + TRACK_LABEL_PADDING_X;
+pub const TIMELINE_PADDING_LEFT: f64 = 2.0;
+pub const TIMELINE_X: f64 = LABEL_WIDTH + TIMELINE_PADDING_LEFT;
 const LABEL_FONT_SIZE: f32 = 12.0;
 const CLIP_FONT_SIZE: f32 = 10.0;
 const LABEL_INSET: f64 = 4.0;
-
-/// Presentation data only. No project, media, or editor runtime is required.
-pub struct Clip {
-    pub start: Time,
-    pub end: Time,
-    pub label: String,
-    pub selected: bool,
-}
-
-pub struct Track {
-    pub label: String,
-    pub fill: Color,
-    pub accent: Color,
-    pub selected: bool,
-    pub clips: Vec<Clip>,
-}
 
 #[derive(Clone, Copy)]
 pub struct Viewport {
@@ -44,127 +51,31 @@ pub struct Viewport {
     pub scroll_y: f64,
 }
 
-pub struct Timeline<'a> {
-    pub tracks: &'a [Track],
-    pub viewport: Viewport,
-    pub playhead: Time,
-    pub frame_rate: Fraction,
-    pub width: f64,
-    pub height: f64,
-    pub theme: &'a shrimply_cross_ui_theme::Theme,
+#[derive(Clone, Copy)]
+pub struct NaturalEndMarker {
+    pub start: Time,
+    pub end: Time,
+    pub position: Option<Time>,
+    pub repeat_interval: Option<Time>,
+    pub real_start: Option<Time>,
+    pub real_end: Option<Time>,
 }
 
-pub fn draw(painter: &TimelinePainter, timeline: Timeline<'_>) {
-    let Timeline {
-        tracks,
-        viewport,
-        playhead,
-        frame_rate,
-        width,
-        height,
-        theme,
-    } = timeline;
-    let content_width = (width - LABEL_WIDTH).max(0.0);
-    let visible_end = viewport.scale.scroll_seconds.saturating_add(
-        Time {
-            seconds: viewport.scale.seconds_per_pixel,
-        }
-        .scaled(Fraction::from(content_width)),
-    );
-    painter.rect_filled(rect(0.0, 0.0, width, height), 0, theme.view_bg);
-    {
-        let content = painter.with_clip_rect(rect(LABEL_WIDTH, 0.0, content_width, height));
-        ruler::draw(
-            &content,
-            ruler::RulerDraw {
-                scale: viewport.scale,
-                timeline_x: LABEL_WIDTH,
-                timeline_width: content_width,
-                content_height: height,
-                frame_step_seconds: Time {
-                    seconds: Fraction::from(1) / frame_rate,
-                },
-                frame_rate,
-                hide_zero_label: false,
-                style: ruler::RulerStyle {
-                    height: RULER_HEIGHT,
-                    frame_tick_min_width: FRAME_TICK_MIN_WIDTH,
-                    grid_color: theme.sidebar_shade,
-                    label_color: theme.view_fg.alpha_multiply(RULER_LABEL_ALPHA),
-                },
-            },
-        );
-    }
-    {
-        let rows = painter.with_clip_rect(rect(
-            0.0,
-            RULER_HEIGHT,
-            width,
-            (height - RULER_HEIGHT).max(0.0),
-        ));
-        for (row, track) in tracks.iter().enumerate() {
-            let y = RULER_HEIGHT + row as f64 * TRACK_HEIGHT - viewport.scroll_y;
-            if y + TRACK_HEIGHT <= RULER_HEIGHT || y >= height {
-                continue;
-            }
-            draw_track_label(
-                &rows,
-                TrackLabel {
-                    y,
-                    width: LABEL_WIDTH,
-                    index_x: LABEL_WIDTH / 2.0,
-                    text: &track.label,
-                    accent: track.accent,
-                    selected: track.selected,
-                    theme,
-                },
-            );
-            let clips = rows.with_clip_rect(rect(
-                LABEL_WIDTH,
-                RULER_HEIGHT,
-                content_width,
-                (height - RULER_HEIGHT).max(0.0),
-            ));
-            for clip in &track.clips {
-                if clip.end <= viewport.scale.scroll_seconds || clip.start >= visible_end {
-                    continue;
-                }
-                let x = viewport.scale.time_to_x(clip.start, LABEL_WIDTH);
-                let end = viewport.scale.time_to_x(clip.end, LABEL_WIDTH);
-                if end <= LABEL_WIDTH || x >= width {
-                    continue;
-                }
-                let bounds = rect(x, y, (end - x).max(1.0), TRACK_HEIGHT);
-                decoration::draw_item_box(
-                    &clips,
-                    bounds,
-                    track.fill,
-                    clip.selected,
-                    track.accent,
-                    theme.sidebar_border,
-                );
-                draw_clip_label(&clips, bounds, &clip.label, theme.view_fg);
-            }
-            draw_track_divider(&clips, LABEL_WIDTH, y, content_width, theme.sidebar_shade);
-        }
-    }
-    painter.rect_filled(rect(0.0, 0.0, LABEL_WIDTH, RULER_HEIGHT), 0, theme.view_bg);
-    painter.rect_filled(
-        rect(LABEL_WIDTH - 1.0, 0.0, 1.0, height),
-        0,
-        theme.sidebar_border,
-    );
-    painter.rect_filled(rect(0.0, RULER_HEIGHT, width, 1.0), 0, theme.sidebar_border);
-    let content = painter.with_clip_rect(rect(LABEL_WIDTH, 0.0, content_width, height));
-    draw_playhead(
-        &content,
-        viewport.scale.time_to_x(playhead, LABEL_WIDTH),
-        viewport.scale.frame_width(Time {
-            seconds: Fraction::from(1) / frame_rate,
-        }),
-        height,
-        Color::BLUE1,
-    );
+#[derive(Clone, Copy)]
+pub struct TimedItemBox {
+    pub marker: NaturalEndMarker,
+    pub bounds: Rect,
+    pub fill: Color,
+    pub timeline_x: f64,
+    pub view: Viewport,
+    pub selected: bool,
+    pub selected_border_color: Color,
+}
+
+#[derive(Clone, Copy)]
+pub enum PreviewTimeMode {
+    Move,
+    Resize,
 }
 
 pub struct TrackLabel<'a> {
@@ -251,4 +162,22 @@ fn rect(x: f64, y: f64, width: f64, height: f64) -> Rect {
         width.max(0.0) as f32,
         height.max(0.0) as f32,
     )
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum TrackLabelAction {
+    Select,
+    Toggle,
+    Add,
+    AudioRecord,
+    VideoRecord,
+}
+
+pub type TrackButtonId = (TrackKey, TrackLabelAction);
+
+pub struct TrackControlDraw<'a> {
+    pub animation_active: &'a mut bool,
+    pub buttons: &'a mut HashMap<TrackButtonId, shrimply_components_skia::button::Button>,
+    pub active_audio_recording_key: Option<TrackKey>,
+    pub active_video_recording_key: Option<TrackKey>,
 }

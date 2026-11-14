@@ -22,10 +22,31 @@ impl ProjectPresentation {
         vec![
             crate::InspectorDetail {
                 label: "Tracks",
-                value: format!(
-                    "{} video, {} audio, {} caption",
-                    self.video_track_count, self.audio_track_count, self.caption_track_count
-                ),
+                value: [
+                    (
+                        self.video_track_count,
+                        "1 video track",
+                        "%{count} video tracks",
+                    ),
+                    (
+                        self.audio_track_count,
+                        "1 audio track",
+                        "%{count} audio tracks",
+                    ),
+                    (
+                        self.caption_track_count,
+                        "1 caption track",
+                        "%{count} caption tracks",
+                    ),
+                ]
+                .map(|(count, singular, plural)| {
+                    if count == 1 {
+                        shrimply_i18n::text(singular).into_owned()
+                    } else {
+                        shrimply_i18n::text_args(plural, &[("count", count.to_string())])
+                    }
+                })
+                .join(", "),
             },
             crate::InspectorDetail {
                 label: "Duration",

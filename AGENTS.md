@@ -54,3 +54,17 @@ Start with `shrimply cli search "describe the task"`, inspect command help or
 Inform the user when the binary API is missing features that are needed.
 
 Before adding dependency or going with popular options, ask user their opinion on the dependency. Always prefer skia for 2D rendering.
+
+
+Avoid extra labels and meaningless texts.
+
+
+When porting to a new UI framework. Use the GTK UI as the referrence.
+
+Avoid platform specific code unless absolutely necessary.
+
+Try to put as much logic into the shared Rust backend as possible.
+
+Before you stop you must spawn a review agent to ensure that you are maximizing code resuablity.
+
+Keep code hygiene in mind, remove ALL duplicated logic BEFORE you add any new lines of code.

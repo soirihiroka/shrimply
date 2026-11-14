@@ -1,6 +1,6 @@
-use shrimply_editor_state::player_state::{self, ProjectChange, SharedPlayerState};
 use shrimply_math_core::Time;
 pub use shrimply_media_import::*;
+use shrimply_player_core::{self as player_state, ProjectChange, SharedPlayerState};
 use shrimply_timeline_edit::selection_state::{self, SharedSelectionState};
 
 pub fn finish_track_import(
