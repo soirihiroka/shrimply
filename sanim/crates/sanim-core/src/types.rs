@@ -52,6 +52,13 @@ pub enum ListLength {
     Unknown,
     Exact(usize),
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Widening {
+    Literals,
+    Editable,
+    Signal,
+    ListLengths,
+}
 impl ListLength {
     pub fn accepts(self, actual: Self) -> bool {
         self == Self::Unknown || self == actual
@@ -362,37 +369,43 @@ impl Type {
     /// Editable values infer primitive string schemas; explicit annotations can
     /// retain a finite choice. Runtime strings themselves remain ordinary strings.
     pub fn widen_literals(self) -> Self {
-        self.widen(false, false)
+        self.widen(Widening::Literals)
     }
     pub fn editable_schema(self) -> Self {
-        self.widen(true, false)
+        self.widen(Widening::Editable)
     }
     pub fn signal_schema(self) -> Self {
-        self.widen(true, true)
+        self.widen(Widening::Signal)
     }
-    fn widen(self, editable: bool, live: bool) -> Self {
+    pub fn without_list_lengths(self) -> Self {
+        self.widen(Widening::ListLengths)
+    }
+    fn widen(self, mode: Widening) -> Self {
+        let editable = mode != Widening::Literals;
+        let literals = mode != Widening::ListLengths;
+        let live = mode == Widening::Signal;
         match self {
-            Self::StringLiteral(_) => Self::String,
-            Self::RefinedNumeric(domain) if live || domain.is_singleton() => {
+            Self::StringLiteral(_) if literals => Self::String,
+            Self::RefinedNumeric(domain) if live || literals && domain.is_singleton() => {
                 Self::Numeric(domain.unit)
             }
-            Self::Union(types) => Self::union(types.into_iter().map(|ty| ty.widen(editable, live)))
+            Self::Union(types) => Self::union(types.into_iter().map(|ty| ty.widen(mode)))
                 .expect("nonempty checked union"),
             Self::List(inner, length) => Self::List(
-                Box::new(inner.widen(editable, live)),
+                Box::new(inner.widen(mode)),
                 if editable {
                     ListLength::Unknown
                 } else {
                     length
                 },
             ),
-            Self::Option(inner) => Self::Option(Box::new(inner.widen(editable, live))),
-            Self::Array(inner) => Self::Array(Box::new(inner.widen(editable, live))),
-            Self::Signal(inner) => Self::Signal(Box::new(inner.widen(editable, live))),
+            Self::Option(inner) => Self::Option(Box::new(inner.widen(mode))),
+            Self::Array(inner) => Self::Array(Box::new(inner.widen(mode))),
+            Self::Signal(inner) => Self::Signal(Box::new(inner.widen(mode))),
             Self::Record(fields) => Self::Record(
                 fields
                     .into_iter()
-                    .map(|(name, ty)| (name, ty.widen(editable, live)))
+                    .map(|(name, ty)| (name, ty.widen(mode)))
                     .collect(),
             ),
             ty => ty,

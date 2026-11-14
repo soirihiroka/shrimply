@@ -98,6 +98,8 @@ fn check(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
             actuals[index].clone()
         } else if inner.accepts(&actuals[index]) {
             inner.as_ref().clone()
+        } else if let Some(common) = inner.join_list_lengths(&actuals[index]) {
+            common
         } else {
             return Err(format!(
                 "value must match list element type {inner}, found {}",

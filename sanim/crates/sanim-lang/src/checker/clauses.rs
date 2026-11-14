@@ -2,18 +2,6 @@
 use super::*;
 
 impl Checker<'_> {
-    pub(super) fn list_type_arguments<'a>(
-        &self,
-        args: &'a [TypeExpr],
-        span: Span,
-    ) -> Result<(&'a TypeExpr, sanim_core::ListLength), Diagnostic> {
-        match args {
-            [inner]=>Ok((inner,sanim_core::ListLength::Unknown)),
-            [inner,TypeExpr::ConstLength(length)]=>Ok((inner,sanim_core::ListLength::Exact(*length))),
-            [inner,TypeExpr::Named(name,args)] if name=="_" && args.is_empty()=>Ok((inner,sanim_core::ListLength::Unknown)),
-            _=>Err(self.error("S105","List requires an element type and optional fixed length: List<Number>, List<Number,3>, or List<Number,_>; named const generics are not declared by this syntax",span)),
-        }
-    }
     pub(super) fn declare_clauses(
         &mut self,
         module: &Module,

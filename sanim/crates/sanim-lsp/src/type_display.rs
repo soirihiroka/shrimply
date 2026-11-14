@@ -62,8 +62,8 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
         Type::Record(_) => "{…}".into(),
         Type::Overloaded(signatures) => format!("fn ({} clauses)", signatures.len()),
         Type::List(inner, length) => match length {
-            sanim_core::ListLength::Unknown => format!("List<{}>", compact(module, inner)),
-            sanim_core::ListLength::Exact(length) => {
+            sanim_lang::core::ListLength::Unknown => format!("List<{}>", compact(module, inner)),
+            sanim_lang::core::ListLength::Exact(length) => {
                 format!("List<{},{}>", compact(module, inner), length)
             }
         },
@@ -111,8 +111,10 @@ fn expanded(module: &AnalyzedModule, ty: &Type, depth: usize) -> String {
             format!("{{\n{fields}\n{indent}}}")
         }
         Type::List(inner, length) => match length {
-            sanim_core::ListLength::Unknown => format!("List<{}>", expanded(module, inner, depth)),
-            sanim_core::ListLength::Exact(length) => {
+            sanim_lang::core::ListLength::Unknown => {
+                format!("List<{}>", expanded(module, inner, depth))
+            }
+            sanim_lang::core::ListLength::Exact(length) => {
                 format!("List<{},{}>", expanded(module, inner, depth), length)
             }
         },

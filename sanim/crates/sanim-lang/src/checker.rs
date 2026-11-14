@@ -1,6 +1,7 @@
 mod clauses;
 mod dataframe;
 mod list_functions;
+mod lists;
 mod native;
 mod templates;
 use crate::{ast::*, prelude};
@@ -1365,35 +1366,7 @@ impl Checker<'_> {
                     }).and_then(|ty|self.copy_type(if let Type::Signal(inner)=ty {inner}else{ty},expr.span))
                 }
             }
-            ExprKind::List(items) => {
-                let wanted = match expected {
-                    Some(Type::List(t, _)) => Some(t.as_ref()),
-                    _ => None,
-                };
-                let mut inner = wanted.cloned().unwrap_or(Type::Unknown);
-                for item in items {
-                    let ty = self.expression(item, env, wanted, variables)?;
-                    if inner == Type::Unknown {
-                        inner = ty;
-                    } else if wanted.is_none() && !inner.accepts(&ty) {
-                        let mut remaining = self.type_budget.get();
-                        sanim_core::type_budget::charge(&inner, &mut remaining)
-                            .map_err(|reason| self.error("S105", reason, item.span))?;
-                        self.type_budget.set(remaining);
-                        if let Some(joined) = inner.join_list_lengths(&ty) {
-                            inner = joined;
-                        } else {
-                            self.expect(&inner, &ty, item.span)?;
-                        }
-                    } else {
-                        self.expect(&inner, &ty, item.span)?;
-                    }
-                }
-                Ok(Type::List(
-                    Box::new(inner),
-                    sanim_core::ListLength::Exact(items.len()),
-                ))
-            }
+            ExprKind::List(items) => self.list_literal(items, env, expected, variables),
             ExprKind::Record(fields) => {
                 let mut out = BTreeMap::new();
                 for (name, value) in fields {
@@ -1445,7 +1418,13 @@ impl Checker<'_> {
             }
             ExprKind::Binary(op, a, b) => {
                 let left = self.expression(a, env, None, variables)?;
-                let right = self.expression(b, env, Some(&left), variables)?;
+                let context = if op == "+" && matches!(left, Type::List(..)) {
+                    Some(self.copy_type(&left, expr.span)?.without_list_lengths())
+                } else {
+                    None
+                };
+                let right =
+                    self.expression(b, env, Some(context.as_ref().unwrap_or(&left)), variables)?;
                 sanim_core::math::operations::binary_type(op, &left, &right)
                     .map_err(|e| self.error("S106", e, expr.span))
             }

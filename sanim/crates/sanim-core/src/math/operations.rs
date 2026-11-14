@@ -103,17 +103,18 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
     }
     if op == "+"
         && let (Type::List(x, lx), Type::List(y, ly)) = (a, b)
-        && (**x == Type::Unknown || **y == Type::Unknown || x.accepts(y))
     {
+        let element = if **x == Type::Unknown {
+            y.as_ref().clone()
+        } else if **y == Type::Unknown || x.accepts(y) {
+            x.as_ref().clone()
+        } else {
+            x.join_list_lengths(y).ok_or_else(|| {
+                format!("List concatenation requires compatible element types, found {x} and {y}")
+            })?
+        };
         let length = lx.checked_add(*ly)?;
-        return Ok(Type::List(
-            if **x == Type::Unknown {
-                y.clone()
-            } else {
-                x.clone()
-            },
-            length,
-        ));
+        return Ok(Type::List(Box::new(element), length));
     }
     if matches!(op, "+" | "-")
         && let (Type::Vector(n, x), Type::Vector(m, y)) = (a, b)

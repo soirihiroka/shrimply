@@ -96,8 +96,10 @@ impl List {
             }
         };
         let refine = |output: &mut List, value: Value| {
-            if output.element_type.as_ref() == &Type::Unknown {
-                output.element_type = Arc::new(value.ty());
+            if let Some(common) = output.element_type.join_list_lengths(&value.ty())
+                && common != *output.element_type
+            {
+                output.element_type = Arc::new(common);
             }
             value.with_type(&output.element_type)
         };

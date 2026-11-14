@@ -32,15 +32,18 @@ fn list_literals_and_generic_identity_retain_exact_static_lengths() {
 #[test]
 fn nested_literals_join_only_lengths_that_vary() {
     let report =
-        lint("let rows=[[1,2],[3]]\nlet with_empty=[[],[1]]\nlet uniform=[[1,2],[3,4]]").unwrap();
+        lint("let rows=[[1,2],[3]]\nlet with_empty=[[],[1]]\nlet uniform=[[1,2],[3,4]]\nlet combined=[[1,2]]+[[3]]\nlet uniform_combined=[[1,2]]+[[3,4]]\nlet choices:List<\"a\"|\"b\",1>=[\"a\"]\nlet joined_choices=choices+[\"b\"]").unwrap();
     let exports = &report.modules["main.sanim"].checked.exports;
-    for name in ["rows", "with_empty"] {
+    for name in ["rows", "with_empty", "combined"] {
         assert!(
             matches!(&exports[name],Type::List(inner,ListLength::Exact(2)) if matches!(inner.as_ref(),Type::List(_,ListLength::Unknown)))
         );
     }
     assert!(
         matches!(&exports["uniform"],Type::List(inner,ListLength::Exact(2)) if matches!(inner.as_ref(),Type::List(_,ListLength::Exact(2))))
+    );
+    assert!(
+        matches!(&exports["uniform_combined"],Type::List(inner,ListLength::Exact(2)) if matches!(inner.as_ref(),Type::List(_,ListLength::Exact(2))))
     );
     assert!(lint("let rows:List<List<Number,2>>=[[1,2],[3]]").is_err());
 }

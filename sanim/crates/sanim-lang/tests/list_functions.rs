@@ -307,6 +307,10 @@ fn callback_type_errors_and_bounds_fail_with_readable_context() {
             "type Row={x:Number}\nlet result=[1].map(Row)",
             "declared fn",
         ),
+        (
+            "mut rows:List<List<Number,2>>=[[1,2]]\nrows=append(rows,[3])",
+            "type mismatch",
+        ),
     ] {
         let error = Engine::default()
             .prepare("main.sanim", &files(source), &Default::default())
@@ -540,8 +544,12 @@ let empty_filtered=empty.filter(positive)
 let empty_unique=empty.unique()
 let ranged=range(4)
 let stepped=range(8,start=2,step=2)
+let ragged=append([[1,2]],[3])
+let ragged_inserted=insert([[1,2]],0,[3])
 assert(folded==[1,2,3])
 assert(len(history)==3)
+assert(ragged==[[1,2],[3]])
+assert(ragged_inserted==[[3],[1,2]])
 wait(1s)"#,
     );
     for (name, length) in [
