@@ -35,6 +35,56 @@ fn exact_length_validation_shares_values_and_rejects_wrong_lengths() {
 }
 
 #[test]
+fn typed_list_validation_uses_schema_proofs_and_visits_unproven_refinements() {
+    let value = Value::List(List::typed(
+        number(),
+        (0..10_000)
+            .map(|n| Value::Number(sanim_core::Number::scalar(n)))
+            .collect(),
+    ));
+    let expected = Type::List(Box::new(number()), sanim_core::ListLength::Exact(10_000));
+    let mut visits = 0;
+    sanim_core::validation::validate_typed_value(&expected, &value, &mut |_| {
+        visits += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        visits, 1,
+        "a validated collection schema proves its shared elements"
+    );
+    let unchecked = Value::List(List::typed(number(), vec![Value::Bool(true)]));
+    assert!(
+        sanim_core::validate_value(
+            &Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
+            &unchecked
+        )
+        .is_err(),
+        "boundary validation must still inspect untrusted values"
+    );
+    let strings = Value::List(List::typed(
+        Type::String,
+        vec![Value::String("a".into()); 100],
+    ));
+    let narrower = Type::List(
+        Box::new(Type::StringLiteral("a".into())),
+        sanim_core::ListLength::Exact(100),
+    );
+    let mut visits = 0;
+    let error = sanim_core::validation::validate_typed_value(&narrower, &strings, &mut |_| {
+        visits += 1;
+        if visits > 10 {
+            Err("test work budget exhausted".into())
+        } else {
+            Ok(())
+        }
+    })
+    .unwrap_err();
+    assert_eq!(visits, 11);
+    assert!(error.contains("work budget"));
+}
+
+#[test]
 #[ignore = "manual exact/unknown List metadata performance measurement"]
 fn sized_list_metadata_benchmark() {
     use std::{hint::black_box, time::Instant};

@@ -378,7 +378,7 @@ guarded-runtime-bench:
 
 .PHONY: duration-effects-check
 duration-effects-check:
-	$(CARGO) test -p sanim-lang --test duration --test duration_scene_state --test symbolic_effects
+	$(CARGO) test -p sanim-lang --test duration --test duration_scene_state --test symbolic_effects --test language --test literal_types
 	$(CARGO) clippy -p sanim-lang --lib -- -D warnings
 
 .PHONY: duration-memory-check

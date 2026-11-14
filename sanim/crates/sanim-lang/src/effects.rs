@@ -629,10 +629,14 @@ impl Analyzer<'_> {
                 }
                 let body_effect = self.block(body)?;
                 if let Some(value) = constant(count, &self.constants) {
-                    let count = value
-                        .number()
-                        .and_then(Number::usize)
-                        .map_err(|e| self.fail(format!("repeat/timer count: {e}"), count.span))?;
+                    let count = value.number().and_then(Number::usize).map_err(|e| {
+                        Diagnostic::new(
+                            "S303",
+                            format!("repeat/timer count: {e}"),
+                            self.source,
+                            count.span,
+                        )
+                    })?;
                     if count > self.limits.max_iterations {
                         return Err(Diagnostic::new(
                             "S303",
@@ -1248,6 +1252,7 @@ pub(crate) fn lookup<'a>(expr: &Expr, env: &'a Environment) -> Option<&'a Type> 
 pub(crate) fn constant(expr: &Expr, values: &BTreeMap<String, Value>) -> Option<Value> {
     match &expr.kind {
         ExprKind::Number(text) => Number::parse(text).ok().map(Value::Number),
+        ExprKind::String(text) => Some(Value::String(text.as_str().into())),
         ExprKind::Bool(v) => Some(Value::Bool(*v)),
         ExprKind::Name(name) => values
             .get(name)

@@ -171,16 +171,7 @@ jobs:
         shell: bash
         run: |
           source_archive="${RUNNER_TEMP}/shrimply-source.tar"
-          git ls-files --recurse-submodules -z \
-            | tar \
-              --exclude-from=.dockerignore \
-              --group=0 \
-              --no-recursion \
-              --null \
-              --numeric-owner \
-              --owner=0 \
-              -cf "${source_archive}" \
-              -T -
+          bash packaging/flatpak/source-archive.sh "${source_archive}"
           source_hash="$(sha256sum "${source_archive}" | cut -d ' ' -f 1)"
           hashed_archive="${RUNNER_TEMP}/shrimply-source-${source_hash}.tar"
           mv "${source_archive}" "${hashed_archive}"

@@ -239,13 +239,16 @@ pub fn check(
                 let signature =
                     env[name].signatures()[function_clauses[&statement.span.start]].clone();
                 let mut scope = checker.copy_environment(&env, statement.span)?;
+                // A single-clause signal accepts the complete source schema.
+                // Overload guards prove only the sample used to dispatch.
+                let entry_guards = env[name].signatures().len() > 1;
                 for parameter in &signature.parameters {
                     let name = &parameter.name;
                     let ty = &parameter.ty;
                     checker.fresh(name, &scope, statement.span)?;
                     scope.insert(
                         name.clone(),
-                        if parameter.kind == BindingKind::Sig {
+                        if parameter.kind == BindingKind::Sig && entry_guards {
                             ty.clone().signal_schema()
                         } else {
                             ty.clone()

@@ -9,6 +9,43 @@ fn prepare(source: &str) -> Result<Prepared, Diagnostic> {
 }
 
 #[test]
+fn sized_dispatch_uses_constant_work_and_bounds_unproven_element_checks() {
+    let mut work = Vec::new();
+    for count in [64, 8192] {
+        let mut files = MemorySources::default();
+        files.insert("main.sanim",format!("fn size(items:List<Number,{count}>):Number{{return len(items)}}\nfn size(items:List<Number,1>):Number{{return len(items)}}\nlet values=read<List<Number,{count}>>(\"values.json\")\nrepeat 20{{let result=size(values)}}"));
+        files.insert("values.json", format!("[{}]", vec!["1"; count].join(",")));
+        let mut engine = Engine::default();
+        engine.limits.max_operations = 1000;
+        work.push(
+            engine
+                .prepare("main.sanim", &files, &BTreeMap::new())
+                .unwrap()
+                .statistics
+                .operations,
+        );
+    }
+    assert_eq!(
+        work[0], work[1],
+        "dispatch work must depend on clauses, not payload size"
+    );
+
+    let mut files = MemorySources::default();
+    files.insert("main.sanim", "fn size(items:List<\"a\",1024>):Number{return len(items)}\nfn size(items:List<\"b\",1024>):Number{return len(items)}\nlet values=read<List<String,1024>>(\"values.json\")\nlet result=size(values)");
+    files.insert(
+        "values.json",
+        format!("[{}]", vec!["\"a\""; 1024].join(",")),
+    );
+    let mut engine = Engine::default();
+    engine.limits.max_operations = 100;
+    let error = engine
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap_err();
+    assert_eq!(error.code, "S303", "{error}");
+    assert!(error.message.contains("clause validation"), "{error}");
+}
+
+#[test]
 fn string_and_numeric_clauses_dispatch_actual_values_with_named_arguments() {
     prepare(
         r#"

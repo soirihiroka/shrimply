@@ -112,6 +112,21 @@ fn pure_zero_time_unused_map_does_not_force_unrelated_assets() {
 fn overload_effects_specialize_known_literals_and_annotations_are_not_padding() {
     let source =
         "fn delay(time:\"1s\"):Unit{wait(1s)}\nfn delay(time:\"2s\"):Unit{wait(2s)}\ndelay(\"1s\")";
+    let lint = Engine::default()
+        .lint("main.sanim", &files(source))
+        .unwrap();
+    let call_start = source.rfind("delay(").unwrap();
+    assert!(
+        lint.modules["main.sanim"]
+            .checked
+            .durations
+            .iter()
+            .any(|node| {
+                node.span.start == call_start
+                    && node.span.end == source.len()
+                    && node.effect == TimelineEffect::Fixed(Fraction::from(1))
+            })
+    );
     let prepared = Engine::default()
         .prepare("main.sanim", &files(source), &BTreeMap::new())
         .unwrap();

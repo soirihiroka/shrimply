@@ -2,6 +2,27 @@
 use crate::{Fraction, Type, Value, math};
 
 pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
+    validate(ty, value, false, &mut |_| Ok(()))
+}
+
+/// Match a value already validated at the runtime boundary. Persistent collection
+/// schemas are proofs for their unchanged payloads; narrower constraints still
+/// inspect values. The visitor bounds all work that cannot use those proofs.
+pub fn validate_typed_value(
+    ty: &Type,
+    value: &Value,
+    visit: &mut impl FnMut(&Value) -> Result<(), String>,
+) -> Result<(), String> {
+    validate(ty, value, true, visit)
+}
+
+fn validate(
+    ty: &Type,
+    value: &Value,
+    trusted: bool,
+    visit: &mut impl FnMut(&Value) -> Result<(), String>,
+) -> Result<(), String> {
+    visit(value)?;
     // Values retain broad primitive representations; literal constraints are
     // schema proofs, not one runtime datatype for every distinct string.
     match (ty, value) {
@@ -26,7 +47,7 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
         (Type::Union(alternatives), value) => {
             let mut reasons = Vec::new();
             for alternative in alternatives {
-                match validate_value(alternative, value) {
+                match validate(alternative, value, trusted, visit) {
                     Ok(()) => return Ok(()),
                     Err(reason) => reasons.push(reason),
                 }
@@ -41,7 +62,7 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
                 return Err(format!("expected fields of {ty}, found {}", value.ty()));
             }
             for (name, ty) in fields {
-                validate_value(ty, &values[name])
+                validate(ty, &values[name], trusted, visit)
                     .map_err(|error| format!("field '{name}': {error}"))?;
             }
             return Ok(());
@@ -53,21 +74,34 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
                     values.len()
                 ));
             }
+            if trusted && inner.accepts(&values.element_type) {
+                return Ok(());
+            }
             for value in &values.values {
-                validate_value(inner, value)?;
+                validate(inner, value, trusted, visit)?;
             }
             return Ok(());
         }
-        (Type::Array(inner), Value::Array { shape, values, .. }) => {
+        (
+            Type::Array(inner),
+            Value::Array {
+                shape,
+                values,
+                element_type,
+            },
+        ) => {
             if shape.iter().try_fold(1usize, |n, d| n.checked_mul(*d)) != Some(values.len()) {
                 return Err("array shape does not match its value count".into());
             }
+            if trusted && inner.accepts(element_type) {
+                return Ok(());
+            }
             for value in values {
-                validate_value(inner, value)?;
+                validate(inner, value, trusted, visit)?;
             }
             return Ok(());
         }
-        (Type::Option(inner), Value::Some(value)) => return validate_value(inner, value),
+        (Type::Option(inner), Value::Some(value)) => return validate(inner, value, trusted, visit),
         _ => {}
     }
     if !ty.accepts(&value.ty()) {
@@ -105,7 +139,7 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
                 return Err("variant field count mismatch".into());
             }
             for (ty, value) in types.iter().zip(fields.iter()) {
-                validate_value(ty, value)?;
+                validate(ty, value, trusted, visit)?;
             }
         }
         _ => {}

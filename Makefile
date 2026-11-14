@@ -542,6 +542,11 @@ transparent-fill-e2e-test: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-cuda modifiers::transparent_fill::tests::transparent_fill_analyzes_and_renders_a_real_project_end_to_end -- --exact --ignored --test-threads=1 --nocapture
 
 check: fmt-tool-check
+check: source-archive-check
+
+.PHONY: source-archive-check
+source-archive-check:
+	uv run --no-project python -m unittest discover -s packaging/tests -p 'test_source_archive.py'
 
 .PHONY: fmt-tool-check
 fmt-tool-check:

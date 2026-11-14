@@ -1,5 +1,5 @@
 Functions, durations and lists
-=============================
+==============================
 
 Guarded function clauses
 ------------------------
@@ -11,11 +11,11 @@ A function can have several disjoint clauses. Literal strings and numeric refine
    fn delay(time: "1s"): Unit { wait(1s) }
    fn delay(time: "2s"): Unit { wait(2s) }
 
-   fn delay(count: Int < 1): Unit { wait(0s) }
-   fn delay(count: Int >= 1): Unit { wait(count * 1s) }
+   fn repetitions(count: Int < 1): Unit { wait(0s) }
+   fn repetitions(count: Int >= 1): Unit { wait(count * 1s) }
 
    delay("1s")
-   delay(3)
+   repetitions(3)
 
 ``Int`` is an integer refinement of ``Number``; it uses the same exact numeric values. ``Number < 1`` also accepts non-integers below one. Comparisons use matching units; a duration constraint can use ``Duration <= 1s``. Open and closed bounds remain distinct, and the existing type union/intersection/difference operators compose numeric domains.
 
@@ -67,12 +67,31 @@ Declare a contract when a helper needs an explicit duration interface:
    @duration(2s)
    fn preset(name: "slow"): Unit { wait(2s) }
 
-The annotation is a pure ``Duration`` expression in the function's parameter scope. It does not schedule work. Checking rejects a provable mismatch; full evaluation checks the declared duration against the actual call before publishing its result. A mismatch is an error, including when the body takes less time than declared.
+The annotation is a pure ``Duration`` expression in the function's parameter scope. It does not schedule work. Checking rejects a provable mismatch; full evaluation checks the body's consumed timeline duration before publishing its result. A mismatch is an error, including when the body takes less time than declared. Background work started by the body must finish within that interval; use an explicit wait to join it. Omitted default arguments execute before the body and contribute their own duration to the call.
 
 Fast duration-only planning may use this declared contract without evaluating an otherwise unnecessary body. It is therefore a promise that full preparation must validate, not a proof obtained from the body. Use ``check`` for complete validation. The separate call option ``duration=...`` retains its ordinary envelope behavior: it may pad a shorter call and rejects a body exceeding the envelope.
 
+List lengths in types
+---------------------
+
+``List<T, N>`` describes exactly ``N`` elements. Omitting the length, or writing ``_``, leaves it unspecified:
+
+.. code-block:: text
+
+   let values = [1, 2, 3]                 # List<Number,3>
+   let triple: List<Number,3> = values
+   let arbitrary: List<Number> = values
+   let also_arbitrary: List<Number,_> = values
+   type Pair<T> = List<T,2>
+
+The checker rejects known length mismatches in assignments, arguments and returns. ``read<List<Row,3>>("rows.csv")`` validates the row count when the file is loaded. An empty list has length zero. Generic identity functions preserve known lengths, and nested lists retain each dimension when it is uniform. Ragged dimensions become unspecified rather than inventing a size.
+
+``map``, ``scan``, sorting and reversal preserve length. ``zip`` takes the shorter length, concatenation adds lengths, and known slicing bounds determine the result length. ``filter`` and ``unique`` usually have unspecified result lengths because their sizes depend on values. Exact lengths also specialize timeline formulas without inspecting list contents; complete preparation still validates loaded data.
+
+Inferred mutable, signal and reflected lists allow resizing. An explicit ``List<T,N>`` annotation enforces that size. Signal guards describe the sample at invocation, so their body cannot assume that a live signal retains its initial length. Length parameters currently accept nonnegative integer literals or ``_``.
+
 Typed persistent-list operations
--------------------------------
+--------------------------------
 
 List methods accept ordinary named functions, including generic and guarded functions:
 

@@ -97,6 +97,84 @@ wait(1s)"#,
 }
 
 #[test]
+fn accumulator_clauses_close_over_reachable_state_union() {
+    for preparation in [Preparation::Full, Preparation::Demand] {
+        let mut engine = Engine::default();
+        engine.preparation = preparation;
+        let prepared = engine
+            .prepare(
+                "main.sanim",
+                &files(
+                    r#"
+fn step(state:"empty",item:Number):"full" {return "full"}
+fn step(state:"full",item:Number):"empty" {return "empty"}
+fn step(state:"unused",item:Number):"invalid" {return "invalid"}
+fn reduce_step(state:"empty",item:"empty"|"full"):"full" {return "full"}
+fn reduce_step(state:"full",item:"empty"|"full"):"empty" {return "empty"}
+let folded=[1,2].fold("empty",step)
+let scanned=[1,2,3].scan("empty",step)
+let states:List<"empty"|"full">=["empty","full","empty"]
+let reduced=states.reduce(reduce_step)
+assert(folded=="empty")
+assert(scanned==["full","empty","full"])
+assert(reduced=="empty")
+wait(1s)
+"#,
+                ),
+                &Default::default(),
+            )
+            .unwrap();
+        assert_eq!(prepared.animation.duration, Fraction::from(1));
+    }
+}
+
+#[test]
+fn callbacks_require_closed_accumulators_and_complete_argument_coverage() {
+    for (source, reason) in [
+        (
+            r#"fn step(state:"empty",item:Number):"full" {return "full"}
+let result=[1,2].fold("empty",step)"#,
+            "not closed",
+        ),
+        (
+            r#"fn step(state:"empty",item:Number):"full" {return "full"}
+fn step(state:"full",item:Number):"missing" {return "missing"}
+let result=[1,2].scan("empty",step)"#,
+            "not closed",
+        ),
+        (
+            r#"fn kind(value:"a"):Number {return 1}
+fn kind(value:"b"):Number {return 2}
+let items:List<"a"|"b"|"c">=["c"]
+let result=items.map(kind)"#,
+            "do not cover every combination",
+        ),
+        (
+            r#"fn step(state:"empty",item:"a"):"full" {return "full"}
+fn step(state:"full",item:"b"):"empty" {return "empty"}
+let items:List<"a"|"b">=["a","b"]
+let result=items.fold("empty",step)"#,
+            "do not cover every combination",
+        ),
+    ] {
+        let error = Engine::default()
+            .prepare("main.sanim", &files(source), &Default::default())
+            .unwrap_err();
+        assert!(error.message.contains(reason), "{source}: {error}");
+    }
+    prepare(
+        r#"fn kind(value:"a"):Number {return 1}
+fn kind(value:"b"):Number {return 2}
+let items:List<"a"|"b">=["a","b"]
+assert(items.map(kind)==[1,2])
+fn lower(value:Number<0):Number{return value}
+fn lower(value:Number>=0):Number{return value}
+assert([-2,0,3].map(lower)==[-2,0,3])
+wait(1s)"#,
+    );
+}
+
+#[test]
 fn callbacks_are_invoked_once_and_early_exit_preserves_mutations() {
     for preparation in [Preparation::Full, Preparation::Demand] {
         let mut engine = Engine::default();
@@ -332,12 +410,14 @@ fn expand(value:Int < 0):List<String>{return ["negative"]}
 fn expand(value:Int >= 0):List<Number>{return [value]}
 fn size<T>(value:List<T>):Number{return len(value)}
 fn shifted(value:Number,offset:Number=2):Number{return value+offset}
-let labels=[-2,0,3].map(classify)
-let kept=[-2,0,3].filter(retain)
-let total=[-2,0,3].fold(0,accumulate)
+let integers:List<Int>=[-2,0,3]
+let labels=integers.map(classify)
+let kept=integers.filter(retain)
+let total=integers.fold(0,accumulate)
 let lengths=[[1,2],[3]].map(size)
 let shifted_values=[1,2].map(shifted)
-let mixed=[-1,0].flat_map(expand)
+let mixed_items:List<Int>=[-1,0]
+let mixed=mixed_items.flat_map(expand)
 assert(labels==["negative","nonnegative","nonnegative"])
 assert(kept==[0,3])
 assert(total==1)
@@ -437,7 +517,7 @@ fn demand_keeps_asset_backed_callback_mutation_and_timing_in_source_order() {
 fn observe(value:Int < 0):Number{calls=calls+1;return value}
 fn observe(value:Int >= 0):Number{calls=calls+1;return value}
 fn delayed(value:Number):Number{wait(10ms);return value}
-let unused_mutation=read<List<Number>>("items.json").map(observe)
+let unused_mutation=read<List<Int>>("items.json").map(observe)
 assert(calls==3)
 let unused_timing=read<List<Number>>("items.json").map(delayed)
 wait(1s)"#,

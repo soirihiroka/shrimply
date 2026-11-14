@@ -1599,11 +1599,56 @@ impl Runtime<'_, '_> {
                     span,
                 )
             })?;
-            if signature.parameters.iter().all(|parameter| {
-                arguments.get(&parameter.name).is_none_or(|value| {
-                    validate_value(&parameter.ty.substitute(substitutions), value).is_ok()
+            let parameters = signature
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    (
+                        parameter.name.clone(),
+                        parameter.ty.substitute(substitutions),
+                    )
                 })
-            }) {
+                .collect::<Vec<_>>();
+            let mut matches = true;
+            for (name, ty) in parameters {
+                let Some(value) = arguments.get(&name) else {
+                    continue;
+                };
+                let available = self
+                    .limits
+                    .max_operations
+                    .saturating_sub(self.logical_operations);
+                let mut remaining = available;
+                let mut exhausted = false;
+                let result =
+                    sanim_core::validation::validate_typed_value(&ty, value, &mut |value| {
+                        let work = match value {
+                            Value::String(text) => text.len().max(1) as u64,
+                            _ => 1,
+                        };
+                        remaining = remaining.checked_sub(work).ok_or_else(|| {
+                            exhausted = true;
+                            "function clause validation exceeded the operation budget".to_string()
+                        })?;
+                        Ok(())
+                    });
+                self.charge_work(
+                    if exhausted {
+                        available
+                    } else {
+                        available - remaining
+                    },
+                    span,
+                )?;
+                if exhausted {
+                    return Err(self.error("S303", "function clause validation exceeded the operation budget; narrow the input schema to avoid repeated data scans", span));
+                }
+                if result.is_err() {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches {
                 if selected.is_some() {
                     return Err(self.error("S140",format!("function '{}' matches multiple clauses for these arguments; supply an explicit argument to distinguish defaulted clauses",first.name),span));
                 }

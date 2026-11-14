@@ -49,6 +49,22 @@ impl Checker<'_> {
         let initial = argument("initial")
             .cloned()
             .unwrap_or_else(|| inner.clone());
+        let seed = builtin
+            .parameters
+            .iter()
+            .position(|parameter| parameter.name == "initial")
+            .and_then(|index| ordered_args[index])
+            .and_then(|value| match &value.kind {
+                ExprKind::String(value) => Some(Type::StringLiteral(value.clone().into())),
+                _ => super::clauses::literal_number(value).map(|number| {
+                    Type::RefinedNumeric(sanim_core::math::domain::NumericDomain::singleton(number))
+                }),
+            })
+            .unwrap_or_else(|| initial.clone());
+        let accumulating = matches!(
+            definition.operation,
+            Operation::Reduce | Operation::Fold | Operation::Scan
+        );
         let mut accumulator_types = Vec::new();
         let callback = if let Some(callback) = definition
             .callback
@@ -66,7 +82,7 @@ impl Checker<'_> {
             let arguments = if callback.arity == 1 {
                 vec![inner.clone()]
             } else {
-                vec![initial.clone(), inner.clone()]
+                vec![seed.clone(), inner.clone()]
             };
             let expected_result = match definition.operation {
                 Operation::Filter
@@ -90,38 +106,33 @@ impl Checker<'_> {
             let mut reasons = Vec::new();
             let mut schedules = false;
             let mut mutates = false;
-            let actual_arguments = arguments.iter().cloned().map(Some).collect::<Vec<_>>();
+            let mut actual_arguments = arguments.iter().cloned().map(Some).collect::<Vec<_>>();
+            if accumulating {
+                actual_arguments[0] = None;
+            }
+            let mut checked_clauses = Vec::new();
             for signature in
                 super::clauses::candidates(actuals[callback.index].signatures(), &actual_arguments)
             {
                 let checked = (|| -> Result<(Type, BTreeMap<String, Type>), Diagnostic> {
                     let mut bindings = BTreeMap::new();
-                    for (parameter, actual) in signature.parameters.iter().zip(&arguments) {
+                    for (index, (parameter, actual)) in
+                        signature.parameters.iter().zip(&arguments).enumerate()
+                    {
                         if parameter.kind == BindingKind::Sig {
                             return Err(self.error("S106","List callbacks receive snapshot values; use a let or mut parameter instead of sig",expression.span));
                         }
                         infer(&parameter.ty, actual, &mut bindings, self.type_budget)
                             .map_err(|reason| self.error("S106", reason, expression.span))?;
                         let wanted = self.substitute(&parameter.ty, &bindings, expression.span)?;
-                        if !(*actual == Type::Unknown && input_length == ListLength::Exact(0)
+                        if !(accumulating && index == 0
+                            || *actual == Type::Unknown && input_length == ListLength::Exact(0)
                             || actuals[callback.index].signatures().len() > 1
                                 && wanted.overlaps(actual))
                         {
                             self.expect(&wanted, actual, expression.span)?;
                         }
                     }
-                    let expected_result = if matches!(
-                        definition.operation,
-                        Operation::Reduce | Operation::Fold | Operation::Scan
-                    ) {
-                        Some(self.substitute(
-                            &signature.parameters[0].ty,
-                            &bindings,
-                            expression.span,
-                        )?)
-                    } else {
-                        expected_result.clone()
-                    };
                     if let Some(expected) = &expected_result {
                         infer(&signature.result, expected, &mut bindings, self.type_budget)
                             .map_err(|reason| self.error("S106", reason, expression.span))?;
@@ -135,27 +146,51 @@ impl Checker<'_> {
                 })();
                 match checked {
                     Ok((result, bindings)) => {
-                        if matches!(
-                            definition.operation,
-                            Operation::Reduce | Operation::Fold | Operation::Scan
-                        ) {
-                            accumulator_types.push(self.substitute(
-                                &signature.parameters[0].ty,
-                                &bindings,
-                                expression.span,
-                            )?);
-                        }
-                        if let Some(previous) = &substitutions
-                            && previous != &bindings
-                        {
-                            return Err(self.error("S106","callback clauses infer conflicting generic substitutions; use one compatible generic schema across clauses",expression.span));
-                        }
-                        substitutions = Some(bindings);
-                        results.push(result);
-                        schedules |= signature.schedules;
-                        mutates |= signature.mutates;
+                        let domains = signature
+                            .parameters
+                            .iter()
+                            .take(arguments.len())
+                            .map(|parameter| {
+                                self.substitute(&parameter.ty, &bindings, expression.span)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        checked_clauses.push((signature, result, bindings, domains));
                     }
                     Err(error) => reasons.push(error.message),
+                }
+            }
+            // Follow accumulator transitions without evaluating callbacks. A clause can
+            // return another clause's input domain; only their combined contract must close.
+            let mut reachable = seed.clone();
+            let mut domains = Vec::new();
+            loop {
+                let mut progressed = false;
+                let mut pending = Vec::new();
+                for (signature, result, bindings, parameters) in checked_clauses {
+                    if accumulating && !parameters[0].overlaps(&reachable) {
+                        pending.push((signature, result, bindings, parameters));
+                        continue;
+                    }
+                    if let Some(previous) = &substitutions
+                        && previous != &bindings
+                    {
+                        return Err(self.error("S106","callback clauses infer conflicting generic substitutions; use one compatible generic schema across clauses",expression.span));
+                    }
+                    substitutions = Some(bindings);
+                    if accumulating {
+                        accumulator_types.push(parameters[0].clone());
+                        reachable = Type::union([reachable, result.clone()])
+                            .map_err(|reason| self.error("S106", reason, expression.span))?;
+                    }
+                    domains.push(parameters);
+                    results.push(result);
+                    schedules |= signature.schedules;
+                    mutates |= signature.mutates;
+                    progressed = true;
+                }
+                checked_clauses = pending;
+                if !accumulating || !progressed || checked_clauses.is_empty() {
+                    break;
                 }
             }
             if results.is_empty() {
@@ -173,6 +208,22 @@ impl Checker<'_> {
                     ),
                     expression.span,
                 ));
+            }
+            if input_length != ListLength::Exact(0) {
+                let mut covered_arguments = arguments.clone();
+                if accumulating {
+                    let contract = Type::union(accumulator_types.iter().cloned())
+                        .map_err(|reason| self.error("S106", reason, expression.span))?;
+                    if !contract.accepts(&reachable) {
+                        return Err(self.error("S106", format!("{} accumulator contract is not closed: reachable values {reachable} must all be accepted by {contract}",builtin.name),expression.span));
+                    }
+                    covered_arguments[0] = contract;
+                }
+                if !callback_coverage(&domains, &covered_arguments, self.type_budget)
+                    .map_err(|reason| self.error("S106", reason, expression.span))?
+                {
+                    return Err(self.error("S106",format!("{} callback clauses do not cover every combination of argument types {}; add clauses accepting the missing cases or use one helper with a complete input contract",builtin.name,covered_arguments.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")),expression.span));
+                }
             }
             self.call_types.insert(
                 (expr.span.start, expr.span.end),
@@ -354,4 +405,66 @@ impl Checker<'_> {
         );
         Ok(result)
     }
+}
+
+/// Prove coverage of the argument product, rather than independent parameter unions.
+/// Explicit alternatives distribute; numeric intervals use canonical union normalization.
+fn callback_coverage(
+    domains: &[Vec<Type>],
+    actual: &[Type],
+    budget: &std::cell::Cell<usize>,
+) -> Result<bool, String> {
+    let remaining = budget
+        .get()
+        .checked_sub(1)
+        .ok_or("callback coverage exceeds the type complexity budget")?;
+    budget.set(remaining);
+    if domains.iter().any(|domain| {
+        domain
+            .iter()
+            .zip(actual)
+            .all(|(expected, actual)| expected.accepts(actual))
+    }) {
+        return Ok(true);
+    }
+    if let Some((index, Type::Union(alternatives))) = actual
+        .iter()
+        .enumerate()
+        .find(|(_, ty)| matches!(ty, Type::Union(_)))
+    {
+        for alternative in alternatives {
+            let mut remaining = budget.get();
+            for ty in actual {
+                sanim_core::type_budget::charge(ty, &mut remaining)?;
+            }
+            sanim_core::type_budget::charge(alternative, &mut remaining)?;
+            budget.set(remaining);
+            let mut branch = actual.to_vec();
+            branch[index] = alternative.clone();
+            if !callback_coverage(domains, &branch, budget)? {
+                return Ok(false);
+            }
+        }
+        return Ok(true);
+    }
+    for index in 0..actual.len() {
+        let mut merged = Vec::new();
+        for domain in domains.iter().filter(|domain| {
+            domain
+                .iter()
+                .zip(actual)
+                .enumerate()
+                .all(|(other, (expected, actual))| other == index || expected.accepts(actual))
+        }) {
+            let mut remaining = budget.get();
+            sanim_core::type_budget::charge(&domain[index], &mut remaining)?;
+            budget.set(remaining);
+            merged.push(domain[index].clone());
+        }
+        let domains = merged;
+        if !domains.is_empty() && Type::union(domains)?.accepts(&actual[index]) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
