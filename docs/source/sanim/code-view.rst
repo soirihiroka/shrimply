@@ -37,7 +37,7 @@ Code, language, font, font size, line height, line numbers, tab size, themes, sp
 Patches and animation
 ---------------------
 
-``.patch(src="change.patch", animation="morph", duration=700ms)`` accepts a unified diff or a complete replacement source file. Unified diffs validate exact hunk positions, context, counts, filenames and EOF newline markers. A multi-file patch requires ``file="path.py"``. Invalid context fails with a readable error rather than guessing.
+``.patch(src="change.patch", animation="morph", duration=700ms)`` accepts a unified diff or a complete replacement source file. For a scoped edit, use ``code.range(...).edit(src="change.patch", ...)`` or ``code.patch(src="change.patch", range=selection, ...)``. Diff context may surround a selection, but actual changes outside it are rejected. A non-diff source file replaces the selected interval; ``selection.edit(code="replacement", ...)`` supplies replacement text directly. Source outside the selection remains unchanged. Unified diffs validate exact hunk positions, context, counts, filenames and EOF newline markers. A multi-file patch requires ``file="path.py"``. Invalid context fails with a readable error rather than guessing.
 
 - ``morph``: surviving text moves between layouts without fading. Edits inside a token preserve its unchanged prefix and suffix; only inserted and removed text fades. Syntax recoloring interpolates without replacing the surviving glyphs.
 - ``fade``: the old and new code crossfade without token movement.
@@ -50,14 +50,62 @@ Syntax and folding
 
 Bundled native grammars cover Python, Rust, JavaScript, TypeScript, TSX, C, C++, JSON, Bash, TOML, YAML and SQL. Sanim uses its own direct AST parser and shared semantic highlighting; no second Sanim lexer or Tree-sitter parser is introduced. ``lang="plain"`` displays arbitrary text without syntax scopes. Invalid displayed code remains renderable and carries syntax diagnostics. Displayed Sanim has a fixed 200,000-step syntax budget, separate from ``Engine.limits.max_parse_steps`` for executable program modules. Foreign syntax trees have fixed 200,000-node and 256-level limits. Fixed display policies allow shared syntax artifacts across engines; source size, retained memory and execution work keep their independent budgets.
 
+Code ranges and independent folding
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``view.range(...)`` returns one typed selection; ``view.ranges(...)`` returns a list. A singular query reports ambiguity instead of choosing an unrelated match. Add the CodeView to the timeline before using actions on its ranges.
+
 .. code-block:: text
 
-   code.fold(level=2, duration=400ms)
-   code.unfold(level=2, duration=400ms)
-   code.fold(scope="function_definition:main#1", duration=400ms)
-   code.unfold(duration=400ms)
+   add(code)
+   let push: CodeRange = code.range(name="WorkQueue.push")
+   let pop_range = code.range(name="WorkQueue.pop")
+   push.fold(duration=400ms)
+   pop_range.fold(duration=400ms)
+   push.unfold(duration=400ms)  # pop stays folded
 
-``.scopes()`` returns typed records containing ``id``, ``label``, ``start_line``, ``end_line`` and ``depth``. Scope IDs follow syntax ancestry and declaration names, with sibling ordinals. Folding works on real syntax scopes rather than indentation guesses; nested fold choices survive opening a parent. Folded code clips/fades as its surrounding lines move. A stale scope ID produces an explicit diagnostic.
+Folding changes exactly one syntax scope. Folding a parent temporarily hides its children and preserves each child's independent fold choice. No implicit level-wide fold operation exists. A closing line containing source outside the selected node stays visible, so folding one function never hides its sibling's header. A node with no complete body lines to hide reports an error; put a shared-line sibling declaration on its own line to make that scope foldable.
+
+.. list-table:: Selector forms
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Query
+     - Meaning
+   * - ``code.range(name="WorkQueue.push")``
+     - A qualified declaration; a unique bare name also works.
+   * - ``code.ranges(level=2)``
+     - All syntax scopes at depth two, returned for explicit iteration.
+   * - ``code.range(line=24)``
+     - One source line. ``end_line=28`` extends the selection.
+   * - ``code.range(line=24, column=8, length=5)``
+     - A Unicode-column position and optional text length.
+   * - ``code.range(character=120, length=8)``
+     - A global 1-based Unicode character position and length.
+   * - ``code.range(regex="return [0-9]+", occurrence=2)``
+     - A regex match; occurrence is 1-based.
+   * - ``code.ranges(level=2, within=code.range(name="WorkQueue"))``
+     - Restrict a query to another selected interval.
+
+Levels select syntax depth; they do not trigger a fold. ``range`` requires a unique match unless ``occurrence`` selects one. ``ranges`` returns all matches in source order, including an empty list when no match exists. Regex compilation, search work, match counts and returned data are bounded. Backslashes in regex strings use Sanim's ordinary string escaping (``"\\s+"`` for the regex whitespace escape). Use a raw string for regex braces, such as ``r"[0-9]{2}"``, so they are not string interpolations.
+
+Every operation consumes the same range representation:
+
+.. code-block:: text
+
+   let section = code.range(name="WorkQueue.push")
+   section.select(duration=200ms)
+   section.scroll_to(align="center", duration=400ms)
+   section.style(style=CodeStyle(background=Color("blue5")), duration=200ms)
+   section.fold(duration=400ms)
+   section.unfold(duration=400ms)
+   section.edit(src="push.patch", animation="morph", duration=700ms)
+
+Name and level queries select whole syntax scopes. For line, character or regex selections, ``fold`` resolves the innermost syntax scope containing the selected text. An interval spanning unrelated scopes fails with a diagnostic.
+
+Bound ranges belong to one CodeView and one source revision. They can be reused for styling and folding while that source remains unchanged. After an edit or patch, query a new range; reusing an old selection reports that its source is stale. A range from another CodeView is rejected. Bound highlights are cleared when an edit invalidates their source revision.
+
+``CodeRange(start_line,start_column,end_line,end_column)`` and ``CodeLines(start,end)`` construct the same coordinate representation without an owner. Coordinates use 1-based Unicode positions and an exclusive end. These unbound coordinates can be passed to ``code.select(ranges=[...])`` or ``CodeSpan`` for an explicit target view. Tabs retain source columns while visual layout respects ``tab_size`` (1–32).
 
 GNOME styles and precise overrides
 ----------------------------------
@@ -72,19 +120,30 @@ The default theme follows GNOME SourceView's Adwaita semantic colors. Code uses 
    ])
    let code = <CodeView src="test.py" theme={theme}/>
    add(code)
-   code.select(ranges=[code.find("answer")], duration=300ms)
+   code.range(regex="answer").select(duration=300ms)
    code.style(spans=[
        CodeSpan(CodeLines(2), CodeStyle(background=Color("yellow4"), fill=Color("dark5")))
    ], duration=300ms)
 
 ``CodeStyle`` supports fill, background, opacity, bold, italic, underline and strike. Unspecified properties inherit the syntax theme. Explicit spans override syntax captures; later explicit spans override earlier ones. ``.style(spans=[])`` clears explicit span overrides; ``.select()`` clears selections. ``CodeTheme`` accepts default and selection styles plus named ``CodeRule`` entries.
 
-``CodeRange(start_line,start_column,end_line,end_column)`` uses 1-based Unicode columns with an exclusive end. ``CodeLines(start,end)`` selects inclusive lines. ``.find(text,occurrence=1)`` returns a source range and reports a helpful error when the requested occurrence is missing. Tabs retain source columns while visual layout respects ``tab_size`` (1–32).
 
 Viewports
 ---------
 
-Set ``line_numbers=false`` to hide the source-line gutter. It also accepts a signal, so the gutter can change during the animation without reparsing the source. The `scrolling CodeView example <https://github.com/soirihiroka/shrimply/blob/main/sanim/examples/code_view_scroller.sanim>`__ demonstrates scrolling, two syntax folding levels, toggling the gutter, and a small patch transition.
+Line numbers and scope controls are both hidden by default. Set ``line_numbers=true`` or ``scope_indicators=true`` to opt in independently. Both constructor inputs also accept signals. For a timed reveal or hide, use the ordinary presentation style operation:
+
+.. code-block:: text
+
+   code.style(line_numbers=true, scope_indicators=true, duration=300ms)
+   let block = code.range(name="main")
+   block.fold(duration=600ms)
+   block.unfold(duration=600ms)
+   code.style(line_numbers=false, duration=300ms)
+
+Gutter changes fade the controls while source text moves to its new inset and remains opaque. Scope chevrons point right when collapsed and rotate downward when expanded, using the fold/unfold operation's timing and easing. They mark real multiline syntax scopes, once per original header line even when that header wraps. Nested controls disappear with their folded parent and return when it opens.
+
+Immediate signal assignments still commit immediately; use a timed ``.style`` call to animate static presentation flags. A property controlled by a signal has one writer, so ``.style`` cannot also write that property. The `scrolling CodeView example <https://github.com/soirihiroka/shrimply/blob/main/sanim/examples/code_view_scroller.sanim>`__ demonstrates scrolling, rotating scope controls, animated gutters and a small patch transition.
 
 .. code-block:: text
 

@@ -454,7 +454,7 @@ Native source-code views
 
 ``<CodeView src="file.py"/>`` loads a watched source file directly as an element. A literal ``<CodeView lang="python">…</CodeView>`` body preserves foreign syntax; ``code={signal}`` accepts live text. Methods animate patches, selections, styles, syntax scopes and scrolling through native Pango/Skia. Actual syntax trees are cached by source and grammar and shared across views and timeline revisions. See :doc:`CodeView <code-view>` and `the example <https://github.com/soirihiroka/shrimply/blob/main/sanim/examples/code_view.sanim>`__.
 
-A container with ``overflow="auto"`` provides the same clipped viewport for ordinary element trees. Animate its ``scroll`` signal or call ``scroll_to(y=100%, duration=600ms)``; percentages stay relative to the current overflow after resizing. CodeView additionally accepts source-line and syntax-scope targets. See :doc:`scrolling <scrolling>` and `the scrolling example <https://github.com/soirihiroka/shrimply/blob/main/sanim/examples/scrolling.sanim>`__.
+A container with ``overflow="auto"`` provides the same clipped viewport for ordinary element trees. Animate its ``scroll`` signal or call ``scroll_to(y=100%, duration=600ms)``; percentages stay relative to the current overflow after resizing. CodeView additionally accepts source-line and bound source-range targets. See :doc:`scrolling <scrolling>` and `the scrolling example <https://github.com/soirihiroka/shrimply/blob/main/sanim/examples/scrolling.sanim>`__.
 
 Reference guides
 ----------------
@@ -462,6 +462,7 @@ Reference guides
 .. toctree::
    :maxdepth: 1
 
+   functions
    signal-functions
    dataframes
    text-wrapping

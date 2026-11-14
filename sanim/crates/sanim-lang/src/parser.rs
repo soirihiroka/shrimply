@@ -916,6 +916,19 @@ impl Parser<'_> {
         }
         let span = self.span();
         let mut name_span = None;
+        let duration = if self.eat("@") {
+            self.expect("duration")?;
+            self.expect("(")?;
+            let expression = self.expr(0)?;
+            self.expect(")")?;
+            self.skip_lines();
+            if !self.is(Keyword::Fn.text()) {
+                return Err(self.error("@duration(...) must immediately precede a function clause"));
+            }
+            Some(expression)
+        } else {
+            None
+        };
         let binding = if self.eat(Keyword::Let.text()) {
             Some(BindingKind::Let)
         } else if self.eat(Keyword::Mut.text()) {
@@ -1084,6 +1097,7 @@ impl Parser<'_> {
             let body = self.block()?;
             StatementKind::Function {
                 name,
+                duration,
                 generics,
                 parameters,
                 result,
@@ -1231,6 +1245,20 @@ impl Parser<'_> {
         }
         let mut out = if self.eat(Keyword::Sig.text()) {
             TypeExpr::Signal(Box::new(self.type_expression(3)?))
+        } else if self
+            .rest()
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_digit)
+        {
+            let expression = self.atom()?;
+            let ExprKind::Number(text) = expression.kind else {
+                unreachable!("numeric type argument")
+            };
+            let length = sanim_core::Number::parse(&text)
+                .and_then(sanim_core::Number::usize)
+                .map_err(|reason| self.error(format!("List length {reason}")))?;
+            TypeExpr::ConstLength(length)
         } else if self.quoted() {
             let expression = self.string_expression()?;
             match expression.kind {
@@ -1274,7 +1302,7 @@ impl Parser<'_> {
                 name.push_str(&self.name()?);
             }
             let mut args = vec![];
-            if self.eat("<") {
+            if self.is("<") && !self.numeric_refinement_ahead() && self.eat("<") {
                 loop {
                     args.push(self.ty()?);
                     if !self.eat(",") {
@@ -1285,6 +1313,27 @@ impl Parser<'_> {
             }
             TypeExpr::Named(name, args)
         };
+        while self.numeric_refinement_ahead() {
+            let operator = ["<=", ">=", "==", "<", ">"]
+                .into_iter()
+                .find(|operator| self.is(operator))
+                .expect("numeric comparison");
+            self.expect(operator)?;
+            let negative = self.eat("-");
+            if !negative {
+                self.eat("+");
+            }
+            let expression = self.atom()?;
+            let ExprKind::Number(text) = expression.kind else {
+                return Err(self.error("numeric refinement requires a fixed numeric literal"));
+            };
+            let mut number =
+                sanim_core::Number::parse(&text).map_err(|reason| self.error(&reason))?;
+            if negative {
+                number.value = -number.value;
+            }
+            out = TypeExpr::Refined(Box::new(out), operator.into(), number);
+        }
         loop {
             let operator = if self.is("|") {
                 "|"
@@ -1321,6 +1370,15 @@ impl Parser<'_> {
         }
         self.depth -= 1;
         Ok(out)
+    }
+    fn numeric_refinement_ahead(&self) -> bool {
+        ["<=", ">=", "==", "<", ">"].into_iter().any(|operator| {
+            self.rest().strip_prefix(operator).is_some_and(|rest| {
+                let rest = rest.trim_start();
+                let rest = rest.strip_prefix(['-', '+']).unwrap_or(rest).trim_start();
+                rest.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            })
+        })
     }
     fn expr(&mut self, min: u8) -> Result<Expr, Diagnostic> {
         if self.failure.is_some() {

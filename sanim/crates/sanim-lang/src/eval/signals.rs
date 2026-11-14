@@ -120,34 +120,32 @@ impl Runtime<'_, '_> {
         let function = self
             .functions
             .get(key)
+            .and_then(|group| group.clauses.first())
             .ok_or_else(|| self.error("S140", "unknown signal helper", span))?;
         let signature = self
             .loaded
             .iter()
             .find(|module| module.id == function.module)
             .and_then(|module| module.checked.exports.get(&function.name));
-        let Some(Type::Function(signature)) = signature else {
+        let Some(signature) = signature else {
             return Err(self.error("S140", "function is missing its checked signature", span));
         };
-        let substitutions = self
-            .loaded
-            .iter()
-            .find(|module| module.id == self.module)
-            .and_then(|module| module.checked.call_types.get(&span.start))
-            .map(|types| {
-                types
-                    .iter()
-                    .map(|(name, ty)| (name.clone(), ty.substitute(&self.type_bindings)))
-                    .collect()
-            })
-            .unwrap_or_else(|| self.type_bindings.clone());
-        signature
-            .parameters
-            .iter()
-            .find(|parameter| parameter.name == name)
-            .map(|parameter| parameter.ty.substitute(&substitutions))
-            .ok_or_else(|| self.error("S140", format!("unknown signal parameter '{name}'"), span))
+        let substitutions = self.call_type_bindings(span);
+        let types = signature.signatures().iter().filter_map(|signature| {
+            signature
+                .parameters
+                .iter()
+                .find(|parameter| parameter.name == name)
+                .map(|parameter| parameter.ty.substitute(&substitutions))
+        });
+        let ty = Type::union(types).map_err(|error| self.error("S140", error, span))?;
+        Ok(if signature.signatures().len() > 1 {
+            ty.widen_literals()
+        } else {
+            ty
+        })
     }
+
     fn reserve_signal(&mut self, node: Stored, span: Span) -> Result<u64, Diagnostic> {
         if self.reactive.nodes.len() >= self.limits.data.max_values {
             return Err(self.error(
@@ -229,8 +227,11 @@ impl Runtime<'_, '_> {
                 .iter()
                 .find(|module| module.id == self.module)
                 .and_then(|module| crate::effects::lookup(callee, &module.checked.exports));
-            if matches!(declared,Some(Type::Function(signature)) if matches!(signature.result.as_ref(),Type::Signal(_)))
-            {
+            if declared.is_some_and(|ty| {
+                ty.signatures()
+                    .iter()
+                    .any(|signature| matches!(signature.result.as_ref(), Type::Signal(_)))
+            }) {
                 return self
                     .expression_raw(expr, env)?
                     .with_type(&Type::Signal(Box::new(ty.clone())))

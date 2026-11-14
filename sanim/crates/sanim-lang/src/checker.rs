@@ -1,7 +1,10 @@
+mod clauses;
 mod dataframe;
+mod list_functions;
 mod native;
 mod templates;
 use crate::{ast::*, prelude};
+use clauses::infer;
 use sanim_core::{Diagnostic, GenericParameter, Number, Signature, Span, Type, TypeBound, Unit};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,12 +22,14 @@ pub struct NativeMethod {
 }
 #[derive(Clone, Debug, Default)]
 pub struct Checked {
+    /// Statement start -> index in the named export's canonical signatures.
+    pub function_clauses: BTreeMap<usize, usize>,
     pub exports: Environment,
     pub schemas: BTreeMap<String, Type>,
-    pub read_types: BTreeMap<usize, Type>,
+    pub result_types: BTreeMap<(usize, usize), Type>,
     pub template_expressions: BTreeMap<(usize, usize), Type>,
     pub native_methods: BTreeMap<(usize, usize), NativeMethod>,
-    pub call_types: BTreeMap<usize, BTreeMap<String, Type>>,
+    pub call_types: BTreeMap<(usize, usize), BTreeMap<String, Type>>,
     pub reflected: BTreeMap<usize, std::sync::Arc<sanim_core::reflection::Declaration>>,
     pub binding_types: BTreeMap<usize, Type>,
     pub effects: BTreeSet<String>,
@@ -46,7 +51,7 @@ pub fn check(
         type_budget,
         aliases: BTreeMap::new(),
         schemas: BTreeMap::new(),
-        reads: BTreeMap::new(),
+        result_types: BTreeMap::new(),
         template_expressions: BTreeMap::new(),
         native_methods: BTreeMap::new(),
         call_types: BTreeMap::new(),
@@ -190,60 +195,7 @@ pub fn check(
             }
         }
     }
-    for statement in &module.statements {
-        if let StatementKind::Function {
-            name,
-            generics,
-            parameters,
-            result,
-            ..
-        } = &statement.kind
-        {
-            checker.fresh(name, &env, statement.span)?;
-            let resolved = checker.generic_parameters(generics, &env, statement.span)?;
-            let variables = generic_variables(&resolved);
-            let mut seen = BTreeSet::new();
-            let mut params = vec![];
-            for parameter in parameters {
-                let name = &parameter.name;
-                let ty = &parameter.ty;
-                checker.fresh(name, &env, statement.span)?;
-                if !seen.insert(name) {
-                    return Err(checker.error(
-                        "S103",
-                        format!("duplicate parameter '{name}'"),
-                        statement.span,
-                    ));
-                }
-                let ty = checker.resolve(ty, &variables, 0, statement.span)?;
-                if ty.contains_signal() {
-                    return Err(checker.error("S106","write sig before the parameter name, for example fn f(sig value:Number), rather than using sig in its value type",parameter.name_span));
-                }
-                params.push(sanim_core::FunctionParameter {
-                    name: name.clone(),
-                    ty,
-                    kind: parameter.kind,
-                });
-            }
-            let result = checker.resolve(result, &variables, 0, statement.span)?;
-            env.insert(
-                name.clone(),
-                Type::Function(Signature {
-                    duration: sanim_core::TimelineEffect::default(),
-                    schedules: false,
-                    mutates: false,
-                    duration_parameters: BTreeSet::new(),
-                    generics: resolved,
-                    default_count: parameters
-                        .iter()
-                        .filter(|parameter| parameter.default.is_some())
-                        .count(),
-                    parameters: params,
-                    result: Box::new(result),
-                }),
-            );
-        }
-    }
+    let function_clauses = checker.declare_clauses(module, &mut env)?;
     for statement in &module.statements {
         match &statement.kind {
             StatementKind::Alias { .. }
@@ -253,13 +205,11 @@ pub fn check(
                 name,
                 generics: _,
                 parameters,
+                duration,
                 body,
                 ..
             } => {
-                checker.function = Some(name.clone());
-                let Type::Function(declaration) = &env[name] else {
-                    unreachable!()
-                };
+                let declaration = &env[name].signatures()[function_clauses[&statement.span.start]];
                 let declaration_variables = generic_variables(&declaration.generics);
                 checker.function = Some(name.clone());
                 let mut saw_default = false;
@@ -285,18 +235,33 @@ pub fn check(
                         ));
                     }
                 }
-                let Type::Function(signature) = env[name].clone() else {
-                    unreachable!()
-                };
+                let signature =
+                    env[name].signatures()[function_clauses[&statement.span.start]].clone();
                 let mut scope = checker.copy_environment(&env, statement.span)?;
                 for parameter in &signature.parameters {
                     let name = &parameter.name;
                     let ty = &parameter.ty;
                     checker.fresh(name, &scope, statement.span)?;
-                    scope.insert(name.clone(), ty.clone());
+                    scope.insert(
+                        name.clone(),
+                        if parameter.kind == BindingKind::Sig {
+                            ty.clone().signal_schema()
+                        } else {
+                            ty.clone()
+                        },
+                    );
                 }
                 checker.function = Some(name.clone());
                 let variables = generic_variables(&signature.generics);
+                if let Some(duration) = duration {
+                    let actual = checker.expression(
+                        duration,
+                        &scope,
+                        Some(&Type::Numeric(Unit::Duration)),
+                        &variables,
+                    )?;
+                    checker.expect(&Type::Numeric(Unit::Duration), &actual, duration.span)?;
+                }
                 checker.binding_scopes.push(BTreeMap::new());
                 for parameter in &signature.parameters {
                     checker.bind_kind(&parameter.name, parameter.kind);
@@ -386,7 +351,7 @@ pub fn check(
         }
     }
     for (name, ty) in &mut env {
-        if let Type::Function(signature) = ty {
+        for signature in ty.signatures_mut() {
             signature.schedules = checker.effects.contains(name);
             signature.mutates = checker.mutations.contains(name);
         }
@@ -407,6 +372,21 @@ pub fn check(
         }
     }
     for statement in &module.statements {
+        if let StatementKind::Function {
+            duration: Some(duration),
+            ..
+        } = &statement.kind
+        {
+            let mut invalid = None;
+            duration.visit(&mut |expression| {
+                if checker.call_state_effect(expression, &env) {
+                    invalid.get_or_insert(expression.span);
+                }
+            });
+            if let Some(span) = invalid {
+                return Err(checker.error("S128","@duration(...) must be a pure Duration expression; it must not schedule timeline work or mutate state",span));
+            }
+        }
         check_signal_purity(&checker, statement, &env)?;
     }
     if !root {
@@ -431,9 +411,13 @@ pub fn check(
         type_budget,
         limits,
     )?;
-    for (name, effect) in &duration_analysis.functions {
-        if let Some(Type::Function(signature)) = env.get_mut(name) {
-            signature.duration = *effect;
+    for statement in &module.statements {
+        if let StatementKind::Function { name, .. } = &statement.kind {
+            let signature = &mut env
+                .get_mut(name)
+                .expect("checked function")
+                .signatures_mut()[function_clauses[&statement.span.start]];
+            signature.duration = duration_analysis.clauses[&statement.span.start].clone();
             signature.schedules = checker.effects.contains(name);
             signature.mutates = checker.mutations.contains(name);
             signature.duration_parameters = signature
@@ -446,12 +430,13 @@ pub fn check(
         }
     }
     Ok(Checked {
+        function_clauses,
         durations: duration_analysis.nodes,
         duration_needed: duration_analysis.needed,
         value_dependencies: duration_analysis.value_dependencies,
         exports: env,
         schemas: checker.schemas,
-        read_types: checker.reads,
+        result_types: checker.result_types,
         template_expressions: checker.template_expressions,
         native_methods: checker.native_methods,
         call_types: checker.call_types,
@@ -471,10 +456,10 @@ struct Checker<'a> {
     type_budget: &'a std::cell::Cell<usize>,
     aliases: BTreeMap<String, Alias>,
     schemas: BTreeMap<String, Type>,
-    reads: BTreeMap<usize, Type>,
+    result_types: BTreeMap<(usize, usize), Type>,
     template_expressions: BTreeMap<(usize, usize), Type>,
     native_methods: BTreeMap<(usize, usize), NativeMethod>,
-    call_types: BTreeMap<usize, BTreeMap<String, Type>>,
+    call_types: BTreeMap<(usize, usize), BTreeMap<String, Type>>,
     reflected: BTreeMap<usize, std::sync::Arc<sanim_core::reflection::Declaration>>,
     reflection_names: BTreeMap<usize, String>,
     binding_types: BTreeMap<usize, Type>,
@@ -493,20 +478,37 @@ impl Checker<'_> {
         let ExprKind::Call { callee, args, .. } = &expr.kind else {
             return false;
         };
-        if crate::timing::builtin_call(callee, args, &self.native_methods)
-            .is_some_and(|call| call.schedules())
-            || matches!(&callee.kind,ExprKind::Name(name) if self.effects.contains(name))
+        if crate::timing::builtin_call(callee, args, &self.native_methods).is_some_and(|call| {
+            call.schedules()
+                || crate::list_functions::callback_type(&call, env)
+                    .is_some_and(|ty| ty.signatures().iter().any(|signature| signature.schedules))
+        }) || matches!(&callee.kind,ExprKind::Name(name) if self.effects.contains(name))
         {
             return true;
         }
-        matches!(crate::effects::lookup(callee,env),Some(Type::Function(signature)) if signature.schedules || !signature.parameters.iter().any(|parameter|parameter.name=="duration") && crate::timing::envelope(args).is_some_and(|expr|!crate::timing::known_zero(expr)))
+        crate::effects::lookup(callee, env).is_some_and(|ty| {
+            ty.signatures().iter().any(|signature| {
+                signature.schedules
+                    || !signature
+                        .parameters
+                        .iter()
+                        .any(|parameter| parameter.name == "duration")
+                        && crate::timing::envelope(args)
+                            .is_some_and(|expr| !crate::timing::known_zero(expr))
+            })
+        })
     }
     fn call_mutates(&self, expr: &Expr, env: &Environment) -> bool {
-        let ExprKind::Call { callee, .. } = &expr.kind else {
+        let ExprKind::Call { callee, args, .. } = &expr.kind else {
             return false;
         };
         matches!(&callee.kind, ExprKind::Name(name) if self.mutations.contains(name))
-            || matches!(crate::effects::lookup(callee, env), Some(Type::Function(signature)) if signature.mutates)
+            || crate::timing::builtin_call(callee, args, &self.native_methods).is_some_and(|call| {
+                crate::list_functions::callback_type(&call, env)
+                    .is_some_and(|ty| ty.signatures().iter().any(|signature| signature.mutates))
+            })
+            || crate::effects::lookup(callee, env)
+                .is_some_and(|ty| ty.signatures().iter().any(|signature| signature.mutates))
     }
     fn call_state_effect(&self, expr: &Expr, env: &Environment) -> bool {
         self.call_schedules(expr, env) || self.call_mutates(expr, env)
@@ -691,9 +693,17 @@ impl Checker<'_> {
                 .ok_or_else(|| self.error("S105", "generic type budget exceeded", span))?,
         );
         let depends = match expr {
+            TypeExpr::ConstLength(_)=>return Err(self.error("S105","a numeric length is only valid as the second List type argument, for example List<Number,3>",span)),
+            TypeExpr::Refined(inner, _, _) => {
+                self.validate_template(inner, variables, depth + 1, span)?
+            }
             TypeExpr::StringLiteral(_) => false,
             TypeExpr::Signal(inner) => self.validate_template(inner, variables, depth + 1, span)?,
             TypeExpr::Named(name, args) => {
+                if matches!(prelude::types().get(name.as_str()),Some(prelude::TypeDefinition::List)) {
+                    let (inner,_)=self.list_type_arguments(args,span)?;
+                    return self.validate_template(inner,variables,depth+1,span);
+                }
                 if variables.contains_key(name) {
                     if !args.is_empty() {
                         return Err(self.error(
@@ -779,6 +789,23 @@ impl Checker<'_> {
                 .ok_or_else(|| self.error("S105", "resolved type budget exceeded", span))?,
         );
         match expr {
+            TypeExpr::ConstLength(_)=>Err(self.error("S105","a numeric length is only valid as the second List type argument, for example List<Number,3>",span)),
+            TypeExpr::Refined(inner, operator, bound) => {
+                let base = self.resolve(inner, variables, depth + 1, span)?;
+                let domain = base.numeric_domain().ok_or_else(|| {
+                    self.error(
+                        "S106",
+                        format!(
+                            "numeric refinement requires a concrete numeric type, found {base}"
+                        ),
+                        span,
+                    )
+                })?;
+                domain
+                    .constrained(operator, *bound)
+                    .map(Type::RefinedNumeric)
+                    .map_err(|reason| self.error("S106", reason, span))
+            }
             TypeExpr::StringLiteral(value) => {
                 self.type_budget.set(
                     self.type_budget
@@ -842,6 +869,10 @@ impl Checker<'_> {
                     return self.copy_type(ty, span);
                 }
                 if let Some(definition) = prelude::types().get(name.as_str()) {
+                    if matches!(definition,prelude::TypeDefinition::List) {
+                        let (inner,length)=self.list_type_arguments(args,span)?;
+                        return Ok(Type::List(Box::new(self.resolve(inner,variables,depth+1,span)?),length));
+                    }
                     let args = args
                         .iter()
                         .map(|arg| self.resolve(arg, variables, depth + 1, span))
@@ -994,7 +1025,11 @@ impl Checker<'_> {
                     if *kind == BindingKind::Let
                         && expected.is_none()
                         && let ExprKind::Call { callee, .. } = &value.kind
-                        && matches!(crate::effects::lookup(callee,env),Some(Type::Function(signature)) if matches!(signature.result.as_ref(),Type::Signal(_)))
+                        && crate::effects::lookup(callee, env).is_some_and(|ty| {
+                            ty.signatures().iter().any(|signature| {
+                                matches!(signature.result.as_ref(), Type::Signal(_))
+                            })
+                        })
                     {
                         ty = Type::Signal(Box::new(ty));
                     }
@@ -1016,7 +1051,7 @@ impl Checker<'_> {
                         {
                             Type::StringLiteral(value.clone().into())
                         } else if *kind != BindingKind::Let {
-                            ty.widen_literals()
+                            ty.editable_schema()
                         } else {
                             ty
                         }
@@ -1141,7 +1176,7 @@ impl Checker<'_> {
                     self.fresh(name, env, statement.span)?;
                     let ty = self.expression(iterable, env, None, variables)?;
                     let inner = match ty {
-                        Type::List(t) | Type::Array(t) => *t,
+                        Type::List(t, _) | Type::Array(t) => *t,
                         _ => {
                             return Err(self.error(
                                 "S116",
@@ -1281,7 +1316,7 @@ impl Checker<'_> {
                 let ty = expected
                     .filter(|ty| crate::reflection::concrete_schema(ty) && ty.accepts(&actual))
                     .cloned()
-                    .unwrap_or_else(|| actual.widen_literals());
+                    .unwrap_or_else(|| actual.editable_schema());
                 if !crate::reflection::concrete_schema(&ty) {
                     return Err(self.error("S113","cannot infer a concrete static type for this reflected default; symbolic generic parameters and untyped empty values cannot be exposed. Add a concrete annotation or explicit generic arguments, for example let optional:Option<Number>=reflect(None)",expr.span));
                 }
@@ -1295,11 +1330,14 @@ impl Checker<'_> {
                 self.reflected.insert(expr.span.start, declaration);
                 Ok(ty)
             }
-            ExprKind::Number(text) => Ok(Type::Numeric(
-                Number::parse(text)
-                    .map_err(|e| self.error("S119", e, expr.span))?
-                    .unit,
-            )),
+            ExprKind::Number(text) => {
+                let number = Number::parse(text).map_err(|e| self.error("S119", e, expr.span))?;
+                Ok(if expected.is_some_and(clauses::refined_context) {
+                    Type::RefinedNumeric(sanim_core::math::domain::NumericDomain::singleton(number))
+                } else {
+                    Type::Numeric(number.unit)
+                })
+            }
             ExprKind::String(value) => {
                 if expected.is_some_and(|ty| ty.string_literals().is_some()) {
                     Ok(Type::StringLiteral(value.clone().into()))
@@ -1329,7 +1367,7 @@ impl Checker<'_> {
             }
             ExprKind::List(items) => {
                 let wanted = match expected {
-                    Some(Type::List(t)) => Some(t.as_ref()),
+                    Some(Type::List(t, _)) => Some(t.as_ref()),
                     _ => None,
                 };
                 let mut inner = wanted.cloned().unwrap_or(Type::Unknown);
@@ -1337,11 +1375,24 @@ impl Checker<'_> {
                     let ty = self.expression(item, env, wanted, variables)?;
                     if inner == Type::Unknown {
                         inner = ty;
+                    } else if wanted.is_none() && !inner.accepts(&ty) {
+                        let mut remaining = self.type_budget.get();
+                        sanim_core::type_budget::charge(&inner, &mut remaining)
+                            .map_err(|reason| self.error("S105", reason, item.span))?;
+                        self.type_budget.set(remaining);
+                        if let Some(joined) = inner.join_list_lengths(&ty) {
+                            inner = joined;
+                        } else {
+                            self.expect(&inner, &ty, item.span)?;
+                        }
                     } else {
                         self.expect(&inner, &ty, item.span)?;
                     }
                 }
-                Ok(Type::List(Box::new(inner)))
+                Ok(Type::List(
+                    Box::new(inner),
+                    sanim_core::ListLength::Exact(items.len()),
+                ))
             }
             ExprKind::Record(fields) => {
                 let mut out = BTreeMap::new();
@@ -1381,6 +1432,13 @@ impl Checker<'_> {
                 Ok(Type::Dict)
             }
             ExprKind::Unary(op, value) => {
+                if expected.is_some_and(clauses::refined_context)
+                    && let Some(number) = clauses::literal_number(expr)
+                {
+                    return Ok(Type::RefinedNumeric(
+                        sanim_core::math::domain::NumericDomain::singleton(number),
+                    ));
+                }
                 let ty = self.expression(value, env, None, variables)?;
                 sanim_core::math::operations::unary_type(op, &ty)
                     .map_err(|e| self.error("S106", e, expr.span))
@@ -1416,7 +1474,7 @@ impl Checker<'_> {
                 }
                 self.expect(&Type::Numeric(Unit::Number), &idx, index.span)?;
                 let inner = match ty {
-                    Type::List(t) | Type::Array(t) => t,
+                    Type::List(t, _) | Type::Array(t) => t,
                     _ => {
                         return Err(self.error(
                             "S122",
@@ -1521,9 +1579,11 @@ impl Checker<'_> {
             return self.native(expr, name, args, env, expected, variables);
         }
         let ty = self.expression(callee, env, None, variables)?;
-        let Type::Function(signature) = ty else {
+        let Some(first_signature) = ty.signatures().first() else {
             return Err(self.error("S123", format!("cannot call {ty:?}"), callee.span));
         };
+        let mut signature = first_signature.clone();
+        let overloaded = ty.signatures().len() > 1;
         let enveloped = !signature
             .parameters
             .iter()
@@ -1556,6 +1616,14 @@ impl Checker<'_> {
         let timed = enveloped
             && crate::timing::envelope(args).is_some_and(|expr| !crate::timing::known_zero(expr));
         let args = &normal;
+        let pretyped = if overloaded {
+            let (selected, actual) =
+                self.clause_signature(ty.signatures(), args, env, variables, expr.span)?;
+            signature = selected;
+            Some(actual)
+        } else {
+            None
+        };
         if let Some(function) = &self.function {
             if signature.schedules || timed {
                 self.effects.insert(function.clone());
@@ -1611,48 +1679,32 @@ impl Checker<'_> {
             )
             .map_err(|e| self.error("S106", e, expr.span))?;
         }
-        for (declaration, value) in signature.parameters.iter().zip(ordered) {
+        for (index, (declaration, value)) in signature.parameters.iter().zip(ordered).enumerate() {
             let parameter = &declaration.ty;
             let Some(value) = value else {
                 continue;
             };
             let wanted = self.substitute(parameter, &substitutions, expr.span)?;
-            let actual = self.expression(value, env, Some(&wanted), variables)?;
+            let actual =
+                if let Some(actual) = pretyped.as_ref().and_then(|types| types[index].as_ref()) {
+                    actual.clone()
+                } else {
+                    self.expression(value, env, Some(&wanted), variables)?
+                };
             if actual.contains_function() {
                 return Err(self.error("S111","function values cannot be passed as arguments or stored in containers; call the function directly",value.span));
             }
             infer(parameter, &actual, &mut substitutions, self.type_budget)
                 .map_err(|e| self.error("S106", e, value.span))?;
-            self.expect(
-                &self.substitute(parameter, &substitutions, value.span)?,
-                &actual,
-                value.span,
-            )?;
-        }
-        for parameter in &signature.generics {
-            if !substitutions.contains_key(&parameter.name) {
-                let default=parameter.default.as_ref().ok_or_else(||self.error("S123",format!("cannot infer type parameter '{}'; provide explicit <Type> arguments or declare a default",parameter.name),expr.span))?;
-                substitutions.insert(
-                    parameter.name.clone(),
-                    self.substitute(default, &substitutions, expr.span)?,
-                );
-            }
-            let actual = &substitutions[&parameter.name];
-            if let Some(bound) = &parameter.constraint
-                && !bound.substitute(&substitutions).accepts(actual)
-            {
-                return Err(self.error(
-                    "S106",
-                    format!(
-                        "type {actual} does not satisfy constraint {bound:?} for '{}'",
-                        parameter.name
-                    ),
-                    expr.span,
-                ));
+            let expected = self.substitute(parameter, &substitutions, value.span)?;
+            if !(overloaded && expected.overlaps(&actual)) {
+                self.expect(&expected, &actual, value.span)?;
             }
         }
+        self.complete_generics(&signature, &mut substitutions, expr.span)?;
         let stored = self.copy_environment(&substitutions, expr.span)?;
-        self.call_types.insert(expr.span.start, stored);
+        self.call_types
+            .insert((expr.span.start, expr.span.end), stored);
         self.substitute(&signature.result, &substitutions, expr.span)
     }
     fn arguments<'a>(
@@ -1753,63 +1805,6 @@ impl Checker<'_> {
     }
 }
 
-fn infer(
-    parameter: &Type,
-    actual: &Type,
-    bindings: &mut BTreeMap<String, Type>,
-    budget: &std::cell::Cell<usize>,
-) -> Result<(), String> {
-    match (parameter, actual) {
-        (Type::Signal(inner), Type::Signal(actual)) => infer(inner, actual, bindings, budget)?,
-        (Type::Signal(inner), actual) => infer(inner, actual, bindings, budget)?,
-        (parameter, Type::Signal(actual)) => infer(parameter, actual, bindings, budget)?,
-        (Type::Union(patterns), actual) => {
-            for pattern in patterns {
-                let mut candidate = bindings.clone();
-                if infer(pattern, actual, &mut candidate, budget).is_ok()
-                    && pattern.substitute(&candidate).accepts(actual)
-                {
-                    *bindings = candidate;
-                    return Ok(());
-                }
-            }
-        }
-
-        (Type::Variable(name) | Type::BoundedVariable(name, _), actual) => {
-            if let Some(previous) = bindings.get(name) {
-                if !previous.accepts(actual) {
-                    return Err(format!(
-                        "generic '{name}' was {previous:?}, but this argument is {actual:?}"
-                    ));
-                }
-            } else if *actual != Type::Unknown {
-                let mut remaining = budget.get();
-                sanim_core::type_budget::charge(actual, &mut remaining)?;
-                budget.set(remaining);
-                bindings.insert(name.clone(), actual.clone());
-            }
-        }
-        (Type::List(a), Type::List(b))
-        | (Type::Option(a), Type::Option(b))
-        | (Type::Array(a), Type::Array(b))
-        | (Type::Series(a), Type::Series(b)) => infer(a, b, bindings, budget)?,
-        (Type::DataFrame { row: a, groups: ga }, Type::DataFrame { row: b, groups: gb })
-            if ga == gb =>
-        {
-            infer(a, b, bindings, budget)?
-        }
-        (Type::Record(a), Type::Record(b)) => {
-            for (name, ty) in a {
-                if let Some(actual) = b.get(name) {
-                    infer(ty, actual, bindings, budget)?;
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
 fn generic_variable(parameter: &GenericParameter<Type, TypeBound>) -> Type {
     parameter.constraint.as_ref().map_or_else(
         || Type::Variable(parameter.name.clone()),
@@ -1838,7 +1833,7 @@ impl Checked {
             .exports
             .values()
             .chain(self.schemas.values())
-            .chain(self.read_types.values())
+            .chain(self.result_types.values())
             .chain(self.binding_types.values())
             .chain(
                 self.reflected
@@ -1860,7 +1855,11 @@ fn check_signal_capture(
     env: &Environment,
 ) -> Result<(), Diagnostic> {
     if let ExprKind::Call { callee, .. } = &expression.kind
-        && matches!(crate::effects::lookup(callee,env),Some(Type::Function(signature)) if matches!(signature.result.as_ref(),Type::Signal(_)))
+        && crate::effects::lookup(callee, env).is_some_and(|ty| {
+            ty.signatures()
+                .iter()
+                .any(|signature| matches!(signature.result.as_ref(), Type::Signal(_)))
+        })
     {
         return Ok(());
     }
@@ -1911,7 +1910,11 @@ fn check_signal_purity(
                         checker,
                         body,
                         env,
-                        matches!(env.get(name),Some(Type::Function(signature)) if matches!(signature.result.as_ref(),Type::Signal(_))),
+                        env.get(name).is_some_and(|ty| {
+                            ty.signatures().iter().any(|signature| {
+                                matches!(signature.result.as_ref(), Type::Signal(_))
+                            })
+                        }),
                     )?;
                 }
                 StatementKind::Background { body }
@@ -1939,7 +1942,9 @@ fn check_signal_purity(
         let ExprKind::Call { callee, args, .. } = &expr.kind else {
             return;
         };
-        let Some(Type::Function(signature)) = crate::effects::lookup(callee, env) else {
+        let Some(signature) =
+            crate::effects::lookup(callee, env).and_then(|ty| ty.signatures().first())
+        else {
             return;
         };
         let mut positional = 0;

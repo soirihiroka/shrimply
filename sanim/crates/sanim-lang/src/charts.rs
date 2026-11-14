@@ -30,7 +30,7 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
     let number = Type::Numeric(Unit::Number);
     let length = Type::Numeric(Unit::Length);
     let p = |name, ty, required| Parameter { name, ty, required };
-    let list = |ty| Type::List(Box::new(ty));
+    let list = |ty| Type::List(Box::new(ty), sanim_core::ListLength::Unknown);
     let mut out = vec![];
     let mut add = |name, parameters, result| {
         out.push(Builtin {
@@ -76,10 +76,10 @@ pub(crate) fn builtins(common: Vec<Parameter>) -> Vec<Builtin> {
             params.extend([
                 p(
                     "data",
-                    Type::List(Box::new(record([
-                        ("x", number.clone()),
-                        ("y", number.clone()),
-                    ]))),
+                    Type::List(
+                        Box::new(record([("x", number.clone()), ("y", number.clone())])),
+                        sanim_core::ListLength::Unknown,
+                    ),
                     true,
                 ),
                 p("x_scale", scale_type(), true),

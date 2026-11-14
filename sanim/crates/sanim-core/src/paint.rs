@@ -33,14 +33,17 @@ impl Paint {
                 ("angle".to_string(), Type::Numeric(Unit::Angle)),
                 (
                     "stops".to_string(),
-                    Type::List(Box::new(Type::Record(
-                        [
-                            ("offset".to_string(), Type::Numeric(Unit::Number)),
-                            ("color".to_string(), Type::Color),
-                        ]
-                        .into_iter()
-                        .collect(),
-                    ))),
+                    Type::List(
+                        Box::new(Type::Record(
+                            [
+                                ("offset".to_string(), Type::Numeric(Unit::Number)),
+                                ("color".to_string(), Type::Color),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        )),
+                        crate::ListLength::Unknown,
+                    ),
                 ),
             ]
             .into_iter()

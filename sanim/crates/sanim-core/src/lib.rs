@@ -9,7 +9,7 @@ pub mod font;
 pub use font::Font;
 pub mod layout;
 pub mod list_views;
-pub use duration::{NodeDuration, TimelineEffect};
+pub use duration::{DurationExpr, DurationSymbol, NodeDuration, TimelineEffect};
 pub mod math;
 pub mod media;
 pub mod paint;
@@ -37,7 +37,7 @@ pub use types::*;
 use serde::{Deserialize, Serialize};
 pub use shrimply_resource_pipeline::fingerprint::{digest, digest_bytes};
 
-pub const SEMANTICS_VERSION: &str = "sanim-0.1";
+pub const SEMANTICS_VERSION: &str = "sanim-0.2";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {

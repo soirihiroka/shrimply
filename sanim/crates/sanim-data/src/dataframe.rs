@@ -262,12 +262,18 @@ pub fn compile(frame: &Frame, series: Option<&Series>, limits: Limits) -> Result
         frame.same_rows(&series.frame)?;
         (
             format!("{} AS value", compiler.expression(&series.expression)?),
-            Type::List(Box::new(series.ty.as_ref().clone())),
+            Type::List(
+                Box::new(series.ty.as_ref().clone()),
+                sanim_core::ListLength::Unknown,
+            ),
         )
     } else {
         (
             columns(frame, None).join(","),
-            Type::List(Box::new(Type::Record(frame.schema.as_ref().clone()))),
+            Type::List(
+                Box::new(Type::Record(frame.schema.as_ref().clone())),
+                sanim_core::ListLength::Unknown,
+            ),
         )
     };
     let sql = format!(

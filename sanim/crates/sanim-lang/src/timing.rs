@@ -107,7 +107,7 @@ impl Builtin {
     }
     /// The generic signature depends on its duration argument; omitted arguments resolve to default.
     pub fn timeline_duration(&self) -> TimelineEffect {
-        TimelineEffect::Dependent
+        TimelineEffect::Unknown
     }
 }
 
@@ -119,6 +119,23 @@ pub(crate) struct BuiltinCall<'a> {
     args: &'a [(Option<String>, Expr)],
 }
 impl<'a> BuiltinCall<'a> {
+    pub(crate) fn argument(&self, index: usize) -> Option<&'a Expr> {
+        if index == 0 && self.receiver.is_some() {
+            return self.receiver;
+        }
+        let name = self.builtin.parameters.get(index)?.name;
+        self.args
+            .iter()
+            .find(|(label, _)| label.as_deref() == Some(name))
+            .map(|(_, value)| value)
+            .or_else(|| {
+                self.args
+                    .iter()
+                    .filter(|(label, _)| label.is_none())
+                    .nth(index.checked_sub(usize::from(self.receiver.is_some()))?)
+                    .map(|(_, value)| value)
+            })
+    }
     pub(crate) fn easing_argument(&self) -> Option<&'a Expr> {
         self.builtin
             .easing_argument_after(self.args, usize::from(self.receiver.is_some()))

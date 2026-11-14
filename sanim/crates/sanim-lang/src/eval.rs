@@ -1,6 +1,7 @@
 mod dataframe;
 mod demand;
 pub(crate) mod duration;
+mod list_functions;
 mod lists;
 mod native;
 mod plans;
@@ -42,14 +43,20 @@ enum CacheDependency<'a> {
     Font(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 struct Function {
     module: String,
     name: String,
     parameters: Vec<Parameter>,
     body: Vec<Statement>,
-    fingerprint: String,
+    clause: usize,
+    duration: Option<Expr>,
     span: Span,
+}
+#[derive(Clone)]
+struct FunctionGroup {
+    clauses: Vec<Arc<Function>>,
+    fingerprint: String,
 }
 
 pub(crate) fn evaluate(
@@ -130,6 +137,7 @@ pub(crate) fn evaluate(
         duration_only,
         preparation,
         result_needed: false,
+        discarded_list_call: None,
         signal_return: None,
         duration_needed: duration_needed.unwrap_or_default(),
         type_bindings: BTreeMap::new(),
@@ -211,25 +219,43 @@ pub(crate) fn evaluate(
                 name,
                 parameters,
                 body,
+                duration,
                 ..
             } = &statement.kind
             {
                 let key = format!("{}::{name}", module.id);
-                runtime.functions.insert(
-                    key.clone(),
-                    Arc::new(Function {
-                        module: module.id.clone(),
-                        name: name.clone(),
-                        parameters: parameters.clone(),
-                        body: body.clone(),
-                        span: statement.span,
-                        fingerprint: digest(
-                            &serde_json::to_vec(statement).expect("serializable function"),
-                        ),
-                    }),
-                );
+                let group = runtime.functions.entry(key.clone()).or_insert_with(|| {
+                    Arc::new(FunctionGroup {
+                        clauses: Vec::new(),
+                        fingerprint: String::new(),
+                    })
+                });
+                Arc::make_mut(group).clauses.push(Arc::new(Function {
+                    module: module.id.clone(),
+                    name: name.clone(),
+                    parameters: parameters.clone(),
+                    body: body.clone(),
+                    clause: module
+                        .checked
+                        .function_clauses
+                        .get(&statement.span.start)
+                        .copied()
+                        .expect("checked function clause"),
+                    duration: duration.clone(),
+                    span: statement.span,
+                }));
                 env.insert(name.clone(), Value::Function(key).into());
             }
+        }
+        for group in runtime.functions.values_mut().filter(|group| {
+            group
+                .clauses
+                .first()
+                .is_some_and(|function| function.module == module.id)
+        }) {
+            let group = Arc::make_mut(group);
+            group.fingerprint =
+                digest(&serde_json::to_vec(&group.clauses).expect("serializable function clauses"));
         }
         runtime.globals.insert(module.id.clone(), env.clone());
         let restored = if runtime.root_active && !duration_only {
@@ -433,7 +459,7 @@ pub(crate) struct Runtime<'a, 's> {
     pub(super) list_edit: Option<crate::lists::EditReceipt>,
     background_depth: usize,
     instance_paths: BTreeMap<String, BTreeMap<usize, String>>,
-    functions: BTreeMap<String, Arc<Function>>,
+    functions: BTreeMap<String, Arc<FunctionGroup>>,
     constructors: BTreeMap<String, Type>,
     reflected: imbl::Vector<ReflectedInput>,
     used_overrides: imbl::OrdSet<String>,
@@ -447,6 +473,7 @@ pub(crate) struct Runtime<'a, 's> {
     root_active: bool,
     duration_only: bool,
     result_needed: bool,
+    discarded_list_call: Option<(String, Span)>,
     signal_return: Option<Type>,
     duration_needed: BTreeMap<String, BTreeSet<String>>,
     type_bindings: BTreeMap<String, Type>,
@@ -581,6 +608,7 @@ impl Runtime<'_, '_> {
                         StatementKind::Repeat { .. } | StatementKind::For { .. }
                     )
                     && !crate::effects::has_return(std::slice::from_ref(statement))
+                    && self.duration_statement_safe(statement)
                     && let TimelineEffect::Fixed(duration) = self.timeline_effect(statement.span)
                 {
                     self.advance_duration(duration, statement.span)?;
@@ -1412,6 +1440,7 @@ impl Runtime<'_, '_> {
                     let parameter = self
                         .functions
                         .get(&key)
+                        .and_then(|group| group.clauses.first())
                         .and_then(|function| {
                             if let Some(label) = label {
                                 function
@@ -1523,6 +1552,66 @@ impl Runtime<'_, '_> {
             }
         }
     }
+    fn function_signature(&self, function: &Function) -> Option<&Signature> {
+        self.loaded
+            .iter()
+            .find(|module| module.id == function.module)
+            .and_then(|module| module.checked.exports.get(&function.name))
+            .and_then(|ty| ty.signatures().get(function.clause))
+    }
+    fn call_type_bindings(&self, span: Span) -> BTreeMap<String, Type> {
+        self.loaded
+            .iter()
+            .find(|module| module.id == self.module)
+            .and_then(|module| module.checked.call_types.get(&(span.start, span.end)))
+            .map(|types| {
+                types
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), ty.substitute(&self.type_bindings)))
+                    .collect()
+            })
+            .unwrap_or_else(|| self.type_bindings.clone())
+    }
+    fn select_function(
+        &mut self,
+        group: &FunctionGroup,
+        evaluated: &Values,
+        substitutions: &BTreeMap<String, Type>,
+        span: Span,
+    ) -> Result<Arc<Function>, Diagnostic> {
+        let first = group
+            .clauses
+            .first()
+            .ok_or_else(|| self.error("S140", "function has no checked clauses", span))?;
+        if group.clauses.len() == 1 {
+            return Ok(first.clone());
+        }
+        let mut arguments = Values::new();
+        for (name, value) in evaluated {
+            arguments.insert(name.clone(), self.sample_signal(value.clone(), span)?);
+        }
+        let mut selected = None;
+        for function in &group.clauses {
+            let signature = self.function_signature(function).ok_or_else(|| {
+                self.error(
+                    "S140",
+                    "function clause is missing its checked signature",
+                    span,
+                )
+            })?;
+            if signature.parameters.iter().all(|parameter| {
+                arguments.get(&parameter.name).is_none_or(|value| {
+                    validate_value(&parameter.ty.substitute(substitutions), value).is_ok()
+                })
+            }) {
+                if selected.is_some() {
+                    return Err(self.error("S140",format!("function '{}' matches multiple clauses for these arguments; supply an explicit argument to distinguish defaulted clauses",first.name),span));
+                }
+                selected = Some(function.clone());
+            }
+        }
+        selected.ok_or_else(||self.error("S140",format!("function '{}' has no clause matching the supplied values; checked alternatives: {}",first.name,group.clauses.iter().filter_map(|function|self.function_signature(function)).map(|signature|signature.parameters.iter().map(|parameter|format!("{}: {}",parameter.name,parameter.ty)).collect::<Vec<_>>().join(", ")).collect::<Vec<_>>().join(" | ")),span))
+    }
     fn invoke(
         &mut self,
         key: &str,
@@ -1531,11 +1620,29 @@ impl Runtime<'_, '_> {
         need_result: bool,
         provided: Option<&BTreeSet<String>>,
     ) -> Result<Value, Diagnostic> {
-        let function = self
+        if self.depth >= self.limits.max_call_depth {
+            return Err(self.error("S303", "bounded function call depth exceeded", span));
+        }
+        self.depth += 1;
+        let group = self
             .functions
             .get(key)
             .cloned()
             .ok_or_else(|| self.error("S305", format!("unknown function '{key}'"), span))?;
+        let first = group
+            .clauses
+            .first()
+            .ok_or_else(|| self.error("S140", "function has no checked clauses", span))?;
+        let ordered = order_values(
+            evaluated,
+            &first
+                .parameters
+                .iter()
+                .map(|parameter| parameter.name.clone())
+                .collect::<Vec<_>>(),
+        );
+        let bindings = self.call_type_bindings(span);
+        let function = self.select_function(&group, &ordered, &bindings, span)?;
         let envelope = if !function
             .parameters
             .iter()
@@ -1567,19 +1674,7 @@ impl Runtime<'_, '_> {
         }
         self.used_functions
             .entry(key.to_owned())
-            .or_insert((function.fingerprint.clone(), self.root_statement));
-        let bindings = self
-            .loaded
-            .iter()
-            .find(|m| m.id == self.module)
-            .and_then(|m| m.checked.call_types.get(&span.start))
-            .map(|types| {
-                types
-                    .iter()
-                    .map(|(name, ty)| (name.clone(), ty.substitute(&self.type_bindings)))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .or_insert((group.fingerprint.clone(), self.root_statement));
         let call_site = self.instance_site(span);
         let mutates = self.function_mutates(&function);
         let previous_types = std::mem::replace(&mut self.type_bindings, bindings);
@@ -1590,14 +1685,6 @@ impl Runtime<'_, '_> {
             .get(&function.module)
             .cloned()
             .unwrap_or_default();
-        let ordered = order_values(
-            evaluated,
-            &function
-                .parameters
-                .iter()
-                .map(|parameter| parameter.name.clone())
-                .collect::<Vec<_>>(),
-        );
         self.identity
             .push(format!("{}@{}", function.name, call_site));
         self.source_calls.push_back(caller);
@@ -1619,21 +1706,14 @@ impl Runtime<'_, '_> {
             } else if let Some(default) = default {
                 if parameter.kind == BindingKind::Sig {
                     let ty = self
-                        .loaded
-                        .iter()
-                        .find(|module| module.id == function.module)
-                        .and_then(|module| module.checked.exports.get(&function.name))
-                        .and_then(|ty| {
-                            if let Type::Function(signature) = ty {
-                                signature
-                                    .parameters
-                                    .iter()
-                                    .find(|param| param.name == *name)
-                                    .map(|param| param.ty.substitute(&self.type_bindings))
-                            } else {
-                                None
-                            }
+                        .function_signature(&function)
+                        .and_then(|signature| {
+                            signature
+                                .parameters
+                                .iter()
+                                .find(|parameter| parameter.name == *name)
                         })
+                        .map(|parameter| parameter.ty.substitute(&self.type_bindings))
                         .ok_or_else(|| self.error("S140", "missing checked sig parameter", span))?;
                     self.capture_signal(default, &scope, &ty)?
                 } else {
@@ -1643,21 +1723,14 @@ impl Runtime<'_, '_> {
                 return Err(self.error("S305", format!("missing argument '{name}'"), span));
             };
             let parameter_type = self
-                .loaded
-                .iter()
-                .find(|module| module.id == function.module)
-                .and_then(|module| module.checked.exports.get(&function.name))
-                .and_then(|ty| {
-                    if let Type::Function(signature) = ty {
-                        signature
-                            .parameters
-                            .iter()
-                            .find(|parameter| &parameter.name == name)
-                            .map(|parameter| parameter.ty.substitute(&self.type_bindings))
-                    } else {
-                        None
-                    }
-                });
+                .function_signature(&function)
+                .and_then(|signature| {
+                    signature
+                        .parameters
+                        .iter()
+                        .find(|parameter| parameter.name == *name)
+                })
+                .map(|parameter| parameter.ty.substitute(&self.type_bindings));
             if parameter.kind == BindingKind::Sig {
                 let Value::Signal(signal) = value else {
                     return Err(self.error(
@@ -1685,47 +1758,52 @@ impl Runtime<'_, '_> {
                 scope.insert(name.clone(), value.into());
             }
         }
-        let signature = self
-            .loaded
-            .iter()
-            .find(|module| module.id == function.module)
-            .and_then(|module| module.checked.exports.get(&function.name));
-        let live_return = if let Some(Type::Function(signature)) = signature {
+        let declared_duration = if let Some(annotation) = &function.duration {
+            let start = self.cursor;
+            let value = self.expression(annotation, &scope)?;
+            let declared = crate::timing::Timing::default()
+                .value(Some(&value))
+                .map_err(|error| {
+                    self.error(
+                        "S304",
+                        format!(
+                            "invalid @duration contract for '{}': {error}",
+                            function.name
+                        ),
+                        annotation.span,
+                    )
+                })?;
+            if self.cursor != start {
+                return Err(self.error(
+                    "S304",
+                    "@duration expressions cannot advance the timeline",
+                    annotation.span,
+                ));
+            }
+            Some(declared)
+        } else {
+            None
+        };
+        let live_return = self.function_signature(&function).and_then(|signature| {
             if let Type::Signal(inner) = signature.result.as_ref() {
                 Some(inner.substitute(&self.type_bindings))
             } else {
                 None
             }
-        } else {
-            None
-        };
+        });
         let previous_signal_return = std::mem::replace(&mut self.signal_return, live_return);
         let previous_result = self.result_needed;
         self.result_needed = need_result;
         let function_start = self.cursor;
         self.call_horizons.push(function_start);
-        self.depth += 1;
-        let result = if self.depth > self.limits.max_call_depth {
-            Err(self.error("S303", "bounded function call depth exceeded", span))
-        } else {
-            self.scoped_block(&function.body, &mut scope)
-        };
+        let result = self.scoped_block(&function.body, &mut scope);
         let result = result.and_then(|value| {
             if self.duration_only && !need_result {
                 return Ok(value);
             }
             let ty = self
-                .loaded
-                .iter()
-                .find(|module| module.id == function.module)
-                .and_then(|module| module.checked.exports.get(&function.name))
-                .and_then(|ty| {
-                    if let Type::Function(signature) = ty {
-                        Some(signature.result.substitute(&self.type_bindings))
-                    } else {
-                        None
-                    }
-                });
+                .function_signature(&function)
+                .map(|signature| signature.result.substitute(&self.type_bindings));
             value
                 .map(|value| {
                     if let Some(ty) = &ty {
@@ -1743,6 +1821,14 @@ impl Runtime<'_, '_> {
                 .copied()
                 .expect("active function horizon")
                 .max(self.cursor);
+            if !self.duration_only && let Some(declared)=declared_duration {
+                let annotation=function.duration.as_ref().expect("declared duration");
+                let actual=math::arithmetic("-",self.cursor,function_start).map_err(|error|self.error("S304",error,span))?;
+                if horizon>self.cursor {
+                    return Err(self.error("S304",format!("@duration contract for '{}' requires an exact blocking duration, but background work continues beyond the function's cursor; wait for that work to finish inside the function or remove the exact @duration contract",function.name),annotation.span));
+                }
+                if declared!=actual {return Err(self.error("S304",format!("@duration contract for '{}' declares {declared}s, but its body consumed {actual}s; update the contract or the function body",function.name),annotation.span));}
+            }
             self.map_time_until(
                 function_start,
                 horizon,

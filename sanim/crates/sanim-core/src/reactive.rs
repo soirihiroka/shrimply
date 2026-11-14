@@ -450,7 +450,10 @@ impl ReactiveGraph {
                 } else {
                     Type::union(types)?
                 };
-                Ok((Type::List(Box::new(element)), depth + 1))
+                Ok((
+                    Type::List(Box::new(element), crate::ListLength::Exact(values.len())),
+                    depth + 1,
+                ))
             }
             Node::Record { fields } => {
                 let mut depth = 0;
@@ -470,6 +473,7 @@ impl ReactiveGraph {
                 if !matches!(
                     cell.ty.as_ref(),
                     Type::Numeric(_)
+                        | Type::RefinedNumeric(_)
                         | Type::Fraction
                         | Type::Bool
                         | Type::String
@@ -478,7 +482,7 @@ impl ReactiveGraph {
                         | Type::Color
                         | Type::Font
                         | Type::Code(_)
-                        | Type::List(_)
+                        | Type::List(_, _)
                         | Type::Record(_)
                         | Type::Option(_)
                         | Type::Enum { .. }
@@ -1022,7 +1026,7 @@ impl Sampler<'_> {
             }
             Node::Constant(value) => value.clone(),
             Node::List { values } => {
-                let Type::List(ty) = &graph.nodes[id].ty else {
+                let Type::List(ty, _) = &graph.nodes[id].ty else {
                     unreachable!("validated retained list")
                 };
                 Value::List(crate::List::typed(
@@ -1118,7 +1122,11 @@ fn state_value_bytes(ty: &Type, value: &Value) -> Result<usize, String> {
 fn interpolated_type(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::Numeric(_) | Type::Fraction | Type::Color | Type::Vector(2..=4, Some(_))
+        Type::Numeric(_)
+            | Type::RefinedNumeric(_)
+            | Type::Fraction
+            | Type::Color
+            | Type::Vector(2..=4, Some(_))
     )
 }
 fn leaf_type(value: &Value) -> Result<Type, String> {
@@ -1188,7 +1196,8 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
         | Property::CodeSpans
         | Property::CodeLineHeight
         | Property::CodeTabSize
-        | Property::CodeLineNumbers => unreachable!("CodeView properties validated above"),
+        | Property::CodeLineNumbers
+        | Property::CodeScopeIndicators => unreachable!("CodeView properties validated above"),
         Property::Overflow | Property::OverflowX | Property::OverflowY => {
             crate::Overflow::ty().accepts(ty)
         }

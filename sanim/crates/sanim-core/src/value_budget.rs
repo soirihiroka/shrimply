@@ -8,12 +8,14 @@ pub struct Budget {
     assets: imbl::OrdMap<usize, Weak<Vec<u8>>>,
     media: imbl::OrdMap<usize, Weak<crate::media::Asset>>,
     text: imbl::OrdMap<usize, Weak<str>>,
+    range_origins: imbl::OrdMap<usize, Weak<crate::code::view::RangeOrigin>>,
 }
 impl Budget {
     pub fn metadata_bytes(&self) -> usize {
         self.assets.len() * FONT_ENTRY_BYTES
             + self.media.len() * MEDIA_ENTRY_BYTES
             + self.text.len() * TEXT_ENTRY_BYTES
+            + self.range_origins.len() * RANGE_ORIGIN_ENTRY_BYTES
     }
     fn contains(&self, bytes: &Arc<Vec<u8>>) -> bool {
         self.assets
@@ -22,6 +24,9 @@ impl Budget {
             .is_some_and(|existing| Arc::ptr_eq(&existing, bytes))
     }
 }
+const RANGE_ORIGIN_ENTRY_BYTES: usize =
+    std::mem::size_of::<imbl::OrdMap<usize, Weak<crate::code::view::RangeOrigin>>>()
+        + std::mem::size_of::<(usize, Weak<crate::code::view::RangeOrigin>)>();
 const TEXT_ENTRY_BYTES: usize = std::mem::size_of::<imbl::OrdMap<usize, Weak<str>>>()
     + std::mem::size_of::<(usize, Weak<str>)>();
 const MEDIA_ENTRY_BYTES: usize =
@@ -116,6 +121,39 @@ pub fn charge_with_budget(
         }
         Ok(())
     }
+    fn code_range(
+        range: &crate::code::view::Range,
+        bytes: &mut usize,
+        items: &mut usize,
+        budget: &mut Budget,
+    ) -> Result<(), String> {
+        let Some(origin) = &range.origin else {
+            return Ok(());
+        };
+        let id = Arc::as_ptr(origin) as usize;
+        if budget
+            .range_origins
+            .get(&id)
+            .and_then(Weak::upgrade)
+            .is_some_and(|previous| Arc::ptr_eq(&previous, origin))
+        {
+            return Ok(());
+        }
+        take(
+            bytes,
+            items,
+            RANGE_ORIGIN_ENTRY_BYTES
+                + std::mem::size_of_val(origin.as_ref())
+                + std::mem::size_of::<(usize, usize)>(),
+        )?;
+        shared_text(&origin.owner, bytes, items, budget)?;
+        shared_text(&origin.revision, bytes, items, budget)?;
+        if let Some(scope) = &origin.scope_id {
+            shared_text(scope, bytes, items, budget)?;
+        }
+        budget.range_origins.insert(id, Arc::downgrade(origin));
+        Ok(())
+    }
     fn code_options(
         options: &crate::code::view::Options,
         bytes: &mut usize,
@@ -130,6 +168,9 @@ pub fn charge_with_budget(
             depth,
             fonts,
         )?;
+        for span in &options.spans {
+            code_range(&span.range, bytes, items, fonts)?;
+        }
         let metadata = std::mem::size_of_val(options)
             + std::mem::size_of_val(options.spans.as_slice())
             + options
@@ -200,6 +241,9 @@ pub fn charge_with_budget(
                         })
                     {
                         code_options(&snapshot.options, bytes, items, depth - 1, fonts)?;
+                    }
+                    for range in snapshot.selection.iter() {
+                        code_range(range, bytes, items, fonts)?;
                     }
                     let metadata = std::mem::size_of_val(snapshot.as_ref())
                         + snapshot

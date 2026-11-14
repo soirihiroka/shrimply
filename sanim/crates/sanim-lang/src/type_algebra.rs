@@ -3,50 +3,85 @@ use sanim_core::Type;
 use std::cell::Cell;
 
 pub(crate) fn intersection(left: Type, right: Type, budget: &Cell<usize>) -> Result<Type, String> {
+    intersection_inner(left, right, budget)?
+        .ok_or_else(|| "type intersection is empty; no value satisfies all alternatives".into())
+}
+fn intersection_inner(
+    left: Type,
+    right: Type,
+    budget: &Cell<usize>,
+) -> Result<Option<Type>, String> {
     charge(&left, budget)?;
     if left == right {
-        return Ok(left);
+        return Ok(Some(left));
+    }
+    if let (Some(left), Some(right)) = (left.numeric_domain(), right.numeric_domain()) {
+        return Ok(left.intersection(&right).map(Type::RefinedNumeric));
     }
     match (left, right) {
-        (Type::Union(values), right) => Type::union(
+        (Type::Union(values), right) => union_present(
             values
                 .into_iter()
-                .map(|left| intersection(left, copy(&right, budget)?, budget))
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(|left| intersection_inner(left, copy(&right, budget)?, budget)),
         ),
-        (left, Type::Union(values)) => Type::union(
+        (left, Type::Union(values)) => union_present(
             values
                 .into_iter()
-                .map(|right| intersection(copy(&left, budget)?, right, budget))
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(|right| intersection_inner(copy(&left, budget)?, right, budget)),
         ),
         (Type::Record(mut left), Type::Record(right)) => {
             for (name, ty) in right {
                 let value = if let Some(previous) = left.remove(&name) {
-                    intersection(previous, ty, budget).map_err(|message| {
-                        format!("field '{name}' conflicts in record composition: {message}")
-                    })?
+                    let Some(value) =
+                        intersection_inner(previous, ty, budget).map_err(|message| {
+                            format!("field '{name}' conflicts in record composition: {message}")
+                        })?
+                    else {
+                        return Ok(None);
+                    };
+                    value
                 } else {
                     ty
                 };
                 left.insert(name, value);
             }
-            Ok(Type::Record(left))
+            Ok(Some(Type::Record(left)))
         }
         (left, right) => Err(format!(
             "cannot compose incompatible types {left} and {right}; '&' combines record fields, and repeated fields must have compatible types"
         )),
     }
 }
-
 pub(crate) fn difference(left: Type, right: Type, budget: &Cell<usize>) -> Result<Type, String> {
+    difference_inner(left, right, budget)?.ok_or_else(|| {
+        "type subtraction is empty; it removes every alternative in the base type".into()
+    })
+}
+fn difference_inner(left: Type, right: Type, budget: &Cell<usize>) -> Result<Option<Type>, String> {
+    charge(&left, budget)?;
+    if let (Some(left), Some(right)) = (left.numeric_domain(), right.numeric_domain()) {
+        return union_present(
+            left.difference(&right)?
+                .into_iter()
+                .map(|domain| Ok(Some(Type::RefinedNumeric(domain)))),
+        );
+    }
     match (left, right) {
-        (Type::Union(values), right) => Type::union(
+        (Type::Union(values), right) => union_present(
             values
                 .into_iter()
-                .map(|left| difference(left, copy(&right, budget)?, budget))
-                .collect::<Result<Vec<_>, _>>()?,
+                .map(|left| difference_inner(left, copy(&right, budget)?, budget)),
         ),
+        (left, Type::Union(values)) => {
+            let mut output = Some(left);
+            for right in values {
+                let Some(left) = output else {
+                    break;
+                };
+                output = difference_inner(left, right, budget)?;
+            }
+            Ok(output)
+        }
         (Type::Record(mut fields), Type::Record(removed)) => {
             for name in removed.keys() {
                 if fields.remove(name).is_none() {
@@ -56,11 +91,27 @@ pub(crate) fn difference(left: Type, right: Type, budget: &Cell<usize>) -> Resul
                     ));
                 }
             }
-            Ok(Type::Record(fields))
+            Ok(Some(Type::Record(fields)))
         }
         (left, right) => Err(format!(
             "record subtraction requires record operands, found {left} - {right}; write Base - {{field:Type}}"
         )),
+    }
+}
+/// Bottom remains internal while distributing; only a wholly empty public type fails.
+fn union_present(
+    values: impl IntoIterator<Item = Result<Option<Type>, String>>,
+) -> Result<Option<Type>, String> {
+    let values = values
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        Ok(None)
+    } else {
+        Type::union(values).map(Some)
     }
 }
 
@@ -94,7 +145,10 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
             }
             Type::union(fields)
         }
-        Type::DataFrame { .. } if name == "columns" => Ok(Type::List(Box::new(Type::String))),
+        Type::DataFrame { .. } if name == "columns" => Ok(Type::List(
+            Box::new(Type::String),
+            sanim_core::ListLength::Unknown,
+        )),
         Type::Dict | Type::Data => Err(format!(
             "dictionary values use brackets: write value[\"{name}\"] instead of value.{name}"
         )),
@@ -115,9 +169,13 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
         Type::Fraction if matches!(name, "numerator" | "denominator") => {
             Ok(Type::Numeric(Unit::Number))
         }
-        Type::Matrix4 if name == "rows" => Ok(Type::List(Box::new(Type::List(Box::new(
-            Type::Numeric(Unit::Number),
-        ))))),
+        Type::Matrix4 if name == "rows" => Ok(Type::List(
+            Box::new(Type::List(
+                Box::new(Type::Numeric(Unit::Number)),
+                sanim_core::ListLength::Unknown,
+            )),
+            sanim_core::ListLength::Unknown,
+        )),
         Type::Element
             if sanim_core::code::view::INPUTS
                 .iter()
@@ -144,7 +202,10 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
             "overflow" | "overflow_x" | "overflow_y" => Ok(sanim_core::Overflow::ty()),
             _ => Err(format!("unknown element property '{name}'")),
         },
-        Type::Array(_) if name == "shape" => Ok(Type::List(Box::new(Type::Numeric(Unit::Number)))),
+        Type::Array(_) if name == "shape" => Ok(Type::List(
+            Box::new(Type::Numeric(Unit::Number)),
+            sanim_core::ListLength::Unknown,
+        )),
         other => Err(format!("{other} has no field '{name}'")),
     }
 }

@@ -7,7 +7,7 @@ fn discriminated_union_validation_benchmark() {
     const ROWS: usize = 4096;
     const WORDS: usize = 32;
     const SAMPLES: usize = 15;
-    let samples = Type::List(Box::new(Type::String));
+    let samples = Type::List(Box::new(Type::String), sanim_core::ListLength::Unknown);
     let shape = |kind| {
         Type::Record(BTreeMap::from([
             ("kind".to_owned(), kind),
@@ -15,13 +15,16 @@ fn discriminated_union_validation_benchmark() {
         ]))
     };
     let row = shape(Type::String);
-    let expected = Type::List(Box::new(
-        Type::union([
-            shape(Type::StringLiteral("before".into())),
-            shape(Type::StringLiteral("after".into())),
-        ])
-        .unwrap(),
-    ));
+    let expected = Type::List(
+        Box::new(
+            Type::union([
+                shape(Type::StringLiteral("before".into())),
+                shape(Type::StringLiteral("after".into())),
+            ])
+            .unwrap(),
+        ),
+        sanim_core::ListLength::Unknown,
+    );
     let words = Value::List(List::typed(
         Type::String,
         (0..WORDS)

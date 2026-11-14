@@ -22,6 +22,7 @@ pub fn parameter_type(ty: &Type) -> bool {
         | Type::String
         | Type::StringLiteral(_)
         | Type::Numeric(_)
+        | Type::RefinedNumeric(_)
         | Type::Fraction
         | Type::Data => true,
         Type::Option(inner) => **inner == Type::Unknown || parameter_type(inner),

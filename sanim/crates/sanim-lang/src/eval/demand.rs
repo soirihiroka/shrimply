@@ -7,12 +7,17 @@ impl Runtime<'_, '_> {
     pub(super) fn should_defer(&self, expression: &Expr, env: &Env, span: Span) -> bool {
         if self.preparation != crate::Preparation::Demand
             || self.duration_only
+            || self.expression_mutates(expression)
+            || self.expression_schedules(expression)
             || self
                 .binding_type(span)
                 .is_ok_and(|ty| ty.contains_element() || ty.contains_function())
         {
             return false;
         }
+        let Some(module) = self.loaded.iter().find(|module| module.id == self.module) else {
+            return false;
+        };
         let mut pure = true;
         let mut expensive = false;
         expression.visit(&mut |node| match &node.kind {
@@ -36,22 +41,19 @@ impl Runtime<'_, '_> {
                 expensive |= matches!(env.get(name), Some(Binding::Deferred(_)));
             }
             ExprKind::Call { callee, args, .. } => {
-                let builtin = match &callee.kind {
-                    ExprKind::Name(name) => prelude::builtin(name),
-                    ExprKind::Member(_, _) => self
-                        .checked_native_method(callee.span)
-                        .and_then(|method| prelude::builtin(&method.name)),
-                    _ => None,
-                };
-                let Some(builtin) = builtin else {
+                let Some(call) =
+                    crate::timing::builtin_call(callee, args, &module.checked.native_methods)
+                else {
                     pure = false;
                     return;
                 };
+                let builtin = call.builtin;
 
-                pure &= !builtin.call_schedules_after(
-                    args,
-                    usize::from(matches!(callee.kind, ExprKind::Member(_, _))),
-                ) && !builtin.result.contains_element()
+                // Like direct user calls, callbacks can read module globals not
+                // captured by the deferred expression's lexical snapshot.
+                pure &= crate::list_functions::callback_argument(&call).is_none()
+                    && !call.schedules()
+                    && !builtin.result.contains_element()
                     && !matches!(builtin.execute, prelude::Execution::Assertion);
                 expensive |= self
                     .checked_native_method(callee.span)

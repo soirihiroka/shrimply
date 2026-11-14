@@ -220,7 +220,7 @@ fn generated_code_glyphs_keep_their_constructor_owner_after_patch_and_fold() {
 </CodeView>
 add(view)
 view.patch(src="example.py.patch",duration=500ms)
-view.fold(level=1,duration=200ms)
+view.range(name="example").fold(duration=200ms)
 "#,
     );
     files.insert(

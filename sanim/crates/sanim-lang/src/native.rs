@@ -200,10 +200,7 @@ pub(crate) fn range(
         .map(Number::usize)
         .transpose()?
         .unwrap_or(1);
-    if step == 0 {
-        return Err("range step must be positive".into());
-    }
-    let count = end.saturating_sub(start).div_ceil(step);
+    let count = sanim_core::math::range_count(start, end, step)?;
     if count > limits.max_iterations {
         return Err(format!(
             "range would create {count} items; iteration limit is {}",

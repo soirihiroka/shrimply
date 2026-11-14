@@ -86,7 +86,7 @@ pub(crate) fn register(builtins: &mut Vec<Builtin>) {
 }
 
 fn check(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
-    let Type::List(inner) = &actuals[0] else {
+    let Type::List(inner, length) = &actuals[0] else {
         return Err(format!("items must be List<T>, found {}", actuals[0]));
     };
     let inner = if let Some(index) = builtin
@@ -107,7 +107,17 @@ fn check(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
     } else {
         inner.as_ref().clone()
     };
-    Ok(Type::List(Box::new(inner)))
+    let length = match builtin.name {
+        "append" | "insert" => length.checked_add(sanim_core::ListLength::Exact(1))?,
+        "pop" | "popleft" => match length {
+            sanim_core::ListLength::Exact(value) => {
+                sanim_core::ListLength::Exact(value.saturating_sub(1))
+            }
+            _ => sanim_core::ListLength::Unknown,
+        },
+        _ => *length,
+    };
+    Ok(Type::List(Box::new(inner), length))
 }
 
 pub(crate) fn execute(

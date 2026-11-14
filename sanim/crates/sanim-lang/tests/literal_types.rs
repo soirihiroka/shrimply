@@ -132,7 +132,7 @@ fn imported_data_checks_literal_fields_and_nested_containers() {
     assert!(sanim_core::validate_value(&literal, &Value::String("after".into())).is_err());
     assert!(
         sanim_core::validate_value(
-            &Type::List(Box::new(literal)),
+            &Type::List(Box::new(literal), sanim_core::ListLength::Unknown),
             &Value::List(sanim_core::List::typed(
                 Type::String,
                 [Value::String("after".into())].into_iter().collect()

@@ -62,7 +62,10 @@ fn dynamic_conversion_checks_actual_values() {
 #[test]
 fn sql_default_result_is_dictionary_rows() {
     let p=run("type Sample = {name: String, value: Number}\nlet samples = read<List<Sample>>(\"rows.csv\")\nlet grouped = query(\"SELECT name, SUM(value) AS total FROM samples GROUP BY name ORDER BY name\", tables= {samples=samples})\nfor row in grouped { let total = decode<Number>(row[\"total\"]); assert(total >= 2) }\n").unwrap();
-    assert_eq!(p.bindings["grouped"].ty(), Type::List(Box::new(Type::Dict)));
+    assert_eq!(
+        p.bindings["grouped"].ty(),
+        Type::List(Box::new(Type::Dict), sanim_core::ListLength::Exact(2))
+    );
     assert_eq!(p.bindings["grouped"].list().unwrap().len(), 2);
 }
 #[test]

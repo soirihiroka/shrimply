@@ -18,11 +18,11 @@ let code=CodeView(code=r"""{text}""",lang="python",line_numbers=numbers,width=22
 let pane=<Box w-240 h-100 overflow-y-scroll>{{code}}</Box>
 add(pane)
 wait(1s)
-code.fold(level=1,duration=1s,ease="linear")
+code.range(name="task_0").fold(duration=1s,ease="linear")
 wait(1s)
 numbers=false
 wait(1s)
-code.unfold(level=1,duration=1s,ease="linear")
+code.range(name="task_0").unfold(duration=1s,ease="linear")
 wait(1s)
 numbers=true
 wait(1s)

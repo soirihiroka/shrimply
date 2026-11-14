@@ -2,6 +2,7 @@ use fraction::{Fraction, Sign};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 pub mod chart;
+pub mod domain;
 pub mod format;
 pub mod functions;
 pub mod linear;
@@ -11,6 +12,13 @@ pub mod paint;
 pub mod scroll;
 
 const MAX_VISUAL_DENOMINATOR: u64 = 1_000_000;
+
+pub fn range_count(start: usize, end: usize, step: usize) -> Result<usize, String> {
+    if step == 0 {
+        return Err("range step must be positive".into());
+    }
+    Ok(end.saturating_sub(start).div_ceil(step))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Unit {

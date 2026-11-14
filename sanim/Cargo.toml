@@ -35,6 +35,7 @@ rusqlite = { version = "0.40", features = ["bundled", "hooks", "limits", "column
 serde_yaml_ng = "0.10"
 notify = "8"
 imbl = { version = "7.0.2", features = ["serde"] }
+regex = "1"
 taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox"] }
 
 [profile.release]

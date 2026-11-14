@@ -56,7 +56,10 @@ impl TryFrom<ListViewsData> for ListViews {
                     crate::reactive::MAX_REACTIVE_DEPTH,
                 )?;
                 crate::validate_value(
-                    &Type::List(Box::new(snapshot.items.element_type.as_ref().clone())),
+                    &Type::List(
+                        Box::new(snapshot.items.element_type.as_ref().clone()),
+                        crate::ListLength::Unknown,
+                    ),
                     &value,
                 )?;
                 if let Some(event) = event {

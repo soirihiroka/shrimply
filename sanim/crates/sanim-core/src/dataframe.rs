@@ -132,11 +132,19 @@ pub fn scalar_type(ty: &Type) -> bool {
         return true;
     }
     match ty {
-        Type::Bool | Type::String | Type::StringLiteral(_) | Type::Numeric(_) => true,
+        Type::Bool
+        | Type::String
+        | Type::StringLiteral(_)
+        | Type::Numeric(_)
+        | Type::RefinedNumeric(_) => true,
         Type::Option(inner) => {
             matches!(
                 inner.as_ref(),
-                Type::Bool | Type::String | Type::StringLiteral(_) | Type::Numeric(_)
+                Type::Bool
+                    | Type::String
+                    | Type::StringLiteral(_)
+                    | Type::Numeric(_)
+                    | Type::RefinedNumeric(_)
             )
         }
         _ => false,
@@ -655,10 +663,12 @@ pub fn aggregate_type(operation: &str, ty: &Type) -> Result<Type, String> {
     };
     match operation {
         "count" | "size" => Ok(Type::Numeric(Unit::Number)),
-        "mean" | "sum" if matches!(inner, Type::Numeric(_)) => Ok(if operation == "sum" {
-            inner.clone()
+        "mean" | "sum" if inner.numeric_unit().is_some() => Ok(if operation == "sum" {
+            Type::Numeric(inner.numeric_unit().expect("numeric aggregate"))
         } else {
-            Type::Option(Box::new(inner.clone()))
+            Type::Option(Box::new(Type::Numeric(
+                inner.numeric_unit().expect("numeric aggregate"),
+            )))
         }),
         "min" | "max" if scalar_type(inner) => Ok(Type::Option(Box::new(inner.clone()))),
         _ => Err(format!(

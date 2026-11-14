@@ -66,9 +66,9 @@ fn raw_markup_foreign_syntax_is_literal_dedented_and_ast_foldable() {
 </CodeView>
 add(view)
 wait(1s)
-view.fold(level=2,duration=1s)
+view.fold(range=view.range(line=3),duration=1s)
 wait(1s)
-view.unfold(level=2,duration=1s)
+view.unfold(range=view.range(line=3),duration=1s)
 wait(1s)"#,
     )
     .unwrap();
@@ -172,26 +172,22 @@ wait(1s)"####,
 fn style_selection_and_readable_errors_are_native_methods() {
     let prepared=prepare(r#"let view=CodeView(code=r"value = 1",lang="python",spans=[CodeSpan(CodeRange(1,1,1,6),CodeStyle(fill=Color("orange3"),bold=true,underline=true))])
 add(view)
-view.select(ranges=[view.find("value")],duration=1s)
+view.select(ranges=[view.range(regex="value")],duration=1s)
 view.style(theme=CodeTheme(rules=[CodeRule("number",CodeStyle(fill=Color("purple3")))]),duration=1s)
 wait(1s)"#).unwrap();
     assert_eq!(prepared.animation.duration, 3.into());
-    let invalid = prepare(
+    let error = prepare(
         r#"let v=CodeView(code="x=1",lang="python",spans=[CodeSpan(CodeRange(9,1,9,3),CodeStyle())])
 add(v)
 wait(1s)"#,
     )
-    .unwrap();
-    let error = invalid
-        .animation
-        .sample_with(0.into(), sanim_data::code::view::resolve_pending)
-        .unwrap_err();
-    assert!(error.contains("line 9"), "{error}");
+    .unwrap_err();
+    assert!(error.message.contains("line 9"), "{error}");
     for (source, expected) in [
         (
             r#"let v=CodeView(code="x=1",lang="python")
-v.fold(scope="missing")"#,
-            "scope",
+v.fold(range=v.range(name="missing"))"#,
+            "matched nothing",
         ),
         (
             r#"let v=CodeView(code="x=1",lang="python")
@@ -200,12 +196,12 @@ v.select(ranges=[CodeRange(1,0,1,1)])"#,
         ),
         (
             r#"let v=CodeView(code="x=1",lang="python")
-v.fold(level=0)"#,
+let invalid=v.range(level=0)"#,
             "1-based",
         ),
         (
             r#"let v=CodeView(code="anything")
-v.fold()"#,
+v.fold(range=CodeRange(1,1,1,1))"#,
             "no native syntax tree",
         ),
         (r#"let v=CodeView()"#, "exactly one"),
@@ -306,6 +302,97 @@ view.style(theme=CodeTheme())"#).unwrap_err();
 }
 
 #[test]
+fn gutters_default_hidden_and_timed_style_retains_both_visibility_endpoints() {
+    let source = r#"let view=<CodeView lang="python">print("hello")</CodeView>
+add(view)
+wait(1s)
+view.style(line_numbers=true,scope_indicators=true,duration=400ms,ease="linear")
+wait(600ms)
+view.style(line_numbers=false,duration=200ms,ease="linear")
+wait(800ms)"#;
+    let prepared = prepare(source).unwrap();
+    let Geometry::Code { options, .. } = prepared.animation.find("view").unwrap().geometry.as_ref()
+    else {
+        panic!("CodeView constructor")
+    };
+    assert!(!options.line_numbers && !options.scope_indicators);
+    let state = &prepared.animation.code_views["view"];
+    let showing = state
+        .presentation(Fraction::new(6u64, 5u64))
+        .unwrap()
+        .unwrap();
+    assert!(!showing.from.options.line_numbers && !showing.from.options.scope_indicators);
+    assert!(showing.to.options.line_numbers && showing.to.options.scope_indicators);
+    assert_eq!(showing.raw_progress, Fraction::new(1u64, 2u64));
+    let hiding = state
+        .presentation(Fraction::new(21u64, 10u64))
+        .unwrap()
+        .unwrap();
+    assert!(hiding.from.options.line_numbers && hiding.from.options.scope_indicators);
+    assert!(!hiding.to.options.line_numbers && hiding.to.options.scope_indicators);
+    assert_eq!(hiding.raw_progress, Fraction::new(1u64, 2u64));
+    assert_eq!(prepared.animation.duration, 3.into());
+    let mut files = MemorySources::default();
+    files.insert("main.sanim", source);
+    let duration = Engine::default()
+        .duration("main.sanim", &files, &Default::default())
+        .unwrap();
+    assert_eq!(duration.duration, prepared.animation.duration);
+
+    let mut serialized = serde_json::to_value(options).unwrap();
+    let fields = serialized.as_object_mut().unwrap();
+    fields.remove("line_numbers");
+    fields.remove("scope_indicators");
+    let decoded: sanim_core::code::view::Options = serde_json::from_value(serialized).unwrap();
+    assert!(!decoded.line_numbers && !decoded.scope_indicators);
+}
+
+#[test]
+fn gutter_style_calls_use_the_shared_default_duration_and_reject_invalid_flags() {
+    let prepared = prepare("let view=CodeView(code=r\"x=1\",lang=\"python\")\nview.style(line_numbers=true,scope_indicators=true)").unwrap();
+    assert_eq!(prepared.animation.duration, Fraction::new(3u64, 10u64));
+    for flag in ["line_numbers", "scope_indicators"] {
+        let error = prepare(&format!(
+            "let view=CodeView(code=r\"x=1\",lang=\"python\",{flag}=1)"
+        ))
+        .unwrap_err();
+        assert!(error.message.contains("Bool"), "{error}");
+    }
+}
+
+#[test]
+fn scope_indicator_signals_retain_types_and_timed_style_has_a_single_writer() {
+    let prepared = prepare(
+        r#"mut scopes=false
+let view=CodeView(code=r"x=1",lang="python",scope_indicators=scopes)
+add(view)
+wait(1s)
+scopes=true
+wait(1s)"#,
+    )
+    .unwrap();
+    let view = prepared.animation.find("view").unwrap();
+    for (time, expected) in [(0, false), (1, true)] {
+        assert_eq!(
+            prepared
+                .animation
+                .sample_property(view, Property::CodeScopeIndicators, time.into())
+                .unwrap()
+                .boolean()
+                .unwrap(),
+            expected
+        );
+    }
+    for flag in ["line_numbers", "scope_indicators"] {
+        let error = prepare(&format!("mut showing=false\nlet view=CodeView(code=r\"x=1\",lang=\"python\",{flag}=showing)\nview.style({flag}=true,duration=500ms)")).unwrap_err();
+        assert!(
+            error.message.contains(&format!("signal-controlled {flag}")),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn displayed_sanim_has_a_fixed_budget_independent_of_executable_module_limits() {
     let mut files = MemorySources::default();
     let displayed = (0..50)
@@ -369,7 +456,7 @@ fn large_code_stays_unshaped_until_needed_and_can_be_folded_before_first_layout(
         *pending && children.is_empty(),
         "unused source must not build glyphs"
     );
-    files.insert("main.sanim","let view=<CodeView src=\"large.py\" line_numbers={false}/>\nadd(view)\nview.fold(level=1,duration=0s)\nwait(1s)");
+    files.insert("main.sanim","let view=<CodeView src=\"large.py\" line_numbers={false}/>\nadd(view)\nfor selected in view.ranges() { selected.fold(duration=0s) }\nwait(1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();
@@ -416,8 +503,9 @@ fn changed_presentation_metadata_and_checkpoint_roots_obey_byte_limits() {
     let mut files = MemorySources::default();
     let changed = r#"let view=<CodeView lang="python">x = 1</CodeView>
 add(view)
+let selection=[CodeRange(1,1,1,2)]
 repeat 100 {
-    view.select(ranges=[CodeRange(1,1,1,2)],duration=1ms)
+    view.select(ranges=selection,duration=1ms)
     view.select(duration=1ms)
 }
 wait(1s)"#;
@@ -427,8 +515,11 @@ wait(1s)"#;
     let error = engine
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_err();
+    // Event storage spends the same retained-data budget as subsequent call
+    // arguments, so either check may be the first to reject the next edit.
     assert!(
-        error.message.contains("CodeView timeline metadata"),
+        error.message.contains("CodeView timeline metadata")
+            || error.message.contains("generated value byte budget"),
         "{error}"
     );
     files.insert("main.sanim", changed.replace("100", "4"));

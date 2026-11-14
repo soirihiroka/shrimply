@@ -5,6 +5,7 @@ use crate::{Fraction, Number, Type, Unit, Value};
 pub fn scalar_unit(ty: &Type) -> Option<Unit> {
     match ty {
         Type::Numeric(unit) => Some(*unit),
+        Type::RefinedNumeric(domain) => Some(domain.unit),
         Type::Fraction => Some(Unit::Number),
         Type::BoundedVariable(_, bound) => match bound.as_ref() {
             crate::TypeBound::Numeric => Some(Unit::Number),
@@ -41,6 +42,7 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
     if matches!(op, "==" | "!=")
         && (a.accepts(b)
             || b.accepts(a)
+            || matches!((a,b),(Type::List(x,_),Type::List(y,_)) if **x==Type::Unknown || **y==Type::Unknown || x.accepts(y) || y.accepts(x))
             || Type::String.accepts(a) && Type::String.accepts(b)
             || scalar_unit(a).is_some() && scalar_unit(a) == scalar_unit(b))
     {
@@ -64,6 +66,10 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
             && scalar_unit(variable) == Some(Unit::Number)
             && scalar_unit(other) == Some(Unit::Number)
         {
+            if matches!(variable,Type::BoundedVariable(_,bound) if matches!(bound.as_ref(),crate::TypeBound::Type(ty) if matches!(ty.as_ref(),Type::RefinedNumeric(_))))
+            {
+                return Ok(Type::Numeric(Unit::Number));
+            }
             if other == variable || matches!(other, Type::Numeric(Unit::Number)) {
                 return Ok(variable.clone());
             }
@@ -96,14 +102,18 @@ pub fn binary_type(op: &str, a: &Type, b: &Type) -> Result<Type, String> {
         return Ok(Type::String);
     }
     if op == "+"
-        && let (Type::List(x), Type::List(_)) = (a, b)
-        && a.accepts(b)
+        && let (Type::List(x, lx), Type::List(y, ly)) = (a, b)
+        && (**x == Type::Unknown || **y == Type::Unknown || x.accepts(y))
     {
-        return Ok(if **x == Type::Unknown {
-            b.clone()
-        } else {
-            a.clone()
-        });
+        let length = lx.checked_add(*ly)?;
+        return Ok(Type::List(
+            if **x == Type::Unknown {
+                y.clone()
+            } else {
+                x.clone()
+            },
+            length,
+        ));
     }
     if matches!(op, "+" | "-")
         && let (Type::Vector(n, x), Type::Vector(m, y)) = (a, b)
@@ -155,7 +165,15 @@ pub fn unary_type(op: &str, ty: &Type) -> Result<Type, String> {
     if matches!(op, "+" | "-")
         && (scalar_unit(ty).is_some() || matches!(ty, Type::Vector(..) | Type::Matrix4))
     {
-        return Ok(ty.clone());
+        if matches!(ty,Type::BoundedVariable(_,bound) if matches!(bound.as_ref(),crate::TypeBound::Type(ty) if matches!(ty.as_ref(),Type::RefinedNumeric(_))))
+        {
+            return Ok(Type::Numeric(Unit::Number));
+        }
+        return Ok(if let Type::RefinedNumeric(domain) = ty {
+            Type::Numeric(domain.unit)
+        } else {
+            ty.clone()
+        });
     }
     Err(format!("operator '{op}' is not defined for {ty}"))
 }
@@ -241,7 +259,7 @@ pub fn binary(op: &str, a: Value, b: Value) -> Result<Value, String> {
     match (a, b) {
         (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}").into())),
         (Value::List(a), Value::List(b)) => {
-            let Type::List(element_type) = ty else {
+            let Type::List(element_type, _) = ty else {
                 unreachable!("checked list concatenation type")
             };
             let mut values = a.values;

@@ -286,7 +286,7 @@ fn parse_tree(
         };
         let start_line = node.start_position().row + 1;
         let end_line = node.end_position().row + usize::from(node.end_position().column > 0);
-        if end_line <= start_line || node.has_error() {
+        if node.has_error() {
             continue;
         }
         while parents
@@ -299,8 +299,7 @@ fn parse_tree(
             .last()
             .map(|(_, _, id)| id.clone())
             .unwrap_or_else(|| Arc::from(""));
-        let name = node
-            .child_by_field_name("name")
+        let name = declaration_name(node)
             .and_then(|node| node.utf8_text(document.text.as_bytes()).ok())
             .unwrap_or("");
         let label = if name.is_empty() {
@@ -325,6 +324,8 @@ fn parse_tree(
             label: label.into(),
             start_line,
             end_line,
+            start_byte: node.start_byte(),
+            end_byte: node.end_byte(),
             depth: parents.len() + 1,
         });
         parents.push((start, end, id));
@@ -339,6 +340,43 @@ fn parse_tree(
         bytes: cache::bytes(&document),
         document: Arc::new(document),
     }))
+}
+
+// Grammars expose declaration names through different native fields. Follow
+// declarators, not source-text heuristics, so qualified C++ names stay intact.
+fn declaration_name(node: Node<'_>) -> Option<Node<'_>> {
+    if let Some(name) = node.child_by_field_name("name") {
+        return Some(name);
+    }
+    if node.kind() == "impl_item" {
+        return node.child_by_field_name("type");
+    }
+    if matches!(node.kind(), "arrow_function" | "function_expression")
+        && let Some(parent) = node
+            .parent()
+            .filter(|parent| parent.kind() == "variable_declarator")
+    {
+        return parent.child_by_field_name("name");
+    }
+    let mut declarator = node.child_by_field_name("declarator")?;
+    for _ in 0..MAX_SYNTAX_DEPTH {
+        if matches!(
+            declarator.kind(),
+            "identifier"
+                | "field_identifier"
+                | "qualified_identifier"
+                | "scoped_identifier"
+                | "destructor_name"
+                | "operator_name"
+        ) {
+            return Some(declarator);
+        }
+        if let Some(name) = declarator.child_by_field_name("name") {
+            return Some(name);
+        }
+        declarator = declarator.child_by_field_name("declarator")?;
+    }
+    None
 }
 
 fn captures(query: &Query, root: Node<'_>, source: &[u8]) -> Result<Vec<Capture>, String> {

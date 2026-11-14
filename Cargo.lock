@@ -5279,6 +5279,7 @@ name = "sanim-lang"
 version = "0.1.0"
 dependencies = [
  "imbl",
+ "regex",
  "sanim-core",
  "sanim-data",
  "serde",

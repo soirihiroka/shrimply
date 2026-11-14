@@ -6,8 +6,11 @@ use crate::{
 use sanim_core::*;
 
 pub(crate) fn register(out: &mut Vec<Builtin>) {
-    let target = Type::union([Type::Element, Type::List(Box::new(Type::Element))])
-        .expect("element target union");
+    let target = Type::union([
+        Type::Element,
+        Type::List(Box::new(Type::Element), sanim_core::ListLength::Unknown),
+    ])
+    .expect("element target union");
     let position = Type::union([
         Type::Vector(2, Some(Unit::Length)),
         Type::Vector(2, Some(Unit::Percent)),

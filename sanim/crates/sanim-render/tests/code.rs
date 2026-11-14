@@ -14,9 +14,9 @@ print(main())
 let view=CodeView(code=source,lang="python",font_size=18pt,line_numbers=false)
 add(view)
 wait(1s)
-view.fold(level=1,duration=1s)
+view.range(name="main").fold(duration=1s)
 wait(1s)
-view.unfold(level=1,duration=1s)
+view.range(name="main").unfold(duration=1s)
 wait(1s)"#,
     );
     Engine::new(Viewport {
@@ -95,9 +95,9 @@ wait(1s)
 number=2
 size=18pt
 tint=Color("orange3")
-view.fold(level=1,duration=1s)
+view.range(name="main").fold(duration=1s)
 wait(1s)
-view.unfold(level=1,duration=1s)
+view.range(name="main").unfold(duration=1s)
 wait(1s)"#);
     let prepared = Engine::new(Viewport {
         width: 640,

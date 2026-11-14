@@ -297,7 +297,7 @@ pub(crate) fn concrete_schema(ty: &Type) -> bool {
         Type::Unknown | Type::Variable(_) | Type::BoundedVariable(..) | Type::Vector(_, None) => {
             false
         }
-        Type::List(inner) | Type::Option(inner) | Type::Array(inner) => concrete_schema(inner),
+        Type::List(inner, _) | Type::Option(inner) | Type::Array(inner) => concrete_schema(inner),
         Type::Record(fields) => fields.values().all(concrete_schema),
         Type::Union(values) => values.iter().all(concrete_schema),
         Type::Enum { variants, .. } => variants.values().flatten().all(concrete_schema),

@@ -85,15 +85,15 @@ fn parse_sanim(mut document: Document) -> Result<Document, String> {
                 index
             );
             let end_line = line_ends.partition_point(|end| *end < statement.span.end) + 1;
-            if end_line > statement.span.line {
-                scopes.push(Scope {
-                    id: Arc::from(id.as_str()),
-                    label: label.into(),
-                    start_line: statement.span.line,
-                    end_line,
-                    depth,
-                });
-            }
+            scopes.push(Scope {
+                id: Arc::from(id.as_str()),
+                label: label.into(),
+                start_line: statement.span.line,
+                end_line,
+                start_byte: statement.span.start,
+                end_byte: statement.span.end,
+                depth,
+            });
             for (branch, body) in bodies.into_iter().enumerate() {
                 walk(
                     body,

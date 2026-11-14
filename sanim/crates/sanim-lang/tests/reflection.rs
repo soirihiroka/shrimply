@@ -242,7 +242,7 @@ fn compound_types_keep_full_schema_and_validate_all_nested_values() {
         .prepare_json("main.sanim", &files, &inputs)
         .unwrap();
     assert!(
-        matches!(p.reflected[0].ty.as_ref(),Type::Record(fields) if matches!(fields["palette"],Type::List(_)))
+        matches!(p.reflected[0].ty.as_ref(),Type::Record(fields) if matches!(fields["palette"],Type::List(_, _)))
     );
     let bad = BTreeMap::from([(
         "plot.style".into(),
@@ -445,7 +445,10 @@ fn contextual_types_resolve_optional_and_empty_expression_defaults() {
     );
     assert_eq!(
         default.reflected[1].ty.as_ref(),
-        &Type::List(Box::new(Type::Numeric(Unit::Number)))
+        &Type::List(
+            Box::new(Type::Numeric(Unit::Number)),
+            sanim_core::ListLength::Unknown
+        )
     );
     assert_eq!(default.reflected[0].default, Value::None);
     let overridden = engine

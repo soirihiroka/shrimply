@@ -75,7 +75,10 @@ fn parenthesized_type_difference_composes_with_intersections() {
 #[test]
 fn empty_csv_and_sql_lists_preserve_the_full_composed_row_schema() {
     let p=run("type RunInfo={run:String,n:Number}\ntype Measurements={x:Number,y:Number}\ntype Sample=RunInfo&Measurements\nlet rows=read<List<Sample>>(\"samples.csv\")\nlet selected=query<Sample>(\"SELECT run,n,x,y FROM rows WHERE 0\",tables={rows=rows})\nassert(len(rows)==0)\nassert(len(selected)==0)\n").unwrap();
-    let expected = Type::List(Box::new(p.types["Sample"].clone()));
+    let expected = Type::List(
+        Box::new(p.types["Sample"].clone()),
+        sanim_core::ListLength::Exact(0),
+    );
     assert_eq!(p.bindings["rows"].ty(), expected);
     assert_eq!(p.bindings["selected"].ty(), expected);
     assert!(p.bindings["selected"].list().unwrap().is_empty());

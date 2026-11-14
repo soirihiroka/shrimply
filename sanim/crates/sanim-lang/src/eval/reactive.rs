@@ -638,11 +638,8 @@ impl Runtime<'_, '_> {
 
 impl Runtime<'_, '_> {
     pub(super) fn function_mutates(&self, function: &Function) -> bool {
-        self.loaded
-            .iter()
-            .find(|module| module.id == function.module)
-            .and_then(|module| module.checked.exports.get(&function.name))
-            .is_some_and(|ty| matches!(ty,Type::Function(signature) if signature.mutates))
+        self.function_signature(function)
+            .is_some_and(|signature| signature.mutates)
     }
     pub(super) fn instance_site(&self, span: Span) -> String {
         self.instance_paths
@@ -745,9 +742,19 @@ impl Runtime<'_, '_> {
         };
         let mut mutates = false;
         expr.visit_while(&mut |expr| {
-            if self.observed_signal(expr).is_some() {return false;}
-            if let ExprKind::Call {callee,..}=&expr.kind {
-                mutates |= matches!(crate::effects::lookup(callee,&module.checked.exports),Some(Type::Function(signature)) if signature.mutates);
+            if self.observed_signal(expr).is_some() {
+                return false;
+            }
+            if let ExprKind::Call { callee, args, .. } = &expr.kind {
+                mutates |= crate::effects::lookup(callee, &module.checked.exports)
+                    .is_some_and(|ty| ty.signatures().iter().any(|signature| signature.mutates))
+                    || crate::timing::builtin_call(callee, args, &module.checked.native_methods)
+                        .is_some_and(|call| {
+                            crate::list_functions::callback_type(&call, &module.checked.exports)
+                                .is_some_and(|ty| {
+                                    ty.signatures().iter().any(|signature| signature.mutates)
+                                })
+                        });
             }
             !mutates
         });
@@ -825,17 +832,23 @@ impl Runtime<'_, '_> {
                         .checked
                         .native_methods,
                 )
-                .is_some_and(|call| call.schedules());
-                if let Some(Type::Function(signature)) =
-                    crate::effects::lookup(callee, &module.checked.exports)
-                {
-                    schedules |= signature.schedules
-                        || !signature
-                            .parameters
-                            .iter()
-                            .any(|parameter| parameter.name == "duration")
-                            && crate::timing::envelope(args)
-                                .is_some_and(|duration| !crate::timing::known_zero(duration));
+                .is_some_and(|call| {
+                    call.schedules()
+                        || crate::list_functions::callback_type(&call, &module.checked.exports)
+                            .is_some_and(|ty| {
+                                ty.signatures().iter().any(|signature| signature.schedules)
+                            })
+                });
+                if let Some(ty) = crate::effects::lookup(callee, &module.checked.exports) {
+                    schedules |= ty.signatures().iter().any(|signature| {
+                        signature.schedules
+                            || !signature
+                                .parameters
+                                .iter()
+                                .any(|parameter| parameter.name == "duration")
+                                && crate::timing::envelope(args)
+                                    .is_some_and(|duration| !crate::timing::known_zero(duration))
+                    });
                 }
             }
             !schedules

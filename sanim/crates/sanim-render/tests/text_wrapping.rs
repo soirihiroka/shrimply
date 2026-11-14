@@ -173,7 +173,7 @@ fn code_soft_rows_keep_logical_gutter_numbers_and_share_the_source_tree() {
 fn collapsed_code_newlines_map_to_the_original_logical_lines() {
     let (mut renderer, scene, options) = prepare(
         r#"
-let code=<CodeView lang="plain" whitespace-normal w-500 font_size={12pt}>first
+let code=<CodeView lang="plain" whitespace-normal w-500 font_size={12pt} line_numbers={true}>first
 second</CodeView>
 add(code)
 wait(1s)
@@ -298,7 +298,7 @@ wait(1s)
 #[test]
 fn trailing_blank_source_lines_keep_their_gutter_numbers_after_wrapping() {
     let (mut renderer, scene, options) = prepare(
-        "let code = r\"\"\"one\ntwo\n\n\"\"\"\nlet plain=CodeView(code=code,lang=\"plain\",width=200pt)\nlet wrapped=CodeView(code=code,lang=\"plain\",width=200pt,white_space=\"pre-wrap\")\nadd(plain)\nadd(wrapped)\nwait(1s)",
+        "let code = r\"\"\"one\ntwo\n\n\"\"\"\nlet plain=CodeView(code=code,lang=\"plain\",width=200pt,line_numbers=true)\nlet wrapped=CodeView(code=code,lang=\"plain\",width=200pt,white_space=\"pre-wrap\",line_numbers=true)\nadd(plain)\nadd(wrapped)\nwait(1s)",
     );
     let state = renderer.frame_state(&scene, 0.into(), &options).unwrap();
     let labels = |element: &sanim_core::Element| {
@@ -321,48 +321,93 @@ fn trailing_blank_source_lines_keep_their_gutter_numbers_after_wrapping() {
 
 #[test]
 fn generated_code_glyphs_are_already_resolved_and_keep_their_native_styles() {
-    let (_renderer,scene,_options)=prepare(r#"
+    let (_renderer, scene, _options) = prepare(
+        r#"
 let code=<CodeView lang="python" whitespace-pre-wrap wrap-anywhere w-150 font_size={12pt}>
     def example():
         return "A long message with several wrapped words"
 </CodeView>
 add(code)
 wait(1s)
-"#);
-    let mut code_resolutions=0;
-    let mut glyph_resolutions=0;
-    let elements=scene.animation().layout_with(0.into(),640.into(),360.into(),|element,time|{
-        if sanim_data::requires_resolution(element) {
-            match element.geometry.as_ref() { Geometry::Code{..}=>code_resolutions+=1,Geometry::Text{..}=>glyph_resolutions+=1,_=>{} }
-        }
-        sanim_data::resolve_pending(element,time)
-    }).unwrap();
-    assert_eq!(code_resolutions,1);
-    assert_eq!(glyph_resolutions,0,"generated glyphs must not be normalized or reshaped as authored labels");
-    let Geometry::Code{options,children,..}=elements[0].geometry.as_ref() else{unreachable!()};
+"#,
+    );
+    let mut code_resolutions = 0;
+    let mut glyph_resolutions = 0;
+    let elements = scene
+        .animation()
+        .layout_with(0.into(), 640.into(), 360.into(), |element, time| {
+            if sanim_data::requires_resolution(element) {
+                match element.geometry.as_ref() {
+                    Geometry::Code { .. } => code_resolutions += 1,
+                    Geometry::Text { .. } => glyph_resolutions += 1,
+                    _ => {}
+                }
+            }
+            sanim_data::resolve_pending(element, time)
+        })
+        .unwrap();
+    assert_eq!(code_resolutions, 1);
+    assert_eq!(
+        glyph_resolutions, 0,
+        "generated glyphs must not be normalized or reshaped as authored labels"
+    );
+    let Geometry::Code {
+        options, children, ..
+    } = elements[0].geometry.as_ref()
+    else {
+        unreachable!()
+    };
     let keyword=children.iter().find(|element|matches!(element.geometry.as_ref(),Geometry::Text{text,..} if text.as_ref()=="def")).unwrap();
-    let Geometry::Text{outline,..}=keyword.geometry.as_ref() else{unreachable!()};
-    let native=sanim_data::font::cached_shape(&options.font,"def",options.font_size,true,false).unwrap();
-    assert!(Arc::ptr_eq(outline,&native.outline),"keyword must retain its bold native outline");
+    let Geometry::Text { outline, .. } = keyword.geometry.as_ref() else {
+        unreachable!()
+    };
+    let native =
+        sanim_data::font::cached_shape(&options.font, "def", options.font_size, true, false)
+            .unwrap();
+    assert!(
+        Arc::ptr_eq(outline, &native.outline),
+        "keyword must retain its bold native outline"
+    );
 }
 
 #[test]
 #[ignore = "separates native layout, state accounting and recording costs"]
 fn codeview_frame_pipeline_benchmark() {
     let code=(0..100).map(|index|format!("def function_{index}():\n    return \"A long line of source text with several word boundaries\"\n")).collect::<String>();
-    let source=format!("mut width=180pt\nlet code=CodeView(code=r\"\"\"{code}\"\"\",lang=\"python\",white_space=\"pre-wrap\",overflow_wrap=\"anywhere\",width=width)\nadd(code)\nanimate(width,to=300pt,duration=3s,ease=\"linear\")\nwait(1s)");
-    let (mut renderer,scene,options)=prepare(&source);
-    for time in [0,1,2,3] {
-        let mut native=std::time::Duration::ZERO;
-        let mut glyph_resolutions=0;
-        let started=std::time::Instant::now();
-        let layout=scene.animation().layout_with(time.into(),640.into(),360.into(),|element,time|{
-            if matches!(element.geometry.as_ref(),Geometry::Text{..}) && sanim_data::requires_resolution(element) { glyph_resolutions+=1; }
-            let started=std::time::Instant::now(); let result=sanim_data::resolve_pending(element,time); native+=started.elapsed(); result
-        }).unwrap();
-        eprintln!("time={time} native={native:?} full_layout={:?} glyph_resolutions={glyph_resolutions} glyphs={}",started.elapsed(),layout[0].geometry.children().unwrap().len());
-        let state=renderer.frame_state(&scene,time.into(),&options).unwrap();
-        let started=std::time::Instant::now(); renderer.record(&scene,time.into(),&options).unwrap();
-        eprintln!("time={time} cached_native_state_us={} recording={:?}",state.compute_micros,started.elapsed());
+    let source = format!(
+        "mut width=180pt\nlet code=CodeView(code=r\"\"\"{code}\"\"\",lang=\"python\",white_space=\"pre-wrap\",overflow_wrap=\"anywhere\",width=width)\nadd(code)\nanimate(width,to=300pt,duration=3s,ease=\"linear\")\nwait(1s)"
+    );
+    let (mut renderer, scene, options) = prepare(&source);
+    for time in [0, 1, 2, 3] {
+        let mut native = std::time::Duration::ZERO;
+        let mut glyph_resolutions = 0;
+        let started = std::time::Instant::now();
+        let layout = scene
+            .animation()
+            .layout_with(time.into(), 640.into(), 360.into(), |element, time| {
+                if matches!(element.geometry.as_ref(), Geometry::Text { .. })
+                    && sanim_data::requires_resolution(element)
+                {
+                    glyph_resolutions += 1;
+                }
+                let started = std::time::Instant::now();
+                let result = sanim_data::resolve_pending(element, time);
+                native += started.elapsed();
+                result
+            })
+            .unwrap();
+        eprintln!(
+            "time={time} native={native:?} full_layout={:?} glyph_resolutions={glyph_resolutions} glyphs={}",
+            started.elapsed(),
+            layout[0].geometry.children().unwrap().len()
+        );
+        let state = renderer.frame_state(&scene, time.into(), &options).unwrap();
+        let started = std::time::Instant::now();
+        renderer.record(&scene, time.into(), &options).unwrap();
+        eprintln!(
+            "time={time} cached_native_state_us={} recording={:?}",
+            state.compute_micros,
+            started.elapsed()
+        );
     }
 }

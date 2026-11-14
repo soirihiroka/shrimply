@@ -29,7 +29,7 @@ Scrolling is a layout behavior of ordinary ``Box`` and ``Rect`` elements. A Box 
 
 Scroll offsets are ``Vec2`` values. Points describe content offsets; percentages describe the current overflow range, so ``Vec2(0%, 100%)`` means the bottom edge even after resizing. Offsets are clamped after layout, including content changes, folding and font changes. The default scroll curve is the normal bounded spring; ``ease="linear"`` is available for constant-speed movement.
 
-``scroll_to`` accepts one target form: ``to=Vec2(...)``, ``x=``/``y=``, or a Code View ``line=``/``scope=``. Code lines use 1-based numbering; scopes accept the IDs returned by ``.scopes()`` or an unambiguous declaration name.
+``scroll_to`` accepts one target form: ``to=Vec2(...)``, ``x=``/``y=``, or a CodeView ``line=``/``range=``. Code lines use 1-based numbering. Use the same bound ranges as folding, selecting, styling and editing; range scrolling checks the source revision and keeps its visible line interval in view.
 
 Axis targets preserve their units: ``scroll_to(y=100%)`` stays at the bottom when the viewport resizes. When specifying both ``x=`` and ``y=``, use the same unit for both.
 
@@ -38,11 +38,12 @@ Axis targets preserve their units: ``scroll_to(y=100%)`` stays at the bottom whe
    let code = <CodeView src="./example.py" width={80%} height={50%} />
    add(code)
    code.scroll_to(line=40, align="center", duration=500ms)
-   code.scroll_to(scope="main", duration=400ms)
+   code.range(name="main").scroll_to(duration=400ms)
+   code.scroll_to(range=code.range(regex="result"), align="center", duration=400ms)
 
 A CodeView with both width and height defaults to ``overflow="auto"``. Without a fixed viewport it uses its intrinsic content size and visible overflow. An explicit ``overflow="visible"`` keeps content visible outside an allocated box.
 
-The default ``align="nearest"`` moves only enough to reveal the requested line. ``start``, ``center`` and ``end`` choose an explicit vertical alignment. A target inside a folded scope reveals its visible header.
+The default ``align="nearest"`` moves only enough to reveal the requested line. ``start``, ``center`` and ``end`` choose an explicit vertical alignment. Targets follow the actual wrapped visual rows, including blank lines and viewport padding. A target inside a folded scope reveals its visible header.
 
 For a shared reactive offset, supply ``scroll=`` and animate its mutable input:
 

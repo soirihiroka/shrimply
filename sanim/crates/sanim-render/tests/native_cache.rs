@@ -46,7 +46,7 @@ fn state_cache_byte_limits_include_folded_source_and_font_assets() {
         include_bytes!("../../../examples/assets/DejaVuSansCondensed-subset.ttf").as_slice(),
     );
     for source in [
-        "let code=CodeView(src=\"source.py\",width=200pt,height=100pt,line_numbers=false)\nadd(code)\ncode.fold(level=1,duration=0s)\nwait(1s)",
+        "let code=CodeView(src=\"source.py\",width=200pt,height=100pt,line_numbers=false)\nadd(code)\ncode.range(name=\"example\").fold(duration=0s)\nwait(1s)",
         "let label=Text(\"\",font=read<Font>(\"font.ttf\"))\nadd(label)\nwait(1s)",
     ] {
         files.insert("main.sanim", source);
@@ -80,7 +80,7 @@ fn native_endpoint_benchmark() {
         .collect::<String>();
     let mut files = MemorySources::default();
     files.insert("source.py", source);
-    files.insert("main.sanim", "let code=CodeView(src=\"source.py\",width=600pt,height=320pt,line_numbers=false)\nadd(code)\nwait(1s)\ncode.fold(level=1,duration=1s,ease=\"linear\")\nwait(1s)");
+    files.insert("main.sanim", "let code=CodeView(src=\"source.py\",width=600pt,height=320pt,line_numbers=false)\nadd(code)\nwait(1s)\ncode.range(name=\"function_0\").fold(duration=1s,ease=\"linear\")\nwait(1s)");
     let animation = Engine::new(Viewport {
         width: 1280,
         height: 720,

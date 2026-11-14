@@ -24,7 +24,7 @@ fn sql_type(ty: &Type) -> Result<&'static str, String> {
     Ok(match ty {
         Type::Bool => "INTEGER",
         Type::String | Type::Fraction => "TEXT",
-        Type::Numeric(_) => "ANY",
+        Type::Numeric(_) | Type::RefinedNumeric(_) => "ANY",
         Type::Option(inner) => return sql_type(inner),
         Type::Union(_) => {
             return Err(format!(
@@ -143,6 +143,11 @@ fn row_values(
 }
 
 fn output(value: ValueRef<'_>, ty: &Type, limits: Limits) -> Result<Value, String> {
+    if let Type::RefinedNumeric(domain) = ty {
+        let value = output(value, &Type::Numeric(domain.unit), limits)?;
+        sanim_core::validate_value(ty, &value)?;
+        return Ok(value);
+    }
     if let Type::Option(inner) = ty {
         return if value == ValueRef::Null {
             Ok(Value::None)
@@ -359,7 +364,7 @@ impl Database {
         parameters: Option<&Value>,
         result: &Type,
     ) -> Result<Value, String> {
-        let Type::List(row_type) = result else {
+        let Type::List(row_type, _) = result else {
             return Err(
                 "SQL result requires List<Row>, List<Dict>, or a list of scalar values".into(),
             );
@@ -490,6 +495,14 @@ impl Database {
                         .expect("validated scalar SQL result column")
                         .1
                 });
+            }
+            if let Type::List(_, length) = result
+                && !length.allows(rows.len())
+            {
+                return Err(format!(
+                    "expected SQL result {result}, found List with {} items",
+                    rows.len()
+                ));
             }
             Ok(Value::List(sanim_core::List::typed(
                 row_type.as_ref().clone(),

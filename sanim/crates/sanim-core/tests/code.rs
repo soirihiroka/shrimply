@@ -1,5 +1,29 @@
 use sanim_core::code::{Document, Language, Patch};
 #[test]
+fn folded_line_extent_preserves_only_code_outside_the_actual_scope_boundary() {
+    for (source, end_byte, expected) in [
+        ("a\nb\nc", 4, 2),
+        ("a\r\nb\r\nc", 6, 2),
+        ("a\nb c", 3, 1),
+        ("a\nb  \r\nc", 3, 2),
+    ] {
+        let scope = sanim_core::code::Scope {
+            id: "test".into(),
+            label: "scope:test".into(),
+            start_line: 1,
+            end_line: 2,
+            start_byte: 0,
+            end_byte,
+            depth: 1,
+        };
+        assert_eq!(
+            scope.hidden_end_line(source).unwrap(),
+            expected,
+            "{source:?}"
+        );
+    }
+}
+#[test]
 fn unified_patch_validates_context_paths_counts_and_terminal_newline() {
     let base = Document::read("sample.py", "x = 1\nkeep = 2\ny = 3\n", Language::Python).unwrap();
     let patch=Document::read("sample.py.patch","--- a/sample.py\n+++ b/sample.py\n@@ -1 +1 @@\n-x = 1\n+x = 4\n@@ -3 +3 @@\n-y = 3\n+y = 5\n",Language::Auto).unwrap();
@@ -100,11 +124,12 @@ fn presentation_state() -> sanim_core::code::view::State {
             auto_line_height: false,
             tab_size: 4,
             line_numbers: false,
+            scope_indicators: false,
             theme: std::sync::Arc::new(Theme::default()),
             spans: vec![],
         }),
         folded: Default::default(),
-        selection: vec![],
+        selection: std::sync::Arc::from([]),
         end: 0.into(),
         events: Default::default(),
     }
@@ -320,4 +345,29 @@ fn unresolved_code_bounds_fail_closed_and_native_evidence_uses_the_new_source() 
     });
     let viewport = verify::bounds(&code).unwrap();
     assert_eq!(viewport.max.values[0] - viewport.min.values[0], 20.);
+}
+
+#[test]
+fn code_presentation_snapshots_share_unchanged_selection_buffers() {
+    use std::sync::Arc;
+    let mut state = presentation_state();
+    state.selection = vec![sanim_core::code::view::Range {
+        start_line: 1,
+        start_column: 1,
+        end_line: 1,
+        end_column: 4,
+        origin: None,
+    }]
+    .into();
+    let before = state.snapshot();
+    state.folded.insert("function:example".into());
+    let after = state.snapshot();
+    assert!(Arc::ptr_eq(&state.selection, &before.selection));
+    assert!(Arc::ptr_eq(&before.selection, &after.selection));
+    state.selection = Arc::from([]);
+    assert_eq!(
+        before.selection.len(),
+        1,
+        "later edits must not mutate retained snapshots"
+    );
 }

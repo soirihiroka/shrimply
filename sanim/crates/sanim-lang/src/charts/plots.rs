@@ -45,7 +45,7 @@ pub(super) fn expensive(name: &str) -> Option<&'static str> {
 pub(super) fn builtins(common: &[Parameter]) -> Vec<Builtin> {
     let num = Type::Numeric(Unit::Number);
     let length = Type::Numeric(Unit::Length);
-    let list = |ty| Type::List(Box::new(ty));
+    let list = |ty| Type::List(Box::new(ty), sanim_core::ListLength::Unknown);
     let p = |name, ty, required| Parameter { name, ty, required };
     PLOTS
         .iter()

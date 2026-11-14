@@ -78,7 +78,7 @@ impl Checker<'_> {
                     .map(|ty| Type::Series(Box::new(ty)))
                     .ok_or_else(|| frame::unknown_column(schema, &names[0]))
             }
-            Type::List(inner) if Type::String.accepts(inner) => names(index)
+            Type::List(inner, _) if Type::String.accepts(inner) => names(index)
                 .and_then(|names| frame::selected_schema(schema, &names))
                 .map(|schema| frame_type(schema, Vec::new())),
             Type::Series(inner) if **inner == Type::Bool => Ok(Type::DataFrame {
@@ -117,7 +117,7 @@ impl Checker<'_> {
         }
         let result = (|| -> Result<Type, String> {
             if builtin.name == "DataFrame" {
-                let Type::List(row) = &actual["rows"] else {
+                let Type::List(row, _) = &actual["rows"] else {
                     return Err(format!(
                         "DataFrame requires List<Row>, found {}",
                         actual["rows"]
@@ -148,7 +148,7 @@ impl Checker<'_> {
             }
             if let Type::Series(inner) = receiver {
                 return match operation {
-                    "to_list" => Ok(Type::List(inner.clone())),
+                    "to_list" => Ok(Type::List(inner.clone(), sanim_core::ListLength::Unknown)),
                     "isna" => Ok(Type::Series(Box::new(Type::Bool))),
                     "fillna" => {
                         let inner = if let Type::Option(inner) = inner.as_ref() {
@@ -180,7 +180,7 @@ impl Checker<'_> {
                 ));
             };
             match operation {
-                "to_list" => return Ok(Type::List(row.clone())),
+                "to_list" => return Ok(Type::List(row.clone(), sanim_core::ListLength::Unknown)),
                 "head" | "tail" => return Ok(receiver.clone()),
                 _ => {}
             }

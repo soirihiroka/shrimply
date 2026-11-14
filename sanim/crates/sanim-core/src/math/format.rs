@@ -125,7 +125,9 @@ impl Spec {
                 }
                 error.map_or(Ok(()), Err)
             }
-            Type::Numeric(_) | Type::Fraction | Type::Bool => self.numeric_options(),
+            Type::Numeric(_) | Type::RefinedNumeric(_) | Type::Fraction | Type::Bool => {
+                self.numeric_options()
+            }
             _ => self.string_options(),
         }
     }

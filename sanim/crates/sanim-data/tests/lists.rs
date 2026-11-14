@@ -6,10 +6,13 @@ fn number() -> Type {
     Type::Numeric(Unit::Number)
 }
 fn rows() -> Type {
-    Type::List(Box::new(Type::Record(BTreeMap::from([
-        ("id".into(), Type::String),
-        ("value".into(), number()),
-    ]))))
+    Type::List(
+        Box::new(Type::Record(BTreeMap::from([
+            ("id".into(), Type::String),
+            ("value".into(), number()),
+        ]))),
+        sanim_core::ListLength::Unknown,
+    )
 }
 fn bindings(name: &str, value: Value) -> Value {
     Value::Record([(name.to_owned(), value)].into_iter().collect())
@@ -59,15 +62,18 @@ fn query(sql: &str, inputs: &Value, result: &Type) -> Value {
 #[test]
 fn header_only_csv_is_empty_and_its_declared_columns_remain_queryable() {
     let input = decode("empty.csv", b"id,value\n", &rows(), Limits::default()).unwrap();
-    assert_eq!(input.ty(), rows());
+    assert!(rows().accepts(&input.ty()));
     assert_eq!(input.list().unwrap().len(), 0);
     let result = query(
         "SELECT COUNT(*) FROM samples",
         &bindings("samples", input),
-        &Type::List(Box::new(number())),
+        &Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
     );
     assert_eq!(to_json(&result).unwrap(), serde_json::json!([0]));
-    assert_eq!(result.ty(), Type::List(Box::new(number())));
+    assert_eq!(
+        result.ty(),
+        Type::List(Box::new(number()), sanim_core::ListLength::Exact(1))
+    );
 }
 
 #[test]
@@ -77,7 +83,7 @@ fn empty_json_yaml_and_toml_lists_keep_the_full_record_schema() {
         ("empty.yaml", b"[]".as_slice()),
     ] {
         let value = decode(path, bytes, &rows(), Limits::default()).unwrap();
-        assert_eq!(value.ty(), rows());
+        assert!(rows().accepts(&value.ty()));
         assert!(value.list().unwrap().is_empty());
     }
     let schema = Type::Record(BTreeMap::from([("samples".into(), rows())]));
@@ -86,7 +92,7 @@ fn empty_json_yaml_and_toml_lists_keep_the_full_record_schema() {
     else {
         unreachable!()
     };
-    assert_eq!(fields["samples"].ty(), rows());
+    assert!(rows().accepts(&fields["samples"].ty()));
     assert!(fields["samples"].list().unwrap().is_empty());
 }
 
@@ -95,7 +101,7 @@ fn sqlite_accepts_scalar_lists_and_can_query_its_dictionary_results() {
     let input = decode(
         "numbers.json",
         b"[1,2]",
-        &Type::List(Box::new(number())),
+        &Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
         Limits::default(),
     )
     .unwrap();
@@ -103,7 +109,7 @@ fn sqlite_accepts_scalar_lists_and_can_query_its_dictionary_results() {
     let dictionaries = query(
         "SELECT value AS n FROM numbers ORDER BY value",
         &sql_input,
-        &Type::List(Box::new(Type::Dict)),
+        &Type::List(Box::new(Type::Dict), sanim_core::ListLength::Unknown),
     );
     assert_eq!(
         to_json(&dictionaries).unwrap(),
@@ -112,14 +118,14 @@ fn sqlite_accepts_scalar_lists_and_can_query_its_dictionary_results() {
     let total = query(
         "SELECT SUM(n) FROM previous",
         &bindings("previous", dictionaries),
-        &Type::List(Box::new(number())),
+        &Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
     );
     assert_eq!(to_json(&total).unwrap(), serde_json::json!([3]));
     let empty = Value::List(List::typed(number(), vec![]));
     let count = query(
         "SELECT COUNT(*) FROM numbers",
         &bindings("numbers", empty),
-        &Type::List(Box::new(number())),
+        &Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
     );
     assert_eq!(to_json(&count).unwrap(), serde_json::json!([0]));
 }
@@ -129,14 +135,14 @@ fn dictionary_sql_columns_use_the_actual_union_of_scalar_keys() {
     let input = decode(
         "rows.json",
         br#"[{"x":1},{"x":2,"label":"ok"}]"#,
-        &Type::List(Box::new(Type::Dict)),
+        &Type::List(Box::new(Type::Dict), sanim_core::ListLength::Unknown),
         Limits::default(),
     )
     .unwrap();
     let result = query(
         "SELECT SUM(x) AS total, COUNT(label) AS labeled FROM samples",
         &bindings("samples", input),
-        &Type::List(Box::new(Type::Dict)),
+        &Type::List(Box::new(Type::Dict), sanim_core::ListLength::Unknown),
     );
     assert_eq!(
         to_json(&result).unwrap(),
@@ -148,7 +154,7 @@ fn dictionary_sql_columns_use_the_actual_union_of_scalar_keys() {
         "SELECT COUNT(*) FROM samples",
         &bindings("samples", empty),
         None,
-        &Type::List(Box::new(Type::Dict)),
+        &Type::List(Box::new(Type::Dict), sanim_core::ListLength::Unknown),
         Limits::default(),
     )
     .unwrap_err();
@@ -161,7 +167,7 @@ fn nested_dictionary_fields_fail_with_the_input_row_and_column() {
     let input = decode(
         "rows.json",
         br#"[{"x":{"nested":1}}]"#,
-        &Type::List(Box::new(Type::Dict)),
+        &Type::List(Box::new(Type::Dict), sanim_core::ListLength::Unknown),
         Limits::default(),
     )
     .unwrap();
@@ -169,7 +175,7 @@ fn nested_dictionary_fields_fail_with_the_input_row_and_column() {
         "SELECT x FROM samples",
         &bindings("samples", input),
         None,
-        &Type::List(Box::new(Type::Dict)),
+        &Type::List(Box::new(Type::Dict), sanim_core::ListLength::Unknown),
         Limits::default(),
     )
     .unwrap_err();
@@ -189,7 +195,7 @@ fn sqlite_list_benchmark() {
             .collect(),
     ));
     let inputs = bindings("samples", input);
-    let result_ty = Type::List(Box::new(number()));
+    let result_ty = Type::List(Box::new(number()), sanim_core::ListLength::Unknown);
     let repeats = 10;
     let start = std::time::Instant::now();
     for _ in 0..repeats {

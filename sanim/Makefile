@@ -3,6 +3,33 @@ RUST_TOOLCHAIN ?= nightly-2026-04-03
 CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
 
+.PHONY: sized-lists-check
+sized-lists-check:
+	$(CARGO) test -p sanim-core --test lists
+	$(CARGO) test -p sanim-data --test lists --test decoding
+	$(CARGO) test -p sanim-lang --test sized_lists --test function_clauses
+	$(CARGO) clippy -p sanim-lang --lib -- -D warnings
+.PHONY: sized-lists-bench
+sized-lists-bench:
+	$(CARGO) test --release -p sanim-core --test lists sized_list_metadata_benchmark -- --ignored --nocapture
+
+.PHONY: list-functions-check list-functions-test list-functions-bench
+list-functions-check:
+	$(CARGO) clippy -p sanim-lang --all-targets -- -D warnings
+	$(MAKE) list-functions-test
+list-functions-test:
+	$(CARGO) test -p sanim-lang --test list_functions --test list_edits
+list-functions-bench:
+	$(CARGO) test --release -p sanim-lang --test list_functions bisect_benchmark -- --ignored --nocapture
+
+.PHONY: function-clauses-check
+function-clauses-check:
+	$(CARGO) test -p sanim-lang --test function_clauses
+	$(CARGO) clippy -p sanim-lang --lib -- -D warnings
+.PHONY: function-clauses-bench
+function-clauses-bench:
+	$(CARGO) test --release -p sanim-lang --test function_clauses function_clause_dispatch_benchmark -- --ignored --nocapture
+
 .PHONY: media-check media-bench
 media-check:
 	$(CARGO) test -p sanim-core -p sanim-data -p sanim-lang -p sanim-render --test media
@@ -223,6 +250,12 @@ code-transition-check:
 	$(CARGO) test -p sanim-data ordered_paths_ --lib
 code-transition-bench:
 	$(CARGO) test --release -p sanim-data --test code_transitions transition_benchmark -- --ignored --nocapture
+
+.PHONY: code-gutter-check code-gutter-bench
+code-gutter-check:
+	$(CARGO) test -p sanim-render --test code_gutter
+code-gutter-bench:
+	$(CARGO) test --release -p sanim-render --test code_gutter gutter_benchmark -- --ignored --nocapture
 reactive-label-check:
 	$(CARGO) test -p sanim-lang --test reactive_labels
 	$(CARGO) test -p sanim-render --test reactive_labels
@@ -306,3 +339,55 @@ text-cow-check:
 .PHONY: text-wrapping-integration-bench
 text-wrapping-integration-bench:
 	$(CARGO) test --release -p sanim-render --test text_wrapping codeview_frame_pipeline_benchmark -- --ignored --nocapture
+
+.PHONY: code-range-core-check
+code-range-core-check:
+	$(CARGO) test -p sanim-core --test code_ranges
+	$(CARGO) clippy -p sanim-core -p sanim-data --all-targets -- -D warnings
+
+.PHONY: code-range-bench
+.PHONY: code-range-check
+code-range-check:
+	$(CARGO) test -p sanim-lang --test code_ranges --test range_edits
+
+code-range-bench:
+	$(CARGO) test --release -p sanim-core --test code_ranges batched_unicode_range_resolution -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --test code_ranges range_query_benchmark -- --ignored --nocapture
+
+.PHONY: wrapped-token-check wrapped-token-bench
+wrapped-token-check:
+	$(CARGO) test -p sanim-data --lib long_wrapped
+wrapped-token-bench:
+	$(CARGO) test --release -p sanim-data --lib long_wrapped_token_scaling_benchmark -- --ignored --nocapture
+
+.PHONY: symbolic-duration-check symbolic-duration-bench
+symbolic-duration-check:
+	$(CARGO) test -p sanim-core --test symbolic_duration
+	$(CARGO) test -p sanim-core --lib duration::
+	$(CARGO) clippy -p sanim-core --lib -- -D warnings
+symbolic-duration-bench:
+	$(CARGO) test --release -p sanim-core --test symbolic_duration symbolic_duration_resolution_benchmark -- --ignored --nocapture
+
+.PHONY: guarded-runtime-check
+guarded-runtime-check:
+	$(CARGO) test -p sanim-lang --test guarded_runtime
+
+.PHONY: guarded-runtime-bench
+guarded-runtime-bench:
+	$(CARGO) test --release -p sanim-lang --test guarded_runtime guarded_call_benchmark -- --ignored --nocapture
+
+.PHONY: duration-effects-check
+duration-effects-check:
+	$(CARGO) test -p sanim-lang --test duration --test duration_scene_state --test symbolic_effects
+	$(CARGO) clippy -p sanim-lang --lib -- -D warnings
+
+.PHONY: duration-memory-check
+duration-memory-check:
+	$(CARGO) test -p sanim-core --test symbolic_duration
+	$(CARGO) test -p sanim-core --lib duration::
+	$(CARGO) test -p sanim-lang --lib effects::duration_memory_tests
+	$(CARGO) clippy -p sanim-core -p sanim-lang --lib -- -D warnings
+
+.PHONY: duration-memory-bench
+duration-memory-bench:
+	$(CARGO) test --release -p sanim-core --test symbolic_duration duration_heap_accounting_benchmark -- --ignored --nocapture

@@ -12,6 +12,7 @@ mod eval;
 mod font_tests;
 pub mod formatter;
 mod lint;
+mod list_functions;
 mod lists;
 mod media;
 mod native;

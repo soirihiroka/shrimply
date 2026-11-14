@@ -44,7 +44,7 @@ pub(crate) fn len(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> 
         &actuals[0],
         Type::Dict
             | Type::Data
-            | Type::List(_)
+            | Type::List(_, _)
             | Type::Array(_)
             | Type::DataFrame { .. }
             | Type::Series(_)
@@ -65,7 +65,7 @@ pub(crate) fn get(_builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> 
             }
             Type::Data
         }
-        Type::List(t) | Type::Array(t) => {
+        Type::List(t, _) | Type::Array(t) => {
             expect(&Type::Numeric(Unit::Number), &actuals[1])?;
             *t.clone()
         }

@@ -145,6 +145,129 @@ fn invalid_viewports_and_ambiguous_scroll_targets_fail_with_helpful_errors() {
 }
 
 #[test]
+fn bound_code_ranges_scroll_their_visible_interval_and_reject_stale_or_cross_view_sources() {
+    const VIEW: &str = r#"let view=<CodeView lang="python" width={100pt} height={40pt} font_size={10pt} line_height={12pt}>
+a=1
+b=2
+c=3
+d=4
+e=5
+def target():
+    one=1
+    return one
+f=6
+g=7
+h=8
+i=9
+</CodeView>
+add(view)
+let selected=view.range(name="target")
+"#;
+    let prepared = prepare(&format!("{VIEW}selected.scroll_to(align=\"start\",duration=1s,ease=\"linear\")\nview.scroll_to(range=selected,align=\"end\",duration=1s,ease=\"linear\")")).unwrap();
+    let view = prepared.animation.find("view").unwrap();
+    for (time, expected) in [(1u64, 60.), (2u64, 56.)] {
+        let offset = prepared
+            .animation
+            .sample_property(view, Property::Scroll, time.into())
+            .unwrap()
+            .vec2()
+            .unwrap();
+        assert_eq!(offset.values, [0., expected]);
+    }
+    for (body, expected) in [
+        (
+            "selected.edit(code=r\"def target():\\n    return 2\",duration=0s)\nselected.scroll_to()",
+            "stale",
+        ),
+        (
+            "let other=CodeView(code=\"x=1\",lang=\"python\",width=100pt,height=40pt)\nother.scroll_to(range=selected)",
+            "belongs to",
+        ),
+        ("view.scroll_to(scope=\"target\")", "scope"),
+    ] {
+        let error = prepare(&format!("{VIEW}{body}")).unwrap_err();
+        assert!(error.message.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn source_range_scroll_targets_follow_native_wrap_rows_blank_lines_and_fold_headers() {
+    use sanim_core::{Geometry, verify};
+    fn visible(prepared: &sanim_lang::Prepared, expected: impl Fn(&str) -> bool) -> f64 {
+        let elements = prepared
+            .animation
+            .layout_with(1.into(), 200.into(), 120.into(), |element, time| {
+                sanim_data::code::view::resolve_pending(element, time)?;
+                sanim_data::font::resolve_pending(element)
+            })
+            .unwrap();
+        let view = &elements[0];
+        let scroll = view.layout.scroll.unwrap().values[1];
+        assert!(
+            scroll > 100.,
+            "wrapped source rows must replace logical-line approximation: {scroll}"
+        );
+        let children = view.geometry.children().unwrap();
+        let token=children.iter().find(|child| matches!(child.geometry.as_ref(), Geometry::Text { text,.. } if expected(text))).expect("target remains a visible native text token");
+        let bounds = verify::bounds(token).unwrap();
+        // Font outlines can overhang their typographic row by a small amount.
+        assert!(
+            bounds.min.values[1] - scroll >= -2. && bounds.max.values[1] - scroll <= 42.,
+            "target must be inside the viewport after native row scrolling: {:?}, scroll={scroll}",
+            bounds
+        );
+        scroll
+    }
+    let prefix = format!("{}B", "A".repeat(149));
+    let tail = "tail\n".repeat(12);
+    let view = |content: &str, language: &str| {
+        format!(
+            "let view=<CodeView lang=\"{language}\" width={{100pt}} height={{40pt}} font_size={{12pt}} line_height={{18pt}} whitespace-pre-wrap wrap-anywhere>\n{content}</CodeView>\nadd(view)\n"
+        )
+    };
+    let source = view(&format!("{prefix}\nTARGET\n{tail}"), "plain");
+    let targeted = prepare(&format!(
+        "{source}view.range(line=2).scroll_to(align=\"start\",duration=1s,ease=\"linear\")"
+    ))
+    .unwrap();
+    visible(&targeted, |text| text == "TARGET");
+    let padded = prepare(&format!(
+        "{}view.range(line=2).scroll_to(align=\"end\",duration=1s,ease=\"linear\")",
+        source.replace("height={40pt}", "height={40pt} padding={10pt}")
+    ))
+    .unwrap();
+    visible(&padded, |text| text == "TARGET");
+    let character = prepare(&format!(
+        "{source}view.range(character=150).scroll_to(align=\"start\",duration=1s,ease=\"linear\")"
+    ))
+    .unwrap();
+    visible(&character, |text| text.ends_with('B'));
+    let blank = prepare(&format!(
+        "{}view.range(line=2).scroll_to(align=\"start\",duration=1s,ease=\"linear\")",
+        view(&format!("{prefix}\n\nTARGET\n{tail}"), "plain")
+    ))
+    .unwrap();
+    visible(&blank, |text| text == "TARGET");
+    let folded=prepare(&format!("{}view.range(name=\"target\").fold(duration=0s)\nview.range(regex=\"inside\",occurrence=1).scroll_to(align=\"start\",duration=1s,ease=\"linear\")",view(&format!("{prefix}\ndef target():\n    inside=1\n    return inside\n{tail}"),"python"))).unwrap();
+    visible(&folded, |text| text == "def");
+}
+
+#[test]
+fn scrolling_collapsed_source_whitespace_uses_its_native_visible_row() {
+    for mode in ["normal", "pre-line"] {
+        let source = format!(
+            r#"let view=<CodeView code={{r"    hello          world    "}} lang="plain" width={{50pt}} height={{20pt}} whitespace-{mode}/>
+add(view)
+view.range(character=2).scroll_to(duration=100ms)
+view.range(character=12).scroll_to(duration=100ms)
+view.range(character=27).scroll_to(duration=100ms)
+wait(1s)"#
+        );
+        prepare(&source).unwrap();
+    }
+}
+
+#[test]
 fn ordinary_container_overflow_shorthand_and_axis_overrides_are_explicit() {
     use sanim_core::Overflow;
     let prepared = prepare(r#"let pane=<Rect width={100pt} height={60pt} overflow="scroll" overflow_x="hidden" overflow_y="auto">

@@ -16,13 +16,13 @@ impl Runtime<'_, '_> {
     }
     pub(super) fn timeline_effect(&self, span: Span) -> TimelineEffect {
         let Some(module) = self.loaded.iter().find(|m| m.id == self.module) else {
-            return TimelineEffect::Dependent;
+            return TimelineEffect::Unknown;
         };
         let nodes = &module.checked.durations;
         nodes
             .binary_search_by_key(&(span.start, span.end), |n| (n.span.start, n.span.end))
             .ok()
-            .map_or(TimelineEffect::Dependent, |index| nodes[index].effect)
+            .map_or(TimelineEffect::Unknown, |index| nodes[index].effect.clone())
     }
     pub(super) fn duration_binding_needed(&self, name: &str) -> bool {
         self.duration_needed
@@ -89,9 +89,41 @@ impl Runtime<'_, '_> {
         self.last_call.end = self.cursor;
         Ok(())
     }
+    fn duration_call_safe(&self, expr: &Expr) -> bool {
+        let ExprKind::Call { callee, args, .. } = &expr.kind else {
+            return true;
+        };
+        let Some(module) = self.loaded.iter().find(|module| module.id == self.module) else {
+            return false;
+        };
+        if crate::timing::builtin_call(callee, args, &module.checked.native_methods).is_some() {
+            return true;
+        }
+        crate::effects::lookup(callee, &module.checked.exports).is_some_and(|ty| {
+            !ty.signatures().is_empty()
+                && ty
+                    .signatures()
+                    .iter()
+                    .all(|signature| matches!(signature.duration, TimelineEffect::Fixed(_)))
+        })
+    }
+    pub(super) fn duration_statement_safe(&self, statement: &Statement) -> bool {
+        let mut safe = true;
+        statement.visit_expressions(&mut |expr| safe &= self.duration_call_safe(expr));
+        safe
+    }
+    fn duration_summary_safe(&self, expr: &Expr) -> bool {
+        let mut safe = true;
+        expr.visit_while(&mut |node| {
+            safe &= self.duration_call_safe(node);
+            safe
+        });
+        safe
+    }
     pub(super) fn duration_effects(&mut self, expr: &Expr, env: &Env) -> Result<(), Diagnostic> {
         self.work(expr.span)?;
         if !self.expression_mutates(expr)
+            && self.duration_summary_safe(expr)
             && let TimelineEffect::Fixed(duration) = self.timeline_effect(expr.span)
         {
             return self.advance_duration(duration, expr.span);
@@ -109,6 +141,15 @@ impl Runtime<'_, '_> {
                         .checked
                         .native_methods,
                 ) {
+                    if matches!(call.builtin.execute, crate::prelude::Execution::List) {
+                        let previous = self
+                            .discarded_list_call
+                            .replace((self.module.clone(), expr.span));
+                        let result = self.expression(expr, env);
+                        self.discarded_list_call = previous;
+                        result?;
+                        return Ok(());
+                    }
                     if let Some(receiver) = call.receiver {
                         self.duration_effects(receiver, env)?;
                     }
@@ -160,7 +201,13 @@ impl Runtime<'_, '_> {
                     }
                     return Err(self.error("S305", format!("unknown function '{key}'"), expr.span));
                 };
-                let mutates = self.function_mutates(&function);
+                let group = function;
+                let function = group.clauses.first().expect("registered function group");
+                let mutates = group
+                    .clauses
+                    .iter()
+                    .any(|function| self.function_mutates(function));
+                let dispatch_needed = group.clauses.len() > 1;
                 let needed = self
                     .duration_needed
                     .get(&function.module)
@@ -171,7 +218,7 @@ impl Runtime<'_, '_> {
                     .map(|parameter| {
                         (
                             parameter.name.clone(),
-                            mutates || needed.contains(&parameter.name),
+                            dispatch_needed || mutates || needed.contains(&parameter.name),
                         )
                     })
                     .collect::<Vec<_>>();
@@ -265,10 +312,11 @@ impl Runtime<'_, '_> {
         Ok(())
     }
     pub(super) fn fixed_block_duration(&self, body: &[Statement]) -> Option<Fraction> {
-        if body
-            .iter()
-            .any(|statement| self.statement_stateful(statement))
-            || crate::effects::has_return(body)
+        if body.iter().any(|statement| {
+            let mut safe = true;
+            statement.visit_expressions(&mut |expr| safe &= self.duration_call_safe(expr));
+            !safe || self.statement_stateful(statement)
+        }) || crate::effects::has_return(body)
         {
             return None;
         }

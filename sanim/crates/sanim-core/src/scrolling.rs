@@ -148,8 +148,8 @@ pub fn visible_row(
         .scopes
         .iter()
         .filter(|scope| folded.contains(&scope.id))
-        .map(|scope| (scope.start_line, scope.end_line))
-        .collect();
+        .map(|scope| Ok((scope.start_line, scope.hidden_end_line(&document.text)?)))
+        .collect::<Result<_, String>>()?;
     ranges.sort_unstable();
     for &(first, last) in &ranges {
         if first < line && line <= last {

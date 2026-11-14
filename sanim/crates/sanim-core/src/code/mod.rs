@@ -150,7 +150,33 @@ pub struct Scope {
     pub label: Arc<str>,
     pub start_line: usize,
     pub end_line: usize,
+    /// Exact UTF-8 syntax bounds, independent of whole-line presentation ranges.
+    pub start_byte: usize,
+    pub end_byte: usize,
     pub depth: usize,
+}
+impl Scope {
+    /// Whole lines hidden by folding; a boundary shared with outside syntax stays visible.
+    pub fn hidden_end_line(&self, source: &str) -> Result<usize, String> {
+        let suffix = source.get(self.end_byte..).ok_or_else(|| {
+            format!(
+                "syntax node '{}' has an invalid end byte {}",
+                self.label, self.end_byte
+            )
+        })?;
+        if self.end_byte > 0 && source.as_bytes()[self.end_byte - 1] == b'\n' {
+            return Ok(self.end_line);
+        }
+        let trailing = suffix
+            .split('\n')
+            .next()
+            .expect("source suffix has one line");
+        Ok(if trailing.trim().is_empty() {
+            self.end_line
+        } else {
+            self.end_line.saturating_sub(1).max(self.start_line)
+        })
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Highlight {

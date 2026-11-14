@@ -189,7 +189,7 @@ fn every_checked_node_and_function_has_a_duration_effect() {
             builtin.parameters[builtin.timing.parameter].name,
             "duration"
         );
-        assert_eq!(builtin.timeline_duration(), TimelineEffect::Dependent);
+        assert_eq!(builtin.timeline_duration(), TimelineEffect::Unknown);
     }
 }
 #[test]

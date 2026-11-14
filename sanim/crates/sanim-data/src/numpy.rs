@@ -245,7 +245,7 @@ fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String
             values.push(Value::Bool(chunk[0] != 0));
             continue;
         }
-        if **inner != Type::Numeric(Unit::Number) && **inner != Type::Data {
+        if inner.numeric_unit() != Some(Unit::Number) && **inner != Type::Data {
             return Err("numeric NPY dtype requires Array<Number>".into());
         }
         let mut padded = [0u8; 8];
@@ -298,10 +298,12 @@ fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String
             }
             _ => return Err("unsupported NPY kind".into()),
         };
-        values.push(Value::Number(Number {
+        let decoded = Value::Number(Number {
             value,
             unit: Unit::Number,
-        }));
+        });
+        sanim_core::validate_value(inner, &decoded)?;
+        values.push(decoded);
     }
     Ok(Value::Array {
         element_type: inner.clone().into(),

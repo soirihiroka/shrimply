@@ -200,7 +200,8 @@ fn convert(
             .as_str()
             .map(|v| Value::String(v.into()))
             .ok_or_else(bad),
-        Type::Numeric(unit) => {
+        ty if ty.numeric_unit().is_some() => {
+            let unit = ty.numeric_unit().expect("numeric type");
             let n = match value {
                 Json::Number(v) => Number::parse(&expand_exponent(&v.to_string())?)
                     .map_err(|e| format!("{path}: expected {ty}: {e}"))?,
@@ -209,10 +210,12 @@ fn convert(
                 }
                 _ => return Err(bad()),
             };
-            if n.unit != *unit {
+            if n.unit != unit {
                 return Err(bad());
             }
-            Ok(Value::Number(n))
+            let decoded = Value::Number(n);
+            sanim_core::validate_value(ty, &decoded).map_err(|error| format!("{path}: {error}"))?;
+            Ok(decoded)
         }
         Type::Color => {
             if let Some(text) = value.as_str() {
@@ -381,8 +384,16 @@ fn convert(
             }
             Ok(Value::Record(out.into_iter().collect()))
         }
-        Type::List(inner) | Type::Array(inner) => {
+        Type::List(inner, _) | Type::Array(inner) => {
             let rows = value.as_array().ok_or_else(bad)?;
+            if let Type::List(_, length) = ty
+                && !length.allows(rows.len())
+            {
+                return Err(format!(
+                    "{path}: expected {ty}, found List with {} items",
+                    rows.len()
+                ));
+            }
             let values = rows
                 .iter()
                 .enumerate()

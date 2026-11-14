@@ -41,8 +41,8 @@ fn union_predicates_substitution_and_constraints_cover_every_alternative() {
 fn contextual_union_lists_keep_a_concrete_current_schema_and_original_payload() {
     let empty = Value::List(vec![].into());
     let ty = Type::union([
-        Type::List(Box::new(number())),
-        Type::List(Box::new(Type::String)),
+        Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
+        Type::List(Box::new(Type::String), sanim_core::ListLength::Unknown),
     ])
     .unwrap();
     let refined = empty.with_type(&ty).unwrap();

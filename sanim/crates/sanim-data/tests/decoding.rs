@@ -9,10 +9,13 @@ fn number() -> Type {
     Type::Numeric(Unit::Number)
 }
 fn table() -> Type {
-    Type::List(Box::new(Type::Record(BTreeMap::from([
-        ("id".into(), Type::String),
-        ("value".into(), number()),
-    ]))))
+    Type::List(
+        Box::new(Type::Record(BTreeMap::from([
+            ("id".into(), Type::String),
+            ("value".into(), number()),
+        ]))),
+        sanim_core::ListLength::Unknown,
+    )
 }
 #[test]
 fn csv_validates_columns_and_numbers() {
@@ -116,7 +119,10 @@ fn json_schema_rejects_extra_fields() {
 }
 #[test]
 fn json_optional_values() {
-    let ty = Type::List(Box::new(Type::Option(Box::new(number()))));
+    let ty = Type::List(
+        Box::new(Type::Option(Box::new(number()))),
+        sanim_core::ListLength::Unknown,
+    );
     let value = decode("a.json", b"[null,2]", &ty, Limits::default()).unwrap();
     assert_eq!(value.list().unwrap()[0], Value::None);
 }
@@ -149,9 +155,14 @@ fn byte_limit_is_checked_before_parse() {
         ..Limits::default()
     };
     assert!(
-        decode("a.json", b"[1,2]", &Type::List(Box::new(number())), limits)
-            .unwrap_err()
-            .contains("byte limit")
+        decode(
+            "a.json",
+            b"[1,2]",
+            &Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
+            limits
+        )
+        .unwrap_err()
+        .contains("byte limit")
     );
 }
 #[test]
@@ -160,7 +171,15 @@ fn decoded_value_limit_is_enforced() {
         max_values: 2,
         ..Limits::default()
     };
-    assert!(decode("a.json", b"[1,2]", &Type::List(Box::new(number())), limits).is_err());
+    assert!(
+        decode(
+            "a.json",
+            b"[1,2]",
+            &Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
+            limits
+        )
+        .is_err()
+    );
 }
 #[test]
 fn nesting_limit_is_enforced() {
@@ -168,7 +187,15 @@ fn nesting_limit_is_enforced() {
         max_depth: 0,
         ..Limits::default()
     };
-    assert!(decode("a.json", b"[1]", &Type::List(Box::new(number())), limits).is_err());
+    assert!(
+        decode(
+            "a.json",
+            b"[1]",
+            &Type::List(Box::new(number()), sanim_core::ListLength::Unknown),
+            limits
+        )
+        .is_err()
+    );
 }
 #[test]
 fn unsupported_format_fails() {
@@ -388,7 +415,7 @@ fn json_and_npy_vectors_retain_f64_range() {
 #[test]
 fn sql_instruction_budget_interrupts_recursive_queries() {
     let tables = Value::Record(Default::default());
-    let ty = Type::List(Box::new(Type::Dict));
+    let ty = Type::List(Box::new(Type::Dict), sanim_core::ListLength::Unknown);
     let limits = Limits {
         max_sql_steps: 1000,
         ..Limits::default()
@@ -402,7 +429,7 @@ fn sql_rejects_multiple_statements() {
         "SELECT 1 AS value; SELECT 2 AS value",
         &Value::Record(Default::default()),
         None,
-        &Type::List(Box::new(Type::Dict)),
+        &Type::List(Box::new(Type::Dict), sanim_core::ListLength::Unknown),
         Limits::default(),
     )
     .unwrap_err();

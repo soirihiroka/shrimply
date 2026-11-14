@@ -1,5 +1,7 @@
 //! Native source-code elements and timeline presentation methods.
 mod edits;
+mod patch_edit;
+mod selectors;
 mod syntax;
 use crate::{
     native::Context,
@@ -16,15 +18,6 @@ use sanim_core::{
 use std::sync::Arc;
 
 use sanim_core::code::values::*;
-fn scope_type() -> Type {
-    record([
-        ("id", Type::String),
-        ("label", Type::String),
-        ("start_line", Type::Numeric(Unit::Number)),
-        ("end_line", Type::Numeric(Unit::Number)),
-        ("depth", Type::Numeric(Unit::Number)),
-    ])
-}
 
 pub(crate) fn register(output: &mut Vec<Builtin>, common: Vec<Parameter>) {
     let p = |name, ty, required| Parameter { name, ty, required };
@@ -53,8 +46,13 @@ pub(crate) fn register(output: &mut Vec<Builtin>, common: Vec<Parameter>) {
         p("line_height", Type::Numeric(Unit::Length), false),
         p("tab_size", Type::Numeric(Unit::Number), false),
         p("line_numbers", Type::Bool, false),
+        p("scope_indicators", Type::Bool, false),
         p("theme", theme_type(), false),
-        p("spans", Type::List(Box::new(span_type())), false),
+        p(
+            "spans",
+            Type::List(Box::new(span_type()), sanim_core::ListLength::Unknown),
+            false,
+        ),
     ];
     parameters.extend(common);
     output.push(Builtin {
@@ -80,6 +78,36 @@ fn check_source(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
     Ok(builtin.result.clone())
 }
 
+fn check_query(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
+    if builtin.name == "CodeView.range"
+        && !builtin
+            .parameters
+            .iter()
+            .zip(actuals)
+            .any(|(parameter, ty)| {
+                selectors::QUERY_KINDS.contains(&parameter.name) && *ty != Type::Unit
+            })
+    {
+        return Err("CodeView.range requires name=, level=, line=, character=, or regex=; use view.ranges() to list all syntax ranges".into());
+    }
+    Ok(builtin.result.clone())
+}
+fn check_edit(builtin: &Builtin, actuals: &[Type]) -> Result<Type, String> {
+    let present = |name| {
+        builtin
+            .parameters
+            .iter()
+            .zip(actuals)
+            .any(|(parameter, ty)| parameter.name == name && *ty != Type::Unit)
+    };
+    if present("code") == present("src") {
+        return Err(
+            "range.edit requires exactly one replacement: code=String or src=\"file.py\"".into(),
+        );
+    }
+    Ok(builtin.result.clone())
+}
+
 fn methods() -> &'static [Builtin] {
     static METHODS: std::sync::OnceLock<Vec<Builtin>> = std::sync::OnceLock::new();
     METHODS.get_or_init(|| {
@@ -92,60 +120,92 @@ fn methods() -> &'static [Builtin] {
                     p("src", Type::String, true),
                     p("animation", Type::String, false),
                     p("file", Type::String, false),
+                    p("range", range_type(), false),
                 ],
                 Type::Unit,
                 true,
             ),
             (
                 "CodeView.select",
-                vec![p("ranges", Type::List(Box::new(range_type())), false)],
+                vec![p(
+                    "ranges",
+                    Type::List(Box::new(range_type()), sanim_core::ListLength::Unknown),
+                    false,
+                )],
                 Type::Unit,
                 true,
             ),
             (
                 "CodeView.style",
                 vec![
-                    p("spans", Type::List(Box::new(span_type())), false),
+                    p(
+                        "spans",
+                        Type::List(Box::new(span_type()), sanim_core::ListLength::Unknown),
+                        false,
+                    ),
                     p("theme", theme_type(), false),
+                    p("line_numbers", Type::Bool, false),
+                    p("scope_indicators", Type::Bool, false),
                 ],
                 Type::Unit,
                 true,
             ),
             (
                 "CodeView.fold",
-                vec![
-                    p("scope", Type::String, false),
-                    p("level", Type::Numeric(Unit::Number), false),
-                ],
+                vec![p("range", range_type(), true)],
                 Type::Unit,
                 true,
             ),
             (
                 "CodeView.unfold",
-                vec![
-                    p("scope", Type::String, false),
-                    p("level", Type::Numeric(Unit::Number), false),
-                ],
+                vec![p("range", range_type(), true)],
                 Type::Unit,
                 true,
             ),
             (
-                "CodeView.scopes",
-                vec![],
-                Type::List(Box::new(scope_type())),
-                false,
-            ),
-            (
-                "CodeView.find",
-                vec![
-                    p("text", Type::String, true),
-                    p("occurrence", Type::Numeric(Unit::Number), false),
-                ],
+                "CodeView.range",
+                selectors::parameters(false),
                 range_type(),
                 false,
             ),
+            (
+                "CodeView.ranges",
+                selectors::parameters(true),
+                Type::List(Box::new(range_type()), sanim_core::ListLength::Unknown),
+                false,
+            ),
+            ("CodeRange.fold", vec![], Type::Unit, true),
+            ("CodeRange.unfold", vec![], Type::Unit, true),
+            ("CodeRange.select", vec![], Type::Unit, true),
+            (
+                "CodeRange.scroll_to",
+                vec![p("align", Type::String, false)],
+                Type::Unit,
+                true,
+            ),
+            (
+                "CodeRange.style",
+                vec![p("style", style_type(), true)],
+                Type::Unit,
+                true,
+            ),
+            (
+                "CodeRange.edit",
+                vec![
+                    p("code", Type::String, false),
+                    p("src", Type::String, false),
+                    p("animation", Type::String, false),
+                    p("file", Type::String, false),
+                ],
+                Type::Unit,
+                true,
+            ),
         ] {
-            let mut parameters = vec![p("view", Type::Element, true)];
+            let mut parameters = vec![if name.starts_with("CodeRange.") {
+                p("range", range_type(), true)
+            } else {
+                p("view", Type::Element, true)
+            }];
             parameters.extend(arguments);
             let mut builtin = Builtin {
                 name,
@@ -161,14 +221,20 @@ fn methods() -> &'static [Builtin] {
                     ..Default::default()
                 },
                 content: Default::default(),
-                execute: if name == "CodeView.patch" {
+                execute: if matches!(name, "CodeView.patch" | "CodeRange.edit") {
                     Execution::Source(execute)
                 } else if schedule {
                     Execution::Native(execute)
                 } else {
                     Execution::Access(execute)
                 },
-                check: native_types::fixed,
+                check: if matches!(name, "CodeView.range" | "CodeView.ranges") {
+                    check_query
+                } else if name == "CodeRange.edit" {
+                    check_edit
+                } else {
+                    native_types::fixed
+                },
             };
             crate::prelude::finalize(&mut builtin);
             methods.push(builtin);
@@ -180,7 +246,13 @@ pub(crate) fn builtin(name: &str) -> Option<&'static Builtin> {
     methods().iter().find(|method| method.name == name)
 }
 pub(crate) fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
-    methods().iter().filter(move |_| *receiver == Type::Element)
+    methods().iter().filter(move |method| {
+        if method.name.starts_with("CodeRange.") {
+            range_type().accepts(receiver)
+        } else {
+            *receiver == Type::Element
+        }
+    })
 }
 fn current_document(
     view: &Value,
@@ -266,7 +338,9 @@ fn execute(
     mut context: Context<'_>,
 ) -> Result<Value, String> {
     syntax::install();
-    let required = |name: &str| args.get(name).ok_or_else(|| format!("missing '{name}'"));
+    if name.starts_with("CodeRange.") {
+        return selectors::action(name, args, context);
+    }
     if let Some(operation) = Native::from_name(name) {
         return operation.execute(args);
     }
@@ -329,7 +403,12 @@ fn execute(
                     .get("line_numbers")
                     .map(Value::boolean)
                     .transpose()?
-                    .unwrap_or(true),
+                    .unwrap_or(false),
+                scope_indicators: args
+                    .get("scope_indicators")
+                    .map(Value::boolean)
+                    .transpose()?
+                    .unwrap_or(false),
                 theme: Arc::new(
                     args.get("theme")
                         .map(theme)
@@ -363,6 +442,15 @@ fn execute(
             else {
                 unreachable!()
             };
+            sanim_core::code::view::validate_ranges(
+                &root.id,
+                &document,
+                &options
+                    .spans
+                    .iter()
+                    .map(|span| span.range.clone())
+                    .collect::<Vec<_>>(),
+            )?;
             let element = Arc::make_mut(&mut root);
             element.geometry = Arc::new(Geometry::Code {
                 document,
@@ -382,74 +470,8 @@ fn execute(
             };
             Ok(Value::Element(root))
         }
-        "CodeView.scopes" => {
-            let document = syntax::parse(
-                current_document(required("view")?, &context)?
-                    .as_ref()
-                    .clone(),
-            )?;
-            Ok(Value::List(List::typed(
-                scope_type(),
-                document
-                    .scopes
-                    .iter()
-                    .map(|scope| {
-                        Value::Record(
-                            [
-                                ("id".to_string(), Value::String(scope.id.clone())),
-                                ("label".to_string(), Value::String(scope.label.clone())),
-                                ("start_line".to_string(), scalar(scope.start_line)),
-                                ("end_line".to_string(), scalar(scope.end_line)),
-                                ("depth".to_string(), scalar(scope.depth)),
-                            ]
-                            .into_iter()
-                            .collect(),
-                        )
-                    })
-                    .collect(),
-            )))
-        }
-        "CodeView.find" => {
-            let document = current_document(required("view")?, &context)?;
-            let source = document.source()?;
-            let text = required("text")?.string()?;
-            if text.is_empty() {
-                return Err("CodeView.find text cannot be empty".into());
-            }
-            let occurrence = args
-                .get("occurrence")
-                .map(|value| integer(value, "occurrence"))
-                .transpose()?
-                .unwrap_or(1);
-            let at = source
-                .match_indices(text)
-                .nth(
-                    occurrence
-                        .checked_sub(1)
-                        .ok_or("CodeView.find occurrence is 1-based")?,
-                )
-                .map(|(at, _)| at)
-                .ok_or_else(|| {
-                    format!(
-                        "CodeView.find could not find occurrence {occurrence} of {text:?} in '{}'",
-                        document.path
-                    )
-                })?;
-            let position = |at: usize| {
-                let prefix = &source[..at];
-                (
-                    prefix.bytes().filter(|byte| *byte == b'\n').count() + 1,
-                    prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1,
-                )
-            };
-            let (start_line, start_column) = position(at);
-            let (end_line, end_column) = position(at + text.len());
-            Ok(range_value(Range {
-                start_line,
-                start_column,
-                end_line,
-                end_column,
-            }))
+        "CodeView.range" | "CodeView.ranges" => {
+            selectors::query(args, context, name == "CodeView.ranges")
         }
         _ => edits::execute(name, args, context),
     }

@@ -126,7 +126,7 @@ fn plan(
             retained[index] = true;
         }
         let mut ends: Arc<[usize]> = Arc::from([]);
-        if typing && !token.key.starts_with("line-number:") {
+        if typing && !token.is_gutter() {
             if previous.is_some() {
                 last_typed = None;
             } else if let Some(word) = text(&token.element) {
@@ -158,7 +158,7 @@ fn plan(
     let mut deletion_characters = 0usize;
     for index in (0..from.len()).rev().filter(|&index| !retained[index]) {
         let token = &from[index];
-        let ends = if typing && !token.key.starts_with("line-number:") {
+        let ends = if typing && !token.is_gutter() {
             text(&token.element)
                 .map(boundaries)
                 .transpose()?
@@ -435,6 +435,10 @@ pub fn transition_tokens(
                     element.opacity =
                         math::visual_lerp(previous.element.opacity, element.opacity, appearance)?;
                 }
+                if previous.element.rotation != element.rotation {
+                    element.rotation =
+                        math::visual_lerp(previous.element.rotation, element.rotation, progress)?;
+                }
                 if previous.style != token.style {
                     recolor(&mut element, &previous.element, appearance)?;
                 }
@@ -453,7 +457,14 @@ pub fn transition_tokens(
                 prefix(&mut element, &value, &token.style)?;
             }
         } else if animation != PatchAnimation::Typewriter {
-            element.opacity = math::visual_product(element.opacity, inserted_opacity)?;
+            element.opacity = math::visual_product(
+                element.opacity,
+                if token.is_gutter() {
+                    appearance
+                } else {
+                    inserted_opacity
+                },
+            )?;
         }
         children.push_back(element);
     }
@@ -475,7 +486,14 @@ pub fn transition_tokens(
                 prefix(&mut old, &value, &token.style)?;
             }
         } else {
-            old.opacity = math::visual_product(old.opacity, removed_opacity)?;
+            old.opacity = math::visual_product(
+                old.opacity,
+                if token.is_gutter() {
+                    math::arithmetic("-", 1.into(), appearance)?
+                } else {
+                    removed_opacity
+                },
+            )?;
         }
         children.push_back(old);
     }

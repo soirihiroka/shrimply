@@ -40,6 +40,16 @@ impl Checker<'_> {
             }
             return self.frame_native(expr, builtin, args, env, variables);
         }
+        if matches!(builtin.execute, prelude::Execution::List) {
+            if !types.is_empty() {
+                return Err(self.error(
+                    "S123",
+                    "List methods infer type arguments from the items and callback",
+                    expr.span,
+                ));
+            }
+            return self.list_function(expr, builtin, args, env, expected, variables);
+        }
         if builtin.result == Type::Data && builtin.name == "Data" {
             if !types.is_empty() {
                 return Err(self.error("S123", "Data does not take type arguments", expr.span));
@@ -70,11 +80,12 @@ impl Checker<'_> {
             let result = if types.len() == 1 {
                 self.resolve(&types[0], variables, 0, expr.span)?
             } else if types.is_empty() {
-                let expected = expected
-                    .cloned()
-                    .unwrap_or(Type::List(Box::new(Type::Dict)));
+                let expected = expected.cloned().unwrap_or(Type::List(
+                    Box::new(Type::Dict),
+                    sanim_core::ListLength::Unknown,
+                ));
                 if matches!(builtin.execute, prelude::Execution::Query) {
-                    let Type::List(row) = expected else {
+                    let Type::List(row, _) = expected else {
                         return Err(self.error("S125", "query produces List<Row>", expr.span));
                     };
                     *row
@@ -125,7 +136,8 @@ impl Checker<'_> {
                 if !matches!(actuals[0], Type::Data | Type::Dict) {
                     return Err(self.error("S106", "decode<T> requires Data or Dict", expr.span));
                 }
-                self.reads.insert(expr.span.start, result.clone());
+                self.result_types
+                    .insert((expr.span.start, expr.span.end), result.clone());
                 return Ok(result);
             }
             sanim_data::sqlite::validate_row_type(&result)
@@ -143,7 +155,7 @@ impl Checker<'_> {
                     )),
                 };
             for (name, table) in tables {
-                let Type::List(row) = table else {
+                let Type::List(row, _) = table else {
                     return Err(self.error(
                         "S106",
                         format!("SQL input '{name}' must be a List<T>, found {table}"),
@@ -154,8 +166,14 @@ impl Checker<'_> {
                     self.error("S125", format!("SQL input '{name}': {message}"), expr.span)
                 })?;
             }
-            let result = Type::List(Box::new(result));
-            self.reads.insert(expr.span.start, result.clone());
+            let length = if let Some(Type::List(_, length)) = expected {
+                *length
+            } else {
+                sanim_core::ListLength::Unknown
+            };
+            let result = Type::List(Box::new(result), length);
+            self.result_types
+                .insert((expr.span.start, expr.span.end), result.clone());
             return Ok(result);
         }
         if matches!(builtin.execute, prelude::Execution::Read) {
@@ -182,7 +200,8 @@ impl Checker<'_> {
             let path = ordered[0].ok_or_else(|| self.error("S125", "missing path", expr.span))?;
             let actual = self.expression(path, env, Some(&Type::String), variables)?;
             self.expect(&Type::String, &actual, path.span)?;
-            self.reads.insert(expr.span.start, ty.clone());
+            self.result_types
+                .insert((expr.span.start, expr.span.end), ty.clone());
             return Ok(ty);
         }
         if !types.is_empty() {
@@ -249,7 +268,33 @@ impl Checker<'_> {
                     })?;
             }
         }
-        (builtin.check)(builtin, &actuals)
-            .map_err(|e| self.error("S106", format!("{name}: {e}"), expr.span))
+        let mut result = (builtin.check)(builtin, &actuals)
+            .map_err(|e| self.error("S106", format!("{name}: {e}"), expr.span))?;
+        if name == "range" {
+            let count = |name, default| {
+                let at = builtin
+                    .parameters
+                    .iter()
+                    .position(|parameter| parameter.name == name)?;
+                crate::list_functions::constant_count(ordered[at], default)
+            };
+            if let (Some(start), Some(end), Some(step)) = (
+                count("start", Some(0)),
+                count("end", None),
+                count("step", Some(1)),
+            ) {
+                let length = sanim_core::math::range_count(start, end, step)
+                    .map_err(|reason| self.error("S106", reason, expr.span))?;
+                result = Type::List(
+                    Box::new(Type::Numeric(Unit::Number)),
+                    sanim_core::ListLength::Exact(length),
+                );
+            }
+            self.result_types.insert(
+                (expr.span.start, expr.span.end),
+                self.copy_type(&result, expr.span)?,
+            );
+        }
+        Ok(result)
     }
 }

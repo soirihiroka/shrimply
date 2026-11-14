@@ -67,7 +67,7 @@ impl Runtime<'_, '_> {
         if !matches!(&source.1.kind,ExprKind::Name(source) if source==name) {
             return None;
         }
-        let (Value::List(before), Value::List(after), Type::List(inner)) =
+        let (Value::List(before), Value::List(after), Type::List(inner, _)) =
             (before, after, expected)
         else {
             return None;

@@ -1260,3 +1260,369 @@ fn literal_completion_edits_round_trip_sanim_braces_and_control_characters() {
         .unwrap_or_else(|error| panic!("{error}; source={source:?}"));
     assert_eq!(prepared.bindings["selected"].string().unwrap(), value);
 }
+
+#[test]
+fn code_ranges_expose_named_types_actions_and_timing_from_the_native_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = "let code=CodeView(code=r\"def main():\\n    return 1\",lang=\"python\")\nadd(code)\nlet section=code.range(name=\"main\")\nsection.fold(duration=400ms)\nwait(1s)\n";
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"version":1,"text":source}}),
+        ),
+        request(
+            2,
+            "textDocument/completion",
+            json!({"textDocument":{"uri":uri},"position":{"line":3,"character":8}}),
+        ),
+        request(
+            3,
+            "textDocument/completion",
+            json!({"textDocument":{"uri":uri},"position":{"line":2,"character":17}}),
+        ),
+        request(
+            4,
+            "textDocument/inlayHint",
+            json!({"textDocument":{"uri":uri},"range":{"start":{"line":0,"character":0},"end":{"line":5,"character":0}}}),
+        ),
+        request(
+            5,
+            "textDocument/signatureHelp",
+            json!({"textDocument":{"uri":uri},"position":{"line":3,"character":22}}),
+        ),
+    ];
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    for (id, expected) in [
+        (2, vec!["fold", "unfold", "edit", "select", "style"]),
+        (3, vec!["range", "ranges", "patch", "scroll_to"]),
+    ] {
+        let items = reply(&replies, id)["result"]["items"].as_array().unwrap();
+        for name in expected {
+            assert!(
+                items.iter().any(|item| item["label"] == name),
+                "missing {name}: {replies:#?}"
+            );
+        }
+        assert!(
+            !items
+                .iter()
+                .any(|item| item["label"] == "scopes" || item["label"] == "find")
+        );
+    }
+    let hints = reply(&replies, 4)["result"].as_array().unwrap();
+    assert!(
+        hints
+            .iter()
+            .any(|hint| hint["position"]["line"] == 2 && hint["label"] == ": CodeRange"),
+        "{hints:#?}"
+    );
+    let signature = reply(&replies, 5)["result"]["signatures"][0]["label"]
+        .as_str()
+        .unwrap();
+    assert!(
+        signature.contains("duration") && signature.contains("Duration"),
+        "{signature}"
+    );
+}
+
+#[test]
+fn guarded_clauses_expose_all_signatures_and_their_own_parameter_types_and_durations() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = "fn choose(mode:\"before\"):Number{wait(1s);return 1}\nfn choose(mode:\"after\"):Number{wait(2s);return 2}\nlet mode=reflect(\"before\")\nlet selected=choose(mode)\nlet _before=choose(\"before\")\nlet _after=choose(\"after\")\n";
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+    ];
+    for (id, method, line, character) in [
+        (2, "textDocument/signatureHelp", 4, 22),
+        (3, "textDocument/completion", 4, 22),
+        (4, "textDocument/hover", 0, 11),
+        (5, "textDocument/hover", 1, 11),
+        (6, "textDocument/hover", 3, 15),
+        (8, "textDocument/definition", 3, 15),
+        (9, "textDocument/signatureHelp", 5, 21),
+    ] {
+        messages.push(request(
+            id,
+            method,
+            json!({"textDocument":{"uri":uri},"position":{"line":line,"character":character}}),
+        ));
+    }
+    messages.push(request(7,"textDocument/inlayHint",json!({"textDocument":{"uri":uri},"range":{"start":{"line":0,"character":0},"end":{"line":5,"character":0}}})));
+    messages.push(request(
+        10,
+        "textDocument/documentSymbol",
+        json!({"textDocument":{"uri":uri}}),
+    ));
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    assert_eq!(reply(&replies, 9)["result"]["activeSignature"], 1);
+    let outline = reply(&replies, 10)["result"].as_array().unwrap();
+    assert!(
+        outline[0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("\"before\"")
+    );
+    assert!(!outline[0]["detail"].as_str().unwrap().contains("\"after\""));
+    assert!(outline[1]["detail"].as_str().unwrap().contains("\"after\""));
+    let signatures = reply(&replies, 2)["result"]["signatures"]
+        .as_array()
+        .unwrap();
+    assert_eq!(signatures.len(), 2, "{signatures:?}");
+    assert!(
+        signatures[0]["label"]
+            .as_str()
+            .unwrap()
+            .contains("\"before\"")
+    );
+    assert!(
+        signatures[1]["label"]
+            .as_str()
+            .unwrap()
+            .contains("\"after\"")
+    );
+    assert!(
+        signatures[0]["documentation"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("1s")
+    );
+    assert!(
+        signatures[1]["documentation"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("2s")
+    );
+    let items = reply(&replies, 3)["result"]["items"].as_array().unwrap();
+    assert!(items.iter().any(|item| item["label"] == "\"before\""));
+    assert!(items.iter().any(|item| item["label"] == "\"after\""));
+    assert!(
+        reply(&replies, 4)["result"]["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("\"before\"")
+    );
+    assert!(
+        reply(&replies, 5)["result"]["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("\"after\"")
+    );
+    let definitions = reply(&replies, 8)["result"].as_array().unwrap();
+    assert_eq!(definitions.len(), 2);
+    assert_eq!(definitions[0]["range"]["start"]["line"], 0);
+    assert_eq!(definitions[1]["range"]["start"]["line"], 1);
+    let call_hover = reply(&replies, 6)["result"]["contents"]["value"]
+        .as_str()
+        .unwrap();
+    assert!(call_hover.contains("1s | 2s"), "{call_hover}");
+    let hints = reply(&replies, 7)["result"].as_array().unwrap();
+    assert!(
+        hints
+            .iter()
+            .any(|hint| hint["position"]["line"] == 0 && hint["label"] == "duration: 1s"),
+        "{hints:?}"
+    );
+    assert!(
+        hints
+            .iter()
+            .any(|hint| hint["position"]["line"] == 1 && hint["label"] == "duration: 2s"),
+        "{hints:?}"
+    );
+}
+
+#[test]
+fn literal_completion_filters_other_known_arguments_without_executing_the_program() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = "fn tint(side:\"left\",color:\"blue\"):String{return color}\nfn tint(side:\"right\",color:\"red\"):String{return color}\nlet _unread=read<String>(\"absent.txt\")\nlet _selected=tint(\"left\",\"blue\")\n";
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+        request(
+            2,
+            "textDocument/completion",
+            json!({"textDocument":{"uri":uri},"position":{"line":3,"character":29}}),
+        ),
+    ];
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    let items = reply(&replies, 2)["result"]["items"].as_array().unwrap();
+    assert!(
+        items.iter().any(|item| item["label"] == "\"blue\""),
+        "{items:?}"
+    );
+    assert!(
+        !items.iter().any(|item| item["label"] == "\"red\""),
+        "{items:?}"
+    );
+    let diagnostics = replies
+        .iter()
+        .filter(|reply| reply["method"] == "textDocument/publishDiagnostics")
+        .flat_map(|reply| reply["params"]["diagnostics"].as_array().unwrap());
+    let diagnostics = diagnostics.collect::<Vec<_>>();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn symbolic_duration_contracts_and_generic_list_results_reach_real_lsp_clients() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = "fn beat(n:Number):Unit{repeat n {wait(250ms)}}\n@duration(n*250ms)\nfn contracted(n:Number):Unit{repeat n {wait(250ms)}}\nfn identity<T>(value:T):T{return value}\nlet values=[1,2,3]\nlet mapped=values.map(identity)\n";
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+        request(
+            2,
+            "textDocument/hover",
+            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":4}}),
+        ),
+        request(
+            3,
+            "textDocument/signatureHelp",
+            json!({"textDocument":{"uri":uri},"position":{"line":5,"character":25}}),
+        ),
+        request(
+            4,
+            "textDocument/inlayHint",
+            json!({"textDocument":{"uri":uri},"range":{"start":{"line":0,"character":0},"end":{"line":6,"character":0}}}),
+        ),
+    ];
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    let hover = reply(&replies, 2)["result"]["contents"]["value"]
+        .as_str()
+        .unwrap();
+    assert!(
+        hover.contains("n") && hover.contains("1/4") && !hover.contains("unknown"),
+        "{hover}"
+    );
+    let signature = reply(&replies, 3)["result"]["signatures"][0]["label"]
+        .as_str()
+        .unwrap();
+    assert!(
+        signature.contains("callback")
+            && signature.contains("Number")
+            && signature.contains("List<Number,3>"),
+        "{signature}"
+    );
+    let hints = reply(&replies, 4)["result"].as_array().unwrap();
+    assert!(
+        hints.iter().any(|hint| hint["position"]["line"] == 2
+            && hint["label"]
+                .as_str()
+                .is_some_and(|label| label.contains("duration:")
+                    && label.contains("n")
+                    && label.contains("1/4"))),
+        "{hints:?}"
+    );
+    assert!(
+        hints
+            .iter()
+            .any(|hint| hint["position"]["line"] == 5 && hint["label"] == ": List<Number,3>"),
+        "{hints:?}"
+    );
+}
+
+#[test]
+fn chained_generic_list_signatures_keep_distinct_inner_and_outer_type_proofs() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let line = "let result=[1,2].map(textify).map(marker)";
+    let source = format!(
+        "fn textify<T>(value:T):String{{return \"{{value}}\"}}\nfn marker<T>(value:T):Number{{return 1}}\n{line}\n"
+    );
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+    ];
+    for (id, name) in [(2, "textify"), (3, "marker")] {
+        messages.push(request(id,"textDocument/signatureHelp",json!({"textDocument":{"uri":uri},"position":{"line":2,"character":line.find(name).unwrap()+2}})));
+    }
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    let inner = reply(&replies, 2)["result"]["signatures"][0]["label"]
+        .as_str()
+        .unwrap();
+    let outer = reply(&replies, 3)["result"]["signatures"][0]["label"]
+        .as_str()
+        .unwrap();
+    assert!(
+        inner.contains("value: Number") && inner.contains("List<String,2>"),
+        "{inner}"
+    );
+    assert!(
+        outer.contains("value: String") && outer.contains("List<Number,2>"),
+        "{outer}"
+    );
+}
+
+#[test]
+fn exact_list_cardinality_is_visible_in_hover_inference_generics_and_mutability() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = "fn identity<T>(value:T):T{return value}\nlet explicit:List<Number,3>=[1,2,3]\nlet inferred=[1,2,3]\nlet forwarded=identity(inferred)\nmut editable=[1,2,3]\neditable=[1,2]\nlet chained=inferred.map(identity).map(identity)\n";
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"languageId":"sanim","version":1,"text":source}}),
+        ),
+    ];
+    for (id, line) in [(2, 1), (3, 2), (4, 3), (5, 4), (6, 6)] {
+        messages.push(request(
+            id,
+            "textDocument/hover",
+            json!({"textDocument":{"uri":uri},"position":{"line":line,"character":5}}),
+        ));
+    }
+    messages.push(request(7,"textDocument/inlayHint",json!({"textDocument":{"uri":uri},"range":{"start":{"line":0,"character":0},"end":{"line":7,"character":0}}})));
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    for id in [2, 3, 4, 6] {
+        let hover = reply(&replies, id)["result"]["contents"]["value"]
+            .as_str()
+            .unwrap();
+        assert!(hover.contains("List<Number,3>"), "{id}: {hover}");
+    }
+    let editable = reply(&replies, 5)["result"]["contents"]["value"]
+        .as_str()
+        .unwrap();
+    assert!(
+        editable.contains("List<Number>") && !editable.contains("List<Number,3>"),
+        "{editable}"
+    );
+    let hints = reply(&replies, 7)["result"].as_array().unwrap();
+    for line in [2, 3, 6] {
+        assert!(hints.iter().any(|hint|hint["position"]["line"]==line&&hint["label"]==": List<Number,3>"),"{hints:?}");
+    }
+    assert!(
+        hints
+            .iter()
+            .any(|hint| hint["position"]["line"] == 4 && hint["label"] == ": List<Number>"),
+        "{hints:?}"
+    );
+    let diagnostics = replies
+        .iter()
+        .filter(|reply| reply["method"] == "textDocument/publishDiagnostics")
+        .flat_map(|reply| reply["params"]["diagnostics"].as_array().unwrap())
+        .collect::<Vec<_>>();
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}

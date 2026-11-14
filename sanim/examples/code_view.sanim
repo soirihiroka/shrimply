@@ -18,13 +18,13 @@ let panels = <Box flex flex-row width={90%} height={70%} gap={50pt} align={Align
 add(title)
 add(panels)
 wait(400ms)
-python_view.select(ranges=[python_view.find("answer += value")], duration=350ms)
+python_view.select(ranges=[python_view.range(regex=r"answer \\+= value")], duration=350ms)
 wait(400ms)
 python_view.patch(src="code_view_sample.py.patch", animation="morph", duration=900ms)
 wait(500ms)
-python_view.fold(level=1, duration=600ms)
+python_view.range(name="total").fold( duration=600ms)
 wait(500ms)
-python_view.unfold(level=1, duration=600ms)
+python_view.range(name="total").unfold( duration=600ms)
 wait(500ms)
 sanim_view.style(theme=CodeTheme(rules=[
     CodeRule("function", CodeStyle(fill=Color("blue1"), underline=true)),

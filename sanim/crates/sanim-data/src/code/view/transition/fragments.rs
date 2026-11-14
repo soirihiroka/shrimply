@@ -4,7 +4,10 @@
 use super::{at, boundaries, correspondence, identify, prefix, text};
 use imbl::Vector;
 use sanim_core::{Geometry, code::view::Token};
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 type Prepared = (Vector<Token>, Vector<Token>, Vec<Option<usize>>);
 
@@ -17,7 +20,12 @@ pub(super) fn prepare(from: &Vector<Token>, to: &Vector<Token>) -> Result<Prepar
         .zip(to.front())
         .is_some_and(|(a, b)| a.revision == b.revision)
     {
-        return Ok((from.clone(), to.clone(), matches));
+        if to.iter().zip(&matches).all(|(token, matched)| {
+            token.key.split(':').next() != Some("token") || matched.is_some()
+        }) {
+            return Ok((from.clone(), to.clone(), matches));
+        }
+        return reflow(from, to);
     }
     let mut retained = vec![false; from.len()];
     for previous in matches.iter().flatten() {
@@ -52,6 +60,7 @@ pub(super) fn prepare(from: &Vector<Token>, to: &Vector<Token>) -> Result<Prepar
     let mut old_parts = vec![None; from.len()];
     let mut new_parts = vec![None; to.len()];
     let mut split = false;
+    let mut work = super::MAX_TRANSITION_ITEMS;
     for (new, old) in replacements.into_iter().enumerate() {
         let Some(old) = old else {
             continue;
@@ -91,35 +100,98 @@ pub(super) fn prepare(from: &Vector<Token>, to: &Vector<Token>) -> Result<Prepar
         }
         let old_cuts = [0, a_starts[head], a_starts[a_ends.len() - tail], a.len()];
         let new_cuts = [0, b_starts[head], b_starts[b_ends.len() - tail], b.len()];
-        old_parts[old] = Some(parts(&from[old], &old_cuts)?);
-        new_parts[new] = Some(parts(&to[new], &new_cuts)?);
+        old_parts[old] = Some(parts(&from[old], &old_cuts, &mut work)?);
+        new_parts[new] = Some(parts(&to[new], &new_cuts, &mut work)?);
         split = true;
     }
     if !split {
         return Ok((from.clone(), to.clone(), matches));
     }
-    let expand = |tokens: &Vector<Token>, fragments: Vec<Option<Vec<Token>>>| {
-        // Keep all untouched vector branches shared with the endpoint; a one-
-        // word edit must not rebuild the entire token vector's storage.
-        let mut expanded = tokens.clone();
-        for (index, parts) in fragments.into_iter().enumerate().rev() {
-            if let Some(parts) = parts {
-                expanded.remove(index);
-                for part in parts.into_iter().rev() {
-                    expanded.insert(index, part);
-                }
-            }
-        }
-        expanded
-    };
     let from = expand(from, old_parts);
     let to = expand(to, new_parts);
     let matches = correspondence::matches(&from, &to);
     Ok((from, to, matches))
 }
 
-fn parts(token: &Token, cuts: &[usize; 4]) -> Result<Vec<Token>, String> {
+fn expand(tokens: &Vector<Token>, fragments: Vec<Option<Vec<Token>>>) -> Vector<Token> {
+    // Keep all untouched vector branches shared with the endpoint; a one-
+    // word edit must not rebuild the entire token vector's storage.
+    let mut expanded = tokens.clone();
+    for (index, parts) in fragments.into_iter().enumerate().rev() {
+        if let Some(parts) = parts {
+            expanded.remove(index);
+            for part in parts.into_iter().rev() {
+                expanded.insert(index, part);
+            }
+        }
+    }
+    expanded
+}
+
+fn reflow(from: &Vector<Token>, to: &Vector<Token>) -> Result<Prepared, String> {
+    let mut boundaries: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    for token in from.iter().chain(to) {
+        if token.key.split(':').next() != Some("token") {
+            continue;
+        }
+        if let Some(word) = text(&token.element) {
+            let line = boundaries.entry(token.line).or_default();
+            line.insert(token.column);
+            line.insert(
+                token
+                    .column
+                    .checked_add(word.chars().count())
+                    .ok_or("code fragment column overflow")?,
+            );
+        }
+    }
+    let mut work = super::MAX_TRANSITION_ITEMS;
+    let mut split = |tokens: &Vector<Token>| -> Result<Vector<Token>, String> {
+        let mut replacements = vec![None; tokens.len()];
+        for (index, token) in tokens.iter().enumerate() {
+            if token.key.split(':').next() != Some("token") {
+                continue;
+            }
+            let Some(word) = text(&token.element) else {
+                continue;
+            };
+            let offsets: Vec<_> = word
+                .char_indices()
+                .map(|(at, _)| at)
+                .chain(std::iter::once(word.len()))
+                .collect();
+            let end = token
+                .column
+                .checked_add(offsets.len() - 1)
+                .ok_or("code fragment column overflow")?;
+            let cuts = boundaries[&token.line].range((
+                std::ops::Bound::Excluded(token.column),
+                std::ops::Bound::Excluded(end),
+            ));
+            let mut bytes = vec![0];
+            bytes.extend(cuts.map(|column| offsets[column - token.column]));
+            if bytes.len() == 1 {
+                continue;
+            }
+            bytes.push(word.len());
+            replacements[index] = Some(parts(token, &bytes, &mut work)?);
+        }
+        Ok(expand(tokens, replacements))
+    };
+    let from = split(from)?;
+    let to = split(to)?;
+    let matches = correspondence::matches(&from, &to);
+    Ok((from, to, matches))
+}
+
+fn parts(token: &Token, cuts: &[usize], work: &mut usize) -> Result<Vec<Token>, String> {
     let source = text(&token.element).ok_or("code transition token has no native text")?;
+    let cost = cuts
+        .windows(2)
+        .filter(|pair| pair[0] != pair[1])
+        .try_fold(0usize, |total, pair| total.checked_add(pair[1]))
+        .ok_or("code fragment preparation work overflow")?;
+    *work=work.checked_sub(cost).ok_or("code transition fragment preparation exceeds its native shaping work budget; reduce the displayed source or the number of changed wrap boundaries")?;
     let mut output = Vec::new();
     for range in cuts.windows(2) {
         let (start, end) = (range[0], range[1]);

@@ -25,6 +25,7 @@ struct Endpoint {
     options: Arc<Options>,
     tokens: imbl::Vector<Token>,
     size: [f64; 2],
+    rows: Vec<super::SourceRow>,
 }
 
 type Identity = (
@@ -231,7 +232,9 @@ fn endpoint(
             .collect(),
     );
     let mut bytes = MAX_LAYOUT_BYTES;
-    let mut items = MAX_LAYOUT_ITEMS;
+    let mut items = MAX_LAYOUT_ITEMS
+        .checked_sub(prepared.rows.len())
+        .ok_or("code layout visual rows exceed their item budget")?;
     sanim_core::value_budget::charge(
         &Value::List(children),
         &mut bytes,
@@ -253,6 +256,7 @@ fn endpoint(
         )?;
     }
     let metadata = std::mem::size_of::<Endpoint>()
+        + prepared.rows.capacity() * std::mem::size_of::<super::SourceRow>()
         + key.len()
         + tokens
             .iter()
@@ -284,6 +288,7 @@ fn endpoint(
         options: options.clone(),
         tokens,
         size: prepared.size,
+        rows: prepared.rows,
     });
     let mut cache = cache.lock().expect("code layout cache poisoned");
     cache.content.insert(
@@ -293,6 +298,91 @@ fn endpoint(
     );
     cache.identities.insert(identity, hint, hint_bytes);
     Ok(endpoint)
+}
+
+/// Source selections use the exact native visual rows already retained for rendering.
+pub fn range_bounds(
+    element: &Element,
+    selected: &sanim_core::code::view::Range,
+) -> Result<[f64; 2], String> {
+    let Geometry::Code {
+        document,
+        options,
+        presentation,
+        ..
+    } = element.geometry.as_ref()
+    else {
+        return Err("source range scrolling requires CodeView".into());
+    };
+    let snapshot = presentation.as_ref().map_or_else(
+        || {
+            Arc::new(Snapshot {
+                document: document.clone(),
+                options: options.clone(),
+                folded: imbl::OrdSet::new(),
+                selection: Arc::from([]),
+            })
+        },
+        |event| event.to.clone(),
+    );
+    let recipe = element
+        .layout
+        .text
+        .resolved
+        .ok_or("source range scrolling requires resolved CodeView layout")?;
+    let endpoint = endpoint(&element.id, &snapshot, recipe)?;
+    let selected_bytes = sanim_core::code::view::resolve_ranges(
+        &element.id,
+        &endpoint.document,
+        std::slice::from_ref(selected),
+    )?
+    .pop()
+    .expect("one requested source range");
+    let folded: Vec<_> = endpoint
+        .document
+        .scopes
+        .iter()
+        .filter(|scope| snapshot.folded.contains(&scope.id))
+        .map(|scope| {
+            Ok((
+                scope.start_line,
+                scope.hidden_end_line(&endpoint.document.text)?,
+            ))
+        })
+        .collect::<Result<_, String>>()?;
+    let visible = |position: (usize, usize), end: bool| {
+        folded
+            .iter()
+            .filter(|(start, last)| *start < position.0 && position.0 <= *last)
+            .min_by_key(|(start, _)| *start)
+            .map_or(position, |(start, _)| (start + usize::from(end), 1))
+    };
+    let start = visible((selected.start_line, selected.start_column), false);
+    let end = visible((selected.end_line, selected.end_column), true);
+    let mut matching = endpoint.rows.iter().filter(|row| {
+        if start == end {
+            row.start <= start && start < row.end || row.start == row.end && start == row.start
+        } else {
+            row.start < end && start < row.end
+                || row.start == row.end && start <= row.start && row.start < end
+        }
+    });
+    let padding = math::to_f64(element.layout.padding)?;
+    if let Some(first) = matching.next() {
+        return Ok(matching
+            .fold([first.top, first.bottom], |bounds, row| {
+                [bounds[0].min(row.top), bounds[1].max(row.bottom)]
+            })
+            .map(|position| position + padding));
+    }
+    if selected_bytes.is_empty() && selected_bytes.start == endpoint.document.text.len() {
+        return Ok(endpoint
+            .rows
+            .last()
+            .map_or([0., endpoint.size[1]], |row| [row.top, row.bottom])
+            .map(|position| position + padding));
+    }
+    Err("selected source range has no visible native layout row".into())
 }
 
 pub fn resolve_pending(element: &mut Element, _time: Fraction) -> Result<(), String> {

@@ -2,7 +2,7 @@
 use crate::{
     code::{
         Document,
-        view::{Override, Range, Style, Theme},
+        view::{Override, Range, RangeOrigin, Style, Theme},
     },
     *,
 };
@@ -96,7 +96,11 @@ impl Native {
             ),
             Self::CodeTheme => (
                 vec![
-                    ("rules", Type::List(Box::new(rule_type())), false),
+                    (
+                        "rules",
+                        Type::List(Box::new(rule_type()), crate::ListLength::Unknown),
+                        false,
+                    ),
                     ("selection", Type::Color, false),
                     ("inactive_opacity", num, false),
                     ("line_number", Type::Color, false),
@@ -180,8 +184,7 @@ impl Native {
             )),
             "CodeRange" => {
                 let value = Value::Record(args.clone());
-                range(&value)?;
-                Ok(value)
+                Ok(range_value(range(&value)?))
             }
             "CodeLines" => {
                 let start = integer(required("start")?, "CodeLines start")?;
@@ -195,6 +198,7 @@ impl Native {
                     start_column: 1,
                     end_line: end.checked_add(1).ok_or("CodeLines end overflow")?,
                     end_column: 1,
+                    origin: None,
                 };
                 range.validate()?;
                 Ok(range_value(range))
@@ -256,10 +260,19 @@ pub fn style_type() -> Type {
         ("opacity", option(Type::Numeric(Unit::Number))),
     ])
 }
+pub fn origin_type() -> Type {
+    record([
+        ("owner", Type::String),
+        ("revision", Type::String),
+        ("scope_id", option(Type::String)),
+    ])
+}
 pub fn range_type() -> Type {
     record(
         ["start_line", "start_column", "end_line", "end_column"]
-            .map(|name| (name, Type::Numeric(Unit::Number))),
+            .map(|name| (name, Type::Numeric(Unit::Number)))
+            .into_iter()
+            .chain(std::iter::once(("origin", option(origin_type())))),
     )
 }
 pub fn rule_type() -> Type {
@@ -270,14 +283,20 @@ pub fn span_type() -> Type {
 }
 pub fn theme_type() -> Type {
     record([
-        ("rules", Type::List(Box::new(rule_type()))),
+        (
+            "rules",
+            Type::List(Box::new(rule_type()), crate::ListLength::Unknown),
+        ),
         ("selection", Type::Color),
         ("inactive_opacity", Type::Numeric(Unit::Number)),
         ("line_number", Type::Color),
     ])
 }
 pub fn scalar(value: usize) -> Value {
-    Value::Number(Number::scalar(value as i64))
+    Value::Number(Number {
+        value: Fraction::from(value as u64),
+        unit: Unit::Number,
+    })
 }
 pub fn document(value: &Value) -> Result<Arc<Document>, String> {
     if let Value::Code(document) = value {
@@ -347,6 +366,39 @@ pub fn range(value: &Value) -> Result<Range, String> {
         start_column: get("start_column")?,
         end_line: get("end_line")?,
         end_column: get("end_column")?,
+        origin: match f.get("origin") {
+            None | Some(Value::None) => None,
+            Some(Value::Some(value)) => {
+                let origin = fields(value)?;
+                let get = |name| {
+                    origin
+                        .get(name)
+                        .ok_or_else(|| format!("CodeRange origin missing {name}"))
+                };
+                let string = |name| match get(name)? {
+                    Value::String(value) => Ok(value.clone()),
+                    _ => Err(format!("CodeRange origin {name} must be String")),
+                };
+                let scope_id = match get("scope_id")? {
+                    Value::None => None,
+                    Value::Some(value) => match value.as_ref() {
+                        Value::String(value) => Some(value.clone()),
+                        _ => return Err("CodeRange origin scope_id must be Option<String>".into()),
+                    },
+                    _ => return Err("CodeRange origin scope_id must be Option<String>".into()),
+                };
+                Some(Arc::new(RangeOrigin {
+                    owner: string("owner")?,
+                    revision: string("revision")?,
+                    scope_id,
+                }))
+            }
+            Some(_) => {
+                return Err(
+                    "CodeRange origin must be None or Some({owner, revision, scope_id})".into(),
+                );
+            }
+        },
     };
     range.validate()?;
     Ok(range)
@@ -358,6 +410,33 @@ pub fn range_value(range: Range) -> Value {
             ("start_column".to_string(), scalar(range.start_column)),
             ("end_line".to_string(), scalar(range.end_line)),
             ("end_column".to_string(), scalar(range.end_column)),
+            (
+                "origin".to_string(),
+                range
+                    .origin
+                    .map(|origin| {
+                        Value::Some(Arc::new(Value::Record(
+                            [
+                                ("owner".to_string(), Value::String(origin.owner.clone())),
+                                (
+                                    "revision".to_string(),
+                                    Value::String(origin.revision.clone()),
+                                ),
+                                (
+                                    "scope_id".to_string(),
+                                    origin
+                                        .scope_id
+                                        .as_ref()
+                                        .map(|id| Value::Some(Arc::new(Value::String(id.clone()))))
+                                        .unwrap_or(Value::None),
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        )))
+                    })
+                    .unwrap_or(Value::None),
+            ),
         ]
         .into_iter()
         .collect(),
@@ -492,7 +571,7 @@ pub fn spans_value(spans: &[Override]) -> Value {
             .map(|span| {
                 Value::Record(
                     [
-                        ("range".to_string(), range_value(span.range)),
+                        ("range".to_string(), range_value(span.range.clone())),
                         ("style".to_string(), style_value(&span.style)),
                     ]
                     .into_iter()

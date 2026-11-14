@@ -3,6 +3,37 @@ use sanim_core::{
     code::{Content, Document, Language},
 };
 use sanim_data::{Limits, decode};
+
+#[test]
+fn declaration_names_and_exact_syntax_bytes_come_from_native_grammars() {
+    for (path, source, expected) in [
+        ("a.c", "int *factory() {\n return 0;\n}\n", "factory"),
+        (
+            "a.cpp",
+            "int ns::push(int x) {\n return x;\n}\n",
+            "ns::push",
+        ),
+        (
+            "a.rs",
+            "struct Queue;\nimpl Queue {\n fn push() {\n }\n}\n",
+            "Queue",
+        ),
+        ("a.js", "const push = () => {\n return 1;\n};\n", "push"),
+    ] {
+        let document =
+            sanim_data::code::parse(Document::read(path, source, Language::Auto).unwrap()).unwrap();
+        let scope = document
+            .scopes
+            .iter()
+            .find(|scope| scope.label.ends_with(&format!(":{expected}")))
+            .unwrap_or_else(|| panic!("{path}: {:?}", document.scopes));
+        assert!(scope.start_byte < scope.end_byte && scope.end_byte <= source.len());
+        assert!(
+            source.is_char_boundary(scope.start_byte) && source.is_char_boundary(scope.end_byte)
+        );
+    }
+}
+
 #[test]
 fn every_bundled_grammar_has_real_highlights_and_folds() {
     for (path, source) in [
@@ -234,6 +265,7 @@ fn line_number_gutter_uses_native_digit_metrics_and_right_alignment() {
             auto_line_height: true,
             tab_size: 4,
             line_numbers: true,
+            scope_indicators: false,
             theme: Arc::new(Theme::default()),
             spans: vec![],
         };

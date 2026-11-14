@@ -11,13 +11,27 @@ fn name<'a>(module: &'a AnalyzedModule, ty: &Type) -> Option<&'a str> {
         .or_else(|| {
             prelude::types()
                 .iter()
-                .find_map(|(name, definition)| match definition {
+                .filter_map(|(name, definition)| match definition {
                     prelude::TypeDefinition::Plain(schema)
                         if matches!(schema, Type::Record(_)) && schema == ty =>
                     {
                         Some(*name)
                     }
                     _ => None,
+                })
+                // Prefer the structural constructor over convenience factories
+                // returning the same record (CodeRange rather than CodeLines).
+                .max_by_key(|name| {
+                    let Type::Record(fields) = ty else {
+                        return 0;
+                    };
+                    prelude::builtin(name).map_or(0, |builtin| {
+                        builtin
+                            .parameters
+                            .iter()
+                            .filter(|parameter| fields.contains_key(parameter.name))
+                            .count()
+                    })
                 })
         })
 }
@@ -46,7 +60,13 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
             }
         }
         Type::Record(_) => "{…}".into(),
-        Type::List(inner) => format!("List<{}>", compact(module, inner)),
+        Type::Overloaded(signatures) => format!("fn ({} clauses)", signatures.len()),
+        Type::List(inner, length) => match length {
+            sanim_core::ListLength::Unknown => format!("List<{}>", compact(module, inner)),
+            sanim_core::ListLength::Exact(length) => {
+                format!("List<{},{}>", compact(module, inner), length)
+            }
+        },
         Type::Option(inner) => format!("Option<{}>", compact(module, inner)),
         Type::Array(inner) => format!("Array<{}>", compact(module, inner)),
         Type::Series(inner) => format!("Series<{}>", compact(module, inner)),
@@ -67,6 +87,17 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
 fn expanded(module: &AnalyzedModule, ty: &Type, depth: usize) -> String {
     match ty {
         Type::StringLiteral(_) => ty.to_string(),
+        Type::Overloaded(signatures) => signatures
+            .iter()
+            .map(|signature| {
+                format!(
+                    "{}  # duration: {}",
+                    Type::Function(signature.clone()),
+                    signature.duration
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
         Type::Record(fields) => {
             let indent = "    ".repeat(depth);
             let child_indent = "    ".repeat(depth + 1);
@@ -79,7 +110,12 @@ fn expanded(module: &AnalyzedModule, ty: &Type, depth: usize) -> String {
                 .join("\n");
             format!("{{\n{fields}\n{indent}}}")
         }
-        Type::List(inner) => format!("List<{}>", expanded(module, inner, depth)),
+        Type::List(inner, length) => match length {
+            sanim_core::ListLength::Unknown => format!("List<{}>", expanded(module, inner, depth)),
+            sanim_core::ListLength::Exact(length) => {
+                format!("List<{},{}>", expanded(module, inner, depth), length)
+            }
+        },
         Type::Option(inner) => format!("Option<{}>", expanded(module, inner, depth)),
         Type::Array(inner) => format!("Array<{}>", expanded(module, inner, depth)),
         Type::Series(inner) => format!("Series<{}>", expanded(module, inner, depth)),

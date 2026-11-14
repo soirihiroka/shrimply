@@ -59,6 +59,7 @@ pub enum StatementKind {
     },
     Function {
         name: String,
+        duration: Option<Expr>,
         generics: Vec<GenericParameter<TypeExpr>>,
         parameters: Vec<Parameter>,
         result: TypeExpr,
@@ -102,6 +103,8 @@ pub struct Case {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TypeExpr {
+    ConstLength(usize),
+    Refined(Box<TypeExpr>, String, sanim_core::Number),
     StringLiteral(String),
     Named(String, Vec<TypeExpr>),
     Signal(Box<TypeExpr>),

@@ -345,6 +345,7 @@ pub enum Property {
     CodeLineHeight,
     CodeTabSize,
     CodeLineNumbers,
+    CodeScopeIndicators,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -666,7 +667,10 @@ impl Element {
             | Property::CodeSpans
             | Property::CodeLineHeight
             | Property::CodeTabSize
-            | Property::CodeLineNumbers => return Err(format!("{} is not a CodeView", self.id)),
+            | Property::CodeLineNumbers
+            | Property::CodeScopeIndicators => {
+                return Err(format!("{} is not a CodeView", self.id));
+            }
         })
     }
     pub fn set(&mut self, property: Property, value: Value) -> Result<(), String> {
@@ -697,7 +701,10 @@ impl Element {
             | Property::CodeSpans
             | Property::CodeLineHeight
             | Property::CodeTabSize
-            | Property::CodeLineNumbers => return Err(format!("{} is not a CodeView", self.id)),
+            | Property::CodeLineNumbers
+            | Property::CodeScopeIndicators => {
+                return Err(format!("{} is not a CodeView", self.id));
+            }
             Property::WhiteSpace => {
                 self.layout.text.white_space =
                     Some(crate::text::WhiteSpace::parse(value.string()?)?);

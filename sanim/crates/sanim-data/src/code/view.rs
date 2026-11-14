@@ -1,7 +1,8 @@
+mod gutter;
 mod resolver;
 mod transition;
 pub(crate) use resolver::normalized_text;
-pub use resolver::resolve_pending;
+pub use resolver::{range_bounds, resolve_pending};
 use sanim_core::code::view::Token;
 use sanim_core::{
     code::{
@@ -43,6 +44,13 @@ fn run(font: &Font, size: Fraction, text: &str, style: &Style) -> Result<Arc<Run
 pub struct Prepared {
     pub tokens: imbl::Vector<Token>,
     pub size: [f64; 2],
+    rows: Vec<SourceRow>,
+}
+struct SourceRow {
+    start: (usize, usize),
+    end: (usize, usize),
+    top: f64,
+    bottom: f64,
 }
 fn element(
     id: String,
@@ -168,54 +176,28 @@ pub(super) fn prepare_layout(
     let logical_lines = cached_flow
         .as_ref()
         .map_or(line_offsets.len(), |flow| flow.lines);
-    let byte = |line: usize, column: usize| -> Result<usize, String> {
-        if line == line_offsets.len() + 1 && column == 1 {
-            return Ok(text.len());
-        }
-        let start = *line_offsets
-            .get(line.checked_sub(1).ok_or("CodeRange lines are 1-based")?)
-            .ok_or_else(|| format!("CodeRange line {line} exceeds {} lines", line_offsets.len()))?;
-        let end = line_offsets.get(line).copied().unwrap_or(text.len());
-        let content = text[start..end].trim_end_matches(['\r', '\n']);
-        let count = content.chars().count();
-        if column == count + 1 {
-            return Ok(start + content.len());
-        }
-        content
-            .char_indices()
-            .nth(
-                column
-                    .checked_sub(1)
-                    .ok_or("CodeRange columns are 1-based")?,
-            )
-            .map(|(at, _)| start + at)
-            .ok_or_else(|| {
-                format!(
-                    "CodeRange column {column} exceeds line {line}'s {count} Unicode characters"
-                )
-            })
-    };
     let mut events = Vec::<(usize, bool, usize, usize)>::new();
     if cached_flow.is_none() {
+        let ranges: Vec<_> = options
+            .spans
+            .iter()
+            .map(|span| span.range.clone())
+            .chain(selection.iter().cloned())
+            .collect();
+        let resolved = sanim_core::code::view::resolve_ranges(id, document, &ranges)?;
         for (index, highlight) in document.highlights.iter().enumerate() {
             if highlight.start < highlight.end && highlight.end <= text.len() {
                 events.push((highlight.start, true, 0, index));
                 events.push((highlight.end, false, 0, index));
             }
         }
-        for (index, span) in options.spans.iter().enumerate() {
-            span.range.validate()?;
-            let start = byte(span.range.start_line, span.range.start_column)?;
-            let end = byte(span.range.end_line, span.range.end_column)?;
-            events.push((start, true, 1, index));
-            events.push((end, false, 1, index));
+        for (index, bounds) in resolved.iter().take(options.spans.len()).enumerate() {
+            events.push((bounds.start, true, 1, index));
+            events.push((bounds.end, false, 1, index));
         }
-        for (index, range) in selection.iter().enumerate() {
-            range.validate()?;
-            let start = byte(range.start_line, range.start_column)?;
-            let end = byte(range.end_line, range.end_column)?;
-            events.push((start, true, 2, index));
-            events.push((end, false, 2, index));
+        for (index, bounds) in resolved.iter().skip(options.spans.len()).enumerate() {
+            events.push((bounds.start, true, 2, index));
+            events.push((bounds.end, false, 2, index));
         }
     }
     events.sort_unstable();
@@ -226,21 +208,19 @@ pub(super) fn prepare_layout(
     let space = run(&options.font, options.font_size, " ", &Style::default())?.advance;
     let line_height = math::to_f64(options.line_height)?;
     let font_size = math::to_f64(options.font_size)?;
-    let number_width = if options.line_numbers {
-        let digits = "0".repeat(logical_lines.to_string().len());
-        run(&options.font, options.font_size, &digits, &Style::default())?.advance
+    let gutter = gutter::Gutter::new(options, logical_lines, space)?;
+    let number_width = gutter.number_width;
+    let left = gutter.left;
+    let mut indicators = if cached_flow.is_none() {
+        gutter.indicators(id, document, options, folded, revision)?
     } else {
-        0.
-    };
-    let left = if options.line_numbers {
-        number_width + 2. * space
-    } else {
-        0.
+        BTreeMap::new()
     };
     let mut tokens = imbl::Vector::new();
     let mut token_count = 0;
     let mut widest = left + space;
     let mut visible_row = 0usize;
+    let mut source_rows = Vec::new();
     let mut hidden_until = 0usize;
     let mut collapses = BTreeMap::new();
     if cached_flow.is_none() {
@@ -249,10 +229,11 @@ pub(super) fn prepare_layout(
             .iter()
             .filter(|scope| folded.contains(&scope.id))
         {
+            let end = scope.hidden_end_line(text)?;
             collapses
                 .entry(scope.start_line)
-                .and_modify(|end: &mut usize| *end = (*end).max(scope.end_line))
-                .or_insert(scope.end_line);
+                .and_modify(|last: &mut usize| *last = (*last).max(end))
+                .or_insert(end);
         }
     }
     let default_fill = Color::parse("#c0bfbc")?;
@@ -421,6 +402,7 @@ pub(super) fn prepare_layout(
         });
         Ok(advance)
     };
+    let mut indicator_rows = Vec::new();
     for (index, &start) in line_offsets.iter().enumerate() {
         let line = index + 1;
         let end = line_offsets.get(index + 1).copied().unwrap_or(text.len());
@@ -431,6 +413,23 @@ pub(super) fn prepare_layout(
             continue;
         }
         let baseline = visible_row as f64 * line_height + font_size;
+        if recipe.white_space == sanim_core::text::WhiteSpace::Pre {
+            if source_rows.len() >= MAX_CODE_TOKENS {
+                return Err(format!(
+                    "CodeView exceeds {MAX_CODE_TOKENS} visual rows; fold scopes or show a shorter file"
+                ));
+            }
+            source_rows.push(SourceRow {
+                start: (line, 1),
+                end: (line + 1, 1),
+                top: visible_row as f64 * line_height,
+                bottom: (visible_row + 1) as f64 * line_height,
+            });
+        }
+        if recipe.white_space == sanim_core::text::WhiteSpace::Pre && indicators.contains_key(&line)
+        {
+            indicator_rows.push((line, baseline));
+        }
         visible_row += 1;
         if options.line_numbers {
             let style = Style {
@@ -588,6 +587,14 @@ pub(super) fn prepare_layout(
             options,
             &mut glyph,
         )?;
+        let mut flow = flow;
+        flow.indicators = std::mem::take(&mut indicators);
+        let visible: BTreeSet<_> = commands
+            .iter()
+            .filter(|command| command.tag == "newline")
+            .map(|command| command.line)
+            .collect();
+        flow.indicators.retain(|line, _| visible.contains(line));
         let flow = resolver::flow(
             flow_key.as_deref().expect("wrapped source flow key"),
             Some(flow),
@@ -595,8 +602,19 @@ pub(super) fn prepare_layout(
         .expect("stored source flow");
         return draw_flow(&flow, options, recipe, left, space, &mut glyph);
     }
+    for (line, baseline) in indicator_rows {
+        let mut marker = indicators.remove(&line).expect("visible scope control");
+        marker.position.values[1] += baseline;
+        tokens.push_back(marker);
+    }
+    if tokens.len() > MAX_CODE_TOKENS {
+        return Err(format!(
+            "CodeView exceeds {MAX_CODE_TOKENS} displayed tokens; fold scopes or hide gutter controls"
+        ));
+    }
     Ok(Prepared {
         tokens,
+        rows: source_rows,
         size: [
             widest.max(space),
             ((visible_row.max(1)) as f64 * line_height).max(font_size),
@@ -643,9 +661,11 @@ pub(super) struct Flow {
     source: shrimply_fonts::native::shaping::Source,
     pieces: Vec<Piece>,
     numbers: BTreeMap<usize, Token>,
+    indicators: BTreeMap<usize, Token>,
     font: Font,
     lines: usize,
     last_line: usize,
+    source_end: (usize, usize),
     revision: [u8; 32],
 }
 impl Flow {
@@ -665,6 +685,7 @@ impl Flow {
             .iter()
             .filter_map(|piece| piece.template.as_ref())
             .chain(self.numbers.values())
+            .chain(self.indicators.values())
             .map(|token| Value::Element(token.element.clone()))
             .collect();
         value_budget::charge_with_budget(
@@ -686,11 +707,13 @@ impl Flow {
             .iter()
             .filter_map(|piece| piece.template.as_ref())
             .chain(self.numbers.values())
+            .chain(self.indicators.values())
             .map(|token| std::mem::size_of::<Token>() + token.key.len())
             .sum::<usize>();
         Ok(resolver::MAX_LAYOUT_BYTES - bytes
             + token_bytes
             + self.numbers.len() * std::mem::size_of::<(usize, Token)>()
+            + self.indicators.len() * std::mem::size_of::<(usize, Token)>()
             + std::mem::size_of::<Self>()
             + self.source.retained_bytes()
             + self.pieces.capacity() * std::mem::size_of::<Piece>()
@@ -818,6 +841,7 @@ fn prepare_flow(
         source: shrimply_fonts::native::shaping::Source::styled(text.into(), spans.into())?,
         pieces,
         numbers,
+        indicators: BTreeMap::new(),
         font: options.font.clone(),
         lines,
         last_line: commands
@@ -825,6 +849,8 @@ fn prepare_flow(
             .rev()
             .find(|command| command.tag == "newline")
             .map_or(1, |command| command.line),
+        source_end: sanim_core::code::view::SourceIndex::new(&document.text)
+            .position(document.text.len())?,
         revision,
     })
 }
@@ -863,15 +889,28 @@ fn draw_flow(
         }
     }
     characters.sort_unstable_by_key(|(index, _)| *index);
+    // Pango's character iterator visits Unicode scalars, including spaces and
+    // combining characters. Reuse that sorted index for every source column;
+    // rescanning a long token prefix for each wrapped row is quadratic.
+    let source_column = |piece: &Piece, at: usize| {
+        piece.column + characters.partition_point(|(index, _)| *index < at)
+            - characters.partition_point(|(index, _)| *index < piece.start)
+    };
     let native_rows = native.layout().lines_readonly();
     let rows: Vec<usize> = native_rows
         .iter()
         .map(|line| line.start_index() as usize)
         .collect();
+    if rows.len() > MAX_CODE_TOKENS {
+        return Err(format!(
+            "CodeView exceeds {MAX_CODE_TOKENS} visual rows; fold scopes or show a shorter file"
+        ));
+    }
     let line_height = math::to_f64(options.line_height)?;
     let size = math::to_f64(options.font_size)?;
     let mut numbered = BTreeSet::new();
     let mut piece_index = 0;
+    let mut source_rows = Vec::with_capacity(rows.len());
     for (row, start) in rows.iter().copied().enumerate() {
         let end = rows.get(row + 1).copied().unwrap_or(text.len());
         while pieces
@@ -888,11 +927,31 @@ fn draw_flow(
             },
             |piece| piece.line,
         );
-        if options.line_numbers
-            && numbered.insert(line)
-            && let Some(template) = flow.numbers.get(&line)
-        {
-            tokens.push_back(positioned(template, [0., row as f64 * line_height + size]));
+        let row_pieces = &pieces[piece_index..pieces.partition_point(|piece| piece.start < end)];
+        let start_position = row_pieces.first().map_or((line, 1), |piece| {
+            (piece.line, source_column(piece, start.max(piece.start)))
+        });
+        let end_position = row_pieces.last().map_or(start_position, |piece| {
+            let until = end.min(piece.end);
+            if text[piece.start..until].ends_with('\n') {
+                (piece.line + 1, 1)
+            } else {
+                (piece.line, source_column(piece, until))
+            }
+        });
+        source_rows.push(SourceRow {
+            start: start_position,
+            end: end_position,
+            top: row as f64 * line_height,
+            bottom: (row + 1) as f64 * line_height,
+        });
+        if numbered.insert(line) {
+            if let Some(template) = flow.numbers.get(&line) {
+                tokens.push_back(positioned(template, [0., row as f64 * line_height + size]));
+            }
+            if let Some(template) = flow.indicators.get(&line) {
+                tokens.push_back(positioned(template, [0., row as f64 * line_height + size]));
+            }
         }
         for piece in pieces[piece_index..]
             .iter()
@@ -906,7 +965,7 @@ fn draw_flow(
             {
                 continue;
             }
-            let column = piece.column + text[piece.start..at].chars().count();
+            let column = source_column(piece, at);
             let first_char = characters.partition_point(|(index, _)| *index < at);
             let last_char = characters.partition_point(|(index, _)| *index < at + word.len());
             let x = characters[first_char..last_char]
@@ -934,8 +993,23 @@ fn draw_flow(
             }
         }
     }
+    // Collapsed whitespace between native rows belongs to the preceding row;
+    // retain that source mapping even when it contributes no painted glyph.
+    if let Some(first) = source_rows.first_mut() {
+        first.start = (1, 1);
+    }
+    for index in 1..source_rows.len() {
+        let next = source_rows[index].start;
+        if source_rows[index - 1].end < next {
+            source_rows[index - 1].end = next;
+        }
+    }
+    if let Some(last) = source_rows.last_mut() {
+        last.end = last.end.max(flow.source_end);
+    }
     Ok(Prepared {
         tokens,
+        rows: source_rows,
         size: [
             (left + native.metrics.advance).max(space),
             (rows.len().max(1) as f64 * line_height).max(size),
@@ -962,6 +1036,7 @@ mod wrapping_tests {
             auto_line_height: false,
             tab_size: 4,
             line_numbers: true,
+            scope_indicators: false,
             theme: Default::default(),
             spans: vec![],
         }
@@ -1029,6 +1104,126 @@ mod wrapping_tests {
                     .shares_tree(&current.document.syntax)
             );
         }
+    }
+    #[test]
+    fn long_wrapped_reflow_rejects_quadratic_prefix_shaping_before_native_work() {
+        let document = Document::source_shared(
+            "",
+            "A".repeat(8192).into(),
+            sanim_core::code::Language::Plain,
+        )
+        .unwrap();
+        let options = options();
+        let from = prepare(
+            "bounded-fragments",
+            &document,
+            &options,
+            &Default::default(),
+            &[],
+        )
+        .unwrap();
+        let to = prepare_layout(
+            "bounded-fragments",
+            &document,
+            &options,
+            &Default::default(),
+            &[],
+            sanim_core::text::Recipe {
+                white_space: WhiteSpace::PreWrap,
+                overflow_wrap: OverflowWrap::Anywhere,
+                width: Some(90.into()),
+            },
+        )
+        .unwrap();
+        let half = Fraction::new(1u64, 2u64);
+        let error = transition_tokens(
+            &from.tokens,
+            &to.tokens,
+            half,
+            half,
+            half,
+            sanim_core::code::view::PatchAnimation::Morph,
+        )
+        .unwrap_err();
+        assert!(error.contains("shaping work budget"), "{error}");
+    }
+    #[test]
+    fn long_wrapped_unicode_tokens_keep_exact_columns_for_every_visual_row() {
+        let text = "αβ".repeat(512);
+        let document =
+            Document::source_shared("", text.clone().into(), sanim_core::code::Language::Plain)
+                .unwrap();
+        let prepared = prepare_layout(
+            "unicode-columns",
+            &document,
+            &options(),
+            &Default::default(),
+            &[],
+            sanim_core::text::Recipe {
+                white_space: WhiteSpace::PreWrap,
+                overflow_wrap: OverflowWrap::Anywhere,
+                width: Some(90.into()),
+            },
+        )
+        .unwrap();
+        let source: Vec<_> = text.chars().collect();
+        assert!(prepared.rows.len() > 100);
+        for token in prepared.tokens.iter().filter(|token| !token.is_gutter()) {
+            let Geometry::Text { text, .. } = token.element.geometry.as_ref() else {
+                panic!("plain token text");
+            };
+            let expected: String = source[token.column - 1..]
+                .iter()
+                .take(text.chars().count())
+                .collect();
+            assert_eq!(text.as_ref(), expected);
+        }
+    }
+    #[test]
+    #[ignore = "relative CPU benchmark; run make wrapped-token-bench"]
+    fn long_wrapped_token_scaling_benchmark() {
+        let mut timings = Vec::new();
+        for length in [8192, 32768] {
+            let document = Document::source_shared(
+                "",
+                "A".repeat(length).into(),
+                sanim_core::code::Language::Plain,
+            )
+            .unwrap();
+            let mut samples = Vec::new();
+            for sample in 0..9 {
+                let started = std::time::Instant::now();
+                let prepared = prepare_layout(
+                    "token-scaling",
+                    &document,
+                    &options(),
+                    &Default::default(),
+                    &[],
+                    sanim_core::text::Recipe {
+                        white_space: WhiteSpace::PreWrap,
+                        overflow_wrap: OverflowWrap::Anywhere,
+                        width: Some(90.into()),
+                    },
+                )
+                .unwrap();
+                assert!(prepared.rows.len() > length / 20);
+                std::hint::black_box(prepared);
+                if sample > 0 {
+                    samples.push(started.elapsed());
+                }
+            }
+            samples.sort();
+            timings.push(samples[4]);
+        }
+        let ratio = timings[1].as_secs_f64() / timings[0].as_secs_f64();
+        eprintln!(
+            "native wrapped token scaling: 8192={:?}, 32768={:?}, ratio={ratio:.2}",
+            timings[0], timings[1]
+        );
+        assert!(
+            ratio < 8.,
+            "4x source length must stay below quadratic 16x scaling"
+        );
     }
     #[test]
     #[ignore = "relative CPU benchmark; run make text-wrapping-bench"]

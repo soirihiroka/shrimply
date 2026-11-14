@@ -22,6 +22,7 @@ fn options() -> Options {
         auto_line_height: true,
         tab_size: 4,
         line_numbers: false,
+        scope_indicators: false,
         theme: Arc::new(Theme::default()),
         spans: vec![],
     }
@@ -431,6 +432,7 @@ fn stable_source_recolors_without_crossfading_when_highlight_style_changes() {
     let mut changed = options();
     changed.spans.push(Override {
         range: Range {
+            origin: None,
             start_line: 1,
             start_column: 1,
             end_line: 1,
@@ -473,6 +475,7 @@ fn decorated_fragment_edits_preserve_unique_element_ids() {
     let mut styled = options();
     styled.spans.push(Override {
         range: Range {
+            origin: None,
             start_line: 1,
             start_column: 1,
             end_line: 1,

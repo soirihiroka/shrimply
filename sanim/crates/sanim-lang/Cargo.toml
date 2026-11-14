@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 imbl.workspace = true
+regex.workspace = true
 sanim-core.workspace = true
 sanim-data.workspace = true
 shrimply-asset.workspace = true

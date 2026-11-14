@@ -16,6 +16,7 @@ pub enum Type {
     Sql,
     SqlIdent,
     Numeric(Unit),
+    RefinedNumeric(crate::math::domain::NumericDomain),
     Fraction,
     Vector(usize, Option<Unit>),
     Matrix4,
@@ -30,7 +31,7 @@ pub enum Type {
         groups: Vec<String>,
     },
     Series(Box<Type>),
-    List(Box<Type>),
+    List(Box<Type>, ListLength),
     Union(Vec<Type>),
     Option(Box<Type>),
     Array(Box<Type>),
@@ -40,8 +41,50 @@ pub enum Type {
         variants: BTreeMap<String, Vec<Type>>,
     },
     Function(Signature),
+    Overloaded(Vec<Signature>),
     Variable(String),
     BoundedVariable(String, Box<TypeBound>),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ListLength {
+    #[default]
+    Unknown,
+    Exact(usize),
+}
+impl ListLength {
+    pub fn accepts(self, actual: Self) -> bool {
+        self == Self::Unknown || self == actual
+    }
+    pub fn allows(self, length: usize) -> bool {
+        self.accepts(Self::Exact(length))
+    }
+    pub fn checked_add(self, other: Self) -> Result<Self, String> {
+        match (self, other) {
+            (Self::Exact(a), Self::Exact(b)) => a
+                .checked_add(b)
+                .map(Self::Exact)
+                .ok_or_else(|| "List length overflow while adding sizes".into()),
+            _ => Ok(Self::Unknown),
+        }
+    }
+    pub fn checked_mul(self, other: Self) -> Result<Self, String> {
+        match (self, other) {
+            (Self::Exact(0), _) | (_, Self::Exact(0)) => Ok(Self::Exact(0)),
+            (Self::Exact(a), Self::Exact(b)) => a
+                .checked_mul(b)
+                .map(Self::Exact)
+                .ok_or_else(|| "List length overflow while multiplying sizes".into()),
+            _ => Ok(Self::Unknown),
+        }
+    }
+    pub fn min(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Exact(0), _) | (_, Self::Exact(0)) => Self::Exact(0),
+            (Self::Exact(a), Self::Exact(b)) => Self::Exact(a.min(b)),
+            _ => Self::Unknown,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,7 +121,7 @@ impl TypeBound {
                 };
         }
         match self {
-            Self::Numeric => matches!(ty, Type::Numeric(Unit::Number) | Type::Fraction),
+            Self::Numeric => ty.numeric_unit() == Some(Unit::Number) || *ty == Type::Fraction,
             Self::Readable => ty.readable(),
             Self::Reflectable => ty.reflectable(),
             Self::Type(bound) => match (bound.as_ref(), ty) {
@@ -124,6 +167,106 @@ pub struct Signature {
 }
 
 impl Type {
+    pub fn signatures(&self) -> &[Signature] {
+        match self {
+            Self::Function(signature) => std::slice::from_ref(signature),
+            Self::Overloaded(signatures) => signatures,
+            _ => &[],
+        }
+    }
+    pub fn signatures_mut(&mut self) -> &mut [Signature] {
+        match self {
+            Self::Function(signature) => std::slice::from_mut(signature),
+            Self::Overloaded(signatures) => signatures,
+            _ => &mut [],
+        }
+    }
+    pub fn numeric_unit(&self) -> Option<Unit> {
+        match self {
+            Self::Numeric(unit) => Some(*unit),
+            Self::RefinedNumeric(domain) => Some(domain.unit),
+            _ => None,
+        }
+    }
+    pub fn numeric_domain(&self) -> Option<crate::math::domain::NumericDomain> {
+        match self {
+            Self::Numeric(unit) => Some(crate::math::domain::NumericDomain::all(*unit, false)),
+            Self::RefinedNumeric(domain) => Some(domain.clone()),
+            _ => None,
+        }
+    }
+    /// Homogeneous literals can contain rows of different lengths without
+    /// erasing their element types. Only length facts and inference holes join.
+    pub fn join_list_lengths(&self, other: &Self) -> Option<Self> {
+        if self == other || *other == Self::Unknown {
+            return Some(self.clone());
+        }
+        if *self == Self::Unknown {
+            return Some(other.clone());
+        }
+        match (self, other) {
+            (Self::List(a, la), Self::List(b, lb)) => Some(Self::List(
+                Box::new(a.join_list_lengths(b)?),
+                if la == lb { *la } else { ListLength::Unknown },
+            )),
+            (Self::Record(a), Self::Record(b)) if a.keys().eq(b.keys()) => Some(Self::Record(
+                a.iter()
+                    .map(|(name, ty)| Some((name.clone(), ty.join_list_lengths(&b[name])?)))
+                    .collect::<Option<_>>()?,
+            )),
+            (Self::Option(a), Self::Option(b)) => {
+                Some(Self::Option(Box::new(a.join_list_lengths(b)?)))
+            }
+            (Self::Array(a), Self::Array(b)) => {
+                Some(Self::Array(Box::new(a.join_list_lengths(b)?)))
+            }
+            _ => None,
+        }
+    }
+    /// Whether two checked domains may share a value. Generic holes are
+    /// conservative; disjointness must be proved before accepting clauses.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        if let Self::Union(types) = self {
+            return types.iter().any(|ty| ty.overlaps(other));
+        }
+        if let Self::Union(types) = other {
+            return types.iter().any(|ty| self.overlaps(ty));
+        }
+        if let (Some(left), Some(right)) = (self.numeric_domain(), other.numeric_domain()) {
+            return left.intersection(&right).is_some();
+        }
+        if matches!(
+            self,
+            Self::Unknown | Self::Variable(_) | Self::BoundedVariable(..)
+        ) || matches!(
+            other,
+            Self::Unknown | Self::Variable(_) | Self::BoundedVariable(..)
+        ) {
+            return true;
+        }
+        match (self, other) {
+            // Empty collections and None inhabit both element domains.
+            (Self::List(a, la), Self::List(b, lb)) => {
+                (la == lb || *la == ListLength::Unknown || *lb == ListLength::Unknown)
+                    && (la.allows(0) && lb.allows(0) || a.overlaps(b))
+            }
+            (Self::Array(_), Self::Array(_)) | (Self::Option(_), Self::Option(_)) => true,
+            (Self::Series(a), Self::Series(b)) | (Self::Signal(a), Self::Signal(b)) => {
+                a.overlaps(b)
+            }
+            (Self::DataFrame { row: a, groups: ga }, Self::DataFrame { row: b, groups: gb }) => {
+                ga == gb && a.overlaps(b)
+            }
+            (Self::StringLiteral(left), Self::StringLiteral(right)) => left == right,
+            (Self::Record(left), Self::Record(right)) => {
+                left.len() == right.len()
+                    && left
+                        .iter()
+                        .all(|(name, ty)| right.get(name).is_some_and(|other| ty.overlaps(other)))
+            }
+            _ => self.accepts(other) || other.accepts(self),
+        }
+    }
     /// Flatten and order alternatives once so equivalent unions share one schema.
     pub fn union(types: impl IntoIterator<Item = Type>) -> Result<Self, String> {
         fn append(ty: Type, output: &mut Vec<Type>) {
@@ -139,6 +282,57 @@ impl Type {
         for ty in types {
             append(ty, &mut alternatives);
         }
+        let mut domains = Vec::new();
+        alternatives.retain(|ty| {
+            if let Some(domain) = ty.numeric_domain() {
+                domains.push(domain);
+                false
+            } else {
+                true
+            }
+        });
+        domains.sort_by(|a, b| {
+            a.unit
+                .cmp(&b.unit)
+                .then(a.integer.cmp(&b.integer))
+                .then_with(|| match (a.lower, b.lower) {
+                    (Some(a), Some(b)) => {
+                        a.0.partial_cmp(&b.0)
+                            .expect("finite checked type bounds")
+                            .then(b.1.cmp(&a.1))
+                    }
+                    (None, None) => std::cmp::Ordering::Equal,
+                    (None, Some(_)) => std::cmp::Ordering::Less,
+                    (Some(_), None) => std::cmp::Ordering::Greater,
+                })
+        });
+        let mut merged: Vec<crate::math::domain::NumericDomain> = Vec::new();
+        for domain in domains {
+            if let Some(previous) = merged.last_mut()
+                && let Some(union) = previous.union(&domain)
+            {
+                *previous = union;
+            } else {
+                merged.push(domain);
+            }
+        }
+        let broad = merged
+            .iter()
+            .filter(|domain| !domain.integer && domain.lower.is_none() && domain.upper.is_none())
+            .map(|domain| domain.unit)
+            .collect::<std::collections::BTreeSet<_>>();
+        alternatives.extend(
+            merged
+                .into_iter()
+                .filter(|domain| !domain.integer || !broad.contains(&domain.unit))
+                .map(|domain| {
+                    if !domain.integer && domain.lower.is_none() && domain.upper.is_none() {
+                        Self::Numeric(domain.unit)
+                    } else {
+                        Self::RefinedNumeric(domain)
+                    }
+                }),
+        );
         alternatives
             .sort_by_cached_key(|ty| serde_json::to_vec(ty).expect("serializable semantic type"));
         alternatives.dedup();
@@ -168,18 +362,37 @@ impl Type {
     /// Editable values infer primitive string schemas; explicit annotations can
     /// retain a finite choice. Runtime strings themselves remain ordinary strings.
     pub fn widen_literals(self) -> Self {
+        self.widen(false, false)
+    }
+    pub fn editable_schema(self) -> Self {
+        self.widen(true, false)
+    }
+    pub fn signal_schema(self) -> Self {
+        self.widen(true, true)
+    }
+    fn widen(self, editable: bool, live: bool) -> Self {
         match self {
             Self::StringLiteral(_) => Self::String,
-            Self::Union(types) => Self::union(types.into_iter().map(Self::widen_literals))
+            Self::RefinedNumeric(domain) if live || domain.is_singleton() => {
+                Self::Numeric(domain.unit)
+            }
+            Self::Union(types) => Self::union(types.into_iter().map(|ty| ty.widen(editable, live)))
                 .expect("nonempty checked union"),
-            Self::List(inner) => Self::List(Box::new(inner.widen_literals())),
-            Self::Option(inner) => Self::Option(Box::new(inner.widen_literals())),
-            Self::Array(inner) => Self::Array(Box::new(inner.widen_literals())),
-            Self::Signal(inner) => Self::Signal(Box::new(inner.widen_literals())),
+            Self::List(inner, length) => Self::List(
+                Box::new(inner.widen(editable, live)),
+                if editable {
+                    ListLength::Unknown
+                } else {
+                    length
+                },
+            ),
+            Self::Option(inner) => Self::Option(Box::new(inner.widen(editable, live))),
+            Self::Array(inner) => Self::Array(Box::new(inner.widen(editable, live))),
+            Self::Signal(inner) => Self::Signal(Box::new(inner.widen(editable, live))),
             Self::Record(fields) => Self::Record(
                 fields
                     .into_iter()
-                    .map(|(name, ty)| (name, ty.widen_literals()))
+                    .map(|(name, ty)| (name, ty.widen(editable, live)))
                     .collect(),
             ),
             ty => ty,
@@ -196,7 +409,7 @@ impl Type {
         match self {
             Self::Unknown | Self::Vector(_, None) => true,
             Self::Variable(_) | Self::BoundedVariable(..) => !symbolic_parameters,
-            Self::List(t)
+            Self::List(t, _)
             | Self::Option(t)
             | Self::Array(t)
             | Self::Series(t)
@@ -214,7 +427,7 @@ impl Type {
         }
     }
     pub fn contains_function(&self) -> bool {
-        self.contains(&|ty| matches!(ty, Self::Function(_)))
+        self.contains(&|ty| !ty.signatures().is_empty())
     }
     pub fn contains_signal(&self) -> bool {
         self.contains(&|ty| matches!(ty, Self::Signal(_)))
@@ -227,7 +440,7 @@ impl Type {
             return true;
         }
         match self {
-            Self::List(t)
+            Self::List(t, _)
             | Self::Option(t)
             | Self::Array(t)
             | Self::Series(t)
@@ -238,13 +451,13 @@ impl Type {
             Self::Enum { variants, .. } => {
                 variants.values().flatten().any(|ty| ty.contains(predicate))
             }
-            Self::Function(signature) => {
+            Self::Function(_) | Self::Overloaded(_) => self.signatures().iter().any(|signature| {
                 signature.result.contains(predicate)
                     || signature
                         .parameters
                         .iter()
                         .any(|parameter| parameter.ty.contains(predicate))
-            }
+            }),
             Self::BoundedVariable(_, bound) => {
                 matches!(bound.as_ref(), TypeBound::Type(ty) if ty.contains(predicate))
             }
@@ -252,6 +465,9 @@ impl Type {
         }
     }
     pub fn accepts(&self, actual: &Type) -> bool {
+        if let (Some(expected), Some(actual)) = (self.numeric_domain(), actual.numeric_domain()) {
+            return expected.accepts(&actual);
+        }
         if let Self::Union(alternatives) = actual {
             return !alternatives.is_empty() && alternatives.iter().all(|ty| self.accepts(ty));
         }
@@ -266,8 +482,10 @@ impl Type {
                 (Self::Code(crate::code::Language::Auto), Self::Code(_)) => true,
                 (Self::Vector(n, None), Self::Vector(m, _)) => n == m,
                 (Self::Signal(a), Self::Signal(b)) => a.accepts(b),
-                (Self::List(a), Self::List(b))
-                | (Self::Option(a), Self::Option(b))
+                (Self::List(a, la), Self::List(b, lb)) => {
+                    la.accepts(*lb) && (**b == Self::Unknown || a.accepts(b))
+                }
+                (Self::Option(a), Self::Option(b))
                 | (Self::Array(a), Self::Array(b))
                 | (Self::Series(a), Self::Series(b)) => **b == Self::Unknown || a.accepts(b),
                 (
@@ -289,6 +507,7 @@ impl Type {
             | Self::StringLiteral(_)
             | Self::Code(_)
             | Self::Numeric(_)
+            | Self::RefinedNumeric(_)
             | Self::Fraction
             | Self::Vector(..)
             | Self::Matrix4
@@ -301,7 +520,7 @@ impl Type {
             Self::Data => true,
             Self::Dict => true,
             Self::Enum { variants, .. } => variants.values().flatten().all(Self::readable),
-            Self::List(t) | Self::Array(t) | Self::Option(t) => t.readable(),
+            Self::List(t, _) | Self::Array(t) | Self::Option(t) => t.readable(),
             Self::Record(fields) => fields.values().all(Self::readable),
             Self::Union(alternatives) => {
                 !alternatives.is_empty() && alternatives.iter().all(Self::readable)
@@ -317,7 +536,7 @@ impl Type {
                 TypeBound::Type(ty) => ty.data_convertible(),
                 TypeBound::Readable => false,
             },
-            Self::List(t) | Self::Array(t) | Self::Option(t) => t.data_convertible(),
+            Self::List(t, _) | Self::Array(t) | Self::Option(t) => t.data_convertible(),
             Self::Record(fields) => fields.values().all(Self::data_convertible),
             Self::Enum { variants, .. } => variants.values().flatten().all(Self::data_convertible),
             Self::Union(alternatives) => {
@@ -335,7 +554,7 @@ impl Type {
                 _ => false,
             },
             Self::Enum { variants, .. } => variants.values().flatten().all(Self::reflectable),
-            Self::List(t) | Self::Array(t) | Self::Option(t) => t.reflectable(),
+            Self::List(t, _) | Self::Array(t) | Self::Option(t) => t.reflectable(),
             Self::Record(fields) => fields.values().all(Self::reflectable),
             Self::Union(alternatives) => {
                 !alternatives.is_empty() && alternatives.iter().all(Self::reflectable)
@@ -351,7 +570,7 @@ impl Type {
                     Self::BoundedVariable(name.clone(), Box::new(bound.substitute(bindings)))
                 })
             }
-            Self::List(t) => Self::List(Box::new(t.substitute(bindings))),
+            Self::List(t, length) => Self::List(Box::new(t.substitute(bindings)), *length),
             Self::Option(t) => Self::Option(Box::new(t.substitute(bindings))),
             Self::Array(t) => Self::Array(Box::new(t.substitute(bindings))),
             Self::Signal(t) => Self::Signal(Box::new(t.substitute(bindings))),
@@ -401,6 +620,20 @@ impl std::fmt::Display for Type {
                 }
             ),
             Self::Fraction => write!(f, "Fraction"),
+            Self::RefinedNumeric(domain) => {
+                if domain.integer && domain.unit == Unit::Number {
+                    write!(f, "Int")?;
+                } else {
+                    write!(f, "{}", Self::Numeric(domain.unit))?;
+                }
+                if let Some((value, inclusive)) = domain.lower {
+                    write!(f, " {} {value}", if inclusive { ">=" } else { ">" })?;
+                }
+                if let Some((value, inclusive)) = domain.upper {
+                    write!(f, " {} {value}", if inclusive { "<=" } else { "<" })?;
+                }
+                Ok(())
+            }
             Self::Vector(n, None) => write!(f, "Vec{n}"),
             Self::Vector(n, Some(unit)) => write!(f, "Vec{n}<{}>", Self::Numeric(*unit)),
             Self::Matrix4 => write!(f, "Matrix4"),
@@ -418,7 +651,8 @@ impl std::fmt::Display for Type {
                 Ok(())
             }
             Self::Series(t) => write!(f, "Series<{t}>"),
-            Self::List(t) => write!(f, "List<{t}>"),
+            Self::List(t, ListLength::Unknown) => write!(f, "List<{t}>"),
+            Self::List(t, ListLength::Exact(length)) => write!(f, "List<{t},{length}>"),
             Self::Union(alternatives) => {
                 for (index, ty) in alternatives.iter().enumerate() {
                     if index > 0 {
@@ -465,6 +699,15 @@ impl std::fmt::Display for Type {
                     write!(f, "{name}: {ty}")?;
                 }
                 write!(f, "): {}", sig.result)
+            }
+            Self::Overloaded(signatures) => {
+                for (index, signature) in signatures.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{}", Self::Function(signature.clone()))?;
+                }
+                Ok(())
             }
         }
     }
@@ -604,7 +847,10 @@ impl Value {
             Self::Vec4(v) => Type::Vector(4, Some(v.unit)),
             Self::Matrix4(_) => Type::Matrix4,
             Self::Color(_) => Type::Color,
-            Self::List(v) => Type::List(Box::new(v.element_type.as_ref().clone())),
+            Self::List(v) => Type::List(
+                Box::new(v.element_type.as_ref().clone()),
+                ListLength::Exact(v.len()),
+            ),
             Self::Array { element_type, .. } => {
                 Type::Array(Box::new(element_type.as_ref().clone()))
             }
@@ -625,8 +871,16 @@ impl Value {
     /// Refine contextual collection schemas without changing shared source payloads.
     /// This does not introduce implicit scalar conversions.
     pub fn with_type(&self, expected: &Type) -> Result<Self, String> {
+        if let (Type::List(_, length), Self::List(list)) = (expected, self)
+            && !length.allows(list.len())
+        {
+            return Err(format!(
+                "expected {expected}, found List with {} items",
+                list.len()
+            ));
+        }
         match (expected, self) {
-            (Type::List(inner), Self::List(list))
+            (Type::List(inner, _), Self::List(list))
                 if inner.as_ref() == list.element_type.as_ref() =>
             {
                 return Ok(self.clone());
@@ -660,7 +914,7 @@ impl Value {
             return Ok(self.clone());
         }
         Ok(match (expected, self) {
-            (Type::List(inner), Self::List(list)) => Self::List(List::from_values(
+            (Type::List(inner, _), Self::List(list)) => Self::List(List::from_values(
                 Arc::new(inner.as_ref().clone()),
                 if list.is_empty() {
                     list.values.clone()
@@ -843,7 +1097,7 @@ mod tests {
                 }),
             ),
             (
-                Type::List(Box::new(Type::Color)),
+                Type::List(Box::new(Type::Color), crate::ListLength::Unknown),
                 Value::List(List::typed(
                     Type::Color,
                     vec![Value::Color(Color([Fraction::from(2); 4]))],

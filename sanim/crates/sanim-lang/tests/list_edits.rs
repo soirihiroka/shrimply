@@ -24,10 +24,13 @@ fn empty_results_keep_schema_and_empty_input_infers_from_inserted_value() {
     let prepared = prepare(
         "let first=append([],3)\nlet empty=pop(first,0)\nlet restored=insert(empty,0,4)\nassert(len(empty)==0)\nassert(restored==[4])\n",
     );
-    let expected = Type::List(Box::new(Type::Numeric(Unit::Number)));
-    assert_eq!(prepared.bindings["first"].ty(), expected);
-    assert_eq!(prepared.bindings["empty"].ty(), expected);
-    assert_eq!(prepared.bindings["restored"].ty(), expected);
+    let expected = Type::List(
+        Box::new(Type::Numeric(Unit::Number)),
+        sanim_core::ListLength::Unknown,
+    );
+    assert!(expected.accepts(&prepared.bindings["first"].ty()));
+    assert!(expected.accepts(&prepared.bindings["empty"].ty()));
+    assert!(expected.accepts(&prepared.bindings["restored"].ty()));
 }
 
 #[test]
@@ -38,7 +41,10 @@ fn pop_and_popleft_remove_opposite_ends_without_changing_the_input() {
     assert_eq!(prepared.bindings["original"].list().unwrap().len(), 3);
     assert_eq!(
         prepared.bindings["empty"].ty(),
-        Type::List(Box::new(Type::Numeric(Unit::Number)))
+        Type::List(
+            Box::new(Type::Numeric(Unit::Number)),
+            sanim_core::ListLength::Exact(0)
+        )
     );
 }
 

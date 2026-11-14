@@ -170,18 +170,23 @@ impl Runtime<'_, '_> {
             if let ExprKind::Call { callee, .. } = &expr.kind
                 && let Some(Binding::Value(Value::Function(key))) = binding(runtime, callee, env)
                 && visited.insert(key.clone())
-                && let Some(function) = runtime.functions.get(key)
-                && let Some(scope) = runtime.globals.get(&function.module)
+                && let Some(group) = runtime.functions.get(key)
             {
-                let mut found = false;
-                for statement in &function.body {
-                    statement.visit_expressions(&mut |expr| {
-                        if !found {
-                            found = node(runtime, expr, scope, visited);
+                for function in &group.clauses {
+                    if let Some(scope) = runtime.globals.get(&function.module) {
+                        let mut found = false;
+                        for statement in &function.body {
+                            statement.visit_expressions(&mut |expr| {
+                                if !found {
+                                    found = node(runtime, expr, scope, visited);
+                                }
+                            });
                         }
-                    });
+                        if found {
+                            return true;
+                        }
+                    }
                 }
-                return found;
             }
             false
         }
@@ -463,7 +468,9 @@ impl Runtime<'_, '_> {
                     return self.graph_node(Node::Math{name:name.clone(),args},expr.span);
                 }
                 let Value::Function(key)=self.expression(callee,env)? else{return Err(self.error("S140","retained signals require direct pure helper calls",expr.span));};
-                let function=self.functions.get(&key).cloned().ok_or_else(||self.error("S140","retained constructor/data calls must be snapshotted with let first",expr.span))?;
+                let group=self.functions.get(&key).cloned().ok_or_else(||self.error("S140","retained constructor/data calls must be snapshotted with let first",expr.span))?;
+                if group.clauses.len()!=1 {return Err(self.error("S140","retained animated helpers require one straight-line clause; snapshot a guarded helper call with let before retaining it",expr.span));}
+                let function=group.clauses[0].clone();
                 let mut inputs=BTreeMap::new();
                 for (index,(label,value)) in args.enumerate(){let name=label.as_ref().or_else(||function.parameters.get(index).map(|parameter| &parameter.name)).ok_or_else(||self.error("S140","invalid retained helper argument",value.span))?;inputs.insert(name.clone(),self.lower_expression(value,env,locals,depth+1)?);}
                 let scope=self.globals.get(&function.module).cloned().unwrap_or_default();

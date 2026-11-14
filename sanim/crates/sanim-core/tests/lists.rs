@@ -6,11 +6,68 @@ fn number() -> Type {
 }
 
 #[test]
+fn exact_length_validation_shares_values_and_rejects_wrong_lengths() {
+    let value = Value::List(List::typed(
+        number(),
+        (0..1024)
+            .map(|value| Value::Number(sanim_core::Number::scalar(value)))
+            .collect(),
+    ));
+    let exact = Type::List(Box::new(number()), sanim_core::ListLength::Exact(1024));
+    let Value::List(before) = &value else {
+        unreachable!()
+    };
+    let refined = value.with_type(&exact).unwrap();
+    let Value::List(after) = &refined else {
+        unreachable!()
+    };
+    assert!(before.values.ptr_eq(&after.values));
+    assert!(Arc::ptr_eq(&before.element_type, &after.element_type));
+    assert!(
+        value
+            .with_type(&Type::List(
+                Box::new(number()),
+                sanim_core::ListLength::Exact(1023)
+            ))
+            .is_err()
+    );
+    assert_eq!(refined.ty(), exact);
+}
+
+#[test]
+#[ignore = "manual exact/unknown List metadata performance measurement"]
+fn sized_list_metadata_benchmark() {
+    use std::{hint::black_box, time::Instant};
+    const ITEMS: usize = 100_000;
+    const READS: usize = 100_000;
+    let value = Value::List(List::typed(
+        number(),
+        (0..ITEMS)
+            .map(|value| Value::Number(sanim_core::Number::scalar(value as i64)))
+            .collect(),
+    ));
+    for length in [
+        sanim_core::ListLength::Unknown,
+        sanim_core::ListLength::Exact(ITEMS),
+    ] {
+        let schema = Type::List(Box::new(number()), length);
+        let start = Instant::now();
+        for _ in 0..READS {
+            black_box(value.with_type(black_box(&schema)).unwrap());
+        }
+        eprintln!(
+            "{length:?}: {READS} shared schema applications over {ITEMS} values: {:?}",
+            start.elapsed()
+        );
+    }
+}
+
+#[test]
 fn contextual_empty_lists_retain_schema_without_adding_values_or_copying_payloads() {
     let original = Value::List(vec![].into());
-    let expected = Type::List(Box::new(number()));
+    let expected = Type::List(Box::new(number()), sanim_core::ListLength::Unknown);
     let refined = original.with_type(&expected).unwrap();
-    assert_eq!(refined.ty(), expected);
+    assert!(expected.accepts(&refined.ty()));
     let (Value::List(before), Value::List(after)) = (&original, &refined) else {
         unreachable!()
     };
@@ -28,17 +85,32 @@ fn contextual_empty_lists_retain_schema_without_adding_values_or_copying_payload
 #[test]
 fn nested_list_refinement_preserves_original_values() {
     let original = Value::List(vec![Value::List(vec![].into())].into());
-    let expected = Type::List(Box::new(Type::List(Box::new(number()))));
+    let expected = Type::List(
+        Box::new(Type::List(
+            Box::new(number()),
+            sanim_core::ListLength::Unknown,
+        )),
+        sanim_core::ListLength::Unknown,
+    );
     let refined = original.with_type(&expected).unwrap();
-    assert_eq!(refined.ty(), expected);
+    assert!(expected.accepts(&refined.ty()));
     assert_eq!(
         original.ty(),
-        Type::List(Box::new(Type::List(Box::new(Type::Unknown))))
+        Type::List(
+            Box::new(Type::List(
+                Box::new(Type::Unknown),
+                sanim_core::ListLength::Exact(0)
+            )),
+            sanim_core::ListLength::Exact(1)
+        )
     );
     let Value::List(outer) = refined else {
         unreachable!()
     };
-    assert_eq!(outer[0].ty(), Type::List(Box::new(number())));
+    assert_eq!(
+        outer[0].ty(),
+        Type::List(Box::new(number()), sanim_core::ListLength::Exact(0))
+    );
     assert_eq!(outer[0].list().unwrap().len(), 0);
     assert!(Value::Bool(true).with_type(&number()).is_err());
 }
@@ -58,9 +130,10 @@ fn assignable_list_schemas_do_not_change_value_equality() {
         vec![Value::Number(sanim_core::Number::scalar(1))],
     ));
     let wider = exact
-        .with_type(&Type::List(Box::new(
-            Type::union([number(), Type::String]).unwrap(),
-        )))
+        .with_type(&Type::List(
+            Box::new(Type::union([number(), Type::String]).unwrap()),
+            sanim_core::ListLength::Unknown,
+        ))
         .unwrap();
     assert_ne!(exact.ty(), wider.ty());
     assert_eq!(
@@ -170,7 +243,7 @@ fn typed_list_benchmark() {
             .map(|number| Value::Number(sanim_core::Number::scalar(i64::from(number))))
             .collect(),
     ));
-    let ty = Type::List(Box::new(number()));
+    let ty = Type::List(Box::new(number()), sanim_core::ListLength::Unknown);
     let start = std::time::Instant::now();
     for _ in 0..count {
         std::hint::black_box(value.with_type(&ty).unwrap());

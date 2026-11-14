@@ -5,6 +5,17 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
     // Values retain broad primitive representations; literal constraints are
     // schema proofs, not one runtime datatype for every distinct string.
     match (ty, value) {
+        (Type::RefinedNumeric(domain), Value::Number(number)) => {
+            return if domain.contains(*number) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected {ty}, found {} ({})",
+                    number.value,
+                    Type::Numeric(number.unit)
+                ))
+            };
+        }
         (Type::StringLiteral(expected), Value::String(actual)) => {
             return if expected == actual {
                 Ok(())
@@ -35,7 +46,13 @@ pub fn validate_value(ty: &Type, value: &Value) -> Result<(), String> {
             }
             return Ok(());
         }
-        (Type::List(inner), Value::List(values)) => {
+        (Type::List(inner, length), Value::List(values)) => {
+            if !length.allows(values.len()) {
+                return Err(format!(
+                    "expected {ty}, found List with {} items",
+                    values.len()
+                ));
+            }
             for value in &values.values {
                 validate_value(inner, value)?;
             }

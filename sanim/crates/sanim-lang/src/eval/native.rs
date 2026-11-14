@@ -22,6 +22,8 @@ impl Runtime<'_, '_> {
             ));
         }
         let start = self.cursor;
+        let has_envelope = !matches!(builtin.execute, prelude::Execution::List)
+            || builtin.duration_argument(&arguments).is_some();
         let easing = crate::timing::easing(builtin.easing_argument(&arguments))
             .map_err(|error| self.error("S304", error, span))?;
         let mut controls = [
@@ -42,11 +44,12 @@ impl Runtime<'_, '_> {
         for index in controls.into_iter().rev() {
             arguments.remove(index);
         }
+        let requested = has_envelope.then_some(duration);
         let value = self.native_inner(builtin, arguments, duration, easing, span)?;
         if builtin.result == Type::Element {
             self.record_element_source(&value, span)?;
         }
-        self.finish_call_duration(start, Some(duration), self.cursor, span)?;
+        self.finish_call_duration(start, requested, self.cursor, span)?;
         self.last_call.easing = easing;
         Ok(value)
     }
@@ -82,6 +85,9 @@ impl Runtime<'_, '_> {
             .map(|v| v.name.to_string())
             .collect::<Vec<_>>();
         let mut args = order_values(&arguments, &params);
+        if matches!(builtin.execute, prelude::Execution::List) {
+            return self.list_function(builtin, &args, span);
+        }
         if name == "Image"
             && let Some(src) = args.get("src")
         {
@@ -91,7 +97,7 @@ impl Runtime<'_, '_> {
             )?;
             args.insert("asset".into(), value);
         }
-        if matches!(name, "CodeView" | "CodeView.patch")
+        if matches!(name, "CodeView" | "CodeView.patch" | "CodeRange.edit")
             && let Some(src) = args.get("src")
         {
             let language = if name == "CodeView" {
@@ -138,7 +144,7 @@ impl Runtime<'_, '_> {
                 .loaded
                 .iter()
                 .find(|v| v.id == self.module)
-                .and_then(|v| v.checked.read_types.get(&span.start))
+                .and_then(|v| v.checked.result_types.get(&(span.start, span.end)))
                 .ok_or_else(|| self.error("S301", "missing read schema", span))?
                 .substitute(&self.type_bindings);
             let path = args
@@ -156,7 +162,7 @@ impl Runtime<'_, '_> {
                 .loaded
                 .iter()
                 .find(|v| v.id == self.module)
-                .and_then(|v| v.checked.read_types.get(&span.start))
+                .and_then(|v| v.checked.result_types.get(&(span.start, span.end)))
                 .ok_or_else(|| self.error("S301", "missing prepared data schema", span))?
                 .substitute(&self.type_bindings);
             return if matches!(builtin.execute, prelude::Execution::Decode) {

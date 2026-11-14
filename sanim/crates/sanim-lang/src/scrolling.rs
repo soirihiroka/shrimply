@@ -44,8 +44,8 @@ fn registry() -> &'static [Builtin] {
                     required: false,
                 },
                 Parameter {
-                    name: "scope",
-                    ty: Type::String,
+                    name: "range",
+                    ty: code::values::range_type(),
                     required: false,
                 },
                 Parameter {
@@ -91,7 +91,7 @@ fn layout_work(elements: &[Element]) -> usize {
     work
 }
 
-fn execute(
+pub(crate) fn execute(
     _name: &str,
     args: &imbl::OrdMap<String, Value>,
     mut context: Context<'_>,
@@ -119,12 +119,12 @@ fn execute(
     let targets = usize::from(args.contains_key("to"))
         + usize::from(args.contains_key("x") || args.contains_key("y"))
         + usize::from(args.contains_key("line"))
-        + usize::from(args.contains_key("scope"));
+        + usize::from(args.contains_key("range"));
     if targets != 1 {
-        return Err("scroll_to requires one target: to=Vec2(...), x=/y=, line= or scope=".into());
+        return Err("scroll_to requires one target: to=Vec2(...), x=/y=, line= or range=".into());
     }
-    if args.contains_key("align") && !args.contains_key("line") && !args.contains_key("scope") {
-        return Err("scroll alignment applies to line= or scope= targets".into());
+    if args.contains_key("align") && !args.contains_key("line") && !args.contains_key("range") {
+        return Err("scroll alignment applies to line= or range= targets".into());
     }
     let start = *context.cursor;
     if context.animation.find(&view.id).is_none() {
@@ -177,56 +177,27 @@ fn execute(
             }
         }
     } else {
-        let Geometry::Code {
-            document,
-            options,
-            presentation,
-            ..
-        } = rendered.geometry.as_ref()
-        else {
-            return Err("line= and scope= scrolling require CodeView".into());
+        let Geometry::Code { document, .. } = rendered.geometry.as_ref() else {
+            return Err("line= and range= scrolling require CodeView".into());
         };
-        let (document, options, folded) =
-            presentation
-                .as_ref()
-                .map_or((document.as_ref(), options.as_ref(), None), |event| {
-                    (
-                        event.to.document.as_ref(),
-                        event.to.options.as_ref(),
-                        Some(&event.to.folded),
-                    )
-                });
         context.charge_work(document.text.len() + document.scopes.len())?;
-        let line = if let Some(value) = args.get("line") {
-            value.number()?.usize()?
+        let selected = if let Some(value) = args.get("range") {
+            code::values::range(value)?
         } else {
-            let requested = args.get("scope").expect("scope target").string()?;
-            let matching: Vec<_> = document
-                .scopes
-                .iter()
-                .filter(|scope| {
-                    scope.id.as_ref() == requested
-                        || scope.label.as_ref() == requested
-                        || scope.label.rsplit(':').next() == Some(requested)
-                })
-                .collect();
-            if matching.len() != 1 {
-                return Err(format!(
-                    "scope {requested:?} must identify exactly one CodeView scope; use .scopes() to inspect scope IDs"
-                ));
+            let line = args
+                .get("line")
+                .expect("source line target")
+                .number()?
+                .usize()?;
+            code::view::Range {
+                start_line: line,
+                start_column: 1,
+                end_line: line.checked_add(1).ok_or("source line overflow")?,
+                end_column: 1,
+                origin: None,
             }
-            matching[0].start_line
         };
-        let count = document.text.lines().count().max(1);
-        if line == 0 || line > count {
-            return Err(format!(
-                "CodeView line {line} is outside its 1..={count} source lines"
-            ));
-        }
-        let empty = imbl::OrdSet::new();
-        let row = sanim_core::scrolling::visible_row(document, folded.unwrap_or(&empty), line)?;
-        let height = math::to_f64(options.line_height)?;
-        let top = row as f64 * height;
+        let [top, bottom] = sanim_data::code::view::range_bounds(rendered, &selected)?;
         let viewport = sanim_core::scrolling::viewport(rendered)?;
         let viewport_height = viewport[3] - viewport[1];
         to.values[1] = match args
@@ -238,15 +209,19 @@ fn execute(
             "nearest" => {
                 if top < from.values[1] {
                     top
-                } else if top + height > from.values[1] + viewport_height {
-                    top + height - viewport_height
+                } else if bottom > from.values[1] + viewport_height {
+                    if bottom - top > viewport_height {
+                        top
+                    } else {
+                        bottom - viewport_height
+                    }
                 } else {
                     from.values[1]
                 }
             }
             "start" => top,
-            "center" => top - (viewport_height - height) / 2.,
-            "end" => top + height - viewport_height,
+            "center" => (top + bottom - viewport_height) / 2.,
+            "end" => bottom - viewport_height,
             other => {
                 return Err(format!(
                     "unknown scroll alignment {other:?}; use nearest, start, center or end"

@@ -21,6 +21,8 @@ pub(crate) enum Execution {
     Source(Evaluator),
     /// Cheap accessors must not serialize/hash their entire input just to cache a lookup.
     Access(Evaluator),
+    /// Higher-order list operations call declared functions through the runtime.
+    List,
     Read,
     Decode,
     Query,
@@ -177,7 +179,10 @@ fn build_builtins() -> Vec<Builtin> {
         "Matrix4",
         vec![p(
             "rows",
-            List(Box::new(List(Box::new(num.clone())))),
+            List(
+                Box::new(List(Box::new(num.clone()), sanim_core::ListLength::Unknown)),
+                sanim_core::ListLength::Unknown,
+            ),
             false,
         )],
         Matrix4,
@@ -222,7 +227,11 @@ fn build_builtins() -> Vec<Builtin> {
                 Type::union([length.clone(), String]).expect("corner radius"),
                 false,
             ),
-            p("children", List(Box::new(Element)), false),
+            p(
+                "children",
+                List(Box::new(Element), sanim_core::ListLength::Unknown),
+                false,
+            ),
         ]);
         add(
             name,
@@ -235,7 +244,11 @@ fn build_builtins() -> Vec<Builtin> {
     }
     let mut params = common();
     params.extend([
-        p("children", List(Box::new(Element)), false),
+        p(
+            "children",
+            List(Box::new(Element), sanim_core::ListLength::Unknown),
+            false,
+        ),
         p(
             "radius",
             Type::union([length.clone(), String]).expect("corner radius"),
@@ -266,7 +279,10 @@ fn build_builtins() -> Vec<Builtin> {
     let mut params = common();
     params.push(p(
         "points",
-        List(Box::new(Vector(2, Some(Dimension::Length)))),
+        List(
+            Box::new(Vector(2, Some(Dimension::Length))),
+            sanim_core::ListLength::Unknown,
+        ),
         true,
     ));
     add(
@@ -356,7 +372,7 @@ fn build_builtins() -> Vec<Builtin> {
     add(
         "keys",
         vec![p("value", Unknown, true)],
-        List(Box::new(String)),
+        List(Box::new(String), sanim_core::ListLength::Unknown),
         false,
         Execution::Access(native::keys),
         native_types::keys,
@@ -376,7 +392,7 @@ fn build_builtins() -> Vec<Builtin> {
             p("start", num.clone(), false),
             p("step", num.clone(), false),
         ],
-        List(Box::new(num.clone())),
+        List(Box::new(num.clone()), sanim_core::ListLength::Unknown),
         false,
         Execution::Native(native::range),
         native_types::fixed,
@@ -527,17 +543,20 @@ pub fn builtin(name: &str) -> Option<&'static Builtin> {
         .or_else(|| crate::dataframe::builtin(name))
         .or_else(|| crate::code_view::builtin(name))
         .or_else(|| crate::scrolling::builtin(name))
+        .or_else(|| crate::list_functions::builtin(name))
 }
 
 pub fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
     crate::dataframe::methods_for(receiver)
         .chain(crate::code_view::methods_for(receiver))
         .chain(crate::scrolling::methods_for(receiver))
+        .chain(crate::list_functions::methods_for(receiver))
 }
 
 #[derive(Clone)]
 pub enum TypeDefinition {
     Plain(Type),
+    List,
     Container(fn(Box<Type>) -> Type),
     Vector(usize),
     Bound(sanim_core::TypeBound),
@@ -546,11 +565,13 @@ impl TypeDefinition {
     pub fn instantiate(&self, args: Vec<Type>) -> Result<Type, String> {
         match (self, args.as_slice()) {
             (Self::Plain(ty), []) => Ok(ty.clone()),
+            (Self::List,[inner])=>Ok(Type::List(Box::new(inner.clone()),sanim_core::ListLength::Unknown)),
             (Self::Container(build), [inner]) => Ok(build(Box::new(inner.clone()))),
             (Self::Vector(n), []) => Ok(Type::Vector(*n, Some(Dimension::Number))),
             (Self::Vector(n), [Type::Numeric(unit)]) => Ok(Type::Vector(*n, Some(*unit))),
             (Self::Plain(_), _) => Err("takes no type arguments".into()),
             (Self::Container(_), _) => Err("requires exactly one type argument".into()),
+            (Self::List,_)=>Err("requires an element type and optional nonnegative integer length: List<Number> or List<Number,3>".into()),
             (Self::Bound(_), _) => Err("is a generic constraint, not a value type".into()),
             (Self::Vector(_), _) => Err("expects zero arguments or one numeric unit type".into()),
         }
@@ -564,6 +585,13 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
         let mut out = std::collections::BTreeMap::new();
         for (name, ty) in [
             ("Number", Type::Numeric(Dimension::Number)),
+            (
+                "Int",
+                Type::RefinedNumeric(sanim_core::math::domain::NumericDomain::all(
+                    Dimension::Number,
+                    true,
+                )),
+            ),
             ("Length", Type::Numeric(Dimension::Length)),
             ("Duration", Type::Numeric(Dimension::Duration)),
             ("Angle", Type::Numeric(Dimension::Angle)),
@@ -604,7 +632,7 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
                 out.insert(builtin.name, Vector(n));
             }
         }
-        out.insert("List", Container(Type::List));
+        out.insert("List", List);
         out.insert(
             "DataFrame",
             Container(|row| Type::DataFrame {
