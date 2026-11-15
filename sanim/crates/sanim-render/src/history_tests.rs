@@ -5,7 +5,7 @@ use sanim_lang::{Engine, MemorySources};
 
 fn scene(renderer: &mut Renderer, source: &str) -> Scene {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", source);
+    sources.insert("main.sanim", format!("{}\nAnimation()", source));
     let animation = Engine::new(Viewport {
         width: 240,
         height: 160,
@@ -20,7 +20,7 @@ fn scene(renderer: &mut Renderer, source: &str) -> Scene {
 
 const MOVING_FOREGROUND: &str = r#"
 let background=<Box w-140 h-100 bg-blue3><Label>Background</Label></Box>
-add(background)
+Animation(children=[background])
 let marker=<Box w-20 h-20 bg-orange3/>
 marker.move_to([120pt, 80pt],duration=4s,ease="linear")
 "#;
@@ -63,11 +63,11 @@ fn retained_writes_viewport_changes_and_hot_edits_do_not_replay_stale_background
     let source = r#"
 mut tint=Color("blue3")
 let background=<Box w-140 h-100 fill={tint}/>
-add(background)
-spawn {
-wait(1s)
-tint=Color("green3")
-}
+Animation(children=[background])
+<Animation absolute flow="sequence">
+{wait(1s)}
+{animate(tint,to=Color("green3"),duration=0s)}
+</Animation>
 let marker=<Box w-20 h-20 bg-orange3/>
 marker.move_to([120pt, 80pt],duration=4s,ease="linear")
 "#;
@@ -145,7 +145,7 @@ fn cached_pictures_preserve_work_limits_and_nested_memory_accounting() {
 #[test]
 fn exceeding_path_capacity_keeps_the_admitted_working_set_hot() {
     let source = format!(
-        "let items=[{}]\nfor item in items {{ add(item) }}\nwait(1s)",
+        "let items=[{}]\nfor item in items {{ Animation(children=[item]) }}\nwait(1s)",
         (1..=draw::MAX_GEOMETRY_CACHE_ENTRIES + 1)
             .map(|size| format!("Box(width={size}pt,height=1pt)"))
             .collect::<Vec<_>>()

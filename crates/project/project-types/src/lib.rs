@@ -1,4 +1,5 @@
 use glam::Vec2;
+pub mod tags;
 use serde::{Deserialize, Serialize};
 use shrimply_math_core::{Fraction, Time};
 use shrimply_math_geometry::Size2D;
@@ -175,4 +176,24 @@ pub struct TrackGap {
     pub track: TrackKey,
     pub start: Time,
     pub end: Time,
+}
+
+pub fn validate_video_settings(
+    canvas_size: CanvasSize,
+    frame_rate: shrimply_math_core::Fraction,
+) -> Result<(), String> {
+    if !(MIN_CANVAS_DIMENSION..=MAX_CANVAS_DIMENSION).contains(&canvas_size.width)
+        || !(MIN_CANVAS_DIMENSION..=MAX_CANVAS_DIMENSION).contains(&canvas_size.height)
+    {
+        return Err(format!(
+            "project dimensions must be between {MIN_CANVAS_DIMENSION} and {MAX_CANVAS_DIMENSION} pixels"
+        ));
+    }
+    if shrimply_math_core::time_from_frame(1, frame_rate).is_none() {
+        return Err(
+            "project frame rate must be finite, positive, and have a representable frame duration"
+                .into(),
+        );
+    }
+    Ok(())
 }

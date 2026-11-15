@@ -1,182 +1,122 @@
-use crate::ui::{Number2Picker, SingleLineTextInput, dropdown};
-use adw::prelude::*;
-use shrimply_components_gtk::{tr, ui::I18nAlertDialogExt};
-use shrimply_inspector_core::project::{MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION, presentation};
-use shrimply_project_document::project::Project;
-use std::{cell::Cell, rc::Rc};
+use super::{InspectorContext, section::InspectorSection};
 
-use super::{Inspectable, InspectorContext, item::flat, list, section::InspectorSection};
-
-impl Inspectable for Project {
-    fn title(&self) -> &'static str {
-        "Project"
+pub(super) fn settings(
+    section: &InspectorSection,
+    context: &InspectorContext,
+    control: shrimply_inspector_core::InspectorControl,
+) {
+    use adw::prelude::*;
+    use shrimply_components_gtk::{
+        tr,
+        ui::{I18nAlertDialogExt, Number2Picker, StringChoice, labeled_string_selector},
+    };
+    use shrimply_inspector_core::project as shared;
+    let model = control
+        .project_settings
+        .expect("shared project settings model");
+    let actions = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .halign(gtk::Align::End)
+        .visible(model.dirty)
+        .build();
+    let discard = gtk::Button::with_label(tr!(shared::SETTINGS_DISCARD).as_ref());
+    let apply = gtk::Button::with_label(tr!(shared::SETTINGS_APPLY).as_ref());
+    apply.add_css_class("suggested-action");
+    actions.append(&discard);
+    actions.append(&apply);
+    let controller = context.inspector_core.clone();
+    let rate_actions = actions.clone();
+    let fps = labeled_string_selector(
+        &model.frame_rate.label,
+        &model.frame_rate.value,
+        model
+            .frame_rate
+            .values
+            .iter()
+            .zip(&model.frame_rate.labels)
+            .map(|(value, label)| StringChoice {
+                value: value.clone(),
+                label: label.clone(),
+            })
+            .collect(),
+        move |value| {
+            controller
+                .stage_project_frame_rate(value.parse().expect("shared frame rate choice"))
+                .expect("valid frame rate");
+            rate_actions.set_visible(controller.project_settings_presentation().dirty);
+        },
+    );
+    section.add_wide_control(fps.widget());
+    let resolution = &model.resolution;
+    let [width, height] = resolution.components.as_slice() else {
+        panic!("resolution has two dimensions")
+    };
+    let [width_prefix, height_prefix] = resolution.prefixes.as_slice() else {
+        panic!("resolution has two prefixes")
+    };
+    let controller = context.inspector_core.clone();
+    let dimension_actions = actions.clone();
+    let mut dimensions = Number2Picker::builder(
+        width.parse().expect("project width"),
+        height.parse().expect("project height"),
+    )
+    .minimum(resolution.number.minimum)
+    .maximum(resolution.number.maximum)
+    .drag_step(resolution.number.drag_step)
+    .digits(
+        resolution
+            .number
+            .digits
+            .try_into()
+            .expect("nonnegative digits"),
+    )
+    .width_chars(resolution.width_characters)
+    .first_prefix(width_prefix)
+    .second_prefix(height_prefix);
+    if resolution.lock {
+        dimensions = dimensions.enable_lock();
     }
-
-    fn add_rows(&self, _section: &InspectorSection, _context: &InspectorContext) {}
-
-    fn inspect(&self, context: &InspectorContext) -> Vec<gtk::Widget> {
-        let project = presentation(self);
-        let config = InspectorSection::controls();
-
-        let name_controller = context.inspector_core.clone();
-        let name_commit_controller = context.inspector_core.clone();
-        let name = SingleLineTextInput::builder(&project.name)
-            .on_change(move |next| {
-                name_controller.set_project_name(&next);
-            })
-            .on_commit(move |_| name_commit_controller.finish_live_edit())
-            .build();
-        config.add_control_row("Name", &name);
-        let tags_controller = context.inspector_core.clone();
-        config.add_wide_control(&shrimply_components_gtk::ui::tag_editor(
-            project.tags,
-            move |tags| tags_controller.set_project_tags(tags),
-        ));
-
-        let initial_fps = project.frame_rate;
-        let initial_width = project.canvas_size.width;
-        let initial_height = project.canvas_size.height;
-        let staged_fps = Rc::new(Cell::new(initial_fps));
-        let staged_width = Rc::new(Cell::new(initial_width));
-        let staged_height = Rc::new(Cell::new(initial_height));
-
-        let discard = gtk::Button::with_label(tr!("Discard").as_ref());
-        let apply = gtk::Button::with_label(tr!("Apply").as_ref());
-        apply.add_css_class("suggested-action");
-        let actions = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(6)
-            .halign(gtk::Align::End)
-            .build();
-        actions.append(&discard);
-        actions.append(&apply);
-        actions.set_visible(false);
-
-        let update_actions: Rc<dyn Fn()> = {
-            let actions = actions.clone();
-            let staged_fps = staged_fps.clone();
-            let staged_width = staged_width.clone();
-            let staged_height = staged_height.clone();
-            Rc::new(move || {
-                actions.set_visible(
-                    staged_fps.get() != initial_fps
-                        || staged_width.get() != initial_width
-                        || staged_height.get() != initial_height,
-                );
-            })
-        };
-
-        let fps = dropdown(
-            project.frame_rate,
-            shrimply_project_document::project::frame_rate_choices(project.frame_rate),
-            {
-                let staged_fps = staged_fps.clone();
-                let update_actions = update_actions.clone();
-                move |next| {
-                    staged_fps.set(next);
-                    update_actions();
+    let dimensions = dimensions
+        .on_change(move |values, _| {
+            controller
+                .stage_project_dimensions(values[0].round() as u32, values[1].round() as u32)
+                .expect("valid project dimensions");
+            dimension_actions.set_visible(controller.project_settings_presentation().dirty);
+        })
+        .build_with_handles();
+    section.add_control_row(&resolution.label, &dimensions.widget);
+    section.add_wide_control(&actions);
+    let controller = context.inspector_core.clone();
+    let refresh = context.refresh.clone();
+    discard.connect_clicked(move |_| {
+        controller.discard_project_settings();
+        refresh();
+    });
+    let controller = context.inspector_core.clone();
+    apply.connect_clicked(move |button| {
+        let dialog = adw::AlertDialog::new(
+            Some(tr!(shared::SETTINGS_TITLE).as_ref()),
+            Some(tr!(shared::SETTINGS_WARNING).as_ref()),
+        );
+        dialog.add_responses_i18n(&[
+            ("cancel", shared::SETTINGS_CANCEL),
+            ("apply", shared::SETTINGS_APPLY),
+        ]);
+        dialog.set_close_response("cancel");
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_response_appearance("apply", adw::ResponseAppearance::Destructive);
+        let controller = controller.clone();
+        dialog.choose(
+            Some(button.upcast_ref::<gtk::Widget>()),
+            None::<&gtk::gio::Cancellable>,
+            move |response| {
+                if response.as_str() == "apply" {
+                    controller
+                        .apply_staged_project_settings()
+                        .expect("validated settings apply");
                 }
             },
         );
-        config.add_control_row("FPS", &fps);
-
-        let resolution = Number2Picker::builder(
-            f64::from(project.canvas_size.width),
-            f64::from(project.canvas_size.height),
-        )
-        .minimum(f64::from(MIN_CANVAS_DIMENSION))
-        .maximum(f64::from(MAX_CANVAS_DIMENSION))
-        .drag_step(1.0)
-        .digits(0)
-        .width_chars(7)
-        .first_prefix("W")
-        .second_prefix("H")
-        .enable_lock()
-        .on_first_change({
-            let staged_width = staged_width.clone();
-            let update_actions = update_actions.clone();
-            move |next| {
-                staged_width.set(next.round() as u32);
-                update_actions();
-            }
-        })
-        .on_second_change({
-            let staged_height = staged_height.clone();
-            let update_actions = update_actions.clone();
-            move |next| {
-                staged_height.set(next.round() as u32);
-                update_actions();
-            }
-        })
-        .build_with_handles();
-        config.add_control_row("Resolution", &resolution.widget);
-        config.add_wide_control(&actions);
-
-        let refresh_inspector = context.refresh.clone();
-        discard.connect_clicked(move |_| refresh_inspector());
-
-        let apply_controller = context.inspector_core.clone();
-        apply.connect_clicked(move |button| {
-            let dialog = adw::AlertDialog::new(
-                Some(tr!("Change Project Settings?").as_ref()),
-                Some(
-                    tr!("Changing the frame rate or resolution can affect timing, visual layout, and rendered output. Existing media and effects may no longer match the project.")
-                        .as_ref(),
-                ),
-            );
-            dialog.add_responses_i18n(&[("cancel", "Cancel"), ("apply", "Apply")]);
-            dialog.set_close_response("cancel");
-            dialog.set_default_response(Some("cancel"));
-            dialog.set_response_appearance("apply", adw::ResponseAppearance::Destructive);
-
-            let controller = apply_controller.clone();
-            let next_fps = staged_fps.get();
-            let next_width = staged_width.get();
-            let next_height = staged_height.get();
-            dialog.choose(
-                Some(button.upcast_ref::<gtk::Widget>()),
-                None::<&gtk::gio::Cancellable>,
-                move |response| {
-                    if response.as_str() != "apply" {
-                        return;
-                    }
-                    controller
-                        .apply_project_settings(
-                            shrimply_project_document::project::CanvasSize {
-                                width: next_width,
-                                height: next_height,
-                            },
-                            next_fps,
-                        )
-                        .expect("validated project settings must apply");
-                },
-            );
-        });
-
-        let info = super::info::item(context);
-
-        list::render_categories(
-            vec![
-                list::InspectorCategory {
-                    key: "config",
-                    label: "Project",
-                    icon: "sliders-horizontal-symbolic",
-                    items: vec![flat(config.into_widget())],
-                },
-                list::InspectorCategory {
-                    key: "info",
-                    label: "Info",
-                    icon: "info-outline-symbolic",
-                    items: vec![info],
-                },
-                list::InspectorCategory {
-                    key: "performance",
-                    label: "Performance",
-                    icon: "speedometer-symbolic",
-                    items: vec![flat(super::benchmarking::widget())],
-                },
-            ],
-            context,
-        )
-    }
+    });
 }

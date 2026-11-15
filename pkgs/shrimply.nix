@@ -42,6 +42,7 @@
   rustPlatform,
   shrimply-slang,
   shrimply-oidn,
+  spirv-tools,
   uv,
   vulkan-headers,
   vulkan-loader,
@@ -118,6 +119,7 @@ rustPlatform.buildRustPackage {
     ninja
     pkg-config
     python3
+    spirv-tools
     (wrapGAppsHook4.override { makeWrapper = makeShellWrapper; })
   ];
 

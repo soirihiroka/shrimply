@@ -25,12 +25,17 @@ on:
       - "!**/*.rst"
       - "!**/docs/**"
   workflow_dispatch:
+    inputs:
+      check_only:
+        description: Run debug checks without packaging or publishing a release
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 concurrency:
-  group: macos-prerelease-${{ github.ref }}
+  group: macos-${{ inputs.check_only && 'check' || 'prerelease' }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -65,6 +70,7 @@ jobs:
             opencv \
             pkgconf \
             poppler \
+            ripgrep \
             rubberband \
             uv
 
@@ -106,14 +112,14 @@ jobs:
           native_versions="$(brew list --versions)"
           native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" \
             | LC_ALL=C sort | shasum -a 256 | cut -d ' ' -f 1)"
-          echo "prefix=macos-application-v2-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
+          echo "prefix=macos-application-v2${{ inputs.check_only && '-debug' || '' }}-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
 
       - name: Restore macOS application cache
         id: application-cache
         uses: actions/cache/restore@v6
         with:
           path: |
-            target/release
+            target/${{ inputs.check_only && 'debug' || 'release' }}
             ${{ env.CARGO_HOME }}/registry
             ${{ env.CARGO_HOME }}/git
           key: ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-${{ github.sha }}
@@ -128,7 +134,12 @@ jobs:
           key: pocketsphinx-model-v1-${{ runner.os }}-${{ hashFiles('vendor/pocketsphinx/build.rs') }}
 
       - name: Build AppKit release
+        if: ${{ !inputs.check_only }}
         run: make appkit-release
+
+      - name: Check AppKit debug build
+        if: inputs.check_only
+        run: make appkit-check fmt source-size-check
 
       - name: Save macOS application cache
         id: save-application-cache
@@ -136,13 +147,13 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: |
-            target/release
+            target/${{ inputs.check_only && 'debug' || 'release' }}
             ${{ env.CARGO_HOME }}/registry
             ${{ env.CARGO_HOME }}/git
           key: ${{ steps.application-cache.outputs.cache-primary-key }}
 
       - name: Prune old macOS application caches
-        if: github.ref == 'refs/heads/main' && steps.save-application-cache.outcome == 'success'
+        if: github.ref == 'refs/heads/main' && !inputs.check_only && steps.save-application-cache.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           CACHE_KEY: ${{ steps.application-cache.outputs.cache-primary-key }}
@@ -152,6 +163,7 @@ jobs:
             "macos-application-prebuilt-macos-26-${{ runner.arch }}-"
 
       - name: Assemble application bundle
+        if: ${{ !inputs.check_only }}
         shell: bash
         run: |
           contents="${MACOS_APP}/Contents"
@@ -197,6 +209,7 @@ jobs:
           codesign --force --deep --sign - "${MACOS_APP}"
 
       - name: Verify application bundle
+        if: ${{ !inputs.check_only }}
         shell: bash
         run: |
           contents="${MACOS_APP}/Contents"
@@ -232,6 +245,7 @@ jobs:
           fi
 
       - name: Create and verify archive
+        if: ${{ !inputs.check_only }}
         run: |
           archive_name="$(basename "${MACOS_ARCHIVE}")"
           ditto -c -k --sequesterRsrc --keepParent "${MACOS_APP}" "${MACOS_ARCHIVE}"
@@ -248,7 +262,7 @@ jobs:
           test -s "${MACOS_ARCHIVE}.sha256"
 
       - name: Publish prerelease
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && !inputs.check_only
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

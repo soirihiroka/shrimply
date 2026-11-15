@@ -77,7 +77,7 @@ fn changed(source: &Source, old: u64) -> sanim_runtime::Snapshot {
 #[test]
 fn native_sanim_frames_reflow_with_editor_viewport() {
     let f = Fixture::new(
-        "bg(Color(\"transparent\"))\nadd(Box(position=Vec2(25%,0%), fill=Color(\"red\"), width=2*(2pt), height=2*(2pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n",
+        "bg(Color(\"transparent\"))\nAnimation(children=[Box(position=[25%,0%], fill=Color(\"red\"), width=2*(2pt), height=2*(2pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n",
     );
     let item = f.item();
     let mut source = Source::new(&item).unwrap();
@@ -110,7 +110,7 @@ fn native_sanim_frames_reflow_with_editor_viewport() {
 #[test]
 fn native_sanim_reflected_inputs_are_applied_before_export() {
     let f = Fixture::new(
-        "let tint=reflect(Color(\"red\"))\nadd(Box(fill=tint, width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n",
+        "let tint=reflect(Color(\"red\"))\nAnimation(children=[Box(fill=tint, width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n",
     );
     let mut item = f.item();
     let VideoItemContent::Sanim(settings) = &mut item.content else {
@@ -134,7 +134,7 @@ fn native_sanim_reflected_inputs_are_applied_before_export() {
 #[test]
 fn native_sanim_export_pins_one_revision_and_preview_can_resume_live() {
     let f = Fixture::new(
-        "add(Box(fill=Color(\"red\"), width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n",
+        "Animation(children=[Box(fill=Color(\"red\"), width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n",
     );
     let item = f.item();
     let mut source = Source::new(&item).unwrap();
@@ -144,7 +144,7 @@ fn native_sanim_export_pins_one_revision_and_preview_can_resume_live() {
     };
     let first = ready(&mut source, &item, canvas, true);
     let revision = source.runtime.snapshot().revision;
-    f.write("add(Box(fill=Color(\"blue\"), width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n");
+    f.write("Animation(children=[Box(fill=Color(\"blue\"), width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n");
     let next = changed(&source, revision);
     assert!(next.revision > revision);
     let pinned = ready(&mut source, &item, canvas, true);
@@ -155,7 +155,7 @@ fn native_sanim_export_pins_one_revision_and_preview_can_resume_live() {
 #[test]
 fn native_sanim_failed_preview_keeps_frame_but_new_export_fails() {
     let f = Fixture::new(
-        "add(Box(fill=Color(\"red\"), width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n",
+        "Animation(children=[Box(fill=Color(\"red\"), width=2*(10pt), height=2*(10pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n",
     );
     let item = f.item();
     let mut source = Source::new(&item).unwrap();
@@ -190,7 +190,7 @@ fn native_sanim_failed_preview_keeps_frame_but_new_export_fails() {
 #[test]
 fn native_sanim_reuses_same_frame_without_encoding_png() {
     let f = Fixture::new(
-        "add(Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n",
+        "Animation(children=[Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n",
     );
     let item = f.item();
     let mut source = Source::new(&item).unwrap();
@@ -207,7 +207,7 @@ fn native_sanim_reuses_same_frame_without_encoding_png() {
 #[test]
 fn native_sanim_reflection_observations_do_not_publish_strict_export_sessions() {
     let f = Fixture::new(
-        "let color1=reflect(Color(\"red\"),label=\"Display Color\",key=\"theme.accent\")\nadd(Box(fill=color1, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center))\nwait(1s)",
+        "let color1=reflect(Color(\"red\"),label=\"Display Color\",key=\"theme.accent\")\nAnimation(children=[Box(fill=color1, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(1s)",
     );
     let item = f.item();
     let canvas = CanvasSize {
@@ -376,7 +376,7 @@ fn native_sanim_reflection_benchmark() {
     let mut script = (0..64)
         .map(|index| format!("let field_{index}=reflect({index})\n"))
         .collect::<String>();
-    script.push_str("add(Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n");
+    script.push_str("Animation(children=[Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n");
     let fixture = Fixture::new(&script);
     let mut item = fixture.item();
     let mut source = Source::new(&item).unwrap();
@@ -572,7 +572,7 @@ fn native_sanim_reflection_sets_reuse_source_schema_but_gets_refresh_dependent_d
 #[test]
 fn native_sanim_element_inspection_uses_published_state_and_invalidates_on_reload() {
     let fixture = Fixture::new(
-        "let marker=Box(width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)\n",
+        "let marker=Box(width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(1s)\n",
     );
     let item = fixture.item();
     let canvas = CanvasSize {
@@ -640,7 +640,7 @@ fn native_sanim_element_inspection_uses_published_state_and_invalidates_on_reloa
         "distinct nested instance with same item UUID stays inspectable"
     );
     let revision = source.runtime.snapshot().revision;
-    fixture.write("let marker=Box(width=2*(20pt), height=2*(20pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)\n");
+    fixture.write("let marker=Box(width=2*(20pt), height=2*(20pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(1s)\n");
     assert!(changed(&source, revision).revision > revision);
     assert!(!inspection::is_current(&result));
     // A completed reload must never pick its newer geometry over older displayed pixels.
@@ -666,9 +666,9 @@ fn native_sanim_inspection_maps_lazy_code_glyphs_to_their_constructor_owner() {
 mut count=1
 sig source="x = {count}"
 let view=CodeView(code=source,lang="python",font_size=12pt,line_numbers=false)
-add(view)
+Animation(children=[view])
 wait(1s)
-count=2
+animate(count,to=2,duration=0s)
 wait(1s)
 "#,
     );

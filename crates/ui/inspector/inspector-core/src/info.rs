@@ -7,6 +7,8 @@ use crate::InspectorTarget;
 
 pub mod metadata;
 
+pub const ARTWORK_PREVIEW_HEIGHT: u32 = 220;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaInfoPresentation {
     pub artwork: Option<MediaInfoArtwork>,

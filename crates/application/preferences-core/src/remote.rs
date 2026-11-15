@@ -39,6 +39,27 @@ fn text_field(label: &str, value: &str) -> Value {
     json!({"label":text(label),"value":value,"keyboard":"text","multiline":false})
 }
 
+pub fn page(page: PreferencePage, controls: Vec<Value>) -> Value {
+    let summary_controls =
+        if controls.len() == 1 && controls[0]["label"] == text(page.title()).as_ref() {
+            controls[0]["controls"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+        } else {
+            &controls
+        };
+    let summary = summary_controls
+        .iter()
+        .take(3)
+        .filter_map(|group| group["label"].as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut document = json!({"widget":"group","label":text(page.title()),"icon":page.icon(),"summary":summary,"controls":controls});
+    normalize_control(&mut document, &format!("preferences:{}", page.id()));
+    document
+}
+
 fn preference(store: &SharedPreferences, id: Id) -> Value {
     let presentation = id.presentation();
     let command = json!({"action":"set","key":id.key()});
@@ -87,17 +108,7 @@ fn preference(store: &SharedPreferences, id: Id) -> Value {
             widget
         }
         StoredValue::FontFamily(family) => {
-            let (source, name) = match family {
-                FontFamily::Local { name } => ("local", name),
-                FontFamily::GoogleFonts { name } => ("google_fonts", name),
-            };
-            let fields = vec![
-                json!({"label":text("Source"),"value":source,"keyboard":"text","multiline":false,"choices":[{"value":"local","label":text("Local")},{"value":"google_fonts","label":"Google Fonts"}]}),
-                text_field("Font family", &name),
-            ];
-            let mut widget = editor(presentation.label, fields, command);
-            widget["display"] = json!(name);
-            widget
+            json!({"widget":"font","label":text(presentation.label),"display":family.name(),"command":{"action":"font_open"}})
         }
     };
     control["subtitle"] = json!(text(presentation.subtitle));
@@ -113,10 +124,14 @@ impl PreferencesUi {
                 self.servers.insert(url, Some(status));
             }
         }
+        let selected = snapshot(store).compute_server_url;
+        if !self.servers.contains_key(&selected) {
+            self.request_server(selected, None);
+        }
         let mut groups: Vec<(&str, Vec<Value>)> = Vec::new();
         for id in Id::ALL {
             let presentation = id.presentation();
-            if !presentation.available {
+            if !presentation.available || presentation.page.is_none() {
                 continue;
             }
             let index = groups
@@ -128,73 +143,107 @@ impl PreferencesUi {
                 });
             groups[index].1.push(preference(store, id));
         }
-        let mut controls = groups.into_iter().map(|(label,controls)| {
-            let icon = match label {
-                "Captions" => "closed-captioning-symbolic",
-                "Text" => "rich-text-symbolic",
-                "Timeline" => "ruler-angled-symbolic",
-                "Preview" => "image-symbolic",
-                "Performance" => "speedometer-symbolic",
-                "Blender" => "sliders-horizontal-symbolic",
-                _ => unreachable!("preference group presentation"),
-            };
-            let summary = controls.iter().take(3).filter_map(|control|control["label"].as_str()).collect::<Vec<_>>().join(", ");
-            json!({"widget":"group","label":text(label),"icon":icon,"summary":summary,"controls":controls})
-        }).collect::<Vec<_>>();
-        controls.push(self.compute_servers(store));
-        for (index, control) in controls.iter_mut().enumerate() {
-            normalize_control(control, &format!("preferences:{index}"));
+        let mut groups = groups.into_iter().collect::<HashMap<_, _>>();
+        for group in self.compute_servers(store) {
+            groups.insert(group.0, group.1);
         }
+        let controls = PreferencePage::ALL.into_iter().filter_map(|id| {
+            let controls = id.groups().iter().filter_map(|label| groups.remove(label).map(|controls| json!({"widget":"group","label":text(label),"controls":controls}))).collect::<Vec<_>>();
+            (!controls.is_empty()).then(|| page(id, controls))
+        }).collect::<Vec<_>>();
         json!({"title":text("Preferences"),"back_label":text("Back"),"close_label":text("Close"),"controls":controls})
     }
 
-    fn compute_servers(&self, store: &SharedPreferences) -> Value {
+    fn compute_servers(&self, store: &SharedPreferences) -> Vec<(&'static str, Vec<Value>)> {
         let settings = snapshot(store);
-        let mut controls = vec![
-            json!({"widget":"choice","choice_style":"row","label":text("Server"),"display":settings.compute_server_url,"choices":settings.compute_server_urls.iter().map(|url|json!({"label":url,"command":{"action":"server_select","url":url}})).collect::<Vec<_>>()}),
+        let url = &settings.compute_server_url;
+        let status = self.servers.get(url);
+        let server = status
+            .and_then(Option::as_ref)
+            .and_then(|result| result.as_ref().ok());
+        let mut endpoints = vec![
+            json!({"widget":"choice","choice_style":"row","label":text("Server"),"display":url,"choices":settings.compute_server_urls.iter().map(|url|json!({"label":url,"command":{"action":"server_select","url":url}})).collect::<Vec<_>>()}),
+            editor(
+                "Add Server",
+                vec![text_field("URL", "")],
+                json!({"action":"server_add"}),
+            ),
+            editor(
+                "Edit Server",
+                vec![text_field("URL", url)],
+                json!({"action":"server_edit","url":url}),
+            ),
+            json!({"widget":"button","label":text("Remove Server"),"enabled":settings.compute_server_urls.len()>1,"command":{"action":"server_remove","url":url}}),
+            json!({"widget":"button","label":text("Check Connection"),"enabled":!matches!(status,Some(None)),"command":{"action":"server_check","url":url}}),
         ];
-        controls.push(editor(
-            "Add Server",
-            vec![text_field("URL", "")],
-            json!({"action":"server_add"}),
-        ));
-        for url in &settings.compute_server_urls {
-            let mut rows = vec![
-                editor(
-                    "Edit Server",
-                    vec![text_field("URL", url)],
-                    json!({"action":"server_edit","url":url}),
-                ),
-                json!({"widget":"button","label":text("Remove Server"),"enabled":settings.compute_server_urls.len()>1,"command":{"action":"server_remove","url":url}}),
-            ];
-            let pending = self.servers.get(url).is_some_and(Option::is_none);
-            rows.push(json!({"widget":"button","label":text("Check Connection"),"enabled":!pending,"command":{"action":"server_check","url":url}}));
-            match self.servers.get(url) {
-                Some(None) => rows.push(json!({"widget":"loading","label":text("Connecting…")})),
-                Some(Some(Err(error))) => {
-                    rows.push(json!({"widget":"text","label":text("Status"),"display":error}))
-                }
-                Some(Some(Ok(server))) => {
-                    for (label, value) in [
-                        ("Status", server.summary.as_str()),
-                        ("Version", server.version.as_str()),
-                        ("Protocol", server.protocol.as_str()),
-                        ("PyTorch", server.torch.as_str()),
-                        ("CUDA", server.cuda.as_str()),
-                        ("Jobs", server.jobs.as_str()),
-                        ("Reservations", server.reservations.as_str()),
-                        ("Workers", server.workers.as_str()),
-                        ("Features", server.features.as_str()),
-                    ] {
-                        rows.push(json!({"widget":"text","label":text(label),"display":value,"editable":false}));
-                    }
-                    rows.push(json!({"widget":"choice","choice_style":"row","label":text("Device"),"display":server.selected_device.and_then(|index|server.devices.get(index)).map_or("",|device|device.label.as_str()),"enabled":!server.devices.is_empty(),"choices":server.devices.iter().map(|device|json!({"label":device.label,"command":{"action":"server_device","url":url,"device":device.id}})).collect::<Vec<_>>()}));
-                }
-                None => {}
+        match status {
+            Some(None) => endpoints.push(json!({"widget":"loading","label":text("Connecting…")})),
+            Some(Some(Err(error))) => {
+                endpoints.push(json!({"widget":"text","label":text("Status"),"display":error}))
             }
-            controls.push(json!({"widget":"group","label":url,"controls":rows}));
+            _ => {}
         }
-        json!({"widget":"group","label":text("Compute Servers"),"icon":"network-server-symbolic","summary":settings.compute_server_url,"controls":controls})
+        let row = |label: &str, display: &str| json!({"widget":"text","label":text(label),"display":display,"editable":false});
+        let selected = vec![
+            row(
+                "Version",
+                server.map_or("—", |server| server.version.as_str()),
+            ),
+            row(
+                "Protocol",
+                server.map_or("—", |server| server.protocol.as_str()),
+            ),
+        ];
+        let mut compute = vec![
+            row(
+                "PyTorch",
+                server.map_or("—", |server| server.torch.as_str()),
+            ),
+            row("CUDA", server.map_or("—", |server| server.cuda.as_str())),
+        ];
+        compute.push(json!({"widget":"choice","choice_style":"row","label":text("Device"),"display":server.and_then(|server|server.selected_device.and_then(|index|server.devices.get(index))).map_or("—",|device|device.label.as_str()),"enabled":server.is_some_and(|server|!server.devices.is_empty()),"choices":server.map(|server|server.devices.iter().map(|device|json!({"label":device.label,"command":{"action":"server_device","url":url,"device":device.id}})).collect::<Vec<_>>()).unwrap_or_default()}));
+        compute.extend([
+            row("Jobs", server.map_or("—", |server| server.jobs.as_str())),
+            row(
+                "Reserved memory",
+                server.map_or("—", |server| server.reservations.as_str()),
+            ),
+            row(
+                "Workers",
+                server.map_or("—", |server| server.workers.as_str()),
+            ),
+        ]);
+        vec![
+            ("Inference Servers", endpoints),
+            ("Selected Server", selected),
+            ("Compute", compute),
+            (
+                "Features",
+                vec![row(
+                    "Available",
+                    server.map_or("—", |server| server.features.as_str()),
+                )],
+            ),
+        ]
+    }
+
+    fn request_server(&mut self, url: String, device: Option<String>) {
+        self.next_request = self
+            .next_request
+            .checked_add(1)
+            .expect("Preference server request overflow");
+        let request = self.next_request;
+        self.requests.insert(url.clone(), request);
+        self.servers.insert(url.clone(), None);
+        let sender = self.sender.clone();
+        std::thread::spawn(move || {
+            let status = match device {
+                Some(device) => select_compute_device(&url, &device),
+                None => compute_server_status(&url),
+            }
+            .map(|status| present_compute_server(&status));
+            let _ = sender.send((url, request, status));
+        });
     }
 
     pub fn apply(&mut self, store: &SharedPreferences, request: &Value) -> Result<Value, String> {
@@ -257,23 +306,7 @@ impl PreferencesUi {
                         } else {
                             None
                         };
-                        self.next_request = self
-                            .next_request
-                            .checked_add(1)
-                            .expect("Preference server request overflow");
-                        let request = self.next_request;
-                        self.requests.insert(url.to_owned(), request);
-                        self.servers.insert(url.to_owned(), None);
-                        let sender = self.sender.clone();
-                        let url = url.to_owned();
-                        std::thread::spawn(move || {
-                            let status = match device {
-                                Some(device) => select_compute_device(&url, &device),
-                                None => compute_server_status(&url),
-                            }
-                            .map(|status| present_compute_server(&status));
-                            let _ = sender.send((url, request, status));
-                        });
+                        self.request_server(url.to_owned(), device);
                     }
                     _ => unreachable!("server preference action dispatcher"),
                 }

@@ -203,6 +203,7 @@ def build_opencv(args, sources, root):
     directory = source(sources, f"opencv-{OPENCV_VERSION}", f"https://codeload.github.com/opencv/opencv/tar.gz/refs/tags/{OPENCV_VERSION}", OPENCV_SHA256)
     patch_source(directory, compatibility_patch)
     options = [
+        "-U*FFMPEG*",
         "-DBUILD_LIST=core,imgproc,video,videoio,calib3d", "-DBUILD_TESTS=OFF",
         "-DBUILD_PERF_TESTS=OFF", "-DBUILD_EXAMPLES=OFF", "-DBUILD_ANDROID_PROJECTS=OFF",
         "-DBUILD_ANDROID_EXAMPLES=OFF", "-DBUILD_JAVA=OFF", "-DBUILD_opencv_apps=OFF",
@@ -299,7 +300,8 @@ def main():
         stamp = root / "build.sha256"
         hardware_patch = Path(__file__).resolve().with_name("ffmpeg-android-hardware.patch")
         encoder_patch = Path(__file__).resolve().with_name("ffmpeg-android-encoder.patch")
-        identity = hashlib.sha256(Path(__file__).read_bytes() + hardware_patch.read_bytes() + encoder_patch.read_bytes() + (ndk / "source.properties").read_bytes()).hexdigest()
+        qp_patch = Path(__file__).resolve().with_name("ffmpeg-android-qp.patch")
+        identity = hashlib.sha256(Path(__file__).read_bytes() + hardware_patch.read_bytes() + encoder_patch.read_bytes() + qp_patch.read_bytes() + (ndk / "source.properties").read_bytes()).hexdigest()
         sources = cache / "sources"
         sources.mkdir(exist_ok=True)
         if args.text:
@@ -322,6 +324,7 @@ def main():
         ffmpeg = source(sources, f"ffmpeg-{FFMPEG_VERSION}", f"https://ffmpeg.org/releases/ffmpeg-{FFMPEG_VERSION}.tar.xz", FFMPEG_SHA256)
         patch_source(ffmpeg, hardware_patch)
         patch_source(ffmpeg, encoder_patch)
+        patch_source(ffmpeg, qp_patch)
         cmake_build(args, root, "opus", opus, ["-DOPUS_BUILD_TESTING=OFF", "-DOPUS_BUILD_PROGRAMS=OFF"])
         build_audio_encoders(args, sources, root, compiler)
         ffmpeg_build = root / "ffmpeg"

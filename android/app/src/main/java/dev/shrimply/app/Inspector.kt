@@ -1,5 +1,6 @@
 package dev.shrimply.app
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.selection.toggleable
@@ -10,12 +11,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +30,7 @@ import org.json.JSONObject
 internal fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
 
 /** Render localized Rust widget descriptions and forward their opaque commands. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled: Boolean, command: (Array<out Pair<String, Any>>) -> Unit, modifier: Modifier, selectFile: (JSONObject) -> Unit) {
     val categories = document?.optJSONArray("categories")?.objects().orEmpty()
@@ -42,9 +50,29 @@ internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled
             category?.getJSONArray("items")?.objects()?.forEach { item -> key(item.getString("id")) { InspectorItem(timeline, item, enabled, send, selectFile) } }
         }
     }
+    document?.optJSONObject("font_picker")?.let { picker ->
+        val close = { send(picker.getJSONObject("close")) }
+        ModalBottomSheet(onDismissRequest = close) {
+            Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f)) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(picker.getString("title"), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = close) { Text(picker.getString("close_label")) }
+                }
+                FontPreferences(picker, enabled && !picker.getBoolean("busy"), send)
+            }
+        }
+    }
 }
 
 internal fun inspectorIcon(icon: String): Int = when (icon) {
+    "document-edit-symbolic" -> R.drawable.document_edit
+    "fill-tool-symbolic" -> R.drawable.fill_tool
+    "eraser-symbolic" -> R.drawable.eraser
+    "function-exponential-symbolic" -> R.drawable.function_exponential
+    "move-tool-symbolic" -> R.drawable.move_tool
+    "appearance-symbolic" -> R.drawable.appearance
+    "application-x-executable-symbolic" -> R.drawable.application_x_executable
+    "security-high-symbolic" -> R.drawable.security_high
     "padlock2-symbolic" -> R.drawable.padlock2
     "padlock2-open-symbolic" -> R.drawable.padlock2_open
     "rotation.svg", "arrow3-up-symbolic" -> R.drawable.arrow3_up
@@ -55,6 +83,8 @@ internal fun inspectorIcon(icon: String): Int = when (icon) {
     "folder-open-symbolic" -> R.drawable.folder_open
     "sliders-horizontal-symbolic" -> R.drawable.sliders_horizontal
     "rich-text-symbolic" -> R.drawable.rich_text
+    "blend-tool-symbolic" -> R.drawable.blend_tool
+    "playback-speed-symbolic" -> R.drawable.playback_speed
     "image-symbolic" -> R.drawable.image
     "audio-volume-high-symbolic" -> R.drawable.audio_volume_high
     "media-playback-start-symbolic" -> R.drawable.media_playback_start
@@ -65,6 +95,7 @@ internal fun inspectorIcon(icon: String): Int = when (icon) {
     "edit-paste-symbolic" -> R.drawable.edit_paste
     "zoom-in-symbolic" -> R.drawable.zoom_in
     "zoom-out-symbolic" -> R.drawable.zoom_out
+    "window-close-symbolic" -> R.drawable.window_close
     "list-add-symbolic" -> R.drawable.list_add
     "media-seek-backward-symbolic" -> R.drawable.media_seek_backward
     "media-seek-forward-symbolic" -> R.drawable.media_seek_forward
@@ -83,7 +114,7 @@ private fun InspectorItem(timeline: TimelineSession, item: JSONObject, enabled: 
         if (title.isNotEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
             item.optJSONObject("toggle")?.let { toggle -> Switch(checked = toggle.getBoolean("selected"), enabled = enabled,
-                onCheckedChange = { send(toggle.getJSONObject("command")) }) }
+                onCheckedChange = { send(toggle.getJSONObject("command")) }, modifier = Modifier.semantics { contentDescription = title }) }
             item.optJSONObject("button_toggle")?.let { toggle ->
                 IconToggleButton(checked = toggle.getBoolean("selected"), enabled = enabled, onCheckedChange = { send(toggle.getJSONObject("command")) }) {
                     Icon(painterResource(inspectorIcon(toggle.getString("icon"))), toggle.getString("label"), Modifier.size(16.dp))
@@ -109,10 +140,12 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
     val active = enabled && control.getBoolean("enabled")
     val editable = active && control.getBoolean("editable")
     var editor by remember { mutableStateOf<JSONObject?>(null) }
+    var confirmation by remember { mutableStateOf<JSONObject?>(null) }
     Column(Modifier.fillMaxWidth()) {
         when (val widget = control.getString("widget")) {
+            "tags" -> Tags(control, editable, send)
             "group" -> {
-                if (label.isNotEmpty()) Text(label, Modifier.padding(if (settings) PaddingValues(start = 24.dp, top = 24.dp, end = 16.dp, bottom = 8.dp) else PaddingValues()), color = if (settings) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+                if (label.isNotEmpty()) Text(label, Modifier.padding(if (settings) PaddingValues(start = 24.dp, top = 20.dp, end = 16.dp, bottom = 8.dp) else PaddingValues()), color = if (settings) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, style = if (settings) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge)
                 control.getJSONArray("controls").objects().forEach { child ->
                     key(child.getString("id")) { InspectorControl(timeline, child, active, send, selectFile, settings) }
                 }
@@ -127,32 +160,76 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                     }
                 }
             }
-            "toggle" -> if (settings) {
+            "actions" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                control.getJSONArray("actions").objects().forEach { action ->
+                    TextButton(enabled = editable, onClick = {
+                        if (action.has("confirmation")) confirmation = action else send(action.getJSONObject("command"))
+                    }) { Text(action.getString("label")) }
+                }
+            }
+            "action_list" -> {
+                Text(label, style = MaterialTheme.typography.labelMedium)
+                val rows = control.getJSONArray("rows").objects()
+                if (rows.isEmpty()) Text(control.getString("empty"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                rows.forEach { row ->
+                    ListItem(headlineContent = { Text(row.getString("label")) },
+                        supportingContent = { Text(row.getString("subtitle")) },
+                        trailingContent = { Row {
+                            row.getJSONArray("actions").objects().forEach { action ->
+                                IconButton(enabled = editable && action.getBoolean("enabled"), onClick = { send(action.getJSONObject("command")) }) {
+                                    Icon(painterResource(inspectorIcon(action.getString("icon"))), action.getString("label"), Modifier.size(16.dp))
+                                }
+                            }
+                        } }, modifier = Modifier.fillMaxWidth().clickable(enabled = editable) { send(row.getJSONObject("command")) })
+                }
+                control.getJSONObject("add").let { add ->
+                    TextButton(enabled = editable, onClick = { send(add.getJSONObject("command")) }) { Text(add.getString("label")) }
+                }
+            }
+            "file_location" -> {
+                val reveal = control.getJSONObject("reveal")
                 ListItem(headlineContent = { Text(label) },
-                    supportingContent = if (summary.isEmpty()) null else { { Text(summary) } },
-                    trailingContent = { Switch(checked = control.getBoolean("selected"), enabled = editable, onCheckedChange = null) },
-                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth().toggleable(value = control.getBoolean("selected"), enabled = editable,
-                        role = Role.Switch, onValueChange = { send(control.getJSONObject("command")) }).padding(start = 8.dp).heightIn(min = 72.dp))
+                    supportingContent = { androidx.compose.foundation.text.selection.SelectionContainer { Text(control.getString("display")) } },
+                    trailingContent = { IconButton(enabled = active, onClick = { send(reveal.getJSONObject("command")) }) {
+                        Icon(painterResource(inspectorIcon(reveal.getString("icon"))), reveal.getString("label"), Modifier.size(16.dp))
+                    } },
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = active) { send(reveal.getJSONObject("command")) })
+            }
+            "image" -> InspectorImage(timeline, control)
+            "toggle" -> if (settings) {
+                val checked = control.getBoolean("selected")
+                SettingsRow(label, summary, editable,
+                    modifier = Modifier.toggleable(value = checked, enabled = editable,
+                        role = Role.Switch, onValueChange = { send(control.getJSONObject("command")) }),
+                    trailing = { Switch(checked = checked, enabled = editable, onCheckedChange = null,
+                        thumbContent = if (checked) { { Icon(painterResource(R.drawable.check_plain), null, Modifier.size(SwitchDefaults.IconSize)) } } else null) })
             } else Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(label, Modifier.weight(1f))
-                Switch(checked = control.getBoolean("selected"), enabled = editable, onCheckedChange = { send(control.getJSONObject("command")) })
+                if (control.optBoolean("busy")) CircularProgressIndicator(Modifier.size(20.dp))
+                Switch(checked = control.getBoolean("selected"), enabled = editable, onCheckedChange = { send(control.getJSONObject("command")) },
+                    modifier = Modifier.semantics { contentDescription = label })
             }
             "choice" -> {
                 val choices = control.getJSONArray("choices").objects()
                 ChoiceInput(label, control.getString("display"), choices.map { it.getString("label") }, editable,
-                    control.getString("choice_style") == "button", summary = if (settings) summary else "", settings = settings) { send(choices[it].getJSONObject("command")) }
+                    control.getString("choice_style") == "button", summary = if (settings) summary else "", settings = settings,
+                    description = control.optString("choice_description")) { send(choices[it].getJSONObject("command")) }
             }
-            "button" -> if (settings) ListItem(headlineContent = { Text(label, color = MaterialTheme.colorScheme.primary) },
-                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth().clickable(enabled = active) { send(control.getJSONObject("command")) }.padding(start = 8.dp).heightIn(min = 72.dp))
+            "progress" -> Column(Modifier.fillMaxWidth()) {
+                TextButton(onClick = { send(control.getJSONObject("command")) }, enabled = active) { Text(control.optString("cancel_label").ifEmpty { label }) }
+                control.getString("tooltip").takeIf { it.isNotEmpty() }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                if (!control.isNull("progress")) {
+                    val progress = control.getDouble("progress").toFloat()
+                    if (progress < 0f) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    else LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                }
+            }
+            "button" -> if (settings) SettingsRow(label, summary, active,
+                modifier = Modifier.clickable(enabled = active) { send(control.getJSONObject("command")) })
             else TextButton(onClick = { send(control.getJSONObject("command")) }, enabled = active) { Text(label) }
             "live_rows" -> LiveRows(timeline, control.getJSONObject("resource"))
             "text", "loading" -> {
-                if (settings) ListItem(headlineContent = { Text(label) },
-                    supportingContent = if (control.getString("display").isEmpty()) null else { { Text(control.getString("display")) } },
-                    colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
-                    modifier = Modifier.fillMaxWidth().padding(start = 8.dp).heightIn(min = 72.dp))
+                if (settings) SettingsRow(label, control.getString("display"), active)
                 else {
                     if (label.isNotEmpty()) Text(label, style = MaterialTheme.typography.labelMedium)
                     if (control.getString("display").isNotEmpty()) Text(control.getString("display"), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -160,7 +237,13 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                 if (widget == "loading") LinearProgressIndicator(Modifier.fillMaxWidth())
             }
             "number" -> NumberInput(timeline, control, editable)
-            "editor" -> ListItem(headlineContent = { Text(label) },
+            "font" -> SettingsRow(label, control.getString("display"), editable,
+                modifier = Modifier.clickable(enabled = editable) { send(control.getJSONObject("command")) },
+                trailing = { Icon(painterResource(R.drawable.go_next), null, Modifier.size(20.dp)) })
+            "editor" -> if (settings) SettingsRow(label,
+                listOf(control.getString("display"), summary).filter { it.isNotEmpty() }.joinToString("\n"), editable,
+                modifier = Modifier.clickable(enabled = editable) { editor = control.getJSONObject("editor") })
+            else ListItem(headlineContent = { Text(label) },
                 supportingContent = { Text(listOf(control.getString("display"), if (settings) summary else "").filter { it.isNotEmpty() }.joinToString("\n")) },
                 colors = ListItemDefaults.colors(containerColor = if (settings) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainerLow),
                 modifier = Modifier.fillMaxWidth().clickable(enabled = editable) { editor = control.getJSONObject("editor") }
@@ -183,6 +266,36 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
         }
     }
     editor?.let { description -> InspectorEdit(description, { editor = null }, send) }
+    confirmation?.let { action ->
+        val dialog = action.getJSONObject("confirmation")
+        AlertDialog(onDismissRequest = { confirmation = null },
+            title = { Text(dialog.getString("title")) }, text = { Text(dialog.getString("message")) },
+            confirmButton = { TextButton(onClick = { send(action.getJSONObject("command")); confirmation = null }) { Text(dialog.getString("confirm_label")) } },
+            dismissButton = { TextButton(onClick = { confirmation = null }) { Text(dialog.getString("cancel_label")) } })
+    }
+}
+
+/** Native image decoding and drawing; Rust owns the resource and presentation. */
+@Composable
+private fun InspectorImage(timeline: TimelineSession, control: JSONObject) {
+    val resource = control.getJSONObject("resource")
+    val key = resource.toString()
+    var image by remember(key) { mutableStateOf<ImageBitmap?>(null) }
+    var failure by remember(key) { mutableStateOf<String?>(null) }
+    LaunchedEffect(key) {
+        try {
+            val result = timeline.request(resource)
+            image = withContext(Dispatchers.IO) {
+                val bytes = android.util.Base64.decode(result.getString("image"), android.util.Base64.DEFAULT)
+                android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes))).asImageBitmap()
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (error: Exception) { failure = error.message ?: control.getString("error") }
+    }
+    Text(control.getString("label"), style = MaterialTheme.typography.labelMedium)
+    image?.let { Image(it, contentDescription = control.getString("label"), modifier = Modifier.fillMaxWidth().height(control.getInt("height").dp)) }
+    if (image == null && failure == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+    failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 }
 
 @Composable

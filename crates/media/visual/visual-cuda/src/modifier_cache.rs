@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::analysis_renderer::{Renderer, Target};
 
-pub use shrimply_visual_core::modifier_cache::{Status, effective_item, invalidate, status};
+pub use shrimply_visual_core::modifier_cache::{Status, effective_item_at, invalidate, status};
 
 pub fn bake(project: Project, address: ItemAddress, modifier_id: Uuid) -> Result<(), String> {
     shrimply_visual_core::modifier_cache::bake(project, address, modifier_id, bake_inner)

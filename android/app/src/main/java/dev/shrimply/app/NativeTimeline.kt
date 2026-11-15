@@ -96,6 +96,7 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
     }
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        ScreenRecordingService.stopOwner(identity)
         latest.set(null)
         main.removeCallbacks(update)
         val closing = handle.getAndSet(0)

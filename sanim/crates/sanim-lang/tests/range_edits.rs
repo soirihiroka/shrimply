@@ -56,8 +56,8 @@ view.range(name="one").edit(src="outside.patch",duration=400ms)"#,
 
 #[test]
 fn regex_and_character_edits_use_the_same_unicode_range_representation() {
-    // Queries bind to the construction snapshot, so each view selects original text.
-    // Editing plans do not make their future text available to a subsequent query.
+    // Bound ranges capture their original snapshot. Separate views make this test
+    // compare character and regex selection over the same Unicode source.
     let files = files(
         r#"let contents=r"éλz"
 let view=CodeView(code=contents,lang="plain")

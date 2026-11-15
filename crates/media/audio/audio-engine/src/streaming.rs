@@ -13,6 +13,7 @@ use shrimply_project_document::project::{
     fraction_numerator, playback_speed_is_negative, playback_speed_is_zero,
     playback_speed_or_default, scaled_time_delta,
 };
+use shrimply_property_model::timeline_value::TimelineBase;
 
 use super::CHANNELS;
 
@@ -722,13 +723,24 @@ impl GeneratedAudioSession {
             self.phase = 0.0;
         }
         let item_start = item.start.as_sample_frame(self.sample_rate);
+        let constant_parameters = [
+            &generator.frequency_hz,
+            &generator.pulse_width,
+            &generator.seed,
+        ]
+        .into_iter()
+        .all(|value| matches!(value.base, TimelineBase::Const(_)) && value.expression.is_none());
         let mut output = Vec::with_capacity(frame_count.saturating_mul(CHANNELS));
         for frame in 0..frame_count {
             let timeline_frame = start_frame.saturating_add(frame as u64);
             let local_frame = (i128::from(timeline_frame) - i128::from(item_start))
                 .clamp(i128::from(i64::MIN), i128::from(i64::MAX))
                 as i64;
-            let local_time = Time::from_fraction(local_frame, i64::from(self.sample_rate.max(1)));
+            let local_time = if constant_parameters {
+                Time::ZERO
+            } else {
+                Time::from_fraction(local_frame, i64::from(self.sample_rate.max(1)))
+            };
             let frequency = generator.frequency_hz.value_at(local_time).clamp(
                 MIN_FREQUENCY_HZ,
                 self.sample_rate as f32 * NYQUIST_SAFETY_RATIO,
@@ -1342,6 +1354,9 @@ fn apply_transition_gain(
     timeline_start_frame: u64,
     sample_rate: u32,
 ) {
+    if item.transitions.intro.is_none() && item.transitions.outro.is_none() {
+        return;
+    }
     for (frame, channels) in samples.chunks_exact_mut(CHANNELS).enumerate() {
         let position = time_from_sample_frame(
             timeline_start_frame.saturating_add(frame as u64),

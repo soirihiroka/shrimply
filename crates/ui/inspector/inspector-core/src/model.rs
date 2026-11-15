@@ -75,6 +75,21 @@ pub struct CacheControlPresentation {
     pub baking: bool,
 }
 
+impl CacheControlPresentation {
+    pub fn analysis(&self) -> crate::AnalysisControlPresentation {
+        crate::AnalysisControlPresentation {
+            label: self.label.into(),
+            progress: self.progress,
+            tooltip: crate::AnalysisTooltip::RawError(self.tooltip.clone()),
+            sensitive: true,
+            running: self.baking,
+            cancelling: false,
+            terminal: !self.baking,
+            suggested: !self.baking,
+        }
+    }
+}
+
 pub fn cache_control_presentation(
     status: CacheStatus,
     baking_tooltip: &'static str,
@@ -161,6 +176,7 @@ pub struct InspectorAnalysisBackend {
     pub(crate) camera: Option<CameraAnalysis>,
     pub(crate) transparent_fill: Option<TransparentFillAnalysis>,
     pub(crate) visual_cache: Option<VisualCacheBake>,
+    pub(crate) visual_cache_images: bool,
 }
 
 #[cfg(feature = "cuda-backend")]
@@ -170,6 +186,7 @@ impl Default for InspectorAnalysisBackend {
             camera: Some(shrimply_visual_cuda::camera_reconstruction::analyze),
             transparent_fill: Some(shrimply_visual_cuda::transparent_fill_analysis::analyze),
             visual_cache: Some(shrimply_visual_cuda::modifier_cache::bake),
+            visual_cache_images: false,
         }
     }
 }
@@ -187,6 +204,13 @@ impl InspectorAnalysisBackend {
 
     pub fn visual_cache(mut self, bake: VisualCacheBake) -> Self {
         self.visual_cache = Some(bake);
+        self.visual_cache_images = false;
+        self
+    }
+
+    pub fn visual_cache_images(mut self, bake: VisualCacheBake) -> Self {
+        self.visual_cache = Some(bake);
+        self.visual_cache_images = true;
         self
     }
 }
@@ -206,12 +230,18 @@ pub struct InspectorController {
         Rc<RefCell<HashMap<AnalysisTransitionKey, CachedTransparentFillStatus>>>,
     pub(crate) visual_cache_transitions: Rc<RefCell<crate::visual_modifiers::ActiveVisualCaches>>,
     pub(crate) analysis_backend: InspectorAnalysisBackend,
+    pub(crate) audio_cache_transitions: Rc<RefCell<crate::CacheStatusTracker<InspectorTarget>>>,
+    pub(crate) beat_detection_loading: Rc<std::cell::Cell<bool>>,
     pub(crate) camera_analysis_transitions: Rc<RefCell<std::collections::HashSet<ItemAddress>>>,
     pub(crate) sam2_analysis_transitions: Rc<RefCell<crate::visual_modifiers::ActiveSam2Analyses>>,
     pub(crate) camera_models: Rc<RefCell<crate::model_catalog::ModelCatalog>>,
     pub(crate) voice_models: Rc<RefCell<crate::voice_models::VoiceModels>>,
     pub(crate) tts_runtime: Rc<RefCell<crate::tts::editor::Runtime>>,
+    pub(crate) video_generation_runtime: Rc<RefCell<crate::video_generation::Runtime>>,
     pub(crate) media_metadata: Rc<RefCell<crate::info::metadata::Metadata>>,
+    pub(crate) visual_sources: Rc<RefCell<crate::video::source_images::Sources>>,
+    pub(crate) project_settings:
+        Rc<RefCell<Option<shrimply_components_core::project_settings::ProjectSettings>>>,
     pub(crate) sanim_reflection: Rc<RefCell<crate::sanim_parameters::Tracker>>,
 }
 
@@ -249,12 +279,17 @@ impl InspectorController {
             transparent_fill_statuses: Rc::new(RefCell::new(HashMap::new())),
             visual_cache_transitions: Rc::new(RefCell::new(Default::default())),
             analysis_backend: InspectorAnalysisBackend::default(),
+            audio_cache_transitions: Rc::new(RefCell::new(Default::default())),
+            beat_detection_loading: Rc::new(std::cell::Cell::new(false)),
             camera_analysis_transitions: Rc::new(RefCell::new(Default::default())),
             sam2_analysis_transitions: Rc::new(RefCell::new(Default::default())),
             camera_models: Rc::new(RefCell::new(Default::default())),
             voice_models: Rc::new(RefCell::new(Default::default())),
             tts_runtime: Rc::new(RefCell::new(Default::default())),
+            video_generation_runtime: Rc::new(RefCell::new(Default::default())),
             media_metadata: Rc::new(RefCell::new(Default::default())),
+            visual_sources: Rc::new(RefCell::new(Default::default())),
+            project_settings: Rc::new(RefCell::new(None)),
             sanim_reflection: Rc::new(RefCell::new(Default::default())),
         }
     }

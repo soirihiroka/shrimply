@@ -27,6 +27,7 @@ pub enum Target {
     Vulkan,
     VulkanPortable,
     VulkanWordStorage,
+    SpirvPortable,
 }
 
 #[repr(C)]
@@ -120,9 +121,11 @@ impl Compiler {
             "Slang artifact name must contain only ASCII letters, digits, '_' or '-'"
         );
         let extension = match target {
-            Target::Spirv | Target::Vulkan | Target::VulkanPortable | Target::VulkanWordStorage => {
-                "spv"
-            }
+            Target::Spirv
+            | Target::SpirvPortable
+            | Target::Vulkan
+            | Target::VulkanPortable
+            | Target::VulkanWordStorage => "spv",
             Target::Cuda => "cu",
             Target::Metal => "metal",
             Target::Host => "cpp",
@@ -173,7 +176,10 @@ impl Compiler {
             result, 0,
             "compile Slang module {module} for {target:?}; see compiler diagnostics"
         );
-        if matches!(target, Target::VulkanPortable | Target::VulkanWordStorage) {
+        if matches!(
+            target,
+            Target::SpirvPortable | Target::VulkanPortable | Target::VulkanWordStorage
+        ) {
             let bytes = fs::read(&code).expect("read portable SPIR-V code");
             fs::write(&code, crate::spirv::order_declarations(&bytes))
                 .expect("write ordered portable SPIR-V code");

@@ -599,3 +599,145 @@ fn reflection_infers_the_editable_duration_from_a_mixed_wait_context() {
         .unwrap();
     assert_eq!(changed.animation.duration, Fraction::new(2u64, 5u64));
 }
+
+#[test]
+fn variable_length_numeric_cell_tracks_commit_at_the_endpoint() {
+    let files = sources("mut values:List<Number>=[]\nreturn animate(values,to=[1,2],duration=1s)");
+    let prepared = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    let sanim_core::plan::Node::Cell { cell, .. } = prepared.plan.node.as_ref() else {
+        panic!("expected the returned cell plan")
+    };
+    let cell = *cell;
+    assert_eq!(
+        prepared
+            .animation
+            .reactive
+            .sample_cell(cell, Fraction::new(1u64, 2u64))
+            .unwrap()
+            .list()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        prepared
+            .animation
+            .reactive
+            .sample_cell(cell, 1.into())
+            .unwrap()
+            .list()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn demand_defers_unused_data_pipelines_only_for_pure_callbacks() {
+    let files = sources(
+        "fn identity(value:Number):Number{return value}\nlet unused=read<List<Number>>(\"absent.json\").map(identity)\nwait(1s)",
+    );
+    let mut engine = Engine::default();
+    engine.preparation = sanim_lang::Preparation::Demand;
+    let prepared = engine
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert!(
+        prepared
+            .deferred_bindings
+            .iter()
+            .any(|binding| binding.name == "unused")
+    );
+    assert!(!prepared.dependencies.contains_key("absent.json"));
+    assert!(
+        Engine::default()
+            .prepare("main.sanim", &files, &BTreeMap::new())
+            .is_err()
+    );
+}
+
+#[test]
+#[ignore = "release selective-data-laziness benchmark"]
+fn unused_pure_callback_pipeline_benchmark() {
+    use std::time::Instant;
+    let mut files = sources(
+        "fn identity(value:Number):Number{return value}\nlet unused=read<List<Number>>(\"items.json\").map(identity)\nwait(1s)",
+    );
+    files.insert(
+        "items.json",
+        serde_json::to_string(&(0..4096).collect::<Vec<_>>()).unwrap(),
+    );
+    let mut timings = [Vec::new(), Vec::new()];
+    for _ in 0..7 {
+        for (index, mode) in [
+            sanim_lang::Preparation::Demand,
+            sanim_lang::Preparation::Full,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut engine = Engine::default();
+            engine.preparation = mode;
+            let start = Instant::now();
+            let prepared = engine
+                .prepare("main.sanim", &files, &BTreeMap::new())
+                .unwrap();
+            timings[index].push(start.elapsed().as_micros());
+            if index == 0 {
+                assert!(!prepared.dependencies.contains_key("items.json"));
+            }
+        }
+    }
+    for values in &mut timings {
+        values.sort_unstable();
+    }
+    println!(
+        "unused 4096-row pure map: Demand median={}us Full median={}us",
+        timings[0][3], timings[1][3]
+    );
+    assert!(timings[0][3] < timings[1][3]);
+}
+
+#[test]
+fn inline_code_queries_resolve_after_previous_patch_plans() {
+    let mut files = sources(
+        "let view=CodeView(code=\"old\\n\",lang=\"plain\")\nview.patch(src=\"next.txt\",duration=100ms)\nview.range(regex=\"new\").edit(code=\"final\",duration=100ms)",
+    );
+    files.insert("next.txt", "new\n");
+    let prepared = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap();
+    assert_eq!(
+        prepared.animation.code_views["view"].document.text.as_ref(),
+        "final\n"
+    );
+    assert!(prepared.dependencies.contains_key("next.txt"));
+}
+
+#[test]
+fn bound_code_ranges_remain_immutable_snapshot_queries() {
+    let files = sources(
+        "let view=CodeView(code=\"old\",lang=\"plain\")\nlet absent=view.range(regex=\"new\")\nwait(1s)",
+    );
+    let error = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap_err();
+    assert!(error.message.contains("matched nothing"), "{error}");
+}
+
+#[test]
+fn late_code_query_failures_identify_the_actual_selector_action() {
+    let mut files = sources(
+        "let view=CodeView(code=\"old\",lang=\"plain\")\nview.patch(src=\"next.txt\",duration=100ms)\nview.range(regex=\"absent\").select(duration=100ms)",
+    );
+    files.insert("next.txt", "new");
+    let error = Engine::default()
+        .prepare("main.sanim", &files, &BTreeMap::new())
+        .unwrap_err();
+    assert_eq!(error.code, "S304");
+    assert_eq!(error.source, "main.sanim");
+    assert_eq!(error.span.line, 3);
+    assert!(error.message.contains("matched nothing"), "{error}");
+}

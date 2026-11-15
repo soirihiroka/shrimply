@@ -10,13 +10,17 @@ pub enum LayoutError {
     MissingParent,
     CyclicParent,
     Invalid(String),
+    InvalidAt {
+        location: crate::SourceLocation,
+        message: String,
+    },
 }
 impl std::fmt::Display for LayoutError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self{
         Self::MissingParent=>f.write_str("root Animation match_parent requires an external time viewport; provide the clip duration or an explicit Animation duration"),
         Self::CyclicParent=>f.write_str("Animation match_parent cannot size itself from an unconstrained auto parent; give the enclosing Animation an explicit duration or match_parent size"),
-        Self::Invalid(message)=>f.write_str(message),
+        Self::Invalid(message) | Self::InvalidAt{message,..}=>f.write_str(message),
     }
     }
 }

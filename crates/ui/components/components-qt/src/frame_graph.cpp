@@ -1,4 +1,8 @@
 #include "frame_graph.h"
+#include "shrimply-components-qt/src/frame_graph.cxxqt.h"
+#include <QTouchEvent>
+#include <vector>
+#include <chrono>
 
 #include <QGuiApplication>
 #include <QOpenGLFramebufferObject>
@@ -75,6 +79,62 @@ namespace shrimply {
 FrameGraphItemBase::FrameGraphItemBase(QObject *parent)
     : QQuickFramebufferObject(qobject_cast<QQuickItem *>(parent)) {
     setActiveFocusOnTab(true);
+    setAcceptTouchEvents(true);
+    touch_timer_.setTimerType(Qt::PreciseTimer);
+    constexpr int input_poll_hz = 60;
+    touch_timer_.setInterval(std::chrono::milliseconds{1000} / input_poll_hz);
+    connect(&touch_timer_, &QTimer::timeout, this, [this] {
+        if (!frameGraphPollTouch()) touch_timer_.stop();
+    });
+    const auto cancel_inactive = [this] {
+        if (!isEnabled() || !isVisible()) {
+            touch_timer_.stop();
+            ungrabTouchPoints();
+            frameGraphCancelTouch();
+        }
+    };
+    connect(this, &QQuickItem::enabledChanged, this, cancel_inactive);
+    connect(this, &QQuickItem::visibleChanged, this, cancel_inactive);
+}
+
+FrameGraphItemBase::~FrameGraphItemBase() {
+    // Derived Rust state is already destroyed when base teardown emits item signals.
+    disconnect(this, nullptr, this, nullptr);
+}
+
+void FrameGraphItemBase::touchEvent(QTouchEvent *event) {
+    if (event->pointingDevice()->type() != QInputDevice::DeviceType::TouchScreen) {
+        event->ignore();
+        return;
+    }
+    if (event->type() == QEvent::TouchCancel) {
+        frameGraphCancelTouch();
+        touch_timer_.stop();
+    } else {
+        if (event->type() == QEvent::TouchBegin) {
+            // A popup can consume the previous release; Qt's new sequence cancels it.
+            frameGraphCancelTouch();
+            forceActiveFocus(Qt::MouseFocusReason);
+        }
+        std::vector<FrameGraphContact> contacts;
+        contacts.reserve(event->points().size());
+        for (const auto &point : event->points()) {
+            const std::uint8_t phase = point.state() == QEventPoint::State::Pressed ? 0
+                : point.state() == QEventPoint::State::Released ? 2 : 1;
+            contacts.push_back({static_cast<std::uint64_t>(point.id()),
+                static_cast<float>(point.position().x()),
+                static_cast<float>(point.position().y()), phase});
+        }
+        if (frameGraphTouch({contacts.data(), contacts.size()})) {
+            if (!touch_timer_.isActive()) touch_timer_.start();
+        } else touch_timer_.stop();
+    }
+    event->accept();
+}
+
+void FrameGraphItemBase::touchUngrabEvent() {
+    touch_timer_.stop();
+    frameGraphCancelTouch();
 }
 
 QQuickFramebufferObject::Renderer *FrameGraphItemBase::createRenderer() const {

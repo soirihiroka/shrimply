@@ -1,0 +1,284 @@
+--- a/libavcodec/mediacodec_wrapper.c
++++ b/libavcodec/mediacodec_wrapper.c
+@@ -55,6 +55,7 @@
+     jclass codec_capabilities_class;
+     jfieldID color_formats_id;
+     jfieldID profile_levels_id;
++    jmethodID is_feature_supported_id;
+ 
+     jclass codec_profile_level_class;
+     jfieldID profile_id;
+@@ -81,6 +82,7 @@
+     { "android/media/MediaCodecInfo$CodecCapabilities", NULL, NULL, FF_JNI_CLASS, OFFSET(codec_capabilities_class), 1 },
+         { "android/media/MediaCodecInfo$CodecCapabilities", "colorFormats", "[I", FF_JNI_FIELD, OFFSET(color_formats_id), 1 },
+         { "android/media/MediaCodecInfo$CodecCapabilities", "profileLevels", "[Landroid/media/MediaCodecInfo$CodecProfileLevel;", FF_JNI_FIELD, OFFSET(profile_levels_id), 1 },
++        { "android/media/MediaCodecInfo$CodecCapabilities", "isFeatureSupported", "(Ljava/lang/String;)Z", FF_JNI_METHOD, OFFSET(is_feature_supported_id), 1 },
+ 
+     { "android/media/MediaCodecInfo$CodecProfileLevel", NULL, NULL, FF_JNI_CLASS, OFFSET(codec_profile_level_class), 1 },
+         { "android/media/MediaCodecInfo$CodecProfileLevel", "profile", "I", FF_JNI_FIELD, OFFSET(profile_id), 1 },
+@@ -469,7 +471,8 @@
+     return -1;
+ }
+ 
+-char *ff_AMediaCodecList_getCodecNameByType(const char *mime, int profile, int encoder, void *log_ctx)
++static char *mediacodec_get_codec_name(const char *mime, int profile, int encoder,
++                                      const char *match, const char *feature, void *log_ctx)
+ {
+     int ret;
+     int i;
+@@ -483,6 +486,7 @@
+     struct JNIAMediaFormatFields mediaformat_jfields = { 0 };
+ 
+     jobject codec_name = NULL;
++    jstring feature_name = NULL;
+ 
+     jobject info = NULL;
+     jobject type = NULL;
+@@ -500,6 +504,12 @@
+ 
+     if ((ret = ff_jni_init_jfields(env, &mediaformat_jfields, jni_amediaformat_mapping, 0, log_ctx)) < 0) {
+         goto done;
++    }
++
++    if (feature) {
++        feature_name = (*env)->NewStringUTF(env, feature);
++        if (!feature_name || ff_jni_exception_check(env, 1, log_ctx) < 0)
++            goto done;
+     }
+ 
+     codec_count = (*env)->CallStaticIntMethod(env, jfields.mediacodec_list_class, jfields.get_codec_count_id);
+@@ -564,6 +574,9 @@
+         (*env)->DeleteLocalRef(env, codec_name);
+         codec_name = NULL;
+ 
++        if (match && strcmp(name, match))
++            goto done_with_info;
++
+         /* Skip software decoders */
+         if (
+             strstr(name, "OMX.google") ||
+@@ -597,6 +610,15 @@
+                 goto done;
+             }
+ 
++            if (feature_name) {
++                int supported = (*env)->CallBooleanMethod(env, capabilities,
++                                                          jfields.is_feature_supported_id, feature_name);
++                if (ff_jni_exception_check(env, 1, log_ctx) < 0)
++                    goto done;
++                if (!supported)
++                    goto done_with_type;
++            }
++
+             profile_levels = (*env)->GetObjectField(env, capabilities, jfields.profile_levels_id);
+             if (ff_jni_exception_check(env, 1, log_ctx) < 0) {
+                 goto done;
+@@ -666,6 +688,7 @@
+     }
+ 
+ done:
++    (*env)->DeleteLocalRef(env, feature_name);
+     (*env)->DeleteLocalRef(env, codec_name);
+     (*env)->DeleteLocalRef(env, info);
+     (*env)->DeleteLocalRef(env, type);
+@@ -684,6 +707,20 @@
+     }
+ 
+     return name;
++}
++
++char *ff_AMediaCodecList_getCodecNameByType(const char *mime, int profile, int encoder, void *log_ctx)
++{
++    return mediacodec_get_codec_name(mime, profile, encoder, NULL, NULL, log_ctx);
++}
++
++int ff_AMediaCodecList_isEncoderFeatureSupported(const char *name, const char *mime,
++                                                const char *feature, void *log_ctx)
++{
++    char *found = mediacodec_get_codec_name(mime, -1, 1, name, feature, log_ctx);
++    int supported = found != NULL;
++    av_free(found);
++    return supported;
+ }
+ 
+ static FFAMediaFormat *mediaformat_jni_new(void)
+--- a/libavcodec/mediacodec_wrapper.h
++++ b/libavcodec/mediacodec_wrapper.h
+@@ -58,6 +58,8 @@
+ int ff_AMediaCodecProfile_getProfileFromAVCodecContext(AVCodecContext *avctx);
+ 
+ char *ff_AMediaCodecList_getCodecNameByType(const char *mime, int profile, int encoder, void *log_ctx);
++int ff_AMediaCodecList_isEncoderFeatureSupported(const char *name, const char *mime,
++                                                const char *feature, void *log_ctx);
+ 
+ typedef struct FFAMediaFormat FFAMediaFormat;
+ struct FFAMediaFormat {
+--- a/libavcodec/mediacodecenc.c
++++ b/libavcodec/mediacodecenc.c
+@@ -102,6 +102,7 @@
+     int qp_i_max;
+     int qp_p_max;
+     int qp_b_max;
++    int qcom_fixed_qp;
+ } MediaCodecEncContext;
+ 
+ enum {
+@@ -126,27 +127,58 @@
+     AV_PIX_FMT_NONE
+ };
+ 
+-static void mediacodec_dump_format(AVCodecContext *avctx,
+-        FFAMediaFormat *out_format)
+-{
+-    MediaCodecEncContext *s = avctx->priv_data;
+-    const char *name = s->name;
+-    char *str = ff_AMediaFormat_toString(out_format);
+-
+-    av_log(avctx, AV_LOG_DEBUG, "MediaCodec encoder %s output format %s\n",
+-           name ? name : "unknown", str);
+-    av_free(str);
+-}
+-
+-static void mediacodec_output_format(AVCodecContext *avctx)
+-{
+-    MediaCodecEncContext *s = avctx->priv_data;
+-    FFAMediaFormat *out_format = ff_AMediaCodec_getOutputFormat(s->codec);
+-
++/* Legacy OMX exposes these limits through its vendor extension, rather than
++ * Codec2's standardized video-qp fields. Use one list for setting and readback. */
++static const char *const qcom_qp_range_keys[] = {
++    "vendor.qti-ext-enc-qp-range.qp-i-min", "vendor.qti-ext-enc-qp-range.qp-i-max",
++    "vendor.qti-ext-enc-qp-range.qp-p-min", "vendor.qti-ext-enc-qp-range.qp-p-max",
++    "vendor.qti-ext-enc-qp-range.qp-b-min", "vendor.qti-ext-enc-qp-range.qp-b-max",
++};
++
++static int mediacodec_check_output_format(AVCodecContext *avctx, FFAMediaFormat *out_format)
++{
++    MediaCodecEncContext *s = avctx->priv_data;
++    char *str;
++
++    if (!out_format)
++        return AVERROR_EXTERNAL;
+     if (!s->name)
+         s->name = ff_AMediaCodec_getName(s->codec);
+-    mediacodec_dump_format(avctx, out_format);
+-    ff_AMediaFormat_delete(out_format);
++    str = ff_AMediaFormat_toString(out_format);
++    av_log(avctx, AV_LOG_DEBUG, "MediaCodec encoder %s output format %s\n",
++           s->name ? s->name : "unknown", str);
++    av_free(str);
++    if (avctx->max_b_frames > 0) {
++        int32_t value;
++        /* Optional format keys may be ignored. Require encoder readback before
++         * constructing decode timestamps for the requested reorder bound. */
++        if (!ff_AMediaFormat_getInt32(out_format, "max-bframes", &value) ||
++            value != avctx->max_b_frames) {
++            av_log(avctx, AV_LOG_ERROR, "Hardware encoder did not accept the B-frame limit\n");
++            return AVERROR(ENOSYS);
++        }
++    }
++    if (s->qcom_fixed_qp) {
++        for (unsigned i = 0; i < FF_ARRAY_ELEMS(qcom_qp_range_keys); i++) {
++            int32_t value;
++            if (!ff_AMediaFormat_getInt32(out_format, qcom_qp_range_keys[i], &value) ||
++                value != avctx->qmin) {
++                av_log(avctx, AV_LOG_ERROR, "Hardware encoder did not accept fixed QP bounds\n");
++                return AVERROR(ENOSYS);
++            }
++        }
++    }
++    return 0;
++}
++
++static int mediacodec_output_format(AVCodecContext *avctx)
++{
++    MediaCodecEncContext *s = avctx->priv_data;
++    FFAMediaFormat *out_format = ff_AMediaCodec_getOutputFormat(s->codec);
++    int ret = mediacodec_check_output_format(avctx, out_format);
++    if (out_format)
++        ff_AMediaFormat_delete(out_format);
++    return ret;
+ }
+ 
+ static int extract_extradata_support(AVCodecContext *avctx)
+@@ -310,7 +332,9 @@
+ static void on_format_changed(FFAMediaCodec *codec, void *userdata,
+                               FFAMediaFormat *format)
+ {
+-    mediacodec_dump_format(userdata, format);
++    int ret = mediacodec_check_output_format(userdata, format);
++    if (ret < 0)
++        on_error(codec, userdata, ret, "Hardware encoder output format changed");
+ }
+ 
+ static int mediacodec_init_async_state(AVCodecContext *avctx)
+@@ -358,10 +382,24 @@
+ 
+ static int mediacodec_generate_extradata(AVCodecContext *avctx);
+ 
+-static void mediacodec_set_qp_range(AVCodecContext *avctx,
+-                                    FFAMediaFormat *format)
+-{
+-    MediaCodecEncContext *s = avctx->priv_data;
++static int mediacodec_set_qp_range(AVCodecContext *avctx, const char *mime,
++                                   FFAMediaFormat *format)
++{
++    MediaCodecEncContext *s = avctx->priv_data;
++
++    if (avctx->qmin >= 0 && avctx->qmin == avctx->qmax) {
++        s->qcom_fixed_qp = s->name &&
++            !strncmp(s->name, "OMX.qcom.video.encoder.", sizeof("OMX.qcom.video.encoder.") - 1);
++        if (!s->qcom_fixed_qp &&
++            !ff_AMediaCodecList_isEncoderFeatureSupported(s->name, mime, "qp-bounds", avctx)) {
++            av_log(avctx, AV_LOG_ERROR, "Hardware encoder does not support fixed QP bounds\n");
++            return AVERROR(ENOSYS);
++        }
++        if (s->qcom_fixed_qp) {
++            for (unsigned i = 0; i < FF_ARRAY_ELEMS(qcom_qp_range_keys); i++)
++                ff_AMediaFormat_setInt32(format, qcom_qp_range_keys[i], avctx->qmin);
++        }
++    }
+ 
+     // Handle common options in AVCodecContext first.
+     if (avctx->qmin >= 0) {
+@@ -389,6 +427,7 @@
+         ff_AMediaFormat_setInt32(format, "video-qp-p-max", s->qp_p_max);
+     if (s->qp_b_max >= 0)
+         ff_AMediaFormat_setInt32(format, "video-qp-b-max", s->qp_b_max);
++    return 0;
+ }
+ 
+ static av_cold int mediacodec_init(AVCodecContext *avctx)
+@@ -527,7 +566,9 @@
+         if (s->bitrate_mode == BITRATE_MODE_CQ && avctx->global_quality > 0)
+             ff_AMediaFormat_setInt32(format, "quality", avctx->global_quality);
+     }
+-    mediacodec_set_qp_range(avctx, format);
++    ret = mediacodec_set_qp_range(avctx, codec_mime, format);
++    if (ret < 0)
++        goto bailout;
+ 
+     // frame-rate and i-frame-interval are required to configure codec
+     if (avctx->framerate.num >= avctx->framerate.den && avctx->framerate.den > 0) {
+@@ -604,7 +645,9 @@
+     if (ret)
+         goto bailout;
+ 
+-    mediacodec_output_format(avctx);
++    ret = mediacodec_output_format(avctx);
++    if (ret < 0)
++        goto bailout;
+ 
+     s->frame = av_frame_alloc();
+     if (!s->frame) {
+@@ -686,8 +729,8 @@
+         return AVERROR(EAGAIN);
+ 
+     if (ff_AMediaCodec_infoOutputFormatChanged(codec, index)) {
+-        mediacodec_output_format(avctx);
+-        return AVERROR(EAGAIN);
++        ret = mediacodec_output_format(avctx);
++        return ret < 0 ? ret : AVERROR(EAGAIN);
+     }
+ 
+     if (ff_AMediaCodec_infoOutputBuffersChanged(codec, index)) {

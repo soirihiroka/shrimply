@@ -12,6 +12,7 @@
 namespace shrimply {
 
 void register_drag_input();
+void activate_combo_index(QQuickItem *control, int index);
 
 class DragInput : public QQuickItem {
     Q_OBJECT

@@ -33,6 +33,7 @@ pub struct LayerGroup {
     pub opacity: u8,
 }
 
+#[derive(Clone, Debug)]
 pub struct LayerEntry {
     pub path: String,
     pub name: String,

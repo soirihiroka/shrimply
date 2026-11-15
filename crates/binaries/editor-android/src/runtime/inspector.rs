@@ -15,8 +15,26 @@ impl Runtime {
         {
             return false;
         }
+        if self.inspector_polled_at.elapsed() < document::POLL_INTERVAL {
+            return false;
+        }
+        self.inspector_polled_at = std::time::Instant::now();
         let revision = player::snapshot(&self.player).revision;
-        let changed = self.inspector.as_ref().is_some_and(document::poll);
+        let mut changed = self.inspector.as_ref().is_some_and(document::poll);
+        changed |= self.inspector_visible
+            && self
+                .inspector_document
+                .as_ref()
+                .is_some_and(document::InspectorDocument::pending);
+        if let (Some(controller), Some(document)) = (&self.inspector, &self.inspector_document) {
+            match self.inspector_fonts.poll(controller, document) {
+                Ok(value) => changed |= value,
+                Err(error) => {
+                    self.error = Some(error);
+                    changed = true;
+                }
+            }
+        }
         if changed {
             self.inspector_stamp = None;
             if player::snapshot(&self.player).revision != revision
@@ -60,7 +78,9 @@ impl Runtime {
             &preferences.compute_server_url,
             &preferences.last_tts_model,
         );
-        self.inspector_status = self.inspector_interaction.snapshot(&next).to_string();
+        let mut snapshot = self.inspector_interaction.snapshot(&next);
+        self.inspector_fonts.decorate(&next, &mut snapshot);
+        self.inspector_status = snapshot.to_string();
         self.inspector_document = Some(next);
         self.inspector_stamp = Some(stamp);
     }
@@ -79,6 +99,34 @@ impl Runtime {
         }
         self.inspector_stamp = None;
         Ok(())
+    }
+
+    pub(super) fn apply_inspector_fonts(&mut self, request: &Value) -> Result<Value, String> {
+        self.finish_numeric()?;
+        self.update_inspector();
+        let controller = self.inspector.as_ref().ok_or("Open a project first")?;
+        let document = self
+            .inspector_document
+            .as_ref()
+            .ok_or("Open the inspector first")?;
+        let revision = player::snapshot(&self.player).revision;
+        let result = self.inspector_fonts.apply(controller, document, request);
+        self.inspector_stamp = None;
+        if player::snapshot(&self.player).revision != revision {
+            self.timeline_changed()?;
+        }
+        result?;
+        Ok(Value::Null)
+    }
+
+    pub(super) fn inspector_resource(&mut self, request: &Value) -> Result<Value, String> {
+        self.update_inspector();
+        let controller = self.inspector.as_ref().ok_or("Open a project first")?;
+        let document = self
+            .inspector_document
+            .as_ref()
+            .ok_or("Open the inspector first")?;
+        document::remote::resource_request(controller, document, request)
     }
 
     pub(super) fn apply_inspector_numeric(&mut self, request: &Value) -> Result<Value, String> {

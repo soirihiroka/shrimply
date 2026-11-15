@@ -79,10 +79,31 @@ pub fn draw_track_label_pane(
             },
         );
 
+        let button_y = track_label_button_y(y);
+        let add_rect = rect(
+            crate::math::track_label_add_x(view.track_controls_progress),
+            button_y,
+            TRACK_LABEL_BUTTON_SIZE,
+            TRACK_LABEL_BUTTON_SIZE,
+        );
+        let add_icon_rect = draw_track_icon_button(
+            &row_painter,
+            add_rect,
+            icon_color,
+            (key, TrackLabelAction::Add),
+            false,
+            track_control_draw,
+        );
+        draw_icon(
+            &row_painter,
+            add_icon_rect,
+            Icon("plus-symbolic"),
+            icon_color,
+        );
+
         if !controls_visible {
             continue;
         }
-        let button_y = track_label_button_y(y);
         let toggle_rect = rect(
             TRACK_LABEL_TOGGLE_X,
             button_y,
@@ -102,27 +123,6 @@ pub fn draw_track_label_pane(
             toggle_icon_rect,
             key.kind,
             track_enabled(project, key),
-            icon_color,
-        );
-
-        let add_rect = rect(
-            TRACK_LABEL_ADD_X,
-            button_y,
-            TRACK_LABEL_BUTTON_SIZE,
-            TRACK_LABEL_BUTTON_SIZE,
-        );
-        let add_icon_rect = draw_track_icon_button(
-            &row_painter,
-            add_rect,
-            icon_color,
-            (key, TrackLabelAction::Add),
-            false,
-            track_control_draw,
-        );
-        draw_icon(
-            &row_painter,
-            add_icon_rect,
-            Icon("plus-symbolic"),
             icon_color,
         );
 
@@ -290,13 +290,19 @@ pub fn track_label_action_at(
     let row_y = row_screen_y(row, view);
     let button_y = track_label_button_y(row_y);
     let key = TrackKey { kind, track_index };
+    if hit_track_label_button(
+        x,
+        y,
+        crate::math::track_label_add_x(view.track_controls_progress),
+        button_y,
+    ) {
+        return Some((key, TrackLabelAction::Add));
+    }
     if view.track_controls_progress < 1.0 {
         return Some((key, TrackLabelAction::Select));
     }
     if hit_track_label_button(x, y, TRACK_LABEL_TOGGLE_X, button_y) {
         Some((key, TrackLabelAction::Toggle))
-    } else if hit_track_label_button(x, y, TRACK_LABEL_ADD_X, button_y) {
-        Some((key, TrackLabelAction::Add))
     } else if hit_track_label_button(x, y, TRACK_LABEL_RECORD_X, button_y) {
         match kind {
             TrackKind::Audio => Some((key, TrackLabelAction::AudioRecord)),

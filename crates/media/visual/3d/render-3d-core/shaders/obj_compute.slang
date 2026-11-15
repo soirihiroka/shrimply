@@ -1,4 +1,6 @@
+#include "modules/scene-parameter.slang"
 import render_3d_abi;
+import render_3d_budget;
 import render_3d_composite;
 import render_3d_environment;
 import render_3d_ground;
@@ -95,7 +97,6 @@ PbrSettings material_pbr(ComputeMaterial material)
     result._padding = material.pbr.padding;
     return result;
 }
-
 
 float2 vertex_uv(uint vertex, uint set)
 {
@@ -669,23 +670,99 @@ void sample_surface_environment(
     reflection *= reflection_composed_hit ? 1.0 : scene.environment.intensity;
 }
 
-float4 shade_surface(
-    ComputeSurface surface,
-    float3 world_direction,
-    uint2 pixel,
-    uint path_bounce,
-    inout uint seed)
+float3 pbr_direct_lighting(ComputeSurface surface, float3 world_direction, inout uint seed)
 {
+    SCENE_ARRAY_VIEW(SunLight, scene, sun_lights);
+    SCENE_ARRAY_VIEW(PointLight, scene, point_lights);
+
     ComputeMaterial material = materials[surface.material_index];
     float3 world_position = surface.world_position;
     float3 normal = surface.normal;
-    float4 mesh_base_color = surface.mesh_base_color;
     float3 base_color = surface.base_color;
     float metallic = surface.metallic;
     float roughness = surface.roughness;
     float3 view = -world_direction;
-    if (dot(normal, view) < 0.0)
-        normal = -normal;
+    if (dot(normal,view)<0.0) normal = -normal;
+    PbrSettings surface_pbr = material_pbr(material);
+    bool path_tracing = scene.pbr.path_tracing != PathTracingMode::Off;
+    bool stochastic_transport = OBJECT_TRANSPORT && (path_tracing || surface_pbr.transmission > 0.0);
+    float3 shaded = path_tracing ? float3(0.0) : base_color * 0.02;
+    uint light_samples = stochastic_transport
+        ? 1u
+        : uint(scene.pbr.light_sampling_quality);
+    for (uint light_index = 0; light_index < scene.sun_light_count; ++light_index)
+    {
+        SunLight light = SCENE_ARRAY_AT(scene, sun_lights, light_index);
+        float3 light_color = float3(0.0);
+        for (uint light_sample = 0; light_sample < light_samples; ++light_sample)
+        {
+            float3 world_light = sample_cone(
+                normalize(-light.direction_angular_radius.xyz),
+                light.direction_angular_radius.w,
+                seed);
+            float3 visibility = shadow_visibility(
+                world_position,
+                normal,
+                world_light,
+                RAY_MAXIMUM);
+            light_color += pbr_light(
+                normal,
+                view,
+                world_light,
+                light.color_intensity.rgb * light.color_intensity.w * visibility,
+                base_color,
+                metallic,
+                roughness,
+                float3(1.0),
+                surface_pbr);
+        }
+        shaded += light_color / float(light_samples);
+    }
+    for (uint light_index = 0; light_index < scene.point_light_count; ++light_index)
+    {
+        PointLight light = SCENE_ARRAY_AT(scene, point_lights, light_index);
+        float3 light_color = float3(0.0);
+        for (uint light_sample = 0; light_sample < light_samples; ++light_sample)
+        {
+            float3 sampled_position = light.position_radius.xyz
+                + sample_unit_sphere(seed) * light.position_radius.w;
+            float3 delta = sampled_position - world_position;
+            float distance_squared = dot(delta, delta);
+            float distance = sqrt(distance_squared);
+            if (distance >= light.range_padding.x)
+                continue;
+            float3 visibility = shadow_visibility(
+                world_position,
+                normal,
+                delta / max(distance, RAY_MINIMUM),
+                distance);
+            float falloff = pow(1.0 - distance / light.range_padding.x, 2.0)
+                / max(distance_squared, 0.01);
+            light_color += pbr_light(
+                normal,
+                view,
+                delta / max(distance, RAY_MINIMUM),
+                light.color_intensity.rgb * light.color_intensity.w
+                    * falloff * visibility,
+                base_color,
+                metallic,
+                roughness,
+                float3(1.0),
+                surface_pbr);
+        }
+        shaded += light_color / float(light_samples);
+    }
+    return shaded;
+}
+
+ComputeSurface prepare_lighting_surface(ComputeSurface surface, float3 world_direction, uint2 pixel)
+{
+    ComputeMaterial material = materials[surface.material_index];
+    float3 world_position = surface.world_position;
+    float3 normal = surface.normal;
+    float3 base_color = surface.base_color;
+    float3 view = -world_direction;
+    if (dot(normal,view)<0.0) normal = -normal;
     if (OBJECT_SHADING_MODEL == ShadingModel::Toon
         && scene.toon.texture_filter == ToonTextureFilter::Kuwahara
         && material.flags.x != 0
@@ -701,168 +778,43 @@ float4 shade_surface(
             scene.toon,
             tracer);
     }
-    PbrSettings surface_pbr = material_pbr(material);
-    bool path_tracing = scene.pbr.path_tracing != PathTracingMode::Off;
-    bool stochastic_transport = OBJECT_TRANSPORT && (path_tracing || surface_pbr.transmission > 0.0);
-    if (OBJECT_SHADING_MODEL == ShadingModel::Depth)
-    {
-        float4 clip_position = mul(
-            scene.view_projection,
-            float4(world_position, 1.0));
-        float depth = saturate(
-            clip_position.z / max(abs(clip_position.w), RAY_MINIMUM));
-        return float4(
-            float3(depth),
-            material.flags.x != 0 ? mesh_base_color.a : scene.base_color.a);
-    }
 
-    float3 shaded;
-    if (OBJECT_SHADING_MODEL == ShadingModel::Toon)
+    surface.normal = normal;
+    surface.base_color = base_color;
+    return surface;
+}
+
+ToonDirectLighting surface_toon_direct(ComputeSurface surface, float3 direction)
+{
+    ToonShadowTracer tracer;
+    return integrate_toon_direct_lights(scene,surface.world_position,surface.normal,-direction,scene.toon,tracer);
+}
+
+float3 surface_toon_color(ComputeSurface surface, float3 direction, uint2 pixel,
+    float3 diffuse, float3 reflection, ToonDirectLighting lighting)
+{
+    return toon_surface_color(surface.base_color,surface.normal,-direction,float2(pixel)+0.5,
+        diffuse*0.25,reflection*surface.metallic,scene.toon,lighting);
+}
+
+float3 surface_static_environment(ComputeSurface surface, float3 direction,
+    PbrSettings settings, float3 diffuse, float3 reflection)
+{
+    float3 fresnel = pbr_fresnel(surface.base_color,surface.metallic,
+        saturate(dot(surface.normal,-direction)),settings.ior);
+    return diffuse*surface.base_color*(1.0-surface.metallic) + reflection*fresnel;
+}
+
+float3 surface_display_color(float3 color, uint path_bounce)
+{
+    if (path_bounce == 0u)
     {
-        float3 environment_diffuse;
-        float3 environment_reflection;
-        sample_surface_environment(
-            world_position,
-            normal,
-            view,
-            roughness,
-            environment_diffuse,
-            environment_reflection);
-        ToonShadowTracer tracer;
-        ToonDirectLighting lighting = integrate_toon_direct_lights(
-            scene,
-            world_position,
-            normal,
-            view,
-            scene.toon,
-            tracer);
-        shaded = toon_surface_color(
-            base_color,
-            normal,
-            view,
-            float2(pixel) + 0.5,
-            environment_diffuse * 0.25,
-            environment_reflection * metallic,
-            scene.toon,
-            lighting);
+        color *= scene.material.z;
+        if (scene.pbr.denoising == 0u)
+            color = float3(linear_to_srgb(aces_tone_map(color.r)),
+                linear_to_srgb(aces_tone_map(color.g)),linear_to_srgb(aces_tone_map(color.b)));
     }
-    else
-    {
-        shaded = path_tracing ? float3(0.0) : base_color * 0.02;
-        uint light_samples = stochastic_transport
-            ? 1u
-            : uint(scene.pbr.light_sampling_quality);
-        for (uint light_index = 0; light_index < scene.sun_light_count; ++light_index)
-        {
-            SunLight light = scene.sun_lights[light_index];
-            float3 light_color = float3(0.0);
-            for (uint light_sample = 0; light_sample < light_samples; ++light_sample)
-            {
-                float3 world_light = sample_cone(
-                    normalize(-light.direction_angular_radius.xyz),
-                    light.direction_angular_radius.w,
-                    seed);
-                float3 visibility = shadow_visibility(
-                    world_position,
-                    normal,
-                    world_light,
-                    RAY_MAXIMUM);
-                light_color += pbr_light(
-                    normal,
-                    view,
-                    world_light,
-                    light.color_intensity.rgb * light.color_intensity.w * visibility,
-                    base_color,
-                    metallic,
-                    roughness,
-                    float3(1.0),
-                    surface_pbr);
-            }
-            shaded += light_color / float(light_samples);
-        }
-        for (uint light_index = 0; light_index < scene.point_light_count; ++light_index)
-        {
-            PointLight light = scene.point_lights[light_index];
-            float3 light_color = float3(0.0);
-            for (uint light_sample = 0; light_sample < light_samples; ++light_sample)
-            {
-                float3 sampled_position = light.position_radius.xyz
-                    + sample_unit_sphere(seed) * light.position_radius.w;
-                float3 delta = sampled_position - world_position;
-                float distance_squared = dot(delta, delta);
-                float distance = sqrt(distance_squared);
-                if (distance >= light.range_padding.x)
-                    continue;
-                float3 visibility = shadow_visibility(
-                    world_position,
-                    normal,
-                    delta / max(distance, RAY_MINIMUM),
-                    distance);
-                float falloff = pow(1.0 - distance / light.range_padding.x, 2.0)
-                    / max(distance_squared, 0.01);
-                light_color += pbr_light(
-                    normal,
-                    view,
-                    delta / max(distance, RAY_MINIMUM),
-                    light.color_intensity.rgb * light.color_intensity.w
-                        * falloff * visibility,
-                    base_color,
-                    metallic,
-                    roughness,
-                    float3(1.0),
-                    surface_pbr);
-            }
-            shaded += light_color / float(light_samples);
-        }
-        if (stochastic_transport && shared_environment_enabled(scene))
-        {
-            ComputePbrEnvironmentTracer tracer;
-            shaded += integrate_pbr_environment(
-                scene,
-                world_position,
-                normal,
-                view,
-                base_color,
-                metallic,
-                roughness,
-                surface_pbr,
-                seed,
-                tracer);
-        }
-        else
-        {
-            float3 environment_diffuse;
-            float3 environment_reflection;
-            sample_surface_environment(
-                world_position,
-                normal,
-                view,
-                roughness,
-                environment_diffuse,
-                environment_reflection);
-            float3 fresnel = pbr_fresnel(
-                base_color,
-                metallic,
-                saturate(dot(normal, view)),
-                surface_pbr.ior);
-            shaded += environment_diffuse * base_color * (1.0 - metallic)
-                + environment_reflection * fresnel;
-        }
-    }
-    if (path_bounce == 0)
-    {
-        shaded *= scene.material.z;
-        if (scene.pbr.denoising == 0)
-        {
-            shaded = float3(
-                linear_to_srgb(aces_tone_map(shaded.r)),
-                linear_to_srgb(aces_tone_map(shaded.g)),
-                linear_to_srgb(aces_tone_map(shaded.b)));
-        }
-    }
-    return float4(
-        shaded,
-        material.flags.x != 0 ? mesh_base_color.a : scene.base_color.a);
+    return color;
 }
 
 struct TransportResult
@@ -885,536 +837,14 @@ struct GroundTransportContinuation
     uint transmitted;
 };
 
-TransportResult shade_transport_path(
-    ComputeSurface first_surface,
-    float3 first_direction,
-    uint2 pixel,
-    uint first_path_bounce,
-    uint random_seed)
+// Transport lighting and advancement share one implementation across backends.
+// A wavefront host dispatches the same two steps that the monolithic wrapper loops.
+#include "modules/obj-compute-transport.slang"
+
+#include "modules/obj-compute-sampling.slang"
+
+void object_finish_pixel(uint2 pixel, uint2 dimensions, float4 color, float4 background)
 {
-    if (!OBJECT_TRANSPORT)
-    {
-        float4 local = shade_surface(first_surface, first_direction, pixel, 1u, random_seed);
-        TransportResult result;
-        result.radiance = local.rgb;
-        result.background = float3(0.0);
-        result.alpha = local.a;
-        return result;
-    }
-    ComputeSurface surface = first_surface;
-    float3 direction = first_direction;
-    float3 throughput = float3(1.0);
-    float3 radiance = float3(0.0);
-    float3 background = float3(0.0);
-    bool transmitted = false;
-    uint path_bounce = first_path_bounce;
-    uint seed = random_seed;
-    float alpha = materials[surface.material_index].flags.x != 0
-        ? surface.mesh_base_color.a
-        : scene.base_color.a;
-    uint bounce_limit = pbr_transport_bounce_limit(scene.pbr);
-    bool path_tracing = scene.pbr.path_tracing != PathTracingMode::Off;
-    GroundTransportContinuation continuations[FINAL_TRANSPORT_BOUNCES];
-    uint continuation_count = 0u;
-
-    while (true)
-    {
-        TransportResult completed;
-        bool path_complete = false;
-        float4 local = shade_surface(surface, direction, pixel, 1u, seed);
-        radiance += throughput * local.rgb;
-        PbrSettings settings = material_pbr(materials[surface.material_index]);
-        if ((!path_tracing && settings.transmission <= 0.0)
-            || path_bounce >= bounce_limit)
-        {
-            completed.radiance = radiance;
-            completed.background = background;
-            completed.alpha = alpha;
-            path_complete = true;
-        }
-        else
-        {
-            float3 normal = surface.normal;
-            float3 view = -direction;
-            bool front_face = dot(normal, view) >= 0.0;
-            if (!front_face)
-                normal = -normal;
-            PbrSample sample = pbr_sample(
-                normal,
-                view,
-                front_face,
-                surface.base_color,
-                surface.metallic,
-                surface.roughness,
-                settings,
-                seed);
-            float survival = 1.0;
-            if (sample.valid && path_bounce >= 2u)
-            {
-                survival = clamp(
-                    max(sample.weight.r, max(sample.weight.g, sample.weight.b)),
-                    0.1,
-                    0.95);
-                sample.valid = random_float(seed) <= survival;
-            }
-            if (!sample.valid)
-            {
-                completed.radiance = radiance;
-                completed.background = background;
-                completed.alpha = alpha;
-                path_complete = true;
-            }
-            else
-            {
-                throughput *= sample.weight / survival;
-                transmitted = transmitted || sample.refracted;
-                float side = dot(sample.direction, normal) >= 0.0 ? 1.0 : -1.0;
-                float3 origin = surface.world_position + normal * (RAY_MINIMUM * side);
-                RayDesc ray = {
-                    mul(scene.model_inverse, float4(origin, 1.0)).xyz,
-                    RAY_MINIMUM,
-                    normalize(mul(
-                        scene.model_inverse,
-                        float4(sample.direction, 0.0)).xyz),
-                    RAY_MAXIMUM
-                };
-                ComputeSurface next_surface;
-                float query_distance;
-                bool geometry_hit = trace_surface_hit(ray, next_surface, query_distance);
-                float geometry_distance = geometry_hit
-                    ? length(next_surface.world_position - origin)
-                    : RAY_MAXIMUM;
-
-                ComputeCompositeSampler composite_sampler;
-                float4 virtual_color;
-                float virtual_distance;
-                int virtual_ground;
-                bool virtual_hit = shared_sample_composed_planes(
-                    scene,
-                    composite_sampler,
-                    origin,
-                    sample.direction,
-                    0.0,
-                    virtual_color,
-                    virtual_distance,
-                    virtual_ground)
-                    && virtual_distance < geometry_distance;
-                if (OBJECT_GROUNDS && virtual_hit && virtual_ground >= 0)
-                {
-                    Ground ground = scene.grounds[virtual_ground];
-                    float3 ground_position = origin + sample.direction * virtual_distance;
-                    float3 ground_normal = normalize(ground.normal_composite.xyz);
-                    if (scene.ground_shading_model == ShadingModel::Depth)
-                    {
-                        float4 clip_position = mul(
-                            scene.view_projection,
-                            float4(ground_position, 1.0));
-                        float depth = saturate(
-                            clip_position.z / max(abs(clip_position.w), RAY_MINIMUM));
-                        radiance += throughput * float3(depth);
-                        completed.radiance = radiance;
-                        completed.background = background;
-                        completed.alpha = alpha;
-                        path_complete = true;
-                    }
-                    else
-                    {
-                        uint ground_seed = seed;
-                        float shadow_occlusion = ground_shadow_occlusion(
-                            ground_position,
-                            ground_normal,
-                            ground_seed);
-                        GroundReflectionRay reflection = sample_ground_reflection(
-                            scene,
-                            ground,
-                            ground_position,
-                            ground_normal,
-                            sample.direction,
-                            path_bounce + 1u,
-                            ground_seed);
-                        GroundTransportContinuation continuation;
-                        continuation.reflection = reflection;
-                        continuation.virtual_color = virtual_color;
-                        continuation.radiance = radiance;
-                        continuation.background = background;
-                        continuation.throughput = throughput;
-                        continuation.alpha = alpha;
-                        continuation.shadow_occlusion = shadow_occlusion;
-                        continuation.receiver_strength =
-                            ground.settings.y * ground.position_opacity.w;
-                        continuation.transmitted = transmitted ? 1u : 0u;
-                        continuations[continuation_count] = continuation;
-                        continuation_count += 1u;
-
-                        ComputeSurface reflected_surface;
-                        float reflected_distance;
-                        bool reflected_hit = false;
-                        if (OBJECT_GROUND_REFLECTIONS && reflection.valid)
-                        {
-                            RayDesc reflection_ray = {
-                                mul(scene.model_inverse, float4(reflection.origin, 1.0)).xyz,
-                                RAY_MINIMUM,
-                                normalize(mul(
-                                    scene.model_inverse,
-                                    float4(reflection.direction, 0.0)).xyz),
-                                RAY_MAXIMUM
-                            };
-                            reflected_hit = trace_surface_hit(
-                                reflection_ray,
-                                reflected_surface,
-                                reflected_distance);
-                        }
-                        if (reflected_hit)
-                        {
-                            surface = reflected_surface;
-                            direction = reflection.direction;
-                            throughput = float3(1.0);
-                            radiance = float3(0.0);
-                            background = float3(0.0);
-                            transmitted = false;
-                            path_bounce = reflection.path_bounce;
-                            seed = reflection.random_seed;
-                            alpha = materials[surface.material_index].flags.x != 0
-                                ? surface.mesh_base_color.a
-                                : scene.base_color.a;
-                            continue;
-                        }
-                        completed.radiance = float3(0.0);
-                        completed.background = float3(0.0);
-                        completed.alpha = 0.0;
-                        path_complete = true;
-                    }
-                }
-                else if (virtual_hit)
-                {
-                    if (transmitted)
-                        background += throughput * virtual_color.rgb;
-                    else
-                        radiance += throughput * virtual_color.rgb;
-                    completed.radiance = radiance;
-                    completed.background = background;
-                    completed.alpha = alpha;
-                    path_complete = true;
-                }
-                else if (!geometry_hit)
-                {
-                    float4 transmitted_background;
-                    bool background_hit = transmitted
-                        && shared_sample_transmission_background(
-                            scene,
-                            composite_sampler,
-                            origin,
-                            sample.direction,
-                            transmitted_background);
-                    if (background_hit)
-                        background += throughput * transmitted_background.rgb;
-                    else
-                    {
-                        bool composed_hit;
-                        float3 environment = sample_environment(
-                            origin,
-                            sample.direction,
-                            0.0,
-                            composed_hit);
-                        if (!composed_hit)
-                            environment *= scene.environment.intensity;
-                        float environment_mis = shared_environment_enabled(scene) && !sample.delta
-                            ? power_heuristic(sample.pdf, SHARED_UNIFORM_ENVIRONMENT_PDF)
-                            : 1.0;
-                        radiance += throughput * environment * environment_mis;
-                    }
-                    completed.radiance = radiance;
-                    completed.background = background;
-                    completed.alpha = alpha;
-                    path_complete = true;
-                }
-                else
-                {
-                    surface = next_surface;
-                    direction = sample.direction;
-                    path_bounce += 1u;
-                    continue;
-                }
-            }
-        }
-
-        if (!path_complete)
-            continue;
-        while (OBJECT_GROUNDS && continuation_count > 0u)
-        {
-            continuation_count -= 1u;
-            GroundTransportContinuation continuation =
-                continuations[continuation_count];
-            float4 reflection = continuation.reflection.valid
-                ? finish_ground_reflection(
-                    continuation.reflection,
-                    float4(completed.radiance, completed.alpha))
-                : float4(0.0);
-            float4 virtual_color = continuation.virtual_color;
-            composite_over(virtual_color, reflection);
-            float3 parent_radiance = continuation.radiance;
-            float3 parent_background = continuation.background;
-            if (scene.ground_shading_model == ShadingModel::Toon)
-            {
-                float4 toon_shadow = toon_ground_shadow(
-                    scene,
-                    continuation.shadow_occlusion,
-                    continuation.receiver_strength,
-                    float2(pixel) + 0.5);
-                if (continuation.transmitted != 0u)
-                {
-                    parent_radiance += continuation.throughput
-                        * toon_shadow.rgb * toon_shadow.a;
-                    virtual_color.rgb = lerp(
-                        virtual_color.rgb,
-                        toon_shadow.rgb,
-                        toon_shadow.a);
-                }
-                else
-                    composite_over(virtual_color, toon_shadow);
-            }
-            else if (continuation.transmitted != 0u)
-            {
-                virtual_color.rgb *= 1.0
-                    - continuation.shadow_occlusion * continuation.receiver_strength;
-            }
-            else
-            {
-                composite_ground_shadow(
-                    virtual_color,
-                    continuation.shadow_occlusion * continuation.receiver_strength);
-            }
-            if (continuation.transmitted != 0u)
-                parent_background += continuation.throughput * virtual_color.rgb;
-            else
-                parent_radiance += continuation.throughput * virtual_color.rgb;
-            completed.radiance = parent_radiance;
-            completed.background = parent_background;
-            completed.alpha = continuation.alpha;
-        }
-        return completed;
-    }
-}
-
-float4 shade_stochastic_path(
-    ComputeSurface first_surface,
-    float3 first_direction,
-    uint2 pixel,
-    uint random_seed,
-    out float4 background)
-{
-    TransportResult result = shade_transport_path(
-        first_surface,
-        first_direction,
-        pixel,
-        0u,
-        random_seed);
-    float3 radiance = result.radiance;
-    radiance *= scene.material.z;
-    background = float4(result.background, 0.0);
-    if (scene.pbr.denoising == 0)
-    {
-        radiance = float3(
-            aces_tone_map(radiance.r),
-            aces_tone_map(radiance.g),
-            aces_tone_map(radiance.b));
-        radiance = saturate(radiance + result.background);
-        radiance = float3(
-            linear_to_srgb(radiance.r),
-            linear_to_srgb(radiance.g),
-            linear_to_srgb(radiance.b));
-        background = float4(0.0);
-    }
-    return float4(radiance, result.alpha);
-}
-
-
-float4 render_sample(
-    float2 sample_position,
-    uint2 pixel,
-    uint2 dimensions,
-    uint seed,
-    out float4 background)
-{
-    background = float4(0.0);
-    CameraRay camera = camera_ray(
-        scene,
-        sample_position,
-        dimensions,
-        true,
-        seed);
-    if (!camera.valid)
-        return float4(0.0);
-    uint ground_seed = seed;
-    RayDesc ray = camera.object_ray;
-
-    ComputeSurface surface;
-    float ray_distance;
-    float4 color = float4(0.0);
-    float visible_distance = RAY_MAXIMUM;
-    if (trace_surface_hit(ray, surface, ray_distance))
-    {
-        visible_distance = length(surface.world_position - camera.world_origin);
-        color = OBJECT_SHADING_MODEL == ShadingModel::Pbr
-                && OBJECT_TRANSPORT
-                && (scene.pbr.path_tracing != PathTracingMode::Off
-                    || material_pbr(materials[surface.material_index]).transmission > 0.0)
-            ? shade_stochastic_path(
-                surface,
-                camera.world_direction,
-                pixel,
-                seed,
-                background)
-            : shade_surface(surface, camera.world_direction, pixel, 0u, seed);
-    }
-    if (!OBJECT_GROUNDS) return color;
-    int ground_index = -1;
-    float ground_distance = visible_distance + RAY_MINIMUM;
-    float3 ground_position = float3(0.0);
-    float3 ground_normal = float3(0.0);
-    for (uint index = 0; index < scene.ground_count; ++index)
-    {
-        float candidate_distance;
-        float3 candidate_position;
-        float3 candidate_normal;
-        if (intersect_ground(
-            scene.grounds[index],
-            camera.ground_origin,
-            camera.world_direction,
-            candidate_distance,
-            candidate_position,
-            candidate_normal)
-            && candidate_distance < ground_distance)
-        {
-            ground_index = int(index);
-            ground_distance = candidate_distance;
-            ground_position = candidate_position;
-            ground_normal = candidate_normal;
-        }
-    }
-    if (ground_index < 0 || ground_distance >= visible_distance + RAY_MINIMUM)
-        return color;
-    Ground ground = scene.grounds[ground_index];
-    if (scene.ground_shading_model == ShadingModel::Depth)
-    {
-        float4 clip_position = mul(scene.view_projection, float4(ground_position, 1.0));
-        float depth = saturate(clip_position.z / max(abs(clip_position.w), RAY_MINIMUM));
-        return float4(float3(depth), ground.position_opacity.w);
-    }
-    float shadow_occlusion = ground_shadow_occlusion(
-        ground_position,
-        ground_normal,
-        ground_seed);
-    float receiver_strength = ground.settings.y * ground.position_opacity.w;
-    GroundReflectionRay reflection_ray = sample_ground_reflection(
-        scene,
-        ground,
-        ground_position,
-        ground_normal,
-        camera.world_direction,
-        0u,
-        ground_seed);
-    float4 reflection = float4(0.0);
-    if (OBJECT_GROUND_REFLECTIONS && reflection_ray.valid)
-    {
-        RayDesc reflected_ray = {
-            mul(scene.model_inverse, float4(reflection_ray.origin, 1.0)).xyz,
-            RAY_MINIMUM,
-            normalize(mul(
-                scene.model_inverse,
-                float4(reflection_ray.direction, 0.0)).xyz),
-            RAY_MAXIMUM
-        };
-        ComputeSurface reflected_surface;
-        float reflected_distance;
-        if (trace_surface_hit(reflected_ray, reflected_surface, reflected_distance))
-        {
-            TransportResult reflected = shade_transport_path(
-                reflected_surface,
-                reflection_ray.direction,
-                pixel,
-                reflection_ray.path_bounce,
-                reflection_ray.random_seed);
-            reflection = finish_ground_reflection(
-                reflection_ray,
-                float4(reflected.radiance, reflected.alpha));
-        }
-    }
-    composite_over(color, reflection);
-    if (scene.ground_shading_model == ShadingModel::Toon)
-    {
-        composite_over(
-            color,
-            toon_ground_shadow(
-                scene,
-                shadow_occlusion,
-                receiver_strength,
-                float2(pixel) + 0.5));
-        return color;
-    }
-    composite_ground_shadow(color, shadow_occlusion * receiver_strength);
-    return color;
-}
-
-[shader("compute")]
-[numthreads(8, 8, 1)]
-void obj_compute(uint3 thread_id : SV_DispatchThreadID)
-{
-    uint2 pixel = thread_id.xy;
-    uint2 dimensions = uint2(output_size.width, output_size.height);
-    if (pixel.x >= dimensions.x || pixel.y >= dimensions.y)
-        return;
-
-    AntiAliasing anti_aliasing = scene.toon.anti_aliasing;
-    uint anti_aliasing_samples = anti_aliasing_sample_count(anti_aliasing);
-    uint minimum_samples = 1u;
-    uint maximum_samples = 1u;
-    float relative_error = 0.0;
-    bool adaptive = scene.pbr.path_tracing != PathTracingMode::Off;
-    if (adaptive)
-    {
-        adaptive_path_budget(
-            scene.pbr,
-            minimum_samples,
-            maximum_samples,
-            relative_error);
-    }
-    uint depth_of_field_samples = scene.camera_lens.y > 0.0
-        ? (scene.pbr.render_quality == RenderQuality::Interactive ? 2u : 8u)
-        : 1u;
-    uint transmission_samples = scene.pbr.transmission > 0.0
-        ? ground_light_sample_count(scene.pbr)
-        : 1u;
-    minimum_samples = max(
-        minimum_samples,
-        max(anti_aliasing_samples, max(transmission_samples, depth_of_field_samples)));
-    maximum_samples = max(maximum_samples, minimum_samples);
-    float4 color = float4(0.0);
-    float4 background = float4(0.0);
-    float4 squared_error = float4(0.0);
-    uint sample_count = 0u;
-    for (uint sample_index = 0; sample_index < maximum_samples; ++sample_index)
-    {
-        float2 offset = maximum_samples == anti_aliasing_samples
-            ? anti_aliasing_offset(sample_index, anti_aliasing, pixel)
-            : stochastic_pixel_offset(sample_index, maximum_samples, pixel);
-        float4 sample_background;
-        float4 sample_color = render_sample(
-            float2(pixel) + 0.5 + offset,
-            pixel,
-            dimensions,
-            random_seed(pixel, sample_index),
-            sample_background);
-        sample_count += 1u;
-        float4 delta = sample_color - color;
-        color += delta / float(sample_count);
-        background += (sample_background - background) / float(sample_count);
-        squared_error += delta * (sample_color - color);
-        if (adaptive
-            && sample_count >= minimum_samples
-            && adaptive_converged(color, squared_error, sample_count, relative_error))
-            break;
-    }
     if (scene.toon.outline_mode != OutlineMode::Off
         && scene.toon.outline_method != OutlineMethod::RegionBoundary)
     {
@@ -1557,6 +987,36 @@ void obj_compute(uint3 thread_id : SV_DispatchThreadID)
 
 [shader("compute")]
 [numthreads(8, 8, 1)]
+void obj_compute(uint3 thread_id : SV_DispatchThreadID)
+{
+    uint2 pixel = thread_id.xy;
+    uint2 dimensions = uint2(output_size.width, output_size.height);
+    if (pixel.x >= dimensions.x || pixel.y >= dimensions.y)
+        return;
+
+    SamplingBudget budget = sampling_budget(scene);
+    SampleMoments moments;
+    moments.color = float4(0.0);
+    moments.background = float4(0.0);
+    moments.squared_error = float4(0.0);
+    moments.count = 0u;
+    for (uint sample_index=0u; sample_index<budget.maximum_samples; ++sample_index)
+    {
+        float2 offset = budget.maximum_samples == budget.anti_aliasing_samples
+            ? anti_aliasing_offset(sample_index,scene.toon.anti_aliasing,pixel)
+            : stochastic_pixel_offset(sample_index,budget.maximum_samples,pixel);
+        float4 sample_background;
+        float4 sample_color = render_sample(float2(pixel)+0.5+offset,pixel,dimensions,
+            random_seed(pixel,sample_index),sample_background);
+        if (accumulate_sample(moments,budget,sample_color,sample_background)) break;
+    }
+    float4 color = moments.color;
+    float4 background = moments.background;
+    object_finish_pixel(pixel,dimensions,color,background);
+}
+
+[shader("compute")]
+[numthreads(8, 8, 1)]
 void obj_denoise_composite_compute(uint3 thread_id : SV_DispatchThreadID)
 {
     uint2 pixel = thread_id.xy;
@@ -1638,3 +1098,7 @@ void obj_outline_compute(uint3 thread_id : SV_DispatchThreadID)
     else
         output_pixels[pixel_index] = pack_color(color);
 }
+
+#include "modules/obj-compute-surface.slang"
+
+#include "modules/obj-wavefront.slang"

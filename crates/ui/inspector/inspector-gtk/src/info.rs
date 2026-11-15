@@ -4,38 +4,7 @@ use adw::prelude::*;
 use gtk::glib;
 use shrimply_components_gtk::tr;
 
-use super::{
-    InspectorContext,
-    item::{InspectorListItem, flat},
-};
-
-const ARTWORK_HEIGHT: i32 = 220;
 const INLINE_VALUE_MAX_CHARS: usize = 24;
-
-pub(super) fn item(context: &InspectorContext) -> InspectorListItem {
-    let preferences = shrimply_editor_state::preferences::snapshot(&context.preferences);
-    let document = shrimply_inspector_document::document(
-        &context.inspector_core,
-        format_date,
-        &preferences.compute_server_url,
-        &preferences.last_tts_model,
-    );
-    let category = document
-        .categories
-        .into_iter()
-        .find(|category| category.icon == shrimply_inspector_document::CategoryIcon::Info)
-        .expect("inspected target has an information category");
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    for item in category.items {
-        let shrimply_inspector_document::InspectorListItem::Flat(section) = item else {
-            panic!("information document contains an editable card");
-        };
-        for widget in super::control::section(&section, context) {
-            content.append(&widget);
-        }
-    }
-    flat(content)
-}
 
 pub(super) fn property_row(title: &str, value: &str) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
@@ -102,7 +71,7 @@ pub(super) fn artwork(
     let picture = gtk::Picture::for_paintable(&texture);
     picture.set_content_fit(gtk::ContentFit::Contain);
     picture.set_can_shrink(true);
-    picture.set_height_request(ARTWORK_HEIGHT);
+    picture.set_height_request(shrimply_inspector_core::info::ARTWORK_PREVIEW_HEIGHT as i32);
     group.add(&picture);
     Some(group)
 }

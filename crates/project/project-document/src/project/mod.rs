@@ -102,7 +102,7 @@ pub use shrimply_project_types::{
     PROJECT_PRESETS, ProjectPreset, TrackGap, TrackKey, TrackKind, TransitionSide,
     clamp_item_end_to_next_start, frame_rate_choices,
 };
-pub use tags::normalize_tags;
+pub use tags::{TagEdit, edit_tags, normalize_tags};
 pub use timing::*;
 
 pub const PROJECT_FORMAT_VERSION: u32 = 32;

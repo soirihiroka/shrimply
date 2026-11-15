@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[test]
 fn default_spring_preserves_valid_signal_dimensions_at_all_sampled_times() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","mut extent=100pt\nlet marker=Box(width=2*(extent), height=2*(extent), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nextent=abs(1pt,duration=1s)");
+    files.insert("main.sanim","mut extent=100pt\nlet marker=Box(width=2*(extent), height=2*(extent), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nanimate(extent,to=abs(1pt),duration=1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -13,12 +13,12 @@ fn default_spring_preserves_valid_signal_dimensions_at_all_sampled_times() {
     for index in 0u64..=1000 {
         let value = prepared
             .animation
-            .sample_property(marker, Property::Radius, Fraction::new(index, 1000u64))
+            .sample_property(marker, Property::Width, Fraction::new(index, 1000u64))
             .unwrap()
             .number()
             .unwrap()
             .value;
-        assert!(value >= Fraction::from(1) && value <= Fraction::from(100));
+        assert!(value >= Fraction::from(2) && value <= Fraction::from(200));
     }
 }
 

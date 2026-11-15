@@ -42,7 +42,7 @@ struct ServerSelection {
 struct ServerList {
     group: glib::WeakRef<adw::PreferencesGroup>,
     add: glib::WeakRef<adw::ButtonRow>,
-    rows: Rc<RefCell<Vec<adw::ActionRow>>>,
+    rows: Rc<RefCell<Vec<glib::WeakRef<adw::ActionRow>>>>,
     generation: Rc<Cell<u64>>,
     selection: ServerSelection,
 }
@@ -208,18 +208,23 @@ pub fn page(
     features_group.add(&rows.features);
 
     let page = adw::PreferencesPage::builder()
-        .title(tr!("External").as_ref())
-        .icon_name("application-x-executable-symbolic")
-        .name("external")
+        .title(tr!(store::PreferencePage::External.title()).as_ref())
+        .icon_name(store::PreferencePage::External.icon())
+        .name(store::PreferencePage::External.id())
         .build();
     let cli_group = adw::PreferencesGroup::new();
     cli_group.add(&crate::cli::row());
     page.add(&cli_group);
-    page.add(blender_group);
-    page.add(&endpoint_group);
-    page.add(&server_group);
-    page.add(&compute_group);
-    page.add(&features_group);
+    for name in store::PreferencePage::External.groups() {
+        page.add(match *name {
+            "Blender" => blender_group,
+            "Inference Servers" => &endpoint_group,
+            "Selected Server" => &server_group,
+            "Compute" => &compute_group,
+            "Features" => &features_group,
+            _ => unreachable!("external preference group"),
+        });
+    }
 
     let revision = Rc::new(Cell::new(0_u64));
     let server_list = ServerList {
@@ -297,7 +302,9 @@ fn rebuild_server_rows(servers: &ServerList) {
         .set(servers.generation.get().wrapping_add(1));
     group.remove(&add);
     for row in servers.rows.borrow_mut().drain(..) {
-        group.remove(&row);
+        if let Some(row) = row.upgrade() {
+            group.remove(&row);
+        }
     }
 
     let (urls, selected) = store::compute_servers(&servers.selection.preferences);
@@ -327,7 +334,7 @@ fn rebuild_server_rows(servers: &ServerList) {
             }
         });
 
-        let edit_parent = widgets.row.clone();
+        let edit_parent = widgets.row.downgrade();
         let edit_servers = servers.clone();
         let old_url = url.clone();
         let delete_servers = servers.clone();
@@ -335,6 +342,9 @@ fn rebuild_server_rows(servers: &ServerList) {
         let menu = create_server_menu_button(
             can_delete,
             move || {
+                let Some(edit_parent) = edit_parent.upgrade() else {
+                    return;
+                };
                 let servers = edit_servers.clone();
                 let old_url = old_url.clone();
                 let edited_url = old_url.clone();
@@ -346,7 +356,7 @@ fn rebuild_server_rows(servers: &ServerList) {
         );
         widgets.row.add_suffix(&menu);
         group.add(&widgets.row);
-        servers.rows.borrow_mut().push(widgets.row.clone());
+        servers.rows.borrow_mut().push(widgets.row.downgrade());
         check_server_summary(servers, url, widgets);
     }
     group.add(&add);
@@ -391,30 +401,24 @@ fn create_server_menu_button(
     on_edit: impl Fn() + 'static,
     on_delete: impl Fn() + 'static,
 ) -> gtk::MenuButton {
-    let popover = gtk::Popover::new();
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let edit = gtk::Button::with_label(tr!("Edit Server").as_ref());
-    edit.set_has_frame(false);
-    edit.add_css_class("flat");
-    let edit_popover = popover.clone();
-    edit.connect_clicked(move |_| {
-        edit_popover.popdown();
-        on_edit();
-    });
-    content.append(&edit);
-
-    let delete = gtk::Button::with_label(tr!("Delete Server").as_ref());
-    delete.set_has_frame(false);
-    delete.add_css_class("flat");
-    delete.add_css_class("destructive-action");
-    delete.set_sensitive(can_delete);
-    let delete_popover = popover.clone();
-    delete.connect_clicked(move |_| {
-        delete_popover.popdown();
+    let model = gio::Menu::new();
+    model.append(Some(tr!("Edit Server").as_ref()), Some("server.edit"));
+    model.append(Some(tr!("Delete Server").as_ref()), Some("server.delete"));
+    let actions = gio::SimpleActionGroup::new();
+    actions.add_action(&shrimply_components_gtk::ui::menu_action(
+        "edit",
+        None,
+        move || {
+            on_edit();
+            None
+        },
+    ));
+    let delete = shrimply_components_gtk::ui::menu_action("delete", None, move || {
         on_delete();
+        None
     });
-    content.append(&delete);
-    popover.set_child(Some(&content));
+    delete.set_enabled(can_delete);
+    actions.add_action(&delete);
 
     let menu = gtk::MenuButton::new();
     menu.set_icon_name("view-more-symbolic");
@@ -422,7 +426,9 @@ fn create_server_menu_button(
     menu.add_css_class("flat");
     menu.set_tooltip_i18n("Server menu");
     menu.set_valign(gtk::Align::Center);
-    menu.set_popover(Some(&popover));
+    menu.set_menu_model(Some(&model));
+    menu.insert_action_group("server", Some(&actions));
+    shrimply_components_gtk::ui::adaptive_menu(&menu, "server", &actions);
     menu
 }
 

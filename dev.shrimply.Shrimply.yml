@@ -33,6 +33,23 @@ cleanup:
   - "*.la"
 
 modules:
+  - name: spirv-tools
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DSPIRV_SKIP_TESTS=ON
+      - -DSPIRV_WERROR=OFF
+    cleanup:
+      - "*"
+    sources:
+      - type: git
+        url: https://github.com/KhronosGroup/SPIRV-Tools.git
+        tag: v2026.4
+        commit: ef96ed763b43b59b33b31b362f09a02b729fa1c9
+      - type: git
+        url: https://github.com/KhronosGroup/SPIRV-Headers.git
+        commit: 496543121ce6419f23d6fa5d7194ba66c36212d2
+        dest: external/spirv-headers
+
   - name: level-zero
     buildsystem: cmake-ninja
     config-opts:

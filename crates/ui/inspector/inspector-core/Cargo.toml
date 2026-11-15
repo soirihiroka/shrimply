@@ -8,6 +8,7 @@ default = ["cuda-backend"]
 cuda-backend = ["dep:shrimply-visual-cuda"]
 
 [dependencies]
+shrimply-components-core.workspace = true
 shrimply-fonts = { workspace = true, features = ["native"] }
 shrimply-trust-core.workspace = true
 async-channel.workspace = true
@@ -41,6 +42,7 @@ shrimply-editor-state = { workspace = true }
 shrimply-text-3d = { workspace = true, default-features = true }
 shrimply-timeline-edit = { workspace = true }
 shrimply-tts = { workspace = true }
+shrimply-video-generation.workspace = true
 shrimply-visual-cuda = { workspace = true, optional = true }
 shrimply-visual-core = { workspace = true }
 shrimply-visual-modifiers = { workspace = true, default-features = true }

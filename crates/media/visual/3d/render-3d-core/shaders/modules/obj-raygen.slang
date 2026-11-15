@@ -3,53 +3,22 @@ void raygen_main()
 {
     uint2 pixel = DispatchRaysIndex().xy;
     uint2 dimensions = DispatchRaysDimensions().xy;
-    AntiAliasing anti_aliasing = scene.toon.anti_aliasing;
-    uint anti_aliasing_samples = anti_aliasing_sample_count(anti_aliasing);
-    uint minimum_samples = 1u;
-    uint maximum_samples = 1u;
-    float relative_error = 0.0;
-    bool adaptive = scene.pbr.path_tracing != PathTracingMode::Off;
-    if (adaptive)
-        adaptive_path_budget(
-            scene.pbr,
-            minimum_samples,
-            maximum_samples,
-            relative_error);
-    uint transmission_samples = scene.pbr.transmission > 0.0
-        ? ground_light_sample_count(scene.pbr)
-        : 1u;
-    uint depth_of_field_samples = scene.camera_lens.y > 0.0
-        ? (scene.pbr.render_quality == RenderQuality::Interactive ? 2u : 8u)
-        : 1u;
-    minimum_samples = max(
-        minimum_samples,
-        max(anti_aliasing_samples, max(transmission_samples, depth_of_field_samples)));
-    maximum_samples = max(maximum_samples, minimum_samples);
-    float4 mean = float4(0.0);
-    float4 mean_background = float4(0.0);
-    float4 squared_error = float4(0.0);
-    uint sample_count = 0u;
-    for (uint sample_index = 0; sample_index < maximum_samples; ++sample_index)
+    SamplingBudget budget = sampling_budget(scene);
+    SampleMoments moments;
+    moments.color=float4(0.0);
+    moments.background=float4(0.0);
+    moments.squared_error=float4(0.0);
+    moments.count=0u;
+    for (uint sample_index=0u; sample_index<budget.maximum_samples; ++sample_index)
     {
-        float2 offset = maximum_samples == anti_aliasing_samples
-            ? anti_aliasing_offset(sample_index, anti_aliasing, pixel)
-            : stochastic_pixel_offset(sample_index, maximum_samples, pixel);
-        RayPayload sample = trace_surface(
-            float2(pixel) + 0.5 + offset,
-            dimensions,
-            false,
-            random_seed(pixel, sample_index));
-        float4 sample_color = sample.color;
-        sample_count += 1u;
-        float4 delta = sample_color - mean;
-        mean += delta / float(sample_count);
-        mean_background += (sample.background - mean_background) / float(sample_count);
-        squared_error += delta * (sample_color - mean);
-        if (adaptive
-            && sample_count >= minimum_samples
-            && adaptive_converged(mean, squared_error, sample_count, relative_error))
-            break;
+        float2 offset=budget.maximum_samples==budget.anti_aliasing_samples
+            ? anti_aliasing_offset(sample_index,scene.toon.anti_aliasing,pixel)
+            : stochastic_pixel_offset(sample_index,budget.maximum_samples,pixel);
+        RayPayload sample=trace_surface(float2(pixel)+0.5+offset,dimensions,false,random_seed(pixel,sample_index));
+        if (accumulate_sample(moments,budget,sample.color,sample.background)) break;
     }
+    float4 mean=moments.color;
+    float4 mean_background=moments.background;
     float4 color = mean;
 
     OutlineMode outline_mode = scene.toon.outline_mode;

@@ -1,7 +1,8 @@
 use super::{InspectorContext, section::InspectorSection};
 use adw::prelude::*;
 use shrimply_components_gtk::tr;
-use shrimply_inspector_core::{ControlKind, InspectorControl, InspectorTarget};
+use shrimply_inspector_core::{ControlKind, ControlRowRole, InspectorControl, InspectorTarget};
+mod expression;
 pub(crate) mod layered;
 mod value;
 
@@ -11,7 +12,38 @@ pub(super) fn section(
 ) -> Vec<gtk::Widget> {
     let section = InspectorSection::controls();
     let mut information: Option<adw::PreferencesGroup> = None;
-    for control in model.controls.iter().filter(|control| control.visible) {
+    let mut controls = model
+        .controls
+        .iter()
+        .filter(|control| control.visible)
+        .peekable();
+    while let Some(control) = controls.next() {
+        if let Some(group) = control.row_group {
+            information = None;
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let mut grouped = vec![control];
+            while controls
+                .peek()
+                .is_some_and(|control| control.row_group == Some(group))
+            {
+                grouped.push(controls.next().expect("matching grouped control"));
+            }
+            for control in grouped {
+                let native = InspectorSection::controls();
+                let mut control = control.clone();
+                let primary = control.row_role == ControlRowRole::Primary;
+                if control.row_role == ControlRowRole::Auxiliary {
+                    control.tooltip = control.label.clone();
+                    control.label.clear();
+                }
+                add_control(&native, context, &context.list_target, control);
+                let native = native.into_widget();
+                native.set_hexpand(primary);
+                row.append(&native);
+            }
+            section.add_wide_control(&row);
+            continue;
+        }
         match control.kind {
             ControlKind::InfoHeading => {
                 let group = adw::PreferencesGroup::builder()
@@ -46,6 +78,10 @@ pub(super) fn add_control(
     let first_row = section.row.get();
     let focus = control.preview_focus.clone();
     match control.kind {
+        ControlKind::Action => value::action(section, context, target, control),
+        ControlKind::AudioCache | ControlKind::VisualCache | ControlKind::Analysis => {
+            section.add_wide_control(&super::progress::widget(control, context));
+        }
         ControlKind::Selector
         | ControlKind::OptionalSelector
         | ControlKind::OptionalNumberSelector
@@ -75,9 +111,17 @@ pub(super) fn add_control(
             group.add(&super::info::property_row(&control.label, &control.value));
             section.add_wide_control(&group);
         }
-        ControlKind::TtsEditor | ControlKind::BeatDetection | ControlKind::AudioModifierMenu => {
+        ControlKind::TtsEditor
+        | ControlKind::BeatDetection
+        | ControlKind::AudioModifierMenu
+        | ControlKind::VisualModifierMenu => {
             section.add_wide_control(&super::audio::control(&control, context));
         }
+        ControlKind::FontFamilies => value::fonts(section, context, target, control),
+        ControlKind::LayeredDrawing => value::drawing(section, context, target, control),
+        ControlKind::Performance => section.add_wide_control(&super::benchmarking::widget()),
+        ControlKind::ProjectSettings => super::project::settings(section, context, control),
+        ControlKind::InfoHeading => unreachable!("information heading handled by section"),
         ControlKind::FileLocation => {
             section.add_wide_control(&super::info::file_row(control.value.into(), &control.label))
         }
@@ -98,7 +142,6 @@ pub(super) fn add_control(
                 section.add_wide_control(&group);
             }
         }
-        _ => panic!("unsupported generic GTK control kind: {:?}", control.kind),
     }
     if let Some(focus) = focus {
         let controller = context.inspector_core.clone();

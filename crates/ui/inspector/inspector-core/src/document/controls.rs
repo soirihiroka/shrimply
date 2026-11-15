@@ -7,6 +7,11 @@ impl InspectorController {
         target: &InspectorTarget,
         control: &InspectorControl,
     ) -> Result<(), String> {
+        if control.kind == ControlKind::LayeredBoolean
+            && control.path.starts_with("/content/layers/")
+        {
+            return self.ensure_image_layer_control(target, control);
+        }
         if control.audio_modifier {
             return Ok(());
         }
@@ -110,6 +115,105 @@ impl InspectorController {
                     .and_then(|invert| self.set_alpha_mask_inverted(target, mask, invert)),
             ),
             _ => None,
+        }
+    }
+}
+
+impl InspectorController {
+    pub fn populate_background_control(
+        &self,
+        target: &InspectorTarget,
+        control: &mut InspectorControl,
+        server_url: &str,
+    ) -> Result<(), String> {
+        match control.kind {
+            ControlKind::Analysis => {
+                let status = self
+                    .control_analysis_presentation(
+                        target,
+                        control.action.ok_or("analysis control has no action")?,
+                        server_url,
+                    )?
+                    .ok_or("analysis action has no presentation")?;
+                if status.active() {
+                    self.observe_analysis_transition(
+                        target,
+                        control.action.expect("analysis action was resolved"),
+                        &status,
+                    );
+                }
+                control.sensitive = status.sensitive;
+                control.busy = status.active();
+                control.value = status.label.clone();
+                control.tooltip = status.tooltip.as_str().into();
+                control.analysis = Some(status);
+            }
+            ControlKind::AudioCache | ControlKind::VisualCache => {
+                let id = control.target_id.ok_or("cache control has no target")?;
+                let status = self.cache_status(target, control.kind, id);
+                if control.kind == ControlKind::AudioCache {
+                    let mut active = self.audio_cache_transitions.borrow_mut();
+                    if active.tracked(target.clone(), id).is_none() {
+                        active.observe(target.clone(), id, status.clone());
+                    }
+                }
+                let status = crate::cache_control_presentation(status, "").analysis();
+                control.value = status.label.clone();
+                control.tooltip = status.tooltip.as_str().into();
+                control.busy = status.active();
+                control.analysis = Some(status);
+            }
+            ControlKind::BeatDetection => control.busy = self.audio_beat_detection_loading(target),
+            ControlKind::VisualCacheQuality if self.analysis_backend.visual_cache_images => {
+                control.kind = ControlKind::ReadOnly;
+                control.value = shrimply_i18n::text("Lossless image frames").into_owned();
+                control.values.clear();
+                control.labels.clear();
+                control.editable = false;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    pub fn activate_control(
+        &self,
+        target: &InspectorTarget,
+        control: &InspectorControl,
+        server_url: &str,
+    ) -> Result<(), String> {
+        if !control.sensitive || !control.action_sensitive {
+            return Err("inspector action is unavailable".into());
+        }
+        match control.kind {
+            ControlKind::AudioCache => {
+                return self.toggle_audio_cache(
+                    target,
+                    control.target_id.ok_or("cache target is required")?,
+                );
+            }
+            ControlKind::VisualCache => {
+                return self.toggle_visual_cache(
+                    target,
+                    control.target_id.ok_or("cache target is required")?,
+                );
+            }
+            _ => {}
+        }
+        let action = control.action.ok_or("control has no action")?;
+        if let Some(status) = self.control_analysis_presentation(target, action, server_url)?
+            && !status.sensitive
+        {
+            return Err("analysis action is unavailable".into());
+        }
+        match action {
+            crate::InspectorControlAction::ToggleSam2Analysis { modifier_id, .. } => {
+                self.toggle_sam2_analysis(target, modifier_id, server_url.into())
+            }
+            crate::InspectorControlAction::ToggleCameraAnalysis => {
+                self.toggle_camera_analysis(target, server_url.into())
+            }
+            _ => self.trigger_video_control_action(target, action),
         }
     }
 }

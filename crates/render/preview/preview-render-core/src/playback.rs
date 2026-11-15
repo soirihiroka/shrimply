@@ -51,6 +51,7 @@ struct State<F> {
     retry: RefCell<Option<(Instant, Time)>>,
     generation: Cell<u64>,
     stopped: Cell<bool>,
+    visible: Cell<bool>,
 }
 
 impl<F> Clone for PreviewMedia<F> {
@@ -105,6 +106,7 @@ impl<F: 'static> PreviewMedia<F> {
                 retry: RefCell::new(None),
                 generation: Cell::new(0),
                 stopped: Cell::new(false),
+                visible: Cell::new(true),
             }),
         };
         let configured_resources = Cell::new(resource_config);
@@ -239,7 +241,28 @@ impl<F: 'static> PreviewMedia<F> {
         }
     }
 
+    /// Hidden native surfaces can retain the player clock without rendering frames.
+    pub fn set_visible(&self, visible: bool) {
+        if self.inner.visible.replace(visible) == visible {
+            return;
+        }
+        self.inner.settled.borrow_mut().take();
+        self.inner.retry.borrow_mut().take();
+        if visible && !self.inner.stopped.get() {
+            send(
+                &self.inner.video_tx,
+                VideoCommand::Render {
+                    position: player_state::snapshot(&self.inner.player_state).position,
+                    accuracy: CompositeAccuracy::FULLY_ACCURATE,
+                },
+            );
+        }
+    }
+
     pub fn next_update(&self) -> Option<Duration> {
+        if !self.inner.visible.get() {
+            return None;
+        }
         let now = Instant::now();
         [
             self.inner.settled.borrow().map(|(deadline, ..)| deadline),
@@ -252,6 +275,9 @@ impl<F: 'static> PreviewMedia<F> {
     }
 
     fn poll_deferred_renders(&self) {
+        if !self.inner.visible.get() {
+            return;
+        }
         let settled = *self.inner.settled.borrow();
         if let Some((deadline, generation, position, accuracy)) = settled
             && Instant::now() >= deadline
@@ -330,9 +356,10 @@ impl<F: 'static> PreviewMedia<F> {
                     );
                     media.inner.expected_revision.set(snapshot.revision);
                 }
-                if position_changed
-                    || playing_changed
-                    || project_change.is_some_and(|change| change.video || change.audio)
+                if media.inner.visible.get()
+                    && (position_changed
+                        || playing_changed
+                        || project_change.is_some_and(|change| change.video || change.audio))
                 {
                     let previous_position = last_position.get();
                     let local_scrub = position_changed

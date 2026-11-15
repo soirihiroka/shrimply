@@ -13,5 +13,4 @@ let rectangle = <Box width={size} height={size} radius={size / 6} fill="orange3"
 Animation(children=[circle])
 Animation(children=[rectangle])
 
-let pulse_task = <Animation absolute flow="sequence">{animate(phase, to=1800deg, duration=10s, ease="linear")}</Animation>
-pulse_task.join()
+animate(phase,to=1800deg,duration=10s,ease="linear")

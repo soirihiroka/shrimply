@@ -1,3 +1,6 @@
+mod input;
+pub use input::FrameGraphInputResult;
+
 use std::{
     ops::{Deref, DerefMut},
     time::Instant,
@@ -113,11 +116,29 @@ pub struct FrameGraphComponentAction {
 }
 
 #[derive(Clone, Copy)]
+pub enum FrameGraphCommand {
+    PreviousKey,
+    ToggleKey,
+    NextKey,
+}
+
+#[derive(Clone, Copy)]
 pub struct FrameGraphStatus {
     pub can_previous: bool,
     pub can_next: bool,
     pub key_at_playhead: bool,
     pub value: f64,
+}
+
+impl FrameGraphStatus {
+    pub fn command_label(self, command: FrameGraphCommand) -> std::borrow::Cow<'static, str> {
+        shrimply_i18n::text(match command {
+            FrameGraphCommand::PreviousKey => "Previous keyframe",
+            FrameGraphCommand::ToggleKey if self.key_at_playhead => "Delete keyframe at playhead",
+            FrameGraphCommand::ToggleKey => "Add keyframe at playhead",
+            FrameGraphCommand::NextKey => "Next keyframe",
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -241,6 +262,8 @@ pub struct FrameGraphState {
 pub struct FrameGraphComponents {
     states: Vec<FrameGraphState>,
     active_component: usize,
+    touch: shrimply_components_skia::input::TouchInput,
+    touch_playhead: Option<Time>,
 }
 
 impl FrameGraphComponents {
@@ -256,7 +279,14 @@ impl FrameGraphComponents {
         Self {
             states,
             active_component,
+            touch: Default::default(),
+            touch_playhead: None,
         }
+    }
+
+    pub fn replace_components(&mut self, components: Self) {
+        self.states = components.states;
+        self.active_component = components.active_component;
     }
 
     pub fn single(state: FrameGraphState) -> Self {

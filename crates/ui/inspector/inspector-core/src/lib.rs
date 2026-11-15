@@ -45,6 +45,7 @@ pub mod tts;
 mod value;
 pub use edit_transaction::{InspectorEditTransaction, InspectorGraphEdit};
 pub mod video;
+pub mod video_generation;
 pub mod visual_modifiers;
 
 pub use alpha_mask::AlphaMaskPresentation;
@@ -74,7 +75,7 @@ pub use project::ProjectPresentation;
 pub use section::{
     AnalysisControlPresentation, AnalysisTooltip, ControlKind, ControlRowRole, InspectorControl,
     InspectorControlAction, InspectorSection, KeyframeCommits, NumberConstraint, NumberMapping,
-    NumberSpec, ScalarStorage, TextKeyframeCommits,
+    NumberSpec, ProgressButtonPresentation, ScalarStorage, TextKeyframeCommits,
 };
 pub use target::InspectorTarget;
 pub use track::TrackPresentation;

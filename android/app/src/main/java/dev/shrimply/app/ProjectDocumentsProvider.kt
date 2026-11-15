@@ -31,6 +31,25 @@ class ProjectDocumentsProvider : DocumentsProvider() {
         private fun documentId(root: File, file: File): String =
             if (file == root) ROOT_ID else "$ROOT_ID/${file.relativeTo(root).invariantSeparatorsPath}"
 
+        internal fun sourceFile(context: Context, uri: Uri): File? {
+            if (uri.authority != context.packageName + ".projects") return null
+            val id = if (DocumentsContract.isDocumentUri(context, uri)) DocumentsContract.getDocumentId(uri) else DocumentsContract.getTreeDocumentId(uri)
+            return resolveFile(File(context.filesDir, "projects").canonicalFile, id)
+        }
+
+        private fun resolveFile(root: File, id: String): File {
+            val target = when {
+                id == ROOT_ID -> root
+                id.startsWith("$ROOT_ID/") -> File(root, id.removePrefix("$ROOT_ID/"))
+                else -> throw FileNotFoundException("Unknown project document.")
+            }.canonicalFile
+            if (!target.toPath().startsWith(root.toPath()) || documentId(root, target) != id
+                || (!target.isFile && !target.isDirectory)) {
+                throw FileNotFoundException("The project document is unavailable.")
+            }
+            return target
+        }
+
         internal fun directoryUri(context: Context, directory: File): Uri {
             val root = File(context.filesDir, "projects").canonicalFile
             val folder = directory.canonicalFile
@@ -49,18 +68,7 @@ class ProjectDocumentsProvider : DocumentsProvider() {
         return true
     }
 
-    private fun file(id: String): File {
-        val target = when {
-            id == ROOT_ID -> root
-            id.startsWith("$ROOT_ID/") -> File(root, id.removePrefix("$ROOT_ID/"))
-            else -> throw FileNotFoundException("Unknown project document.")
-        }.canonicalFile
-        if (!target.toPath().startsWith(root.toPath()) || documentId(root, target) != id
-            || (!target.isFile && !target.isDirectory)) {
-            throw FileNotFoundException("The project document is unavailable.")
-        }
-        return target
-    }
+    private fun file(id: String): File = resolveFile(root, id)
 
     override fun queryRoots(projection: Array<out String>?): Cursor {
         val context = requireNotNull(context)

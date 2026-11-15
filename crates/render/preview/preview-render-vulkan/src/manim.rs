@@ -35,7 +35,7 @@ impl Compositor {
         let renderer = self
             .manim
             .as_mut()
-            .expect("initialized Intel Manim renderer");
+            .expect("initialized Vulkan Manim renderer");
         let descriptor = shrimply_manim_wgpu::Renderer::external_frame_descriptor(&frame.prepared);
         let slot_id = match self.manim_slots.get(&frame.item_id) {
             Some(slot) if renderer.target_descriptor(slot.id) == Some(descriptor) => slot.id,

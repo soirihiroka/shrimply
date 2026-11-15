@@ -50,14 +50,16 @@ fn layout_diagnostic(
     let code = match &error {
         LayoutError::MissingParent => "S138",
         LayoutError::CyclicParent => "S139",
-        LayoutError::Invalid(_) => "S304",
+        LayoutError::Invalid(_) | LayoutError::InvalidAt { .. } => "S304",
     };
-    let (source, span) = plan
-        .origin
-        .as_ref()
-        .map_or((source, Span::default()), |origin| {
-            (origin.location.source.as_ref(), origin.location.span)
-        });
+    let location = if let LayoutError::InvalidAt { location, .. } = &error {
+        Some(location)
+    } else {
+        plan.origin.as_ref().map(|origin| &origin.location)
+    };
+    let (source, span) = location.map_or((source, Span::default()), |location| {
+        (location.source.as_ref(), location.span)
+    });
     Diagnostic::new(code, error.to_string(), source, span)
 }
 

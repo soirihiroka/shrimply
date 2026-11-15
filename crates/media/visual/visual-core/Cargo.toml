@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-cuda-stabilization = ["dep:shrimply-affine-l1-stabilization"]
+cuda-stabilization = ["shrimply-affine-l1-stabilization/nvidia"]
 
 [dependencies]
 shrimply-fonts = { workspace = true, features = ["native"] }
@@ -26,7 +26,7 @@ shrimply-math-color = { workspace = true }
 shrimply-asset = { workspace = true }
 shrimply-blender-core = { workspace = true }
 shrimply-layered-image-loader = { workspace = true }
-shrimply-affine-l1-stabilization = { workspace = true, optional = true }
+shrimply-affine-l1-stabilization.workspace = true
 shrimply-mesh-flow-stabilization = { workspace = true }
 cached.workspace = true
 tracing.workspace = true

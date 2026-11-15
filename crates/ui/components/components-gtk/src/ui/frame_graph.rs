@@ -76,9 +76,21 @@ impl FrameGraph {
             .hexpand(true)
             .focusable(true)
             .build();
-        let previous = flat_button("go-previous-symbolic", "Previous keyframe");
-        let toggle = flat_button("list-add-symbolic", "Add keyframe at playhead");
-        let next = flat_button("go-next-symbolic", "Next keyframe");
+        let status = state.status();
+        let previous = flat_button(
+            "go-previous-symbolic",
+            status
+                .command_label(FrameGraphCommand::PreviousKey)
+                .as_ref(),
+        );
+        let toggle = flat_button(
+            "list-add-symbolic",
+            status.command_label(FrameGraphCommand::ToggleKey).as_ref(),
+        );
+        let next = flat_button(
+            "go-next-symbolic",
+            status.command_label(FrameGraphCommand::NextKey).as_ref(),
+        );
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         spacer.set_hexpand(true);
@@ -106,11 +118,9 @@ impl FrameGraph {
                 } else {
                     "list-add-symbolic"
                 });
-                toggle.set_tooltip_text(Some(if status.key_at_playhead {
-                    "Delete keyframe at playhead"
-                } else {
-                    "Add keyframe at playhead"
-                }));
+                toggle.set_tooltip_text(Some(
+                    status.command_label(FrameGraphCommand::ToggleKey).as_ref(),
+                ));
                 for handler in status_handlers.borrow().iter() {
                     handler(status);
                 }

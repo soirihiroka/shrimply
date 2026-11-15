@@ -3,6 +3,13 @@ use shrimply_project_document::project::LayeredImageItem;
 use shrimply_project_evaluation::{TransformExpressionCache, VisualEvaluation, resolve_bool};
 use std::sync::Arc;
 
+pub use shrimply_layered_image_loader::LayerEntry;
+
+/// Portable source hierarchy used by the inspector without a renderer dependency.
+pub fn entries(source: shrimply_asset::Asset) -> Result<Vec<LayerEntry>, String> {
+    shrimply_layered_image_loader::load(source).map(|document| document.entries.clone())
+}
+
 const LAYER_NOISE_MULTIPLIER: u32 = 0x85eb_ca6b;
 
 pub struct Prepared {

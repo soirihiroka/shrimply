@@ -7,7 +7,7 @@ use core::pin::Pin;
 use std::collections::HashMap;
 
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::{QColor, QString, QStringList, QUrl};
+use cxx_qt_lib::{QColor, QMap, QMapPair_QString_QVariant, QString, QStringList, QUrl, QVariant};
 use shrimply_inspector_core::InspectorTarget;
 
 use crate::item::{InspectorAction, InspectorListItem};
@@ -33,38 +33,25 @@ fn analysis_presentation(
     control: &InspectorControl,
     target: Option<&InspectorTarget>,
 ) -> Option<shrimply_inspector_core::AnalysisControlPresentation> {
-    match control.action? {
-        shrimply_inspector_core::InspectorControlAction::ToggleSam2Analysis {
-            modifier_id,
-            generation,
-            prompt_signature,
-            can_analyze,
-        } => {
-            let InspectorTarget::Item(address) = target? else {
-                return None;
-            };
-            Some(shrimply_inspector_core::sam2_analysis_control(
-                &shrimply_visual_core::sam2::analysis::AnalysisTarget {
-                    address: address.clone(),
-                    modifier_id,
-                },
-                generation,
-                prompt_signature,
-                can_analyze,
-            ))
-        }
-        shrimply_inspector_core::InspectorControlAction::ToggleTransparentFillAnalysis {
-            modifier_id,
-        } => super::transparent_fill_analysis_control(target?, modifier_id).ok(),
-        shrimply_inspector_core::InspectorControlAction::ToggleCameraAnalysis => {
-            super::camera_analysis_control(target?).ok()
-        }
-        _ => None,
-    }
+    let target = target?;
+    let action = control.action?;
+    let server_url = crate::PREFERENCES.with_borrow(|preferences| {
+        shrimply_editor_state::preferences::snapshot(
+            preferences
+                .as_ref()
+                .expect("Qt inspector analysis requested before preferences were installed"),
+        )
+        .compute_server_url
+    });
+    crate::with_controller(|controller| {
+        controller.control_analysis_presentation(target, action, &server_url)
+    })
+    .ok()
+    .flatten()
 }
 
-fn analysis_tooltip(status: &shrimply_inspector_core::AnalysisControlPresentation) -> QString {
-    match &status.tooltip {
+fn analysis_tooltip(tooltip: &shrimply_inspector_core::AnalysisTooltip) -> QString {
+    match tooltip {
         shrimply_inspector_core::AnalysisTooltip::MessageKey(message) => {
             shrimply_i18n_qt::text(message)
         }
@@ -155,6 +142,8 @@ pub(crate) mod qobject {
     }
 
     unsafe extern "C++" {
+        include!("cxx-qt-lib/qmap.h");
+        type QMap_QString_QVariant = cxx_qt_lib::QMap<cxx_qt_lib::QMapPair_QString_QVariant>;
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
         include!("cxx-qt-lib/qstringlist.h");
@@ -406,6 +395,23 @@ pub(crate) mod qobject {
             item: i32,
             control: i32,
         ) -> QString;
+        #[qinvokable]
+        #[cxx_name = "controlProgressButton"]
+        fn control_progress_button(
+            self: &InspectorBackend,
+            category: i32,
+            item: i32,
+            control: i32,
+            hovered: bool,
+        ) -> QMap_QString_QVariant;
+        #[qinvokable]
+        #[cxx_name = "controlModifierMenu"]
+        fn control_modifier_menu(
+            self: &InspectorBackend,
+            category: i32,
+            item: i32,
+            control: i32,
+        ) -> QMap_QString_QVariant;
         #[qinvokable]
         #[cxx_name = "controlValue"]
         fn control_value(
@@ -838,6 +844,16 @@ pub(crate) mod qobject {
             source: &QString,
         );
         #[qinvokable]
+        #[cxx_name = "controlGraphLifecycle"]
+        fn control_graph_lifecycle(
+            self: Pin<&mut InspectorBackend>,
+            category: i32,
+            item: i32,
+            control: i32,
+            phase: i32,
+            redo: bool,
+        );
+        #[qinvokable]
         #[cxx_name = "seekControlGraph"]
         fn seek_control_graph(
             self: Pin<&mut InspectorBackend>,
@@ -1004,6 +1020,8 @@ pub struct InspectorBackendRust {
     transform_live: Option<shrimply_inspector_core::transform::TransformLivePresentation>,
     analysis_controls: HashMap<AnalysisControlKey, CachedAnalysisControl>,
     expression_diagnostic_cache: shrimply_inspector_core::rhai_editor::DiagnosticCache,
+    pub(crate) graph_edit: shrimply_inspector_core::InspectorGraphEdit,
+    pub(crate) graph_edit_row: Option<(usize, usize, usize)>,
 }
 
 impl cxx_qt::Initialize for qobject::InspectorBackend {

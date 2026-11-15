@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
@@ -8,10 +8,20 @@ use shrimply_project_document::project::FontFamily as ProjectFontFamily;
 
 use crate::font_cache::{self, FontCatalog, FontFamily, FontSource, GoogleFamily};
 
+pub const GOOGLE_LOOKUP_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum PreviewFormat {
+    Typeface,
+    FontFile,
+}
+type PreviewKey = (FontSource, String, i64, PreviewFormat);
+
 enum Message {
     Catalog(FontCatalog),
     Preview {
         family: FontFamily,
+        format: PreviewFormat,
         generation: u64,
         result: Option<Result<(), String>>,
     },
@@ -40,8 +50,8 @@ pub struct Browser {
     generation: u64,
     current_generation: Arc<AtomicU64>,
     lookup_generation: Option<u64>,
-    pending_previews: HashMap<(String, i64), u64>,
-    preview_queue: VecDeque<FontFamily>,
+    pending_previews: HashMap<PreviewKey, u64>,
+    preview_queue: VecDeque<(FontFamily, PreviewFormat)>,
     active_previews: usize,
     catalog_loaded: bool,
     loading_catalog: bool,
@@ -145,26 +155,41 @@ impl Browser {
         true
     }
 
-    pub fn request_previews(&mut self, range: Range<usize>) {
+    pub fn request_previews(&mut self, range: Range<usize>, format: PreviewFormat) {
         let end = range.end.min(self.visible.len());
+        let wanted = self.visible[range.start.min(end)..end]
+            .iter()
+            .map(|family| preview_key(family, format))
+            .collect::<HashSet<_>>();
+        self.pending_previews
+            .retain(|key, _| key.3 != format || wanted.contains(key));
+        self.preview_queue.retain(|(family, queued_format)| {
+            self.pending_previews
+                .contains_key(&preview_key(family, *queued_format))
+        });
         for family in self
             .visible
             .get(range.start.min(end)..end)
             .into_iter()
             .flatten()
         {
-            if family.source != FontSource::Google
-                || family.revision < 0
-                || font_cache::preview_source(family, self.lookup.as_ref()).is_ok()
-            {
+            let ready = match format {
+                PreviewFormat::Typeface => {
+                    family.source != FontSource::Google
+                        || family.revision < 0
+                        || font_cache::preview_source(family, self.lookup.as_ref()).is_ok()
+                }
+                PreviewFormat::FontFile => font_cache::native_preview_ready(family),
+            };
+            if ready {
                 continue;
             }
-            let key = preview_key(family);
+            let key = preview_key(family, format);
             if let Some(generation) = self.pending_previews.get_mut(&key) {
                 *generation = self.generation;
             } else {
                 self.pending_previews.insert(key, self.generation);
-                self.preview_queue.push_back(family.clone());
+                self.preview_queue.push_back((family.clone(), format));
             }
         }
         self.start_preview_jobs();
@@ -212,11 +237,12 @@ impl Browser {
                 }
                 Message::Preview {
                     family,
+                    format,
                     generation,
                     result,
                 } => {
                     self.active_previews = self.active_previews.saturating_sub(1);
-                    let key = preview_key(&family);
+                    let key = preview_key(&family, format);
                     let requested_generation = self.pending_previews.get(&key).copied();
                     if requested_generation == Some(generation) {
                         self.pending_previews.remove(&key);
@@ -308,22 +334,32 @@ impl Browser {
     fn start_preview_jobs(&mut self) {
         const MAX_PREVIEW_WORKERS: usize = 2;
         while self.active_previews < MAX_PREVIEW_WORKERS {
-            let Some(family) = self.preview_queue.pop_front() else {
+            let Some((family, format)) = self.preview_queue.pop_front() else {
                 break;
             };
-            if !self.pending_previews.contains_key(&preview_key(&family)) {
+            if !self
+                .pending_previews
+                .contains_key(&preview_key(&family, format))
+            {
                 continue;
             }
             let generation = self.generation;
             self.active_previews += 1;
             let sender = self.sender.clone();
             let current_generation = Arc::clone(&self.current_generation);
+            let lookup = self.lookup.clone();
             thread::spawn(move || {
                 let result = (current_generation.load(Ordering::Acquire) == generation)
-                    .then(|| font_cache::prepare_cached_preview(&family))
+                    .then(|| match format {
+                        PreviewFormat::Typeface => font_cache::prepare_cached_preview(&family),
+                        PreviewFormat::FontFile => {
+                            font_cache::prepare_native_preview(&family, lookup.as_ref())
+                        }
+                    })
                     .filter(|_| current_generation.load(Ordering::Acquire) == generation);
                 let _ = sender.send(Message::Preview {
                     family,
+                    format,
                     generation,
                     result,
                 });
@@ -332,8 +368,13 @@ impl Browser {
     }
 }
 
-fn preview_key(family: &FontFamily) -> (String, i64) {
-    (family.name.to_lowercase(), family.revision)
+fn preview_key(family: &FontFamily, format: PreviewFormat) -> PreviewKey {
+    (
+        family.source,
+        family.name.to_lowercase(),
+        family.revision,
+        format,
+    )
 }
 
 pub fn normalized_families(families: &[ProjectFontFamily]) -> Vec<ProjectFontFamily> {
@@ -425,14 +466,22 @@ pub enum FamilyEdit {
 }
 
 impl crate::InspectorController {
+    pub fn control_font_families(
+        &self,
+        target: &crate::InspectorTarget,
+        control: &crate::InspectorControl,
+    ) -> Result<Vec<ProjectFontFamily>, String> {
+        let (value, _) = self.control_graph_source(target)?;
+        read_control_font_families(&value, control)
+    }
+
     pub fn edit_control_font_family(
         &self,
         target: &crate::InspectorTarget,
         control: &crate::InspectorControl,
         edit: FamilyEdit,
     ) -> Result<(), String> {
-        let (value, _) = self.control_graph_source(target)?;
-        let families = read_control_font_families(&value, control)?;
+        let families = self.control_font_families(target, control)?;
         let next = match edit {
             FamilyEdit::Append(family) => append_family(&families, family),
             FamilyEdit::Replace { index, family } => replace_family(&families, index, family),

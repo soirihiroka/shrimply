@@ -21,6 +21,113 @@ use crate::{InspectorContext, player_state, section::InspectorSection};
 
 const LAYERED_TEXT_MIN_CONTENT_HEIGHT: i32 = 86;
 
+pub(super) fn action(
+    section: &InspectorSection,
+    context: &InspectorContext,
+    target: &InspectorTarget,
+    control: InspectorControl,
+) {
+    let action = control.action.expect("action control requires an action");
+    let file = action.file_selection();
+    let label = if (file.is_some() || control.label.is_empty()) && !control.value.is_empty() {
+        &control.value
+    } else {
+        &control.label
+    };
+    let button = gtk::Button::with_label(tr!(label).as_ref());
+    button.set_sensitive(control.sensitive && control.action_sensitive);
+    let controller = context.inspector_core.clone();
+    let activation_target = target.clone();
+    let refresh = context.refresh.clone();
+    let error_anchor = context.category_bar.downgrade();
+    let preferences = context.preferences.clone();
+    let activation = control.clone();
+    button.connect_clicked(move |button| {
+        if let Some(selection) = file {
+            let filter = gtk::FileFilter::new();
+            for extension in selection.extensions {
+                filter.add_pattern(&format!("*.{extension}"));
+            }
+            let filters = gtk::gio::ListStore::new::<gtk::FileFilter>();
+            filters.append(&filter);
+            let dialog = gtk::FileDialog::builder()
+                .title(tr!(selection.title).as_ref())
+                .filters(&filters)
+                .default_filter(&filter)
+                .build();
+            let controller = controller.clone();
+            let target = activation_target.clone();
+            let refresh = refresh.clone();
+            let error_anchor = error_anchor.clone();
+            shrimply_components_gtk::file_picker::open(
+                selection.title,
+                &dialog,
+                button.root().and_downcast::<gtk::Window>().as_ref(),
+                move |result| {
+                    if let Some(path) = result.ok().and_then(|file| file.path()) {
+                        if let Err(error) = controller.set_control_file(&target, action, &path)
+                            && let Some(anchor) = error_anchor.upgrade()
+                        {
+                            shrimply_components_gtk::toast::show_confirmation_text_for_widget(
+                                &anchor, &error,
+                            );
+                        }
+                        refresh();
+                    }
+                },
+            );
+        } else {
+            let server_url =
+                shrimply_editor_state::preferences::snapshot(&preferences).compute_server_url;
+            if let Err(error) =
+                controller.activate_control(&activation_target, &activation, &server_url)
+            {
+                shrimply_components_gtk::toast::show_confirmation_text_for_widget(button, &error);
+            }
+            refresh();
+        }
+    });
+    if !control.prefix_icon.is_empty() {
+        if file.is_some() {
+            let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            content.append(&gtk::Image::from_icon_name(&control.prefix_icon));
+            content.append(&gtk::Label::new(Some(tr!(label).as_ref())));
+            button.set_child(Some(&content));
+        } else {
+            button.set_icon_name(&control.prefix_icon);
+        }
+        button.set_tooltip_text(Some(
+            tr!(if control.tooltip.is_empty() {
+                label
+            } else {
+                &control.tooltip
+            })
+            .as_ref(),
+        ));
+    }
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    button.set_hexpand(true);
+    row.append(&button);
+    if let Some(action) = control.secondary_action {
+        let mut secondary = control.clone();
+        secondary.action = Some(action);
+        if !control.action_icon.is_empty() {
+            row.append(&action_button(
+                context,
+                target,
+                secondary,
+                &control.action_icon,
+                &control.action_tooltip,
+            ));
+        }
+    }
+    if file.is_some() {
+        section.add_control_row(&control.label, &row);
+    } else {
+        section.add_wide_control(&row);
+    }
+}
+
 pub(super) fn boolean(
     section: &InspectorSection,
     context: &InspectorContext,
@@ -276,6 +383,37 @@ pub(super) fn text(
     target: &InspectorTarget,
     control: InspectorControl,
 ) {
+    if control.kind == ControlKind::MultilineText && control.path == "/tags" {
+        let controller = context.inspector_core.clone();
+        let editor = shrimply_components_gtk::ui::tag_editor(control.values, move |tags| {
+            controller.set_project_tags(tags)
+        });
+        editor.set_sensitive(control.editable && control.sensitive);
+        section.add_wide_control(&editor);
+        return;
+    }
+    if control.kind == ControlKind::Text {
+        let controller = context.inspector_core.clone();
+        let edited = control.clone();
+        let target = target.clone();
+        let commit_controller = controller.clone();
+        let commit_control = control.clone();
+        let commit_target = target.clone();
+        let editor = shrimply_components_gtk::ui::SingleLineTextInput::builder(&control.value)
+            .on_change(move |value| {
+                report(controller.set_basic_control_value(&target, &edited, &value));
+            })
+            .on_commit(move |_| {
+                report(commit_controller.commit_basic_control(&commit_target, &commit_control));
+            })
+            .build();
+        editor.set_sensitive(control.editable && control.sensitive);
+        if !control.tooltip.is_empty() {
+            editor.set_tooltip_text(Some(tr!(&control.tooltip).as_ref()));
+        }
+        section.add_control_row(&control.label, &editor);
+        return;
+    }
     let controller = context.inspector_core.clone();
     let edited = control.clone();
     let edit_target = target.clone();
@@ -459,6 +597,21 @@ fn attach(
     editor: gtk::Widget,
 ) {
     editor.set_sensitive(control.editable && control.sensitive);
+    let editor = if control.action.is_some() && !control.action_icon.is_empty() {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        editor.set_hexpand(true);
+        row.append(&editor);
+        row.append(&action_button(
+            context,
+            target,
+            control.clone(),
+            &control.action_icon,
+            &control.action_tooltip,
+        ));
+        row.upcast()
+    } else {
+        editor
+    };
     let tooltip = if control.tooltip.is_empty() {
         &control.subtitle
     } else {
@@ -475,6 +628,7 @@ fn attach(
             | ControlKind::LayeredText
             | ControlKind::LayeredVector2
             | ControlKind::LayeredVector3
+            | ControlKind::LayeredDrawing
     ) {
         let expression = control
             .layered
@@ -500,6 +654,7 @@ fn expression(
         ControlKind::LayeredText => ExpressionValue::Text,
         ControlKind::LayeredVector2 => ExpressionValue::Vec2,
         ControlKind::LayeredVector3 => ExpressionValue::Vec3,
+        ControlKind::LayeredDrawing => ExpressionValue::Drawing,
         _ => unreachable!("layered value expression"),
     };
     let controller = context.inspector_core.clone();
@@ -508,7 +663,7 @@ fn expression(
     let output_controller = controller.clone();
     let output = control.clone();
     let output_target = target.clone();
-    crate::timeline_value::expression_section(
+    super::expression::section(
         context,
         "native value expression",
         move |refresh| {
@@ -525,9 +680,15 @@ fn expression(
                 },
             )
         },
-        move |_, _, _, _| {
+        move || {
             let path = path(&output);
             let (value, error) = match output.kind {
+                ControlKind::LayeredDrawing => {
+                    let value = output_controller
+                        .paint_drawing_expression_output(&output_target, output.timeline_id?)
+                        .ok()?;
+                    (value.value, value.error)
+                }
                 ControlKind::LayeredBoolean => {
                     let value = output_controller
                         .bool_expression_output(&output_target, path)
@@ -592,7 +753,7 @@ fn expression(
                 }
                 _ => unreachable!("layered value expression"),
             };
-            Some(crate::timeline_value::ExpressionOutput { value, error })
+            Some(shrimply_inspector_core::InspectorExpressionOutput { value, error })
         },
     )
 }
@@ -627,4 +788,71 @@ fn report<T>(result: Result<T, String>) -> bool {
             false
         }
     }
+}
+
+pub(super) fn fonts(
+    section: &InspectorSection,
+    context: &InspectorContext,
+    target: &InspectorTarget,
+    control: InspectorControl,
+) {
+    let families = context
+        .inspector_core
+        .control_font_families(target, &control)
+        .expect("font control has families");
+    let controller = context.inspector_core.clone();
+    let target = target.clone();
+    let label = control.label.clone();
+    let editable = control.editable && control.sensitive;
+    let picker = crate::font_selector::font_selector_list(&families, move |families| {
+        report(controller.set_basic_control_value(
+            &target,
+            &control,
+            &serde_json::to_string(&families).expect("font families serialize"),
+        ));
+    });
+    picker.set_sensitive(editable);
+    section.add_control_row(&label, &picker);
+}
+
+pub(super) fn drawing(
+    section: &InspectorSection,
+    context: &InspectorContext,
+    target: &InspectorTarget,
+    control: InspectorControl,
+) {
+    let summary = gtk::Label::builder()
+        .label(&control.value)
+        .xalign(0.0)
+        .css_classes(["dim-label"])
+        .build();
+    attach(section, context, target, control, summary.upcast());
+}
+
+fn action_button(
+    context: &InspectorContext,
+    target: &InspectorTarget,
+    control: InspectorControl,
+    icon: &str,
+    tooltip: &str,
+) -> gtk::Button {
+    let button = gtk::Button::builder()
+        .icon_name(icon)
+        .tooltip_text(tr!(tooltip).as_ref())
+        .css_classes(["flat"])
+        .sensitive(control.sensitive && control.action_sensitive)
+        .build();
+    let controller = context.inspector_core.clone();
+    let target = target.clone();
+    let preferences = context.preferences.clone();
+    let refresh = context.refresh.clone();
+    button.connect_clicked(move |button| {
+        let server_url =
+            shrimply_editor_state::preferences::snapshot(&preferences).compute_server_url;
+        if let Err(error) = controller.activate_control(&target, &control, &server_url) {
+            shrimply_components_gtk::toast::show_confirmation_text_for_widget(button, &error);
+        }
+        refresh();
+    });
+    button
 }

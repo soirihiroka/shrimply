@@ -7,6 +7,11 @@ pub fn track_label_width(controls_progress: f64) -> f64 {
         + (crate::LABEL_WIDTH - crate::COMPACT_LABEL_WIDTH) * controls_progress
 }
 
+pub fn track_label_add_x(controls_progress: f64) -> f64 {
+    crate::TRACK_INDEX_COLUMN_WIDTH
+        + (crate::TRACK_LABEL_ADD_X - crate::TRACK_INDEX_COLUMN_WIDTH) * controls_progress
+}
+
 pub fn visible_time_bounds(
     view: crate::Viewport,
     width: f64,

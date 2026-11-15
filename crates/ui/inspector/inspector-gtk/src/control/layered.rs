@@ -341,9 +341,6 @@ fn graph(
     let control = control.clone();
     let refreshed = graph.clone();
     let preferences = context.preferences.clone();
-    let project = context.project.clone();
-    let selected = context.selected_item.clone();
-    let player = context.player_state.clone();
     let alive = Rc::downgrade(&context.listener_scope);
     player_state::connect_while_alive_named(
         &context.player_state,
@@ -354,12 +351,9 @@ fn graph(
                 return;
             }
             if matches!(event, player_state::PlayerEvent::State(_)) {
-                let position = player_state::snapshot(&player).position;
-                let local = selected
-                    .as_ref()
-                    .and_then(|key| project.borrow().keyframe_time(key, position))
-                    .unwrap_or(position);
-                refreshed.set_playhead(local);
+                if let Ok(time) = controller.current_keyframe_time(&target) {
+                    refreshed.set_playhead(time);
+                }
             } else if let Ok(Some(source)) = controller.control_graph(&target, &control) {
                 let mut control = control.clone();
                 control.scalar_graph = Some(source.clone());
@@ -424,7 +418,7 @@ fn scalar_expression(
     let output_control = control.clone();
     let output_controller = controller.clone();
     let output_target = target.clone();
-    crate::timeline_value::expression_section(
+    super::expression::section(
         context,
         "native scalar expression",
         move |refresh| {
@@ -441,10 +435,10 @@ fn scalar_expression(
                 },
             )
         },
-        move |_, _, _, _| {
+        move || {
             let output =
                 expression_output(&output_controller, &output_target, &output_control).ok()?;
-            Some(crate::timeline_value::ExpressionOutput {
+            Some(shrimply_inspector_core::InspectorExpressionOutput {
                 value: format!(
                     "{:.*}{}",
                     usize::try_from(output_control.number.digits).expect("nonnegative digits"),

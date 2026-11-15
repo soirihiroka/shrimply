@@ -1,13 +1,10 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use shrimply_components_skia::canvas::TimelinePainter;
 pub use shrimply_keyframe_graph_skia::{
-    FrameGraphAction, FrameGraphComponentAction, FrameGraphComponents, FrameGraphKey,
-    FrameGraphModifiers, FrameGraphPointerButton, FrameGraphPointerPosition, FrameGraphScrollInput,
-    FrameGraphState, FrameGraphStatus,
+    FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction, FrameGraphComponents,
+    FrameGraphInputResult, FrameGraphKey, FrameGraphModifiers, FrameGraphPointerButton,
+    FrameGraphPointerPosition, FrameGraphScrollInput, FrameGraphState, FrameGraphStatus,
 };
 use shrimply_keyframe_graph_skia::{GraphDomain, KeyframeGraph};
 use shrimply_math_core::Time;
@@ -19,57 +16,14 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct FrameGraphCore {
     components: Rc<RefCell<FrameGraphComponents>>,
-    touch: Rc<RefCell<shrimply_components_skia::input::TouchInput>>,
-    touch_playhead: Rc<Cell<Option<Time>>>,
 }
 
 pub type SharedFrameGraphState = FrameGraphCore;
-
-#[derive(Default)]
-pub struct FrameGraphInputResult {
-    pub actions: Vec<FrameGraphComponentAction>,
-    pub focus: bool,
-    pub handled: bool,
-    pub redraw: bool,
-    pub history: Option<bool>,
-    pub cancelled: bool,
-}
-
-impl FrameGraphInputResult {
-    /// Keep native adapters from dropping gesture cancellation or history requests.
-    pub fn into_actions(mut self, component: usize) -> Vec<FrameGraphComponentAction> {
-        if self.cancelled {
-            self.actions.insert(
-                0,
-                FrameGraphComponentAction {
-                    component,
-                    action: FrameGraphAction::EditCancelled,
-                },
-            );
-        }
-        if let Some(redo) = self.history {
-            self.actions.push(FrameGraphComponentAction {
-                component,
-                action: FrameGraphAction::HistoryRequested { redo },
-            });
-        }
-        self.actions
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum FrameGraphCommand {
-    PreviousKey,
-    ToggleKey,
-    NextKey,
-}
 
 impl FrameGraphCore {
     pub fn new(components: FrameGraphComponents) -> Self {
         Self {
             components: Rc::new(RefCell::new(components)),
-            touch: Rc::new(RefCell::new(Default::default())),
-            touch_playhead: Rc::new(Cell::new(None)),
         }
     }
 
@@ -118,7 +72,7 @@ impl FrameGraphCore {
     }
 
     pub fn replace_components(&self, components: FrameGraphComponents) {
-        *self.components.borrow_mut() = components;
+        self.components.borrow_mut().replace_components(components);
     }
 
     pub fn replace_active_graph(&self, graph: KeyframeGraph) {
@@ -196,61 +150,16 @@ impl FrameGraphCore {
         position: FrameGraphPointerPosition,
         modifiers: FrameGraphModifiers,
     ) -> FrameGraphInputResult {
-        let actions = self.components.borrow_mut().active_actions(|state| {
-            state.begin_pointer(
-                button,
-                position.x,
-                position.y,
-                position.width,
-                position.height,
-                modifiers,
-            )
-        });
-        FrameGraphInputResult {
-            actions,
-            focus: true,
-            handled: true,
-            redraw: true,
-            ..Default::default()
-        }
+        self.components
+            .borrow_mut()
+            .input_begin_pointer(button, position, modifiers)
     }
-
     pub fn update_pointer(&self, position: FrameGraphPointerPosition) -> FrameGraphInputResult {
-        let mut actions = self.components.borrow_mut().active_actions(|state| {
-            state.update_pointer(position.x, position.y, position.width, position.height)
-        });
-        if actions
-            .iter()
-            .any(|action| matches!(action.action, FrameGraphAction::KeysMoved(_)))
-        {
-            actions.insert(
-                0,
-                FrameGraphComponentAction {
-                    component: self.active_component(),
-                    action: FrameGraphAction::EditStarted,
-                },
-            );
-        }
-        FrameGraphInputResult {
-            actions,
-            handled: true,
-            redraw: true,
-            ..Default::default()
-        }
+        self.components.borrow_mut().input_update_pointer(position)
     }
-
     pub fn end_pointer(&self) -> FrameGraphInputResult {
-        FrameGraphInputResult {
-            actions: self
-                .components
-                .borrow_mut()
-                .active_actions(FrameGraphState::end_pointer),
-            handled: true,
-            redraw: true,
-            ..Default::default()
-        }
+        self.components.borrow_mut().input_end_pointer()
     }
-
     pub fn scroll(
         &self,
         dx: f64,
@@ -259,17 +168,10 @@ impl FrameGraphCore {
         zoom: bool,
         input: FrameGraphScrollInput,
     ) -> FrameGraphInputResult {
-        let handled = self
-            .components
+        self.components
             .borrow_mut()
-            .scroll(dx, dy, position, zoom, input);
-        FrameGraphInputResult {
-            handled,
-            redraw: handled,
-            ..Default::default()
-        }
+            .input_scroll(dx, dy, position, zoom, input)
     }
-
     pub fn magnify(
         &self,
         magnification: f64,
@@ -277,154 +179,28 @@ impl FrameGraphCore {
     ) -> FrameGraphInputResult {
         self.components
             .borrow_mut()
-            .magnify(magnification, position.x, position.width);
-        FrameGraphInputResult {
-            handled: true,
-            redraw: true,
-            ..Default::default()
-        }
+            .input_magnify(magnification, position)
     }
-
     pub fn key(&self, key: FrameGraphKey) -> FrameGraphInputResult {
-        FrameGraphInputResult {
-            actions: self
-                .components
-                .borrow_mut()
-                .active_actions(|state| state.key(key)),
-            handled: true,
-            redraw: true,
-            ..Default::default()
-        }
+        self.components.borrow_mut().input_key(key)
     }
-
-    /// Native hosts forward logical contacts; gesture recognition stays shared.
     pub fn touch(
         &self,
         changes: &[shrimply_components_skia::input::TouchChange],
         position: FrameGraphPointerPosition,
     ) -> FrameGraphInputResult {
-        use shrimply_components_skia::input::TouchAction;
-        if !self.touch_active()
-            && changes
-                .iter()
-                .any(|change| change.phase == shrimply_components_skia::input::TouchPhase::Begin)
-        {
-            self.touch_playhead
-                .set(Some(self.components.borrow().playhead()));
-        }
-        let gestures = self.touch.borrow_mut().update(changes);
-        let mut result = FrameGraphInputResult::default();
-        for gesture in gestures {
-            let update = match gesture {
-                TouchAction::Press(point) => self.begin_pointer(
-                    FrameGraphPointerButton::Primary,
-                    FrameGraphPointerPosition {
-                        x: f64::from(point.x),
-                        y: f64::from(point.y),
-                        ..position
-                    },
-                    FrameGraphModifiers::default(),
-                ),
-                TouchAction::Move(point) => self.update_pointer(FrameGraphPointerPosition {
-                    x: f64::from(point.x),
-                    y: f64::from(point.y),
-                    ..position
-                }),
-                TouchAction::Release(_) => self.end_pointer(),
-                TouchAction::Cancel(_) => self.cancel_pointer(),
-                TouchAction::Transform {
-                    previous_center,
-                    center,
-                    scale,
-                } => {
-                    let anchor = FrameGraphPointerPosition {
-                        x: f64::from(center.x),
-                        y: f64::from(center.y),
-                        ..position
-                    };
-                    let mut update = self.scroll(
-                        f64::from(previous_center.x - center.x),
-                        0.0,
-                        anchor,
-                        false,
-                        FrameGraphScrollInput::Surface,
-                    );
-                    let zoom = self.magnify(f64::from(scale).ln(), anchor);
-                    update.redraw |= zoom.redraw;
-                    update.handled |= zoom.handled;
-                    update
-                }
-                TouchAction::History { redo } => {
-                    result.history = Some(redo);
-                    self.end_pointer()
-                }
-            };
-            result.actions.extend(update.actions);
-            result.redraw |= update.redraw;
-            result.handled |= update.handled;
-            result.focus |= update.focus;
-            result.cancelled |= update.cancelled;
-        }
-        if !self.touch_active() {
-            self.touch_playhead.set(None);
-        }
-        result
+        self.components.borrow_mut().input_touch(changes, position)
     }
-
     pub fn touch_active(&self) -> bool {
-        self.touch.borrow().active()
+        self.components.borrow().input_touch_active()
     }
-
     pub fn waiting_long_press(&self) -> bool {
-        self.touch.borrow().waiting_long_press()
+        self.components.borrow().input_waiting_long_press()
     }
-
     pub fn poll_long_press(&self, position: FrameGraphPointerPosition) -> FrameGraphInputResult {
-        let point = self.touch.borrow_mut().poll_long_press();
-        point.map_or_else(FrameGraphInputResult::default, |point| {
-            let mut result = self.begin_pointer(
-                FrameGraphPointerButton::Secondary,
-                FrameGraphPointerPosition {
-                    x: f64::from(point.x),
-                    y: f64::from(point.y),
-                    ..position
-                },
-                FrameGraphModifiers::default(),
-            );
-            for action in &mut result.actions {
-                match &mut action.action {
-                    FrameGraphAction::InterpolationRequested { touch, .. }
-                    | FrameGraphAction::TextInterpolationRequested { touch, .. } => *touch = true,
-                    _ => {}
-                }
-            }
-            result
-        })
+        self.components.borrow_mut().input_poll_long_press(position)
     }
-
     pub fn cancel_touch(&self) -> FrameGraphInputResult {
-        if self.touch.borrow_mut().cancel().is_empty() {
-            self.end_pointer()
-        } else {
-            self.cancel_pointer()
-        }
-    }
-
-    fn cancel_pointer(&self) -> FrameGraphInputResult {
-        self.end_pointer();
-        FrameGraphInputResult {
-            actions: self
-                .touch_playhead
-                .take()
-                .map(|time| FrameGraphComponentAction {
-                    component: self.active_component(),
-                    action: FrameGraphAction::PlayheadChanged(time),
-                })
-                .into_iter()
-                .collect(),
-            cancelled: true,
-            redraw: true,
-            ..Default::default()
-        }
+        self.components.borrow_mut().input_cancel_touch()
     }
 }

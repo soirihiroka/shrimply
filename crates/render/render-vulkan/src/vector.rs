@@ -134,7 +134,7 @@ impl Renderer {
             };
             self.skia = Some(
                 gpu::direct_contexts::make_vulkan(&backend, None)
-                    .ok_or("Create Intel Skia Vulkan context")?,
+                    .ok_or("Create Vulkan Skia Vulkan context")?,
             );
         }
         let info = ImageInfo::new(dimensions, ColorType::RGBA8888, AlphaType::Premul, None);
@@ -149,7 +149,7 @@ impl Renderer {
             None,
             None,
         )
-        .ok_or("Allocate Intel vector surface")?;
+        .ok_or("Allocate Vulkan vector surface")?;
         surface.canvas().clear(skia_safe::Color::TRANSPARENT);
         draw(surface.canvas())?;
         let image = surface.image_snapshot();
@@ -158,12 +158,12 @@ impl Renderer {
             skia.flush_and_submit();
         }
         let (texture, origin) = gpu::images::get_backend_texture_from_image(&image, false)
-            .ok_or("Get Intel vector texture")?;
+            .ok_or("Get Vulkan vector texture")?;
         if origin != gpu::SurfaceOrigin::TopLeft {
-            return Err("Intel vector texture has an unexpected origin".into());
+            return Err("Vulkan vector texture has an unexpected origin".into());
         }
         let native = gpu::backend_textures::get_vk_image_info(&texture)
-            .ok_or("Intel vector texture is not Vulkan")?;
+            .ok_or("Vulkan vector texture is not Vulkan")?;
         let source = vk::Image::from_raw(*native.image() as u64);
         let old_layout = vk::ImageLayout::from_raw(native.layout as i32);
         let copied = self.allocate(length)?;

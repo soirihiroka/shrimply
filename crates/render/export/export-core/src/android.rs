@@ -66,28 +66,12 @@ impl VideoBackend for Backend {
         }
     }
 
+    fn decode_order_delay(&self, settings: &ExportSettings) -> Option<u32> {
+        Some(settings.b_frames)
+    }
+
     fn validate(&self, _project: &Project, settings: &ExportSettings) -> Result<(), String> {
-        if settings.video_codec != core::ExportVideoCodec::Gif {
-            match settings.rate_control {
-                core::ExportRateControl::ConstantQp
-                    if settings.constant_qp > core::settings::MAX_CONSTANT_QP =>
-                {
-                    return Err("Constant QP must be between 0 and 51".into());
-                }
-                core::ExportRateControl::ConstantQp => {}
-                core::ExportRateControl::ConstantBitrate
-                | core::ExportRateControl::VariableBitrate
-                    if settings.bitrate_kbps > 0 => {}
-                core::ExportRateControl::ConstantBitrate
-                | core::ExportRateControl::VariableBitrate => {
-                    return Err("Video bitrate must be larger than zero".into());
-                }
-                _ => return Err("The selected rate control is not supported by MediaCodec".into()),
-            }
-        }
-        if settings.b_frames != 0 {
-            return Err("Android MediaCodec export requires B frames to be disabled for reliable decode timestamps".into());
-        }
+        core::settings::validate_backend(settings, core::settings::Backend::MediaCodec)?;
         if settings.video_codec != core::ExportVideoCodec::Gif
             && !shrimply_render_vulkan::device::Device::get()?.presentation_timing
         {
@@ -159,6 +143,16 @@ impl VideoBackend for Backend {
             global_header,
         )?;
         unsafe {
+            if settings.b_frames > 0 {
+                // Android otherwise defaults AVC to Baseline, which cannot
+                // represent B frames even when the encoder supports them.
+                if settings.video_codec == core::ExportVideoCodec::H264 {
+                    (*encoder.as_mut_ptr()).profile = sys::AV_PROFILE_H264_MAIN;
+                }
+                (*encoder.as_mut_ptr()).strict_std_compliance = sys::FF_COMPLIANCE_EXPERIMENTAL;
+                (*encoder.as_mut_ptr()).has_b_frames = i32::try_from(settings.b_frames)
+                    .map_err(|_| "B-frame count exceeds the encoder range")?;
+            }
             (*encoder.as_mut_ptr()).hw_device_ctx = sys::av_buffer_ref(hardware.0);
             if (*encoder.as_ptr()).hw_device_ctx.is_null() {
                 return Err("Retain MediaCodec encoder device".into());
@@ -166,6 +160,7 @@ impl VideoBackend for Backend {
         }
         let mut options = ffmpeg::Dictionary::new();
         options.set("ndk_codec", "1");
+        options.set("pts_as_dts", "0");
         options.set(
             "bitrate_mode",
             if settings.rate_control == core::ExportRateControl::ConstantBitrate {
@@ -182,7 +177,12 @@ impl VideoBackend for Backend {
         }
         let encoder = encoder
             .open_as_with(codec, options)
-            .map_err(|error| format!("Open hardware encoder {name}: {error}"))?;
+            .map_err(|error| match error {
+                ffmpeg::Error::Other { errno } if errno == libc::ENOSYS => format!(
+                    "Hardware encoder {name} does not support the requested quality or B-frame settings"
+                ),
+                _ => format!("Open hardware encoder {name}: {error}"),
+            })?;
         self.surface = Some(Renderer::new(
             &window,
             project.canvas_size.width,

@@ -15,6 +15,7 @@ shrimply-render-metal = { workspace = true }
 shrimply-visual-frame.workspace = true
 shrimply-render-core = { workspace = true }
 shrimply-visual-core = { workspace = true }
+shrimply-affine-l1-stabilization.workspace = true
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-math-core = { workspace = true }
 shrimply-math-geometry = { workspace = true }
@@ -23,8 +24,6 @@ skia-safe.workspace = true
 objc2.workspace = true
 objc2-metal.workspace = true
 objc2-core-video.workspace = true
-objc2-core-ml.workspace = true
-objc2-vision.workspace = true
 objc2-foundation.workspace = true
 uuid.workspace = true
 tracing.workspace = true

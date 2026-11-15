@@ -88,17 +88,17 @@ impl GraphSession {
 
     pub fn snapshot(&self) -> Value {
         let state = self.core.status();
-        let action = |id: &str, label: &str, icon: &str, enabled: bool| json!({"label":text(label),"icon":icon,"enabled":enabled,"command":{"op":"framegraph_action","serial":self.serial,"action":id}});
+        let action = |id: &str, label: &str, icon: &str, enabled: bool| json!({"label":label,"icon":icon,"enabled":enabled,"command":{"op":"framegraph_action","serial":self.serial,"action":id}});
         json!({"serial":self.serial,"title":text(&self.control.label),"close_label":text("Close"),"height":self.core.preferred_height(),
             "actions":[
-                action("previous","Previous keyframe","media-seek-backward-symbolic",state.can_previous),
-                action("toggle",if state.key_at_playhead {"Delete keyframe at playhead"} else {"Add keyframe at playhead"},if state.key_at_playhead {"user-trash-symbolic"} else {"list-add-symbolic"},true),
-                action("next","Next keyframe","media-seek-forward-symbolic",state.can_next),
-                action("copy","Copy keyframes","edit-copy-symbolic",true),
-                action("paste","Paste keyframes","edit-paste-symbolic",true),
-                action("delete","Delete keyframes","user-trash-symbolic",true),
-                action("zoom-in","Zoom In","zoom-in-symbolic",true),
-                action("zoom-out","Zoom Out","zoom-out-symbolic",true)
+                action("previous",state.command_label(FrameGraphCommand::PreviousKey).as_ref(),"media-seek-backward-symbolic",state.can_previous),
+                action("toggle",state.command_label(FrameGraphCommand::ToggleKey).as_ref(),if state.key_at_playhead {"user-trash-symbolic"} else {"list-add-symbolic"},true),
+                action("next",state.command_label(FrameGraphCommand::NextKey).as_ref(),"media-seek-forward-symbolic",state.can_next),
+                action("copy",text("Copy keyframes").as_ref(),"edit-copy-symbolic",true),
+                action("paste",text("Paste keyframes").as_ref(),"edit-paste-symbolic",true),
+                action("delete",text("Delete keyframes").as_ref(),"user-trash-symbolic",true),
+                action("zoom-in",text("Zoom In").as_ref(),"zoom-in-symbolic",true),
+                action("zoom-out",text("Zoom Out").as_ref(),"zoom-out-symbolic",true)
             ],"menu":self.menu,"dismiss":{"op":"framegraph_close","serial":self.serial}})
     }
 

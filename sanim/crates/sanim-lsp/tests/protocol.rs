@@ -18,7 +18,7 @@ fn native_definitions_cover_functions_methods_constants_types_and_both_markup_ta
         "let pi=PI\n",
         "let alignment=Align.Center\n",
         "let values:List<Number>=[1]\n",
-        "let chained=df.head(n=1,duration=1ms).to_list()\n",
+        "let chained=df.head(n=1).to_list()\n",
     );
     let mut messages = vec![
         initialize(dir.path()),
@@ -41,10 +41,11 @@ fn native_definitions_cover_functions_methods_constants_types_and_both_markup_ta
         (12, "List", "List"),
         (12, "Number", "Number"),
         (13, "head", "DataFrame.head"),
-        (13, "duration", "DataFrame.head"),
+        (13, "n", "DataFrame.head"),
     ];
     for (index, (line, token, _)) in cases.iter().enumerate() {
-        let character = source.lines().nth(*line).unwrap().rfind(token).unwrap() + 1;
+        let character =
+            source.lines().nth(*line).unwrap().rfind(token).unwrap() + usize::from(token.len() > 1);
         messages.push(request(
             index as u64 + 2,
             "textDocument/definition",
@@ -98,7 +99,8 @@ fn definitions_resolve_local_and_imported_type_uses_import_paths_and_assignment_
         (5, "counter", uri.as_str(), 4, 4),
     ];
     for (i, (line, token, ..)) in cases.iter().enumerate() {
-        let character = source.lines().nth(*line).unwrap().rfind(token).unwrap() + 1;
+        let character =
+            source.lines().nth(*line).unwrap().rfind(token).unwrap() + usize::from(token.len() > 1);
         messages.push(request(
             i as u64 + 2,
             "textDocument/definition",
@@ -270,11 +272,11 @@ fn inferred_type_hint_edits_round_trip_through_the_actual_checker() {
     assert!(edited.contains("linked: sig (Number)"), "{edited}");
     assert!(!edited.contains('…'));
     let mut sources = sanim_lang::MemorySources::default();
-    sources.insert("main.sanim", source);
+    sources.insert("main.sanim", format!("{}\nAnimation()", source));
     let original = sanim_lang::Engine::default()
         .lint("main.sanim", &sources)
         .unwrap();
-    sources.insert("main.sanim", edited.clone());
+    sources.insert("main.sanim", format!("{}\nAnimation()", edited.clone()));
     let annotated = sanim_lang::Engine::default()
         .lint("main.sanim", &sources)
         .unwrap_or_else(|error| panic!("{error:?}\n{edited}"));
@@ -288,7 +290,7 @@ fn inferred_type_hint_edits_round_trip_through_the_actual_checker() {
 fn real_stdio_session_reports_types_completion_hover_definition_and_symbols() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "let size=10pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)";
+    let source = "let size=10pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(1s)";
     let mut messages = vec![
         initialize(dir.path()),
         notification("initialized", json!({})),
@@ -390,7 +392,7 @@ fn unsaved_import_edits_recheck_dependents_without_evaluating_data() {
     let main = format!("file://{}", dir.path().join("main.sanim").display());
     let helper = format!("file://{}", dir.path().join("helper.sanim").display());
     std::fs::write(dir.path().join("helper.sanim"), "let size=10pt").unwrap();
-    let source = "import \"helper.sanim\" as helper\nlet marker=Box(width=2*(helper.size), height=2*(helper.size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)";
+    let source = "import \"helper.sanim\" as helper\nlet marker=Box(width=2*(helper.size), height=2*(helper.size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(1s)";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -468,7 +470,7 @@ fn transport_rejects_ambiguous_or_truncated_frames() {
 fn semantic_tokens_and_inlays_use_utf16_types_and_exact_timeline_effects() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "let size=10pt\nlet title=\"😊 {size}\"\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(0.5s)\n";
+    let source = "let size=10pt\nlet title=\"😊 {size}\"\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(0.5s)\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -584,7 +586,11 @@ fn inline_types_are_named_and_hover_shows_the_full_structure() {
         .unwrap();
     assert_eq!(scale["label"], ": LinearScale");
     let tooltip = scale["tooltip"]["value"].as_str().unwrap();
-    for field in ["clamp: Bool", "domain: Vec2", "range: Vec2"] {
+    for field in [
+        "clamp: Bool",
+        "domain: List<Number,2>",
+        "range: List<Length (pt),2>",
+    ] {
         assert!(tooltip.contains(field), "{tooltip}");
     }
     assert!(!tooltip.contains("No animation"));
@@ -609,7 +615,7 @@ fn inline_types_are_named_and_hover_shows_the_full_structure() {
         live["tooltip"]["value"]
             .as_str()
             .unwrap()
-            .contains("domain: Vec2")
+            .contains("domain: List<Number,2>")
     );
 }
 
@@ -622,11 +628,11 @@ fn incremental_analysis_benchmark() {
         initialize(dir.path()),
         notification(
             "textDocument/didOpen",
-            json!({"textDocument":{"uri":uri,"version":1,"text":"let size=1pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)"}}),
+            json!({"textDocument":{"uri":uri,"version":1,"text":"let size=1pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(1s)"}}),
         ),
     ];
     for version in 2..=101 {
-        messages.push(notification("textDocument/didChange",json!({"textDocument":{"uri":uri,"version":version},"contentChanges":[{"text":format!("let size={version}pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)")}]})));
+        messages.push(notification("textDocument/didChange",json!({"textDocument":{"uri":uri,"version":version},"contentChanges":[{"text":format!("let size={version}pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(1s)")}]})));
     }
     finish(&mut messages);
     let started = std::time::Instant::now();
@@ -706,7 +712,7 @@ fn unsaved_symlink_uri_overlays_keep_client_uris_and_recheck_imports() {
     std::fs::write(root.join("helper.sanim"), "let size=10pt").unwrap();
     let main = format!("file://{}", alias.join("main.sanim").display()).replace(' ', "%20");
     let helper = format!("file://{}", alias.join("helper.sanim").display()).replace(' ', "%20");
-    let source = "import \"helper.sanim\" as helper\nlet marker=Box(width=2*(helper.size), height=2*(helper.size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)";
+    let source = "import \"helper.sanim\" as helper\nlet marker=Box(width=2*(helper.size), height=2*(helper.size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(1s)";
     let mut messages = vec![
         initialize(&root),
         notification(
@@ -1493,7 +1499,7 @@ fn literal_completion_edits_round_trip_sanim_braces_and_control_characters() {
     assert!(!text.contains("\\b") && !text.contains("\\u"));
     source.replace_range(declaration.len() + start..declaration.len() + end, text);
     let mut files = sanim_lang::MemorySources::default();
-    files.insert("main.sanim", &source);
+    files.insert("main.sanim", format!("{}\nAnimation()", &source));
     let prepared = sanim_lang::Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_or_else(|error| panic!("{error}; source={source:?}"));
@@ -1504,7 +1510,7 @@ fn literal_completion_edits_round_trip_sanim_braces_and_control_characters() {
 fn code_ranges_expose_named_types_actions_and_timing_from_the_native_registry() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "let code=CodeView(code=r\"def main():\\n    return 1\",lang=\"python\")\nadd(code)\nlet section=code.range(name=\"main\")\nsection.fold(duration=400ms)\nwait(1s)\n";
+    let source = "let code=CodeView(code=r\"def main():\\n    return 1\",lang=\"python\")\nAnimation(children=[code])\nlet section=code.range(name=\"main\")\nsection.fold(duration=400ms)\nwait(1s)\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -1568,10 +1574,10 @@ fn code_ranges_expose_named_types_actions_and_timing_from_the_native_registry() 
 }
 
 #[test]
-fn guarded_clauses_expose_all_signatures_and_their_own_parameter_types_and_durations() {
+fn guarded_clauses_expose_all_signatures_and_their_own_parameter_types() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "fn<mut> choose(mode:\"before\"):Number{wait(1s);return 1}\nfn<mut> choose(mode:\"after\"):Number{wait(2s);return 2}\nlet mode=reflect(\"before\")\nlet selected=choose(mode)\nlet _before=choose(\"before\")\nlet _after=choose(\"after\")\n";
+    let source = "fn choose(mode:\"before\"):Number{return 1}\nfn choose(mode:\"after\"):Number{return 2}\nlet mode=reflect(\"before\")\nlet selected=choose(mode)\nlet _before=choose(\"before\")\nlet _after=choose(\"after\")\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -1638,18 +1644,9 @@ fn guarded_clauses_expose_all_signatures_and_their_own_parameter_types_and_durat
             .unwrap()
             .contains("\"after\"")
     );
-    assert!(
-        signatures[0]["documentation"]["value"]
-            .as_str()
-            .unwrap()
-            .contains("1s")
-    );
-    assert!(
-        signatures[1]["documentation"]["value"]
-            .as_str()
-            .unwrap()
-            .contains("2s")
-    );
+    for signature in signatures {
+        assert!(signature["label"].as_str().unwrap().contains("Number"));
+    }
     let items = reply(&replies, 3)["result"]["items"].as_array().unwrap();
     assert!(items.iter().any(|item| item["label"] == "\"before\""));
     assert!(items.iter().any(|item| item["label"] == "\"after\""));
@@ -1672,18 +1669,12 @@ fn guarded_clauses_expose_all_signatures_and_their_own_parameter_types_and_durat
     let call_hover = reply(&replies, 6)["result"]["contents"]["value"]
         .as_str()
         .unwrap();
-    assert!(call_hover.contains("1s | 2s"), "{call_hover}");
+    assert!(call_hover.contains("Number"), "{call_hover}");
     let hints = reply(&replies, 7)["result"].as_array().unwrap();
     assert!(
-        hints
-            .iter()
-            .any(|hint| hint["position"]["line"] == 0 && hint["label"] == "duration: 1s"),
-        "{hints:?}"
-    );
-    assert!(
-        hints
-            .iter()
-            .any(|hint| hint["position"]["line"] == 1 && hint["label"] == "duration: 2s"),
+        !hints.iter().any(|hint| hint["label"]
+            .as_str()
+            .is_some_and(|label| label.starts_with("duration:"))),
         "{hints:?}"
     );
 }
@@ -1725,10 +1716,10 @@ fn literal_completion_filters_other_known_arguments_without_executing_the_progra
 }
 
 #[test]
-fn symbolic_duration_contracts_and_generic_list_results_reach_real_lsp_clients() {
+fn animation_factories_and_generic_list_results_reach_real_lsp_clients() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "fn<mut> beat(n:Number):Unit{repeat n {wait(250ms)}}\n@duration(n*250ms)\nfn<mut> contracted(n:Number):Unit{repeat n {wait(250ms)}}\nfn identity<T>(value:T):T{return value}\nlet values=[1,2,3]\nlet mapped=values.map(identity)\n";
+    let source = "fn beat(n:Number):Animation{return wait(250ms).repeat(n)}\nfn identity<T>(value:T):T{return value}\nlet values=[1,2,3]\nlet mapped=values.map(identity)\nbeat(4)\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -1738,17 +1729,17 @@ fn symbolic_duration_contracts_and_generic_list_results_reach_real_lsp_clients()
         request(
             2,
             "textDocument/hover",
-            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":source.lines().next().unwrap().find("beat").unwrap()+1}}),
+            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":4}}),
         ),
         request(
             3,
             "textDocument/signatureHelp",
-            json!({"textDocument":{"uri":uri},"position":{"line":5,"character":25}}),
+            json!({"textDocument":{"uri":uri},"position":{"line":3,"character":25}}),
         ),
         request(
             4,
             "textDocument/inlayHint",
-            json!({"textDocument":{"uri":uri},"range":{"start":{"line":0,"character":0},"end":{"line":6,"character":0}}}),
+            json!({"textDocument":{"uri":uri},"range":{"start":{"line":0,"character":0},"end":{"line":5,"character":0}}}),
         ),
     ];
     finish(&mut messages);
@@ -1757,7 +1748,7 @@ fn symbolic_duration_contracts_and_generic_list_results_reach_real_lsp_clients()
         .as_str()
         .unwrap();
     assert!(
-        hover.contains("n") && hover.contains("1/4") && !hover.contains("unknown"),
+        hover.contains("Animation") && !hover.contains("Side duration"),
         "{hover}"
     );
     let signature = reply(&replies, 3)["result"]["signatures"][0]["label"]
@@ -1771,18 +1762,9 @@ fn symbolic_duration_contracts_and_generic_list_results_reach_real_lsp_clients()
     );
     let hints = reply(&replies, 4)["result"].as_array().unwrap();
     assert!(
-        hints.iter().any(|hint| hint["position"]["line"] == 2
-            && hint["label"]
-                .as_str()
-                .is_some_and(|label| label.contains("duration:")
-                    && label.contains("n")
-                    && label.contains("1/4"))),
-        "{hints:?}"
-    );
-    assert!(
         hints
             .iter()
-            .any(|hint| hint["position"]["line"] == 5 && hint["label"] == ": List<Number,3>"),
+            .any(|hint| hint["position"]["line"] == 3 && hint["label"] == ": List<Number,3>"),
         "{hints:?}"
     );
 }

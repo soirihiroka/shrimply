@@ -227,7 +227,12 @@ fn search_font_browser(query: String) -> bool {
 }
 
 fn request_font_browser_previews(range: std::ops::Range<usize>) {
-    FONT_BROWSER.with_borrow_mut(|browser| browser.request_previews(range));
+    FONT_BROWSER.with_borrow_mut(|browser| {
+        browser.request_previews(
+            range,
+            shrimply_inspector_core::font_selector::PreviewFormat::Typeface,
+        )
+    });
 }
 
 fn font_browser_count() -> usize {

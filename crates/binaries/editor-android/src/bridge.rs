@@ -28,7 +28,6 @@ use crate::input::{INPUT_STRIDE, MAX_INPUT_VALUES};
 const SURFACE_COUNT: usize = 3;
 const BENCHMARK_FRAMES: usize = 1200;
 const FRAME_BUDGET_NS: u128 = 1_000_000_000 / 60;
-const INSPECTOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
 static FONT_RESOURCES: std::sync::OnceLock<(Vec<std::path::PathBuf>, std::path::PathBuf)> =
     std::sync::OnceLock::new();
 
@@ -168,7 +167,8 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         }
         let frame_interval = Duration::from_nanos(FRAME_BUDGET_NS as u64);
         let frame_delay = frame_interval.saturating_sub(last_update.elapsed());
-        let playback_delay = (runtime.foreground && player::snapshot(&runtime.player).playing)
+        let playback_delay = ((runtime.foreground || runtime.screen_recording_clock_active())
+            && player::snapshot(&runtime.player).playing)
             .then_some(frame_delay);
         let scene_delay = runtime
             .timeline
@@ -182,7 +182,8 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 }
             });
         let delay = [
-            (runtime.foreground && runtime.timeline.is_some()).then_some(INSPECTOR_POLL_INTERVAL),
+            (runtime.foreground && runtime.timeline.is_some())
+                .then_some(shrimply_inspector_document::POLL_INTERVAL),
             playback_delay,
             (runtime.foreground
                 && viewport.visible
@@ -319,10 +320,15 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         }
         if next_viewport != viewport {
             picture_dirty = true;
+            let capture = runtime.screen_recording_pending();
             if !next_viewport.visible
                 && let Some(scene) = runtime.timeline.as_mut()
             {
-                scene.suspend();
+                if capture {
+                    scene.suspend_while_recording();
+                } else {
+                    scene.suspend();
+                }
             }
             viewport = next_viewport;
         }
@@ -417,18 +423,8 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                         .expect("open timeline")
                         .event(event),
                     crate::input::Input::Key(action) => {
-                        match runtime
-                            .timeline
-                            .as_mut()
-                            .expect("open timeline")
-                            .key_action(action)
-                        {
-                            Ok(None) => {}
-                            Ok(Some(_)) => runtime.error = Some(
-                                "This action requires a native dialog which is not available yet."
-                                    .into(),
-                            ),
-                            Err(error) => runtime.error = Some(error),
+                        if let Err(error) = runtime.timeline_key_action(action) {
+                            runtime.error = Some(error);
                         }
                     }
                     crate::input::Input::TogglePlaying => player::toggle_playing(&runtime.player),
@@ -515,7 +511,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         meter_animating = audio_meter.update(runtime.take_audio_peaks(), Instant::now());
         if let Some(scene) = runtime.timeline.as_mut() {
             picture_dirty |= meter_animating && scene.audio_monitor_progress() > 0.0;
-            if viewport.visible && viewport.width > 0 && viewport.height > 0 {
+            if runtime.foreground && viewport.visible && viewport.width > 0 && viewport.height > 0 {
                 let size = shrimply_components_skia::canvas::vec2(
                     viewport.width as f32 / viewport.density,
                     viewport.height as f32 / viewport.density,
@@ -612,20 +608,13 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 if let Err(error) = runtime.request(&json!({"op":"show_track_add","kind":key.kind.label().to_ascii_lowercase(),"track":key.track_index,"track_id":track_id,"position":request.position,"import_targets":import_targets,"bottom_sheet":shrimply_components_core::layout::menu_uses_bottom_sheet(if request.touch { "touch" } else { "pointer" }),"x":request.point.x,"y":request.point.y})) { runtime.error = Some(error); }
                 changed = true;
             }
-            if let Some(request) = requests.audio_record {
-                let key = request.key;
-                let track_id = runtime
-                    .backend
-                    .project()
-                    .and_then(|project| {
-                        shrimply_timeline_edit::selection_state::track_address(&project, key)
-                    })
-                    .map(|address| address.track_id().to_string());
-                if let Err(error) = runtime.request(&json!({"op":"show_audio_record","kind":"audio","track":key.track_index,"track_id":track_id,"position":request.position})) { runtime.error = Some(error); }
-                changed = true;
-            }
-            if requests.video_record.is_some() {
-                runtime.error = Some("Video recording requires an Android camera capture backend; this build cannot record video.".into());
+            for request in [requests.audio_record, requests.video_record]
+                .into_iter()
+                .flatten()
+            {
+                if let Err(error) = runtime.request_recording(request) {
+                    runtime.error = Some(error);
+                }
                 changed = true;
             }
         }
@@ -641,10 +630,28 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             runtime.sync_cursor();
             changed = true;
         }
-        if runtime.foreground && player::snapshot(&runtime.player).playing {
+        if (runtime.foreground || runtime.screen_recording_clock_active())
+            && player::snapshot(&runtime.player).playing
+        {
             changed |= runtime.tick();
         }
-        if graph_viewport.visible && graph_viewport.width > 0 && graph_viewport.height > 0 {
+        if runtime.screen_recording_clock_active()
+            && let Some(scene) = runtime.timeline.as_mut()
+        {
+            changed |= scene.maintain_video_recording();
+        }
+        match runtime.poll_video_recording() {
+            Ok(update) => changed |= update,
+            Err(error) => {
+                runtime.error = Some(error);
+                changed = true;
+            }
+        }
+        if runtime.foreground
+            && graph_viewport.visible
+            && graph_viewport.width > 0
+            && graph_viewport.height > 0
+        {
             let size = shrimply_components_skia::canvas::vec2(
                 graph_viewport.width as f32 / graph_viewport.density,
                 graph_viewport.height as f32 / graph_viewport.density,
@@ -702,7 +709,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 changed = true;
             }
         }
-        if preview_dirty && preview_viewport.visible {
+        if runtime.foreground && preview_dirty && preview_viewport.visible {
             let size = glam::vec2(
                 preview_viewport.width as f32 / preview_viewport.density,
                 preview_viewport.height as f32 / preview_viewport.density,
@@ -982,6 +989,8 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_initialize<'caller>(
 ) {
     unowned
         .with_env(|env| -> jni::errors::Result<()> {
+            let certificate_context = env.new_local_ref(&application)?;
+            rustls_platform_verifier::android::init_with_env(env, certificate_context)?;
             static APPLICATION: std::sync::OnceLock<jni::refs::Global<JObject<'static>>> =
                 std::sync::OnceLock::new();
             let application = env.new_global_ref(application)?;

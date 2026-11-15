@@ -790,7 +790,7 @@ impl Compositor {
                 std::thread::Builder::new()
                     .name("preview-morph-flow".into())
                     .spawn(move || {
-                        let result = super::optical_flow::estimate_rgba(
+                        let result = shrimply_affine_l1_stabilization::flow_metal::estimate_rgba(
                             &source_bytes,
                             &target_bytes,
                             width,

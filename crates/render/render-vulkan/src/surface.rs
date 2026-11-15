@@ -149,14 +149,17 @@ impl Renderer {
                 .surface_api
                 .get_physical_device_surface_capabilities(self.physical, self.surface)
                 .expect("surface capabilities");
-            let extent = if caps.current_extent.width != u32::MAX {
-                caps.current_extent
-            } else {
+            // Android permits a chosen extent, and its reported current extent
+            // can lag a SurfaceView resize. Follow the supplied pixel size so
+            // SurfaceFlinger does not stretch a stale buffer into the new view.
+            let extent = if cfg!(target_os = "android") || caps.current_extent.width == u32::MAX {
                 vk::Extent2D {
                     width: width.clamp(caps.min_image_extent.width, caps.max_image_extent.width),
                     height: height
                         .clamp(caps.min_image_extent.height, caps.max_image_extent.height),
                 }
+            } else {
+                caps.current_extent
             };
             assert!(
                 extent.width > 0 && extent.height > 0,

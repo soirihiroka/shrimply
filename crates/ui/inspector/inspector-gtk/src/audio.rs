@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use adw::prelude::*;
 use gtk::glib;
@@ -7,73 +7,37 @@ use shrimply_components_gtk::{
     ui::{SearchMenuItem, search_rank, searchable_menu},
 };
 use shrimply_inspector_core::{ControlKind, InspectorControl};
-use shrimply_project_document::project::{AudioItem, AudioSource};
 
-use super::{Inspectable, InspectorContext, list, section::InspectorSection};
-
-impl Inspectable for AudioItem {
-    fn title(&self) -> &'static str {
-        shrimply_inspector_core::audio_title(self)
-    }
-    fn add_rows(&self, _section: &InspectorSection, _context: &InspectorContext) {}
-    fn inspect(&self, context: &InspectorContext) -> Vec<gtk::Widget> {
-        let preferences = shrimply_editor_state::preferences::snapshot(&context.preferences);
-        let document = shrimply_inspector_document::document(
-            &context.inspector_core,
-            super::info::format_date,
-            &preferences.compute_server_url,
-            &preferences.last_tts_model,
-        );
-        list::render_document(document, context, controls)
-    }
-}
-
-fn controls(
-    model: &shrimply_inspector_core::InspectorSection,
-    context: &InspectorContext,
-) -> Vec<gtk::Widget> {
-    if let Some(control) = model
-        .controls
-        .iter()
-        .find(|control| control.kind == ControlKind::AudioCache)
-    {
-        let project = context.project.borrow();
-        let item = project
-            .audio_item(context.selected_item.as_ref().expect("audio cache item"))
-            .expect("audio cache item exists");
-        let modifier = item
-            .modifiers
-            .iter()
-            .find(|modifier| Some(modifier.id) == control.target_id)
-            .expect("audio cache modifier exists");
-        let shrimply_audio_modifiers::AudioModifierEffect::Cache(cache) = &modifier.effect else {
-            panic!("audio cache control requires cache effect");
-        };
-        return super::audio_cache::rows(cache, modifier.id, context);
-    }
-    super::control::section(model, context)
-}
+use super::InspectorContext;
 
 pub(super) fn control(control: &InspectorControl, context: &InspectorContext) -> gtk::Widget {
     match control.kind {
         ControlKind::TtsEditor => {
-            let project = context.project.borrow();
-            let item = project
-                .audio_item(context.selected_item.as_ref().expect("TTS item"))
-                .expect("TTS item exists");
-            let AudioSource::Tts(settings) = &item.source else {
-                panic!("TTS control requires TTS source");
-            };
-            tts_editor(item.id, settings, context)
+            if let Some(presentation) = &control.tts {
+                shrimply_tts_gtk::editor(
+                    context.inspector_core.clone(),
+                    context.list_target.clone(),
+                    context.preferences.clone(),
+                    (**presentation).clone(),
+                    context.refresh.clone(),
+                )
+            } else {
+                gtk::Label::builder()
+                    .label(tr!(&control.subtitle).as_ref())
+                    .wrap(true)
+                    .build()
+                    .upcast()
+            }
         }
         ControlKind::BeatDetection => beat_detection(control, context),
-        ControlKind::AudioModifierMenu => modifier_menu(control, context),
+        ControlKind::AudioModifierMenu | ControlKind::VisualModifierMenu => {
+            modifier_menu(control, context)
+        }
         _ => panic!("unsupported audio widget kind: {:?}", control.kind),
     }
 }
 
 fn beat_detection(control: &InspectorControl, context: &InspectorContext) -> gtk::Widget {
-    let id = control.target_id.expect("beat detection item");
     let enabled = control.value.parse().expect("beat detection is boolean");
     let row = adw::ActionRow::builder()
         .title(tr!(&control.label).as_ref())
@@ -81,7 +45,11 @@ fn beat_detection(control: &InspectorControl, context: &InspectorContext) -> gtk
         .build();
     let spinner = adw::Spinner::new();
     spinner.set_size_request(18, 18);
-    spinner.set_visible(enabled && shrimply_audio_engine::beat::is_loading(id));
+    spinner.set_visible(
+        context
+            .inspector_core
+            .audio_beat_detection_loading(&context.list_target),
+    );
     row.add_suffix(&spinner);
     let toggle = gtk::Switch::builder()
         .active(enabled)
@@ -91,24 +59,18 @@ fn beat_detection(control: &InspectorControl, context: &InspectorContext) -> gtk
     row.set_activatable_widget(Some(&toggle));
     if enabled {
         let spinner = spinner.downgrade();
-        let mut polls_without_loading = 0_u8;
-        let mut observed_loading = shrimply_audio_engine::beat::is_loading(id);
-        glib::timeout_add_local(Duration::from_millis(33), move || {
+        let scope = Rc::downgrade(&context.listener_scope);
+        let controller = context.inspector_core.clone();
+        let target = context.list_target.clone();
+        glib::timeout_add_local(Duration::from_millis(50), move || {
+            if scope.upgrade().is_none() {
+                return glib::ControlFlow::Break;
+            }
             let Some(spinner) = spinner.upgrade() else {
                 return glib::ControlFlow::Break;
             };
-            let loading = shrimply_audio_engine::beat::is_loading(id);
-            spinner.set_visible(loading);
-            observed_loading |= loading;
-            if observed_loading && !loading {
-                return glib::ControlFlow::Break;
-            }
-            polls_without_loading = polls_without_loading.saturating_add((!loading) as u8);
-            if polls_without_loading >= 60 {
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
+            spinner.set_visible(controller.audio_beat_detection_loading(&target));
+            glib::ControlFlow::Continue
         });
     }
     let controller = context.inspector_core.clone();
@@ -130,19 +92,25 @@ fn modifier_menu(control: &InspectorControl, context: &InspectorContext) -> gtk:
     let controller = context.inspector_core.clone();
     let target = context.list_target.clone();
     let control = control.clone();
+    let kind = control.kind;
     let menu_controller = controller.clone();
     let menu_target = target.clone();
+    let menu = control.clone();
     buttons.append(&searchable_menu(
-        tr!("Add modifier").as_ref(),
-        tr!("Search modifiers").as_ref(),
+        tr!(&control.label).as_ref(),
+        tr!(&control.tooltip).as_ref(),
         move |query| {
-            let mut choices = control
+            let mut choices = menu
                 .values
                 .iter()
-                .zip(&control.labels)
-                .zip(&control.search_terms)
+                .zip(&menu.labels)
+                .zip(&menu.search_terms)
                 .filter_map(|((value, label), search)| {
-                    Some((search_rank(label, [search.as_str()], query)?, value, label))
+                    (value != "__paste__").then_some((
+                        search_rank(label, [search.as_str()], query)?,
+                        value,
+                        label,
+                    ))
                 })
                 .collect::<Vec<_>>();
             choices.sort_by_key(|(rank, _, _)| *rank);
@@ -153,11 +121,7 @@ fn modifier_menu(control: &InspectorControl, context: &InspectorContext) -> gtk:
                     let target = menu_target.clone();
                     let value = value.clone();
                     SearchMenuItem::new(tr!(label).as_ref(), move || {
-                        if let Err(error) = controller.add_control_modifier(
-                            &target,
-                            ControlKind::AudioModifierMenu,
-                            &value,
-                        ) {
+                        if let Err(error) = controller.add_control_modifier(&target, kind, &value) {
                             tracing::warn!(%error, "Could not add audio modifier");
                         }
                     })
@@ -165,63 +129,17 @@ fn modifier_menu(control: &InspectorControl, context: &InspectorContext) -> gtk:
                 .collect()
         },
     ));
-    if controller.can_paste_audio_modifiers(&target, &context.property_clipboard) {
+    if let Some(index) = control.values.iter().position(|value| value == "__paste__") {
         let paste = gtk::Button::builder()
             .icon_name("edit-paste-symbolic")
-            .tooltip_text(tr!("Paste Modifier").as_ref())
+            .tooltip_text(tr!(&control.labels[index]).as_ref())
             .build();
-        let clipboard = context.property_clipboard.clone();
         paste.connect_clicked(move |button| {
-            match controller.paste_audio_modifiers(&target, &clipboard) {
-                Ok(count) if count > 0 => {
-                    let message = if count == 1 {
-                        tr!("1 effect pasted").into_owned()
-                    } else {
-                        shrimply_components_gtk::i18n::text_args(
-                            "%{count} effects pasted",
-                            &[("count", count.to_string())],
-                        )
-                    };
-                    shrimply_components_gtk::toast::show_confirmation_text_for_widget(
-                        button, &message,
-                    );
-                }
-                Ok(_) => {}
-                Err(error) => tracing::warn!(%error, "Could not paste audio modifiers"),
+            if let Err(error) = controller.add_control_modifier(&target, kind, "__paste__") {
+                shrimply_components_gtk::toast::show_confirmation_text_for_widget(button, &error);
             }
         });
         buttons.append(&paste);
     }
     buttons.upcast()
-}
-
-fn tts_editor(
-    id: uuid::Uuid,
-    settings: &shrimply_tts::TtsSettings,
-    context: &InspectorContext,
-) -> gtk::Widget {
-    let target = context.list_target.clone();
-    let changed_controller = context.inspector_core.clone();
-    let changed_target = target.clone();
-    let commit_controller = context.inspector_core.clone();
-    let generated_controller = context.inspector_core.clone();
-    shrimply_tts_gtk::editor(
-        id,
-        context.preferences.clone(),
-        settings,
-        move |settings| {
-            if let Err(error) = changed_controller.set_tts_settings(&changed_target, settings, true)
-            {
-                tracing::error!(%error, "Could not edit GTK TTS settings");
-            }
-        },
-        move || commit_controller.finish_live_edit(),
-        move |generation, model| {
-            if let Err(error) =
-                generated_controller.apply_tts_generation(&target, id, &model, generation)
-            {
-                tracing::error!(%error, "Could not apply GTK TTS generation");
-            }
-        },
-    )
 }

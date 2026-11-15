@@ -924,3 +924,13 @@ pub unsafe fn gaussian_vertical_rgba(
     )
     .to_rgba_u32()
 }
+
+/// A nonempty rectangular tile whose pixel count fits the supplied allocation budget.
+pub fn bounded_tile_extent(size: (u32, u32), max_pixels: usize) -> Option<(u32, u32)> {
+    if size.0 == 0 || size.1 == 0 || max_pixels == 0 {
+        return None;
+    }
+    let width = (size.0 as usize).min(max_pixels);
+    let height = (size.1 as usize).min(max_pixels / width);
+    Some((width as u32, height as u32))
+}

@@ -280,7 +280,7 @@ fn provenance_lookup_and_reload_benchmark() {
     );
     let separate: String = (0..ELEMENTS)
         .map(|index| {
-            format!("let shape_{index}=Box(id=\"shape-{index}\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(shape_{index})\n")
+            format!("let shape_{index}=Box(id=\"shape-{index}\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[shape_{index}])\n")
         })
         .collect();
     for (style, prefix) in [

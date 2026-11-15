@@ -22,10 +22,13 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_RENDERER").is_none() {
         return;
     }
+    println!("cargo:rerun-if-env-changed=SPIRV_OPT");
+    println!("cargo:rerun-if-env-changed=SPIRV_VAL");
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../render-core/shaders");
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Vulkan shader output"));
     let compiler = shrimply_slang_build::Compiler::new(&directory, &output);
     let mut generated = String::new();
+    let mut object_abi = None;
     for (portable, target, table, suffix) in [
         (false, shrimply_slang_build::Target::Vulkan, "MODULES", ""),
         (
@@ -123,46 +126,126 @@ fn main() {
                 generated.push_str("] },\n");
             }
         }
-        if portable || std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("android") {
-            generated.push_str("];\n");
-            continue;
-        }
         let object_shaders = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../media/visual/3d/render-3d-core/shaders");
         let object_compiler = shrimply_slang_build::Compiler::new(&object_shaders, &output);
-        let objects = object_compiler.compile(
+        let object_entries = [
+            "obj_compute",
+            "obj_denoise_composite_compute",
+            "obj_outline_distance_compute",
+            "obj_outline_compute",
+            "reflect_software",
+        ];
+        let objects = object_compiler.compile_as(
             &object_shaders.join("obj_software.slang"),
-            shrimply_slang_build::Target::Vulkan,
-            &[
-                "obj_compute",
-                "obj_denoise_composite_compute",
-                "obj_outline_distance_compute",
-                "obj_outline_compute",
-                "reflect_software",
-            ],
+            &format!("obj_software{suffix}"),
+            target,
+            if matches!(target, shrimply_slang_build::Target::VulkanWordStorage) {
+                &[]
+            } else if portable {
+                &["reflect_software"]
+            } else {
+                &object_entries
+            },
         );
         let reflection: serde_json::Value =
             serde_json::from_slice(&objects.reflection).expect("Software OBJ reflection");
-        writeln!(
-            generated,
-            "Module {{ code: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{}\")), kernels: &[",
-            objects.filename
-        )
-        .unwrap();
-        for entry in reflection["entryPoints"]
-            .as_array()
-            .expect("Software OBJ entries")
-        {
-            let name = entry["name"].as_str().expect("Software OBJ entry name");
-            if name == "reflect_software" {
-                continue;
-            }
-            let group = entry["threadGroupSize"]
+        // Mobile drivers compile the entire module even when only one entry is
+        // selected. Keep unrelated kernels and reflection-only buffers out of it.
+        let word_storage = matches!(target, shrimply_slang_build::Target::VulkanWordStorage);
+        let entries = if word_storage {
+            reflection["entryPoints"]
                 .as_array()
-                .expect("Software OBJ group size");
-            writeln!(generated, "KernelLayout {{ name: {name:?}, entry: {name:?}, buffered: false, group: [{}, {}, {}], fields: &[Field {{ name: \"data\", offset: 0, size: 8, boolean: false, unsigned: false }}] }},", group[0], group[1], group[2]).unwrap();
+                .expect("wavefront entrypoints")
+                .iter()
+                .filter_map(|entry| entry["name"].as_str())
+                .filter(|name| {
+                    !name.starts_with("reflect_")
+                        && !matches!(*name, "obj_compute" | "obj_composite_upload_compute")
+                })
+                .collect::<Vec<_>>()
+        } else {
+            object_entries[..object_entries.len() - 1].to_vec()
+        };
+        let entry_modules = if portable {
+            entries
+                .iter()
+                .map(|entry| {
+                    object_compiler.compile_as(
+                        &object_shaders.join("obj_software.slang"),
+                        &format!("{entry}{suffix}"),
+                        target,
+                        &[entry],
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let features = enum_values(&objects.abi, "SoftwareObjectFeature");
+        let transport = features["Transport"];
+        let grounds = features["Grounds"];
+        let reflections = features["GroundReflections"];
+        let mut options = String::new();
+        for (name, value) in [
+            ("TRANSPORT", transport),
+            ("GROUNDS", grounds),
+            ("GROUND_REFLECTIONS", reflections),
+        ] {
+            writeln!(options, "const {name}: u32 = {value};").unwrap();
         }
-        generated.push_str("] },\n");
+        std::fs::write(output.join("software_options.rs"), options)
+            .expect("write reflected software options");
+        if word_storage {
+            let scratch = reflection["entryPoints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|entry| entry["name"] == "reflect_wavefront")
+                .expect("wavefront scratch ABI");
+            let mut sizes = String::new();
+            for parameter in scratch["parameters"].as_array().unwrap() {
+                let constant = match parameter["name"].as_str().unwrap() {
+                    "work" => "TRANSPORT_BYTES",
+                    "sample" => "SAMPLE_BYTES",
+                    "accumulation" => "ACCUMULATION_BYTES",
+                    _ => panic!("unknown wavefront scratch"),
+                };
+                let size = parameter["binding"]["size"].as_u64().expect("scratch size");
+                assert!(size > 0 && size.is_multiple_of(4), "word scratch layout");
+                writeln!(sizes, "const {constant}: usize = {size};").unwrap();
+            }
+            std::fs::write(output.join("software_scratch.rs"), sizes)
+                .expect("write reflected scratch sizes");
+        }
+        for module in if portable {
+            entry_modules.as_slice()
+        } else {
+            std::slice::from_ref(&objects)
+        } {
+            let module_reflection: serde_json::Value =
+                serde_json::from_slice(&module.reflection).expect("Software OBJ entry reflection");
+            let code = if word_storage {
+                prepare_object_shader(&output, &module.filename)
+            } else {
+                module.filename.clone()
+            };
+            writeln!(generated, "Module {{ code: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{code}\")), kernels: &[").unwrap();
+            for entry in module_reflection["entryPoints"]
+                .as_array()
+                .expect("Software OBJ entries")
+            {
+                let name = entry["name"].as_str().expect("Software OBJ entry name");
+                if name == "reflect_software" {
+                    continue;
+                }
+                let group = entry["threadGroupSize"]
+                    .as_array()
+                    .expect("Software OBJ group size");
+                writeln!(generated, "KernelLayout {{ name: {name:?}, entry: {name:?}, buffered: false, group: [{}, {}, {}], fields: &[Field {{ name: \"data\", offset: 0, size: 8, boolean: false, unsigned: false }}] }},", group[0], group[1], group[2]).unwrap();
+            }
+            generated.push_str("] },\n");
+        }
         let reflected = reflection["entryPoints"]
             .as_array()
             .unwrap()
@@ -170,6 +253,7 @@ fn main() {
             .find(|entry| entry["name"] == "reflect_software")
             .expect("Software ABI entry");
         let mut assertions = String::from("const _: () = {\n");
+        let mut uniform_packing = String::new();
         for parameter in reflected["parameters"]
             .as_array()
             .expect("Software ABI parameters")
@@ -177,6 +261,9 @@ fn main() {
             let name = parameter["type"]["name"]
                 .as_str()
                 .expect("Software ABI struct name");
+            if name == "SoftwareObjectOptions" {
+                continue;
+            }
             if name == "SceneUniforms" {
                 let mut packing = String::from(
                     "fn pack_scene_uniforms(value: &shrimply_render_3d_core::obj::SceneUniforms) -> Vec<u8> {\n",
@@ -187,8 +274,7 @@ fn main() {
                 writeln!(packing, "let mut output = vec![0; {size}];").unwrap();
                 pack_fields(&mut packing, &parameter["type"], "value", "0", size);
                 packing.push_str("output\n}\n");
-                std::fs::write(output.join("software_uniforms.rs"), packing)
-                    .expect("write scalar scene packing");
+                uniform_packing = packing;
                 continue;
             }
             let rust_type = match name {
@@ -208,8 +294,19 @@ fn main() {
             writeln!(assertions, "assert!(std::mem::size_of::<{rust_type}>() == {size}, \"Software OBJ ABI size: {name}\");").unwrap();
         }
         assertions.push_str("};\n");
-        std::fs::write(output.join("software_abi.rs"), assertions)
-            .expect("write Software OBJ ABI checks");
+        if let Some(reference) = &object_abi {
+            assert_eq!(
+                reference,
+                &(assertions, uniform_packing),
+                "Portable Vulkan must preserve uploaded OBJ structure layouts"
+            );
+        } else {
+            std::fs::write(output.join("software_abi.rs"), &assertions)
+                .expect("write Software OBJ ABI checks");
+            std::fs::write(output.join("software_uniforms.rs"), &uniform_packing)
+                .expect("write scalar scene packing");
+            object_abi = Some((assertions, uniform_packing));
+        }
         generated.push_str("];\n");
     }
     let mut reference_abi = None;
@@ -399,4 +496,82 @@ fn pack_fields(
             writeln!(output, "output[{offset}..{end}].copy_from_slice(bytes(std::slice::from_ref(&{expression}))); ").unwrap();
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn enum_values(abi: &[u8], name: &str) -> std::collections::BTreeMap<String, u32> {
+    std::str::from_utf8(abi)
+        .expect("shader ABI is UTF-8")
+        .lines()
+        .filter_map(|line| {
+            let columns = line.split('\t').collect::<Vec<_>>();
+            match columns.as_slice() {
+                ["enum", ty, "uint32", variant, value] if *ty == name => Some((
+                    (*variant).to_owned(),
+                    value.parse().expect("unsigned shader option"),
+                )),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_object_shader(output: &std::path::Path, source: &str) -> String {
+    use std::process::Command;
+    let filename = format!(
+        "{}_prepared.spv",
+        source.strip_suffix(".spv").expect("SPIR-V artifact")
+    );
+    let destination = output.join(&filename);
+    let temporary = destination.with_extension("tmp.spv");
+    let tool = std::env::var_os("SPIRV_OPT").unwrap_or_else(|| "spirv-opt".into());
+    let status = Command::new(tool)
+        .args([
+            "--fold-spec-const-op-composite",
+            "--eliminate-dead-branches",
+            "--eliminate-dead-code-aggressive",
+            "--eliminate-dead-functions",
+            "--eliminate-local-single-block",
+            "--eliminate-local-single-store",
+            "--scalar-replacement=100",
+            "--convert-local-access-chains",
+            "--eliminate-local-single-block",
+            "--eliminate-local-single-store",
+            "--ssa-rewrite",
+            "--ccp",
+            "--simplify-instructions",
+            "--eliminate-dead-branches",
+            "--eliminate-dead-code-aggressive",
+            "--eliminate-dead-functions",
+            "--merge-return",
+            "--merge-blocks",
+            "--cfg-cleanup",
+            "--simplify-instructions",
+            "--eliminate-dead-code-aggressive",
+        ])
+        .arg(output.join(source))
+        .arg("-o")
+        .arg(&temporary)
+        .status()
+        .expect("Portable 3D shaders require SPIRV-Tools; install spirv-opt or set SPIRV_OPT");
+    assert!(
+        status.success(),
+        "prepare software OBJ shader {source}: {status}"
+    );
+    let code = std::fs::read(&temporary).expect("read optimized object shader");
+    std::fs::write(&temporary, shrimply_slang_build::order_declarations(&code))
+        .expect("order object shader declarations");
+    let validator = std::env::var_os("SPIRV_VAL").unwrap_or_else(|| "spirv-val".into());
+    let status = Command::new(validator)
+        .args(["--target-env", "vulkan1.1", "--scalar-block-layout"])
+        .arg(&temporary)
+        .status()
+        .expect("Portable 3D shaders require SPIRV-Tools; install spirv-val or set SPIRV_VAL");
+    assert!(
+        status.success(),
+        "validate software OBJ shader {source}: {status}"
+    );
+    std::fs::rename(&temporary, &destination).expect("install validated object shader");
+    filename
 }

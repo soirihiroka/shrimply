@@ -19,6 +19,7 @@ enum class Target
     Vulkan,
     VulkanPortable,
     VulkanWordStorage,
+    SpirvPortable,
 };
 
 struct CompileRequest
@@ -222,7 +223,8 @@ static int compile(const CompileRequest& request)
     const bool cuda = request.target == Target::Cuda;
     const bool word_storage = request.target == Target::VulkanWordStorage;
     const bool vulkan = request.target == Target::Vulkan || request.target == Target::VulkanPortable || word_storage;
-    const bool spirv = request.target == Target::Spirv || vulkan;
+    const bool portable_spirv = request.target == Target::SpirvPortable;
+    const bool spirv = request.target == Target::Spirv || portable_spirv || vulkan;
 
     Slang::ComPtr<slang::IGlobalSession> global_session;
     if (SLANG_FAILED(slang::createGlobalSession(global_session.writeRef())))
@@ -259,6 +261,7 @@ static int compile(const CompileRequest& request)
     switch (request.target)
     {
     case Target::Spirv:
+    case Target::SpirvPortable:
     case Target::Vulkan:
     case Target::VulkanPortable:
     case Target::VulkanWordStorage: target.format = SLANG_SPIRV; break;
@@ -272,7 +275,7 @@ static int compile(const CompileRequest& request)
     if (cuda)
         target.floatingPointMode = SLANG_FLOATING_POINT_MODE_PRECISE;
     if (spirv)
-        target.profile = global_session->findProfile(word_storage ? "spirv_1_3" : SPIRV_PROFILE);
+        target.profile = global_session->findProfile(word_storage || portable_spirv ? "spirv_1_3" : SPIRV_PROFILE);
     slang::SessionDesc description = {};
     description.defaultMatrixLayoutMode = cuda || request.target == Target::Host
         ? SLANG_MATRIX_LAYOUT_ROW_MAJOR : SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;

@@ -120,7 +120,7 @@ for index in range(64) {
     Animation(children=[view])
 }
 wait(1s)
-source=read<String>("large.txt")
+animate(source,to=read<String>("large.txt"),duration=0s)
 wait(1s)"#,
     );
     let mut renderer = Renderer::default();

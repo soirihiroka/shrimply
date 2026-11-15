@@ -3,12 +3,14 @@
 use shrimply_render_vulkan as gpu;
 #[path = "../../preview-render-core/src/gpu_alpha_mask.rs"]
 mod alpha_mask;
+pub mod analysis;
 #[path = "../../preview-render-core/src/gpu_effects.rs"]
 mod effects;
 #[path = "../../preview-render-core/src/gpu_layered_image.rs"]
 mod layered_image;
 #[cfg(target_os = "linux")]
 mod manim;
+pub mod modifier_cache;
 mod morph;
 mod sam2;
 pub mod worker;
@@ -59,8 +61,8 @@ pub struct Presented {
 impl Presented {
     pub fn into_buffers(self) -> (gpu::Texture, Buffer) {
         assert!(
-            self.completed().expect("Intel GPU submission failed"),
-            "Intel frame published before GPU completion"
+            self.completed().expect("Vulkan GPU submission failed"),
+            "Vulkan frame published before GPU completion"
         );
         (self.display, self.rendered.buffer)
     }
@@ -181,10 +183,10 @@ impl Compositor {
     }
     pub fn render(&mut self, plan: FramePlan) -> Result<Presented, String> {
         let rendered = {
-            let _measurement = shrimply_profiling::measure("Intel rendering / Compose layers");
+            let _measurement = shrimply_profiling::measure("Vulkan rendering / Compose layers");
             self.render_gpu(plan, 0)?
         };
-        let _measurement = shrimply_profiling::measure("Intel rendering / Prepare presentation");
+        let _measurement = shrimply_profiling::measure("Vulkan rendering / Prepare presentation");
         let (display, presentation) = self.renderer.presentation_texture(
             &rendered.buffer,
             rendered.width,
@@ -220,23 +222,28 @@ impl Compositor {
         position: Time,
         target: shrimply_preview_render_core::CaptureTarget,
     ) -> Result<Option<Vec<u8>>, String> {
-        self.scene.set_capture_target(Some(target));
-        self.scene.request_frame();
-        let plan = self.prepare(
-            project,
-            position,
-            shrimply_preview_render_core::CompositeAccuracy::FULLY_ACCURATE,
-        )?;
-        shrimply_manim_state::validate_render_updates(self.take_manim_updates())?;
-        let Some(plan) = plan else {
-            return Ok(None);
-        };
-        if plan.loading || !plan.accuracy.content_accurate() {
-            return Ok(None);
-        }
-        let rendered = self.render_gpu(plan, 0)?;
-        rendered.wait()?;
-        self.renderer.readback(&rendered.buffer).map(Some)
+        self.scene.set_strict_sources(true);
+        let result = (|| {
+            self.scene.set_capture_target(Some(target));
+            self.scene.request_frame();
+            let plan = self.prepare(
+                project,
+                position,
+                shrimply_preview_render_core::CompositeAccuracy::FULLY_ACCURATE,
+            )?;
+            shrimply_manim_state::validate_render_updates(self.take_manim_updates())?;
+            let Some(plan) = plan else {
+                return Ok(None);
+            };
+            if plan.loading || !plan.accuracy.content_accurate() {
+                return Ok(None);
+            }
+            let rendered = self.render_gpu(plan, 0)?;
+            rendered.wait()?;
+            self.renderer.readback(&rendered.buffer).map(Some)
+        })();
+        self.scene.set_strict_sources(false);
+        result
     }
 
     pub fn render_accurate(
@@ -302,10 +309,10 @@ impl Compositor {
         }
         let layers = self.layers(&plan.layers, size, &external_masks, &mut submissions)?;
         let buffer = if direct_video {
-            shrimply_profiling::increment("Intel rendering / Video composition bypasses");
+            shrimply_profiling::increment("Vulkan rendering / Video composition bypasses");
             layers[0].1.clone()
         } else {
-            let _measurement = shrimply_profiling::measure("Intel rendering / Final composition");
+            let _measurement = shrimply_profiling::measure("Vulkan rendering / Final composition");
             let (buffer, composite) = self
                 .renderer
                 .composite_buffers(&layers, size.0, size.1, background)?
@@ -361,7 +368,7 @@ impl Compositor {
             (0, 0),
             skia_safe::image::CachingHint::Allow,
         ) {
-            return Err("Read static image for Intel compositor".into());
+            return Err("Read static image for Vulkan compositor".into());
         }
         let buffer = self.renderer.upload(&bytes)?;
         self.images.insert(key, buffer.clone());
@@ -373,7 +380,7 @@ impl Compositor {
         if let Some(imported) = self.videos.get(&key) {
             return Ok(imported.output.clone());
         }
-        let _measurement = shrimply_profiling::measure("Intel rendering / Import video");
+        let _measurement = shrimply_profiling::measure("Vulkan rendering / Import video");
         let imported = ImportedFrame::import(&mut self.renderer, video.clone())?;
         let buffer = imported.output.clone();
         self.videos.insert(key, imported);
@@ -392,7 +399,7 @@ impl Compositor {
         external_masks: &ExternalMasks,
         submissions: &mut Vec<Submission>,
     ) -> Result<Vec<(Nv12LayerParams, Buffer)>, String> {
-        let _measurement = shrimply_profiling::measure("Intel rendering / Prepare layers");
+        let _measurement = shrimply_profiling::measure("Vulkan rendering / Prepare layers");
         let mut result = Vec::with_capacity(layers.len());
         for layer in layers {
             if let Source::RasterMorph(morph) = &layer.source {
@@ -431,13 +438,11 @@ impl Compositor {
                     &mut self.used_layered_sources,
                     submissions,
                 )?,
-                #[cfg(target_os = "linux")]
                 Source::Gaussian(plan) => self.renderer.gaussian(
                     &plan.session,
                     (plan.width, plan.height),
                     &plan.params,
                 )?,
-                #[cfg(target_os = "linux")]
                 Source::Obj(plan) => {
                     let background = if result.is_empty() {
                         None
@@ -458,8 +463,8 @@ impl Compositor {
                 #[cfg(target_os = "linux")]
                 Source::Manim(frame) => self.manim_frame(frame)?,
                 #[cfg(target_os = "android")]
-                Source::Gaussian(_) | Source::Obj(_) | Source::Manim(_) => {
-                    return Err("3D and Manim rendering is not available on Android yet".into());
+                Source::Manim(_) => {
+                    return Err("Manim rendering is not available on Android".into());
                 }
                 Source::RasterMorph(_) => unreachable!("handled before source rendering"),
             };

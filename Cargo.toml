@@ -135,7 +135,6 @@ members = [
     "crates/media/visual/video/video-recording",
     "crates/media/visual/video/video-recording-windows",
     "crates/media/visual/video/video-generation",
-    "crates/ui/video-generation/video-generation-gtk",
     "crates/media/visual/anime4k-cuda",
     "crates/media/visual/video/video-decoder",
     "crates/media/visual/video/decoder-pool",
@@ -303,7 +302,6 @@ shrimply-tts = { path = "crates/media/audio/tts" }
 shrimply-tts-gtk = { path = "crates/ui/tts/tts-gtk" }
 shrimply-video-decoder = { path = "crates/media/visual/video/video-decoder" }
 shrimply-video-generation = { path = "crates/media/visual/video/video-generation" }
-shrimply-video-generation-gtk = { path = "crates/ui/video-generation/video-generation-gtk" }
 shrimply-video-recording = { path = "crates/media/visual/video/video-recording" }
 shrimply-video-recording-windows = { path = "crates/media/visual/video/video-recording-windows" }
 shrimply-visual-core = { path = "crates/media/visual/visual-core" }

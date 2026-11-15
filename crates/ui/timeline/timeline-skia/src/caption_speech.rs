@@ -178,12 +178,7 @@ enum Message {
 pub fn models(server_url: &str) -> Result<Vec<shrimply_tts::TtsModel>, String> {
     let models = shrimply_tts::models(server_url)?
         .into_iter()
-        .filter(|model| {
-            model
-                .inputs
-                .iter()
-                .any(|input| input.purpose() == Some(shrimply_tts::InputPurpose::Duration))
-        })
+        .filter(shrimply_tts::is_caption_model)
         .collect::<Vec<_>>();
     if models.is_empty() {
         Err("The server does not provide a text-to-speech model with caption timing".into())

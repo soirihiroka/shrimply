@@ -479,6 +479,7 @@ animation-plan-lifecycle-check:
 	$(CARGO) test -p sanim-lang --lib font_tests::changing_native_font_epoch_invalidates_retained_text_prefixes
 animation-plan-lifecycle-bench:
 	$(CARGO) test --release -p sanim-lang --no-default-features --test forever reflow_reuses_builder_and_bounds_retained_revisions -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test forever unused_pure_callback_pipeline_benchmark -- --ignored --nocapture
 
 .PHONY: temporal-index-check
 temporal-index-check:
@@ -497,10 +498,10 @@ runtime-event-check:
 runtime-event-bench:
 	$(CARGO) test --release -p sanim-runtime --lib pending_event_benchmark -- --ignored --nocapture
 
-.PHONY: fixture-migration-check
-fixture-migration-check:
-	$(CARGO) test -p sanim-lang --tests --no-fail-fast
-
 .PHONY: visual-fixture-check
 visual-fixture-check:
 	$(CARGO) test -p sanim-lang --test absolute_layout --test code --test range_edits --test literal_types --test media --test reactive_labels --test reactive_vectors --test scrolling --test signal_functions --no-fail-fast
+
+.PHONY: reactivity-fixture-check
+reactivity-fixture-check:
+	$(CARGO) test -p sanim-lang --test reactivity --no-fail-fast

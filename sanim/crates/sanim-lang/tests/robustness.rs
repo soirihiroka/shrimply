@@ -217,16 +217,66 @@ fn source_changes_during_prepare_discard_revision() {
 fn all_shipped_examples_prepare() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
     let sources = FileSources::new(root).unwrap();
-    for path in [
-        "hello.sanim",
-        "data.sanim",
-        "repeated_pulse.sanim",
-        "query.sanim",
-    ] {
+    let mut examples =
+        std::fs::read_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".sanim") && name != "theme.sanim")
+            .collect::<Vec<_>>();
+    examples.sort();
+    for path in &examples {
         let p = Engine::default()
             .prepare(path, &sources, &BTreeMap::new())
             .unwrap_or_else(|e| panic!("{path}: {e}"));
         assert!(!p.animation.layers.is_empty());
+    }
+}
+
+#[test]
+fn demo_labels_change_at_their_placed_timeline_boundaries() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let sources = FileSources::new(root).unwrap();
+    for (path, id, samples) in [
+        (
+            "text_wrapping.sanim",
+            "mode",
+            vec![
+                (Fraction::from(0), "whitespace-normal · wrap-normal"),
+                (
+                    Fraction::new(31u64, 5u64),
+                    "whitespace-pre-wrap · preserved spaces and newlines",
+                ),
+                (
+                    Fraction::new(59u64, 5u64),
+                    "whitespace-nowrap · clipped horizontal overflow",
+                ),
+                (
+                    Fraction::new(87u64, 5u64),
+                    "whitespace-normal · wrap-anywhere · long words can break",
+                ),
+            ],
+        ),
+        (
+            "code_view_scroller.sanim",
+            "stage_label",
+            vec![
+                (Fraction::from(0), "Scroll through the source"),
+                (Fraction::new(2u64, 5u64), "Reveal the gutter"),
+                (Fraction::new(93u64, 20u64), "Fold push; pop remains open"),
+            ],
+        ),
+    ] {
+        let prepared = Engine::default()
+            .prepare(path, &sources, &BTreeMap::new())
+            .unwrap();
+        let element = prepared.animation.find(id).unwrap();
+        for (time, expected) in samples {
+            let actual = prepared
+                .animation
+                .sample_property(element, sanim_core::Property::Text, time)
+                .unwrap();
+            assert_eq!(actual.string().unwrap(), expected, "{path} at {time}");
+        }
     }
 }
 #[test]

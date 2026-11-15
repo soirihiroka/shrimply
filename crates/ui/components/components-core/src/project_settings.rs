@@ -7,6 +7,7 @@ pub const CUSTOM_PRESET_INDEX: usize = PROJECT_PRESETS.len();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProjectSettings {
+    pub original: Option<(CanvasSize, Fraction)>,
     pub preset: usize,
     pub width: u32,
     pub height: u32,
@@ -26,6 +27,7 @@ impl Default for ProjectSettings {
             .position(|rate| rate.value == selected.fps)
             .unwrap_or_default();
         Self {
+            original: None,
             preset,
             width: selected.canvas_size.width,
             height: selected.canvas_size.height,
@@ -45,6 +47,7 @@ impl ProjectSettings {
             .iter()
             .position(|rate| rate.value == frame_rate);
         Self {
+            original: Some((canvas_size, frame_rate)),
             preset,
             width: canvas_size
                 .width
@@ -117,5 +120,42 @@ impl ProjectSettings {
                     .map(|rate| rate.value)
             })?,
         ))
+    }
+}
+
+pub const SETTINGS_TITLE: &str = "Change Project Settings?";
+pub const SETTINGS_WARNING: &str = "Changing the frame rate or resolution can affect timing, visual layout, and rendered output. Existing media and effects may no longer match the project.";
+pub const SETTINGS_APPLY: &str = "Apply";
+pub const SETTINGS_DISCARD: &str = "Discard";
+pub const SETTINGS_CANCEL: &str = "Cancel";
+
+impl ProjectSettings {
+    pub fn changed(self) -> bool {
+        self.original
+            .is_some_and(|original| self.settings() != Some(original))
+    }
+    pub fn discard(&mut self) {
+        if let Some((canvas, fps)) = self.original {
+            *self = Self::from_values(canvas, fps);
+        }
+    }
+    pub fn stage_dimensions(&mut self, width: u32, height: u32) -> Result<(), String> {
+        let fps = self
+            .settings()
+            .expect("project settings include frame rate")
+            .1;
+        shrimply_project_types::validate_video_settings(CanvasSize { width, height }, fps)?;
+        self.set_width(width);
+        self.set_height(height);
+        Ok(())
+    }
+    pub fn stage_frame_rate(&mut self, fps: Fraction) -> Result<(), String> {
+        let canvas = self
+            .settings()
+            .expect("project settings include frame rate")
+            .0;
+        shrimply_project_types::validate_video_settings(canvas, fps)?;
+        self.set_custom_frame_rate(fps);
+        Ok(())
     }
 }

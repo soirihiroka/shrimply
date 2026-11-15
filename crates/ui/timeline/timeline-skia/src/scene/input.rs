@@ -458,10 +458,28 @@ impl Scene {
 
     /// Detach from a native surface while retaining view state for a later realization.
     pub fn suspend(&mut self) {
+        self.suspend_capture(false);
+    }
+
+    /// A native capture service can keep recording while its editor surface is detached.
+    pub fn suspend_while_recording(&mut self) {
+        self.suspend_capture(true);
+    }
+
+    fn suspend_capture(&mut self, preserve_video: bool) {
         self.touch_input.cancel();
         self.cancel_touch_drag();
+        let playing = preserve_video
+            && self.video_recording_clock_active()
+            && player_state::snapshot(&self.player).playing;
         self.finish_audio_recording();
-        self.stop_video_recording();
+        if preserve_video {
+            if playing {
+                player_state::set_playing(&self.player, true);
+            }
+        } else {
+            self.stop_video_recording();
+        }
         self.suspended = true;
         self.clear_drop_preview();
         self.text_drop_preview = None;

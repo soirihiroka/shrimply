@@ -75,9 +75,7 @@ impl Buffer {
             unsafe {
                 device.raw.destroy_buffer(buffer, None);
             }
-            return Err(format!(
-                "Intel Vulkan buffer has no memory type for {flags:?}"
-            ));
+            return Err(format!("Vulkan buffer has no memory type for {flags:?}"));
         };
         let mut address =
             vk::MemoryAllocateFlagsInfo::default().flags(vk::MemoryAllocateFlags::DEVICE_ADDRESS);
@@ -96,7 +94,7 @@ impl Buffer {
                 unsafe {
                     device.raw.destroy_buffer(buffer, None);
                 }
-                return Err(format!("allocate Intel Vulkan memory: {e:?}"));
+                return Err(format!("allocate Vulkan memory: {e:?}"));
             }
         };
         if let Err(e) = unsafe { device.raw.bind_buffer_memory(buffer, memory, 0) } {
@@ -104,7 +102,7 @@ impl Buffer {
                 device.raw.destroy_buffer(buffer, None);
                 device.raw.free_memory(memory, None);
             }
-            return Err(format!("bind Intel Vulkan memory: {e:?}"));
+            return Err(format!("bind Vulkan memory: {e:?}"));
         }
         let address = device.buffer_address(buffer);
         if address == 0 {
@@ -112,7 +110,7 @@ impl Buffer {
                 device.raw.destroy_buffer(buffer, None);
                 device.raw.free_memory(memory, None);
             }
-            return Err("Intel Vulkan buffer device addresses are unavailable".into());
+            return Err("Vulkan buffer device addresses are unavailable".into());
         }
         let host_visible = device.memory.memory_types[index as usize]
             .property_flags

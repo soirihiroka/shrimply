@@ -63,6 +63,7 @@ pub(super) fn section(
                 let mut control =
                     InspectorControl::new(ControlKind::InfoArtwork, "", "Artwork").read_only();
                 control.image_bytes = Some(artwork.clone());
+                control.image_version = info.artwork_version.clone();
                 section.add(control);
             }
             for group in &info.presentation.groups {

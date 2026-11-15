@@ -1,5 +1,5 @@
 use super::*;
-use shrimply_components_core::presentation::normalize_control;
+use shrimply_components_core::presentation::{NumberField, normalize_control};
 use shrimply_i18n::text;
 
 pub(super) fn editor_value(request: &Value) -> Result<&str, String> {
@@ -20,21 +20,12 @@ impl Session {
         command["value"] = value;
         command
     }
-    fn editor(
-        &self,
-        key: &str,
-        label: &str,
-        value: impl ToString,
-        min: &str,
-        max: &str,
-        step: &str,
-        digits: usize,
-    ) -> Value {
+    fn editor(&self, field: &NumberField, value: impl ToString) -> Value {
         let value = value.to_string();
         let mut command = self.command("field");
-        command["key"] = json!(key);
-        json!({"widget":"editor","label":text(label),"display":value,
-            "editor":{"title":text(label),"fields":[{"value":value,"minimum":min,"maximum":max,"step":step,"digits":digits,"keyboard":"decimal","multiline":false}],"command":command,"confirm_label":text("Apply"),"cancel_label":text("Cancel")}})
+        command["key"] = json!(field.key);
+        json!({"widget":"editor","label":text(field.label),"display":value,
+            "editor":{"title":text(field.label),"fields":[{"value":value,"minimum":field.minimum,"maximum":field.maximum,"step":field.step,"digits":field.digits,"keyboard":"decimal","multiline":false}],"command":command,"confirm_label":text("Apply"),"cancel_label":text("Cancel")}})
     }
     fn choice(
         &self,
@@ -111,28 +102,12 @@ pub(super) fn snapshot(session: &Session) -> Value {
                     ),
                 );
                 for field in transcription::NUMBER_FIELDS {
-                    controls.push(session.editor(
-                        field.key,
-                        field.label,
-                        options.field_value(field.key),
-                        field.minimum,
-                        field.maximum,
-                        field.step,
-                        field.digits,
-                    ));
+                    controls.push(session.editor(&field, options.field_value(field.key)));
                 }
             }
             Operation::Silences(config) => {
                 for field in silence::FIELDS {
-                    controls.push(session.editor(
-                        field.key,
-                        field.label,
-                        config.field_value(field.key),
-                        field.minimum,
-                        field.maximum,
-                        field.step,
-                        field.digits,
-                    ));
+                    controls.push(session.editor(&field, config.field_value(field.key)));
                 }
             }
             Operation::Audio { format, .. } => controls.push(session.choice(

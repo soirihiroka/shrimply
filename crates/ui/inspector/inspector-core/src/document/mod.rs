@@ -82,24 +82,33 @@ impl crate::InspectorController {
         let blender = crate::video::blender::poll_metadata();
         let manim_scenes = crate::manim_parameters::poll_scenes();
         let media = self.media_metadata.borrow_mut().poll();
+        let image_sources = self.visual_sources.borrow_mut().poll();
         let voices = self.voice_models.borrow_mut().poll();
         let cameras = self.camera_models.borrow_mut().poll();
         let analysis = self.poll_camera_analysis();
         let sam2 = self.poll_sam2_analysis();
         let tts = self.poll_tts();
+        let video_generation = self.poll_video_generation();
         let fill = self.poll_transparent_fill_analysis();
         let caches = self.poll_visual_caches();
+        let audio_caches = self.poll_audio_caches();
+        let loading = self.audio_beat_detection_loading(&self.target());
+        let beats = self.beat_detection_loading.replace(loading) != loading;
         pdf || sanim
             || blender
             || manim_scenes
             || media
+            || image_sources
             || voices
             || cameras
             || analysis
             || sam2
             || tts
+            || video_generation
             || fill
             || caches
+            || audio_caches
+            || beats
     }
 
     pub fn document_snapshot(&self, server_url: &str) -> crate::InspectorSnapshot {
@@ -147,6 +156,25 @@ impl crate::InspectorController {
                 0,
                 crate::video::blender::card(&source.item, &source.asset, &metadata),
             );
+        }
+        if let Some(card) = self
+            .video_generation_card(&snapshot.target, server_url)
+            .expect("video generation presentation")
+        {
+            snapshot
+                .video
+                .as_mut()
+                .expect("generation video selected")
+                .visual
+                .insert(0, card);
+        }
+        if let InspectorTarget::Item(address) = &snapshot.target
+            && let Some(item) = self.project.borrow().video_item(address)
+            && let Some(video) = snapshot.video.as_mut()
+        {
+            video
+                .visual
+                .splice(0..0, self.source_image_cards(item, snapshot.runtime));
         }
         if snapshot.video.as_ref().is_some_and(|video| {
             video.visual.iter().any(|card| {
@@ -506,7 +534,10 @@ impl crate::InspectorController {
                 values[3] as u8,
             );
             if let Some(result) = self
-                .set_sanim_color(target, &control.path, color, &control.commit_name)
+                .set_svg_color(target, &control.path, color)
+                .or_else(|| {
+                    self.set_sanim_color(target, &control.path, color, &control.commit_name)
+                })
                 .or_else(|| {
                     self.set_manim_color(target, &control.path, color, &control.commit_name)
                 })

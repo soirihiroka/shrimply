@@ -1,4 +1,5 @@
 use std::{
+    hash::{DefaultHasher, Hash, Hasher},
     path::PathBuf,
     sync::{Arc, mpsc},
     thread,
@@ -10,6 +11,7 @@ use super::{InspectorMedia, MediaInfoPresentation};
 pub struct CachedMetadata {
     pub presentation: MediaInfoPresentation,
     pub artwork: Option<Arc<[u8]>>,
+    pub artwork_version: Option<String>,
     pub audio_stream_count: u32,
     pub video_stream_count: u32,
 }
@@ -90,10 +92,15 @@ impl Metadata {
             thread::spawn(move || {
                 let result = shrimply_media_info::inspect(&key.path, key.revision).map(|info| {
                     let mut presentation = super::media_info_presentation(&info, format_date);
-                    let artwork = presentation
+                    let artwork: Option<Arc<[u8]>> = presentation
                         .artwork
                         .take()
                         .map(|artwork| artwork.data.into());
+                    let artwork_version = artwork.as_deref().map(|bytes| {
+                        let mut hash = DefaultHasher::new();
+                        bytes.hash(&mut hash);
+                        format!("{:016x}", hash.finish())
+                    });
                     let stream_count = |kind| {
                         u32::try_from(
                             info.streams
@@ -106,6 +113,7 @@ impl Metadata {
                     Arc::new(CachedMetadata {
                         presentation,
                         artwork,
+                        artwork_version,
                         audio_stream_count: stream_count("audio"),
                         video_stream_count: stream_count("video"),
                     })

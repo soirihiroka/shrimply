@@ -9,18 +9,10 @@ ColumnLayout {
     property int initialHeight: backend.minimumDimension()
     property string initialFpsNumerator: "30"
     property string initialFpsDenominator: "1"
-    property int stagedWidth: initialWidth
-    property int stagedHeight: initialHeight
-    property string stagedFpsNumerator: initialFpsNumerator
-    property string stagedFpsDenominator: initialFpsDenominator
     property bool initialized: false
     property string pendingResetSourceKey: ""
     readonly property string sourceKey: initialWidth + ":" + initialHeight + ":"
         + initialFpsNumerator + ":" + initialFpsDenominator
-    readonly property bool changed: stagedWidth !== initialWidth
-        || stagedHeight !== initialHeight
-        || stagedFpsNumerator !== initialFpsNumerator
-        || stagedFpsDenominator !== initialFpsDenominator
     signal applyRequested(int width, int height, string fpsNumerator, string fpsDenominator)
     spacing: 8
 
@@ -30,11 +22,7 @@ ColumnLayout {
                 || initialFpsNumerator.length === 0
                 || initialFpsDenominator.length === 0)
             return
-        stagedWidth = initialWidth
-        stagedHeight = initialHeight
-        stagedFpsNumerator = initialFpsNumerator
-        stagedFpsDenominator = initialFpsDenominator
-        backend.configure(stagedWidth, stagedHeight, stagedFpsNumerator, stagedFpsDenominator)
+        backend.configure(initialWidth, initialHeight, initialFpsNumerator, initialFpsDenominator)
     }
 
     onSourceKeyChanged: {
@@ -57,7 +45,7 @@ ColumnLayout {
     }
 
     ControlRow {
-        label: ComponentTranslations.text("FPS")
+        label: backend.settingsText("fps")
         Dropdown {
             value: String(backend.frameRate)
             values: {
@@ -70,17 +58,15 @@ ColumnLayout {
             }
             onSelected: function(value) {
                 backend.setFrameRateValue(Number(value))
-                root.stagedFpsNumerator = backend.fpsNumerator()
-                root.stagedFpsDenominator = backend.fpsDenominator()
             }
         }
     }
 
     ControlRow {
-        label: ComponentTranslations.text("Resolution")
+        label: backend.settingsText("resolution")
         Number2Picker {
-            first: root.stagedWidth
-            second: root.stagedHeight
+            first: backend.width
+            second: backend.height
             minimum: backend.minimumDimension()
             maximum: backend.maximumDimension()
             dragStep: 1
@@ -90,21 +76,21 @@ ColumnLayout {
             secondPrefix: "H"
             enableLock: true
             onValuesEdited: function(width, height, component) {
-                root.stagedWidth = Math.round(width)
-                root.stagedHeight = Math.round(height)
+                backend.setWidthValue(Math.round(width))
+                backend.setHeightValue(Math.round(height))
             }
         }
     }
 
     RowLayout {
         Layout.alignment: Qt.AlignRight
-        visible: root.changed
+        visible: backend.changed
         Button {
-            text: ComponentTranslations.text("Discard")
-            onClicked: root.resetDraft()
+            text: backend.settingsText("discard")
+            onClicked: backend.discard()
         }
         Button {
-            text: ComponentTranslations.text("Apply")
+            text: backend.settingsText("apply")
             highlighted: true
             onClicked: confirmation.open()
         }
@@ -119,13 +105,11 @@ ColumnLayout {
             || (root.Window.window ? root.Window.window.contentItem : root)
         anchors.centerIn: Qt.platform.os === "windows"
             ? windowsDialogAnchor : Overlay.overlay
-        title: ComponentTranslations.text("Change Project Settings?")
+        title: backend.settingsText("title")
         standardButtons: Dialog.NoButton
 
         contentItem: Label {
-            text: ComponentTranslations.text(
-                "Changing the frame rate or resolution can affect timing, visual layout, and rendered output. Existing media and effects may no longer match the project."
-            )
+            text: backend.settingsText("warning")
             wrapMode: Text.Wrap
             width: Qt.platform.os === "windows"
                 ? Math.max(0, Math.min(460, confirmation.windowsDialogAnchor.width - 48))
@@ -149,11 +133,11 @@ ColumnLayout {
         footer: DialogButtonBox {
             Button {
                 id: cancel
-                text: ComponentTranslations.text("Cancel")
+                text: backend.settingsText("cancel")
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
             Button {
-                text: ComponentTranslations.text("Apply")
+                text: backend.settingsText("apply")
                 highlighted: true
                 DialogButtonBox.buttonRole: DialogButtonBox.DestructiveRole
             }
@@ -161,10 +145,10 @@ ColumnLayout {
             onDiscarded: {
                 confirmation.close()
                 root.applyRequested(
-                    root.stagedWidth,
-                    root.stagedHeight,
-                    root.stagedFpsNumerator,
-                    root.stagedFpsDenominator
+                    backend.width,
+                    backend.height,
+                    backend.fpsNumerator(),
+                    backend.fpsDenominator()
                 )
             }
         }

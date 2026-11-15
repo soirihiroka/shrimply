@@ -1,3 +1,4 @@
+import dev.shrimply.components
 import QtCore
 import QtQuick
 import QtQuick.Controls
@@ -307,7 +308,7 @@ ApplicationWindow {
                                         backend.setPreferenceValue("preview-shadow-size", String(value))
                                 }
                                 Label { text: backend.translate("Upsample Method") }
-                                ComboBox {
+                                AdaptiveComboBox {
                                     id: previewUpsample
                                     Layout.fillWidth: true
                                     model: [backend.translate("Nearest"), backend.translate("Bilinear")]
@@ -315,7 +316,7 @@ ApplicationWindow {
                                         backend.setPreferenceValue("preview-upsample-method", String(currentIndex))
                                 }
                                 Label { text: backend.translate("Downsample Method") }
-                                ComboBox {
+                                AdaptiveComboBox {
                                     id: previewDownsample
                                     Layout.fillWidth: true
                                     model: [backend.translate("Nearest"), backend.translate("Bilinear"), backend.translate("Trilinear")]
@@ -442,7 +443,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             ColumnLayout {
                                 anchors.fill: parent
-                                ComboBox {
+                                AdaptiveComboBox {
                                     id: serverChoice
                                     Layout.fillWidth: true
                                     model: ListModel { id: serverModel }
@@ -509,7 +510,7 @@ ApplicationWindow {
                                 Label { text: backend.translate("CUDA") }
                                 Label { id: serverCuda; Layout.fillWidth: true }
                                 Label { text: backend.translate("Device") }
-                                ComboBox {
+                                AdaptiveComboBox {
                                     id: serverDevice
                                     Layout.fillWidth: true
                                     enabled: !root.serverBusy && currentIndex >= 0

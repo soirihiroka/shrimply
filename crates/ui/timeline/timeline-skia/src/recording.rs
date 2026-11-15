@@ -196,6 +196,18 @@ pub(crate) struct ActiveVideoRecording {
 }
 
 impl Scene {
+    pub fn video_recording_in_progress(&self) -> bool {
+        self.active_video_recording
+            .as_ref()
+            .is_some_and(|active| !active.stopping)
+    }
+
+    pub fn video_recording_clock_active(&self) -> bool {
+        self.active_video_recording
+            .as_ref()
+            .is_some_and(|active| active.ready && !active.stopping)
+    }
+
     pub fn toggle_video_recording(&mut self, key: TrackKey) -> Result<(), String> {
         self.toggle_video_recording_at(key, player_state::current_time(&self.player))
     }
@@ -324,7 +336,7 @@ impl Scene {
         }
     }
 
-    pub(crate) fn maintain_video_recording(&mut self) -> bool {
+    pub fn maintain_video_recording(&mut self) -> bool {
         let Some(active) = self.active_video_recording.as_ref() else {
             return false;
         };

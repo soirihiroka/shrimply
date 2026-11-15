@@ -484,6 +484,23 @@ pub fn time_ratio_f64(time: Time, duration: Time) -> f64 {
     if duration == Time::ZERO {
         return 0.0;
     }
+    if let (
+        Some((time_numerator, time_denominator)),
+        Some((duration_numerator, duration_denominator)),
+    ) = (
+        fraction_ratio_i128(time.seconds),
+        fraction_ratio_i128(duration.seconds),
+    ) && let (Some(numerator), Some(denominator)) = (
+        time_numerator.checked_mul(duration_denominator),
+        time_denominator.checked_mul(duration_numerator),
+    ) && denominator != 0
+    {
+        // Stay in exact integer arithmetic until this existing UI conversion.
+        let value = numerator as f64 / denominator as f64;
+        if value.is_finite() {
+            return value;
+        }
+    }
     let ratio =
         BigFraction::from_fraction(time.seconds) / BigFraction::from_fraction(duration.seconds);
     let value = ratio

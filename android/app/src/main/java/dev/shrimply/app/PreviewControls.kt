@@ -5,6 +5,11 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,9 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-/** Native widgets bind Rust's preview status and opaque guide command. */
+/** Native widgets bind Rust's preview presentation and opaque commands. */
 @Composable
-internal fun PreviewControls(timeline: TimelineSession, modifier: Modifier = Modifier, compact: Boolean = false) {
+internal fun PreviewControls(timeline: TimelineSession, modifier: Modifier = Modifier, compact: Boolean = false, pendingOperation: String? = null) {
     val snapshot by timeline.snapshot
     val controls = snapshot.optJSONObject("preview_controls") ?: return
     if (!controls.getBoolean("visible")) return
@@ -41,10 +46,12 @@ internal fun PreviewControls(timeline: TimelineSession, modifier: Modifier = Mod
     val scope = rememberCoroutineScope()
     var failure by remember { mutableStateOf<String?>(null) }
     Surface(modifier.width(size), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(Modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.size(size), contentAlignment = Alignment.Center) {
-                if (controls.getBoolean("loading")) {
-                    CircularProgressIndicator(Modifier.size(16.dp).semantics { contentDescription = controls.getString("status") }, strokeWidth = 2.dp)
+                if (controls.getBoolean("loading") || pendingOperation != null) {
+                    CircularProgressIndicator(Modifier.size(16.dp).semantics {
+                        contentDescription = pendingOperation?.ifEmpty { controls.getString("loading_status") } ?: controls.getString("status")
+                    }, strokeWidth = 2.dp)
                 } else {
                     Icon(painterResource(R.drawable.check_plain), controls.getString("status"), Modifier.size(16.dp))
                 }
@@ -66,12 +73,60 @@ internal fun PreviewControls(timeline: TimelineSession, modifier: Modifier = Mod
             }, modifier = Modifier.size(size)) {
                 Icon(painterResource(R.drawable.ruler_angled), guide.getString("label"), Modifier.size(16.dp))
             }
+            controls.optJSONObject("paint")?.let { paint ->
+                PreviewPaintControls(paint, size, controls.getString("close_label")) { command ->
+                    scope.launch {
+                        try { timeline.request(command) } catch (error: Exception) { failure = error.message }
+                    }
+                }
+            }
         }
     }
     failure?.let { message ->
         AlertDialog(onDismissRequest = { failure = null }, text = { Text(message) }, confirmButton = {
             TextButton(onClick = { failure = null }) { Text(controls.getString("close_label")) }
         })
+    }
+}
+
+/** Paint controls carry Rust labels, values and commands; native code only renders them. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PreviewPaintControls(paint: JSONObject, size: androidx.compose.ui.unit.Dp, closeLabel: String, send: (JSONObject) -> Unit) {
+    val buttons = paint.getJSONArray("buttons")
+    for (index in 0 until buttons.length()) {
+        val control = buttons.getJSONObject(index)
+        if (control.getBoolean("separator")) HorizontalDivider()
+        val anchor: @Composable (open: () -> Unit) -> Unit = { open ->
+            IconToggleButton(checked = control.getBoolean("active"),
+                colors = IconButtonDefaults.iconToggleButtonColors(checkedContainerColor = MaterialTheme.colorScheme.secondaryContainer),
+                onCheckedChange = { if (control.isNull("editor")) send(control.getJSONObject("command")) else open() },
+                modifier = Modifier.size(size)) {
+                when {
+                    !control.isNull("color") -> {
+                        val rgba = control.getJSONArray("color")
+                        Box(Modifier.size(18.dp).background(Color(rgba.getDouble(0).toFloat(), rgba.getDouble(1).toFloat(),
+                            rgba.getDouble(2).toFloat(), rgba.getDouble(3).toFloat()), CircleShape)
+                            .semantics { contentDescription = control.getString("label") })
+                    }
+                    !control.isNull("icon") -> Icon(painterResource(inspectorIcon(control.getString("icon"))), control.getString("label"), Modifier.size(16.dp))
+                    else -> Text(control.getString("text"), fontSize = 11.sp,
+                        modifier = Modifier.semantics { contentDescription = control.getString("label") })
+                }
+            }
+        }
+        if (control.isNull("editor")) anchor {} else AdaptiveMenuAnchor(anchor = anchor) { dismiss ->
+            val field = control.getJSONObject("editor")
+            var value by remember { mutableFloatStateOf(field.getDouble("value").toFloat()) }
+            Column(Modifier.widthIn(min = 240.dp).padding(horizontal = 24.dp, vertical = 16.dp)) {
+                Text(field.getString("label"), style = MaterialTheme.typography.titleMedium)
+                Slider(value = value, onValueChange = { value = it },
+                    valueRange = field.getDouble("minimum").toFloat()..field.getDouble("maximum").toFloat(),
+                    steps = ((field.getDouble("maximum") - field.getDouble("minimum")) / field.getDouble("step")).toInt() - 1,
+                    onValueChangeFinished = { send(JSONObject(control.getJSONObject("command").toString()).put("value", value)) })
+                TextButton(onClick = dismiss, modifier = Modifier.align(Alignment.End)) { Text(closeLabel) }
+            }
+        }
     }
 }
 

@@ -147,13 +147,34 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         }
     }
 
+    suspend fun sourcePath(uri: Uri): String? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            check(!closing) { "Project session closed" }
+            ProjectDocumentsProvider.sourceFile(context, uri)?.absolutePath ?: run {
+                val id = if (DocumentsContract.isDocumentUri(context, uri)) DocumentsContract.getDocumentId(uri) else DocumentsContract.getTreeDocumentId(uri)
+                var mapped: String? = null
+                for ((folder, origin) in origins.all) {
+                    val tree = (origin as? String)?.let(Uri::parse) ?: continue
+                    if (tree.authority != uri.authority) continue
+                    if (DocumentsContract.getTreeDocumentId(tree) == id) { mapped = File(folder).canonicalPath; break }
+                    val document = DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                    mirrorDatabase.value.rawQuery("SELECT path FROM source_entries WHERE uri=? LIMIT 1", arrayOf(document.toString())).use {
+                        if (it.moveToFirst()) mapped = File(it.getString(0)).canonicalPath
+                    }
+                    if (mapped != null) break
+                }
+                mapped
+            }
+        }
+    }
+
     suspend fun showInFiles(path: String) = withContext(Dispatchers.IO) {
         val directory = mutex.withLock {
             check(!closing) { "Project session closed" }
             val file = File(path).canonicalFile
             check(file.exists()) { "The selected file is unavailable." }
             val directory = if (file.isDirectory) file else file.parentFile!!
-            val folder = projectRoot(file)
+            val folder = if (directory == root.canonicalFile) directory else projectRoot(file)
             val tree = origins.getString(folder.absolutePath, null)?.let(Uri::parse)
             if (tree == null) ProjectDocumentsProvider.directoryUri(context, directory)
             else {

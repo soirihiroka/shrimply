@@ -79,7 +79,7 @@ fn changing_sibling_preserves_text_identity_inside_an_active_container() {
 fn changed_outline_never_reuses_the_previous_text_path() {
     let mut renderer = Renderer::default();
     let scene = scene(
-        "mut words=\"First\"\nlet label=Text(words,id=\"label\")\nAnimation(children=[label])\nwait(500ms)\nwords=\"Different words\"\nwait(500ms)",
+        "mut words=\"First\"\nlet label=Text(words,id=\"label\")\nAnimation(children=[label])\nwait(500ms)\nanimate(words,to=\"Different words\",duration=0s)\nwait(500ms)",
         &mut renderer,
     );
     let options = Options::for_animation(scene.animation());

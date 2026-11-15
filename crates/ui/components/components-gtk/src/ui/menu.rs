@@ -107,6 +107,26 @@ pub fn adaptive_menu(
     });
 }
 
+/// Custom native popovers follow the same input policy as action and choice menus.
+pub fn adaptive_popover(
+    button: &impl IsA<gtk::Button>,
+    content: impl Fn() -> gtk::Widget + 'static,
+) {
+    let button = button.as_ref();
+    let content = Rc::new(content);
+    let sheet_content = content.clone();
+    super::selector::on_touch_menu(button, move |widget| {
+        menu_sheet(&sheet_content(), None).present(Some(widget));
+    });
+    button.connect_clicked(move |button| {
+        let popover = gtk::Popover::new();
+        popover.set_parent(button);
+        popover.set_child(Some(&content()));
+        unparent_on_close(&popover);
+        popover.popup();
+    });
+}
+
 /// Preserve native action state, targets and custom children in touch menus.
 pub fn action_menu_sheet(
     model: &impl IsA<gio::MenuModel>,

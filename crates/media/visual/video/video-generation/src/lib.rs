@@ -16,7 +16,6 @@ const MESSAGE_PACK_STREAM: &str = "application/x-msgpack-stream";
 const MAXIMUM_MEDIA_BYTES: usize = 256 * 1024 * 1024;
 const MAXIMUM_REQUEST_MEDIA_BYTES: usize = 512 * 1024 * 1024;
 const MAXIMUM_EVENT_BYTES: usize = 2 * 1024 * 1024;
-const WAN_MODEL_PREFIX: &str = "Wan-AI/Wan";
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct VideoGenerationSettings {
@@ -201,6 +200,15 @@ impl InputDefinition {
     }
 }
 
+pub fn media_kind(path: &Path) -> Option<MediaKind> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" => Some(MediaKind::Image),
+        "mp4" | "mov" | "mkv" | "webm" => Some(MediaKind::Video),
+        "wav" | "mp3" | "flac" | "ogg" | "opus" | "m4a" | "aac" => Some(MediaKind::Audio),
+        _ => None,
+    }
+}
+
 pub fn sync_settings(settings: &mut VideoGenerationSettings, model: &VideoGenerationModel) {
     settings.model = Some(model.id.clone());
     settings.inputs.retain(|key, value| {
@@ -234,6 +242,8 @@ pub fn is_visible(
 #[derive(Serialize)]
 pub struct GenerationRequest {
     model: String,
+    #[serde(skip)]
+    output: ModelOutput,
     inputs: BTreeMap<String, InputValue>,
 }
 
@@ -314,7 +324,21 @@ pub fn generation_request(
                     value: value.clone(),
                 }
             }
-            (InputDefinition::Number { .. }, VideoGenerationValue::Number { value }) => {
+            (
+                InputDefinition::Number {
+                    minimum, maximum, ..
+                },
+                VideoGenerationValue::Number { value },
+            ) => {
+                if !shrimply_math_core::fraction_is_finite(*value)
+                    || value < minimum
+                    || value > maximum
+                {
+                    return Err(format!(
+                        "{} must be a finite number within its allowed range",
+                        definition.label()
+                    ));
+                }
                 InputValue::Number { value: *value }
             }
             (
@@ -377,6 +401,7 @@ pub fn generation_request(
     }
     Ok(GenerationRequest {
         model: model.id.clone(),
+        output: model.output,
         inputs,
     })
 }
@@ -489,7 +514,7 @@ pub fn generate(
     destination: &Path,
     mut on_progress: impl FnMut(&str) -> bool,
 ) -> Result<GenerationResult, String> {
-    let expected_audio_streams = u32::from(!request.model.starts_with(WAN_MODEL_PREFIX));
+    let expected_audio_streams = u32::from(request.output.audio);
     let body = rmp_serde::to_vec_named(request)
         .map_err(|error| format!("Could not encode video-generation request: {error}"))?;
     let endpoint = format!("{}/video-generations", server_url.trim_end_matches('/'));
@@ -607,7 +632,11 @@ pub fn generate(
                 if expected_bytes != Some(received_bytes) {
                     return Err("Generated output ended at the wrong size".to_string());
                 }
-                if result.video_streams != 1
+                if !shrimply_math_core::fraction_is_finite(result.duration)
+                    || result.duration <= shrimply_math_core::FRACTION_ZERO
+                    || !shrimply_math_core::fraction_is_finite(result.frame_rate)
+                    || result.frame_rate <= shrimply_math_core::FRACTION_ZERO
+                    || result.video_streams != 1
                     || result.audio_streams != expected_audio_streams
                     || result.width == 0
                     || result.height == 0

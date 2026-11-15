@@ -1,3 +1,4 @@
+import dev.shrimply.components
 import QtCore
 import QtQuick
 import QtQuick.Controls
@@ -155,12 +156,13 @@ ApplicationWindow {
                             display: AbstractButton.IconOnly
                             ToolTip.visible: hovered
                             ToolTip.text: text
-                            onClicked: options.popup(
-                                optionsButton, Qt.point(0, optionsButton.height))
+                            MenuInput { id: optionsInput }
+                            Item { id: optionsAnchor; y: parent.height; width: 1; height: 1 }
+                            onClicked: options.presentForInput(optionsAnchor, optionsInput.takeTouch())
 
-                            Menu {
+                            AdaptiveMenu {
                                 id: options
-                                popupType: Popup.Native
+                                pointerPopupType: Popup.Native
 
                                 MenuItem {
                                     text: backend.text("Info")
@@ -306,18 +308,13 @@ ApplicationWindow {
                 font.bold: true
             }
 
-            ComboBox {
+            AdaptiveComboBox {
                 id: preset
                 Layout.fillWidth: true
                 model: backend.presetCount
                 currentIndex: 3
                 displayText: currentIndex >= 0 ? backend.presetLabel(currentIndex) : ""
-                delegate: ItemDelegate {
-                    required property int index
-                    width: preset.width
-                    text: backend.presetLabel(index)
-                    highlighted: preset.highlightedIndex === index
-                }
+                labelForIndex: function(index) { return backend.presetLabel(index) }
                 onActivated: function(index) {
                     if (index < backend.presetCount - 1) {
                         widthInput.value = backend.presetWidth(index)
@@ -376,18 +373,13 @@ ApplicationWindow {
                     Layout.fillWidth: true
                 }
 
-                ComboBox {
+                AdaptiveComboBox {
                     id: frameRate
                     model: backend.frameRateCount
                     currentIndex: 8
                     displayText: currentIndex >= 0
                         ? backend.frameRateLabel(currentIndex) : ""
-                    delegate: ItemDelegate {
-                        required property int index
-                        width: frameRate.width
-                        text: backend.frameRateLabel(index)
-                        highlighted: frameRate.highlightedIndex === index
-                    }
+                    labelForIndex: function(index) { return backend.frameRateLabel(index) }
                     onActivated: preset.currentIndex = backend.presetCount - 1
                 }
             }

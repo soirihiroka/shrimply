@@ -2,8 +2,10 @@ mod audio;
 mod audio_generator;
 mod audio_modifiers;
 mod caption;
+mod font_picker;
 mod metadata;
 mod modifiers;
+pub mod preferences;
 mod project;
 pub mod remote;
 pub mod timeline_service;
@@ -20,11 +22,33 @@ use shrimply_project_document::project::ItemAddress;
 pub use shrimply_inspector_core::BasicInspectorAction;
 pub use video::inspector_item as video_item;
 
+pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct InspectorDocument {
     pub target: InspectorTarget,
     pub title: String,
     pub categories: Vec<InspectorCategory>,
+    server_url: String,
+}
+
+impl InspectorDocument {
+    /// Native hosts retaining only serialized widgets must refresh running controls.
+    pub fn pending(&self) -> bool {
+        self.categories
+            .iter()
+            .flat_map(|category| &category.items)
+            .any(|item| {
+                let section = match item {
+                    InspectorListItem::Item(item) => &item.section,
+                    InspectorListItem::Flat(section) => section,
+                };
+                section
+                    .controls
+                    .iter()
+                    .any(|control| control.visible && control.busy)
+            })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,9 +77,9 @@ impl CategoryIcon {
         match self {
             Self::Project | Self::Track => "sliders-horizontal-symbolic",
             Self::Text => "rich-text-symbolic",
-            Self::Visual => "image-symbolic",
+            Self::Visual => "blend-tool-symbolic",
             Self::Audio => "audio-volume-high-symbolic",
-            Self::Playback => "media-playback-start-symbolic",
+            Self::Playback => "playback-speed-symbolic",
             Self::Info => "info-outline-symbolic",
             Self::Performance => "speedometer-symbolic",
             Self::Transition => "select-symbolic",
@@ -208,6 +232,7 @@ pub fn basic(snapshot: InspectorSnapshot) -> InspectorDocument {
         target: snapshot.target,
         title: snapshot.title,
         categories,
+        server_url: String::new(),
     }
 }
 
@@ -233,6 +258,7 @@ pub fn document(
         .and_then(Value::as_u64)
         .and_then(|value| u32::try_from(value).ok());
     let mut document = basic(snapshot);
+    document.server_url = server_url.into();
     if let Some(media) = media
         && let Some(category) = document
             .categories
@@ -252,6 +278,13 @@ pub fn document(
                 InspectorListItem::Item(item) => &mut item.section,
             };
             for control in &mut section.controls {
+                if control.kind == ControlKind::ProjectSettings {
+                    control.project_settings =
+                        Some(Box::new(controller.project_settings_presentation()));
+                }
+                controller
+                    .populate_background_control(&document.target, control, server_url)
+                    .expect("background control must match its selected item");
                 if control.kind == ControlKind::TtsEditor {
                     match controller.tts_editor(&document.target, server_url, remembered_tts_model)
                     {

@@ -277,7 +277,7 @@ reject!(
     "S002"
 );
 reject!(zero_timer_period, "timer 2 every 0s { wait(1s) }\n", "S002");
-reject!(negative_wait, "wait(-1s)\n", "S304");
+reject!(negative_wait, "wait(-1s)\n", "S305");
 reject!(
     invalid_color,
     "let color = Color(\"not-a-color\")\n",

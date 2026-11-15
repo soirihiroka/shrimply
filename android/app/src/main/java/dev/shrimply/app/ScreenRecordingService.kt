@@ -21,7 +21,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.view.Surface
-import android.view.WindowManager
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -35,8 +34,22 @@ class ScreenRecordingService : Service() {
         private const val Stop = "dev.shrimply.app.STOP_SCREEN_RECORDING"
         private const val PollTimeoutUs = 10_000L
         private const val StopTimeoutMs = 5_000L
-        private data class Delivery(val owner: String, val event: (JSONObject) -> Unit)
+        private class Delivery(val owner: String, @Volatile var event: (JSONObject) -> Unit) {
+            @Volatile var terminal: JSONObject? = null
+            @Volatile var abandoned = false
+            val stopping = AtomicBoolean(false)
+        }
         private val deliveries = ConcurrentHashMap<String, Delivery>()
+
+        private fun deliver(id: String, value: JSONObject) {
+            value.put("id", id)
+            deliveries[id]?.let { delivery ->
+                val terminal = value.getString("event") != "ready"
+                if (terminal) delivery.terminal = value
+                delivery.event(value)
+                if (terminal && delivery.abandoned) deliveries.remove(id, delivery)
+            }
+        }
 
         internal fun start(context: Context, owner: String, config: JSONObject, resultCode: Int,
             grant: Intent, event: (JSONObject) -> Unit) {
@@ -46,50 +59,72 @@ class ScreenRecordingService : Service() {
                 context.startForegroundService(Intent(context, ScreenRecordingService::class.java)
                     .putExtra("config", config.toString()).putExtra("result", resultCode).putExtra("grant", grant))
             } catch (error: Exception) {
-                deliveries.remove(id)?.event?.invoke(JSONObject().put("id", id).put("event", "failed").put("error", error.message))
+                val failure = JSONObject().put("id", id).put("event", "failed").put("error", error.message)
+                deliver(id, failure)
             }
         }
 
-        internal fun stop(context: Context, id: String): Boolean {
-            if (!deliveries.containsKey(id)) return false
-            context.startService(Intent(context, ScreenRecordingService::class.java).setAction(Stop).putExtra("id", id))
+        internal fun observe(owner: String, id: String, event: (JSONObject) -> Unit) {
+            deliveries[id]?.takeIf { it.owner == owner }?.let { delivery ->
+                delivery.event = event
+                delivery.terminal?.let(event)
+            }
+        }
+
+        internal fun acknowledge(id: String) { deliveries[id]?.takeIf { it.terminal != null }?.let { deliveries.remove(id, it) } }
+
+        internal fun stop(id: String): Boolean {
+            val delivery = deliveries[id] ?: return false
+            delivery.stopping.set(true)
             return true
         }
 
-        internal fun stopOwner(context: Context, owner: String) {
-            deliveries.entries.filter { it.value.owner == owner }.forEach { stop(context, it.key) }
+        internal fun stopOwner(owner: String) {
+            deliveries.entries.filter { it.value.owner == owner }.forEach { (id, delivery) ->
+                delivery.stopping.set(true)
+                delivery.abandoned = true
+                delivery.event = {}
+                if (delivery.terminal != null) deliveries.remove(id, delivery)
+            }
         }
     }
 
-    private val stopping = AtomicBoolean(false)
+    private var stopping = AtomicBoolean(false)
     private var recordingId: String? = null
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == Stop) {
             if (intent.getStringExtra("id") == recordingId) stopping.set(true)
+            if (recordingId == null) stopSelf(startId)
             return START_NOT_STICKY
         }
         val config = intent?.getStringExtra("config")?.let(::JSONObject) ?: run { stopSelf(); return START_NOT_STICKY }
         val id = config.getString("id")
         if (recordingId != null) {
-            deliveries.remove(id)?.event?.invoke(JSONObject().put("id", id).put("event", "failed")
-                .put("error", "A screen capture is already active"))
+            if (recordingId != id) deliver(id, JSONObject().put("event", "failed").put("error", "A screen capture is already active"))
             return START_NOT_STICKY
         }
         recordingId = id
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(NotificationChannel(Channel, config.getString("notification_title"), NotificationManager.IMPORTANCE_LOW))
-        val stop = PendingIntent.getService(this, NotificationId,
-            Intent(this, ScreenRecordingService::class.java).setAction(Stop).putExtra("id", id),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val notification = Notification.Builder(this, Channel).setSmallIcon(R.drawable.shrimply_monochrome)
-            .setContentTitle(config.getString("notification_title")).setContentText(config.getString("notification_text"))
-            .setOngoing(true).addAction(Notification.Action.Builder(null, config.getString("stop_label"), stop).build()).build()
-        startForeground(NotificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        val grant = intent.getParcelableExtra("grant", Intent::class.java)
-        val result = intent.getIntExtra("result", 0)
-        Thread({ capture(config, result, grant) }, "Shrimply screen capture").start()
+        stopping = deliveries[id]?.stopping ?: AtomicBoolean(true)
+        try {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(NotificationChannel(Channel, config.getString("notification_title"), NotificationManager.IMPORTANCE_LOW))
+            val stop = PendingIntent.getService(this, NotificationId,
+                Intent(this, ScreenRecordingService::class.java).setAction(Stop).putExtra("id", id),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val notification = Notification.Builder(this, Channel).setSmallIcon(R.drawable.shrimply_monochrome)
+                .setContentTitle(config.getString("notification_title")).setContentText(config.getString("notification_text"))
+                .setOngoing(true).addAction(Notification.Action.Builder(null, config.getString("stop_label"), stop).build()).build()
+            startForeground(NotificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            val grant = intent.getParcelableExtra("grant", Intent::class.java)
+            val result = intent.getIntExtra("result", 0)
+            Thread({ capture(config, result, grant) }, "Shrimply screen capture").start()
+        } catch (error: Exception) {
+            val failure = JSONObject().put("id", id).put("event", "failed").put("error", error.message ?: error.javaClass.simpleName)
+            deliver(id, failure)
+            stopSelf()
+        }
         return START_NOT_STICKY
     }
 
@@ -97,7 +132,6 @@ class ScreenRecordingService : Service() {
 
     private fun capture(config: JSONObject, resultCode: Int, grant: Intent?) {
         val id = config.getString("id")
-        fun event(value: JSONObject) { value.put("id", id); deliveries[id]?.event?.invoke(value) }
         var codec: MediaCodec? = null
         var surface: Surface? = null
         var projection: MediaProjection? = null
@@ -110,7 +144,8 @@ class ScreenRecordingService : Service() {
         try {
             check(grant != null) { "Screen capture permission was not granted" }
             if (stopping.get()) return
-            val bounds = getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
+            val screenWidth = config.getInt("screen_width")
+            val screenHeight = config.getInt("screen_height")
             val mime = config.getString("mime")
             val fps = config.getLong("fps_numerator").toDouble() / config.getLong("fps_denominator")
             val candidates = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.filter {
@@ -118,37 +153,38 @@ class ScreenRecordingService : Service() {
             }
             val encoder = candidates.firstOrNull { info ->
                 val caps = info.getCapabilitiesForType(mime)
-                val video = caps.videoCapabilities
-                val width = ((bounds.width() + video.widthAlignment - 1) / video.widthAlignment) * video.widthAlignment
-                val height = ((bounds.height() + video.heightAlignment - 1) / video.heightAlignment) * video.heightAlignment
+                val video = caps.videoCapabilities ?: return@firstOrNull false
+                val width = ((screenWidth + video.widthAlignment - 1) / video.widthAlignment) * video.widthAlignment
+                val height = ((screenHeight + video.heightAlignment - 1) / video.heightAlignment) * video.heightAlignment
                 MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface in caps.colorFormats && video.areSizeAndRateSupported(width, height, fps)
             } ?: error("No hardware encoder supports the captured screen size and frame rate")
-            val capabilities = encoder.getCapabilitiesForType(mime).videoCapabilities
-            val width = ((bounds.width() + capabilities.widthAlignment - 1) / capabilities.widthAlignment) * capabilities.widthAlignment
-            val height = ((bounds.height() + capabilities.heightAlignment - 1) / capabilities.heightAlignment) * capabilities.heightAlignment
+            val capabilities = checkNotNull(encoder.getCapabilitiesForType(mime).videoCapabilities)
+            val width = ((screenWidth + capabilities.widthAlignment - 1) / capabilities.widthAlignment) * capabilities.widthAlignment
+            val height = ((screenHeight + capabilities.heightAlignment - 1) / capabilities.heightAlignment) * capabilities.heightAlignment
             val format = MediaFormat.createVideoFormat(mime, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, capabilities.bitrateRange.clamp(config.getInt("bitrate")))
                 setFloat(MediaFormat.KEY_FRAME_RATE, fps.toFloat())
                 setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, fps.toFloat())
+                setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER, config.getLong("repeat_frame_after_us"))
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, config.getInt("keyframe_seconds"))
-                setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+                setInteger(MediaFormat.KEY_MAX_B_FRAMES, config.getInt("b_frames"))
             }
             val activeCodec = MediaCodec.createByCodecName(encoder.name)
             codec = activeCodec
             activeCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             surface = activeCodec.createInputSurface()
-            muxer = MediaMuxer(path.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            val activeMuxer = muxer
+            val activeMuxer = MediaMuxer(path.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = activeMuxer
             activeCodec.start()
-            val activeProjection = getSystemService(MediaProjectionManager::class.java).getMediaProjection(resultCode, grant)
+            val activeProjection = checkNotNull(getSystemService(MediaProjectionManager::class.java).getMediaProjection(resultCode, grant))
             projection = activeProjection
             activeProjection.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() { stopping.set(true) }
             }, Handler(Looper.getMainLooper()))
             display = activeProjection.createVirtualDisplay(config.getString("notification_title"), width, height,
-                resources.configuration.densityDpi, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, null)
-            event(JSONObject().put("event", "ready").put("width", width).put("height", height))
+                config.getInt("density_dpi"), DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, null)
+            deliver(id, JSONObject().put("event", "ready").put("width", width).put("height", height))
             val info = MediaCodec.BufferInfo()
             var track = -1
             var firstTimestamp: Long? = null
@@ -157,7 +193,7 @@ class ScreenRecordingService : Service() {
             var eos = false
             while (!eos) {
                 if (stopping.get() && stopAt == null) {
-                    display.release(); display = null
+                    display?.release(); display = null
                     activeProjection.stop()
                     activeCodec.signalEndOfInputStream()
                     stopAt = android.os.SystemClock.elapsedRealtime()
@@ -175,6 +211,7 @@ class ScreenRecordingService : Service() {
                             if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
                                 check(muxing) { "Hardware encoder returned data before its output format" }
                                 val bytes = checkNotNull(activeCodec.getOutputBuffer(index))
+                                bytes.position(info.offset); bytes.limit(info.offset + info.size)
                                 if (firstTimestamp == null) firstTimestamp = info.presentationTimeUs
                                 info.presentationTimeUs -= checkNotNull(firstTimestamp)
                                 check(info.presentationTimeUs >= lastTimestamp) { "Screen recording timestamps went backwards" }
@@ -194,16 +231,21 @@ class ScreenRecordingService : Service() {
         } catch (error: Exception) {
             terminal = JSONObject().put("event", "failed").put("error", error.message ?: error.javaClass.simpleName)
         } finally {
-            display?.release()
-            projection?.stop()
-            if (muxing) runCatching { muxer?.stop() }
-            muxer?.release()
-            runCatching { codec?.stop() }
-            codec?.release()
-            surface?.release()
-            if (!successful) path.delete()
-            event(terminal)
-            deliveries.remove(id)
+            var cleanupFailure: Exception? = null
+            fun release(action: () -> Unit) { try { action() } catch (error: Exception) { if (cleanupFailure == null) cleanupFailure = error } }
+            release { display?.release() }
+            release { projection?.stop() }
+            release { if (muxing) muxer?.stop() }
+            release { muxer?.release() }
+            release { codec?.stop() }
+            release { codec?.release() }
+            release { surface?.release() }
+            if (successful && cleanupFailure != null) {
+                successful = false
+                terminal = JSONObject().put("event", "failed").put("error", cleanupFailure?.message)
+            }
+            if (!successful && path.exists() && !path.delete()) terminal = JSONObject().put("event", "failed").put("error", "recording_cleanup_failed")
+            deliver(id, terminal)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }

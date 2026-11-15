@@ -5,6 +5,11 @@ use serde_json::{Value, json};
 use shrimply_i18n::text;
 use shrimply_inspector_core::{ControlKind, InspectorControl, InspectorController};
 
+mod resources;
+mod tags;
+pub use resources::resource_request;
+mod fonts;
+pub use fonts::Fonts;
 pub mod graph;
 mod numeric;
 mod presentation;
@@ -36,7 +41,7 @@ pub fn snapshot(document: &InspectorDocument) -> Value {
             };
             let id = item_key(document, category.key, &key);
             let controls: Vec<_> = section.controls.iter().enumerate().filter(|(_, control)| control.visible)
-                .filter_map(|(index, control)| presentation::control(control, &id, &control_key(control, index))).collect();
+                .map(|(index, control)| presentation::control(control, &id, &control_key(control, index))).collect();
             let mut actions: Vec<_> = header.into_iter().flat_map(|header| &header.actions).enumerate().map(|(index, action)| {
                 json!({"label":text(action.tooltip),"icon":action.icon,"enabled":action.sensitive,"command":{"item":id,"action":"header_action","index":index}})
             }).collect();
@@ -238,6 +243,27 @@ fn apply_control(
     request: &Value,
 ) -> Result<(), String> {
     let target = &document.target;
+    if control.kind == ControlKind::MultilineText && control.path == "/tags" {
+        return tags::apply(controller, document, control, action, request);
+    }
+    if action == "file" {
+        if !control.sensitive || !control.editable || !control.action_sensitive {
+            return Err("File selection is unavailable".into());
+        }
+        let selected = control
+            .action
+            .filter(|action| action.file_selection().is_some())
+            .ok_or("Control does not select a file")?;
+        return controller.set_control_file(
+            target,
+            selected,
+            std::path::Path::new(
+                request["path"]
+                    .as_str()
+                    .ok_or("File selection requires a path")?,
+            ),
+        );
+    }
     if control.kind == ControlKind::TtsEditor {
         return tts::apply(controller, target, control, action, request);
     }
@@ -253,22 +279,6 @@ fn apply_control(
             }
             request["value"] = values[0].clone();
             "expression_source"
-        } else if control.kind == ControlKind::ProjectSettings {
-            if values.len() != 3 {
-                return Err("project settings require dimensions and a frame rate".into());
-            }
-            let rate: shrimply_math_core::Fraction = values[2]
-                .as_str()
-                .expect("editor values are text")
-                .parse()
-                .map_err(|_| "invalid project frame rate")?;
-            request["components"] = json!([
-                values[0],
-                values[1],
-                shrimply_math_core::fraction_numerator(rate).to_string(),
-                shrimply_math_core::fraction_denominator(rate).to_string()
-            ]);
-            "settings"
         } else if !control.components.is_empty() {
             if values.len() != control.components.len() {
                 return Err("component count changed while the editor was open".into());
@@ -288,8 +298,7 @@ fn apply_control(
         if !control.action_sensitive {
             return Err("inspector action is unavailable".into());
         }
-        return controller
-            .trigger_video_control_action(target, control.action.ok_or("control has no action")?);
+        return controller.activate_control(target, control, &document.server_url);
     }
     if !control.editable {
         return Err("inspector control is read-only".into());
@@ -331,39 +340,50 @@ fn apply_control(
                 .collect::<Result<Vec<_>, _>>()?;
             controller.set_basic_control_components(target, control, &components)?;
         }
-        "settings" => {
+        "settings_stage" => {
             if control.kind != ControlKind::ProjectSettings {
                 return Err("control is not project settings".into());
             }
-            let components = request["components"]
-                .as_array()
-                .filter(|values| values.len() == 4)
-                .ok_or("project settings require dimensions and an exact frame rate")?;
-            let width = components[0]
-                .as_str()
-                .ok_or("width is required")?
-                .parse()
-                .map_err(|_| "invalid project width")?;
-            let height = components[1]
-                .as_str()
-                .ok_or("height is required")?
-                .parse()
-                .map_err(|_| "invalid project height")?;
-            let rate = format!(
-                "{}/{}",
-                components[2]
-                    .as_str()
-                    .ok_or("frame rate numerator is required")?,
-                components[3]
-                    .as_str()
-                    .ok_or("frame rate denominator is required")?
-            )
-            .parse()
-            .map_err(|_| "invalid project frame rate")?;
-            return controller.apply_project_settings(
-                shrimply_project_document::project::CanvasSize { width, height },
-                rate,
-            );
+            match request["field"].as_str() {
+                Some("frame_rate") => controller.stage_project_frame_rate(
+                    request["value"]
+                        .as_str()
+                        .ok_or("frame rate is required")?
+                        .parse()
+                        .map_err(|_| "invalid project frame rate")?,
+                )?,
+                Some("resolution") => {
+                    let values = request["values"]
+                        .as_array()
+                        .filter(|values| values.len() == 2)
+                        .ok_or("project dimensions are required")?;
+                    controller.stage_project_dimensions(
+                        values[0]
+                            .as_str()
+                            .ok_or("width is required")?
+                            .parse()
+                            .map_err(|_| "invalid project width")?,
+                        values[1]
+                            .as_str()
+                            .ok_or("height is required")?
+                            .parse()
+                            .map_err(|_| "invalid project height")?,
+                    )?;
+                }
+                _ => return Err("unknown project settings field".into()),
+            }
+            return Ok(());
+        }
+        "settings_discard" | "settings_apply" => {
+            if control.kind != ControlKind::ProjectSettings {
+                return Err("control is not project settings".into());
+            }
+            if action == "settings_apply" {
+                controller.apply_staged_project_settings()?;
+            } else {
+                controller.discard_project_settings();
+            }
+            return Ok(());
         }
         "keyframes" | "expression" => {
             if control.timeline_path.is_none() {

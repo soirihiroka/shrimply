@@ -195,12 +195,15 @@ public float integrate_ground_shadow<T : IGroundShadowTracer>(
     inout uint state,
     T tracer)
 {
+    SCENE_ARRAY_VIEW(SunLight, scene, sun_lights);
+    SCENE_ARRAY_VIEW(PointLight, scene, point_lights);
+
     uint sample_count = ground_light_sample_count(scene.pbr);
     float total_illuminance = 0.0;
     float blocked_illuminance = 0.0;
     for (uint light_index = 0; light_index < scene.sun_light_count; ++light_index)
     {
-        SunLight light = scene.sun_lights[light_index];
+        SunLight light = SCENE_ARRAY_AT(scene, sun_lights, light_index);
         for (uint sample_index = 0; sample_index < sample_count; ++sample_index)
         {
             float3 direction = sample_cone(
@@ -219,7 +222,7 @@ public float integrate_ground_shadow<T : IGroundShadowTracer>(
     }
     for (uint light_index = 0; light_index < scene.point_light_count; ++light_index)
     {
-        PointLight light = scene.point_lights[light_index];
+        PointLight light = SCENE_ARRAY_AT(scene, point_lights, light_index);
         for (uint sample_index = 0; sample_index < sample_count; ++sample_index)
         {
             float3 sampled_position = light.position_radius.xyz

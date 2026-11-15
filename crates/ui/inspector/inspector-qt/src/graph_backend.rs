@@ -1,4 +1,6 @@
 use core::pin::Pin;
+use cxx_qt::CxxQtType;
+use shrimply_inspector_core::keyframe_graph::FrameGraphAction;
 
 use cxx_qt_lib::{QString, QStringList};
 
@@ -70,6 +72,75 @@ pub(crate) fn update_control_graphs(
 }
 
 impl InspectorBackend {
+    pub fn control_graph_lifecycle(
+        mut self: Pin<&mut Self>,
+        category: i32,
+        item: i32,
+        control: i32,
+        phase: i32,
+        redo: bool,
+    ) {
+        let binding = (phase == 0)
+            .then(|| self.control_target(category, item, control))
+            .flatten();
+        let mut session = std::mem::take(&mut self.as_mut().rust_mut().graph_edit);
+        let result = crate::with_controller(|controller| match phase {
+            0 => binding.as_ref().map_or(Ok(()), |(target, control)| {
+                session.begin_control(controller, target, control)
+            }),
+            1 => session.finish_control(controller),
+            2 => session.cancel(controller),
+            3 => session.apply(
+                controller,
+                &controller.target(),
+                FrameGraphAction::HistoryRequested { redo },
+                |_| Ok(()),
+            ),
+            _ => panic!("Qt passed an invalid graph lifecycle action"),
+        });
+        self.as_mut().rust_mut().graph_edit_row =
+            if phase == 0 && result.is_ok() && binding.is_some() {
+                Some((
+                    usize::try_from(category).expect("graph category index"),
+                    usize::try_from(item).expect("graph item index"),
+                    usize::try_from(control).expect("graph control index"),
+                ))
+            } else {
+                None
+            };
+        self.as_mut().rust_mut().graph_edit = session;
+        if phase != 0 {
+            crate::mark_dirty();
+        }
+        self.as_mut().finish(result);
+    }
+
+    pub(crate) fn reconcile_graph_edit(
+        mut self: Pin<&mut Self>,
+        document: &crate::list::InspectorDocument,
+    ) -> Result<bool, String> {
+        let control = self
+            .rust()
+            .graph_edit_row
+            .and_then(|(category, item, control)| {
+                let item = document.categories.get(category)?.items.get(item)?;
+                let section = match item {
+                    crate::item::InspectorListItem::Item(item) => &item.section,
+                    crate::item::InspectorListItem::Flat(section) => section,
+                };
+                section.controls.get(control)
+            });
+        let mut session = std::mem::take(&mut self.as_mut().rust_mut().graph_edit);
+        let result = crate::with_controller(|controller| {
+            session.retain_control(controller, &document.target, control)
+        });
+        if !matches!(result, Ok(false)) {
+            self.as_mut().rust_mut().graph_edit_row = None;
+        }
+        self.as_mut().rust_mut().graph_edit = session;
+        result
+    }
+
     pub fn control_graph_point_times(&self, category: i32, item: i32, control: i32) -> QStringList {
         self.control(category, item, control)
             .and_then(|control| control.scalar_graph.as_ref())
@@ -234,9 +305,24 @@ impl InspectorBackend {
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;
-            crate::with_controller(|controller| {
-                controller.move_control_graph_keys(&target, &control, &moves)
-            })
+            let mut session = std::mem::take(&mut self.as_mut().rust_mut().graph_edit);
+            let mut times = Vec::new();
+            let result = crate::with_controller(|controller| {
+                session.apply(
+                    controller,
+                    &target,
+                    FrameGraphAction::KeysMoved(moves),
+                    |action| {
+                        let FrameGraphAction::KeysMoved(moves) = action else {
+                            unreachable!("graph edit preserves key moves");
+                        };
+                        times = controller.move_control_graph_keys(&target, &control, &moves)?;
+                        Ok(())
+                    },
+                )
+            });
+            self.as_mut().rust_mut().graph_edit = session;
+            result.map(|()| times)
         })();
         match result {
             Ok(times) => {

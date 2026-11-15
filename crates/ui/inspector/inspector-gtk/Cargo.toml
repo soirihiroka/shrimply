@@ -6,46 +6,23 @@ edition = "2024"
 [dependencies]
 hashbrown.workspace = true
 adw.workspace = true
-async-channel.workspace = true
 glam.workspace = true
 gtk.workspace = true
-num-traits.workspace = true
 pango = { workspace = true, features = ["v1_56"] }
 serde_json.workspace = true
-shrimply-audio-engine = { workspace = true }
-shrimply-audio-modifiers = { workspace = true }
-shrimply-profiling = { workspace = true }
-shrimply-3dgs-core = { workspace = true }
-shrimply-property-model = { workspace = true }
 shrimply-components-core = { workspace = true }
 shrimply-project-evaluation = { workspace = true }
-shrimply-discrete-keyframe-graph-skia = { workspace = true }
-shrimply-math-interpolation = { workspace = true }
 shrimply-inspector-core = { workspace = true, default-features = true }
 shrimply-inspector-document.workspace = true
 shrimply-property-transfer = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
-shrimply-resource-pipeline = { workspace = true }
-shrimply-text-3d = { workspace = true, default-features = true }
 shrimply-render-core = { workspace = true }
-shrimply-scene-3d = { workspace = true }
-shrimply-compute-client = { workspace = true }
-shrimply-shape-3d = { workspace = true }
 shrimply-editor-state = { workspace = true }
 shrimply-tts = { workspace = true }
 shrimply-tts-gtk = { workspace = true }
-shrimply-process-reporting = { workspace = true }
 shrimply-timeline-edit = { workspace = true }
 shrimply-components-gtk = { workspace = true }
-shrimply-visual-modifiers = { workspace = true, default-features = true }
-shrimply-visual-core = { workspace = true }
-shrimply-video-generation = { workspace = true }
-shrimply-video-generation-gtk = { workspace = true }
-shrimply-visual-cuda = { workspace = true }
 shrimply-math-color = { workspace = true, features = ["gdk"] }
-shrimply-cross-ui-theme = { workspace = true }
-shrimply-math-geometry = { workspace = true }
-shrimply-math-core = { workspace = true }
 skia-safe = { workspace = true, features = ["gl", "textlayout"] }
 shrimply-components-skia = { workspace = true }
 sourceview5.workspace = true

@@ -171,21 +171,15 @@ wait(1s)
     assert!(!p.bindings.contains_key("preview"));
 }
 #[test]
-fn frame_methods_have_timeline_effects_without_importing_or_materializing_for_duration() {
+fn unused_frame_plans_do_not_import_or_materialize_during_duration_discovery() {
     let mut sources = MemorySources::default();
-    sources.insert(
-        "main.sanim",
-        r#"type Entry={value:Number}
-let df=DataFrame(read<List<Entry>>("absent.csv"))
-let preview=df.head(5,duration=500ms).to_list(duration=250ms)
-wait(1s)
-"#,
-    );
+    sources.insert("main.sanim","type Row={value:Number}\nlet df=DataFrame(read<List<Row>>(\"absent.csv\"))\nlet unused=df.head(1).to_list()\nwait(1s)");
     let report = Engine::default()
         .duration("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
-    assert_eq!(report.duration, Fraction::new(7u64, 4u64));
+    assert_eq!(report.duration, Fraction::from(1));
     assert_eq!(report.statistics.executed_queries, 0);
+    assert!(!report.dependencies.contains_key("absent.csv"));
 }
 #[test]
 fn column_expressions_cannot_silently_align_unrelated_rows() {

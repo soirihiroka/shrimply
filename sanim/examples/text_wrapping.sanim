@@ -26,21 +26,21 @@ repeat 2 {
     animate(panel_width, to = 280pt, duration = 1400ms, ease = "linear")
     animate(panel_width, to = 620pt, duration = 1400ms, ease = "linear")
 }
-whitespace = "pre-wrap"
-mode_label = "whitespace-pre-wrap · preserved spaces and newlines"
+animate(whitespace, to="pre-wrap", duration=0s)
+animate(mode_label, to="whitespace-pre-wrap · preserved spaces and newlines", duration=0s)
 repeat 2 {
     animate(panel_width, to = 280pt, duration = 1400ms, ease = "linear")
     animate(panel_width, to = 620pt, duration = 1400ms, ease = "linear")
 }
-whitespace = "nowrap"
-mode_label = "whitespace-nowrap · clipped horizontal overflow"
+animate(whitespace, to="nowrap", duration=0s)
+animate(mode_label, to="whitespace-nowrap · clipped horizontal overflow", duration=0s)
 repeat 2 {
     animate(panel_width, to = 280pt, duration = 1400ms, ease = "linear")
     animate(panel_width, to = 620pt, duration = 1400ms, ease = "linear")
 }
-whitespace = "normal"
-overflow_wrap = "anywhere"
-mode_label = "whitespace-normal · wrap-anywhere · long words can break"
+animate(whitespace, to="normal", duration=0s)
+animate(overflow_wrap, to="anywhere", duration=0s)
+animate(mode_label, to="whitespace-normal · wrap-anywhere · long words can break", duration=0s)
 repeat 2 {
     animate(panel_width, to = 280pt, duration = 1400ms, ease = "linear")
     animate(panel_width, to = 620pt, duration = 1400ms, ease = "linear")

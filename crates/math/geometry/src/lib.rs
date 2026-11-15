@@ -6,6 +6,7 @@ pub use shapes::*;
 mod camera_reconstruction;
 mod ellipse;
 mod morph;
+pub mod optical_flow;
 mod projective;
 #[cfg(feature = "skia")]
 mod skia;

@@ -5,7 +5,7 @@ use sanim_render::{Options, Renderer};
 fn scene(file: &str, bytes: &[u8]) -> sanim_core::Animation {
     let mut sources = MemorySources::default();
     sources.insert(file, bytes);
-    sources.insert("main.sanim", format!("bg(Color(\"transparent\"))\nmut width=120pt\nlet image=<Image src=\"{file}\" width={{width}}/>\nAnimation(children=[image])\nwait(1s)\nwidth=160pt\nwait(1s)"));
+    sources.insert("main.sanim", format!("bg(Color(\"transparent\"))\nmut width=120pt\nlet image=<Image src=\"{file}\" width={{width}}/>\nAnimation(children=[image])\nwait(1s)\nanimate(width,to=160pt,duration=0s)\nwait(1s)"));
     Engine::new(Viewport {
         width: 320,
         height: 180,

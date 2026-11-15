@@ -443,7 +443,15 @@ pub(crate) fn lower(
             .expect("validated finite action starts")
     });
     for action in pending.actions {
-        lower_action(&action, &mut animation, limits, &mut budget, &mut work)?;
+        lower_action(&action, &mut animation, limits, &mut budget, &mut work).map_err(
+            |message| match &action.placement.animation.origin {
+                Some(origin) => plan::LayoutError::InvalidAt {
+                    location: origin.location.clone(),
+                    message,
+                },
+                None => plan::LayoutError::Invalid(message),
+            },
+        )?;
     }
 
     animation.indefinite = layout.duration.is_none();

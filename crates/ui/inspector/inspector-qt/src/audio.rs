@@ -4,7 +4,7 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList, QUrl};
 use shrimply_inspector_core::{
     InspectorTarget,
-    tts::{TtsEditorControl, TtsInputEdit},
+    tts::{self, TtsEditorControl, TtsInputEdit},
 };
 use shrimply_math_core::fraction_as_f64;
 
@@ -30,14 +30,18 @@ pub mod tts_qobject {
         #[qml_element]
         #[qproperty(QString, audio_id, cxx_name = "audioId")]
         #[qproperty(i32, revision)]
-        #[qproperty(bool, ready)]
+        #[qproperty(bool, model_enabled, cxx_name = "modelEnabled")]
+        #[qproperty(bool, inputs_enabled, cxx_name = "inputsEnabled")]
+        #[qproperty(bool, generate_enabled, cxx_name = "generateEnabled")]
+        #[qproperty(bool, generate_visible, cxx_name = "generateVisible")]
         #[qproperty(bool, busy)]
-        #[qproperty(bool, generating)]
         #[qproperty(QString, status)]
         #[qproperty(QString, status_tooltip, cxx_name = "statusTooltip")]
         #[qproperty(QString, generate_label, cxx_name = "generateLabel")]
         type TtsEditorBackend = super::TtsEditorBackendRust;
 
+        #[qinvokable]
+        fn label(self: &TtsEditorBackend, key: &QString) -> QString;
         #[qinvokable]
         fn refresh(self: Pin<&mut TtsEditorBackend>);
         #[qinvokable]
@@ -145,8 +149,6 @@ pub mod tts_qobject {
         fn remove_table_row(self: Pin<&mut TtsEditorBackend>, control: i32, row: i32);
         #[qinvokable]
         fn generate(self: Pin<&mut TtsEditorBackend>);
-        #[qinvokable]
-        fn cancel(self: Pin<&mut TtsEditorBackend>);
 
         #[qsignal]
         fn error(self: Pin<&mut TtsEditorBackend>, message: QString);
@@ -163,7 +165,6 @@ struct TtsEditorView {
     target: InspectorTarget,
     server_url: String,
     editor: shrimply_inspector_core::tts::EditorPresentation,
-    generation: shrimply_inspector_core::tts::GenerationPresentation,
 }
 
 fn build_tts_view(audio_id: uuid::Uuid) -> Result<TtsEditorView, String> {
@@ -186,7 +187,6 @@ fn build_tts_view(audio_id: uuid::Uuid) -> Result<TtsEditorView, String> {
                 &preferences.compute_server_url,
                 &preferences.last_tts_model,
             )?,
-            generation: controller.tts_generation(&target),
             target,
             server_url: preferences.compute_server_url,
         })
@@ -196,9 +196,11 @@ fn build_tts_view(audio_id: uuid::Uuid) -> Result<TtsEditorView, String> {
 pub struct TtsEditorBackendRust {
     audio_id: QString,
     revision: i32,
-    ready: bool,
+    model_enabled: bool,
+    inputs_enabled: bool,
+    generate_enabled: bool,
+    generate_visible: bool,
     busy: bool,
-    generating: bool,
     status: QString,
     status_tooltip: QString,
     generate_label: QString,
@@ -210,9 +212,11 @@ impl Default for TtsEditorBackendRust {
         Self {
             audio_id: QString::default(),
             revision: 0,
-            ready: false,
+            model_enabled: false,
+            inputs_enabled: false,
+            generate_enabled: false,
+            generate_visible: false,
             busy: true,
-            generating: false,
             status: QString::default(),
             status_tooltip: QString::default(),
             generate_label: QString::default(),
@@ -226,34 +230,64 @@ impl cxx_qt::Initialize for tts_qobject::TtsEditorBackend {
 }
 
 impl tts_qobject::TtsEditorBackend {
+    pub fn label(&self, key: &QString) -> QString {
+        shrimply_i18n_qt::text(match key.to_string().as_str() {
+            "model" => tts::MODEL_LABEL,
+            "audio_empty" => tts::AUDIO_EMPTY_LABEL,
+            "audio_choose" => tts::CHOOSE_AUDIO_LABEL,
+            "audio_clear" => tts::CLEAR_AUDIO_LABEL,
+            "audio_reveal" => tts::REVEAL_AUDIO_LABEL,
+            "audio_actions" => tts::AUDIO_ACTIONS_LABEL,
+            "add_row" => tts::ADD_ROW_LABEL,
+            "remove_row" => tts::REMOVE_ROW_LABEL,
+            key => panic!("unknown text-to-speech label: {key}"),
+        })
+    }
+
     pub fn refresh(mut self: Pin<&mut Self>) {
         let view = uuid::Uuid::parse_str(&self.audio_id().to_string())
             .map_err(|_| "TTS editor audio ID is invalid".to_string())
             .and_then(build_tts_view);
-        let (ready, busy, generating, status, label) = match &view {
-            Ok(view) => (
-                view.editor.model.is_some(),
-                view.editor.loading || view.generation.running,
-                view.generation.running,
-                if view.generation.status.is_empty() {
-                    view.editor.catalog_status.clone()
-                } else {
-                    view.generation.status.clone()
-                },
-                if view.editor.generated {
-                    "Regenerate"
-                } else {
-                    "Generate"
-                },
+        let (
+            model_enabled,
+            inputs_enabled,
+            generate_enabled,
+            generate_visible,
+            busy,
+            status,
+            label,
+        ) = match &view {
+            Ok(view) => {
+                let actions = view.editor.actions();
+                (
+                    actions.model_sensitive,
+                    actions.inputs_sensitive,
+                    actions.generate_sensitive,
+                    actions.generate_visible,
+                    actions.busy,
+                    actions.status.to_owned(),
+                    actions.generate_label,
+                )
+            }
+            Err(error) => (
+                false,
+                false,
+                false,
+                false,
+                false,
+                error.clone(),
+                tts::GENERATE_LABEL,
             ),
-            Err(error) => (false, false, false, error.clone(), "Generate"),
         };
         self.as_mut().rust_mut().view = view.ok();
-        self.as_mut().set_ready(ready);
+        self.as_mut().set_model_enabled(model_enabled);
+        self.as_mut().set_inputs_enabled(inputs_enabled);
+        self.as_mut().set_generate_enabled(generate_enabled);
+        self.as_mut().set_generate_visible(generate_visible);
         self.as_mut().set_busy(busy);
-        self.as_mut().set_generating(generating);
-        self.as_mut().set_status(QString::from(&status));
-        self.as_mut().set_status_tooltip(QString::from(status));
+        self.as_mut().set_status(shrimply_i18n_qt::text(&status));
+        self.as_mut()
+            .set_status_tooltip(shrimply_i18n_qt::text(&status));
         self.as_mut()
             .set_generate_label(shrimply_i18n_qt::text(label));
         let revision = self.revision().wrapping_add(1);
@@ -616,18 +650,6 @@ impl tts_qobject::TtsEditorBackend {
                             .ok_or_else(|| "TTS model is unavailable".to_string())?,
                     )
                 })
-            });
-        self.as_mut().finish(result);
-    }
-
-    pub fn cancel(mut self: Pin<&mut Self>) {
-        let result = self
-            .rust()
-            .view
-            .as_ref()
-            .ok_or_else(|| "TTS editor is not ready".to_string())
-            .and_then(|view| {
-                super::with_controller(|controller| controller.cancel_tts_generation(&view.target))
             });
         self.as_mut().finish(result);
     }

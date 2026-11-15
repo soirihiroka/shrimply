@@ -36,6 +36,7 @@ Button {
     }
 
     SelectorBackend { id: backend }
+    MenuInput { id: menuInput }
 
     // Match the editor timeline menus: QQuickMenu's Wayland positioner uses
     // the parent item's bottom-left anchor with bottom-right gravity.  A wide
@@ -56,10 +57,11 @@ Button {
     onValueChanged: selectedValue = value
     onSelectedValueChanged: synchronize()
     onClicked: {
+        const touch = menuInput.takeTouch()
         if (popup.opened)
             popup.close()
         else
-            popup.popup(popupAnchor, 0, 0)
+            popup.presentForInput(popupAnchor, touch)
     }
 
     contentItem: RowLayout {
@@ -73,7 +75,7 @@ Button {
 
     SearchMenu {
         id: popup
-        width: Math.max(root.width, 240)
+        preferredWidth: Math.max(root.width, 240)
         labels: root.labels
         selectedIndex: backend.selectedIndex(root.values, root.selectedValue)
         searchEnabled: root.enableSearch

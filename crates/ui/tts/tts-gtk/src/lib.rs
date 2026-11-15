@@ -1,846 +1,558 @@
-use shrimply_components_gtk::tr;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::rc::Rc;
-use std::thread;
-use std::time::Duration;
-
-use gtk::prelude::*;
-use gtk::{gio, glib};
-use shrimply_components_gtk::ui;
+use gtk::{gio, glib, prelude::*};
+use shrimply_components_gtk::{tr, ui};
 use shrimply_editor_state::preferences as preferences_store;
-use shrimply_inspector_core::tts::{GenerationEvent, GenerationTask, TtsGeneration, TtsInputEdit};
-use shrimply_math_core::fraction_as_f64;
-use shrimply_project_document::project::Time;
-use shrimply_tts::{
-    Fraction, InputDefinition, Speech, TableColumn, TtsModel, TtsSettings, TtsValue, is_visible,
+use shrimply_inspector_core::{
+    InspectorController, InspectorTarget,
+    tts::{self, EditorPresentation, TtsEditorControl, TtsInputEdit},
 };
-use uuid::Uuid;
+use std::{cell::RefCell, rc::Rc};
 
-type VisibilityRefresh = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+type EditInput = dyn Fn(&str, TtsInputEdit) -> bool;
 
 #[derive(Clone)]
-struct EditorCallbacks {
-    on_changed: Rc<dyn Fn(TtsSettings)>,
-    on_commit: Rc<dyn Fn()>,
-    on_generated: Rc<dyn Fn(TtsGeneration, TtsModel)>,
-}
-
-struct CachedEditor {
-    widget: gtk::Widget,
-    settings: Rc<RefCell<TtsSettings>>,
-    callbacks: Rc<RefCell<EditorCallbacks>>,
-    active_generation: Rc<RefCell<Option<GenerationTask>>>,
-    server_url: String,
-}
-
-thread_local! {
-    static EDITOR_CACHE: RefCell<HashMap<Uuid, CachedEditor>> = RefCell::new(HashMap::new());
-    static MODEL_CACHE: RefCell<HashMap<String, Vec<TtsModel>>> = RefCell::new(HashMap::new());
+struct Inputs {
+    edit: Rc<EditInput>,
+    commit: Rc<dyn Fn()>,
+    refresh: Rc<dyn Fn()>,
 }
 
 pub fn editor(
-    id: Uuid,
+    controller: InspectorController,
+    target: InspectorTarget,
     preferences: preferences_store::SharedPreferences,
-    value: &TtsSettings,
-    on_changed: impl Fn(TtsSettings) + 'static,
-    on_commit: impl Fn() + 'static,
-    on_generated: impl Fn(TtsGeneration, TtsModel) + 'static,
+    presentation: EditorPresentation,
+    refresh: Rc<dyn Fn()>,
 ) -> gtk::Widget {
-    let server_url = preferences_store::snapshot(&preferences).compute_server_url;
-    let callbacks = EditorCallbacks {
-        on_changed: Rc::new(on_changed),
-        on_commit: Rc::new(on_commit),
-        on_generated: Rc::new(on_generated),
-    };
-    if let Some(widget) = EDITOR_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        cache.retain(|cached_id, cached| {
-            *cached_id == id || cached.active_generation.borrow().is_some()
-        });
-        let replace = cache.get(&id).is_some_and(|cached| {
-            cached.active_generation.borrow().is_none()
-                && (cached.server_url != server_url || *cached.settings.borrow() != *value)
-        });
-        if replace {
-            cache.remove(&id);
-        }
-        let cached = cache.get_mut(&id)?;
-        *cached.callbacks.borrow_mut() = callbacks.clone();
-        detach(&cached.widget);
-        Some(cached.widget.clone())
-    }) {
-        return widget;
-    }
-
-    let settings = Rc::new(RefCell::new(value.clone()));
-    let models = Rc::new(RefCell::new(Vec::<TtsModel>::new()));
-    let callbacks = Rc::new(RefCell::new(callbacks));
-    let on_changed: Rc<dyn Fn(TtsSettings)> = {
-        let callbacks = callbacks.clone();
-        Rc::new(move |value| (callbacks.borrow().on_changed)(value))
-    };
-    let on_commit: Rc<dyn Fn()> = {
-        let callbacks = callbacks.clone();
-        Rc::new(move || (callbacks.borrow().on_commit)())
-    };
-    let on_generated: Rc<dyn Fn(TtsGeneration, TtsModel)> = {
-        let callbacks = callbacks.clone();
-        Rc::new(move |generation, model| (callbacks.borrow().on_generated)(generation, model))
-    };
-    let configuration = configuration(
-        preferences.clone(),
-        settings.clone(),
-        models.clone(),
-        on_changed.clone(),
-        on_commit.clone(),
-    );
-
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let actions = presentation.actions();
     let status = gtk::Label::builder()
-        .label(tr!("Connecting to server…").as_ref())
+        .label(tr!(actions.status).as_ref())
         .wrap(true)
         .xalign(0.0)
+        .hexpand(true)
         .css_classes(["dim-label"])
         .build();
     let spinner = gtk::Spinner::new();
     spinner.start();
-    spinner.set_size_request(18, 18);
-    let generate = gtk::Button::builder()
-        .label(
-            tr!(if value.model.is_some() {
-                "Regenerate"
-            } else {
-                "Generate"
+    spinner.set_visible(actions.busy);
+    let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    status_row.append(&spinner);
+    status_row.append(&status);
+    let model_controller = controller.clone();
+    let model_target = target.clone();
+    let model_preferences = preferences.clone();
+    let model_refresh = refresh.clone();
+    let server_url = presentation.server_url.clone();
+    let selector = ui::labeled_string_selector(
+        tts::MODEL_LABEL,
+        presentation
+            .model
+            .as_ref()
+            .map_or("", |model| model.id.as_str()),
+        presentation
+            .models
+            .iter()
+            .map(|choice| ui::StringChoice {
+                value: choice.value.clone(),
+                label: choice.label.clone(),
             })
-            .as_ref(),
-        )
-        .sensitive(false)
-        .css_classes(["suggested-action"])
-        .build();
-    let cancel = gtk::Button::with_label(tr!("Cancel").as_ref());
-    cancel.set_visible(false);
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    actions.append(&spinner);
-    actions.append(&status);
-    status.set_hexpand(true);
-    actions.append(&cancel);
-    actions.append(&generate);
-
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    content.append(&configuration);
-    content.append(&actions);
-
-    let active_generation = Rc::new(RefCell::new(None::<GenerationTask>));
-    {
-        let active_generation = active_generation.clone();
-        let status = status.clone();
-        let cancel = cancel.clone();
-        cancel.clone().connect_clicked(move |_| {
-            if let Some(cancellation) = active_generation.borrow().as_ref() {
-                status.set_label(tr!("Cancelling…").as_ref());
-                cancel.set_sensitive(false);
-                cancellation.cancel();
+            .collect(),
+        move |id| {
+            if report(model_controller.select_tts_model(&model_target, &server_url, &id)) {
+                preferences_store::set_last_tts_model(&model_preferences, &id);
+                model_refresh();
             }
+        },
+    );
+    selector.set_sensitive(actions.model_sensitive);
+    content.append(selector.widget());
+    if presentation.can_retry {
+        let retry = gtk::Button::with_label(tr!(tts::RETRY_LABEL).as_ref());
+        let retry_controller = controller.clone();
+        let retry_refresh = refresh.clone();
+        let server_url = presentation.server_url.clone();
+        retry.connect_clicked(move |_| {
+            retry_controller.retry_tts_models(&server_url);
+            retry_refresh();
         });
+        content.append(&retry);
     }
-
-    {
-        let generate = generate.clone();
-        let spinner = spinner.clone();
-        let status = status.clone();
-        let models = models.clone();
-        glib::timeout_add_local(Duration::from_millis(50), move || {
-            if !models.borrow().is_empty() {
-                spinner.set_visible(false);
-                status.set_label(tr!("Ready").as_ref());
-                generate.set_sensitive(true);
-                glib::ControlFlow::Break
-            } else {
-                glib::ControlFlow::Continue
-            }
-        });
-    }
-
-    {
-        let preferences = preferences.clone();
-        let settings = settings.clone();
-        let models = models.clone();
-        let status = status.clone();
-        let spinner = spinner.clone();
-        let cancel = cancel.clone();
-        let active_generation = active_generation.clone();
-        generate.clone().connect_clicked(move |button| {
-            let value = settings.borrow().clone();
-            let Some(selected) = value.model.as_ref().and_then(|id| {
-                models
-                    .borrow()
-                    .iter()
-                    .find(|model| &model.id == id)
-                    .cloned()
-            }) else {
-                status.set_label(tr!("Select a model").as_ref());
-                return;
-            };
-            preferences_store::set_last_tts_model(&preferences, &selected.id);
-            let server_url = preferences_store::snapshot(&preferences).compute_server_url;
-            let task = match GenerationTask::start(&server_url, selected.clone(), value) {
-                Ok(task) => task,
-                Err(error) => {
-                    status.set_label(&error);
-                    return;
-                }
-            };
-            *active_generation.borrow_mut() = Some(task);
-            button.set_sensitive(false);
-            cancel.set_visible(true);
-            cancel.set_sensitive(true);
-            spinner.set_visible(true);
-            status.set_tooltip_text(None);
-            status.set_label(tr!("Sending request…").as_ref());
-
-            let status = status.clone();
-            let spinner = spinner.clone();
-            let generate = button.clone();
-            let cancel = cancel.clone();
-            let active_generation = active_generation.clone();
-            let on_generated = on_generated.clone();
-            glib::timeout_add_local(Duration::from_millis(50), move || {
-                loop {
-                    let event = active_generation.borrow_mut().as_mut().and_then(GenerationTask::poll);
-                    match event {
-                        Some(GenerationEvent::Progress(message)) => status.set_label(&message),
-                        Some(GenerationEvent::Done(result)) => {
-                            generate.set_sensitive(true);
-                            cancel.set_visible(false);
-                            cancel.set_sensitive(true);
-                            spinner.set_visible(false);
-                            let cancelled = active_generation
-                                .borrow()
-                                .as_ref()
-                                .is_some_and(|cancellation| cancellation.is_cancelled());
-                            active_generation.borrow_mut().take();
-                            match result {
-                                Ok(generation) => {
-                                    generate.set_label(tr!("Regenerate").as_ref());
-                                    status.set_label(tr!("Generated").as_ref());
-                                    on_generated(generation, selected.clone());
-                                }
-                                Err(_) if cancelled => {
-                                    status.set_label(tr!("Cancelled").as_ref())
-                                }
-                                Err(error) if error.starts_with("Compute server connection failed") => {
-                                    tracing::error!(%error, "Text-to-speech compute connection failed");
-                                    status.set_label(tr!("Compute server connection failed").as_ref());
-                                    status.set_tooltip_text(Some(&error));
-                                }
-                                Err(error) => status.set_label(&error),
-                            }
-                            return glib::ControlFlow::Break;
-                        }
-                        None => return glib::ControlFlow::Continue,
+    if let Some(model) = &presentation.model {
+        let editing_controller = controller.clone();
+        let editing_target = target.clone();
+        let editing_model = model.clone();
+        let committed = controller.clone();
+        let input = Inputs {
+            edit: Rc::new(move |key, edit| {
+                match editing_controller.edit_tts_input(&editing_target, &editing_model, key, edit)
+                {
+                    Ok(_) => true,
+                    Err(error) => {
+                        report::<()>(Err(error));
+                        false
                     }
                 }
-            });
+            }),
+            commit: Rc::new(move || committed.finish_live_edit()),
+            refresh: refresh.clone(),
+        };
+        let fields = fields(&presentation.controls, input);
+        fields.set_sensitive(actions.inputs_sensitive);
+        content.append(&fields);
+        let generate = gtk::Button::with_label(tr!(actions.generate_label).as_ref());
+        generate.set_sensitive(actions.generate_sensitive);
+        generate.add_css_class("suggested-action");
+        let model = model.clone();
+        let server_url = presentation.server_url.clone();
+        generate.connect_clicked(move |button| {
+            controller.finish_live_edit();
+            match controller.toggle_tts_generation(&target, &server_url, &model) {
+                Ok(()) => {
+                    preferences_store::set_last_tts_model(&preferences, &model.id);
+                    refresh();
+                }
+                Err(error) => {
+                    shrimply_components_gtk::toast::show_confirmation_text_for_widget(
+                        button, &error,
+                    );
+                }
+            }
         });
+        status_row.append(&generate);
     }
-
-    let widget = content.upcast::<gtk::Widget>();
-    EDITOR_CACHE.with(|cache| {
-        cache.borrow_mut().insert(
-            id,
-            CachedEditor {
-                widget: widget.clone(),
-                settings,
-                callbacks,
-                active_generation,
-                server_url,
-            },
-        );
-    });
-    widget
-}
-
-fn detach(widget: &gtk::Widget) {
-    let Some(parent) = widget.parent() else {
-        return;
-    };
-    parent
-        .downcast::<gtk::Box>()
-        .expect("cached TTS editor must be parented by an inspector control box")
-        .remove(widget);
-}
-
-pub fn configuration(
-    preferences: preferences_store::SharedPreferences,
-    settings: Rc<RefCell<TtsSettings>>,
-    models: Rc<RefCell<Vec<TtsModel>>>,
-    on_changed: Rc<dyn Fn(TtsSettings)>,
-    on_commit: Rc<dyn Fn()>,
-) -> gtk::Widget {
-    configuration_for(
-        preferences,
-        settings,
-        models,
-        on_changed,
-        on_commit,
-        ConfigurationKind::Regular,
-    )
+    content.append(&status_row);
+    content.upcast()
 }
 
 pub fn caption_configuration(
     preferences: preferences_store::SharedPreferences,
-    settings: Rc<RefCell<TtsSettings>>,
-    models: Rc<RefCell<Vec<TtsModel>>>,
-    on_changed: Rc<dyn Fn(TtsSettings)>,
+    settings: Rc<RefCell<shrimply_tts::TtsSettings>>,
+    models: Rc<RefCell<Vec<shrimply_tts::TtsModel>>>,
+    on_changed: Rc<dyn Fn(shrimply_tts::TtsSettings)>,
     on_commit: Rc<dyn Fn()>,
 ) -> gtk::Widget {
-    configuration_for(
-        preferences,
-        settings,
-        models,
-        on_changed,
-        on_commit,
-        ConfigurationKind::Caption,
-    )
-}
-
-fn configuration_for(
-    preferences: preferences_store::SharedPreferences,
-    settings: Rc<RefCell<TtsSettings>>,
-    models: Rc<RefCell<Vec<TtsModel>>>,
-    on_changed: Rc<dyn Fn(TtsSettings)>,
-    on_commit: Rc<dyn Fn()>,
-    kind: ConfigurationKind,
-) -> gtk::Widget {
-    let fields = Rc::new(RefCell::new(ui::KeyedBox::new(
-        gtk::Orientation::Vertical,
-        12,
-    )));
-    let definitions = Rc::new(RefCell::new(Vec::new()));
-    let update_visibility = Rc::new(RefCell::new(None::<Rc<dyn Fn()>>));
-    let input = InputContext {
-        settings: settings.clone(),
-        models: models.clone(),
-        on_changed: on_changed.clone(),
-        on_commit: on_commit.clone(),
-        update_visibility: update_visibility.clone(),
-    };
-    let field_state = FieldState {
-        input: input.clone(),
-        fields: fields.clone(),
-        definitions: definitions.clone(),
-        kind,
-    };
-    *update_visibility.borrow_mut() = Some({
-        let settings = settings.clone();
-        let fields = Rc::downgrade(&fields);
-        Rc::new(move || {
-            let Some(fields) = fields.upgrade() else {
-                return;
-            };
-            let fields = fields.borrow();
-            for definition in definitions.borrow().iter() {
-                if let Some(widget) = fields.child(&definition.key().to_string()) {
-                    widget.set_visible(is_visible(definition, &settings.borrow().inputs));
-                }
-            }
-        })
-    });
-
-    let selected_model = settings.borrow().model.clone().unwrap_or_default();
-    let model_selector = {
-        let field_state = field_state.clone();
-        let models = models.clone();
-        let preferences = preferences.clone();
-        ui::labeled_string_selector("Model", &selected_model, Vec::new(), move |id| {
-            let Some(model) = models.borrow().iter().find(|model| model.id == id).cloned() else {
-                return;
-            };
-            let synchronized = shrimply_inspector_core::tts::synchronized_settings(
-                &field_state.input.settings.borrow(),
-                &model,
-            );
-            *field_state.input.settings.borrow_mut() = synchronized;
-            (field_state.input.on_changed)(field_state.input.settings.borrow().clone());
-            (field_state.input.on_commit)();
-            preferences_store::set_last_tts_model(&preferences, &model.id);
-            reconcile_fields(&field_state, &model);
-        })
-    };
-    model_selector.set_sensitive(false);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    content.append(model_selector.widget());
-    content.append(fields.borrow().widget());
-
-    let configuration = ConfigurationState {
-        preferences: preferences.clone(),
-        models: models.clone(),
-        model_selector: model_selector.clone(),
-        fields: field_state,
-        kind,
-    };
-
-    {
-        let server_url = preferences_store::snapshot(&preferences).compute_server_url;
-        if let Some(cached) = MODEL_CACHE.with(|cache| cache.borrow().get(&server_url).cloned()) {
-            apply_models(&configuration, cached);
+    let runtime = Rc::new(RefCell::new(tts::Runtime::default()));
+    let refresh = Rc::new(RefCell::new(None::<Rc<dyn Fn()>>));
+    let weak_refresh = Rc::downgrade(&refresh);
+    let rerender: Rc<dyn Fn()> = Rc::new(move || {
+        if let Some(refresh) = weak_refresh.upgrade()
+            && let Some(refresh) = refresh.borrow().as_ref()
+        {
+            refresh();
         }
-        let refreshing = Rc::new(Cell::new(false));
-        refresh_models(server_url, configuration, refreshing);
-    }
-
+    });
+    *refresh.borrow_mut() = Some(Rc::new({
+        let content = content.downgrade();
+        let runtime = runtime.clone();
+        let rerender = rerender.clone();
+        move || {
+            let Some(content) = content.upgrade() else {
+                return;
+            };
+            let snapshot = preferences_store::snapshot(&preferences);
+            let original = settings.borrow().clone();
+            let presentation = runtime.borrow_mut().configuration(
+                &mut settings.borrow_mut(),
+                &snapshot.compute_server_url,
+                &snapshot.last_tts_model,
+                tts::ConfigurationKind::Caption,
+            );
+            *models.borrow_mut() = presentation.model.iter().cloned().collect();
+            if let Some(model) = &presentation.model {
+                preferences_store::set_last_tts_model(&preferences, &model.id);
+            }
+            if *settings.borrow() != original {
+                on_changed(settings.borrow().clone());
+                on_commit();
+            }
+            while let Some(child) = content.first_child() {
+                content.remove(&child);
+            }
+            let selector_runtime = runtime.clone();
+            let selector_settings = settings.clone();
+            let selector_preferences = preferences.clone();
+            let selector_changed = on_changed.clone();
+            let selector_commit = on_commit.clone();
+            let selector_refresh = rerender.clone();
+            let server_url = presentation.server_url.clone();
+            let selector = ui::labeled_string_selector(
+                tts::MODEL_LABEL,
+                presentation
+                    .model
+                    .as_ref()
+                    .map_or("", |model| model.id.as_str()),
+                presentation
+                    .models
+                    .iter()
+                    .map(|choice| ui::StringChoice {
+                        value: choice.value.clone(),
+                        label: choice.label.clone(),
+                    })
+                    .collect(),
+                move |id| {
+                    if report(selector_runtime.borrow_mut().select_configuration_model(
+                        &mut selector_settings.borrow_mut(),
+                        &server_url,
+                        &id,
+                        tts::ConfigurationKind::Caption,
+                    )) {
+                        selector_changed(selector_settings.borrow().clone());
+                        selector_commit();
+                        preferences_store::set_last_tts_model(&selector_preferences, &id);
+                        selector_refresh();
+                    }
+                },
+            );
+            selector.set_sensitive(presentation.actions().model_sensitive);
+            content.append(selector.widget());
+            if let Some(model) = &presentation.model {
+                let model = model.clone();
+                let edited = settings.clone();
+                let changed = on_changed.clone();
+                let input = Inputs {
+                    edit: Rc::new(move |key, edit| {
+                        let result = tts::edit_input(&mut edited.borrow_mut(), &model, key, edit);
+                        if report(result) {
+                            changed(edited.borrow().clone());
+                            true
+                        } else {
+                            false
+                        }
+                    }),
+                    commit: on_commit.clone(),
+                    refresh: rerender.clone(),
+                };
+                content.append(&fields(&presentation.controls, input));
+            }
+            if presentation.can_retry {
+                let retry = gtk::Button::with_label(tr!(tts::RETRY_LABEL).as_ref());
+                let retry_runtime = runtime.clone();
+                let retry_refresh = rerender.clone();
+                let server_url = presentation.server_url.clone();
+                retry.connect_clicked(move |_| {
+                    retry_runtime.borrow_mut().retry_models(&server_url);
+                    retry_refresh();
+                });
+                content.append(&retry);
+            }
+            if !presentation.catalog_status.is_empty() {
+                content.append(
+                    &gtk::Label::builder()
+                        .label(tr!(&presentation.catalog_status).as_ref())
+                        .wrap(true)
+                        .xalign(0.0)
+                        .css_classes(["dim-label"])
+                        .build(),
+                );
+            }
+        }
+    }));
+    refresh
+        .borrow()
+        .as_ref()
+        .expect("caption refresh installed")();
+    let content_weak = content.downgrade();
+    glib::timeout_add_local(shrimply_inspector_core::tts::POLL_INTERVAL, move || {
+        if content_weak.upgrade().is_none() {
+            return glib::ControlFlow::Break;
+        }
+        if runtime.borrow_mut().poll_catalog() {
+            refresh
+                .borrow()
+                .as_ref()
+                .expect("caption refresh installed")();
+        }
+        glib::ControlFlow::Continue
+    });
     content.upcast()
 }
 
-#[derive(Clone)]
-struct ConfigurationState {
-    preferences: preferences_store::SharedPreferences,
-    models: Rc<RefCell<Vec<TtsModel>>>,
-    model_selector: ui::StringSelector,
-    fields: FieldState,
-    kind: ConfigurationKind,
-}
-
-#[derive(Clone)]
-struct FieldState {
-    input: InputContext,
-    fields: Rc<RefCell<ui::KeyedBox<String, InputDefinition>>>,
-    definitions: Rc<RefCell<Vec<InputDefinition>>>,
-    kind: ConfigurationKind,
-}
-
-#[derive(Clone, Copy)]
-enum ConfigurationKind {
-    Regular,
-    Caption,
-}
-
-#[derive(Clone)]
-struct InputContext {
-    settings: Rc<RefCell<TtsSettings>>,
-    models: Rc<RefCell<Vec<TtsModel>>>,
-    on_changed: Rc<dyn Fn(TtsSettings)>,
-    on_commit: Rc<dyn Fn()>,
-    update_visibility: VisibilityRefresh,
-}
-
-fn apply_models(configuration: &ConfigurationState, mut available: Vec<TtsModel>) {
-    if matches!(configuration.kind, ConfigurationKind::Caption) {
-        available.retain(supports_duration);
-    }
-    if available.is_empty() || *configuration.models.borrow() == available {
-        return;
-    }
-    let previous = configuration.models.borrow().clone();
-    let remembered = preferences_store::snapshot(&configuration.preferences).last_tts_model;
-    let model = shrimply_inspector_core::tts::selected_model(
-        &available,
-        &configuration.fields.input.settings.borrow(),
-        &remembered,
-    )
-    .expect("nonempty TTS model list must have a selection")
-    .clone();
-    let choices_changed = previous
-        .iter()
-        .map(|model| (&model.id, &model.label))
-        .ne(available.iter().map(|model| (&model.id, &model.label)));
-    *configuration.models.borrow_mut() = available;
-
-    if choices_changed {
-        let choices = configuration
-            .models
-            .borrow()
-            .iter()
-            .map(|model| ui::StringChoice {
-                value: model.id.clone(),
-                label: model.label.clone(),
-            })
-            .collect::<Vec<_>>();
-        configuration.model_selector.set_choices(&model.id, choices);
-    }
-    configuration.model_selector.set_sensitive(true);
-
-    let original = configuration.fields.input.settings.borrow().clone();
-    let synchronized = shrimply_inspector_core::tts::synchronized_settings(
-        &configuration.fields.input.settings.borrow(),
-        &model,
-    );
-    *configuration.fields.input.settings.borrow_mut() = synchronized;
-    if *configuration.fields.input.settings.borrow() != original {
-        (configuration.fields.input.on_changed)(
-            configuration.fields.input.settings.borrow().clone(),
-        );
-        (configuration.fields.input.on_commit)();
-    }
-    preferences_store::set_last_tts_model(&configuration.preferences, &model.id);
-    reconcile_fields(&configuration.fields, &model);
-}
-
-fn refresh_models(
-    server_url: String,
-    configuration: ConfigurationState,
-    refreshing: Rc<Cell<bool>>,
-) {
-    if refreshing.replace(true) {
-        return;
-    }
-    let (sender, receiver) = async_channel::bounded(1);
-    let request_url = server_url.clone();
-    thread::spawn(move || {
-        let _ = sender.send_blocking(available_models(&request_url));
-    });
-    glib::spawn_future_local(async move {
-        let result = receiver.recv().await;
-        refreshing.set(false);
-        let Ok(Ok(available)) = result else {
-            return;
+fn fields(controls: &[TtsEditorControl], input: Inputs) -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    for field in controls {
+        let row = match field {
+            TtsEditorControl::Text {
+                key,
+                label,
+                value,
+                multiline,
+                max_length,
+            } => text(key, label, value, *multiline, *max_length, input.clone()),
+            TtsEditorControl::Select {
+                key,
+                label,
+                value,
+                choices,
+            } => {
+                let key = key.clone();
+                let edited = input.clone();
+                ui::labeled_string_selector(
+                    label,
+                    value,
+                    choices
+                        .iter()
+                        .map(|choice| ui::StringChoice {
+                            value: choice.value.clone(),
+                            label: choice.label.clone(),
+                        })
+                        .collect(),
+                    move |value| {
+                        if (edited.edit)(&key, TtsInputEdit::Select(value)) {
+                            (edited.commit)();
+                            (edited.refresh)();
+                        }
+                    },
+                )
+                .widget()
+                .clone()
+            }
+            TtsEditorControl::Toggle { key, label, value } => {
+                let key = key.clone();
+                let edited = input.clone();
+                ui::switch_row(label, None, *value, move |value| {
+                    if (edited.edit)(&key, TtsInputEdit::Toggle(value)) {
+                        (edited.commit)();
+                        (edited.refresh)();
+                    }
+                })
+            }
+            TtsEditorControl::Number {
+                key,
+                label,
+                value,
+                minimum,
+                maximum,
+                step,
+                digits,
+            } => {
+                let key = key.clone();
+                let edited = input.clone();
+                let committed = input.clone();
+                let picker = ui::NumberPicker::fraction_builder(*value)
+                    .accepted_range(
+                        shrimply_math_core::fraction_as_f64(*minimum),
+                        shrimply_math_core::fraction_as_f64(*maximum),
+                    )
+                    .drag_step(shrimply_math_core::fraction_as_f64(*step))
+                    .digits(*digits)
+                    .on_change_fraction(move |value| {
+                        (edited.edit)(&key, TtsInputEdit::Number(value));
+                    })
+                    .on_commit(move |_| (committed.commit)())
+                    .build();
+                ui::control_row(label, &picker)
+            }
+            TtsEditorControl::Audio { key, label, path } => {
+                audio(key, label, path.as_deref(), input.clone())
+            }
+            TtsEditorControl::Table {
+                key,
+                label,
+                columns,
+                rows,
+            } => {
+                let table = gtk::Box::new(gtk::Orientation::Vertical, 6);
+                let add = gtk::Button::builder()
+                    .icon_name("list-add-symbolic")
+                    .tooltip_text(tr!(tts::ADD_ROW_LABEL).as_ref())
+                    .build();
+                let header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                header.set_halign(gtk::Align::End);
+                header.append(&add);
+                table.append(&ui::control_row(label, &header));
+                let added = input.clone();
+                let add_key = key.clone();
+                add.connect_clicked(move |_| {
+                    if (added.edit)(&add_key, TtsInputEdit::AddTableRow) {
+                        (added.commit)();
+                        (added.refresh)();
+                    }
+                });
+                for (index, values) in rows.iter().enumerate() {
+                    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+                    for (column_index, column) in columns.iter().enumerate() {
+                        let edited = input.clone();
+                        let committed = input.clone();
+                        let key = key.clone();
+                        let entry = ui::SingleLineTextInput::builder(
+                            values.get(&column.key).cloned().unwrap_or_default(),
+                        )
+                        .placeholder(&column.label)
+                        .max_length(column.max_length)
+                        .on_change(move |value| {
+                            (edited.edit)(
+                                &key,
+                                TtsInputEdit::TableCell {
+                                    row: index,
+                                    column: column_index,
+                                    value,
+                                },
+                            );
+                        })
+                        .on_commit(move |_| (committed.commit)())
+                        .build();
+                        row.append(&entry);
+                    }
+                    let remove = gtk::Button::builder()
+                        .icon_name("list-remove-symbolic")
+                        .tooltip_text(tr!(tts::REMOVE_ROW_LABEL).as_ref())
+                        .build();
+                    let removed = input.clone();
+                    let key = key.clone();
+                    remove.connect_clicked(move |_| {
+                        if (removed.edit)(&key, TtsInputEdit::RemoveTableRow(index)) {
+                            (removed.commit)();
+                            (removed.refresh)();
+                        }
+                    });
+                    row.append(&remove);
+                    table.append(&row);
+                }
+                table.upcast()
+            }
         };
-        MODEL_CACHE.with(|cache| {
-            cache.borrow_mut().insert(server_url, available.clone());
-        });
-        apply_models(&configuration, available);
-    });
-}
-
-fn available_models(server_url: &str) -> Result<Vec<TtsModel>, String> {
-    shrimply_inspector_core::tts::available_models(server_url)
-}
-
-fn reconcile_fields(state: &FieldState, model: &TtsModel) {
-    let definitions = model
-        .inputs
-        .iter()
-        .filter(|definition| {
-            matches!(state.kind, ConfigurationKind::Regular)
-                || shrimply_tts::is_caption_input(definition)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    *state.definitions.borrow_mut() = definitions.clone();
-    let input = state.input.clone();
-    state.fields.borrow_mut().reconcile(
-        definitions
-            .into_iter()
-            .map(|definition| (definition.key().to_string(), definition)),
-        move |_, definition| input_widget(definition, &input),
-    );
-    if let Some(refresh) = state.input.update_visibility.borrow().as_ref() {
-        refresh();
+        container.append(&row);
     }
+    container.upcast()
 }
 
-fn supports_duration(model: &TtsModel) -> bool {
-    model
-        .inputs
-        .iter()
-        .any(|input| input.purpose() == Some(shrimply_tts::InputPurpose::Duration))
-}
-
-fn input_widget(definition: &InputDefinition, input: &InputContext) -> gtk::Widget {
-    match definition {
-        InputDefinition::Text {
-            key,
-            label,
-            multiline,
-            max_length,
-            ..
-        } => text_widget(key, label, *multiline, *max_length, input.clone()),
-        InputDefinition::Select {
-            key,
-            label,
-            options,
-            ..
-        } => {
-            let selected = input
-                .settings
-                .borrow()
-                .inputs
-                .get(key)
-                .and_then(|value| match value {
-                    TtsValue::Select { value } => Some(value.clone()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| options[0].value.clone());
-            let key = key.clone();
-            let input = input.clone();
-            let choices = options
-                .iter()
-                .map(|option| ui::StringChoice {
-                    value: option.value.clone(),
-                    label: option.label.clone(),
-                })
-                .collect();
-            ui::labeled_string_selector(label, &selected, choices, move |value| {
-                if edit_input(&input, &key, TtsInputEdit::Select(value)) {
-                    (input.on_commit)();
-                    refresh_visibility(&input);
-                }
-            })
-            .widget()
-            .clone()
-        }
-        InputDefinition::Audio { key, label, .. } => audio_widget(key, label, input.clone()),
-        InputDefinition::Toggle {
-            key,
-            label,
-            default,
-            ..
-        } => {
-            let active = input
-                .settings
-                .borrow()
-                .inputs
-                .get(key)
-                .and_then(|value| match value {
-                    TtsValue::Toggle { value } => Some(*value),
-                    _ => None,
-                })
-                .unwrap_or(*default);
-            let key = key.clone();
-            let input = input.clone();
-            ui::switch_row(label, None, active, move |active| {
-                if edit_input(&input, &key, TtsInputEdit::Toggle(active)) {
-                    (input.on_commit)();
-                    refresh_visibility(&input);
-                }
-            })
-        }
-        InputDefinition::Number { .. } => number_widget(definition, input.clone()),
-        InputDefinition::Table {
-            key,
-            label,
-            columns,
-            ..
-        } => table_widget(key, label, columns, input.clone()),
-    }
-}
-
-fn edit_input(input: &InputContext, key: &str, edit: TtsInputEdit) -> bool {
-    let model = {
-        let settings = input.settings.borrow();
-        let models = input.models.borrow();
-        settings
-            .model
-            .as_ref()
-            .and_then(|id| models.iter().find(|model| &model.id == id))
-            .cloned()
-    };
-    let Some(model) = model else {
-        return false;
-    };
-    let result = shrimply_inspector_core::tts::edit_input(
-        &mut input.settings.borrow_mut(),
-        &model,
-        key,
-        edit,
-    );
-    match result {
-        Ok(_) => {
-            notify_changed(input);
-            true
-        }
-        Err(error) => {
-            tracing::error!(%error, %key, "Could not edit TTS input");
-            false
-        }
-    }
-}
-
-fn notify_changed(input: &InputContext) {
-    (input.on_changed)(input.settings.borrow().clone());
-}
-
-fn refresh_visibility(input: &InputContext) {
-    if let Some(refresh) = input.update_visibility.borrow().as_ref() {
-        refresh();
-    }
-}
-
-fn text_widget(
+fn text(
     key: &str,
     label: &str,
+    value: &str,
     multiline: bool,
     max_length: usize,
-    input: InputContext,
+    input: Inputs,
 ) -> gtk::Widget {
-    let value = input
-        .settings
-        .borrow()
-        .inputs
-        .get(key)
-        .and_then(|value| match value {
-            TtsValue::Text { value } => Some(value.clone()),
-            _ => None,
-        })
-        .unwrap_or_default();
-    if !multiline {
-        let key = key.to_string();
-        let changed = input.clone();
-        let entry = ui::SingleLineTextInput::builder(value)
+    let key = key.to_owned();
+    let edited = input.clone();
+    if multiline {
+        let editor = ui::MultilineTextInput::builder(value)
+            .max_length(max_length)
+            .on_change(move |value| (edited.edit)(&key, TtsInputEdit::Text(value)))
+            .on_commit(move || (input.commit)())
+            .build();
+        let row = ui::control_row(label, editor.widget());
+        row.first_child()
+            .expect("text row label")
+            .set_valign(gtk::Align::Start);
+        row
+    } else {
+        let editor = ui::SingleLineTextInput::builder(value)
             .max_length(max_length)
             .on_change(move |value| {
-                edit_input(&changed, &key, TtsInputEdit::Text(value));
+                (edited.edit)(&key, TtsInputEdit::Text(value));
             })
-            .on_commit(move |_| (input.on_commit)())
+            .on_commit(move |_| (input.commit)())
             .build();
-        return ui::control_row(label, &entry);
+        ui::control_row(label, &editor)
     }
-
-    let key = key.to_string();
-    let changed = input.clone();
-    let editor = ui::MultilineTextInput::builder(value)
-        .max_length(max_length)
-        .on_change(move |value| edit_input(&changed, &key, TtsInputEdit::Text(value)))
-        .on_commit(move || (input.on_commit)())
-        .build();
-    let row = ui::control_row(label, editor.widget());
-    row.first_child()
-        .expect("text control row has a label")
-        .set_valign(gtk::Align::Start);
-    row
 }
 
-fn audio_widget(key: &str, label: &str, input: InputContext) -> gtk::Widget {
-    let selected = input
-        .settings
-        .borrow()
-        .inputs
-        .get(key)
-        .and_then(|value| match value {
-            TtsValue::Audio { value } => Some(value.path().to_path_buf()),
-            _ => None,
-        });
-    let subtitle = selected
-        .as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| "Choose an audio file".to_string());
+fn audio(key: &str, label: &str, path: Option<&std::path::Path>, input: Inputs) -> gtk::Widget {
+    let selected = Rc::new(RefCell::new(path.map(std::path::Path::to_path_buf)));
     let path_label = gtk::Label::builder()
-        .label(&subtitle)
+        .label(
+            path.map(|path| path.display().to_string())
+                .unwrap_or_else(|| tr!(tts::AUDIO_EMPTY_LABEL).into_owned()),
+        )
         .ellipsize(gtk::pango::EllipsizeMode::Middle)
         .hexpand(true)
         .xalign(0.0)
         .build();
-    let chooser_label = label.to_owned();
-    let chooser = gtk::FileDialog::builder()
-        .title(tr!(label).as_ref())
-        .build();
-    let choose = gtk::Button::with_label(tr!("Choose…").as_ref());
-    let key = key.to_string();
-    let clear = gtk::Button::builder()
-        .label(tr!("Clear").as_ref())
-        .sensitive(selected.is_some())
-        .css_classes(["flat"])
-        .build();
-    let show = gtk::Button::builder()
-        .label(tr!("Show in Folder").as_ref())
-        .sensitive(selected.is_some())
-        .css_classes(["flat"])
-        .build();
-    let menu_content = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(2)
-        .margin_top(4)
-        .margin_bottom(4)
-        .margin_start(4)
-        .margin_end(4)
-        .build();
-    menu_content.append(&clear);
-    menu_content.append(&show);
-    let popover = gtk::Popover::builder()
-        .child(&menu_content)
-        .has_arrow(false)
-        .build();
-    popover.add_css_class("menu");
+    let choose = gtk::Button::with_label(tr!(tts::CHOOSE_AUDIO_LABEL).as_ref());
+    let model = gio::Menu::new();
+    model.append(
+        Some(tr!(tts::CLEAR_AUDIO_LABEL).as_ref()),
+        Some("audio.clear"),
+    );
+    model.append(
+        Some(tr!(tts::REVEAL_AUDIO_LABEL).as_ref()),
+        Some("audio.show"),
+    );
+    let actions = gio::SimpleActionGroup::new();
     let menu = gtk::MenuButton::builder()
         .icon_name("pan-down-symbolic")
-        .tooltip_text(tr!("Reference audio actions").as_ref())
-        .popover(&popover)
+        .tooltip_text(tr!(tts::AUDIO_ACTIONS_LABEL).as_ref())
+        .menu_model(&model)
         .build();
+    menu.insert_action_group("audio", Some(&actions));
+    ui::adaptive_menu(&menu, "audio", &actions);
     let split = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     split.add_css_class("linked");
     split.append(&choose);
     split.append(&menu);
-
-    {
-        let input = input.clone();
-        let key = key.clone();
-        let path_label = path_label.clone();
-        let show = show.clone();
-        clear.connect_clicked(move |button| {
-            if !edit_input(&input, &key, TtsInputEdit::Audio(None)) {
-                return;
-            }
-            path_label.set_label(tr!("Choose an audio file").as_ref());
-            button.set_sensitive(false);
-            show.set_sensitive(false);
-            (input.on_commit)();
-            if let Some(popover) = button
-                .ancestor(gtk::Popover::static_type())
-                .and_downcast::<gtk::Popover>()
-            {
-                popover.popdown();
-            }
-        });
-    }
-    {
-        let input = input.clone();
-        let key = key.clone();
-        show.connect_clicked(move |button| {
-            let path = input
-                .settings
-                .borrow()
-                .inputs
-                .get(&key)
-                .and_then(|value| match value {
-                    TtsValue::Audio { value } => Some(value.path().to_path_buf()),
-                    _ => None,
-                });
-            let Some(path) = path else {
-                return;
-            };
-            if let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
-                button.upcast_ref(),
+    let shown = selected.clone();
+    let show_parent = menu.downgrade();
+    let show = ui::menu_action("show", None, move || {
+        if let Some(parent) = show_parent.upgrade()
+            && let Some(path) = shown.borrow().clone()
+            && let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
+                parent.upcast_ref(),
                 path,
-            ) {
-                let dialog = gtk::AlertDialog::builder()
-                    .message("Could not show reference audio")
-                    .detail(error)
-                    .buttons(["Close"])
-                    .build();
-                let parent = button.root().and_downcast::<gtk::Window>();
-                dialog.choose(parent.as_ref(), None::<&gio::Cancellable>, |_| {});
+            )
+        {
+            shrimply_components_gtk::toast::show_confirmation_text_for_widget(&parent, &error);
+        }
+        None
+    });
+    show.set_enabled(path.is_some());
+    actions.add_action(&show);
+    let cleared = input.clone();
+    let clear_key = key.to_owned();
+    let clear_show = show.clone();
+    let clear_path = selected.clone();
+    let clear_label = path_label.clone();
+    let cleared_actions = actions.downgrade();
+    let clear = ui::menu_action("clear", None, move || {
+        if (cleared.edit)(&clear_key, TtsInputEdit::Audio(None)) {
+            clear_path.borrow_mut().take();
+            clear_label.set_label(tr!(tts::AUDIO_EMPTY_LABEL).as_ref());
+            clear_show.set_enabled(false);
+            if let Some(actions) = cleared_actions.upgrade()
+                && let Some(clear) = actions
+                    .lookup_action("clear")
+                    .and_downcast::<gio::SimpleAction>()
+            {
+                clear.set_enabled(false);
             }
-        });
-    }
-
-    let selected_path = path_label.clone();
-    let clear_for_choose = clear.clone();
-    let show_for_choose = show.clone();
+            (cleared.commit)();
+            (cleared.refresh)();
+        }
+        None
+    });
+    clear.set_enabled(path.is_some());
+    actions.add_action(&clear);
+    let key = key.to_owned();
+    let chooser_label = tts::AUDIO_PICKER_TITLE.to_owned();
+    let chosen_path = selected.clone();
+    let chosen_label = path_label.clone();
     choose.connect_clicked(move |button| {
+        let dialog = gtk::FileDialog::builder()
+            .title(tr!(&chooser_label).as_ref())
+            .build();
         let input = input.clone();
         let key = key.clone();
-        let path_label = selected_path.clone();
-        let clear = clear_for_choose.clone();
-        let show = show_for_choose.clone();
+        let selected = chosen_path.clone();
+        let path_label = chosen_label.clone();
+        let clear = clear.clone();
+        let show = show.clone();
         shrimply_components_gtk::file_picker::open(
             &chooser_label,
-            &chooser,
-            button
-                .root()
-                .and_then(|root| root.downcast::<gtk::Window>().ok())
-                .as_ref(),
+            &dialog,
+            button.root().and_downcast::<gtk::Window>().as_ref(),
             move |result| {
-                let Some(path) = result.ok().and_then(|file| file.path()) else {
-                    return;
-                };
-                path_label.set_label(&path.display().to_string());
-                if !edit_input(&input, &key, TtsInputEdit::Audio(Some(path))) {
-                    return;
+                if let Some(path) = result.ok().and_then(|file| file.path())
+                    && (input.edit)(&key, TtsInputEdit::Audio(Some(path.clone())))
+                {
+                    path_label.set_label(&path.display().to_string());
+                    *selected.borrow_mut() = Some(path);
+                    clear.set_enabled(true);
+                    show.set_enabled(true);
+                    (input.commit)();
+                    (input.refresh)();
                 }
-                clear.set_sensitive(true);
-                show.set_sensitive(true);
-                (input.on_commit)();
             },
         );
     });
@@ -850,171 +562,12 @@ fn audio_widget(key: &str, label: &str, input: InputContext) -> gtk::Widget {
     ui::control_row(label, &controls)
 }
 
-fn number_widget(definition: &InputDefinition, input: InputContext) -> gtk::Widget {
-    let InputDefinition::Number {
-        key,
-        label,
-        default,
-        minimum,
-        maximum,
-        step,
-        ..
-    } = definition
-    else {
-        unreachable!("number_widget requires a number definition");
-    };
-    let value = input
-        .settings
-        .borrow()
-        .inputs
-        .get(key)
-        .and_then(|value| match value {
-            TtsValue::Number { value } => Some(*value),
-            _ => None,
-        })
-        .unwrap_or(*default);
-    let key = key.clone();
-    let control = ui::NumberPicker::fraction_builder(value)
-        .accepted_range(fraction_as_f64(*minimum), fraction_as_f64(*maximum))
-        .drag_step(fraction_as_f64(*step))
-        .digits(shrimply_inspector_core::tts::decimal_places(*step))
-        .on_change_fraction({
-            let input = input.clone();
-            move |value| {
-                edit_input(&input, &key, TtsInputEdit::Number(value));
-            }
-        })
-        .on_commit(move |_| (input.on_commit)())
-        .build();
-    ui::control_row(label, &control)
-}
-
-fn table_widget(
-    key: &str,
-    label: &str,
-    columns: &[TableColumn],
-    input: InputContext,
-) -> gtk::Widget {
-    let container = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    let add = gtk::Button::builder()
-        .icon_name("list-add-symbolic")
-        .valign(gtk::Align::Center)
-        .tooltip_text(tr!("Add row").as_ref())
-        .build();
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    header.set_halign(gtk::Align::End);
-    header.append(&add);
-    let rows = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    container.append(&ui::control_row(label, &header));
-    container.append(&rows);
-    let state = TableEditor {
-        key: key.to_string(),
-        columns: columns.to_vec(),
-        rows,
-        input,
-    };
-    rebuild_table(&state);
-    {
-        let state = state.clone();
-        add.connect_clicked(move |_| {
-            if !edit_input(&state.input, &state.key, TtsInputEdit::AddTableRow) {
-                return;
-            }
-            (state.input.on_commit)();
-            rebuild_table(&state);
-        });
-    }
-    container.upcast()
-}
-
-#[derive(Clone)]
-struct TableEditor {
-    key: String,
-    columns: Vec<TableColumn>,
-    rows: gtk::Box,
-    input: InputContext,
-}
-
-fn rebuild_table(state: &TableEditor) {
-    while let Some(child) = state.rows.first_child() {
-        state.rows.remove(&child);
-    }
-    let count = state
-        .input
-        .settings
-        .borrow()
-        .inputs
-        .get(&state.key)
-        .and_then(|value| match value {
-            TtsValue::Table { rows } => Some(rows.len()),
-            _ => None,
-        })
-        .unwrap_or_default();
-    for index in 0..count {
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        for (column_index, column) in state.columns.iter().enumerate() {
-            let value = state
-                .input
-                .settings
-                .borrow()
-                .inputs
-                .get(&state.key)
-                .and_then(|value| match value {
-                    TtsValue::Table { rows } => rows.get(index),
-                    _ => None,
-                })
-                .and_then(|row| row.get(&column.key))
-                .cloned()
-                .unwrap_or_default();
-            let changed = state.clone();
-            let input = state.input.clone();
-            let entry = ui::SingleLineTextInput::builder(value)
-                .placeholder(&column.label)
-                .max_length(column.max_length)
-                .on_change(move |value| {
-                    edit_input(
-                        &changed.input,
-                        &changed.key,
-                        TtsInputEdit::TableCell {
-                            row: index,
-                            column: column_index,
-                            value,
-                        },
-                    );
-                })
-                .on_commit(move |_| (input.on_commit)())
-                .build();
-            row.append(&entry);
+fn report<T>(result: Result<T, String>) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(%error, "Could not edit text-to-speech controls");
+            false
         }
-        let remove = gtk::Button::builder()
-            .icon_name("list-remove-symbolic")
-            .tooltip_text(tr!("Remove row").as_ref())
-            .build();
-        {
-            let state = state.clone();
-            remove.connect_clicked(move |_| {
-                if !edit_input(
-                    &state.input,
-                    &state.key,
-                    TtsInputEdit::RemoveTableRow(index),
-                ) {
-                    return;
-                }
-                (state.input.on_commit)();
-                rebuild_table(&state);
-            });
-        }
-        row.append(&remove);
-        state.rows.append(&row);
     }
-}
-
-pub fn save_speech(speech: Speech) -> Result<(PathBuf, Time, Fraction), String> {
-    shrimply_inspector_core::tts::save_speech(speech).map(|generation| {
-        (
-            generation.path,
-            generation.duration,
-            generation.speed_factor,
-        )
-    })
 }

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+base64.workspace = true
 serde_json.workspace = true
 shrimply-framegraph-skia.workspace = true
 shrimply-components-skia.workspace = true
@@ -23,3 +24,4 @@ shrimply-export-core.workspace = true
 shrimply-preferences-core.workspace = true
 shrimply-path-core.workspace = true
 shrimply-asset.workspace = true
+shrimply-trust-core.workspace = true

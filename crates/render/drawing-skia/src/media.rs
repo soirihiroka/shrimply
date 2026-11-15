@@ -200,56 +200,64 @@ pub fn prepare_hashed_with_limit(
         }
     }
     let mut font_epoch = None;
-    let (content, size) = if let Some(image) = Image::from_encoded(Data::new_copy(bytes)) {
-        let width = u32::try_from(image.width()).map_err(|_| "invalid image width")?;
-        let height = u32::try_from(image.height()).map_err(|_| "invalid image height")?;
-        validate_size([width, height], max_pixels)?;
-        let image = image
-            .make_raster_image(None, skia_safe::image::CachingHint::Allow)
-            .ok_or("image cannot be decoded")?;
-        (Content::Bitmap(image), [width, height])
-    } else {
-        font_epoch = shrimply_fonts::native::system_font_epoch();
-        let dom = Dom::from_bytes(bytes, FontMgr::new())
-            .map_err(|_| "source is neither a supported bitmap nor a valid SVG")?;
-        let root = dom.root();
-        let intrinsic = root.intrinsic_size();
-        let intrinsic = if intrinsic.width > 0. && intrinsic.height > 0. {
-            intrinsic
+    let (content, size) =
+        if let Some(mut codec) = skia_safe::Codec::from_data(Data::new_copy(bytes)) {
+            let mut info = codec.info();
+            if info.alpha_type() != skia_safe::AlphaType::Opaque {
+                info = info.with_alpha_type(skia_safe::AlphaType::Unpremul);
+            }
+            if codec.origin().swaps_width_height() {
+                info = skia_safe::codec::pixmap_utils::swap_width_height(&info);
+            }
+            let width = u32::try_from(info.width()).map_err(|_| "invalid image width")?;
+            let height = u32::try_from(info.height()).map_err(|_| "invalid image height")?;
+            validate_size([width, height], max_pixels)?;
+            let image = codec
+                .get_image(info, None)
+                .map_err(|error| format!("image cannot be decoded: {error:?}"))?;
+            (Content::Bitmap(image), [width, height])
         } else {
-            root.view_box()
-                .map(|rect| rect.size())
-                .unwrap_or(skia_safe::Size::new(
-                    DEFAULT_SVG_SIZE[0] as f32,
-                    DEFAULT_SVG_SIZE[1] as f32,
-                ))
+            font_epoch = shrimply_fonts::native::system_font_epoch();
+            let dom = Dom::from_bytes(bytes, FontMgr::new())
+                .map_err(|_| "source is neither a supported bitmap nor a valid SVG")?;
+            let root = dom.root();
+            let intrinsic = root.intrinsic_size();
+            let intrinsic = if intrinsic.width > 0. && intrinsic.height > 0. {
+                intrinsic
+            } else {
+                root.view_box()
+                    .map(|rect| rect.size())
+                    .unwrap_or(skia_safe::Size::new(
+                        DEFAULT_SVG_SIZE[0] as f32,
+                        DEFAULT_SVG_SIZE[1] as f32,
+                    ))
+            };
+            if !intrinsic.width.is_finite()
+                || !intrinsic.height.is_finite()
+                || intrinsic.width <= 0.
+                || intrinsic.height <= 0.
+                || intrinsic.width > u32::MAX as f32
+                || intrinsic.height > u32::MAX as f32
+            {
+                return Err("SVG has invalid intrinsic dimensions".into());
+            }
+            let size = [
+                intrinsic.width.ceil() as u32,
+                intrinsic.height.ceil() as u32,
+            ];
+            validate_size(size, max_pixels)?;
+            drop(root);
+            (
+                Content::Svg(Mutex::new(Some(
+                    dom.wrap_send().map_err(|_| "SVG was not uniquely owned")?,
+                ))),
+                size,
+            )
         };
-        if !intrinsic.width.is_finite()
-            || !intrinsic.height.is_finite()
-            || intrinsic.width <= 0.
-            || intrinsic.height <= 0.
-            || intrinsic.width > u32::MAX as f32
-            || intrinsic.height > u32::MAX as f32
-        {
-            return Err("SVG has invalid intrinsic dimensions".into());
-        }
-        let size = [
-            intrinsic.width.ceil() as u32,
-            intrinsic.height.ceil() as u32,
-        ];
-        validate_size(size, max_pixels)?;
-        drop(root);
-        (
-            Content::Svg(Mutex::new(Some(
-                dom.wrap_send().map_err(|_| "SVG was not uniquely owned")?,
-            ))),
-            size,
-        )
-    };
     let retained = bytes
         .len()
         .saturating_add(match &content {
-            Content::Bitmap(_) => size[0] as usize * size[1] as usize * 4,
+            Content::Bitmap(image) => image.image_info().compute_min_byte_size(),
             Content::Svg(_) => bytes.len().saturating_mul(8),
         })
         .saturating_add(std::mem::size_of::<Prepared>() + fingerprint.len());
@@ -276,4 +284,28 @@ fn validate_size(size: [u32; 2], max_pixels: usize) -> Result<(), String> {
         return Err("image dimensions exceed the pixel budget".into());
     }
     Ok(())
+}
+
+/// Lossless storage of a completed, straight-alpha RGBA frame.
+pub fn encode_rgba_png(width: i32, height: i32, pixels: &[u8]) -> Result<Vec<u8>, String> {
+    let info = skia_safe::ImageInfo::new(
+        (width, height),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Unpremul,
+        None,
+    );
+    let stride = usize::try_from(width)
+        .map_err(|_| "Invalid captured image width")?
+        .checked_mul(std::mem::size_of::<u32>())
+        .ok_or("Captured image is too large")?;
+    if width <= 0 || height <= 0 || info.compute_byte_size(stride) != pixels.len() {
+        return Err("Captured image has an invalid RGBA layout".into());
+    }
+    let image =
+        skia_safe::images::raster_from_data(&info, skia_safe::Data::new_copy(pixels), stride)
+            .ok_or("Could not construct the captured image")?;
+    image
+        .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+        .map(|data| data.as_bytes().to_vec())
+        .ok_or_else(|| "Could not encode the captured image".into())
 }

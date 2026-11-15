@@ -11,9 +11,70 @@ use crate::{InspectorController, InspectorTarget};
 #[derive(Default)]
 pub struct InspectorGraphEdit {
     transaction: Option<InspectorEditTransaction>,
+    control: Option<(InspectorTarget, crate::InspectorControl)>,
 }
 
 impl InspectorGraphEdit {
+    pub fn begin_control(
+        &mut self,
+        controller: &InspectorController,
+        target: &InspectorTarget,
+        control: &crate::InspectorControl,
+    ) -> Result<(), String> {
+        if self
+            .control
+            .as_ref()
+            .is_some_and(|(bound_target, bound_control)| {
+                bound_target != target || !same_graph_control(bound_control, control)
+            })
+        {
+            self.cancel(controller)?;
+        }
+        self.apply(
+            controller,
+            target,
+            FrameGraphAction::EditStarted,
+            |_| Ok(()),
+        )?;
+        self.control = Some((target.clone(), control.clone()));
+        Ok(())
+    }
+
+    pub fn finish_control(&mut self, controller: &InspectorController) -> Result<(), String> {
+        let control = self.control.take();
+        self.finish(controller)?;
+        if let Some((target, control)) = control {
+            controller.apply_control_graph_action(
+                &target,
+                &control,
+                FrameGraphAction::EditFinished,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// A native document refresh may retain values, but cannot transfer an in-flight
+    /// gesture to a different target, timeline, modifier, or control instance.
+    pub fn retain_control(
+        &mut self,
+        controller: &InspectorController,
+        target: &InspectorTarget,
+        control: Option<&crate::InspectorControl>,
+    ) -> Result<bool, String> {
+        let Some((bound_target, bound_control)) = self.control.as_ref() else {
+            return Ok(false);
+        };
+        if bound_target == target
+            && control
+                .filter(|control| control.scalar_graph.is_some())
+                .is_some_and(|control| same_graph_control(bound_control, control))
+        {
+            return Ok(false);
+        }
+        self.cancel(controller)?;
+        Ok(true)
+    }
+
     pub fn apply(
         &mut self,
         controller: &InspectorController,
@@ -57,6 +118,7 @@ impl InspectorGraphEdit {
     }
 
     pub fn finish(&mut self, controller: &InspectorController) -> Result<(), String> {
+        self.control = None;
         if let Some(transaction) = self.transaction.take() {
             transaction.finish(controller)?;
         }
@@ -64,6 +126,7 @@ impl InspectorGraphEdit {
     }
 
     pub fn cancel(&mut self, controller: &InspectorController) -> Result<(), String> {
+        self.control = None;
         if let Some(transaction) = self.transaction.take() {
             transaction.cancel(controller)?;
         }
@@ -73,6 +136,15 @@ impl InspectorGraphEdit {
     pub fn is_editing(&self) -> bool {
         self.transaction.is_some()
     }
+}
+
+fn same_graph_control(left: &crate::InspectorControl, right: &crate::InspectorControl) -> bool {
+    left.kind == right.kind
+        && left.path == right.path
+        && left.timeline_path == right.timeline_path
+        && left.timeline_id == right.timeline_id
+        && left.target_id == right.target_id
+        && left.audio_modifier == right.audio_modifier
 }
 
 pub struct InspectorEditTransaction {

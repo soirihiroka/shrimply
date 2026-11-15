@@ -15,6 +15,7 @@ use crate::{
 pub mod blender;
 pub mod pdf;
 pub mod playback;
+pub mod source_images;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VideoPresentation {
@@ -287,6 +288,9 @@ impl InspectorController {
         commit_name: &str,
         commit_immediately: bool,
     ) -> Result<(), String> {
+        if let Some(result) = self.set_video_generation_field(target, path, text) {
+            return result;
+        }
         if let Some(result) = self.relink_executable_source(target, path, text) {
             return result;
         }
@@ -509,6 +513,9 @@ impl InspectorController {
         value: shrimply_math_core::Fraction,
         commit_name: &str,
     ) -> Result<(), String> {
+        if let Some(result) = self.set_video_generation_field(target, path, &value.to_string()) {
+            return result;
+        }
         if let Some(result) = self.set_sanim_fraction(target, path, value, commit_name) {
             return result;
         }
@@ -649,6 +656,14 @@ impl InspectorController {
             unreachable!("validated video target must be an item")
         };
         match action {
+            action @ (InspectorControlAction::GenerateVideo { .. }
+            | InspectorControlAction::CancelVideoGeneration
+            | InspectorControlAction::RetryVideoGenerationModels
+            | InspectorControlAction::SelectVideoGenerationMedia { .. }
+            | InspectorControlAction::RemoveVideoGenerationMedia { .. }
+            | InspectorControlAction::MoveVideoGenerationMedia { .. }) => {
+                self.video_generation_action(target, action)?
+            }
             InspectorControlAction::RebuildVideoStabilization => {
                 let project = self.project.borrow();
                 let item = project
@@ -885,10 +900,12 @@ pub fn presentation(
             crate::info::SourceMetadata::None
         },
         blender: match &item.content {
-            VideoItemContent::Blender(blender) => Some(BlenderSourcePresentation {
-                item: (**blender).clone(),
-                asset: item.file.path().to_string_lossy().into_owned(),
-            }),
+            VideoItemContent::Blender(blender) if shrimply_blender_core::SUPPORTED => {
+                Some(BlenderSourcePresentation {
+                    item: (**blender).clone(),
+                    asset: item.file.path().to_string_lossy().into_owned(),
+                })
+            }
             _ => None,
         },
         manim: crate::manim_parameters::presentation(item),

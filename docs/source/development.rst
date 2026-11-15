@@ -16,6 +16,10 @@ The Qt launcher is ``make dev-qt``. The dev log is ``target/shrimply-dev.log``.
 The build downloads Slang. You need ``curl``, ``tar``, and ``sha256sum``.
 To use a copy you already have, set ``SLANG_LIBRARY_DIR`` and
 ``SLANG_INCLUDE_DIR``.
+Portable Vulkan OBJ shaders also need SPIR-V Tools (``spirv-opt`` and
+``spirv-val``) at build time. Set ``SPIRV_OPT`` and ``SPIRV_VAL`` to use
+executables outside ``PATH``. Renderer and material code remains shared Slang;
+the tools prepare and validate its generated SPIR-V for portable GPU drivers.
 
 CUDA Toolkit 12.9. GTX 900 through RTX 50 should work; that range is not
 fully tested. The Linux GTK binary also includes an Intel backend for preview

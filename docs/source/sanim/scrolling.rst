@@ -24,7 +24,7 @@ Scrolling is a layout behavior of ordinary ``Box`` elements. A Box fills the ava
        <Label>Second item</Label>
    </Box>
    let viewport = <Box overflow="auto" width={50%} height={30%}>{content}</Box>
-   add(viewport)
+   Animation(children=[viewport])
    viewport.scroll_to(to=[0%, 100%], duration=600ms)
 
 Scroll offsets are ordinary two-element Lists. Points describe content offsets; percentages describe the current overflow range, so ``[0%, 100%]`` means the bottom edge even after resizing. Offsets are clamped after layout, including content changes, folding and font changes. The default scroll curve is the normal bounded spring; ``ease="linear"`` is available for constant-speed movement.
@@ -36,7 +36,7 @@ Axis targets preserve their units: ``scroll_to(y=100%)`` stays at the bottom whe
 .. code-block:: text
 
    let code = <CodeView src="./example.py" width={80%} height={50%} />
-   add(code)
+   Animation(children=[code])
    code.scroll_to(line=40, align="center", duration=500ms)
    code.range(name="main").scroll_to(duration=400ms)
    code.scroll_to(range=code.range(regex="result"), align="center", duration=400ms)
@@ -53,7 +53,7 @@ For a shared reactive offset, supply ``scroll=`` and animate its mutable input:
    let viewport = <Box overflow="auto" width={300pt} height={120pt} scroll={offset}>
        <Box width={300pt} height={600pt} x_align={Align.Start} y_align={Align.Start} fill="light1"/>
    </Box>
-   add(viewport)
+   Animation(children=[viewport])
    animate(offset, to=[0pt, 200pt], duration=1s)
 
 A signal-owned offset has one writer: use ``animate(offset, ...)`` rather than ``.scroll_to(...)`` on that view. These controls animate the Sanim scene and do not intercept the editor's wheel or canvas navigation gestures.
@@ -72,6 +72,6 @@ Use ``absolute`` for a child that should retain its authored ``position`` and al
    let stage = <Box w-full h-full x_align={Align.Center} y_align={Align.Center}>
        {marker}
    </Box>
-   add(stage)
+   Animation(children=[stage])
 
 ``relative`` is the default flow participation. The corresponding ordinary constructor argument is ``position_mode="absolute"`` or ``"relative"``; explicit arguments override utilities. A typed signal may switch modes. A constant absolute mode supports ordinary position animations. A mode signal that can become relative reserves position ownership for flow throughout the timeline, so combining it with a position signal or a manual position animation fails with an actionable error. A percentage height inside an automatic-height parent still requires a definite parent height.

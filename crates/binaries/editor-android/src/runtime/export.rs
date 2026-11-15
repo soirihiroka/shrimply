@@ -57,8 +57,7 @@ impl Export {
         let update = self.job.poll();
         let changed = update.progress.is_some() || update.finished.is_some();
         if let Some(progress) = update.progress {
-            self.state["progress"] = serde_json::to_value(video::progress::presentation(progress))
-                .expect("export progress serializes");
+            self.state["progress"] = video::progress::localized(progress);
         }
         if let Some(result) = update.finished {
             match result {
@@ -89,6 +88,9 @@ impl Export {
                 }
             }
         }
+        if changed {
+            self.state["presentation"] = video::progress::job_view(&self.state);
+        }
         changed
     }
 }
@@ -103,7 +105,16 @@ impl Runtime {
         match operation {
             "export_schema" => {
                 let project = self.backend.project().ok_or("open a project first")?;
-                Ok(settings::schema(&project))
+                Ok(settings::schema_for(
+                    &project,
+                    settings::Backend::MediaCodec,
+                    request.get("values"),
+                ))
+            }
+            "export_validate" => {
+                let project = self.backend.project().ok_or("Open a project first")?;
+                settings::parse(&project, PathBuf::new(), request)?;
+                Ok(json!({}))
             }
             "caption_export_schema" => Ok(json!({
                 "formats":CaptionFormat::ALL.map(|format| json!({"value":format.extension(),"label":format.label()})),
@@ -118,6 +129,7 @@ impl Runtime {
                 if operation == "export_cancel" {
                     export.job.cancel();
                     export.state["cancelling"] = json!(true);
+                    export.state["presentation"] = video::progress::job_view(&export.state);
                 } else {
                     export.poll();
                     if export.state["status"] == "running" {
@@ -208,11 +220,13 @@ impl Runtime {
         .inspect_err(|_| {
             let _ = std::fs::remove_dir_all(&directory);
         })?;
+        let mut state = json!({"id":id,"status":"running","directory":directory,"separate":separate,"files":[],"mime":mime,
+            "kind":if is_video {"video"} else {"captions"},"progress":null,"error":null,"cancelling":false});
+        state["presentation"] = video::progress::job_view(&state);
         self.export = Some(Export {
             job,
             directory: directory.clone(),
-            state: json!({"id":id,"status":"running","directory":directory,"separate":separate,"files":[],"mime":mime,
-                "kind":if is_video {"video"} else {"captions"},"progress":null,"error":null,"cancelling":false}),
+            state,
         });
         self.backend.snapshot()
     }

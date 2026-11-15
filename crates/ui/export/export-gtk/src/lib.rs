@@ -11,9 +11,7 @@ mod captions;
 use adw::prelude::*;
 use gtk::{gio, glib};
 use shrimply_editor_state::preferences;
-use shrimply_math_core::Fraction;
 use std::cell::RefCell;
-use std::ops::Deref;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -65,534 +63,224 @@ where
     group.add_action(&action);
 }
 
-#[derive(Clone)]
-struct TypedComboRow<T> {
-    row: adw::ComboRow,
-    values: Rc<[T]>,
-}
-
-impl<T: Copy + PartialEq + 'static> TypedComboRow<T> {
-    fn new<S: AsRef<str>>(
-        title: &str,
-        choices: impl IntoIterator<Item = (T, S)>,
-        selected: T,
-    ) -> Self {
-        let choices = choices
-            .into_iter()
-            .map(|(value, label)| (value, tr!(label.as_ref()).into_owned()))
-            .collect::<Vec<_>>();
-        let selected = choices
-            .iter()
-            .position(|(value, _)| *value == selected)
-            .expect("combo box default must be one of its choices") as u32;
-        let labels = choices
-            .iter()
-            .map(|(_, label)| label.as_str())
-            .collect::<Vec<_>>();
-        let row = adw::ComboRow::new();
-        row.set_title(tr!(title).as_ref());
-        row.set_model(Some(&gtk::StringList::new(&labels)));
-        row.set_selected(selected);
-        shrimply_components_gtk::ui::adaptive_choice(&row);
-        Self {
-            row,
-            values: choices.into_iter().map(|(value, _)| value).collect(),
-        }
-    }
-
-    fn selected(&self) -> T {
-        *self
-            .values
-            .get(self.row.selected() as usize)
-            .expect("combo box selection must be one of its choices")
-    }
-
-    fn widget(&self) -> &adw::ComboRow {
-        &self.row
-    }
-
-    fn connect_selected<F: Fn(T) + 'static>(&self, callback: F) {
-        let values = self.values.clone();
-        self.row.connect_selected_notify(move |row| {
-            let selected = *values
-                .get(row.selected() as usize)
-                .expect("combo box selection must be one of its choices");
-            callback(selected);
-        });
-    }
-}
-
-impl<T> Deref for TypedComboRow<T> {
-    type Target = adw::ComboRow;
-
-    fn deref(&self) -> &Self::Target {
-        &self.row
-    }
-}
-
 fn open_export_page(
     parent: &adw::ApplicationWindow,
     toasts: &adw::ToastOverlay,
     project: Rc<RefCell<project::Project>>,
     preferences: preferences::SharedPreferences,
 ) {
-    #[cfg(target_os = "linux")]
-    let intel = video::intel_backend_selected();
-    #[cfg(not(target_os = "linux"))]
-    let intel = false;
-    let project_fps = project.borrow().fps;
-    let format_row = TypedComboRow::new(
-        "Export format",
-        [
-            (video::ExportVideoCodec::H264, "H.264"),
-            (video::ExportVideoCodec::H265, "H.265"),
-            (video::ExportVideoCodec::Gif, "GIF"),
-        ],
-        video::ExportVideoCodec::H265,
-    );
-
-    let container_row = TypedComboRow::new(
-        "Container",
-        [
-            (video::ExportContainer::Mp4, "MP4"),
-            (video::ExportContainer::Mkv, "MKV"),
-        ],
-        video::ExportContainer::Mp4,
-    );
-
-    let fps_rates = shrimply_export_core::video::settings::frame_rates(project_fps);
-    let fps_row = TypedComboRow::new("Frame rate", fps_rates, project_fps);
-
-    let background_alpha_row = adw::SpinRow::with_range(0.0, f64::from(u8::MAX), 1.0);
-    background_alpha_row.set_title(tr!("Background Alpha").as_ref());
-    background_alpha_row
-        .set_subtitle(tr!("Values below 128 are transparent in GIF output").as_ref());
-    background_alpha_row.set_value(0.0);
-    background_alpha_row.set_digits(0);
-    background_alpha_row.set_visible(false);
-
-    let rate_control_row = TypedComboRow::new(
-        "Rate Control",
-        [
-            (video::ExportRateControl::ConstantQp, "Constant QP"),
-            (
-                video::ExportRateControl::ConstantBitrate,
-                "Constant Bitrate",
-            ),
-            (
-                video::ExportRateControl::VariableBitrate,
-                "Variable Bitrate",
-            ),
-            (
-                video::ExportRateControl::VariableBitrateTargetQuality,
-                "Variable Bitrate with Target Quality",
-            ),
-            (video::ExportRateControl::Lossless, "Lossless"),
-        ]
-        .into_iter()
-        .filter(|(mode, _)| {
-            !intel
-                || matches!(
-                    mode,
-                    video::ExportRateControl::ConstantQp
-                        | video::ExportRateControl::ConstantBitrate
-                        | video::ExportRateControl::VariableBitrate
-                )
-        }),
-        video::ExportRateControl::ConstantQp,
-    );
-
-    let bitrate_row = adw::SpinRow::with_range(50.0, 250_000.0, 50.0);
-    bitrate_row.set_title(tr!("Video Bitrate").as_ref());
-    bitrate_row.set_subtitle(tr!("Kbps for CBR/VBR").as_ref());
-    bitrate_row.set_value(f64::from(
-        shrimply_export_core::video::settings::DEFAULT_VIDEO_BITRATE_KBPS,
+    use shrimply_export_core::video::settings;
+    let backend = video::settings_backend();
+    let snapshot = project.borrow().clone();
+    let schema = settings::schema_for(&snapshot, backend, None);
+    let values = Rc::new(RefCell::new(schema["values"].clone()));
+    let rows = Rc::new(RefCell::new(
+        Vec::<(String, glib::WeakRef<gtk::Widget>)>::new(),
     ));
-    bitrate_row.set_digits(0);
-
-    let max_bitrate_row = adw::SpinRow::with_range(50.0, 250_000.0, 50.0);
-    max_bitrate_row.set_title(tr!("Max Video Bitrate").as_ref());
-    max_bitrate_row.set_subtitle(tr!("Kbps for VBR").as_ref());
-    max_bitrate_row.set_value(f64::from(
-        shrimply_export_core::video::settings::DEFAULT_VIDEO_BITRATE_KBPS,
-    ));
-    max_bitrate_row.set_digits(0);
-
-    let target_quality_row = adw::SpinRow::with_range(1.0, 51.0, 1.0);
-    target_quality_row.set_title(tr!("Target Quality").as_ref());
-    target_quality_row.set_subtitle(tr!("Lower values are higher quality").as_ref());
-    target_quality_row.set_value(20.0);
-    target_quality_row.set_digits(0);
-
-    let default_constant_qp_row = adw::SpinRow::with_range(0.0, 51.0, 1.0);
-    default_constant_qp_row.set_title(tr!("Constant QP").as_ref());
-    default_constant_qp_row.set_subtitle(tr!("Lower values are higher quality").as_ref());
-    default_constant_qp_row.set_value(20.0);
-    default_constant_qp_row.set_digits(0);
-
-    let keyframe_interval_row = adw::SpinRow::with_range(0.0, 10.0, 1.0);
-    keyframe_interval_row.set_title(tr!("Keyframe Interval").as_ref());
-    keyframe_interval_row.set_subtitle(tr!("Seconds; 0 lets the encoder choose").as_ref());
-    keyframe_interval_row.set_value(0.0);
-    keyframe_interval_row.set_digits(0);
-
-    let preset_row = TypedComboRow::new(
-        "Preset",
-        [
-            (video::ExportPreset::P1, "P1: Fastest (Lowest Quality)"),
-            (video::ExportPreset::P2, "P2: Faster (Lower Quality)"),
-            (video::ExportPreset::P3, "P3: Fast (Low Quality)"),
-            (video::ExportPreset::P4, "P4: Medium (Medium Quality)"),
-            (video::ExportPreset::P5, "P5: Slow (Good Quality)"),
-            (video::ExportPreset::P6, "P6: Slower (Better Quality)"),
-            (video::ExportPreset::P7, "P7: Slowest (Best Quality)"),
-        ],
-        video::ExportPreset::P6,
-    );
-
-    let tuning_row = TypedComboRow::new(
-        "Tuning",
-        [
-            (video::ExportTuning::UltraHighQuality, "Ultra High Quality"),
-            (video::ExportTuning::HighQuality, "High Quality"),
-            (video::ExportTuning::LowLatency, "Low Latency"),
-            (video::ExportTuning::UltraLowLatency, "Ultra Low Latency"),
-        ],
-        video::ExportTuning::HighQuality,
-    );
-
-    let multipass_row = TypedComboRow::new(
-        "Multi Pass",
-        [
-            (video::ExportMultipass::SinglePass, "Single Pass"),
-            (
-                video::ExportMultipass::QuarterResolution,
-                "Two Passes (Quarter Resolution)",
-            ),
-            (
-                video::ExportMultipass::FullResolution,
-                "Two Passes (Full Resolution)",
-            ),
-        ],
-        video::ExportMultipass::QuarterResolution,
-    );
-
-    let profile_row = TypedComboRow::new(
-        "Profile",
-        [
-            (video::ExportProfile::Main, "Main"),
-            (video::ExportProfile::Main10, "Main10"),
-        ],
-        video::ExportProfile::Main,
-    );
-
-    let look_ahead_row = adw::SwitchRow::new();
-    look_ahead_row.set_title(tr!("Look-ahead").as_ref());
-    look_ahead_row.set_active(!intel);
-
-    let adaptive_quantization_row = adw::SwitchRow::new();
-    adaptive_quantization_row.set_title(tr!("Adaptive Quantization").as_ref());
-    adaptive_quantization_row.set_active(!intel);
-
-    let b_frames_row = adw::SpinRow::with_range(0.0, if intel { 2.0 } else { 16.0 }, 1.0);
-    b_frames_row.set_title(tr!("B Frames").as_ref());
-    b_frames_row.set_value(2.0);
-    b_frames_row.set_digits(0);
-
-    let b_frame_as_reference_row = adw::SwitchRow::new();
-    b_frame_as_reference_row.set_title(tr!("B Frame as Reference").as_ref());
-    b_frame_as_reference_row.set_active(false);
-    preset_row.set_visible(!intel);
-    tuning_row.set_visible(!intel);
-    multipass_row.set_visible(!intel);
-    look_ahead_row.set_visible(!intel);
-    adaptive_quantization_row.set_visible(!intel);
-    b_frame_as_reference_row.set_visible(!intel);
-
-    let audio_encoder_row = TypedComboRow::new(
-        "Audio Encoder",
-        [
-            (video::ExportAudioEncoder::FdkAac, "FDK AAC"),
-            (video::ExportAudioEncoder::Aac, "AAC"),
-            (video::ExportAudioEncoder::Opus, "Opus"),
-        ],
-        video::ExportAudioEncoder::FdkAac,
-    );
-
-    let audio_sample_rate_row = TypedComboRow::new(
-        "Audio Sample Rate",
-        [(44_100, "44100"), (48_000, "48000"), (96_000, "96000")],
-        shrimply_export_core::video::settings::DEFAULT_AUDIO_SAMPLE_RATE,
-    );
-
-    let audio_bitrate_row = adw::SpinRow::with_range(32.0, 512.0, 8.0);
-    audio_bitrate_row.set_title(tr!("Audio Bitrate").as_ref());
-    audio_bitrate_row.set_subtitle(tr!("Kbps").as_ref());
-    audio_bitrate_row.set_value(f64::from(
-        shrimply_export_core::video::settings::DEFAULT_AUDIO_BITRATE_KBPS,
-    ));
-    audio_bitrate_row.set_digits(0);
-
-    bitrate_row.set_visible(false);
-    max_bitrate_row.set_visible(false);
-    target_quality_row.set_visible(false);
-    rate_control_row.connect_selected({
-        let bitrate_row = bitrate_row.clone();
-        let max_bitrate_row = max_bitrate_row.clone();
-        let target_quality_row = target_quality_row.clone();
-        let constant_qp_row = default_constant_qp_row.clone();
-        let tuning_row = tuning_row.clone();
-        move |selected| {
-            constant_qp_row.set_visible(selected == video::ExportRateControl::ConstantQp);
-            bitrate_row.set_visible(matches!(
-                selected,
-                video::ExportRateControl::ConstantBitrate
-                    | video::ExportRateControl::VariableBitrate
-                    | video::ExportRateControl::VariableBitrateTargetQuality
-            ));
-            max_bitrate_row.set_visible(matches!(
-                selected,
-                video::ExportRateControl::VariableBitrate
-                    | video::ExportRateControl::VariableBitrateTargetQuality
-            ));
-            target_quality_row
-                .set_visible(selected == video::ExportRateControl::VariableBitrateTargetQuality);
-            tuning_row.set_visible(!intel && selected != video::ExportRateControl::Lossless);
+    let groups = Rc::new(RefCell::new(Vec::<(
+        String,
+        glib::WeakRef<adw::PreferencesGroup>,
+    )>::new()));
+    let refresh: Rc<dyn Fn()> = Rc::new({
+        let values = values.clone();
+        let rows = rows.clone();
+        let groups = groups.clone();
+        move || {
+            let schema = settings::schema_for(&snapshot, backend, Some(&values.borrow()));
+            for field in schema["fields"].as_array().expect("export fields") {
+                if let Some(row) = rows
+                    .borrow()
+                    .iter()
+                    .find(|(id, _)| field["id"] == id.as_str())
+                    .and_then(|(_, row)| row.upgrade())
+                {
+                    row.set_visible(field["visible"].as_bool().expect("field visibility"));
+                    row.set_sensitive(field["enabled"].as_bool().expect("field sensitivity"));
+                }
+            }
+            for group in schema["groups"].as_array().expect("export groups") {
+                if let Some(row) = groups
+                    .borrow()
+                    .iter()
+                    .find(|(label, _)| group["label"] == label.as_str())
+                    .and_then(|(_, row)| row.upgrade())
+                {
+                    row.set_visible(group["visible"].as_bool().expect("group visibility"));
+                }
+            }
         }
     });
-
-    let format_group = adw::PreferencesGroup::builder()
-        .title(tr!("Video format").as_ref())
-        .build();
-    format_group.add(format_row.widget());
-    format_group.add(container_row.widget());
-
-    let encoder_group = adw::PreferencesGroup::builder()
-        .title(tr!("Encoder settings").as_ref())
-        .build();
-    encoder_group.add(rate_control_row.widget());
-    encoder_group.add(&bitrate_row);
-    encoder_group.add(&max_bitrate_row);
-    encoder_group.add(&target_quality_row);
-    encoder_group.add(&default_constant_qp_row);
-    encoder_group.add(&keyframe_interval_row);
-    encoder_group.add(preset_row.widget());
-    encoder_group.add(tuning_row.widget());
-    encoder_group.add(multipass_row.widget());
-    encoder_group.add(profile_row.widget());
-    encoder_group.add(&look_ahead_row);
-    encoder_group.add(&adaptive_quantization_row);
-    encoder_group.add(&b_frames_row);
-    encoder_group.add(&b_frame_as_reference_row);
-
-    let output_group = adw::PreferencesGroup::builder()
-        .title(tr!("Output").as_ref())
-        .build();
-    output_group.add(fps_row.widget());
-    output_group.add(&background_alpha_row);
-
-    let audio_group = adw::PreferencesGroup::builder()
-        .title(tr!("Audio").as_ref())
-        .build();
-    audio_group.add(audio_encoder_row.widget());
-    audio_group.add(audio_sample_rate_row.widget());
-    audio_group.add(&audio_bitrate_row);
-
-    format_row.connect_selected({
-        let container_row = container_row.clone();
-        let encoder_group = encoder_group.clone();
-        let audio_group = audio_group.clone();
-        let background_alpha_row = background_alpha_row.clone();
-        move |format| {
-            let nvenc = format != video::ExportVideoCodec::Gif;
-            container_row.set_visible(nvenc);
-            encoder_group.set_visible(nvenc);
-            audio_group.set_visible(nvenc);
-            background_alpha_row.set_visible(!nvenc);
-        }
-    });
-
-    let actions_group = adw::PreferencesGroup::builder().build();
-    let export_action = adw::ButtonRow::builder()
-        .title(tr!("Export").as_ref())
-        .build();
-    export_action.add_css_class("suggested-action");
-    actions_group.add(&export_action);
-
     let page = adw::PreferencesPage::builder()
-        .title(tr!("Export").as_ref())
+        .title(schema["title"].as_str().expect("export title"))
         .name("export")
         .build();
-    page.add(&format_group);
-    page.add(&encoder_group);
-    page.add(&output_group);
-    page.add(&audio_group);
-    page.add(&actions_group);
-
+    let mut group_rows = std::collections::BTreeMap::new();
+    for group in schema["groups"].as_array().expect("export groups") {
+        let label = group["label"].as_str().expect("group label");
+        let row = adw::PreferencesGroup::builder().title(label).build();
+        groups
+            .borrow_mut()
+            .push((label.to_owned(), row.downgrade()));
+        page.add(&row);
+        group_rows.insert(label.to_owned(), row);
+    }
+    for field in schema["fields"].as_array().expect("export fields") {
+        let id = field["id"].as_str().expect("export field id").to_owned();
+        let label = field["label"].as_str().expect("export field label");
+        let subtitle = field["subtitle"].as_str().unwrap_or_default();
+        let update: Rc<dyn Fn(serde_json::Value)> = Rc::new({
+            let values = values.clone();
+            let refresh = refresh.clone();
+            let id = id.clone();
+            move |value| {
+                values.borrow_mut()[&id] = value;
+                refresh();
+            }
+        });
+        let row: gtk::Widget = match field["widget"].as_str().expect("export widget") {
+            "choice" => {
+                let choices = field["choices"].as_array().expect("export choices").clone();
+                let labels: Vec<_> = choices
+                    .iter()
+                    .map(|choice| choice["label"].as_str().expect("choice label"))
+                    .collect();
+                let row = adw::ComboRow::builder()
+                    .title(label)
+                    .subtitle(subtitle)
+                    .model(&gtk::StringList::new(&labels))
+                    .build();
+                let selected = field["value"]
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| field["value"].to_string());
+                row.set_selected(
+                    choices
+                        .iter()
+                        .position(|choice| choice["value"] == selected)
+                        .expect("default export choice") as u32,
+                );
+                shrimply_components_gtk::ui::adaptive_choice(&row);
+                row.connect_selected_notify(move |row| {
+                    update(
+                        choices
+                            .get(row.selected() as usize)
+                            .expect("selected export choice")["value"]
+                            .clone(),
+                    );
+                });
+                row.upcast()
+            }
+            "number" => {
+                let range = field["range"].as_array().expect("export range");
+                let row = adw::SpinRow::with_range(
+                    range[0].as_f64().expect("minimum"),
+                    range[1].as_f64().expect("maximum"),
+                    range[2].as_f64().expect("step"),
+                );
+                row.set_title(label);
+                row.set_subtitle(subtitle);
+                row.set_digits(0);
+                row.set_value(field["value"].as_f64().expect("export default number"));
+                row.connect_value_notify(move |row| update(serde_json::json!(row.value() as u64)));
+                row.upcast()
+            }
+            "toggle" => {
+                let row = adw::SwitchRow::builder()
+                    .title(label)
+                    .subtitle(subtitle)
+                    .active(field["value"].as_bool().expect("export toggle"))
+                    .build();
+                row.connect_active_notify(move |row| update(serde_json::json!(row.is_active())));
+                row.upcast()
+            }
+            _ => unreachable!("export native widget"),
+        };
+        rows.borrow_mut().push((id, row.downgrade()));
+        group_rows
+            .get(field["group"].as_str().expect("field group"))
+            .expect("export group")
+            .add(&row);
+    }
+    refresh();
+    let actions = adw::PreferencesGroup::new();
+    let export = adw::ButtonRow::builder()
+        .title(schema["submit_label"].as_str().expect("export label"))
+        .build();
+    export.add_css_class("suggested-action");
+    actions.add(&export);
+    page.add(&actions);
     let dialog = adw::PreferencesDialog::builder()
-        .title(tr!("Export").as_ref())
+        .title(schema["title"].as_str().expect("export title"))
         .search_enabled(false)
         .build();
     dialog.add(&page);
-
-    let format_row = format_row.clone();
-    let container_row = container_row.clone();
-    let fps_row = fps_row.clone();
-    let background_alpha_row = background_alpha_row.clone();
-    let rate_control_row = rate_control_row.clone();
-    let bitrate_row = bitrate_row.clone();
-    let max_bitrate_row = max_bitrate_row.clone();
-    let target_quality_row = target_quality_row.clone();
-    let default_constant_qp_row = default_constant_qp_row.clone();
-    let keyframe_interval_row = keyframe_interval_row.clone();
-    let preset_row = preset_row.clone();
-    let tuning_row = tuning_row.clone();
-    let multipass_row = multipass_row.clone();
-    let profile_row = profile_row.clone();
-    let look_ahead_row = look_ahead_row.clone();
-    let adaptive_quantization_row = adaptive_quantization_row.clone();
-    let b_frames_row = b_frames_row.clone();
-    let b_frame_as_reference_row = b_frame_as_reference_row.clone();
-    let audio_encoder_row = audio_encoder_row.clone();
-    let audio_sample_rate_row = audio_sample_rate_row.clone();
-    let audio_bitrate_row = audio_bitrate_row.clone();
-    let dialog_for_close = dialog.clone();
-    let parent_for_export = parent.clone();
-    let toasts_for_export = toasts.clone();
-    let project = project.clone();
-    export_action.connect_activated(move |_| {
-        let preferences = preferences::snapshot(&preferences);
-        let settings = collect_export_video_settings(
-            &format_row,
-            &container_row,
-            &fps_row,
-            &background_alpha_row,
-            &rate_control_row,
-            &bitrate_row,
-            &max_bitrate_row,
-            &target_quality_row,
-            &default_constant_qp_row,
-            &keyframe_interval_row,
-            &preset_row,
-            &tuning_row,
-            &multipass_row,
-            &profile_row,
-            &look_ahead_row,
-            &adaptive_quantization_row,
-            &b_frames_row,
-            &b_frame_as_reference_row,
-            &audio_encoder_row,
-            &audio_sample_rate_row,
-            &audio_bitrate_row,
-            &preferences,
-        );
-        let project_snapshot = project.borrow().clone();
-        let default_name = default_video_filename(&project_snapshot, settings.container);
-        let label = "Export Video";
-        let file_dialog = gtk::FileDialog::builder()
-            .title(tr!(label).as_ref())
-            .initial_name(&default_name)
-            .build();
-        let parent_for_save = parent_for_export.clone();
-        let parent_for_error = parent_for_export.clone();
-        let toasts = toasts_for_export.clone();
-        shrimply_components_gtk::file_picker::save(
-            label,
-            &file_dialog,
-            Some(parent_for_save.upcast_ref::<gtk::Window>()),
-            move |result| {
-                let Some(file) = result.ok() else {
+    export.connect_activated({
+        let parent = parent.clone();
+        let toasts = toasts.clone();
+        let dialog = dialog.downgrade();
+        move |_| {
+            let project_snapshot = project.borrow().clone();
+            let preferences = preferences::snapshot(&preferences);
+            let settings = match video::parse_settings(
+                &project_snapshot,
+                std::path::PathBuf::new(),
+                &values.borrow(),
+                video::RenderResourceConfig {
+                    maximum_temporal_decoders: preferences.temporal_decoder_pool_size as usize,
+                    gpu_host_memory_gib: preferences.gpu_host_memory_gib,
+                },
+            ) {
+                Ok(settings) => settings,
+                Err(error) => {
+                    show_export_error(&parent, "Could not export video", &error);
                     return;
-                };
-                let Some(path) = file.path() else {
-                    show_export_error(
-                        &parent_for_error,
-                        "Could not export video",
-                        "Could not resolve the selected file path.",
+                }
+            };
+            let label = "Export Video";
+            let picker = gtk::FileDialog::builder()
+                .title(tr!(label).as_ref())
+                .initial_name(output::default_filename(
+                    &project_snapshot,
+                    video::extension_for_container(settings.container),
+                ))
+                .build();
+            let parent_for_result = parent.clone();
+            let toasts = toasts.clone();
+            shrimply_components_gtk::file_picker::save(
+                label,
+                &picker,
+                Some(parent.upcast_ref::<gtk::Window>()),
+                move |result| {
+                    let Some(file) = result.ok() else {
+                        return;
+                    };
+                    let Some(path) = file.path() else {
+                        show_export_error(
+                            &parent_for_result,
+                            "Could not export video",
+                            "Could not resolve the selected file path.",
+                        );
+                        return;
+                    };
+                    let mut settings = settings.clone();
+                    settings.path = output::ensure_extension(
+                        path,
+                        video::extension_for_container(settings.container),
                     );
-                    return;
-                };
-                let extension = video::extension_for_container(settings.container);
-                let path = output::ensure_extension(path, extension);
-                let mut settings = settings.clone();
-                settings.path = path;
-                start_video_export(
-                    &parent_for_error,
-                    &toasts,
-                    project_snapshot.clone(),
-                    settings,
-                );
-            },
-        );
-        dialog_for_close.close();
+                    start_video_export(
+                        &parent_for_result,
+                        &toasts,
+                        project_snapshot.clone(),
+                        settings,
+                    );
+                },
+            );
+            if let Some(dialog) = dialog.upgrade() {
+                dialog.close();
+            }
+        }
     });
-
     dialog.present(Some(parent.upcast_ref::<gtk::Widget>()));
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_export_video_settings(
-    format_row: &TypedComboRow<video::ExportVideoCodec>,
-    container_row: &TypedComboRow<video::ExportContainer>,
-    fps_row: &TypedComboRow<Fraction>,
-    background_alpha_row: &adw::SpinRow,
-    rate_control_row: &TypedComboRow<video::ExportRateControl>,
-    bitrate_row: &adw::SpinRow,
-    max_bitrate_row: &adw::SpinRow,
-    target_quality_row: &adw::SpinRow,
-    constant_qp_row: &adw::SpinRow,
-    keyframe_interval_row: &adw::SpinRow,
-    preset_row: &TypedComboRow<video::ExportPreset>,
-    tuning_row: &TypedComboRow<video::ExportTuning>,
-    multipass_row: &TypedComboRow<video::ExportMultipass>,
-    profile_row: &TypedComboRow<video::ExportProfile>,
-    look_ahead_row: &adw::SwitchRow,
-    adaptive_quantization_row: &adw::SwitchRow,
-    b_frames_row: &adw::SpinRow,
-    b_frame_as_reference_row: &adw::SwitchRow,
-    audio_encoder_row: &TypedComboRow<video::ExportAudioEncoder>,
-    audio_sample_rate_row: &TypedComboRow<u32>,
-    audio_bitrate_row: &adw::SpinRow,
-    preferences: &preferences::PreferencesSnapshot,
-) -> video::ExportSettings {
-    video::ExportSettings {
-        path: std::path::PathBuf::new(),
-        overwrite: true,
-        video_codec: format_row.selected(),
-        container: match format_row.selected() {
-            video::ExportVideoCodec::Gif => video::ExportContainer::Gif,
-            _ => container_row.selected(),
-        },
-        fps: fps_row.selected(),
-        background_alpha: if format_row.selected() == video::ExportVideoCodec::Gif {
-            background_alpha_row.value() as u8
-        } else {
-            u8::MAX
-        },
-        rate_control: rate_control_row.selected(),
-        constant_qp: constant_qp_row.value() as u32,
-        bitrate_kbps: bitrate_row.value() as u32,
-        max_bitrate_kbps: max_bitrate_row.value() as u32,
-        target_quality: target_quality_row.value() as u32,
-        keyframe_interval_seconds: keyframe_interval_row.value() as u32,
-        preset: preset_row.selected(),
-        tuning: tuning_row.selected(),
-        multipass: multipass_row.selected(),
-        profile: profile_row.selected(),
-        look_ahead: look_ahead_row.is_active(),
-        adaptive_quantization: adaptive_quantization_row.is_active(),
-        b_frames: b_frames_row.value() as u32,
-        b_frame_as_reference: b_frame_as_reference_row.is_active(),
-        audio_encoder: audio_encoder_row.selected(),
-        audio_sample_rate: audio_sample_rate_row.selected(),
-        audio_bitrate_kbps: audio_bitrate_row.value() as u32,
-        maximum_temporal_decoders: preferences.temporal_decoder_pool_size as usize,
-        gpu_host_memory_gib: preferences.gpu_host_memory_gib,
-    }
-}
-
-fn default_video_filename(project: &project::Project, container: video::ExportContainer) -> String {
-    output::default_filename(project, video::extension_for_container(container))
 }
 
 fn start_video_export(

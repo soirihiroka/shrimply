@@ -10,6 +10,7 @@ fn main() -> ExitCode {
     }
     shrimply_process_reporting::diagnostics::init();
     shrimply_i18n_qt::init_system_locale();
+    shrimply_components_qt::init();
 
     if let Err(error) = shrimply_cross_ui_core::launcher::check_nvidia_gpu() {
         tracing::error!("{error}");

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-i18n.workspace = true
 glam.workspace = true
 shrimply-paint-geometry = { workspace = true }
 shrimply-paint-model = { workspace = true }

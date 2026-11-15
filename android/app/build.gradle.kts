@@ -26,6 +26,12 @@ android {
     packaging { jniLibs.useLegacyPackaging = false }
 }
 dependencies {
+    // The existing Rust TLS verifier requires its matching Android component.
+    val verifierVersion = providers.fileContents(rootProject.layout.projectDirectory.file("../Cargo.lock")).asText.map { lock ->
+        Regex("""name = "rustls-platform-verifier-android"\s+version = "([^"]+)"""").find(lock)?.groupValues?.get(1)
+            ?: error("rustls-platform-verifier-android is missing from Cargo.lock")
+    }
+    implementation(verifierVersion.map { "org.rustls:rustls-platform-verifier:$it" })
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.foundation:foundation:1.12.1")
     implementation("androidx.compose.material3:material3:1.4.0")

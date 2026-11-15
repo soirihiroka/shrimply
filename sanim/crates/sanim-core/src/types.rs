@@ -7,7 +7,6 @@ pub enum Type {
     /// Internal inference hole, never a user-declarable type or a dynamic top type.
     Unknown,
     Unit,
-    Task,
     Forever,
     Bool,
     String,
@@ -774,7 +773,6 @@ impl std::fmt::Display for Type {
         match self {
             Self::Unknown => write!(f, "an inferred value"),
             Self::Unit => write!(f, "Unit"),
-            Self::Task => write!(f, "Task"),
             Self::Forever => write!(f, "Forever"),
             Self::Bool => write!(f, "Bool"),
             Self::String => write!(f, "String"),
@@ -965,7 +963,6 @@ impl Vec2 {
 pub enum Value {
     Unit,
     Forever,
-    Task(Option<Fraction>),
     Bool(bool),
     String(Arc<str>),
     Code(Arc<crate::code::Document>),
@@ -1006,7 +1003,6 @@ impl Value {
     pub fn ty(&self) -> Type {
         match self {
             Self::Unit => Type::Unit,
-            Self::Task(_) => Type::Task,
             Self::Forever => Type::Forever,
             Self::Bool(_) => Type::Bool,
             Self::String(_) => Type::String,

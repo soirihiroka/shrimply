@@ -1,6 +1,10 @@
 package dev.shrimply.app
 
 import android.os.Bundle
+import android.os.Build
+import android.app.ActivityManager
+import android.content.pm.PackageManager
+import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.AndroidExternalSurface
@@ -40,6 +44,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var projects: ProjectFiles
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // App-sharing pickers can launch the current app above its permission activity.
+        if (!isTaskRoot && intent.action == android.content.Intent.ACTION_MAIN &&
+            intent.hasCategory(android.content.Intent.CATEGORY_LAUNCHER)) {
+            finish()
+            return
+        }
         val fontDirectories = android.graphics.fonts.SystemFonts.getAvailableFonts()
             .mapNotNull { it.file?.parentFile?.absolutePath }.distinct().sorted()
         NativeTimeline.initialize(applicationContext, java.io.File(filesDir, "config").absolutePath,
@@ -53,15 +63,36 @@ class MainActivity : ComponentActivity() {
         })[EditorModel::class.java]
         timeline = model.timeline
         projects = model.projects
+        val customCaptionSupported = Build.VERSION.SDK_INT >= 35 &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_FREEFORM_WINDOW_MANAGEMENT)
+        val caption = mutableStateOf(WindowCaption())
+        window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+            caption.value = windowCaption(insets, customCaptionSupported)
+            view.onApplyWindowInsets(insets)
+        }
         setContent {
+            val currentCaption = caption.value
             val context = LocalContext.current
             val dark = isSystemInDarkTheme()
             val colors = if (dark) dynamicDarkColorScheme(context)
                 else dynamicLightColorScheme(context)
-            SideEffect {
+            LaunchedEffect(window, dark, colors.primary, colors.surfaceContainerLowest, currentCaption.height > 0) {
                 WindowCompat.getInsetsController(window, window.decorView).apply {
                     isAppearanceLightStatusBars = !dark
                     isAppearanceLightNavigationBars = !dark
+                }
+                if (Build.VERSION.SDK_INT >= 35) {
+                    val transparent = WindowInsetsController.APPEARANCE_TRANSPARENT_CAPTION_BAR_BACKGROUND
+                    val light = WindowInsetsController.APPEARANCE_LIGHT_CAPTION_BARS
+                    val appearance = if (customCaptionSupported) transparent or (if (dark) 0 else light) else 0
+                    window.insetsController?.setSystemBarsAppearance(appearance, transparent or light)
+                }
+                if (!customCaptionSupported) {
+                    // Developer-forced freeform can expose a legacy opaque caption shell.
+                    setTaskDescription(ActivityManager.TaskDescription.Builder()
+                        .setLabel(title.toString()).setIcon(R.mipmap.ic_launcher)
+                        .setPrimaryColor(colors.primary.toArgb())
+                        .setStatusBarColor(colors.surfaceContainerLowest.toArgb()).build())
                 }
             }
             val palette = arrayOf(
@@ -77,13 +108,14 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = colors) {
                 Surface(Modifier.fillMaxSize()) {
                     if (benchmark) NativeSurface(timeline, Modifier.fillMaxSize())
-                    else ProjectApp(timeline, projects)
+                    else ProjectApp(timeline, projects, currentCaption)
                 }
             }
         }
+        window.decorView.requestApplyInsets()
     }
-    override fun onResume() { super.onResume(); timeline.active(true) }
-    override fun onPause() { timeline.active(false); super.onPause() }
+    override fun onResume() { super.onResume(); if (::timeline.isInitialized) timeline.active(true) }
+    override fun onPause() { if (::timeline.isInitialized) timeline.active(false); super.onPause() }
 }
 
 @OptIn(ExperimentalComposeUiApi::class)

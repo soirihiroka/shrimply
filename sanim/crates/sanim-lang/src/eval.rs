@@ -1,3 +1,4 @@
+mod code_queries;
 mod dataframe;
 mod demand;
 mod functions;
@@ -1238,6 +1239,9 @@ impl Runtime<'_, '_> {
                 }
             }
             ExprKind::Call { callee, args, .. } => {
+                if let Some(value) = self.staged_code_range(expr, env)? {
+                    return Ok(value);
+                }
                 let mut receiver = None;
                 let native = match &callee.kind {
                     ExprKind::Name(name) if prelude::builtin(name).is_some() => Some(name.clone()),

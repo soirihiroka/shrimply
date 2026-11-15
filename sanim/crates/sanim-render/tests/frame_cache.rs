@@ -322,7 +322,7 @@ fn unused_animated_cells_and_unadded_bindings_do_not_destroy_static_frame_holds(
         "sig ghost_scale=unused+1\nlet ghost=Box(id=\"ghost\", scale=ghost_scale, width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n",
     ] {
         let mut renderer = Renderer::default();
-        let scene=renderer.prepare(animation(&format!("mut unused=0\n{declarations}Animation(children=[Box(id=\"still\", width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nspawn {{animate(unused,to=1,duration=10s)}}\nwait(10s)"))).unwrap();
+        let scene=renderer.prepare(animation(&format!("mut unused=0\n{declarations}<Animation><Animation>{{Box(id=\"still\", width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)}}</Animation>{{animate(unused,to=1,duration=10s)}}{{wait(10s)}}</Animation>"))).unwrap();
         let options = Options::for_animation(scene.animation());
         let first = renderer
             .frame_state(&scene, Fraction::from(0), &options)

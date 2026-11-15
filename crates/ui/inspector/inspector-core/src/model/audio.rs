@@ -1309,6 +1309,11 @@ impl InspectorController {
                 id,
             )?;
         }
+        self.audio_cache_transitions.borrow_mut().observe(
+            target.clone(),
+            id,
+            audio_cache_status(id),
+        );
         self.refresh_audio_inspector();
         Ok(())
     }

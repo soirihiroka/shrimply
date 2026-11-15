@@ -4,8 +4,8 @@ use objc2::sel;
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSButton, NSControlStateValueOff, NSControlStateValueOn,
     NSFont, NSMenu, NSMenuItem, NSModalResponseOK, NSModalResponseStop, NSOpenPanel, NSPasteboard,
-    NSPasteboardTypeString, NSPopUpButton, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider,
-    NSTextField, NSTextView, NSWorkspace,
+    NSPasteboardTypeString, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider, NSTextField,
+    NSTextView, NSWorkspace,
 };
 use objc2_foundation::{NSNumber, NSPoint, NSString, NSURL, ns_string};
 use shrimply_timeline_skia::{ContextMenuEntry, ContextMenuRequest, TIMELINE_CLIPBOARD_MARKER};
@@ -538,10 +538,10 @@ impl CanvasView {
         let remembered =
             shrimply_editor_state::preferences::snapshot(&self.ivars().session.preferences)
                 .last_tts_model;
-        let model_menu = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(self.mtm()),
+        let model_menu = shrimply_components_appkit::menu::popup(
             NSRect::new(NSPoint::ZERO, NSSize::new(360.0, 26.0)),
             false,
+            self.mtm(),
         );
         for model in &models {
             model_menu.addItemWithTitle(&NSString::from_str(&model.label));
@@ -684,10 +684,10 @@ impl CanvasView {
                     default,
                     ..
                 } => {
-                    let menu = NSPopUpButton::initWithFrame_pullsDown(
-                        NSPopUpButton::alloc(self.mtm()),
+                    let menu = shrimply_components_appkit::menu::popup(
                         NSRect::new(NSPoint::ZERO, NSSize::new(360.0, 26.0)),
                         false,
+                        self.mtm(),
                     );
                     for option in options {
                         menu.addItemWithTitle(&NSString::from_str(&option.label));
@@ -1049,11 +1049,7 @@ impl CanvasView {
         };
 
         label("Model", 0);
-        let model = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(self.mtm()),
-            control_frame(0),
-            false,
-        );
+        let model = shrimply_components_appkit::menu::popup(control_frame(0), false, self.mtm());
         for candidate in &models {
             model.addItemWithTitle(&NSString::from_str(candidate));
         }
@@ -1066,21 +1062,13 @@ impl CanvasView {
         accessory.addSubview(&model);
 
         label("Audio chunks", 1);
-        let chunks = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(self.mtm()),
-            control_frame(1),
-            false,
-        );
+        let chunks = shrimply_components_appkit::menu::popup(control_frame(1), false, self.mtm());
         chunks.addItemWithTitle(ns_string!("Follow cuts"));
         chunks.addItemWithTitle(ns_string!("Continuous"));
         accessory.addSubview(&chunks);
 
         label("Snap source", 2);
-        let snap = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(self.mtm()),
-            control_frame(2),
-            false,
-        );
+        let snap = shrimply_components_appkit::menu::popup(control_frame(2), false, self.mtm());
         for title in ["Audio cuts", "Video cuts", "Audio and video cuts"] {
             snap.addItemWithTitle(&NSString::from_str(title));
         }

@@ -20,11 +20,11 @@ Animation(children=[pane])
 wait(1s)
 code.range(name="task_0").fold(duration=1s,ease="linear")
 wait(1s)
-numbers=false
+animate(numbers,to=false,duration=0s)
 wait(1s)
 code.range(name="task_0").unfold(duration=1s,ease="linear")
 wait(1s)
-numbers=true
+animate(numbers,to=true,duration=0s)
 wait(1s)
 "#
         ),

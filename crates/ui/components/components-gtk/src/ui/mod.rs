@@ -40,7 +40,9 @@ pub use inspector_layered_property::{InspectorLayeredProperty, InspectorLayeredP
 pub use inspector_property_row::InspectorPropertyRow;
 pub use keyed_box::KeyedBox;
 pub use live_performance::live_performance;
-pub use menu::{action_menu_sheet, adaptive_menu, menu_action, menu_sheet, unparent_on_close};
+pub use menu::{
+    action_menu_sheet, adaptive_menu, adaptive_popover, menu_action, menu_sheet, unparent_on_close,
+};
 pub use modifier_menu::{
     SearchMenuItem, modifier_menu, searchable_menu, searchable_menu_at, searchable_popover,
 };

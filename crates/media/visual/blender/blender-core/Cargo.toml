@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-i18n.workspace = true
 shrimply-trust-core.workspace = true
 shrimply-local-ipc.workspace = true
 libc.workspace = true

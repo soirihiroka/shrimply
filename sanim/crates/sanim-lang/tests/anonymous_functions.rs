@@ -57,9 +57,9 @@ fn escaped_mutable_captures_and_reduce_callbacks_remain_valid() {
 
 #[test]
 fn closure_duration_evaluates_local_duration_expressions_exactly() {
-    let source =
-        "let delay=fn<mut>(time:Duration):Unit{let length=time*2;wait(length)}\ndelay(500ms)";
+    let source = "let delay=fn(time:Duration):Animation{let length=time*2;return wait(length)}\ndelay(500ms)";
     let prepared = run(source).unwrap();
+    assert_eq!(prepared.animation.duration, 1.into());
     let mut files = MemorySources::default();
     files.insert("main.sanim", format!("{}\nAnimation()", source));
     assert_eq!(
@@ -246,7 +246,11 @@ fn forward_helper_effects_follow_inferred_closure_aliases() {
     let error = run(source).unwrap_err();
     assert_eq!(error.code, "S131", "{error}");
     assert!(error.message.contains("pure"), "{error}");
-    run("let pause=fn<mut>():Unit{later()}\nfn<mut> later():Unit{wait(1s)}\npause()").unwrap();
+    let returned = run(
+        "let pause=fn():Animation{return later()}\nfn later():Animation{return wait(1s)}\npause()",
+    )
+    .unwrap();
+    assert_eq!(returned.animation.duration, 1.into());
 }
 
 #[test]

@@ -77,43 +77,17 @@ impl qobject::InspectorBackend {
         if control.action.is_some() && !control.action_sensitive {
             return;
         }
-        let result = if let Some(action) = control.action {
-            match action {
-                shrimply_inspector_core::InspectorControlAction::SelectObject3dModel {
-                    modifier_id,
-                } => crate::select_object_3d_model(&target, modifier_id),
-                shrimply_inspector_core::InspectorControlAction::SelectScene3dEnvironment => {
-                    crate::select_scene_3d_environment(&target)
-                }
-                shrimply_inspector_core::InspectorControlAction::SelectPaintTexture {
-                    color_id,
-                } => crate::select_paint_texture(&target, color_id),
-                shrimply_inspector_core::InspectorControlAction::ToggleSam2Analysis {
-                    modifier_id,
-                    ..
-                } => crate::toggle_sam2_analysis(&target, modifier_id),
-                shrimply_inspector_core::InspectorControlAction::ToggleTransparentFillAnalysis {
-                    modifier_id,
-                } => crate::toggle_transparent_fill_analysis(&target, modifier_id),
-                shrimply_inspector_core::InspectorControlAction::ToggleCameraAnalysis => {
-                    crate::toggle_camera_analysis(&target)
-                }
-                action => crate::trigger_video_control_action(&target, action),
+        let result = match control.action {
+            Some(shrimply_inspector_core::InspectorControlAction::SelectObject3dModel {
+                modifier_id,
+            }) => crate::select_object_3d_model(&target, modifier_id),
+            Some(shrimply_inspector_core::InspectorControlAction::SelectScene3dEnvironment) => {
+                crate::select_scene_3d_environment(&target)
             }
-        } else {
-            match control.kind {
-                ControlKind::AudioCache => control
-                    .target_id
-                    .ok_or_else(|| "audio cache control has no modifier target".to_string())
-                    .and_then(|id| crate::toggle_audio_cache(&target, id)),
-                ControlKind::VisualCache => control
-                    .target_id
-                    .ok_or_else(|| "visual cache control has no modifier target".to_string())
-                    .and_then(|id| crate::toggle_visual_cache(&target, id)),
-                ControlKind::Analysis => Err("analysis control has no action".to_string()),
-                ControlKind::Action => Err("inspector action control has no action".to_string()),
-                _ => Err("inspector control does not have an action".to_string()),
-            }
+            Some(shrimply_inspector_core::InspectorControlAction::SelectPaintTexture {
+                color_id,
+            }) => crate::select_paint_texture(&target, color_id),
+            _ => crate::activate_control(&target, &control),
         };
         let refresh_analysis = result.is_ok() && control.kind == ControlKind::Analysis;
         self.as_mut().finish(result);

@@ -1765,6 +1765,14 @@ impl Track {
                 };
                 Ok(Value::List(crate::List::from_values(inner, values)))
             }
+            (Value::List(a), Value::List(b))
+                if a.element_type.accepts(&b.element_type)
+                    || b.element_type.accepts(&a.element_type) =>
+            {
+                // Variable-length data channels commit atomically at their endpoint.
+                // Equal-length numeric lists were interpolated by the branch above.
+                Ok(self.from.clone())
+            }
             (Value::Color(a), Value::Color(b)) => Ok(Value::Color(math::paint::color_lerp(
                 a,
                 b,

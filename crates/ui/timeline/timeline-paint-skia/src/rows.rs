@@ -274,6 +274,18 @@ pub fn active_new_track_at_y(
 }
 
 pub fn row_for_track(project: &Project, kind: TrackKind, track_index: usize) -> Option<usize> {
+    if project.expanded_sequence_paths.is_empty() {
+        let count = track_count(project, kind);
+        if track_index >= count {
+            return None;
+        }
+        let offset = if reversed(kind) {
+            count - 1 - track_index
+        } else {
+            track_index
+        };
+        return Some(track_block_rows(project, kind).0 + offset);
+    }
     rows(project)
         .iter()
         .position(|row| row.root_key == Some(TrackKey { kind, track_index }))
@@ -407,6 +419,9 @@ fn track_block_rows(project: &Project, kind: TrackKind) -> (usize, usize) {
 }
 
 pub fn expanded_rows_before(project: &Project, kind: TrackKind, end: usize) -> usize {
+    if project.expanded_sequence_paths.is_empty() {
+        return 0;
+    }
     let mut count = 0;
     for row in rows(project) {
         if row

@@ -29,10 +29,8 @@ mod vector;
 pub use external::ExternalImage;
 #[path = "denoise.rs"]
 mod denoise;
-#[cfg(target_os = "linux")]
 #[path = "gaussian.rs"]
 mod gaussian;
-#[cfg(target_os = "linux")]
 #[path = "obj.rs"]
 mod obj;
 #[cfg(target_os = "linux")]
@@ -119,7 +117,7 @@ pub struct Submission {
 impl Submission {
     pub fn completed(&self) -> Result<bool, String> {
         unsafe { self.pool.device.raw.get_fence_status(self.fence) }
-            .map_err(|e| format!("poll Intel GPU: {e:?}"))
+            .map_err(|e| format!("poll Vulkan GPU: {e:?}"))
     }
     pub fn wait(&self) -> Result<(), String> {
         unsafe {
@@ -128,7 +126,7 @@ impl Submission {
                 .raw
                 .wait_for_fences(&[self.fence], true, u64::MAX)
         }
-        .map_err(|e| format!("wait for Intel GPU: {e:?}"))
+        .map_err(|e| format!("wait for Vulkan GPU: {e:?}"))
     }
 }
 impl Drop for Submission {
@@ -161,12 +159,10 @@ pub struct Renderer {
     skia: Option<skia_safe::gpu::DirectContext>,
     #[cfg(all(target_os = "android", feature = "android-media"))]
     native_samplers: HashMap<android_image::SamplerKey, Rc<android_image::Sampler>>,
-    #[cfg(target_os = "linux")]
     gaussian: Option<shrimply_3dgs_vulkan::Renderer>,
-    #[cfg(target_os = "linux")]
     object: Option<obj::Uploaded>,
-    #[cfg(target_os = "linux")]
     object_environment: Option<obj::Environment>,
+    object_sampling: Option<obj::SamplingCache>,
     #[cfg(target_os = "linux")]
     oidn: Option<oidn::State>,
     device: Arc<Device>,
@@ -210,12 +206,10 @@ impl Renderer {
             skia: None,
             #[cfg(all(target_os = "android", feature = "android-media"))]
             native_samplers: HashMap::new(),
-            #[cfg(target_os = "linux")]
             gaussian: None,
-            #[cfg(target_os = "linux")]
             object: None,
-            #[cfg(target_os = "linux")]
             object_environment: None,
+            object_sampling: None,
             #[cfg(target_os = "linux")]
             oidn: None,
             pool,
@@ -501,10 +495,79 @@ impl Renderer {
         extent: [usize; 3],
         bindings: DispatchBindings<'_>,
     ) -> Result<Submission, String> {
+        let command = self.command()?;
+        if let Err(error) =
+            unsafe { self.record_dispatch(command, &arguments, &mut resources, extent, bindings) }
+        {
+            unsafe {
+                self.device
+                    .raw
+                    .free_command_buffers(self.pool.raw, &[command]);
+            }
+            return Err(error);
+        }
+        self.submit(command, resources)
+    }
+
+    /// Record dependent compute stages once, retaining their buffers through completion.
+    ///
+    /// # Safety
+    /// Every GPU address in the stages must reference a retained resource of sufficient size.
+    unsafe fn dispatch_batch<'a>(
+        &mut self,
+        stages: impl IntoIterator<Item = &'a Arguments>,
+        mut resources: Vec<Buffer>,
+        extent: [usize; 3],
+    ) -> Result<Submission, String> {
+        let command = self.command()?;
+        let mut count = 0;
+        for stage in stages {
+            if let Err(error) = unsafe {
+                self.record_dispatch(
+                    command,
+                    stage,
+                    &mut resources,
+                    extent,
+                    DispatchBindings {
+                        layout: self.pipeline_layout,
+                        sets: &[],
+                        acquire: &[],
+                        release: &[],
+                    },
+                )
+            } {
+                unsafe {
+                    self.device
+                        .raw
+                        .free_command_buffers(self.pool.raw, &[command]);
+                }
+                return Err(error);
+            }
+            count += 1;
+        }
+        if count == 0 {
+            unsafe {
+                self.device
+                    .raw
+                    .free_command_buffers(self.pool.raw, &[command]);
+            }
+            return Err("Vulkan compute batch is empty".into());
+        }
+        self.submit(command, resources)
+    }
+
+    unsafe fn record_dispatch(
+        &mut self,
+        command: vk::CommandBuffer,
+        arguments: &Arguments,
+        resources: &mut Vec<Buffer>,
+        extent: [usize; 3],
+        bindings: DispatchBindings<'_>,
+    ) -> Result<(), String> {
         if extent.contains(&0) {
             return Err("Vulkan dispatch dimensions must be nonzero".into());
         }
-        let pipeline = self.kernel(&arguments, bindings.layout)?;
+        let pipeline = self.kernel(arguments, bindings.layout)?;
         let group = arguments.layout.group;
         let mut groups = [0_u32; 3];
         for axis in 0..groups.len() {
@@ -512,18 +575,19 @@ impl Renderer {
                 .map_err(|_| "Vulkan dispatch group count overflow")?;
             if groups[axis] > self.device.limits.max_compute_work_group_count[axis] {
                 return Err(format!(
-                    "Intel dispatch exceeds the GPU workgroup limit on axis {axis}: {} > {}",
+                    "Vulkan dispatch exceeds the GPU workgroup limit on axis {axis}: {} > {}",
                     groups[axis], self.device.limits.max_compute_work_group_count[axis]
                 ));
             }
         }
+        let address;
         let push_data = if arguments.layout.buffered {
             let uniforms = self.upload(&arguments.bytes)?;
-            let address = uniforms.address().to_ne_bytes().to_vec();
+            address = uniforms.address().to_ne_bytes();
             resources.push(uniforms);
-            address
+            address.as_slice()
         } else {
-            arguments.bytes
+            arguments.bytes.as_slice()
         };
         if push_data.len() > PUSH_CONSTANT_BYTES as usize {
             return Err(format!(
@@ -531,7 +595,6 @@ impl Renderer {
                 arguments.layout.name
             ));
         }
-        let command = self.command()?;
         unsafe {
             self.device.raw.cmd_pipeline_barrier(
                 command,
@@ -556,7 +619,7 @@ impl Renderer {
                 bindings.layout,
                 vk::ShaderStageFlags::COMPUTE,
                 0,
-                &push_data,
+                push_data,
             );
             if !bindings.sets.is_empty() {
                 self.device.raw.cmd_bind_descriptor_sets(
@@ -583,7 +646,7 @@ impl Renderer {
                 );
             }
         }
-        self.submit(command, resources)
+        Ok(())
     }
 
     pub fn composite_buffers(
@@ -959,7 +1022,6 @@ impl Drop for Renderer {
             skia.release_resources_and_abandon();
         }
         // The borrowed Gaussian renderer uses this queue during destruction too.
-        #[cfg(target_os = "linux")]
         self.gaussian.take();
         unsafe {
             for pipeline in self.kernels.values() {

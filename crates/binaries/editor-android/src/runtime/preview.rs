@@ -22,6 +22,7 @@ impl Runtime {
         json!({
             "visible": preferences.preview_controls_visible,
             "loading": model.loading,
+            "loading_status": model.loading_status,
             "status": model.status,
             "status_icon": "check-plain-symbolic",
             "frame_rate": model.frame_rate,
@@ -29,6 +30,7 @@ impl Runtime {
             "speed": model.speed,
             "speed_label": model.speed_tooltip,
             "close_label": shrimply_i18n::text("Close"),
+            "paint": self.preview_paint_controls(),
             "guide": {"label":model.guides,"icon":"ruler-angled-symbolic",
                 "active":preferences.preview_guides_visible,"enabled":self.backend.project().is_some(),
                 "command":{"op":"preview_guides","visible":!preferences.preview_guides_visible}}
@@ -43,6 +45,75 @@ impl Runtime {
             self.cancel_preview_edit()?;
         }
         shrimply_preferences_core::set_preview_guides_visible(&self.backend.preferences, visible);
+        Ok(self.preview_controls())
+    }
+
+    fn preview_paint_controls(&self) -> Value {
+        use shrimply_project_document::project::{VideoItemContent, generated_item_time};
+        let Some(project) = self.backend.shared_project() else {
+            return Value::Null;
+        };
+        let project = project.borrow();
+        let Some(address) = self
+            .timeline
+            .as_ref()
+            .and_then(|scene| scene.focused_video_address())
+        else {
+            return Value::Null;
+        };
+        let Some(item) = project.video_item(&address) else {
+            return Value::Null;
+        };
+        let VideoItemContent::Paint(paint) = &item.content else {
+            return Value::Null;
+        };
+        let Some(sequence_time) =
+            project.timeline_time_to_sequence(&address.track(), player::current_time(&self.player))
+        else {
+            return Value::Null;
+        };
+        let time =
+            generated_item_time(item, sequence_time).unwrap_or(shrimply_math_core::Time::ZERO);
+        let model = self.preview_interaction.paint_toolbar(paint, time);
+        let buttons = model.buttons.into_iter().map(|button| {
+            let editor = (button.action == shrimply_preview_interaction_skia::surface::paint_toolbar::Action::Size).then(||json!({"label":model.size.label,"value":model.size.value,"minimum":model.size.minimum,"maximum":model.size.maximum,"step":model.size.step}));
+            json!({"label":button.label,"icon":button.icon,"text":button.text,"color":button.color,"active":button.active,"separator":button.separator,"editor":editor,
+                "command":{"op":"preview_paint","project_path":self.backend.path(),"item":item.id.to_string(),"action":button.action.id()}})
+        }).collect::<Vec<_>>();
+        json!({"buttons":buttons})
+    }
+
+    pub(super) fn preview_paint_request(&mut self, request: &Value) -> Result<Value, String> {
+        self.cancel_preview_edit()?;
+        let project = self.backend.shared_project().ok_or("No project is open")?;
+        let project = project.borrow();
+        let address = self
+            .timeline
+            .as_ref()
+            .and_then(|scene| scene.focused_video_address())
+            .ok_or("No paint item is selected")?;
+        let item = project
+            .video_item(&address)
+            .ok_or("Paint item is unavailable")?;
+        if request["item"].as_str() != Some(item.id.to_string().as_str()) {
+            return Err("Paint selection changed".into());
+        }
+        let shrimply_project_document::project::VideoItemContent::Paint(paint) = &item.content
+        else {
+            return Err("Selected item is not paint".into());
+        };
+        let action = shrimply_preview_interaction_skia::surface::paint_toolbar::Action::parse(
+            request["action"]
+                .as_str()
+                .ok_or("Paint action is required")?,
+        )?;
+        self.preview_interaction.paint_toolbar_action(
+            paint,
+            action,
+            request["value"].as_f64().map(|value| value as f32),
+        )?;
+        drop(project);
+        self.prepare_preview_overlay(self.preview_size)?;
         Ok(self.preview_controls())
     }
 

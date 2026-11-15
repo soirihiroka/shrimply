@@ -8,6 +8,7 @@ mod font_picker;
 mod frame_graph;
 mod host;
 mod inspector;
+pub mod menu;
 mod number_picker;
 mod scrolling;
 mod spinner;

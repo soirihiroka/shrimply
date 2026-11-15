@@ -47,6 +47,7 @@ enum SessionState {
 
 impl Source {
     pub fn new(item: &VideoItem, canvas_size: CanvasSize) -> Result<Self, String> {
+        shrimply_blender_core::require_support()?;
         let VideoItemContent::Blender(blender) = &item.content else {
             return Err("Blender source received a non-Blender visual".into());
         };

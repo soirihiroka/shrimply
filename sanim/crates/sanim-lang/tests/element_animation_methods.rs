@@ -119,10 +119,10 @@ fn horizontal_methods_accept_timing_before_named_or_positional_anchor_controls()
 }
 
 #[test]
-fn methods_preserve_purity_and_reject_removed_globals_or_wrong_receivers() {
+fn methods_and_scoped_factories_are_pure_and_validate_receivers() {
     for (source, code) in [
-        ("let shape=Box()\nFadeIn(shape)", "S120"),
-        ("let shape=Box()\nMoveTo(shape,[1pt, 0pt])", "S120"),
+        ("let shape=Box()\nFadeIn(shape)", "S106"),
+        ("let shape=Box()\nMoveTo(shape,[1pt, 0pt])", "S106"),
         ("[1,2].fade_in()", "S123"),
     ] {
         let mut sources = MemorySources::default();
@@ -157,10 +157,9 @@ fn methods_preserve_purity_and_reject_removed_globals_or_wrong_receivers() {
         "RotateTo",
         "FillTo",
     ] {
-        assert!(
-            sanim_lang::prelude::builtin(name).is_none(),
-            "legacy global {name}"
-        );
+        let factory = sanim_lang::prelude::builtin(name).expect("scoped animation factory");
+        assert_eq!(factory.result, sanim_core::Type::Animation, "{name}");
+        assert!(factory.capabilities().is_pure(), "{name}");
     }
 }
 
@@ -168,20 +167,17 @@ fn methods_preserve_purity_and_reject_removed_globals_or_wrong_receivers() {
 #[ignore = "performance measurement: make element-animation-bench"]
 fn method_reload_benchmark() {
     const EDITS: usize = 80;
-    let prefix = "let shape=Box(width=20pt,height=20pt)\nlet task=<Animation absolute flow=\"sequence\">{shape.fade_in(1s)}</Animation>\nwait(500ms)\n";
+    let prefix = "let shape=Box(width=20pt,height=20pt)\nlet reveal=shape.fade_in(1s)\n<Animation>{reveal}{wait(500ms)}</Animation>\n";
     let mut engine = Engine::default();
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", format!("{prefix}task.join()\nwait(1ms)"));
+    sources.insert("main.sanim", format!("{prefix}wait(1ms)"));
     let cold = engine
         .prepare("main.sanim", &sources, &Default::default())
         .unwrap();
     let mut samples = Vec::new();
     let mut bytes = (usize::MAX, 0usize);
     for edit in 0..EDITS {
-        sources.insert(
-            "main.sanim",
-            format!("{prefix}task.join()\nwait({}ms)", edit + 2),
-        );
+        sources.insert("main.sanim", format!("{prefix}wait({}ms)", edit + 2));
         let started = std::time::Instant::now();
         let prepared = engine
             .prepare("main.sanim", &sources, &Default::default())

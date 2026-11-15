@@ -29,7 +29,16 @@ public interface IPbrEnvironmentTracer
     float3 visibility(float3 world_position, float3 normal, float3 direction);
 }
 
-public float3 integrate_pbr_environment<T : IPbrEnvironmentTracer>(
+public struct PbrEnvironmentSample
+{
+    public float3 direction;
+    public float3 contribution;
+    public float weight_sum;
+    public float target;
+    public uint count;
+};
+
+public PbrEnvironmentSample sample_pbr_environment<T : IPbrEnvironmentTracer>(
     SCENE_UNIFORMS scene,
     float3 world_position,
     float3 normal,
@@ -85,10 +94,27 @@ public float3 integrate_pbr_environment<T : IPbrEnvironmentTracer>(
             selected_target = target;
         }
     }
-    if (selected_target <= 0.0)
-        return float3(0.0);
-    return selected_contribution
-        * tracer.visibility(world_position, normal, selected_light)
-        * reservoir_weight_sum
-        / (float(candidate_count) * selected_target);
+    PbrEnvironmentSample result;
+    result.direction = selected_light;
+    result.contribution = selected_contribution;
+    result.weight_sum = reservoir_weight_sum;
+    result.target = selected_target;
+    result.count = candidate_count;
+    return result;
+}
+
+public float3 finish_pbr_environment(PbrEnvironmentSample sample, float3 visibility)
+{
+    if (sample.target <= 0.0) return float3(0.0);
+    return sample.contribution * visibility * sample.weight_sum / (float(sample.count) * sample.target);
+}
+
+public float3 integrate_pbr_environment<T : IPbrEnvironmentTracer>(
+    SCENE_UNIFORMS scene, float3 world_position, float3 normal, float3 view,
+    float3 base_color, float metallic, float roughness, PbrSettings settings,
+    inout uint state, T tracer)
+{
+    PbrEnvironmentSample sample = sample_pbr_environment(scene,world_position,normal,view,base_color,metallic,roughness,settings,state,tracer);
+    if (sample.target <= 0.0) return float3(0.0);
+    return finish_pbr_environment(sample,tracer.visibility(world_position,normal,sample.direction));
 }

@@ -92,7 +92,7 @@ fn forcing_shared_values_keeps_timeline_and_reflection_order() {
     let lazy = demand()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
-    assert_eq!(lazy.animation.duration, Fraction::from(1));
+    assert_eq!(lazy.animation.duration, Fraction::from(2));
     assert_eq!(lazy.statistics.decoded_assets, 1);
     assert_eq!(lazy.statistics.forced_values, 1);
     assert_eq!(lazy.reflected.len(), 1);

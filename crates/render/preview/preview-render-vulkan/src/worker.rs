@@ -174,9 +174,9 @@ pub fn worker<F: From<Frame> + Send + 'static>(
                 }
                 Ok(true) => {}
             }
-            let pending_frame = pending.take().expect("polled Intel frame disappeared");
+            let pending_frame = pending.take().expect("polled Vulkan frame disappeared");
             shrimply_profiling::record(
-                "Intel compositor / GPU completion and polling",
+                "Vulkan compositor / GPU completion and polling",
                 pending_frame.submitted.elapsed(),
             );
             let current = pending_frame.request;
@@ -196,7 +196,7 @@ pub fn worker<F: From<Frame> + Send + 'static>(
                 let (display, rendered) = pending_frame.frame.into_buffers();
                 serial = serial
                     .checked_add(1)
-                    .expect("Intel presentation serial overflow");
+                    .expect("Vulkan presentation serial overflow");
                 let frame = F::from(Frame {
                     display,
                     rendered,
@@ -256,7 +256,7 @@ pub fn worker<F: From<Frame> + Send + 'static>(
         }
         let started = Instant::now();
         let prepared = {
-            let _measurement = shrimply_profiling::measure("Intel compositor / Prepare scene");
+            let _measurement = shrimply_profiling::measure("Vulkan compositor / Prepare scene");
             compositor.prepare(&project, current.position, current.accuracy)
         };
         for error in compositor.take_sanim_errors() {
@@ -269,7 +269,7 @@ pub fn worker<F: From<Frame> + Send + 'static>(
         }
         match prepared.and_then(|plan| {
             plan.map(|plan| {
-                let _measurement = shrimply_profiling::measure("Intel compositor / Submit frame");
+                let _measurement = shrimply_profiling::measure("Vulkan compositor / Submit frame");
                 compositor.render(plan)
             })
             .transpose()

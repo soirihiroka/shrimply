@@ -4,7 +4,7 @@ use shrimply_components_core::presentation::normalize_control;
 use shrimply_i18n::text;
 use shrimply_inspector_core::{
     InspectorControl, InspectorController, InspectorTarget,
-    tts::{TtsEditorControl, TtsInputEdit},
+    tts::{self, TtsEditorControl, TtsInputEdit},
 };
 
 fn value_editor(label: &str, field: Value, command: Value) -> Value {
@@ -22,33 +22,25 @@ pub(super) fn presentation(control: &InspectorControl, item: &str, id: &str) -> 
         value["key"] = json!(key);
         value
     };
-    let mut controls = Vec::new();
-    if editor.loading {
-        controls.push(json!({"widget":"loading","label":text(&editor.catalog_status),"enabled":false,"editable":false}));
-    } else {
-        if !editor.catalog_status.is_empty() {
-            controls.push(json!({"widget":"text","label":text("Status"),"display":text(&editor.catalog_status),"enabled":true,"editable":false}));
-        }
-        controls.push(json!({"widget":"choice","choice_style":"row","label":text("Model"),"display":editor.model.as_ref().map(|model| text(&model.label)),"enabled":!editor.generation.running && !editor.models.is_empty(),"editable":true,
-            "choices":editor.models.iter().map(|model| {
-                let mut next = command("tts_model");
-                next["value"] = json!(model.value);
-                json!({"label":text(&model.label),"command":next})
-            }).collect::<Vec<_>>()}));
-    }
+    let actions = editor.actions();
+    let mut controls = vec![
+        json!({"widget":"choice","choice_style":"row","label":text(tts::MODEL_LABEL),"display":editor.model.as_ref().map(|model| text(&model.label)),"enabled":actions.model_sensitive,"editable":true,
+        "choices":editor.models.iter().map(|model| {
+            let mut next = command("tts_model"); next["value"] = json!(model.value);
+            json!({"label":text(&model.label),"command":next})
+        }).collect::<Vec<_>>()}),
+    ];
     if editor.can_retry {
-        controls.push(json!({"widget":"button","label":text("Retry"),"enabled":true,"editable":false,"command":command("tts_retry")}));
+        controls.push(json!({"widget":"button","label":text(tts::RETRY_LABEL),"enabled":true,"editable":false,"command":command("tts_retry")}));
     }
     controls.extend(input_controls(
         &editor.controls,
-        !editor.generation.running,
+        actions.inputs_sensitive,
         input_command,
     ));
-    if !editor.generation.status.is_empty() {
-        controls.push(json!({"widget":if editor.generation.running {"loading"} else {"text"},"label":text("Status"),"display":text(&editor.generation.status),"enabled":true,"editable":false}));
-    }
+    controls.push(json!({"widget":if actions.busy {"loading"} else {"text"},"label":text(tts::STATUS_LABEL),"display":text(actions.status),"enabled":true,"editable":false}));
     if editor.model.is_some() {
-        controls.push(json!({"widget":"button","label":text(if editor.generation.running {"Cancel"} else if editor.generated {"Regenerate"} else {"Generate"}),"enabled":!editor.generation.cancelling,"editable":false,
+        controls.push(json!({"widget":"button","label":text(actions.generate_label),"enabled":actions.generate_sensitive,"editable":false,
             "command":command(if editor.generation.running {"tts_cancel"} else {"tts_generate"})}));
     }
     let mut result = json!({"id":id,"widget":"group","label":"","enabled":control.sensitive,"editable":control.editable,"controls":controls});
@@ -109,8 +101,8 @@ pub(crate) fn input_controls(
             TtsEditorControl::Audio { key, label, path } => {
                 let mut clear = input_command(key, "tts_audio");
                 clear["path"] = Value::Null;
-                json!({"widget":"file","label":text(label),"display":path.as_ref().map(|path| path.display().to_string()).unwrap_or_default(),"mime":"audio/*","choose_label":text("Choose audio…"),
-                    "command":input_command(key,"tts_audio"),"clear":path.as_ref().map(|_|json!({"label":text("Clear audio"),"command":clear}))})
+                json!({"widget":"file","label":text(label),"display":path.as_ref().map(|path| path.display().to_string()).unwrap_or_default(),"mime":"audio/*","choose_label":text(tts::CHOOSE_AUDIO_LABEL),
+                    "command":input_command(key,"tts_audio"),"clear":path.as_ref().map(|_|json!({"label":text(tts::CLEAR_AUDIO_LABEL),"command":clear}))})
             }
             TtsEditorControl::Table {
                 key,
@@ -130,9 +122,9 @@ pub(crate) fn input_controls(
                     let mut next = input_command(key, "tts_remove_row");
                     next["row"] = json!(row_index);
                     next["rows"] = json!(rows);
-                    fields.push(json!({"widget":"button","label":text("Remove row"),"enabled":true,"editable":false,"command":next}));
+                    fields.push(json!({"widget":"button","label":text(tts::REMOVE_ROW_LABEL),"enabled":true,"editable":false,"command":next}));
                 }
-                fields.push(json!({"widget":"button","label":text("Add row"),"enabled":true,"editable":false,"command":input_command(key,"tts_add_row")}));
+                fields.push(json!({"widget":"button","label":text(tts::ADD_ROW_LABEL),"enabled":true,"editable":false,"command":input_command(key,"tts_add_row")}));
                 json!({"widget":"group","label":text(label),"controls":fields})
             }
         };

@@ -283,6 +283,14 @@ fn denoising_methods(
     ];
     #[cfg(all(not(feature = "cuda-backend"), target_os = "macos"))]
     methods.push((shrimply_scene_3d::DenoisingMethod::MetalSvgf, "Metal SVGF"));
+    #[cfg(all(
+        not(feature = "cuda-backend"),
+        any(target_os = "linux", target_os = "android")
+    ))]
+    methods.push((
+        shrimply_scene_3d::DenoisingMethod::Atrous,
+        "À-trous (basic GPU fallback)",
+    ));
     if !methods.iter().any(|(method, _)| *method == selected) {
         methods.push((selected, "Unavailable on this device"));
     }

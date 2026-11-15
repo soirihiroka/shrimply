@@ -1,12 +1,11 @@
 package dev.shrimply.app
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -16,52 +15,74 @@ import org.json.JSONObject
 @Composable
 internal fun VideoExportSettings(timeline: TimelineSession, projectPath: String, dismiss: () -> Unit, export: (Array<out Pair<String, Any>>) -> Unit) {
     var schema by remember { mutableStateOf<JSONObject?>(null) }
-    var values by rememberSaveable { mutableStateOf<String?>(null) }
+    var values by rememberSaveable(projectPath) { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val input = LocalMenuInputSource.current
+    val bottomSheet = remember { NativeLayout.menuUsesBottomSheet(input.value) }
     LaunchedEffect(projectPath) {
         try {
-            val result = timeline.request("export_schema", "project_path" to projectPath)
+            val result = timeline.request("export_schema", "project_path" to projectPath, "values" to (values?.let(::JSONObject) ?: JSONObject()))
             schema = result
-            if (values == null) values = result.getJSONObject("defaults").toString()
+            if (values == null) values = result.getJSONObject("values").toString()
         } catch (failure: Exception) { error = failure.message }
     }
     val fields = values?.let(::JSONObject)
-    fun set(name: String, value: String) { values = checkNotNull(fields).put(name, value).toString(); error = null }
-    AlertDialog(modifier = Modifier.imePadding(), onDismissRequest = dismiss, title = { Text(tr("Export Video")) }, text = {
-        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (schema == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
-            schema?.let { schema -> fields?.let { fields ->
-                ExportChoice("Video Codec", fields.getString("video_codec"), schema.getJSONArray("video_codecs")) { set("video_codec", it) }
-                val gif = fields.getString("video_codec") == "gif"
-                if (!gif) ExportChoice("Container", fields.getString("container"), schema.getJSONArray("containers")) { set("container", it) }
-                ExportChoice("Frame Rate", fields.getString("fps"), schema.getJSONArray("frame_rates")) { set("fps", it) }
-                if (!gif) ExportChoice("Rate control", fields.getString("rate_control"), schema.getJSONArray("rate_controls")) { set("rate_control", it) }
-                val numeric = if (gif) listOf("background_alpha" to "Background Alpha") else
-                    listOf((if (fields.getString("rate_control") == "constant_qp") "constant_qp" to "Constant QP" else "bitrate_kbps" to "Video Bitrate"), "keyframe_interval_seconds" to "Keyframe Interval")
-                numeric.forEach { (key, label) -> OutlinedTextField(fields.optString(key), { set(key, it) }, label = { Text(tr(label)) }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)) }
-                if (fields.getString("video_codec") != "gif") {
-                    HorizontalDivider()
-                    ExportChoice("Audio Encoder", fields.getString("audio_encoder"), schema.getJSONArray("audio_encoders")) { set("audio_encoder", it) }
-                    listOf("audio_sample_rate" to "Audio Sample Rate", "audio_bitrate_kbps" to "Audio Bitrate").forEach { (key, label) ->
-                        OutlinedTextField(fields.optString(key), { set(key, it) }, label = { Text(tr(label)) }, singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                    }
-                }
-            } }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+    fun set(id: String, value: Any) {
+        val next = JSONObject(checkNotNull(values)).put(id, value).toString()
+        values = next
+        scope.launch {
+            try {
+                val result = timeline.request("export_schema", "project_path" to projectPath, "values" to JSONObject(next))
+                if (values == next) { schema = result; error = null }
+            } catch (failure: Exception) { error = failure.message }
         }
-    }, confirmButton = { TextButton(enabled = schema != null && fields != null, onClick = {
-        try {
-            val fields = checkNotNull(fields)
-            val arguments = fields.keys().asSequence().map { key ->
-                val value: Any = if (key in setOf("video_codec", "container", "fps", "audio_encoder", "rate_control")) fields.getString(key)
-                    else fields.optString(key).toLongOrNull() ?: throw IllegalArgumentException("${key.replace('_', ' ')} must be a whole number.")
-                key to value
-            }.toList().toTypedArray()
-            export(arguments)
-        } catch (failure: Exception) { error = failure.message }
-    }) { Text(tr("Export")) } }, dismissButton = { TextButton(onClick = dismiss) { Text(tr("Cancel")) } })
+    }
+    AdaptiveMenu(expanded = true, bottomSheet = bottomSheet, dismiss = dismiss) {
+        Column(Modifier.fillMaxWidth().padding(24.dp).imePadding(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            schema?.let { description ->
+                Text(description.getString("title"), style = MaterialTheme.typography.headlineSmall)
+                fields?.let { fields -> description.getJSONArray("groups").objects().filter { it.getBoolean("visible") }.forEach { group ->
+                    Text(group.getString("label"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    description.getJSONArray("fields").objects().filter { it.getString("group") == group.getString("label") && it.getBoolean("visible") }.forEach { field -> key(field.getString("id")) {
+                        val id = field.getString("id")
+                        val enabled = !busy && field.getBoolean("enabled")
+                        val label = field.getString("label")
+                        when (field.getString("widget")) {
+                            "choice" -> {
+                                val choices = field.getJSONArray("choices").objects()
+                                val selected = choices.first { it.getString("value") == fields.get(id).toString() }
+                                ChoiceInput(label, selected.getString("label"), choices.map { it.getString("label") }, enabled) { set(id, choices[it].getString("value")) }
+                            }
+                            "number" -> OutlinedTextField(fields.get(id).toString(), { set(id, it) }, enabled = enabled,
+                                label = { Text(label) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                            "toggle" -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(label)
+                                Switch(checked = fields.getBoolean(id), enabled = enabled, onCheckedChange = { set(id, it) })
+                            }
+                            else -> error("Unknown export widget")
+                        }
+                        if (field.optString("subtitle").isNotEmpty()) Text(field.getString("subtitle"), style = MaterialTheme.typography.bodySmall)
+                    } }
+                } }
+            }
+            if (schema == null && error == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            schema?.let { description -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(enabled = !busy, onClick = dismiss) { Text(description.getString("cancel_label")) }
+                Button(enabled = !busy && fields != null, onClick = { scope.launch {
+                    busy = true
+                    try {
+                        val fields = checkNotNull(fields)
+                        timeline.request("export_validate", "project_path" to projectPath, "values" to fields)
+                        export(arrayOf("values" to fields))
+                    } catch (failure: Exception) { error = failure.message }
+                    finally { busy = false }
+                } }) { Text(description.getString("submit_label")) }
+            } }
+        }
+    }
 }
 
 @Composable
@@ -73,40 +94,28 @@ internal fun ExportChoice(label: String, value: String, choices: JSONArray, sele
 
 @Composable
 internal fun ExportProgress(export: JSONObject, enabled: Boolean, command: (String) -> Unit, save: () -> Unit) {
-    val status = export.getString("status")
-    val running = status == "running"
-    val cancelling = export.getBoolean("cancelling")
+    val model = export.getJSONObject("presentation")
     val progress = export.optJSONObject("progress")
-    val captions = export.getString("kind") == "captions"
-    val title = when (status) {
-        "running" -> if (captions) "Export Captions" else "Export Video"
-        "complete" -> if (captions) "Captions exported" else "Video exported"
-        "cancelled" -> "Export cancelled"
-        "failed" -> if (captions) "Could not export captions" else "Could not export video"
-        else -> error("Unknown export state: $status")
-    }
-    AlertDialog(onDismissRequest = { command(if (running) "export_cancel" else "export_dismiss") }, title = { Text(tr(title)) }, text = {
+    val confirm = model.getJSONObject("confirm")
+    AlertDialog(onDismissRequest = { command(model.getString("dismiss")) }, title = { Text(model.getString("title")) }, text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (running) {
-                if (cancelling) Text(tr("Cancelling…"))
-                else if (progress != null) Text(tr(progress.getString("label")))
+            if (model.getBoolean("running")) {
+                if (!model.isNull("cancelling")) Text(model.getString("cancelling"))
+                else if (progress != null) Text(progress.getString("label"))
                 if (progress == null || progress.isNull("fraction")) LinearProgressIndicator(Modifier.fillMaxWidth())
                 else LinearProgressIndicator(progress = { progress.getDouble("fraction").toFloat() }, modifier = Modifier.fillMaxWidth())
-                if (progress != null) {
-                    val arguments = progress.getJSONObject("arguments")
-                    val values = arguments.keys().asSequence().map { it to arguments.getString(it) as Any }.toList().toTypedArray()
-                    Text(tr(progress.getString("message"), *values))
-                }
-            } else if (status == "failed") Text(export.getString("error"), color = MaterialTheme.colorScheme.error)
-            else if (status == "complete") {
-                val files = export.getJSONArray("files")
-                Text((0 until files.length()).joinToString("\n") { files.getJSONObject(it).getString("filename") })
+                if (progress != null) Text(progress.getString("message"))
+            } else if (model.getBoolean("failed")) Text(export.getString("error"), color = MaterialTheme.colorScheme.error)
+            else if (model.getBoolean("complete")) {
+                Text(export.getJSONArray("files").objects().joinToString("\n") { it.getString("filename") })
             }
         }
     }, confirmButton = {
-        if (status == "complete") TextButton(onClick = save, enabled = enabled) { Text(tr("Save")) }
-        else TextButton(onClick = { command(if (running) "export_cancel" else "export_dismiss") }, enabled = enabled && (!running || !cancelling)) { Text(tr(if (running) "Cancel" else "Close")) }
+        TextButton(onClick = { if (confirm.getString("action") == "save") save() else command(confirm.getString("action")) },
+            enabled = enabled && confirm.getBoolean("enabled")) { Text(confirm.getString("label")) }
     }, dismissButton = {
-        if (status == "complete") TextButton(onClick = { command("export_dismiss") }, enabled = enabled) { Text(tr("Close")) }
+        model.optJSONObject("secondary")?.let { secondary ->
+            TextButton(onClick = { command(secondary.getString("action")) }, enabled = enabled) { Text(secondary.getString("label")) }
+        }
     })
 }

@@ -66,9 +66,24 @@ impl FrameGraph {
         let controls = row_stack(6.0, mtm);
         let spacer = objc2_app_kit::NSView::new(mtm);
         controls.addArrangedSubview(&spacer);
-        let previous = graph_button("backward.end", "Previous keyframe", mtm);
-        let toggle = graph_button("plus", "Add keyframe at playhead", mtm);
-        let next = graph_button("forward.end", "Next keyframe", mtm);
+        let status = state.status();
+        let previous = graph_button(
+            "backward.end",
+            status
+                .command_label(FrameGraphCommand::PreviousKey)
+                .as_ref(),
+            mtm,
+        );
+        let toggle = graph_button(
+            "plus",
+            status.command_label(FrameGraphCommand::ToggleKey).as_ref(),
+            mtm,
+        );
+        let next = graph_button(
+            "forward.end",
+            status.command_label(FrameGraphCommand::NextKey).as_ref(),
+            mtm,
+        );
         controls.addArrangedSubview(&previous);
         controls.addArrangedSubview(&toggle);
         controls.addArrangedSubview(&next);
@@ -136,23 +151,16 @@ impl FrameGraph {
                     next.setEnabled(status.can_next);
                 }
                 if let Some(toggle) = toggle.load() {
+                    let label = status.command_label(FrameGraphCommand::ToggleKey);
                     toggle.setImage(Some(&symbol(
                         if status.key_at_playhead {
                             "minus"
                         } else {
                             "plus"
                         },
-                        if status.key_at_playhead {
-                            "Delete keyframe"
-                        } else {
-                            "Add keyframe"
-                        },
+                        label.as_ref(),
                     )));
-                    toggle.setToolTip(Some(&NSString::from_str(if status.key_at_playhead {
-                        "Delete keyframe at playhead"
-                    } else {
-                        "Add keyframe at playhead"
-                    })));
+                    toggle.setToolTip(Some(&NSString::from_str(label.as_ref())));
                 }
                 for handler in handlers.borrow().iter() {
                     handler(status);
@@ -334,7 +342,7 @@ fn show_interpolation_menu(
         .into_iter()
         .map(|interpolation| StringChoice {
             value: interpolation.label().to_string(),
-            label: interpolation.label().to_string(),
+            label: shrimply_i18n::text(interpolation.label()).into_owned(),
         })
         .collect();
     let view = Weak::new(view);
@@ -342,7 +350,7 @@ fn show_interpolation_menu(
     show_searchable_menu_at(
         &host,
         (point, touch),
-        "Search interpolations",
+        shrimply_i18n::text("Search interpolations").as_ref(),
         choices,
         selected.label().to_string(),
         move |value| {

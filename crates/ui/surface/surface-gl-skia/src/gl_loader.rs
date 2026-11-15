@@ -6,6 +6,12 @@ unsafe extern "C" {
     fn glXGetProcAddressARB(proc_name: *const u8) -> *const c_void;
 }
 
+#[cfg(target_os = "linux")]
+#[link(name = "EGL")]
+unsafe extern "C" {
+    fn eglGetProcAddress(proc_name: *const std::ffi::c_char) -> *const c_void;
+}
+
 #[cfg(target_os = "macos")]
 #[link(name = "OpenGL", kind = "framework")]
 unsafe extern "C" {}
@@ -16,7 +22,13 @@ pub fn proc_address(symbol: &str) -> *const c_void {
     };
     #[cfg(target_os = "linux")]
     unsafe {
-        glXGetProcAddressARB(symbol.as_ptr().cast())
+        // GLX may return non-null dispatch stubs for names from another API.
+        // Skia also requests EGL entry points while assembling its GL interface.
+        if symbol.to_bytes().starts_with(b"egl") {
+            eglGetProcAddress(symbol.as_ptr())
+        } else {
+            glXGetProcAddressARB(symbol.as_ptr().cast())
+        }
     }
     #[cfg(target_os = "macos")]
     unsafe {

@@ -16,6 +16,7 @@ const MESSAGE_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_FRAME_BYTES: usize = 1024 * 1024 * 1024;
 const WORKER: &str = include_str!("worker.py");
+pub const SUPPORTED: bool = !cfg!(target_os = "android");
 static BLENDER_BINARY: LazyLock<RwLock<Option<PathBuf>>> = LazyLock::new(RwLock::default);
 static METADATA_CACHE: LazyLock<Mutex<HashMap<DiscoveryKey, Metadata>>> =
     LazyLock::new(Mutex::default);
@@ -28,6 +29,14 @@ struct DiscoveryKey {
     blend: PathBuf,
     blend_modified: Option<SystemTime>,
     blend_size: u64,
+}
+
+pub fn require_support() -> Result<(), String> {
+    if SUPPORTED {
+        Ok(())
+    } else {
+        Err(shrimply_i18n::text("Blender is not supported on Android").into_owned())
+    }
 }
 
 pub fn set_binary(binary: Option<PathBuf>) {
@@ -219,6 +228,7 @@ impl Session {
     }
 
     fn spawn(binary: &Path, blend: Option<&Path>) -> Result<Self, String> {
+        require_support()?;
         let blend = blend.map(shrimply_trust_core::require).transpose()?;
         let blend = blend.as_deref();
         if !binary.is_file() {

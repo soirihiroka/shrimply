@@ -151,11 +151,11 @@ fn duration_planning_preserves_writes_in_helpers_arguments_branches_and_loops() 
             Fraction::new(9u64, 10u64),
         ),
         (
-            "mut count=1\nsig delay=count*100ms\nfn<mut, ref> advance():Number{count=count+1;return 0}\nfn<mut, ref> phase(unused:Number=advance()):Unit{wait(delay)}\nphase()",
+            "mut count=1\nsig delay=count*100ms\nfn<mut, ref> advance():Number{count=count+1;return 0}\nfn<mut, ref> phase(unused:Number=advance()):Animation{return wait(delay)}\nphase()",
             Fraction::new(1u64, 5u64),
         ),
         (
-            "mut count=0\nsig delay=count*100ms\ntimer 3 every 1s {count=count+1;wait(delay)}\nwait(delay)",
+            "mut count=0\nsig delay=count*100ms\nrepeat 3 {count=count+1;wait(delay);wait(1s-delay)}\nwait(delay)",
             Fraction::new(33u64, 10u64),
         ),
         (
@@ -248,10 +248,9 @@ fn only_mutable_bindings_accept_assignment_and_the_type_is_fixed() {
 }
 
 #[test]
-fn signals_reject_transitive_writes_scheduling_visual_assertions_and_cycles() {
+fn signals_reject_transitive_writes_visual_assertions_and_cycles() {
     for source in [
         "mut count=1\nfn<mut, ref> advance():Number{count=count+1;return count}\nsig value=advance()",
-        "fn<mut> phase():Number{wait(1ms);return 1}\nsig value=phase()",
         "let shape=Box(width=10pt,height=10pt)\nfn<mut> checked():Number{assert(inside_canvas(shape));return 1}\nsig value=checked()",
         "sig value=reflect(1)",
         "sig value=current()\nfn<ref> current():Number{return value}",
@@ -270,7 +269,7 @@ fn signals_reject_transitive_writes_scheduling_visual_assertions_and_cycles() {
 }
 
 #[test]
-fn background_cell_animation_drives_shared_retained_dimensions_without_advancing_main_time() {
+fn absolute_cell_plans_drive_shared_retained_dimensions_without_occupying_flow() {
     let source = "mut phase=0deg\nsig size=100pt+sin(phase)*25pt\nlet saved=size\nlet rectangle=Box(id=\"rectangle\", width=size, height=size, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet circle=Box(id=\"circle\", width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet frozen=Box(id=\"frozen\", width=saved, height=saved, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[rectangle])\nAnimation(children=[circle])\nAnimation(children=[frozen])\n<Animation absolute flow=\"sequence\">{animate(phase,to=1800deg,duration=10s,ease=\"linear\")}</Animation>\nwait(10s)\n";
     let p = run(source);
     assert_eq!(p.animation.duration, Fraction::from(10));
@@ -322,13 +321,24 @@ fn background_cell_animation_drives_shared_retained_dimensions_without_advancing
 }
 
 #[test]
-fn background_jobs_extend_duration_by_their_latest_end_instead_of_their_sum() {
+fn parallel_cell_plans_resolve_their_maximum_extent_and_sample_independently() {
     let p = run(
-        "mut phase=0deg\nmut amount=0\n<Animation absolute flow=\"sequence\">{animate(phase,to=1800deg,duration=10s,ease=\"linear\")}</Animation>\n<Animation absolute flow=\"sequence\">{animate(amount,to=1,duration=4s,ease=\"linear\")}</Animation>\nwait(2s)\n",
+        "mut phase=0deg\nmut amount=0\nlet rotating=Box(rotation=phase)\nlet fading=Box(opacity=amount)\nreturn Animation(children=[rotating,fading,animate(phase,to=1800deg,duration=10s,ease=\"linear\"),animate(amount,to=1,duration=4s,ease=\"linear\"),wait(2s)])",
     );
     assert_eq!(p.animation.duration, Fraction::from(10));
-    assert_eq!(number(&p, "phase"), Fraction::from(360));
-    assert_eq!(number(&p, "amount"), Fraction::new(1u64, 2u64));
+    let frame = p.animation.sample(2.into()).unwrap();
+    assert_eq!(
+        frame[0]
+            .property(sanim_core::Property::Rotation)
+            .unwrap()
+            .number()
+            .unwrap()
+            .value,
+        Fraction::from(360)
+    );
+    assert_eq!(frame[1].opacity, Fraction::new(1u64, 2u64));
+    assert_eq!(number(&p, "phase"), Fraction::from(0));
+    assert_eq!(number(&p, "amount"), Fraction::from(0));
 }
 
 #[test]
@@ -342,9 +352,8 @@ fn foreground_animate_advances_time_and_conflicting_cell_writes_are_rejected() {
         Fraction::new(3u64, 2u64)
     );
     for source in [
-        "mut amount=0\n<Animation absolute flow=\"sequence\">{animate(amount,to=1,duration=2s,ease=\"linear\")}</Animation>\n<Animation absolute flow=\"sequence\">{animate(amount,to=2,duration=2s,ease=\"linear\")}</Animation>",
-        "mut amount=0\n<Animation absolute flow=\"sequence\">{animate(amount,to=1,duration=2s,ease=\"linear\")}</Animation>\nwait(1s)\namount=2",
-        "mut amount=0\nanimate(amount,to=1,duration=0s,ease=\"linear\")",
+        "mut amount=0\n<Animation absolute flow=\"sequence\">{animate(amount,to=1,duration=2s,ease=\"linear\")}</Animation>\n<Animation absolute flow=\"sequence\">{animate(amount,to=2,duration=2s,ease=\"linear\")}</Animation>\nwait(2s)",
+        "mut amount=0\n<Animation absolute flow=\"sequence\">{animate(amount,to=1,duration=2s,ease=\"linear\")}</Animation>\nwait(1s)\nanimate(amount,to=2,duration=0s)\nwait(1s)",
         "mut amount=0\nanimate(amount,to=1,duration=7201s,ease=\"linear\")",
     ] {
         let mut files = MemorySources::default();
@@ -385,7 +394,7 @@ fn malformed_host_union_list_payloads_are_fully_validated() {
 }
 
 #[test]
-fn retained_dimensions_reflow_rows_but_row_owned_positions_are_rejected() {
+fn retained_dimensions_reflow_flex_but_flow_owned_positions_are_rejected() {
     let p = run(
         "mut amount=10pt\nsig extent=amount\nlet first=Box(id=\"first\", width=extent, height=10pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet second=Box(id=\"second\", width=10pt, height=10pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(flex_direction=\"row\",id=\"row\",children=[first,second],gap=5pt)])\n<Animation absolute flow=\"sequence\">{animate(amount,to=20pt,duration=2s,ease=\"linear\")}</Animation>\nwait(2s)",
     );
@@ -402,17 +411,17 @@ fn retained_dimensions_reflow_rows_but_row_owned_positions_are_rejected() {
         children: before, ..
     } = before[0].geometry.as_ref()
     else {
-        panic!("row group expected")
+        panic!("flex box expected")
     };
     let sanim_core::Geometry::Box {
         children: after, ..
     } = after[0].geometry.as_ref()
     else {
-        panic!("row group expected")
+        panic!("flex box expected")
     };
     assert!((after[1].position.values[0] - before[1].position.values[0] - 10.).abs() < 1e-6);
     let mut files = MemorySources::default();
-    files.insert("main.sanim","mut offset=[0pt, 0pt]\nsig place=offset\nlet child=Box(id=\"child\", position=place, width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(flex_direction=\"row\",id=\"row\",children=[child])])");
+    files.insert("main.sanim","mut offset:List<Length,2>=[0pt, 0pt]\nsig place=offset\nlet child=Box(id=\"child\", position=place, width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(flex_direction=\"row\",id=\"row\",children=[child])])");
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_err();
@@ -438,7 +447,7 @@ fn constructor_properties_lift_direct_cells_and_pure_helper_captures() {
     };
     assert_eq!(circle_radius("direct"), Fraction::from(15));
     assert_eq!(circle_radius("wrapped"), Fraction::from(30));
-    assert!(matches!(p.bindings["radius"],Value::Number(Number{value,..}) if value==20.into()));
+    assert!(matches!(p.bindings["radius"],Value::Number(Number{value,..}) if value==10.into()));
 }
 
 #[test]
@@ -477,46 +486,66 @@ fn element_dimension_getters_return_lengths_instead_of_colors() {
 }
 
 #[test]
-fn background_assignments_and_helper_writes_do_not_leak_into_the_main_present() {
-    for body in ["count=1", "let ignored=set_later()"] {
-        let prepared = run(&format!(
-            "mut count=0\nfn<mut> set_later():Number{{count=1;return 0}}\nspawn{{wait(2s);{body}}}\nlet before=count\nwait(1s)\nlet middle=count\nwait(1s)\nlet after=count\n"
-        ));
-        assert_eq!(number(&prepared, "before"), Fraction::from(0));
-        assert_eq!(number(&prepared, "middle"), Fraction::from(0));
-        assert_eq!(number(&prepared, "after"), Fraction::from(1));
+fn future_cell_plans_preserve_build_snapshots_and_sample_at_their_position() {
+    for effect in ["animate(count,to=1,duration=0s)", "set_later()"] {
         let source = format!(
-            "mut count=0\nfn<mut> set_later():Number{{count=1;return 0}}\nspawn{{wait(2s);{body}}}\nwait(1s)\nwait(count*10s)\n"
+            "mut count=0\nfn<ref> set_later():Animation{{return animate(count,to=1,duration=0s)}}\nlet indicator=Box(width=(count+1)*1pt,height=1pt)\nAnimation(children=[indicator])\n<Animation absolute flow=\"sequence\">{{wait(2s)}}{{{effect}}}</Animation>\nlet before=count\nwait(1s)\nlet middle=count\nwait(1s)\nlet after=count\nwait(1s)"
         );
-        let mut files = MemorySources::default();
-        files.insert("main.sanim", format!("{}\nAnimation()", &source));
-        let planned = Engine::default()
-            .duration("main.sanim", &files, &BTreeMap::new())
-            .unwrap();
-        let full = run(&source);
-        assert_eq!(planned.duration, Fraction::from(2));
-        assert_eq!(planned.duration, full.animation.duration);
+        let prepared = run(&source);
+        for name in ["before", "middle", "after"] {
+            assert_eq!(number(&prepared, name), Fraction::from(0));
+        }
+        for (time, width) in [(0, 1), (1, 1), (2, 2)] {
+            assert_eq!(
+                prepared.animation.sample(time.into()).unwrap()[0]
+                    .property(sanim_core::Property::Width)
+                    .unwrap()
+                    .number()
+                    .unwrap()
+                    .value,
+                Fraction::from(width)
+            );
+        }
     }
 }
 
 #[test]
-fn property_getters_follow_the_current_cursor_and_temporal_signals_refresh() {
+fn property_getters_are_build_snapshots_while_native_samples_follow_motion() {
     let prepared = run(
-        "mut extent=20pt\nlet rect=Box(width=extent, height=40pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n<Animation absolute flow=\"sequence\">{animate(extent,to=40pt,duration=2s,ease=\"linear\")}</Animation>\nwait(2s)\nlet current_width=rect.width\nsig angle=rect.rotation\nsig doubled=angle*2\nlet before=doubled\nrect.rotate_to(90deg, duration=1s, ease=\"linear\")\nlet after=doubled\n",
+        "mut extent=20pt\nlet rect=Box(width=extent,height=40pt)\nAnimation(children=[rect])\n<Animation absolute>{animate(extent,to=40pt,duration=2s,ease=\"linear\")}</Animation>\nwait(2s)\nlet current_width=rect.width\nsig angle=rect.rotation\nsig doubled=angle*2\nlet before=doubled\nrect.rotate_to(90deg,duration=1s,ease=\"linear\")\nlet after=doubled",
     );
-    assert_eq!(number(&prepared, "current_width"), Fraction::from(40));
+    assert_eq!(number(&prepared, "current_width"), Fraction::from(20));
     assert_eq!(number(&prepared, "before"), Fraction::from(0));
-    assert_eq!(number(&prepared, "after"), Fraction::from(180));
+    assert_eq!(number(&prepared, "after"), Fraction::from(0));
+    let frame = prepared.animation.sample(3.into()).unwrap();
+    assert_eq!(
+        frame[0]
+            .property(sanim_core::Property::Width)
+            .unwrap()
+            .number()
+            .unwrap()
+            .value,
+        Fraction::from(40)
+    );
+    assert_eq!(
+        frame[0]
+            .property(sanim_core::Property::Rotation)
+            .unwrap()
+            .number()
+            .unwrap()
+            .value,
+        Fraction::from(90)
+    );
 }
 
 #[test]
-fn structural_group_children_allow_independently_retained_child_properties() {
+fn box_children_allow_independently_retained_child_properties() {
     let prepared = run(
         "mut radius=10pt\nlet group=Box(children=[Box(id=\"child\", width=2*(radius), height=2*(radius), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nAnimation(children=[group])\n<Animation absolute flow=\"sequence\">{animate(radius,to=20pt,duration=2s,ease=\"linear\")}</Animation>\nwait(2s)\n",
     );
     let elements = prepared.animation.sample(Fraction::from(1)).unwrap();
     let sanim_core::Geometry::Box { children, .. } = elements[0].geometry.as_ref() else {
-        panic!("group geometry")
+        panic!("box geometry")
     };
     assert_eq!(
         children[0]
@@ -530,12 +559,18 @@ fn structural_group_children_allow_independently_retained_child_properties() {
 }
 
 #[test]
-fn unannotated_position_signals_refresh_after_ordinary_motion() {
+fn unannotated_position_signal_snapshots_do_not_execute_motion_plans() {
     let prepared = run(
-        "let rect=Box(width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nsig point=rect.position\nlet before=point\nrect.move_to([20pt, 0pt], duration=1s, ease=\"linear\")\nlet after=point\n",
+        "let rect=Box(width=64pt,height=64pt)\nsig point=rect.position\nlet before=point\nrect.move_to([20pt,0pt],duration=1s,ease=\"linear\")\nlet after=point",
     );
     assert_eq!(prepared.bindings["before"].vec2().unwrap().values, [0., 0.]);
-    assert_eq!(prepared.bindings["after"].vec2().unwrap().values, [20., 0.]);
+    assert_eq!(prepared.bindings["after"].vec2().unwrap().values, [0., 0.]);
+    assert_eq!(
+        prepared.animation.sample(1.into()).unwrap()[0]
+            .position
+            .values,
+        [20., 0.]
+    );
 }
 
 #[test]
@@ -572,32 +607,38 @@ fn ordinary_shape_factory_parameters_are_value_snapshots() {
 }
 
 #[test]
-fn future_same_value_background_writes_remain_explicit_events() {
-    let source = "mut count=0\nspawn{wait(2s);count=0}\ncount=1\nwait(2s)\nlet after=count\nwait(count*10s)\n";
-    let prepared = run(source);
-    assert_eq!(number(&prepared, "after"), Fraction::from(0));
-    assert_eq!(prepared.animation.duration, Fraction::from(2));
-    let mut files = MemorySources::default();
-    files.insert("main.sanim", format!("{}\nAnimation()", source));
-    assert_eq!(
-        Engine::default()
-            .duration("main.sanim", &files, &BTreeMap::new())
-            .unwrap()
-            .duration,
-        prepared.animation.duration
+fn future_point_plans_retain_their_target_after_later_build_writes() {
+    let prepared = run(
+        "mut count=0\nlet reset=Animation(children=[wait(2s),animate(count,to=0,duration=0s)],flow=\"sequence\")\ncount=1\nlet indicator=Box(width=(count+1)*1pt,height=1pt)\nreturn Animation(children=[indicator,reset,wait(3s)])",
     );
+    assert_eq!(number(&prepared, "count"), Fraction::from(1));
+    for (time, width) in [(0, 2), (1, 2), (2, 1), (3, 1)] {
+        assert_eq!(
+            prepared.animation.sample(time.into()).unwrap()[0]
+                .property(sanim_core::Property::Width)
+                .unwrap()
+                .number()
+                .unwrap()
+                .value,
+            Fraction::from(width)
+        );
+    }
 }
 
 #[test]
-fn background_list_writes_commit_at_their_timeline_point_including_helper_writes() {
-    for body in ["rows=[1]", "let ignored=replace_rows()"] {
-        let mut files = MemorySources::default();
-        files.insert("main.sanim",format!("mut rows:List<Number>=[]\nfn<mut> replace_rows():Number{{rows=[1];return 0}}\nspawn{{wait(1s);{body}}}\nlet before=len(rows)\nwait(1s)\nlet after=len(rows)"));
-        let prepared = Engine::default()
-            .prepare("main.sanim", &files, &BTreeMap::new())
-            .unwrap();
-        assert_eq!(number(&prepared, "before"), Fraction::from(0));
-        assert_eq!(number(&prepared, "after"), Fraction::from(1));
+fn list_cell_plans_commit_at_their_timeline_point_including_returned_plans() {
+    for effect in ["animate(rows,to=[one],duration=0s)", "replace_rows()"] {
+        let prepared = run(&format!(
+            "let one=Box(width=1pt,height=1pt)\nmut rows:List<Element>=[]\nfn<ref> replace_rows():Animation{{return animate(rows,to=[one],duration=0s)}}\nlet panel=Box(children=rows)\nreturn Animation(children=[panel,Animation(children=[wait(1s),{effect}],flow=\"sequence\"),wait(2s)])"
+        ));
+        let (width, height) = prepared.animation.logical_size();
+        for (time, len) in [(0, 0), (1, 1), (2, 1)] {
+            let frame = prepared
+                .animation
+                .layout(time.into(), width, height)
+                .unwrap();
+            assert_eq!(frame[0].geometry.children().unwrap().len(), len);
+        }
     }
 }
 
@@ -648,36 +689,38 @@ fn literal_children_reject_reactive_elements_and_topology_factories() {
 }
 
 #[test]
-fn background_pure_helper_local_data_mutation_remains_private_scratch() {
-    let source = "mut output=0\nfn calculate():Number{mut rows:List<Number>=[];rows=[1,2];return len(rows)}\nspawn{wait(1s);output=calculate()}\nlet before=output\nwait(1s)\nlet after=output\n";
-    let prepared = run(source);
-    assert_eq!(number(&prepared, "before"), Fraction::from(0));
-    assert_eq!(number(&prepared, "after"), Fraction::from(2));
-    let mut files = MemorySources::default();
-    files.insert("main.sanim", format!("{}\nAnimation()", source));
-    assert_eq!(
-        Engine::default()
-            .duration("main.sanim", &files, &BTreeMap::new())
-            .unwrap()
-            .duration,
-        prepared.animation.duration
+fn pure_helper_scratch_data_can_provide_a_future_cell_plan_target() {
+    let prepared = run(
+        "mut output=0\nfn calculate():Number{mut rows:List<Number>=[];rows=[1,2];return len(rows)}\nlet indicator=Box(width=(output+1)*1pt,height=1pt)\nreturn Animation(children=[indicator,Animation(children=[wait(1s),animate(output,to=calculate(),duration=0s)],flow=\"sequence\"),wait(2s)])",
     );
+    assert_eq!(number(&prepared, "output"), Fraction::from(0));
+    for (time, width) in [(0, 1), (1, 3), (2, 3)] {
+        assert_eq!(
+            prepared.animation.sample(time.into()).unwrap()[0]
+                .property(sanim_core::Property::Width)
+                .unwrap()
+                .number()
+                .unwrap()
+                .value,
+            Fraction::from(width)
+        );
+    }
 }
 
 #[test]
-fn nested_background_writes_to_parent_local_cells_keep_their_timeline() {
-    let source = "mut before=-1\nmut middle=-1\nmut after=-1\nspawn{mut local=0;spawn{wait(2s);local=1};before=local;wait(1s);middle=local;wait(1s);after=local}\nwait(2s)\n";
-    let prepared = run(source);
-    assert_eq!(number(&prepared, "before"), Fraction::from(0));
-    assert_eq!(number(&prepared, "middle"), Fraction::from(0));
-    assert_eq!(number(&prepared, "after"), Fraction::from(1));
-    let mut files = MemorySources::default();
-    files.insert("main.sanim", format!("{}\nAnimation()", source));
-    assert_eq!(
-        Engine::default()
-            .duration("main.sanim", &files, &BTreeMap::new())
-            .unwrap()
-            .duration,
-        prepared.animation.duration
+fn returned_nested_plans_keep_private_function_cells_alive() {
+    let prepared = run(
+        "fn build():Animation{mut local=10pt;let marker=Box(width=local,height=10pt);return Animation(children=[marker,Animation(children=[wait(2s),animate(local,to=20pt,duration=0s)],flow=\"sequence\")])}\nreturn build()",
     );
+    for (time, width) in [(0, 10), (1, 10), (2, 20)] {
+        assert_eq!(
+            prepared.animation.sample(time.into()).unwrap()[0]
+                .property(sanim_core::Property::Width)
+                .unwrap()
+                .number()
+                .unwrap()
+                .value,
+            Fraction::from(width)
+        );
+    }
 }

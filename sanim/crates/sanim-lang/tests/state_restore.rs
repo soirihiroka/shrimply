@@ -463,7 +463,7 @@ fn bounded_checkpoint_eviction_keeps_suffix_restoration_available() {
     assert!(Arc::ptr_eq(&prefix, &engine.execution_state(9).unwrap()));
     engine.clear_cache();
     assert!(engine.execution_state(9).is_none());
-    assert_eq!(prefix.cursor, Fraction::from(9));
+    assert_eq!(prefix.cursor, Fraction::from(0));
 }
 
 #[test]

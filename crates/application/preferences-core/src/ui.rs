@@ -4,6 +4,65 @@ const VISUAL_DURATION_UNITS_PER_SECOND: i64 = 10;
 const GPU_MEMORY_UNITS_PER_GIB: i64 = 4;
 const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PreferencePage {
+    Appearance,
+    Performance,
+    Trust,
+    External,
+}
+
+impl PreferencePage {
+    pub const ALL: [Self; 4] = [
+        Self::Appearance,
+        Self::Performance,
+        Self::Trust,
+        Self::External,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Appearance => "appearance",
+            Self::Performance => "performance",
+            Self::Trust => "trust",
+            Self::External => "external",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Performance => "Performance",
+            Self::Trust => "Trust",
+            Self::External => "External",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Appearance => "appearance-symbolic",
+            Self::Performance => "speedometer-symbolic",
+            Self::Trust => "security-high-symbolic",
+            Self::External => "application-x-executable-symbolic",
+        }
+    }
+
+    pub fn groups(self) -> &'static [&'static str] {
+        match self {
+            Self::Appearance => &["Captions", "Text", "Preview", "Timeline"],
+            Self::Performance => &["Performance"],
+            Self::Trust => &["Trusted sources"],
+            Self::External => &[
+                "Blender",
+                "Inference Servers",
+                "Selected Server",
+                "Compute",
+                "Features",
+            ],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ComputeDevicePresentation {
     pub id: String,
@@ -254,7 +313,14 @@ impl PreferenceId {
             subtitle,
             group,
             choices,
-            available: self != Self::BlenderBinary || !cfg!(target_os = "android"),
+            page: if self == Self::PreviewControlsVisible {
+                None
+            } else {
+                PreferencePage::ALL
+                    .into_iter()
+                    .find(|page| page.groups().contains(&group))
+            },
+            available: self != Self::BlenderBinary || shrimply_blender_core::SUPPORTED,
         }
     }
 }
@@ -265,6 +331,7 @@ pub struct PreferencePresentation {
     pub subtitle: &'static str,
     pub group: &'static str,
     pub choices: &'static [&'static str],
+    pub page: Option<PreferencePage>,
     pub available: bool,
 }
 

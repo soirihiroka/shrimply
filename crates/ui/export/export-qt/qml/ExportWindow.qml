@@ -96,7 +96,7 @@ Item {
 
                             ControlRow {
                                 label: exportBackend.translate("Export format")
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: ["H.264", "H.265", "GIF"]
                                     currentIndex: exportBackend.videoCodec
                                     onActivated: exportBackend.videoCodec = currentIndex
@@ -105,7 +105,7 @@ Item {
                             ControlRow {
                                 label: exportBackend.translate("Container")
                                 visible: exportBackend.videoCodec !== 2
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: ["MP4", "MKV"]
                                     currentIndex: exportBackend.container
                                     onActivated: exportBackend.container = currentIndex
@@ -125,7 +125,7 @@ Item {
 
                             ControlRow {
                                 label: exportBackend.translate("Rate Control")
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: [
                                         exportBackend.translate("Constant QP"),
                                         exportBackend.translate("Constant Bitrate"),
@@ -196,7 +196,7 @@ Item {
                             }
                             ControlRow {
                                 label: exportBackend.translate("Preset")
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: [
                                         exportBackend.translate("P1: Fastest (Lowest Quality)"),
                                         exportBackend.translate("P2: Faster (Lower Quality)"),
@@ -213,7 +213,7 @@ Item {
                             ControlRow {
                                 label: exportBackend.translate("Tuning")
                                 visible: exportBackend.rateControl !== 4
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: [
                                         exportBackend.translate("Ultra High Quality"),
                                         exportBackend.translate("High Quality"),
@@ -226,7 +226,7 @@ Item {
                             }
                             ControlRow {
                                 label: exportBackend.translate("Multi Pass")
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: [
                                         exportBackend.translate("Single Pass"),
                                         exportBackend.translate("Two Passes (Quarter Resolution)"),
@@ -238,7 +238,7 @@ Item {
                             }
                             ControlRow {
                                 label: exportBackend.translate("Profile")
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: ["Main", "Main10"]
                                     currentIndex: exportBackend.profile
                                     onActivated: exportBackend.profile = currentIndex
@@ -282,7 +282,7 @@ Item {
 
                             ControlRow {
                                 label: exportBackend.translate("Frame rate")
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: exportBackend.frameRateLabels
                                     currentIndex: exportBackend.frameRateIndex
                                     onActivated: exportBackend.frameRateIndex = currentIndex
@@ -313,7 +313,7 @@ Item {
 
                             ControlRow {
                                 label: exportBackend.translate("Audio Encoder")
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: ["FDK AAC", "AAC", "Opus"]
                                     currentIndex: exportBackend.audioEncoder
                                     onActivated: exportBackend.audioEncoder = currentIndex
@@ -321,7 +321,7 @@ Item {
                             }
                             ControlRow {
                                 label: exportBackend.translate("Audio Sample Rate")
-                                ComboBox {
+                                AdaptiveComboBox {
                                     model: ["44100", "48000", "96000"]
                                     currentIndex: exportBackend.audioSampleRate
                                     onActivated: exportBackend.audioSampleRate = currentIndex

@@ -1,6 +1,6 @@
 pub mod encoder;
 mod frames;
-pub use frames::render_and_encode;
+pub use frames::{render_and_encode, render_and_store_images};
 
 use std::collections::HashMap;
 use std::fs;
@@ -22,6 +22,16 @@ use uuid::Uuid;
 
 const MANIFEST_NAME: &str = "manifest.json";
 const MEDIA_NAME: &str = "visual.mkv";
+const FRAMES_NAME: &str = "frames";
+
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum Storage {
+    #[default]
+    Hevc,
+    Images,
+}
+
 const CACHE_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +87,7 @@ struct BakeInput {
     playback_speed: Fraction,
     settings: CacheModifier,
     executor: BakeExecutor,
+    storage: Storage,
 }
 
 struct BakeProcessor {
@@ -102,6 +113,12 @@ struct Manifest {
     playback_speed_denominator: i64,
     fps_numerator: i64,
     fps_denominator: i64,
+    #[serde(default)]
+    storage: Storage,
+    #[serde(default)]
+    frame_origin: Time,
+    #[serde(default)]
+    total_frames: u64,
 }
 
 #[derive(Clone)]
@@ -113,6 +130,9 @@ struct ReadyEntry {
     time_offset: Time,
     playback_speed: Fraction,
     fps: Fraction,
+    storage: Storage,
+    frame_origin: Time,
+    total_frames: u64,
 }
 
 static JOBS: LazyLock<Mutex<HashMap<CacheKey, Job>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -260,6 +280,25 @@ pub fn bake(
     modifier_id: Uuid,
     executor: BakeExecutor,
 ) -> Result<(), String> {
+    bake_with_storage(project, address, modifier_id, executor, Storage::Hevc)
+}
+
+pub fn bake_images(
+    project: Project,
+    address: ItemAddress,
+    modifier_id: Uuid,
+    executor: BakeExecutor,
+) -> Result<(), String> {
+    bake_with_storage(project, address, modifier_id, executor, Storage::Images)
+}
+
+fn bake_with_storage(
+    project: Project,
+    address: ItemAddress,
+    modifier_id: Uuid,
+    executor: BakeExecutor,
+    storage: Storage,
+) -> Result<(), String> {
     let _operation = CACHE_OPERATIONS
         .lock()
         .expect("visual cache operation lock poisoned");
@@ -267,7 +306,8 @@ pub fn bake(
     if matches!(status_for_key(&key), Status::Baking { .. }) {
         return Err("this cache is already baking".to_string());
     }
-    let input = bake_input(project, &address, modifier_id, key.clone(), executor)?;
+    let mut input = bake_input(project, &address, modifier_id, key.clone(), executor)?;
+    input.storage = storage;
     let (first_frame, end_frame) = frame_range(input.start, input.duration, input.project.fps)?;
     let total = end_frame - first_frame;
     invalidate_inner(&key)?;
@@ -314,10 +354,11 @@ fn invalidate_inner(key: &CacheKey) -> Result<(), String> {
     }
 }
 
-pub fn effective_item(
+pub fn effective_item_at(
     address: &ItemAddress,
     item: &VideoItem,
     canvas: CanvasSize,
+    position: Time,
 ) -> Result<Option<VideoItem>, String> {
     let mut ready = None;
     for (index, modifier) in item.modifiers.iter().enumerate().rev() {
@@ -338,7 +379,6 @@ pub fn effective_item(
         return Ok(None);
     };
     let mut effective = item.clone();
-    effective.file = entry.path.into();
     effective.content = VideoItemContent::Media;
     effective.track_id = 0;
     effective.alpha_mask_video = Some(1);
@@ -352,6 +392,28 @@ pub fn effective_item(
         RepeatStrategy::Hold
     } else {
         RepeatStrategy::Empty
+    };
+    effective.file = if entry.storage == Storage::Images {
+        let Some(source_time) =
+            shrimply_project_document::project::video_source_time_at(&effective, position)
+        else {
+            return Ok(None);
+        };
+        let frame = shrimply_math_core::nonnegative_frame_index(
+            source_time.saturating_sub(entry.frame_origin),
+            entry.fps,
+        )
+        .ok_or("visual cache frame rate must be positive")?
+        .min(entry.total_frames - 1);
+        effective.content = VideoItemContent::Image;
+        effective.alpha_mask_video = None;
+        let path = entry.path.join(image_frame_name(frame));
+        if !path.is_file() {
+            return Err(format!("visual cache frame {frame} is missing"));
+        }
+        path.into()
+    } else {
+        entry.path.into()
     };
     effective.transform = Transform::fill(canvas);
     effective.default_transform = None;
@@ -437,6 +499,7 @@ fn bake_input(
         playback_speed,
         settings,
         executor,
+        storage: Storage::Hevc,
     })
 }
 
@@ -460,6 +523,7 @@ fn bake_inner(input: BakeInput, context: &JobContext<Progress>) -> Result<(), St
         settings,
         executor,
         key,
+        storage,
         ..
     } = input;
     let width = project.canvas_size.width.max(1);
@@ -469,6 +533,10 @@ fn bake_inner(input: BakeInput, context: &JobContext<Progress>) -> Result<(), St
     let fps = project.fps;
     let (first_frame, end_frame) = frame_range(start, duration, fps)?;
     let total = end_frame - first_frame;
+    let output = temporary.path().join(match storage {
+        Storage::Hevc => MEDIA_NAME,
+        Storage::Images => FRAMES_NAME,
+    });
     executor(
         BakeRequest {
             project,
@@ -482,12 +550,24 @@ fn bake_inner(input: BakeInput, context: &JobContext<Progress>) -> Result<(), St
             height,
             coded_width,
             coded_height,
-            output: temporary.path().join(MEDIA_NAME),
+            output: output.clone(),
         },
         context,
     )?;
-    if !temporary.path().join(MEDIA_NAME).is_file() {
-        return Err("visual cache executor did not produce media".to_string());
+    match storage {
+        Storage::Hevc if !output.is_file() => {
+            return Err("visual cache executor did not produce media".into());
+        }
+        Storage::Images => {
+            for frame in 0..total {
+                if !output.join(image_frame_name(frame)).is_file() {
+                    return Err(format!(
+                        "visual cache executor did not produce frame {frame}"
+                    ));
+                }
+            }
+        }
+        _ => {}
     }
     let manifest = Manifest {
         version: CACHE_VERSION,
@@ -502,6 +582,11 @@ fn bake_inner(input: BakeInput, context: &JobContext<Progress>) -> Result<(), St
         playback_speed_denominator: fraction_denominator(playback_speed),
         fps_numerator: fraction_numerator(fps),
         fps_denominator: fraction_denominator(fps),
+        storage,
+        frame_origin: shrimply_math_core::time_from_frame(first_frame, fps)
+            .ok_or("cache frame rate must be positive")?
+            .signed_sub(start),
+        total_frames: total,
     };
     fs::write(
         temporary.path().join(MANIFEST_NAME),
@@ -557,8 +642,14 @@ fn ready_entry(key: &CacheKey) -> Result<ReadyEntry, String> {
     {
         return Err("visual cache manifest has an unsupported layout".to_string());
     }
-    let path = directory.join(MEDIA_NAME);
-    if !path.is_file() {
+    let path = directory.join(match manifest.storage {
+        Storage::Hevc => MEDIA_NAME,
+        Storage::Images => FRAMES_NAME,
+    });
+    if match manifest.storage {
+        Storage::Hevc => !path.is_file(),
+        Storage::Images => !path.is_dir() || manifest.total_frames == 0,
+    } {
         return Err("visual cache media is missing".to_string());
     }
     let entry = ReadyEntry {
@@ -575,6 +666,9 @@ fn ready_entry(key: &CacheKey) -> Result<ReadyEntry, String> {
             manifest.fps_numerator,
             manifest.fps_denominator,
         ),
+        storage: manifest.storage,
+        frame_origin: manifest.frame_origin,
+        total_frames: manifest.total_frames,
     };
     READY
         .lock()
@@ -618,4 +712,8 @@ fn frame_range(start: Time, duration: Time, fps: Fraction) -> Result<(u64, u64),
         return Err("cannot cache an item shorter than one project frame".to_string());
     }
     Ok((first, end))
+}
+
+fn image_frame_name(frame: u64) -> String {
+    format!("{frame}.png")
 }

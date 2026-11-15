@@ -32,8 +32,8 @@ fn selected(prepared: &Prepared, name: &str) -> Range {
 #[test]
 fn named_range_methods_are_typed_and_fold_exactly_one_node_with_nested_choices_retained() {
     let prepared = prepare(
-        r#"fn<mut> close(selected: CodeRange): Unit {
-    selected.fold(duration=100ms)
+        r#"fn close(selected: CodeRange): Animation {
+    return selected.fold(duration=100ms)
 }
 let method: CodeRange=code.range(name="WorkQueue.push")
 let nested=code.range(line=3,column=9)
@@ -233,7 +233,7 @@ selected.fold(duration=0s)"#,
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_err();
     assert!(
-        error.message.contains("Animation(children=[view])"),
+        error.message.contains("Animation(children=[view"),
         "{error}"
     );
 }

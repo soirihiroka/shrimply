@@ -31,6 +31,7 @@
   rustToolchain,
   shrimply-slang,
   shrimply-oidn,
+  spirv-tools,
   uv,
   vte-gtk4,
   vulkan-headers,
@@ -76,6 +77,7 @@ mkShell {
     ripgrep
     rubberband
     shrimply-slang
+    spirv-tools
     uv
     vte-gtk4
     vulkan-headers

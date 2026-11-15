@@ -40,7 +40,7 @@ fn main() {
         csv.push_str(&format!("g{},{}\n", i % 10, i));
     }
     sources.insert("data.csv", csv);
-    sources.insert("data.sanim","type Sample = { group: String, value: Number }\nlet samples=read<List<Sample>>(\"data.csv\")\nlet totals=query(\"SELECT SUM(value) AS total FROM samples GROUP BY \\\"group\\\" ORDER BY \\\"group\\\"\", tables= {samples=samples})\n");
+    sources.insert("data.sanim","type Sample = { group: String, value: Number }\nlet samples=read<List<Sample>>(\"data.csv\")\nlet totals=query(\"SELECT SUM(value) AS total FROM samples GROUP BY \\\"group\\\" ORDER BY \\\"group\\\"\", tables= {samples=samples})\nAnimation()");
     let start = Instant::now();
     let data = engine
         .prepare("data.sanim", &sources, &BTreeMap::new())

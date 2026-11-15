@@ -146,10 +146,11 @@ impl Scene {
             let (item, motion_blur_source) = if branch == CaptureBranch::Host {
                 (item, None)
             } else {
-                match shrimply_visual_core::modifier_cache::effective_item(
+                match shrimply_visual_core::modifier_cache::effective_item_at(
                     &address,
                     &item,
                     project.canvas_size,
+                    item_time,
                 )? {
                     Some(cached) => (Cow::Owned(cached), Some(item)),
                     None => (item, None),

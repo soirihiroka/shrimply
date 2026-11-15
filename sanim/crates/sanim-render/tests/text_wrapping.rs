@@ -35,9 +35,9 @@ let paragraph=<Label font_size={14pt}>  A   paragraph with enough words to wrap 
 let panel=<Box width={width} white_space={policy}>{paragraph}</Box>
 Animation(children=[panel])
 wait(1s)
-width=300pt
+animate(width,to=300pt,duration=0s)
 wait(1s)
-policy="nowrap"
+animate(policy,to="nowrap",duration=0s)
 wait(1s)
 "#,
     );
@@ -112,9 +112,9 @@ let code=<CodeView lang="python" whitespace-pre-wrap wrap-anywhere width={100%} 
 let panel=<Box width={width}>{code}</Box>
 Animation(children=[panel])
 wait(1s)
-width=350pt
+animate(width,to=350pt,duration=0s)
 wait(1s)
-numbers=false
+animate(numbers,to=false,duration=0s)
 wait(1s)
 "#;
 #[test]

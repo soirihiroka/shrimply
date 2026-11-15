@@ -63,7 +63,7 @@ impl Texture {
         #[cfg(target_os = "linux")]
         let info = info.push_next(&mut external);
         let image = unsafe { device.raw.create_image(&info, None) }
-            .map_err(|e| format!("Create Intel presentation texture: {e:?}"))?;
+            .map_err(|e| format!("Create Vulkan presentation texture: {e:?}"))?;
         let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
         let index = (0..device.memory.memory_type_count).find(|&index| {
             requirements.memory_type_bits & (1 << index) != 0
@@ -75,7 +75,7 @@ impl Texture {
             unsafe {
                 device.raw.destroy_image(image, None);
             }
-            return Err("Intel texture has no device-local memory type".into());
+            return Err("Vulkan texture has no device-local memory type".into());
         };
         #[cfg(target_os = "linux")]
         let mut export = vk::ExportMemoryAllocateInfo::default()
@@ -93,7 +93,7 @@ impl Texture {
                 unsafe {
                     device.raw.destroy_image(image, None);
                 }
-                return Err(format!("Allocate Intel presentation texture: {e:?}"));
+                return Err(format!("Allocate Vulkan presentation texture: {e:?}"));
             }
         };
         if let Err(e) = unsafe { device.raw.bind_image_memory(image, memory, 0) } {
@@ -101,7 +101,7 @@ impl Texture {
                 device.raw.destroy_image(image, None);
                 device.raw.free_memory(memory, None);
             }
-            return Err(format!("Bind Intel presentation texture: {e:?}"));
+            return Err(format!("Bind Vulkan presentation texture: {e:?}"));
         }
         Ok(Self(Arc::new(Storage {
             device,
@@ -153,7 +153,7 @@ impl Texture {
                     .handle_type(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD),
             )
         }
-        .map_err(|e| format!("Export Intel texture memory: {e:?}"))?;
+        .map_err(|e| format!("Export Vulkan texture memory: {e:?}"))?;
         let memory = unsafe { OwnedFd::from_raw_fd(fd) };
         // Each GL import consumes one binary semaphore signal. A fresh signal
         // permits multiple preview surfaces and recreated OpenGL contexts.
@@ -165,7 +165,7 @@ impl Texture {
                 None,
             )
         }
-        .map_err(|e| format!("Create Intel presentation semaphore: {e:?}"))?;
+        .map_err(|e| format!("Create Vulkan presentation semaphore: {e:?}"))?;
         let fence = match unsafe {
             self.0
                 .device
@@ -177,7 +177,7 @@ impl Texture {
                 unsafe {
                     self.0.device.raw.destroy_semaphore(semaphore, None);
                 }
-                return Err(format!("Create Intel export fence: {error:?}"));
+                return Err(format!("Create Vulkan export fence: {error:?}"));
             }
         };
         if let Err(error) = self.0.device.submit(&[], fence, &[semaphore]) {
@@ -190,7 +190,7 @@ impl Texture {
         self.0
             .exports
             .lock()
-            .expect("Intel export mutex poisoned")
+            .expect("Vulkan export mutex poisoned")
             .push((semaphore, fence));
         let external = ash::khr::external_semaphore_fd::Device::new(
             &self.0.device.instance,
@@ -203,7 +203,7 @@ impl Texture {
                     .handle_type(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD),
             )
         }
-        .map_err(|e| format!("Export Intel texture semaphore: {e:?}"))?;
+        .map_err(|e| format!("Export Vulkan texture semaphore: {e:?}"))?;
         Ok((memory, self.0.allocation_size, unsafe {
             OwnedFd::from_raw_fd(fd)
         }))
@@ -216,7 +216,7 @@ impl Drop for Storage {
         for &(semaphore, fence) in self
             .exports
             .get_mut()
-            .expect("Intel export mutex poisoned")
+            .expect("Vulkan export mutex poisoned")
             .iter()
         {
             unsafe {

@@ -211,10 +211,11 @@ pub(super) fn render_project_frame(
             track_id: active.track_id,
             item_id: item.id,
         };
-        let cached_item = match shrimply_visual_core::modifier_cache::effective_item(
+        let cached_item = match shrimply_visual_core::modifier_cache::effective_item_at(
             &address,
             item,
             project.canvas_size,
+            position,
         ) {
             Ok(item) => item,
             Err(error) => {
@@ -628,10 +629,11 @@ impl FrameItemRenderer<'_> {
                 track_id: *track_id,
                 item_id: child.id,
             };
-            let cached_child = match shrimply_visual_core::modifier_cache::effective_item(
+            let cached_child = match shrimply_visual_core::modifier_cache::effective_item_at(
                 &address,
                 &child,
                 self.project.canvas_size,
+                position,
             ) {
                 Ok(item) => item,
                 Err(value) => {
@@ -868,10 +870,11 @@ impl FrameItemRenderer<'_> {
             track_id,
             item_id: item.id,
         };
-        let cached_item = shrimply_visual_core::modifier_cache::effective_item(
+        let cached_item = shrimply_visual_core::modifier_cache::effective_item_at(
             &address,
             item,
             self.project.canvas_size,
+            self.position,
         )?;
         let motion_blur_source = motion_blur_source
             .or_else(|| cached_item.as_ref().map(|_| item))
@@ -1719,10 +1722,11 @@ impl FrameItemRenderer<'_> {
             source_transition.is_some(),
         )
         .into_owned();
-        let cached_item = shrimply_visual_core::modifier_cache::effective_item(
+        let cached_item = shrimply_visual_core::modifier_cache::effective_item_at(
             address,
             &item,
             self.project.canvas_size,
+            source.position(),
         )?;
         let motion_blur_source = &item;
         let item = cached_item.as_ref().unwrap_or(&item);

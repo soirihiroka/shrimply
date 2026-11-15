@@ -4,17 +4,8 @@ use shrimply_i18n::text;
 use shrimply_inspector_core::{ControlKind, InspectorControl};
 
 fn editor(control: &InspectorControl, command: Value, expression: bool) -> Value {
-    let settings = control.kind == ControlKind::ProjectSettings && !expression;
     let values = if expression {
         vec![control.layered.expression_source.clone()]
-    } else if settings {
-        let [width, height, numerator, denominator] = control.components.as_slice() else {
-            panic!("project settings require dimensions and an exact frame rate");
-        };
-        let rate: shrimply_math_core::Fraction = format!("{numerator}/{denominator}")
-            .parse()
-            .expect("valid project frame rate");
-        vec![width.clone(), height.clone(), rate.to_string()]
     } else if control.components.is_empty() {
         vec![control.value.clone()]
     } else {
@@ -34,30 +25,29 @@ fn editor(control: &InspectorControl, command: Value, expression: bool) -> Value
     } else {
         "decimal"
     };
-    let fields = values.into_iter().enumerate().map(|(index, value)| {
-        let label = if settings {
-            ["Width", "Height", "FPS"].get(index).copied()
-        } else {
-            control.prefixes.get(index).map(String::as_str)
-        };
-        let mut field = json!({"label":label.map(text),"value":value,"multiline":multiline,"keyboard":keyboard});
-        if settings && index == 2 {
-            field["choices"] = json!(shrimply_project_document::project::frame_rate_choices(
-                value.parse().expect("valid project frame rate")
-            ).into_iter().map(|(value,label)|json!({"value":value.to_string(),"label":label})).collect::<Vec<_>>());
-        }
-        field
-    }).collect::<Vec<_>>();
+    let fields = values
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| {
+            let label = control.prefixes.get(index).map(String::as_str);
+            json!({"label":label.map(text),"value":value,"multiline":multiline,"keyboard":keyboard})
+        })
+        .collect::<Vec<_>>();
     json!({"title":text(&control.label),"fields":fields,"command":command,"confirm_label":text("Apply"),"cancel_label":text("Cancel")})
 }
 
-pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Option<Value> {
+pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value {
     use ControlKind as K;
-    if control.kind == K::TtsEditor {
-        return Some(super::tts::presentation(control, item, id));
+    if control.kind == K::ProjectSettings {
+        return project_settings(control, item, id);
+    }
+    if control.kind == K::MultilineText && control.path == "/tags" {
+        return super::tags::presentation(control, item, id);
     }
     let widget = match control.kind {
-        K::Boolean | K::LayeredBoolean => "toggle",
+        K::FontFamilies => return super::fonts::presentation(control, item, id),
+        K::TtsEditor => return super::tts::presentation(control, item, id),
+        K::Boolean | K::LayeredBoolean | K::BeatDetection => "toggle",
         K::Selector
         | K::OptionalSelector
         | K::OptionalNumberSelector
@@ -68,8 +58,11 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Optio
         | K::AudioModifierMenu
         | K::VisualModifierMenu => "choice",
         K::Action => "button",
+        K::Analysis | K::AudioCache | K::VisualCache => "progress",
         K::Performance => "live_rows",
-        K::ReadOnly | K::FileLocation | K::InfoHeading => "text",
+        K::ReadOnly | K::InfoHeading | K::LayeredDrawing => "text",
+        K::FileLocation => "file_location",
+        K::InfoArtwork => "image",
         K::InfoLoading => "loading",
         K::Number
         | K::Fraction
@@ -90,7 +83,6 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Optio
                 "text"
             }
         }
-        _ => return None,
     };
     let command = |action: &str| json!({"item":item,"control":id,"action":action});
     let editable = control.editable && control.sensitive;
@@ -102,6 +94,25 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Optio
     let mut result = json!({"id":id,"widget":widget,"label":text(&control.label),"subtitle":text(&control.subtitle),
         "tooltip":text(&control.tooltip),"enabled":control.sensitive,"editable":editable,"display":display});
     match widget {
+        "file_location" => {
+            let mut next = command("show_in_files");
+            next["op"] = json!("inspector_resource");
+            result["reveal"] = json!({"label":text("Show in folder"),"icon":"folder-open-symbolic","command":next});
+            result["enabled"] = json!(control.sensitive && !control.value.is_empty());
+        }
+        "image" => {
+            let mut next = command("image");
+            next["op"] = json!("inspector_resource");
+            next["version"] = json!(
+                control
+                    .image_version
+                    .as_ref()
+                    .expect("artwork control requires a content version")
+            );
+            result["resource"] = next;
+            result["height"] = json!(shrimply_inspector_core::info::ARTWORK_PREVIEW_HEIGHT);
+            result["error"] = json!(text("Artwork format is not supported."));
+        }
         "number" => {
             let mut number = super::numeric::presentation(
                 control,
@@ -115,6 +126,7 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Optio
             }
         }
         "toggle" => {
+            result["busy"] = json!(control.busy);
             result["selected"] = json!(control.value == "true");
             let mut next = command("value");
             next["value"] = json!((control.value != "true").to_string());
@@ -161,9 +173,38 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Optio
                     .collect::<Vec<_>>()
             );
         }
+        "progress" => {
+            let status = control
+                .analysis
+                .as_ref()
+                .expect("background control requires shared progress");
+            let button = status.button(false);
+            result["label"] = json!(text(&button.label));
+            result["tooltip"] = json!(text(button.tooltip.as_str()));
+            result["enabled"] = json!(button.sensitive);
+            result["progress"] = json!(button.progress);
+            result["suggested"] = json!(button.suggested);
+            result["command"] = command("activate");
+            if status.running {
+                result["cancel_label"] = json!(text(&status.button(true).label));
+            }
+        }
         "button" => {
             result["enabled"] = json!(control.sensitive && control.action_sensitive);
-            result["command"] = command("activate");
+            if let Some(selection) = control.action.and_then(|action| action.file_selection()) {
+                result["widget"] = json!("file");
+                result["display"] = json!("");
+                result["choose_label"] = json!(text(if control.value.is_empty() {
+                    &control.label
+                } else {
+                    &control.value
+                }));
+                result["mime"] = json!("*/*");
+                result["extensions"] = json!(selection.extensions);
+                result["command"] = command("file");
+            } else {
+                result["command"] = command("activate");
+            }
         }
         "editor" => {
             let mut next = command("edit");
@@ -197,7 +238,7 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Optio
     if control.scalar_graph.is_some() {
         result["graph"] = json!({"label":text("Keyframes"),"command":{"op":"framegraph_open","item":item,"control":id}});
     }
-    Some(result)
+    result
 }
 
 fn live_rows() -> Value {
@@ -218,4 +259,48 @@ pub fn performance_request(operation: &str) -> Value {
         result["clipboard_label"] = json!(text("Live Performance"));
     }
     result
+}
+
+fn project_settings(control: &InspectorControl, item: &str, id: &str) -> Value {
+    use shrimply_inspector_core::project as shared;
+    let model = control
+        .project_settings
+        .as_ref()
+        .expect("shared project settings model");
+    let command = |action: &str| json!({"item":item,"control":id,"action":action});
+    let rate = &model.frame_rate;
+    let choices: Vec<_> = rate
+        .values
+        .iter()
+        .zip(&rate.labels)
+        .map(|(value, label)| {
+            let mut next = command("settings_stage");
+            next["field"] = json!(rate.path);
+            next["value"] = json!(value);
+            json!({"value":value,"label":text(label),"command":next})
+        })
+        .collect();
+    let selected = rate
+        .values
+        .iter()
+        .position(|value| value == &rate.value)
+        .expect("current frame rate is a choice");
+    let resolution = &model.resolution;
+    let mut stage = command("settings_stage");
+    stage["field"] = json!(resolution.path);
+    let mut resolution_editor = editor(resolution, stage, false);
+    resolution_editor["confirm_label"] = json!(text("Done"));
+    let mut controls = vec![
+        json!({"id":"frame_rate","widget":"choice","label":text(&rate.label),"subtitle":"","enabled":true,"editable":true,"display":choices[selected]["label"],"choice_style":"row","choices":choices}),
+        json!({"id":"resolution","widget":"editor","label":text(&resolution.label),"subtitle":"","enabled":true,"editable":true,"display":resolution.components.join(" × "),"editor":resolution_editor}),
+    ];
+    if model.dirty {
+        controls.push(json!({"id":"actions","widget":"actions","label":"","subtitle":"","enabled":true,"editable":true,"actions":[
+            {"label":text(shared::SETTINGS_DISCARD),"command":command("settings_discard")},
+            {"label":text(shared::SETTINGS_APPLY),"command":command("settings_apply"),"confirmation":{
+                "title":text(shared::SETTINGS_TITLE),"message":text(shared::SETTINGS_WARNING),"confirm_label":text(shared::SETTINGS_APPLY),"cancel_label":text(shared::SETTINGS_CANCEL)
+            }}
+        ]}));
+    }
+    json!({"id":id,"widget":"group","label":"","subtitle":"","enabled":control.sensitive,"editable":control.editable,"controls":controls})
 }

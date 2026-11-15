@@ -1,5 +1,5 @@
 # A normal Box owns overflow. Its code child keeps its natural content height.
-mut scroll = [0%, 0%]
+mut scroll: List<Percent,2> = [0%, 0%]
 mut stage = "Scroll through the source"
 
 let heading = <Label font_size={28pt} position={[0%, -43%]}>Code, inside a box.</Label>
@@ -65,7 +65,7 @@ let panel = <Box w-84% h-70% p-24 gap-16 rounded-xl bg-card_bg_dark position={[8
         {code}
     </Box>
     <Box flex flex-row items-center justify-between>
-        <Label font_size={13pt} fill="light4">{stage}</Label>
+        <Label id="stage_label" font_size={13pt} fill="light4">{stage}</Label>
         <Label font_size={13pt} fill="blue2">overflow-y-scroll</Label>
     </Box>
 </Box>
@@ -74,7 +74,7 @@ Animation(children=[heading])
 Animation(children=[subtitle])
 Animation(children=[panel])
 wait(400ms)
-stage = "Reveal the gutter"
+animate(stage, to="Reveal the gutter", duration=0s)
 code.style(line_numbers=true, scope_indicators=true, duration=350ms, ease="smooth")
 animate(scroll, to=[0%, 100%], duration=1800ms, ease="smooth")
 wait(500ms)
@@ -82,33 +82,33 @@ animate(scroll, to=[0%, 25%], duration=1200ms, ease="smooth")
 wait(400ms)
 let push = code.range(name="WorkQueue.push")
 let pop_range = code.range(name="WorkQueue.pop")
-stage = "Fold push; pop remains open"
+animate(stage, to="Fold push; pop remains open", duration=0s)
 push.fold(duration=600ms, ease="smooth")
 wait(600ms)
-stage = "Fold pop independently"
+animate(stage, to="Fold pop independently", duration=0s)
 pop_range.fold(duration=600ms, ease="smooth")
 wait(600ms)
-stage = "Open push; pop stays folded"
+animate(stage, to="Open push; pop stays folded", duration=0s)
 push.unfold(duration=600ms, ease="smooth")
 wait(600ms)
-stage = "Hide line numbers; keep scope controls"
+animate(stage, to="Hide line numbers; keep scope controls", duration=0s)
 code.style(line_numbers=false, duration=400ms, ease="smooth")
 wait(600ms)
-stage = "Fold the class; remember individual method choices"
+animate(stage, to="Fold the class; remember individual method choices", duration=0s)
 let queue = code.range(name="WorkQueue")
 queue.fold(duration=700ms, ease="smooth")
 wait(600ms)
-stage = "Open the class; pop is still folded"
+animate(stage, to="Open the class; pop is still folded", duration=0s)
 queue.unfold(duration=700ms, ease="smooth")
 wait(600ms)
 pop_range.unfold(duration=600ms, ease="smooth")
 code.style(line_numbers=true, duration=400ms, ease="smooth")
 wait(500ms)
-stage = "Insert one word; unchanged code stays visible"
+animate(stage, to="Insert one word; unchanged code stays visible", duration=0s)
 animate(scroll, to=[0%, 45%], duration=600ms, ease="smooth")
 wait(400ms)
 code.range(name="WorkQueue.run_next").edit(src="code_view_scroller.py.patch", animation="morph", duration=1200ms, ease="smooth")
 wait(1s)
-stage = "Hide the gutter"
+animate(stage, to="Hide the gutter", duration=0s)
 code.style(line_numbers=false, scope_indicators=false, duration=400ms, ease="smooth")
 wait(600ms)

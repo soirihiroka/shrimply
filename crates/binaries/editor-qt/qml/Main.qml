@@ -6,6 +6,7 @@ import QtQuick.Effects
 import QtQuick.Layouts
 import QtQml.Models
 import Qt.labs.qmlmodels
+import dev.shrimply.components
 import dev.shrimply.editor
 import dev.shrimply.export
 import dev.shrimply.inspector
@@ -143,10 +144,16 @@ ApplicationWindow {
 
     menuBar: MenuBar {
         visible: backend.ready && !window.fullscreenPreview
+        delegate: MenuBarItem {
+            id: menuItem
+            MenuInput { id: menuInput }
+            onPressed: if (menu) menu.bottomSheet = menu.usesBottomSheet(menuInput.takeTouch())
+        }
 
-        Menu {
+        AdaptiveMenu {
+            id: fileMenu
             title: backend.translate("File")
-            popupType: Popup.Native
+            pointerPopupType: Popup.Native
 
             Action { text: backend.translate("Save"); shortcut: StandardKey.Save; onTriggered: backend.save() }
             Action {
@@ -155,7 +162,9 @@ ApplicationWindow {
                 onTriggered: Qt.callLater(backend.showSaveAsDialog)
             }
             MenuSeparator {}
-            Menu {
+            AdaptiveMenu {
+                bottomSheet: fileMenu.bottomSheet
+                pointerPopupType: Popup.Native
                 title: backend.translate("Export")
                 enabled: !exportWindow.busy
 
@@ -177,9 +186,9 @@ ApplicationWindow {
             Action { text: backend.translate("Quit"); shortcut: StandardKey.Quit; onTriggered: Qt.quit() }
         }
 
-        Menu {
+        AdaptiveMenu {
             title: backend.translate("Edit")
-            popupType: Popup.Native
+            pointerPopupType: Popup.Native
 
             Action { text: backend.translate("Undo"); shortcut: StandardKey.Undo; onTriggered: backend.undo() }
             Action { text: backend.translate("Redo"); shortcut: StandardKey.Redo; onTriggered: backend.redo() }
@@ -191,10 +200,10 @@ ApplicationWindow {
             }
         }
 
-        Menu {
+        AdaptiveMenu {
             id: viewMenu
             title: backend.translate("View")
-            popupType: Popup.Native
+            pointerPopupType: Popup.Native
             onAboutToShow: {
                 inspectorMenuItem.checked = window.inspectorVisible
                 timelineMenuItem.checked = window.timelineVisible
@@ -223,9 +232,9 @@ ApplicationWindow {
             }
         }
 
-        Menu {
+        AdaptiveMenu {
             title: backend.translate("Help")
-            popupType: Popup.Native
+            pointerPopupType: Popup.Native
 
             Action { text: backend.translate("Keyboard Shortcuts") }
             Action {
@@ -717,29 +726,9 @@ ApplicationWindow {
         }
     }
 
-    component TimelineMenu: Menu {
-        property bool bottomSheet: false
-        parent: Overlay.overlay
-        popupType: bottomSheet || Qt.platform.os === "windows" ? Popup.Item : Popup.Window
-        modal: bottomSheet
-        dim: bottomSheet
-        width: bottomSheet && parent ? parent.width : implicitWidth
-        height: parent ? Math.min(implicitHeight, parent.height) : implicitHeight
-        transformOrigin: bottomSheet ? Item.Bottom : Item.TopLeft
 
-        function present(anchor, sheet) {
-            bottomSheet = sheet
-            if (sheet) {
-                x = 0
-                y = parent.height - height
-                open()
-            } else {
-                popup(anchor, 0, 0)
-            }
-        }
-    }
-
-    TimelineMenu {
+    AdaptiveMenu {
+        pointerPopupType: Qt.platform.os === "windows" ? Popup.Item : Popup.Window
         id: previewContextMenu
         property var labels: []
 
@@ -803,7 +792,8 @@ ApplicationWindow {
         function onPreviewImageCaptureFailed(error) { backend.reportPreviewImageError(error) }
     }
 
-    TimelineMenu {
+    AdaptiveMenu {
+        pointerPopupType: Qt.platform.os === "windows" ? Popup.Item : Popup.Window
         id: timelineTrackAddMenu
 
         Instantiator {
@@ -838,7 +828,8 @@ ApplicationWindow {
         visible: false
     }
 
-    TimelineMenu {
+    AdaptiveMenu {
+        pointerPopupType: Qt.platform.os === "windows" ? Popup.Item : Popup.Window
         id: timelineContextMenu
 
         Instantiator {

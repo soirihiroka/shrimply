@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use adw::prelude::AdwDialogExt;
 use gtk::glib;
@@ -21,7 +21,7 @@ const DIALOG_HEIGHT: i32 = 760;
 const SEARCH_WIDTH: i32 = 400;
 const MAX_TYPEFACE_CACHE_ENTRIES: usize = 128;
 const MAX_PREVIEW_WORKERS: usize = 2;
-const GOOGLE_LOOKUP_DELAY: Duration = Duration::from_millis(500);
+use shrimply_inspector_core::font_selector::GOOGLE_LOOKUP_DELAY;
 
 thread_local! {
     static FONT_BROWSER: Rc<RefCell<shrimply_inspector_core::font_selector::Browser>> =

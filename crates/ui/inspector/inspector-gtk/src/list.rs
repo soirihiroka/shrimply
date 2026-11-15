@@ -93,6 +93,7 @@ pub(super) fn render_categories(
                 .build()
         })
         .collect::<Vec<_>>();
+    let show_categories = toggles.len() > 1;
     let selector = shrimply_components_gtk::ui::stack_tabs(&stack, toggles);
     let target = context.list_target.clone();
     let list_state = context.list_state.clone();
@@ -105,7 +106,7 @@ pub(super) fn render_categories(
     });
 
     context.category_bar.append(&selector);
-    context.category_bar.set_visible(true);
+    context.category_bar.set_visible(show_categories);
     vec![stack.upcast()]
 }
 

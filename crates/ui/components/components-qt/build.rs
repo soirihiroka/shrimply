@@ -3,6 +3,9 @@ use cxx_qt_build::{CxxQtBuilder, QmlModule};
 fn main() {
     unsafe {
         CxxQtBuilder::new_qml_module(QmlModule::new("dev.shrimply.components").qml_files([
+            "qml/AdaptiveMenu.qml",
+            "qml/AdaptiveComboBox.qml",
+            "qml/MenuInput.qml",
             "qml/ButtonSelector.qml",
             "qml/ColorPicker.qml",
             "qml/Checkerboard.qml",

@@ -12,6 +12,11 @@ pub struct NumberField {
     pub digits: usize,
 }
 
+pub fn tag_editor(tags: &[String]) -> Value {
+    json!({"label":text("Tags"),"placeholder":text("Add tag"),"add_label":text("Add tag"),"add_icon":"list-add-symbolic","remove_icon":"window-close-symbolic",
+        "tags":tags.iter().map(|tag|json!({"value":tag,"remove_label":text_args("Remove tag %{tag}",&[("tag",tag.clone())])})).collect::<Vec<_>>()})
+}
+
 pub fn choice_label(label: &str, selected: Option<&str>) -> String {
     selected.map_or_else(
         || {

@@ -220,7 +220,7 @@ pub fn file_kind(path: &Path) -> Option<FileKind> {
         Some(FileKind::Python)
     } else if extension.eq_ignore_ascii_case("sanim") {
         Some(FileKind::Sanim)
-    } else if extension.eq_ignore_ascii_case("blend") {
+    } else if extension.eq_ignore_ascii_case("blend") && shrimply_blender_core::SUPPORTED {
         Some(FileKind::Blender)
     } else if extension.eq_ignore_ascii_case("psd") || extension.eq_ignore_ascii_case("kra") {
         Some(FileKind::LayeredImage)

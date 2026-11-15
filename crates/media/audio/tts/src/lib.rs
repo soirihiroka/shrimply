@@ -687,3 +687,10 @@ async fn synthesize_async(
         }
     }
 }
+
+pub fn is_caption_model(model: &TtsModel) -> bool {
+    model
+        .inputs
+        .iter()
+        .any(|input| input.purpose() == Some(InputPurpose::Duration))
+}

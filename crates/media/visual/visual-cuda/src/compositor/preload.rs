@@ -331,10 +331,11 @@ fn upcoming(
                         track_id: track.id,
                         item_id: item.id,
                     };
-                    if shrimply_visual_core::modifier_cache::effective_item(
+                    if shrimply_visual_core::modifier_cache::effective_item_at(
                         &address,
                         item,
                         project.canvas_size,
+                        cursor_position,
                     )
                     .ok()
                     .flatten()
@@ -441,10 +442,11 @@ impl FrameItemRenderer<'_> {
                 track_id: active.track_id,
                 item_id: item.id,
             };
-            let cached_item = shrimply_visual_core::modifier_cache::effective_item(
+            let cached_item = shrimply_visual_core::modifier_cache::effective_item_at(
                 &address,
                 item,
                 self.project.canvas_size,
+                self.position,
             )
             .ok()
             .flatten();
@@ -570,10 +572,11 @@ impl FrameItemRenderer<'_> {
                 track_id,
                 item_id: child.id,
             };
-            let cached_child = shrimply_visual_core::modifier_cache::effective_item(
+            let cached_child = shrimply_visual_core::modifier_cache::effective_item_at(
                 &address,
                 &child,
                 self.project.canvas_size,
+                self.position,
             )
             .ok()
             .flatten();

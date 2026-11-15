@@ -281,19 +281,24 @@ pub fn show_preferences_dialog(
     performance_group.add(&gpu_host_memory);
 
     let appearance_page = adw::PreferencesPage::builder()
-        .title(tr!("Appearance").as_ref())
-        .icon_name("appearance-symbolic")
-        .name("appearance")
+        .title(tr!(preferences_store::PreferencePage::Appearance.title()).as_ref())
+        .icon_name(preferences_store::PreferencePage::Appearance.icon())
+        .name(preferences_store::PreferencePage::Appearance.id())
         .build();
-    appearance_page.add(&caption_group);
-    appearance_page.add(&text_group);
-    appearance_page.add(&preview_group);
-    appearance_page.add(&timeline_group);
+    for name in preferences_store::PreferencePage::Appearance.groups() {
+        appearance_page.add(match *name {
+            "Captions" => &caption_group,
+            "Text" => &text_group,
+            "Preview" => &preview_group,
+            "Timeline" => &timeline_group,
+            _ => unreachable!("appearance preference group"),
+        });
+    }
 
     let performance_page = adw::PreferencesPage::builder()
-        .title(tr!("Performance").as_ref())
-        .icon_name("speedometer-symbolic")
-        .name("performance")
+        .title(tr!(preferences_store::PreferencePage::Performance.title()).as_ref())
+        .icon_name(preferences_store::PreferencePage::Performance.icon())
+        .name(preferences_store::PreferencePage::Performance.id())
         .build();
     performance_page.add(&performance_group);
 

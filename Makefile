@@ -30,6 +30,9 @@ endif
 $(CUDA_DEV_TARGETS): override CUDA_IMAGE_FORMAT = cubin
 $(CUDA_DEV_TARGETS): override CUDA_TARGET := $(CUDA_NATIVE_TARGET)
 endif
+SPIRV_OPT ?= spirv-opt
+SPIRV_VAL ?= spirv-val
+export SPIRV_OPT SPIRV_VAL
 SOURCE_LINE_LIMIT ?= 2000
 OPTIX_ROOT ?= $(CURDIR)/external/optix-dev
 DNF ?= sudo dnf
@@ -146,7 +149,8 @@ FEDORA_PACKAGES := \
 	poppler-glib-devel \
 	freetype-devel \
 	qt6-qtbase-devel \
-	qt6-qtdeclarative-devel
+	qt6-qtdeclarative-devel \
+	spirv-tools
 
 .PHONY: native-deps windows-ffmpeg windows-ffmpeg-verify windows-native-deps windows-build windows-dev windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check intel-check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt uninstall uninstall-qt flatpak-gtk
 native-deps:
@@ -353,7 +357,7 @@ endif
 windows-check: override CUDA_IMAGE_FORMAT = ptx
 windows-check: override CUDA_PTX_TARGET = compute_50
 windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
-	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
+	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) build -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
 
 ifeq ($(HOST_OS),Windows_NT)
@@ -471,6 +475,7 @@ editing-api-check: native-deps cuda-artifacts editing-api-fmt
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-editing-api -p shrimply-editing-runtime -p shrimply-cli --lib
 
 source-size-check:
+	@command -v rg >/dev/null 2>&1 || { echo "Source size checks require ripgrep (rg)" >&2; exit 1; }
 	@oversized="$$(rg --files -g '!external/**' -g '!target/**' -g '!vcpkg_installed/**' | while IFS= read -r source_file; do \
 		case "$$source_file" in \
 			(*.rs|*.py|*.c|*.cc|*.cpp|*.cxx|*.h|*.hh|*.hpp|*.cu|*.cuh|*.wgsl|*.glsl|*.vert|*.frag|*.comp|*.slang|*.ts|*.tsx|*.js|*.jsx) \
@@ -788,9 +793,13 @@ android-device-check:
 .PHONY: android-media-deps
 android-media-deps:
 	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4)
+	ln -sfn "$(ANDROID_MEDIA_PREFIX)/lib/pkgconfig" "$(ANDROID_MEDIA_PREFIX)/../pkgconfig-$$(cat '$(ANDROID_MEDIA_PREFIX)/../build.sha256')"
 
 ANDROID_MEDIA_PREFIX = $(abspath $(CARGO_TARGET_DIR)/android-native/$(ANDROID_ABI)/$(ANDROID_PROFILE)/install)
-ANDROID_MEDIA_ENV = SYSTEM_DEPS_LINK=static PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_LIBDIR="$(ANDROID_MEDIA_PREFIX)/lib/pkgconfig" PKG_CONFIG_PATH="$(ANDROID_MEDIA_PREFIX)/lib/pkgconfig" OPENCV_DISABLE_PROBES=cmake,vcpkg_cmake,vcpkg BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(ANDROID_TOOLCHAIN)/sysroot --target=$(ANDROID_TARGET)33"
+# ffmpeg-sys bundles static archives inside its rlib. A changed recipe must
+# change its watched pkg-config environment, rather than only relink the app.
+ANDROID_MEDIA_PKG_CONFIG = $(ANDROID_MEDIA_PREFIX)/../pkgconfig-$(shell cat "$(ANDROID_MEDIA_PREFIX)/../build.sha256" 2>/dev/null)
+ANDROID_MEDIA_ENV = SYSTEM_DEPS_LINK=static PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_LIBDIR="$(ANDROID_MEDIA_PKG_CONFIG)" PKG_CONFIG_PATH="$(ANDROID_MEDIA_PKG_CONFIG)" OPENCV_DISABLE_PROBES=cmake,vcpkg_cmake,vcpkg BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(ANDROID_TOOLCHAIN)/sysroot --target=$(ANDROID_TARGET)33"
 .PHONY: android-media-check
 android-media-check: android-media-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-video-decoder --target $(ANDROID_TARGET)
@@ -808,12 +817,16 @@ android-visual-check: android-media-deps android-text-deps android-opencv-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) check -p shrimply-visual-core --target $(ANDROID_TARGET)
 
 .PHONY: android-opencv-deps
-android-opencv-deps: android-media-deps
+android-opencv-deps: android-media-deps android-l1-deps
 	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --opencv
 
 .PHONY: android-pdf-deps android-preview-check
 android-pdf-deps: android-text-deps android-opencv-deps
 	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --pdf
+
+.PHONY: android-l1-deps
+android-l1-deps:
+	python3 packaging/android-highs.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4)
 
 android-preview-check: android-pdf-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) check -p shrimply-preview-render-core -p shrimply-preview-render-vulkan --target $(ANDROID_TARGET)

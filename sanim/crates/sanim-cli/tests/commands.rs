@@ -93,7 +93,7 @@ fn lint_is_static_and_exposes_unused_expensive_work() {
 #[test]
 fn profile_measures_requested_frames_and_warm_cache_reuse() {
     let (output, bytes) = run(
-        "add(Box(width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\nwait(1s)",
+        "Animation(children=[Box(width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)",
         &["profile", "--json", "--samples", "5"],
     );
     assert!(
@@ -161,7 +161,7 @@ fn malformed_profile_and_duplicate_options_have_argument_exit_status() {
 #[test]
 fn render_writes_actual_png() {
     let (output, png) = run(
-        "add(Box(width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\n",
+        "Animation(children=[Box(width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\n",
         &["render", "--output", "OUTPUT"],
     );
     assert!(
@@ -199,7 +199,7 @@ fn invalid_override_fails() {
 #[test]
 fn bounded_watch_produces_initial_revision() {
     let (output, png) = run(
-        "add(Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\n",
+        "Animation(children=[Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\n",
         &["watch", "--output", "OUTPUT", "--cycles", "1"],
     );
     assert!(
@@ -239,17 +239,17 @@ fn unknown_option_fails() {
 }
 #[test]
 fn file_root_blocks_escape() {
-    let (output, _) = run("let data = read<String>(\"../outside.json\")\n", &["check"]);
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("escapes")
+    let (output, _) = run(
+        "let data = read<String>(\"../outside.json\")\nassert(data!=\"\")\nAnimation()\n",
+        &["check"],
     );
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    assert!(diagnostic.contains("escapes"), "{diagnostic}");
 }
 #[test]
 fn script_filename_with_spaces() {
-    let (output, _) = run("let label = \"hello world\"\n", &["inspect"]);
+    let (output, _) = run("let label = \"hello world\"\nAnimation()\n", &["inspect"]);
     assert!(output.status.success());
 }
 
@@ -293,7 +293,7 @@ fn video_reports_missing_encoder_and_rejects_invalid_dimensions() {
 
 #[test]
 fn cli_duration_reports_exact_time_without_rendering() {
-    let (output, bytes) = run("repeat 100000{wait(1ms)}", &["duration", "--json"]);
+    let (output, bytes) = run("wait(1ms).repeat(100000)", &["duration", "--json"]);
     assert!(
         output.status.success(),
         "{}",
@@ -373,7 +373,7 @@ fn event_watch_reports_repeated_failure_after_recovery_to_same_good_source() {
     }
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("main.sanim");
-    let good = "add(Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n";
+    let good = "Animation(children=[Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\n";
     std::fs::write(&source, good).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_sanim"))
         .arg("watch")

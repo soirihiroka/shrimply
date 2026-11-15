@@ -110,6 +110,12 @@ pub trait VideoBackend {
 
     fn encoder_label(&self, codec: ExportVideoCodec) -> &'static str;
 
+    /// MediaCodec exposes output in decode order with PTS only. Other encoders
+    /// keep their native DTS and do not opt into this CFR clock.
+    fn decode_order_delay(&self, _settings: &ExportSettings) -> Option<u32> {
+        None
+    }
+
     fn validate(&self, project: &Project, settings: &ExportSettings) -> Result<(), String>;
 
     fn prepare(
@@ -352,6 +358,20 @@ where
             )
         }),
         wait_for_header,
+        if settings.video_codec == ExportVideoCodec::Gif {
+            None
+        } else {
+            backend
+                .decode_order_delay(settings)
+                .map(|delay| {
+                    frame_count(export_duration(project), settings.fps)
+                        .ok_or_else(|| {
+                            "Export duration and frame rate exceed the exact range".to_string()
+                        })
+                        .map(|frames| crate::math::decode_order::DecodeOrder::new(frames, delay))
+                })
+                .transpose()?
+        },
     )?;
     let setup_ns = setup_started.elapsed().as_nanos();
 
@@ -470,6 +490,22 @@ pub fn export_duration(project: &Project) -> Time {
 }
 
 fn validate_settings(project: &Project, settings: &ExportSettings) -> Result<(), String> {
+    if settings.video_codec != ExportVideoCodec::Gif {
+        if settings.rate_control == ExportRateControl::ConstantQp
+            && settings.constant_qp > settings::MAX_CONSTANT_QP
+        {
+            return Err("Constant QP must be between 0 and 51".into());
+        }
+        if matches!(
+            settings.rate_control,
+            ExportRateControl::ConstantBitrate
+                | ExportRateControl::VariableBitrate
+                | ExportRateControl::VariableBitrateTargetQuality
+        ) && settings.bitrate_kbps == 0
+        {
+            return Err("Video bitrate must be larger than zero".into());
+        }
+    }
     if project.canvas_size.width == 0 || project.canvas_size.height == 0 {
         return Err("Project canvas size must be larger than zero".to_string());
     }

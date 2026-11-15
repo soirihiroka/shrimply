@@ -18,6 +18,7 @@ pub(crate) mod palette;
 mod preview;
 #[cfg(target_os = "android")]
 mod preview_image;
+mod video_recording;
 
 #[derive(Default)]
 pub(crate) struct Lifecycle {
@@ -38,6 +39,7 @@ pub(crate) struct Runtime {
     context_menu: Option<context::Menu>,
     context_serial: u64,
     timeline_service: Option<shrimply_inspector_document::timeline_service::Session>,
+    video_recording: Option<video_recording::Recording>,
     inspect_serial: u64,
     pub backend: ProjectBackend,
     #[cfg(target_os = "android")]
@@ -52,12 +54,14 @@ pub(crate) struct Runtime {
     inspector: Option<shrimply_inspector_core::InspectorController>,
     inspector_document: Option<shrimply_inspector_document::InspectorDocument>,
     inspector_interaction: shrimply_inspector_document::remote::Interaction,
+    inspector_fonts: shrimply_inspector_document::remote::Fonts,
     inspector_status: String,
+    inspector_polled_at: std::time::Instant,
     pub framegraph: Option<shrimply_inspector_document::remote::graph::GraphSession>,
     pub graph_dirty: bool,
     graph_stamp: Option<(u64, Time)>,
     graph_pointer: shrimply_framegraph_skia::FrameGraphPointerPosition,
-    preferences_ui: shrimply_preferences_core::remote::PreferencesUi,
+    preferences_ui: shrimply_inspector_document::preferences::Preferences,
     preview_toolbar: shrimply_preview_render_core::playback::toolbar::Toolbar,
     pub preview_interaction: shrimply_preview_interaction_skia::surface::Surface,
     preview_size: glam::Vec2,
@@ -114,7 +118,9 @@ impl Runtime {
             inspector: None,
             inspector_document: None,
             inspector_interaction: Default::default(),
+            inspector_fonts: Default::default(),
             inspector_status: "null".into(),
+            inspector_polled_at: std::time::Instant::now(),
             framegraph: None,
             graph_dirty: true,
             graph_stamp: None,
@@ -134,6 +140,7 @@ impl Runtime {
             context_menu: None,
             context_serial: 0,
             timeline_service: None,
+            video_recording: None,
             inspect_serial: 0,
             #[cfg(target_os = "android")]
             export: None,
@@ -178,7 +185,10 @@ impl Runtime {
                 self.cancel_numeric()?;
                 self.cancel_preview_edit()?;
                 let transport = player::snapshot(&self.player);
-                player::set_playing_at(&self.player, false, at);
+                let capture = self.screen_recording_pending();
+                if !capture {
+                    player::set_playing_at(&self.player, false, at);
+                }
                 if transport.playing
                     && player::current_time(&self.player) > transport.duration
                     && !self
@@ -189,7 +199,15 @@ impl Runtime {
                     player::seek_time(&self.player, transport.duration);
                 }
                 if let Some(scene) = self.timeline.as_mut() {
-                    scene.suspend();
+                    if capture {
+                        scene.suspend_while_recording();
+                    } else {
+                        scene.suspend();
+                    }
+                }
+                #[cfg(target_os = "android")]
+                if let Some(media) = &self.media {
+                    media.set_visible(false);
                 }
                 self.sync_cursor();
                 self.foreground = false;
@@ -201,6 +219,10 @@ impl Runtime {
                 && active != self.foreground
             {
                 self.foreground = active;
+                #[cfg(target_os = "android")]
+                if let Some(media) = &self.media {
+                    media.set_visible(active);
+                }
                 if let Err(error) = self.backend.active(active) {
                     failure.get_or_insert(error);
                 }
@@ -249,11 +271,14 @@ impl Runtime {
             operation,
             "inspector"
                 | "inspector_numeric"
+                | "inspector_fonts"
                 | "inspector_file"
                 | "context_action"
                 | "context_control"
                 | "context_delete"
+                | "context_clipboard"
                 | "record_audio"
+                | "record_video"
         ) {
             if self.preview_interaction.active() {
                 self.cancel_preview_edit()?;
@@ -269,77 +294,162 @@ impl Runtime {
             return Err("a source descriptor is only valid for a file import".into());
         }
         let mut result = match operation {
-            "timeline_service_action" | "timeline_service_file" => self.timeline_service_request(request, source),
+            "timeline_service_action" | "timeline_service_file" => {
+                self.timeline_service_request(request, source)
+            }
             "preview_image_dismiss" => {
                 #[cfg(target_os = "android")]
-                { self.dismiss_preview_image(request) }
+                {
+                    self.dismiss_preview_image(request)
+                }
                 #[cfg(not(target_os = "android"))]
-                { Err("Preview image delivery requires the native host".into()) }
-            },
-            "framegraph_open" | "framegraph_close" | "framegraph_action" => self.graph_request(request),
-            "context_action" | "context_control" | "context_delete" | "context_dismiss" => self.context_request(request),
-            "performance" | "performance_clear" | "performance_copy" => Ok(shrimply_inspector_document::remote::performance_request(operation)),
-            "export_schema" | "export_video" | "caption_export_schema" | "export_captions" | "export_cancel" | "export_dismiss" | "export_saved" => {
+                {
+                    Err("Preview image delivery requires the native host".into())
+                }
+            }
+            "framegraph_open" | "framegraph_close" | "framegraph_action" => {
+                self.graph_request(request)
+            }
+            "context_action" | "context_control" | "context_delete" | "context_dismiss"
+            | "context_clipboard" => self.context_request(request),
+            "performance" | "performance_clear" | "performance_copy" => Ok(
+                shrimply_inspector_document::remote::performance_request(operation),
+            ),
+            "export_schema"
+            | "export_validate"
+            | "export_video"
+            | "caption_export_schema"
+            | "export_captions"
+            | "export_cancel"
+            | "export_dismiss"
+            | "export_saved" => {
                 #[cfg(target_os = "android")]
-                { self.export_request(request) }
+                {
+                    self.export_request(request)
+                }
                 #[cfg(not(target_os = "android"))]
-                { Err("Hardware export requires the native Android host".into()) }
-            },
+                {
+                    Err("Hardware export requires the native Android host".into())
+                }
+            }
             "native_palette" => {
                 let palette = palette::NativePalette::from_request(request)?;
                 palette.apply();
                 self.native_palette = Some(palette);
                 self.backend.snapshot()
-            },
-            "preferences_schema" => Ok(self.preferences_ui.snapshot(&self.backend.preferences)),
+            }
             "editor_layout" => {
-                let layout = shrimply_preferences_core::set_editor_layout(&self.backend.preferences, &request["changes"])?;
+                let layout = shrimply_preferences_core::set_editor_layout(
+                    &self.backend.preferences,
+                    &request["changes"],
+                )?;
                 Ok(layout.json())
-            },
-            "preferences" => {
-                let schema = self.preferences_ui.apply(&self.backend.preferences, request)?;
-                let font = shrimply_preferences_core::snapshot(&self.backend.preferences).default_text_font_family;
-                self.inspector = self.inspector.take().map(|controller|controller.with_default_text_font(font));
+            }
+            "preferences_schema" | "preferences" => {
+                let schema = if operation == "preferences" {
+                    self.preferences_ui
+                        .apply(&self.backend.preferences, request)?
+                } else {
+                    self.preferences_ui.snapshot(&self.backend.preferences)
+                };
+                let font = shrimply_preferences_core::snapshot(&self.backend.preferences)
+                    .default_text_font_family;
+                self.inspector = self
+                    .inspector
+                    .take()
+                    .map(|controller| controller.with_default_text_font(font));
                 self.inspector_stamp = None;
                 Ok(schema)
-            },
-            "preview_context_action" | "preview_context_dismiss" => self.preview_context_request(request),
+            }
+            "preview_context_action" | "preview_context_dismiss" => {
+                self.preview_context_request(request)
+            }
             "preview_guides" => self.preview_request(request),
+            "preview_paint" => self.preview_paint_request(request),
             "inspector_visible" => {
-                self.inspector_visible = request["visible"].as_bool().ok_or("inspector visibility requires a boolean")?;
+                self.inspector_visible = request["visible"]
+                    .as_bool()
+                    .ok_or("inspector visibility requires a boolean")?;
                 self.inspector_stamp = None;
                 self.backend.snapshot()
-            },
+            }
+            "inspector_fonts" => self.apply_inspector_fonts(request),
+            "inspector_resource" => self.inspector_resource(request),
             "inspector_numeric" => self.apply_inspector_numeric(request),
             "inspector_file" => self.apply_inspector_file(request, source),
             "inspector" => {
                 let message = self.apply_inspector(request)?;
                 let mut snapshot = self.backend.snapshot()?;
-                if let Some(message) = message { snapshot["message"] = json!(message); }
+                if let Some(message) = message {
+                    snapshot["message"] = json!(message);
+                }
                 Ok(snapshot)
-            },
+            }
             "timeline_tool" => {
-                let id = request["id"].as_str().ok_or("timeline tool requires an id")?;
-                let tool = shrimply_timeline_skia::TimelineTool::ALL.into_iter().find(|tool| tool.description().id == id).ok_or("unknown timeline tool")?;
-                tool.activate(&shrimply_timeline_skia::TimelineTools::new(self.backend.preferences.clone()));
+                let id = request["id"]
+                    .as_str()
+                    .ok_or("timeline tool requires an id")?;
+                let tool = shrimply_timeline_skia::TimelineTool::ALL
+                    .into_iter()
+                    .find(|tool| tool.description().id == id)
+                    .ok_or("unknown timeline tool")?;
+                tool.activate(&shrimply_timeline_skia::TimelineTools::new(
+                    self.backend.preferences.clone(),
+                ));
                 self.backend.snapshot()
-            },
+            }
             "show_track_add" | "show_audio_record" => {
-                if self.backend.project().is_none() { return Err("open a project first".into()); }
-                self.action_serial = self.action_serial.checked_add(1).expect("Android UI action overflow");
-                self.action = Some(json!({"serial":self.action_serial,"service":if operation == "show_audio_record" { "audio_record" } else { "track_add" },"project_path":self.backend.path(),"kind":request["kind"],"track":request["track"],"track_id":request["track_id"],"position":request["position"],"bottom_sheet":request["bottom_sheet"],"x":request["x"],"y":request["y"],"import_targets":request["import_targets"]}));
+                if self.backend.project().is_none() {
+                    return Err("open a project first".into());
+                }
+                self.action_serial = self
+                    .action_serial
+                    .checked_add(1)
+                    .expect("Android UI action overflow");
+                self.action = Some(
+                    json!({"serial":self.action_serial,"service":if operation == "show_audio_record" { "audio_record" } else { "track_add" },"project_path":self.backend.path(),"kind":request["kind"],"track":request["track"],"track_id":request["track_id"],"position":request["position"],"bottom_sheet":request["bottom_sheet"],"x":request["x"],"y":request["y"],"import_targets":request["import_targets"]}),
+                );
                 self.backend.snapshot()
-            },
+            }
             "record_audio" => {
                 let key = {
                     let project = self.backend.project().ok_or("open a project first")?;
-                    shrimply_timeline_edit::TrackKey { kind: shrimply_timeline_edit::TrackKind::Audio, track_index: crate::project::target_index(&project, shrimply_timeline_edit::TrackKind::Audio, request)? }
+                    shrimply_timeline_edit::TrackKey {
+                        kind: shrimply_timeline_edit::TrackKind::Audio,
+                        track_index: crate::project::target_index(
+                            &project,
+                            shrimply_timeline_edit::TrackKind::Audio,
+                            request,
+                        )?,
+                    }
                 };
                 let position = self.backend.position(request)?;
-                self.timeline.as_mut().ok_or("open a project first")?.toggle_audio_recording_at(key, position)?;
+                self.timeline
+                    .as_mut()
+                    .ok_or("open a project first")?
+                    .toggle_audio_recording_at(key, position)?;
                 self.backend.snapshot()
-            },
-            "record_video" => Err("Video recording requires an Android camera capture backend; this build cannot record video.".into()),
+            }
+            "record_video" => {
+                let key = {
+                    let project = self.backend.project().ok_or("open a project first")?;
+                    shrimply_timeline_edit::TrackKey {
+                        kind: shrimply_timeline_edit::TrackKind::Video,
+                        track_index: crate::project::target_index(
+                            &project,
+                            shrimply_timeline_edit::TrackKind::Video,
+                            request,
+                        )?,
+                    }
+                };
+                let position = self.backend.position(request)?;
+                self.timeline
+                    .as_mut()
+                    .ok_or("open a project first")?
+                    .toggle_video_recording_at(key, position)?;
+                self.backend.snapshot()
+            }
+            "video_recording_event" => self.video_recording_event(request),
             "play" | "pause" | "step" | "seek" => {
                 if self.backend.project().is_none() {
                     return Err("open a project first".into());
@@ -347,7 +457,9 @@ impl Runtime {
                 let snapshot = player::snapshot(&self.player);
                 match operation {
                     "play" => {
-                        if !self.foreground { return Err("resume the application before playing".into()); }
+                        if !self.foreground {
+                            return Err("resume the application before playing".into());
+                        }
                         if snapshot.duration <= Time::ZERO {
                             return Err("add timeline content before playing".into());
                         }
@@ -358,11 +470,16 @@ impl Runtime {
                     }
                     "pause" => {
                         player::set_playing(&self.player, false);
-                        if snapshot.playing && player::current_time(&self.player) > snapshot.duration
-                            && !self.timeline.as_ref().is_some_and(|scene| scene.is_recording()) {
+                        if snapshot.playing
+                            && player::current_time(&self.player) > snapshot.duration
+                            && !self
+                                .timeline
+                                .as_ref()
+                                .is_some_and(|scene| scene.is_recording())
+                        {
                             player::seek_time(&self.player, snapshot.duration);
                         }
-                    },
+                    }
                     "step" | "seek" => {
                         let total = snapshot.duration.as_frame_ceil(snapshot.frame_rate);
                         let frame = if operation == "step" {
@@ -372,7 +489,11 @@ impl Runtime {
                             #[cfg(target_os = "android")]
                             if let Some(media) = &self.media {
                                 use shrimply_preview_render_core::playback::StepDirection;
-                                media.mark_step(if step < 0 { StepDirection::Backward } else { StepDirection::Forward });
+                                media.mark_step(if step < 0 {
+                                    StepDirection::Backward
+                                } else {
+                                    StepDirection::Forward
+                                });
                             }
                             snapshot
                                 .position
@@ -399,7 +520,9 @@ impl Runtime {
                 self.cancel_numeric()?;
                 if operation == "close" {
                     player::set_playing(&self.player, false);
-                    if let Some(scene) = self.timeline.as_mut() { scene.suspend(); }
+                    if let Some(scene) = self.timeline.as_mut() {
+                        scene.suspend();
+                    }
                     self.sync_cursor();
                 }
                 let previous_path = self.backend.path().map(std::path::Path::to_path_buf);
@@ -413,12 +536,17 @@ impl Runtime {
                 let reset = previous_path.as_deref() != self.backend.path();
                 let model_changed = previous_revision != self.backend.revision;
                 if reset {
-                    self.generation = self.generation.checked_add(1).expect("Android project generation overflow");
+                    self.generation = self
+                        .generation
+                        .checked_add(1)
+                        .expect("Android project generation overflow");
                     self.action = None;
                 }
                 // Auxiliary failures (for example recent-history I/O) cannot hide
                 // a canonical edit that already committed successfully.
-                if reset || model_changed { self.refresh(reset); }
+                if reset || model_changed {
+                    self.refresh(reset);
+                }
                 result.and_then(|value| lifecycle.map(|_| value))
             }
         };
@@ -458,6 +586,7 @@ impl Runtime {
 
     fn refresh(&mut self, reset: bool) {
         if reset {
+            self.discard_video_recording();
             self.framegraph = None;
             self.graph_stamp = None;
             self.graph_dirty = true;
@@ -488,6 +617,7 @@ impl Runtime {
             self.inspector = None;
             self.inspector_document = None;
             self.inspector_interaction = Default::default();
+            self.inspector_fonts = Default::default();
             self.inspector_stamp = None;
             self.inspector_status = "null".into();
             #[cfg(target_os = "android")]
@@ -507,6 +637,23 @@ impl Runtime {
                         self.player.clone(),
                         selection.clone(),
                     )
+                    .with_analysis_backend({
+                        #[cfg(target_os = "android")]
+                        {
+                            shrimply_inspector_core::InspectorAnalysisBackend::default()
+                                .camera(shrimply_preview_render_vulkan::analysis::camera)
+                                .transparent_fill(
+                                    shrimply_preview_render_vulkan::analysis::transparent_fill,
+                                )
+                                .visual_cache_images(
+                                    shrimply_preview_render_vulkan::modifier_cache::bake,
+                                )
+                        }
+                        #[cfg(not(target_os = "android"))]
+                        {
+                            Default::default()
+                        }
+                    })
                     .with_property_clipboard(clipboard.clone())
                     .with_default_text_font(
                         shrimply_preferences_core::snapshot(&self.backend.preferences)
@@ -553,7 +700,7 @@ impl Runtime {
                     clipboard,
                     performance,
                 );
-                scene.set_recording_available(true, false);
+                scene.set_recording_available(true, true);
                 scene
             });
         }
@@ -681,7 +828,7 @@ impl Runtime {
             .unwrap_or(Value::Null);
         // The project/recents payload changes only on project events, not every frame.
         format!(
-            "{{\"status\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"framegraph\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"export\":{},\"timeline\":{{\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
+            "{{\"status\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"framegraph\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
             self.status,
             shrimply_preferences_core::snapshot(&self.backend.preferences)
                 .editor_layout
@@ -696,6 +843,7 @@ impl Runtime {
                 .map_or(Value::Null, |service| service.snapshot()),
             json!(self.error),
             self.inspector_status,
+            self.video_recording_snapshot(),
             json!(export),
             self.timeline
                 .as_ref()

@@ -96,7 +96,8 @@ pub(super) fn menu(
     let choices = choices.collect::<Vec<_>>();
     InspectorListItem::Flat(InspectorSection {
         controls: vec![
-            InspectorControl::new(kind, "", "")
+            InspectorControl::new(kind, "", "Add modifier")
+                .tooltip("Search modifiers")
                 .choices(
                     choices.iter().map(|c| c.0.clone()).collect(),
                     choices.iter().map(|c| c.1.clone()).collect(),

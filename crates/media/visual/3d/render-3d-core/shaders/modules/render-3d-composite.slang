@@ -185,6 +185,8 @@ public bool shared_sample_composed_planes<T : ICompositeSampler>(
     out float distance,
     out int ground_index)
 {
+    SCENE_ARRAY_VIEW(Ground, scene, grounds);
+
     color = float4(0.0);
     distance = RAY_MAXIMUM;
     ground_index = -1;
@@ -193,7 +195,7 @@ public bool shared_sample_composed_planes<T : ICompositeSampler>(
 
     for (uint index = 0; index < scene.ground_count; ++index)
     {
-        Ground ground = scene.grounds[index];
+        Ground ground = SCENE_ARRAY_AT(scene, grounds, index);
         if (ground.normal_composite.w == 0.0)
             continue;
         float ground_distance;

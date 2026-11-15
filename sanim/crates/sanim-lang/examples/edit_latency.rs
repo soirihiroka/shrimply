@@ -125,7 +125,7 @@ fn main() -> Result<(), String> {
 
     let scene = (0..200)
         .map(|i| {
-            format!("let item_{i}=Box(width=4pt,height=4pt,radius=\"full\",position=[{i}pt, 0pt],fill=Color(\"light1\"),x_align=Align.Center,y_align=Align.Center)\nadd(item_{i})\n")
+            format!("let item_{i}=Box(width=4pt,height=4pt,radius=\"full\",position=[{i}pt, 0pt],fill=Color(\"light1\"),x_align=Align.Center,y_align=Align.Center)\nAnimation(children=[item_{i}])\n")
         })
         .collect::<String>();
     run(

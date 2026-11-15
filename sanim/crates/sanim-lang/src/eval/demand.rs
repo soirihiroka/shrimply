@@ -7,9 +7,9 @@ impl Runtime<'_, '_> {
     pub(super) fn should_defer(&self, expression: &Expr, env: &Env, span: Span) -> bool {
         if self.preparation != crate::Preparation::Demand
             || self.expression_mutates(expression)
-            || self
-                .binding_type(span)
-                .is_ok_and(|ty| ty.contains_element() || ty.contains_function())
+            || self.binding_type(span).is_ok_and(|ty| {
+                ty.contains_element() || ty.contains_function() || ty.contains_animation()
+            })
         {
             return false;
         }
@@ -47,10 +47,20 @@ impl Runtime<'_, '_> {
                 };
                 let builtin = call.builtin;
 
-                // Like direct user calls, callbacks can read module globals not
-                // captured by the deferred expression's lexical snapshot.
-                pure &= crate::list_functions::callback_argument(&call).is_none()
+                // Pure callback contracts forbid mutable/signal/resource captures.
+                // Explicit ref/mut/sig callbacks keep their declaration-time observations.
+                let callback_pure = crate::list_functions::callback_argument(&call).is_none()
+                    || crate::list_functions::callback_type(&call, module.checked.as_ref())
+                        .is_some_and(|ty| {
+                            let signatures = ty.signatures();
+                            !signatures.is_empty()
+                                && signatures
+                                    .iter()
+                                    .all(|signature| signature.capabilities.is_pure())
+                        });
+                pure &= callback_pure
                     && !builtin.result.contains_element()
+                    && !builtin.result.contains_animation()
                     && !matches!(builtin.execute, prelude::Execution::Assertion { .. });
                 expensive |= self
                     .checked_native_method(callee.span)

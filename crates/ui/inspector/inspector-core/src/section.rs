@@ -82,6 +82,17 @@ pub struct AnalysisControlPresentation {
     pub suggested: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProgressButtonPresentation {
+    pub label: String,
+    pub tooltip: AnalysisTooltip,
+    pub sensitive: bool,
+    /// None means idle; a negative fraction means indeterminate.
+    pub progress: Option<f64>,
+    pub suggested: bool,
+    pub destructive: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnalysisTooltip {
     MessageKey(&'static str),
@@ -101,10 +112,48 @@ impl AnalysisControlPresentation {
     pub fn active(&self) -> bool {
         self.running || self.cancelling
     }
+
+    pub fn button(&self, hovered: bool) -> ProgressButtonPresentation {
+        let destructive = self.running && hovered;
+        ProgressButtonPresentation {
+            label: if destructive {
+                "Cancel".into()
+            } else {
+                self.label.clone()
+            },
+            tooltip: self.tooltip.clone(),
+            sensitive: self.sensitive,
+            progress: self.active().then_some(self.progress),
+            suggested: self.suggested && !destructive,
+            destructive,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InspectorControlAction {
+    GenerateVideo {
+        model: u64,
+    },
+    CancelVideoGeneration,
+    RetryVideoGenerationModels,
+    SelectVideoGenerationMedia {
+        model: u64,
+        input: usize,
+    },
+    RemoveVideoGenerationMedia {
+        model: u64,
+        input: usize,
+        index: usize,
+        items: u64,
+    },
+    MoveVideoGenerationMedia {
+        model: u64,
+        input: usize,
+        index: usize,
+        offset: isize,
+        items: u64,
+    },
     RebuildVideoStabilization,
     ClearMaskSource {
         modifier_id: uuid::Uuid,
@@ -290,6 +339,7 @@ pub struct InspectorControl {
     /// Convert user edits back to storage with store_number.
     pub value: String,
     pub image_bytes: Option<std::sync::Arc<[u8]>>,
+    pub image_version: Option<String>,
     pub components: Vec<String>,
     pub kind: ControlKind,
     pub editable: bool,
@@ -327,6 +377,7 @@ pub struct InspectorControl {
     pub scalar_graph: Option<ScalarGraph>,
     pub analysis: Option<AnalysisControlPresentation>,
     pub tts: Option<Box<crate::tts::EditorPresentation>>,
+    pub project_settings: Option<Box<crate::project::SettingsPresentation>>,
     pub action: Option<InspectorControlAction>,
     pub action_sensitive: bool,
     pub secondary_action: Option<InspectorControlAction>,
@@ -353,6 +404,7 @@ impl InspectorControl {
             tooltip: String::new(),
             value: String::new(),
             image_bytes: None,
+            image_version: None,
             components: Vec::new(),
             kind,
             editable: true,
@@ -390,6 +442,7 @@ impl InspectorControl {
             scalar_graph: None,
             analysis: None,
             tts: None,
+            project_settings: None,
             action: None,
             action_sensitive: true,
             secondary_action: None,

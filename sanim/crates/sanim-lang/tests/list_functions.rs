@@ -467,16 +467,16 @@ wait(1s)"#,
 }
 
 #[test]
-fn duration_only_discards_map_outputs_without_forcing_nested_inputs_or_return_assets() {
+fn duration_only_skips_unused_pure_map_inputs_and_outputs() {
     for flat in [false, true] {
-        let (output, read) = if flat {
-            ("List<Number>", "read<List<Number>>(\"absent.json\")")
+        let (output, result) = if flat {
+            ("List<Number>", "[value,value+1]")
         } else {
-            ("Number", "read<Number>(\"absent.json\")")
+            ("Number", "value*2")
         };
         let method = if flat { "flat_map" } else { "map" };
         let mut sources = files(&format!(
-            "fn<ref> delayed(value:Number):{output} {{return {read}}}\nlet inputs=read<List<Number>>(\"inputs.json\")\nlet unused=inputs.{method}(delayed)\nwait(1s)"
+            "fn delayed(value:Number):{output} {{return {result}}}\nlet inputs=read<List<Number>>(\"inputs.json\")\nlet unused=inputs.{method}(delayed)\nwait(1s)"
         ));
         sources.insert("inputs.json", "[1,2]");
         let report = Engine::default()
@@ -486,10 +486,9 @@ fn duration_only_discards_map_outputs_without_forcing_nested_inputs_or_return_as
         assert!(!report.dependencies.contains_key("absent.json"));
         assert_eq!(report.statistics.decoded_assets, 0);
         assert!(!report.dependencies.contains_key("inputs.json"));
-        assert_eq!(report.statistics.checkpoint_count, 0);
     }
     let source = r#"fn double(value:Number):Number{return value*2}
-fn<ref> delayed(value:Number):Number{return read<Number>("absent.json")}
+fn delayed(value:Number):Number{return value+1}
 let unused=[1,2].map(double).map(delayed)
 wait(1s)"#;
     let report = Engine::default()
@@ -509,10 +508,10 @@ fn demand_keeps_asset_backed_callback_mutation_eager_and_pure_results_lazy() {
         r#"mut calls=0
 fn<mut, ref> observe(value:Int < 0):Number{calls=calls+1;return value}
 fn<mut, ref> observe(value:Int >= 0):Number{calls=calls+1;return value}
-fn delayed(value:Number):Number{return value}
+fn doubled(value:Number):Number{return value}
 let unused_mutation=read<List<Int>>("items.json").map(observe)
 assert(calls==3)
-let unused_timing=read<List<Number>>("items.json").map(delayed)
+let unused_pure=read<List<Number>>("items.json").map(doubled)
 wait(1s)"#,
     );
     sources.insert("items.json", "[-1,0,2]");
@@ -527,7 +526,7 @@ wait(1s)"#,
         prepared
             .deferred_bindings
             .iter()
-            .any(|binding| binding.name == "unused_timing")
+            .any(|binding| binding.name == "unused_pure")
     );
 }
 
@@ -583,7 +582,7 @@ fn callback_iteration_limits_count_visits_without_restricting_indexed_queries() 
     );
     run("fn accumulate(a:Number,b:Number):Number{return a+b}\nlet result=[1,2,3].reduce(accumulate)\nassert(result==6)").unwrap();
     run("fn yes(value:Number):Bool{return true}\nlet found=[1,2,3,4,5].any(yes)\nassert(found)\nassert([1,2,3,4,5].bisect_left(4)==3)").unwrap();
-    run("fn<mut> yes(value:Number):Bool{wait(1ms);return true}\nlet found=[1,2,3,4,5].any(yes)\nassert(found)").unwrap();
+    run("fn<mut> yes(value:Number):Bool{check(true);return true}\nlet found=[1,2,3,4,5].any(yes)\nassert(found)").unwrap();
 }
 
 #[test]

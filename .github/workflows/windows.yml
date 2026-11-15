@@ -24,12 +24,17 @@ on:
       - "!**/*.rst"
       - "!**/docs/**"
   workflow_dispatch:
+    inputs:
+      check_only:
+        description: Run debug checks without packaging or publishing a release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-prerelease-${{ github.ref }}
+  group: windows-${{ inputs.check_only && 'check' || 'prerelease' }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -256,10 +261,17 @@ jobs:
           "$env:VCPKG_INSTALLED_DIR\x64-windows\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
 
       - name: Package portable application
+        if: ${{ !inputs.check_only }}
         shell: powershell
         run: make windows-package
 
+      - name: Check Windows debug build
+        if: inputs.check_only
+        shell: powershell
+        run: make windows-check
+
       - name: Upload portable ZIP
+        if: ${{ !inputs.check_only }}
         uses: actions/upload-artifact@v6
         with:
           name: shrimply-windows-x86_64
@@ -279,7 +291,7 @@ jobs:
           if-no-files-found: ignore
 
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && !inputs.check_only
     needs: build
     runs-on: ubuntu-24.04
     permissions:

@@ -16,6 +16,7 @@ pub(super) struct Muxer {
     /// Audio packets remain in the encoder time base until the header has fixed
     /// the container's stream time bases (Matroska uses millisecond ticks).
     pub audio_packets: VecDeque<ffmpeg::Packet>,
+    decode_order: Option<crate::math::decode_order::DecodeOrder>,
 }
 
 impl Muxer {
@@ -24,6 +25,7 @@ impl Muxer {
         video_index: usize,
         audio_stream: Option<(usize, ffmpeg::Rational)>,
         wait_for_header: bool,
+        decode_order: Option<crate::math::decode_order::DecodeOrder>,
     ) -> Result<Self, String> {
         let mut muxer = Self {
             output,
@@ -32,6 +34,7 @@ impl Muxer {
             video_time_base: None,
             audio_time_base: None,
             audio_packets: VecDeque::new(),
+            decode_order,
         };
         if !wait_for_header {
             muxer.write_header()?;
@@ -80,6 +83,16 @@ impl Muxer {
         mut packet: ffmpeg::Packet,
         encoder: &ffmpeg::codec::encoder::video::Encoder,
     ) -> Result<(), String> {
+        if let Some(clock) = &mut self.decode_order {
+            let pts = packet
+                .pts()
+                .ok_or("Encoder returned a video packet without a presentation timestamp")?;
+            let dts = clock.next(pts).map_err(str::to_owned)?;
+            if packet.dts().is_some_and(|native| native != dts) {
+                return Err("Encoder returned an unexpected decode timestamp".into());
+            }
+            packet.set_dts(Some(dts));
+        }
         if self.video_time_base.is_none() {
             let header = extract_header(encoder, &packet)?;
             let mut parameters = self
@@ -149,6 +162,9 @@ impl Muxer {
     }
 
     pub fn finish(&mut self) -> Result<(), String> {
+        if let Some(clock) = &self.decode_order {
+            clock.finish().map_err(str::to_owned)?;
+        }
         if self.video_time_base.is_none() {
             return Err("Video encoder produced no codec header".into());
         }

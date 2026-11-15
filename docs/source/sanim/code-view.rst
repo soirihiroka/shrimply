@@ -6,7 +6,7 @@ CodeView is a rendered element with a cached, immutable syntax tree. Displayed c
 .. code-block:: text
 
    let code = <CodeView src="test.py" font_size={18pt}/>
-   add(code)
+   Animation(children=[code])
    wait(1s)
    code.patch(src="test.py.patch", animation="morph", duration=700ms)
    wait(1s)
@@ -27,12 +27,12 @@ Outer blank lines and the common indentation are removed. Relative indentation, 
    mut count = 1
    sig snippet = "count = {count:d}"
    let code = <CodeView code={snippet} lang="python"/>
-   add(code)
+   Animation(children=[code])
    wait(1s)
-   count = 2
+   animate(count, to=2, duration=0s)
    wait(1s)
 
-Code, language, font, font size, line height, line numbers, tab size, themes, spans and ordinary element properties accept signals. Source paths are watched resources; use inline ``code`` for reactive text. A changing source clears selection offsets that no longer describe the same revision. Explicit ``.patch`` cannot overwrite signal-owned code; assign its mutable input instead. Likewise ``.style`` cannot overwrite signal-owned themes or spans.
+Code, language, font, font size, line height, line numbers, tab size, themes, spans and ordinary element properties accept signals. Source paths are watched resources; use inline ``code`` for reactive text. A changing source clears selection offsets that no longer describe the same revision. Explicit ``.patch`` cannot overwrite signal-owned code; animate its mutable input instead. Likewise ``.style`` cannot overwrite signal-owned themes or spans.
 
 Patches and animation
 ---------------------
@@ -53,11 +53,11 @@ Bundled native grammars cover Python, Rust, JavaScript, TypeScript, TSX, C, C++,
 Code ranges and independent folding
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``view.range(...)`` returns one typed selection; ``view.ranges(...)`` returns a list. A singular query reports ambiguity instead of choosing an unrelated match. Add the CodeView to the timeline before using actions on its ranges.
+``view.range(...)`` returns one typed selection; ``view.ranges(...)`` returns a list. A singular query reports ambiguity instead of choosing an unrelated match. Bound selections capture the source snapshot at construction. An inline chain such as ``view.range(name="updated_function").fold(...)`` resolves its query when that animation is placed, so it can select syntax introduced by an earlier patch plan. Include the CodeView in an ``Animation`` when using a separately bound selection.
 
 .. code-block:: text
 
-   add(code)
+   Animation(children=[code])
    let push: CodeRange = code.range(name="WorkQueue.push")
    let pop_range = code.range(name="WorkQueue.pop")
    push.fold(duration=400ms)
@@ -119,7 +119,7 @@ The default theme follows GNOME SourceView's Adwaita semantic colors. Code uses 
        CodeRule("function", CodeStyle(fill=Color("blue1"), underline=true))
    ])
    let code = <CodeView src="test.py" theme={theme}/>
-   add(code)
+   Animation(children=[code])
    code.range(regex="answer").select(duration=300ms)
    code.style(spans=[
        CodeSpan(CodeLines(2), CodeStyle(background=Color("yellow4"), fill=Color("dark5")))
@@ -148,7 +148,7 @@ Immediate signal assignments still commit immediately; use a timed ``.style`` ca
 .. code-block:: text
 
    let code = <CodeView src="long.py" width={600pt} height={320pt}/>
-   add(code)
+   Animation(children=[code])
    code.scroll_to(line=40, duration=500ms)
 
 Provide both width and height for a clipped viewport. ``scroll=[x, y]`` accepts lengths or percentages of the overflow range. Scrolling shares the native layout, clipping and picking pipeline; offscreen glyph paths are culled.

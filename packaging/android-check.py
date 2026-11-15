@@ -3,18 +3,15 @@ import pathlib
 import re
 import subprocess
 import sys
-import tempfile
 import zipfile
 
 apk, readelf, sdk = map(pathlib.Path, sys.argv[1:])
-with zipfile.ZipFile(apk) as archive, tempfile.TemporaryDirectory() as directory:
+with zipfile.ZipFile(apk) as archive:
     libraries = [name for name in archive.namelist() if name.endswith(".so")]
     if not libraries:
         raise SystemExit("APK contains no native libraries")
-    for index, name in enumerate(libraries):
-        library = pathlib.Path(directory) / f"{index}.so"
-        library.write_bytes(archive.read(name))
-        output = subprocess.check_output([readelf, "-lW", library], text=True)
+    for name in libraries:
+        output = subprocess.check_output([readelf, "-lWd", "-"], input=archive.read(name)).decode()
         alignments = [int(line.split()[-1], 16) for line in output.splitlines() if line.strip().startswith("LOAD ")]
         if not alignments or any(alignment < 16384 for alignment in alignments):
             raise SystemExit(f"{name}: ELF LOAD alignment does not support 16 KiB pages")
@@ -23,8 +20,7 @@ with zipfile.ZipFile(apk) as archive, tempfile.TemporaryDirectory() as directory
         platform = readelf.parent.parent / "sysroot/usr/lib" / triple / "33"
         if not platform.is_dir():
             raise SystemExit(f"Missing Android API 33 library stubs: {platform}")
-        dynamic = subprocess.check_output([readelf, "-dW", library], text=True)
-        for needed in re.findall(r"\(NEEDED\).*\[([^]]+)\]", dynamic):
+        for needed in re.findall(r"\(NEEDED\).*\[([^]]+)\]", output):
             packaged = str(pathlib.PurePosixPath(name).parent / needed)
             if packaged not in libraries and not (platform / needed).is_file():
                 raise SystemExit(f"{name}: required library {needed} is neither packaged nor supplied by Android")

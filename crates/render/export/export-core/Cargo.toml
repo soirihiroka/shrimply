@@ -8,6 +8,7 @@ ffmpeg-next.workspace = true
 libc.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+shrimply-i18n.workspace = true
 shrimply-audio-engine = { workspace = true }
 shrimply-math-color = { workspace = true, features = ["gif"] }
 shrimply-math-core = { workspace = true }

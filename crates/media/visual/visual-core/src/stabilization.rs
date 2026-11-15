@@ -76,10 +76,7 @@ pub enum FrameState {
 
 #[derive(Clone, Copy)]
 enum GenerationOptions {
-    #[cfg(feature = "cuda-stabilization")]
     L1(shrimply_affine_l1_stabilization::StabilizationOptions),
-    #[cfg(not(feature = "cuda-stabilization"))]
-    L1Unavailable,
     MeshFlow(shrimply_mesh_flow_stabilization::StabilizationOptions),
 }
 
@@ -157,9 +154,6 @@ pub fn frame_state(item: &VideoItem, source_position: Time) -> FrameState {
     if !eligible(item) {
         return FrameState::Disabled;
     }
-    if let Err(error) = ensure_available(item) {
-        return FrameState::Failed(error);
-    }
     let key = match cache_key(item, source_position) {
         Ok(key) => key,
         Err(error) => return FrameState::Failed(error),
@@ -234,9 +228,6 @@ pub fn is_ready(item: &VideoItem) -> bool {
 }
 
 pub fn has_failed(item: &VideoItem) -> bool {
-    if ensure_available(item).is_err() {
-        return true;
-    }
     cache_base(item).is_ok_and(|base| {
         FAILED
             .lock()
@@ -309,7 +300,6 @@ pub fn ensure_project(project: &Project) -> Result<(), String> {
         .flat_map(|track| track.items.iter())
         .filter(|item| eligible(item))
     {
-        ensure_available(item)?;
         let duration = item.source_duration.as_nanos_i128().max(1);
         let chunk_duration = i128::from(CHUNK_SECONDS) * NANOS_PER_SECOND;
         let chunks = (duration + chunk_duration - 1) / chunk_duration;
@@ -340,7 +330,6 @@ fn generate(
         return Ok(true);
     }
     let chunk = match options {
-        #[cfg(feature = "cuda-stabilization")]
         GenerationOptions::L1(options) => {
             let Some(chunk) = shrimply_affine_l1_stabilization::analyze_chunk(
                 key.base.source.path(),
@@ -360,10 +349,6 @@ fn generate(
                 frame_rate_denominator: chunk.frame_rate_denominator,
                 source_transforms: chunk.source_transforms,
             })
-        }
-        #[cfg(not(feature = "cuda-stabilization"))]
-        GenerationOptions::L1Unavailable => {
-            return Err("L1 video stabilization requires the CUDA analyzer".into());
         }
         GenerationOptions::MeshFlow(options) => {
             let Some(chunk) = shrimply_mesh_flow_stabilization::analyze_chunk(
@@ -446,16 +431,6 @@ fn eligible(item: &VideoItem) -> bool {
         && matches!(item.content, VideoItemContent::Media)
 }
 
-fn ensure_available(_item: &VideoItem) -> Result<(), String> {
-    #[cfg(not(feature = "cuda-stabilization"))]
-    if matches!(_item.stabilization_method(), VideoStabilizationMethod::L1) {
-        return Err(
-            "L1 video stabilization requires the CUDA analyzer and is unavailable on Metal".into(),
-        );
-    }
-    Ok(())
-}
-
 fn initial_position(item: &VideoItem) -> Time {
     shrimply_project_document::project::video_source_time_at(item, item.start)
         .unwrap_or(item.time_offset)
@@ -464,21 +439,14 @@ fn initial_position(item: &VideoItem) -> Time {
 fn options(item: &VideoItem) -> GenerationOptions {
     match item.stabilization_method() {
         VideoStabilizationMethod::Off | VideoStabilizationMethod::L1 => {
-            #[cfg(feature = "cuda-stabilization")]
-            {
-                GenerationOptions::L1(shrimply_affine_l1_stabilization::StabilizationOptions {
-                    crop_ratio: f64::from(item.stabilization_crop_ratio),
-                    derivative_weights: [
-                        f64::from(item.stabilization_first_derivative_weight),
-                        f64::from(item.stabilization_second_derivative_weight),
-                        f64::from(item.stabilization_third_derivative_weight),
-                    ],
-                })
-            }
-            #[cfg(not(feature = "cuda-stabilization"))]
-            {
-                GenerationOptions::L1Unavailable
-            }
+            GenerationOptions::L1(shrimply_affine_l1_stabilization::StabilizationOptions {
+                crop_ratio: f64::from(item.stabilization_crop_ratio),
+                derivative_weights: [
+                    f64::from(item.stabilization_first_derivative_weight),
+                    f64::from(item.stabilization_second_derivative_weight),
+                    f64::from(item.stabilization_third_derivative_weight),
+                ],
+            })
         }
         VideoStabilizationMethod::MeshFlow => {
             GenerationOptions::MeshFlow(shrimply_mesh_flow_stabilization::StabilizationOptions {

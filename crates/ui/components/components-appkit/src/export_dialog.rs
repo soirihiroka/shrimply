@@ -75,13 +75,13 @@ pub fn popup_row(
 ) -> (Retained<NSView>, Retained<NSPopUpButton>) {
     let row_view = row_view(row, mtm);
     row_view.addSubview(&label(title, mtm));
-    let control = NSPopUpButton::initWithFrame_pullsDown(
-        NSPopUpButton::alloc(mtm),
+    let control = crate::menu::popup(
         NSRect::new(
             NSPoint::new(CONTROL_X, 0.0),
             NSSize::new(CONTROL_WIDTH, ROW_HEIGHT),
         ),
         false,
+        mtm,
     );
     add_choices(&control, choices);
     row_view.addSubview(&control);

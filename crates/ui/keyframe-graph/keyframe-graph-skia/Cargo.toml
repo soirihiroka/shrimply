@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-i18n.workspace = true
 shrimply-discrete-keyframe-graph-skia = { workspace = true }
 shrimply-cross-ui-theme = { workspace = true }
 shrimply-math-interpolation = { workspace = true }

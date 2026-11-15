@@ -3,6 +3,7 @@ package dev.shrimply.app
 import android.content.Intent
 import androidx.activity.compose.LocalActivity
 import android.view.WindowInsets
+import androidx.compose.foundation.layout.WindowInsets as ComposeInsets
 import android.view.WindowInsetsController
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.animateFloatAsState
@@ -57,7 +58,7 @@ private const val InspectorMaximumWidthFraction = 0.45f
 
 /** Layout and actions follow launcher-gtk and preview-gtk, using Android native controls. */
 @Composable
-internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles) {
+internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption: WindowCaption = WindowCaption()) {
     val menuInputSource = remember { mutableStateOf("touch") }
     val event by timeline.snapshot
     val status = event.optJSONObject("status") ?: JSONObject()
@@ -109,6 +110,11 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles) {
             try { block() } catch (failure: Exception) { error = failure.message ?: "The project operation failed." }
             finally { busy = false; progress = "" }
         } }
+    }
+    fun command(operation: String, arguments: Array<out Pair<String, Any>>) = action {
+        val result = timeline.request(operation, *arguments)
+        if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
+        if (result.has("message")) android.widget.Toast.makeText(context, result.getString("message"), android.widget.Toast.LENGTH_SHORT).show()
     }
     fun open(path: String) = action { timeline.request("open", "path" to path) }
     fun closeProject() = action {
@@ -215,9 +221,15 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles) {
     MenuInputScope(menuInputSource) {
     PreviewImageAction(timeline, files)
     TimelineService(timeline, files)
+    ScreenRecordingAction(timeline) { error = it }
     FrameGraphEditor(timeline)
+    if (project != null) event.optJSONObject("timeline")?.optJSONObject("context")?.let { menu ->
+        TimelineContextMenu(menu, !busy, timeline.menuOrigin) { operation, arguments ->
+            command(operation, arrayOf("project_path" to project.getString("path"), "serial" to menu.getLong("serial"), *arguments))
+        }
+    }
     val workspace: @Composable (Boolean) -> Unit = { renderOnly -> workspaceState.SaveableStateProvider(workspaceKey) {
-    Box(Modifier.fillMaxSize().safeDrawingPadding().then(if (renderOnly) Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false } else Modifier)) {
+    Box(Modifier.fillMaxSize().then(if (project == null) Modifier.safeDrawingPadding() else Modifier).then(if (renderOnly) Modifier.clearAndSetSemantics {}.focusProperties { canFocus = false } else Modifier)) {
         if (project == null) {
             Launcher(status, !renderOnly && !busy && schema.has("defaults"), { useSettings(schema.getJSONObject("defaults")); create = true }, { choicesBottomSheet = NativeLayout.menuUsesBottomSheet(menuInputSource.value); openFolder.launch(null) }, ::open,
                 { action { timeline.request("clear_recents") } },
@@ -232,13 +244,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles) {
                 },
                 preferences = { preferences = true },
                 close = ::closeProject,
-                command = { operation, arguments -> action {
-                    val result = timeline.request(operation, *arguments)
-                    if (result.has("clipboard")) context.getSystemService(android.content.ClipboardManager::class.java)
-                        .setPrimaryClip(android.content.ClipData.newPlainText("", result.getString("clipboard")))
-                    if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
-                    if (result.has("message")) android.widget.Toast.makeText(context, result.getString("message"), android.widget.Toast.LENGTH_SHORT).show()
-                } },
+                command = ::command,
                 save = { action { timeline.request("save"); files.flush(project.getString("path")) } },
                 importFile = { importTarget = defaultTarget(); importFile.launch(arrayOf("*/*")) },
                 export = { exportFolder.launch(null) },
@@ -253,9 +259,9 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles) {
                         }
                     }
                     finally { finished() }
-                } }, renderOnly = renderOnly)
+                } }, pendingOperation = if (busy) progress else null, renderOnly = renderOnly, windowCaption = caption)
         }
-        if (busy) {
+        if (busy && project == null) {
             Surface(Modifier.align(Alignment.BottomCenter).fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainerHigh, tonalElevation = 4.dp) {
                 Column(Modifier.padding(16.dp)) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -265,7 +271,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles) {
         }
     }
     } }
-    if (preferences) PreferencesScreen(timeline, { preferences = false }) { workspace(true) } else workspace(false)
+    if (preferences) PreferencesScreen(timeline, files, { preferences = false }) { workspace(true) } else workspace(false)
     if (create) AlertDialog(
         modifier = Modifier.imePadding(),
         onDismissRequest = { if (!busy) { create = false } },
@@ -447,20 +453,23 @@ private fun ActionIcon(resource: Int, description: String, enabled: Boolean = tr
 @Composable
 private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSONObject, status: JSONObject, enabled: Boolean,
     selectFile: (JSONObject) -> Unit, preferences: () -> Unit, close: () -> Unit, command: (String, Array<out Pair<String, Any>>) -> Unit, save: () -> Unit,
-    importFile: () -> Unit, export: () -> Unit, exportVideo: () -> Unit, exportCaptions: () -> Unit, viewChange: (JSONObject, () -> Unit) -> Unit, renderOnly: Boolean = false) {
+    importFile: () -> Unit, export: () -> Unit, exportVideo: () -> Unit, exportCaptions: () -> Unit, viewChange: (JSONObject, () -> Unit) -> Unit,
+    pendingOperation: String? = null, renderOnly: Boolean = false, windowCaption: WindowCaption = WindowCaption()) {
     var fullscreen by rememberSaveable(project.getString("path")) { mutableStateOf(false) }
+    val inspectorState = rememberSaveableStateHolder()
     val window = checkNotNull(LocalActivity.current).window
     BackHandler(fullscreen && !renderOnly) { fullscreen = false }
     DisposableEffect(window, fullscreen, renderOnly) {
+        val immersive = fullscreen && !renderOnly
         val controller = checkNotNull(window.insetsController)
         val bars = WindowInsets.Type.systemBars()
         val behavior = controller.systemBarsBehavior
-        if (fullscreen && !renderOnly) {
+        if (immersive) {
             controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(bars)
         }
         onDispose {
-            if (fullscreen && !renderOnly) {
+            if (immersive) {
                 controller.systemBarsBehavior = behavior
                 controller.show(bars)
             }
@@ -492,7 +501,10 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
     }
     val density = LocalDensity.current.density
     val divider = MaterialTheme.colorScheme.outlineVariant
-    BoxWithConstraints(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    val caption = if (!fullscreen) windowCaption else WindowCaption()
+    val safeInsets = if (caption.height > 0) ComposeInsets.safeDrawing.exclude(ComposeInsets.captionBar)
+        .union(ComposeInsets.statusBars).union(ComposeInsets.displayCutout) else ComposeInsets.safeDrawing
+    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safeInsets).background(MaterialTheme.colorScheme.background)) {
         val availableWidth = maxWidth.value
         val expandedInspectorWidth = inspectorWidth.coerceIn(InspectorMinimumWidth.value.coerceAtMost(availableWidth), availableWidth).dp
         val sideBySide = !NativeLayout.inspectorOverlay(availableWidth, expandedInspectorWidth.value)
@@ -500,28 +512,30 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
         val toolSize = if (compact) 40.dp else 48.dp
         val toolIconSize = if (compact) 14.dp else 16.dp
         Column(Modifier.fillMaxSize()) {
-            if (!fullscreen) Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconToggleButton(checked = inspectorOpen, onCheckedChange = { viewChange(JSONObject().put("inspector_visible", it)) {} }, enabled = enabled) {
-                    Icon(painterResource(R.drawable.dock_left), tr("Toggle Inspector"), Modifier.size(16.dp))
-                }
-                IconToggleButton(checked = timelineOpen, onCheckedChange = { viewChange(JSONObject().put("timeline_visible", it)) {} }, enabled = enabled) {
-                    Icon(painterResource(R.drawable.dock_bottom), tr("Toggle Timeline"), Modifier.size(16.dp))
-                }
-                Spacer(Modifier.weight(1f))
-                AdaptiveMenuButton(enabled, icon = { Icon(painterResource(R.drawable.share), tr("Export"), Modifier.size(16.dp)) }) { dismiss ->
-                    DropdownMenuItem(text = { Text(tr("Export Video")) }, onClick = { dismiss(); exportVideo() })
-                    DropdownMenuItem(text = { Text(tr("Export Captions")) }, onClick = { dismiss(); exportCaptions() })
-                    DropdownMenuItem(text = { Text(tr("Export Project")) }, onClick = { dismiss(); export() })
-                }
-                AdaptiveMenuButton(enabled, icon = { Icon(painterResource(R.drawable.view_more), tr("Project options"), Modifier.size(16.dp)) }) { dismiss ->
-                    DropdownMenuItem(text = { Text(tr("Undo")) }, enabled = status.optBoolean("can_undo"), onClick = { dismiss(); command("undo", emptyArray()) })
-                    DropdownMenuItem(text = { Text(tr("Redo")) }, enabled = status.optBoolean("can_redo"), onClick = { dismiss(); command("redo", emptyArray()) })
-                    DropdownMenuItem(text = { Text(tr("Save")) }, onClick = { dismiss(); save() })
-                    DropdownMenuItem(text = { Text(tr("Import")) }, onClick = { dismiss(); importFile() })
-                    DropdownMenuItem(text = { Text(tr("Preferences")) }, onClick = { dismiss(); preferences() })
-                    DropdownMenuItem(text = { Text(tr("Close")) }, onClick = { dismiss(); close() })
-                }
-            }
+            if (!fullscreen) WindowCaptionHeader(caption, interactive = !renderOnly,
+                left = { modifier, targetSize -> Row(modifier) {
+                    IconToggleButton(checked = inspectorOpen, onCheckedChange = { viewChange(JSONObject().put("inspector_visible", it)) {} }, enabled = enabled, modifier = Modifier.size(targetSize)) {
+                        Icon(painterResource(R.drawable.dock_left), tr("Toggle Inspector"), Modifier.size(16.dp))
+                    }
+                    IconToggleButton(checked = timelineOpen, onCheckedChange = { viewChange(JSONObject().put("timeline_visible", it)) {} }, enabled = enabled, modifier = Modifier.size(targetSize)) {
+                        Icon(painterResource(R.drawable.dock_bottom), tr("Toggle Timeline"), Modifier.size(16.dp))
+                    }
+                } },
+                right = { modifier, targetSize -> Row(modifier) {
+                    AdaptiveMenuButton(enabled, Modifier.size(targetSize), icon = { Icon(painterResource(R.drawable.share), tr("Export"), Modifier.size(16.dp)) }) { dismiss ->
+                        DropdownMenuItem(text = { Text(tr("Export Video")) }, onClick = { dismiss(); exportVideo() })
+                        DropdownMenuItem(text = { Text(tr("Export Captions")) }, onClick = { dismiss(); exportCaptions() })
+                        DropdownMenuItem(text = { Text(tr("Export Project")) }, onClick = { dismiss(); export() })
+                    }
+                    AdaptiveMenuButton(enabled, Modifier.size(targetSize), icon = { Icon(painterResource(R.drawable.view_more), tr("Project options"), Modifier.size(16.dp)) }) { dismiss ->
+                        DropdownMenuItem(text = { Text(tr("Undo")) }, enabled = status.optBoolean("can_undo"), onClick = { dismiss(); command("undo", emptyArray()) })
+                        DropdownMenuItem(text = { Text(tr("Redo")) }, enabled = status.optBoolean("can_redo"), onClick = { dismiss(); command("redo", emptyArray()) })
+                        DropdownMenuItem(text = { Text(tr("Save")) }, onClick = { dismiss(); save() })
+                        DropdownMenuItem(text = { Text(tr("Import")) }, onClick = { dismiss(); importFile() })
+                        DropdownMenuItem(text = { Text(tr("Preferences")) }, onClick = { dismiss(); preferences() })
+                        DropdownMenuItem(text = { Text(tr("Close")) }, onClick = { dismiss(); close() })
+                    }
+                } })
             if (!fullscreen) HorizontalDivider()
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val availableHeight = NativeLayout.splitPaneExtent(maxHeight.value, 1.dp.value, 1f)
@@ -542,7 +556,7 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
                                 val previewCompact = NativeLayout.compactControls(maxWidth.value, maxHeight.value)
                                 Column(Modifier.fillMaxSize()) {
                                     Row(Modifier.weight(1f).fillMaxWidth()) {
-                                        if (!fullscreen) PreviewControls(timeline, compact = previewCompact)
+                                        if (!fullscreen) PreviewControls(timeline, compact = previewCompact, pendingOperation = pendingOperation)
                                         Box(Modifier.weight(1f).fillMaxHeight()) {
                                             NativePreview(timeline, Modifier.fillMaxSize())
                                             PreviewContextMenu(timeline)
@@ -555,9 +569,11 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
                         Surface(Modifier.width(inspectorSize).fillMaxHeight().align(Alignment.TopStart).zIndex(1f),
                             color = MaterialTheme.colorScheme.surfaceContainerLow, shadowElevation = if (sideBySide) 0.dp else 6.dp) {
                             Box(Modifier.fillMaxSize().clipToBounds()) {
-                                if (inspectorSize > 0.dp) Inspector(timeline, timeline.snapshot.value.optJSONObject("inspector"), enabled,
-                                    { arguments -> command("inspector", arrayOf("project_path" to project.getString("path"), *arguments)) },
-                                    Modifier.requiredWidth(expandedInspectorWidth).fillMaxHeight(), selectFile)
+                                if (inspectorSize > 0.dp) inspectorState.SaveableStateProvider("inspector") {
+                                    Inspector(timeline, timeline.snapshot.value.optJSONObject("inspector"), enabled,
+                                        { arguments -> command("inspector", arrayOf("project_path" to project.getString("path"), *arguments)) },
+                                        Modifier.requiredWidth(expandedInspectorWidth).fillMaxHeight(), selectFile)
+                                }
                             }
                         }
                         if (sideBySide && inspectorOpen && !fullscreen) Box(Modifier.offset { IntOffset(inspectorSize.roundToPx(), 0) }.width(DividerSize).fillMaxHeight().pointerInput(enabled, density, availableWidth) {
@@ -599,11 +615,6 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
                         }
                         Box(Modifier.weight(1f).fillMaxHeight()) {
                             NativeSurface(timeline, Modifier.fillMaxSize())
-                            timeline.snapshot.value.optJSONObject("timeline")?.optJSONObject("context")?.let { menu ->
-                                TimelineContextMenu(menu, enabled) { operation, arguments ->
-                                    command(operation, arrayOf("project_path" to project.getString("path"), "serial" to menu.getLong("serial"), *arguments))
-                                }
-                            }
                         }
                     }
                 }

@@ -26,6 +26,15 @@ extern "C" void shrimply_qt_number_end_pointer_lock();
 
 namespace shrimply {
 
+void activate_combo_index(QQuickItem *control, int index) {
+    Q_ASSERT(control);
+    if (!control->setProperty("currentIndex", index)
+        || !QMetaObject::invokeMethod(control, "activated", Q_ARG(int, index))) {
+        qFatal("Shrimply could not activate a native combo box index");
+    }
+}
+
+
 class TypoSyntaxHighlighter final : public QSyntaxHighlighter {
 public:
     explicit TypoSyntaxHighlighter(QTextDocument *document)

@@ -53,10 +53,10 @@ pub(super) fn manage(mtm: MainThreadMarker) -> Result<(), String> {
             alert.runModal();
             return Ok(());
         }
-        let choices = NSPopUpButton::initWithFrame_pullsDown(
-            NSPopUpButton::alloc(mtm),
+        let choices = shrimply_components_appkit::menu::popup(
             NSRect::new(NSPoint::ZERO, NSSize::new(DETAILS_SIZE.width, 32.0)),
             false,
+            mtm,
         );
         for entry in &entries {
             choices.addItemWithTitle(&NSString::from_str(&format!(

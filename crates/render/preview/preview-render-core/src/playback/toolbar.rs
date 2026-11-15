@@ -12,6 +12,7 @@ pub struct Toolbar {
 
 pub struct Presentation {
     pub loading: bool,
+    pub loading_status: String,
     pub status: String,
     pub frame_rate: String,
     pub frame_rate_tooltip: String,
@@ -36,14 +37,15 @@ impl Toolbar {
     }
 
     pub fn presentation(&self, speed: Fraction) -> Presentation {
+        let loading_status = shrimply_i18n::text("Loading preview").into_owned();
         Presentation {
             loading: self.loading,
-            status: shrimply_i18n::text(if self.loading {
-                "Loading preview"
+            status: if self.loading {
+                loading_status.clone()
             } else {
-                "Preview ready"
-            })
-            .into_owned(),
+                shrimply_i18n::text("Preview ready").into_owned()
+            },
+            loading_status,
             frame_rate: self
                 .frame_rate
                 .clone()

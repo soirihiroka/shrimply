@@ -293,19 +293,23 @@ fn refresh_recents(
             .valign(gtk::Align::Center)
             .has_frame(false)
             .build();
-        let popover = gtk::Popover::new();
-        let options = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let info = gtk::Button::with_label(&RecentProjectAction::Info.label());
-        info.set_has_frame(false);
-        let show_in_files = gtk::Button::with_label(&RecentProjectAction::ShowInFiles.label());
-        show_in_files.set_has_frame(false);
-        let delete = gtk::Button::with_label(&RecentProjectAction::Delete.label());
-        delete.set_has_frame(false);
-        options.append(&info);
-        options.append(&show_in_files);
-        options.append(&delete);
-        popover.set_child(Some(&options));
-        menu.set_popover(Some(&popover));
+        let model = gio::Menu::new();
+        model.append(
+            Some(&RecentProjectAction::Info.label()),
+            Some("recent.info"),
+        );
+        model.append(
+            Some(&RecentProjectAction::ShowInFiles.label()),
+            Some("recent.show"),
+        );
+        model.append(
+            Some(&RecentProjectAction::Delete.label()),
+            Some("recent.delete"),
+        );
+        let actions = gio::SimpleActionGroup::new();
+        menu.set_menu_model(Some(&model));
+        menu.insert_action_group("recent", Some(&actions));
+        shrimply_components_gtk::ui::adaptive_menu(&menu, "recent", &actions);
         content.append(&menu);
         let card = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::None)
@@ -319,45 +323,52 @@ fn refresh_recents(
             let app = app.clone();
             move |_, _| open_in_editor(&window, &app, &path)
         });
-        info.connect_clicked({
+        actions.add_action(&shrimply_components_gtk::ui::menu_action("info", None, {
             let name = recent.name.clone();
             let path = recent.path.clone();
-            let window = window.clone();
-            let popover = popover.clone();
-            move |_| {
-                popover.popdown();
+            let window = window.downgrade();
+            move || {
+                let window = window.upgrade()?;
                 show_project_info(&window, &name, &path, last_edited.as_deref());
+                None
             }
-        });
-        show_in_files.connect_clicked({
+        }));
+        actions.add_action(&shrimply_components_gtk::ui::menu_action("show", None, {
             let path = recent.path.clone();
-            let window = window.clone();
-            let popover = popover.clone();
-            move |_| {
-                popover.popdown();
+            let window = window.downgrade();
+            move || {
+                let window = window.upgrade()?;
                 if let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
                     window.upcast_ref(),
                     path.clone(),
                 ) {
                     show_error(&window, "Could not show project file", &error);
                 }
+                None
             }
-        });
-        delete.connect_clicked({
+        }));
+        actions.add_action(&shrimply_components_gtk::ui::menu_action("delete", None, {
             let path = recent.path;
-            let area = area.clone();
-            let search = search.clone();
-            let window = window.clone();
-            let app = app.clone();
-            let popover = popover.clone();
-            move |_| {
-                popover.popdown();
+            let area = area.downgrade();
+            let search = search.downgrade();
+            let window = window.downgrade();
+            let app = app.downgrade();
+            move || {
+                let (Some(area), Some(search), Some(window), Some(app)) = (
+                    area.upgrade(),
+                    search.upgrade(),
+                    window.upgrade(),
+                    app.upgrade(),
+                ) else {
+                    return None;
+                };
                 if let Err(error) = shrimply_cross_ui_core::launcher::remove_recent_project(&path) {
                     show_error(&window, "Could not remove recent project", &error);
                 }
                 refresh_recents(&area, &search, &window, &app);
+                None
             }
-        });
+        }));
         area.append(&card);
     }
 }

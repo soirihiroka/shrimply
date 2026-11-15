@@ -491,7 +491,7 @@ pub(crate) fn execute_effect(
             Ok(Value::Element(root))
         }
         "CodeView.range" | "CodeView.ranges" => {
-            selectors::query(args, context, name == "CodeView.ranges")
+            selectors::query(args, &mut context, name == "CodeView.ranges")
         }
         _ => edits::execute(name, args, context),
     }

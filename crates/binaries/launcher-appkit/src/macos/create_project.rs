@@ -211,10 +211,10 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
         NSSize::new(120.0, 22.0),
     ));
     form.addSubview(&preset_label);
-    let preset = NSPopUpButton::initWithFrame_pullsDown(
-        NSPopUpButton::alloc(mtm),
+    let preset = shrimply_components_appkit::menu::popup(
         NSRect::new(NSPoint::new(120.0, 168.0), NSSize::new(320.0, 32.0)),
         false,
+        mtm,
     );
     for item in PROJECT_PRESETS {
         preset.addItemWithTitle(&NSString::from_str(item.label));
@@ -298,10 +298,10 @@ pub fn show(parent: &NSWindow, mtm: MainThreadMarker) -> Option<Request> {
         NSSize::new(102.0, 22.0),
     ));
     form.addSubview(&fps_label);
-    let fps = NSPopUpButton::initWithFrame_pullsDown(
-        NSPopUpButton::alloc(mtm),
+    let fps = shrimply_components_appkit::menu::popup(
         NSRect::new(NSPoint::new(250.0, 6.0), NSSize::new(190.0, 32.0)),
         false,
+        mtm,
     );
     for rate in COMMON_FRAME_RATES {
         fps.addItemWithTitle(&NSString::from_str(rate.label));

@@ -3,6 +3,7 @@ use std::cell::RefCell;
 
 use glam::Vec2;
 use shrimply_components_skia::input::{TouchAction, TouchChange, TouchInput};
+pub use shrimply_paint_edit_skia::toolbar as paint_toolbar;
 pub use shrimply_preview_provider_skia::math::{pen_tilt, preview_scroll_delta};
 pub use shrimply_preview_provider_skia::{
     Color, Key, KeyState, KeyboardEvent, Modifiers, PointerButton, PointerEvent, PointerInput,
@@ -103,6 +104,40 @@ pub struct Surface {
 }
 
 impl Surface {
+    pub fn paint_toolbar(
+        &self,
+        paint: &shrimply_project_document::project::PaintItem,
+        time: Time,
+    ) -> paint_toolbar::Presentation {
+        use shrimply_project_document::project::{PAINT_PREVIEW_STATE, PaintPreviewState};
+        paint_toolbar::Presentation::new(
+            self.core
+                .extension::<PaintPreviewState>(PAINT_PREVIEW_STATE)
+                .expect("paint preview state"),
+            paint,
+            time,
+        )
+    }
+
+    pub fn paint_toolbar_action(
+        &mut self,
+        paint: &shrimply_project_document::project::PaintItem,
+        action: paint_toolbar::Action,
+        value: Option<f32>,
+    ) -> Result<(), String> {
+        use shrimply_project_document::project::{PAINT_PREVIEW_STATE, PaintPreviewState};
+        let mut result = Ok(());
+        assert!(
+            self.core
+                .update_extension(PAINT_PREVIEW_STATE, |state: &mut PaintPreviewState| {
+                    result = paint_toolbar::apply(state, paint, action, value)
+                }),
+            "paint preview state"
+        );
+        self.stamp = None;
+        result
+    }
+
     fn synchronize_history(&mut self) {
         if self.core.synchronize_history() {
             // The model already belongs to another edit. Dropping these drafts must
