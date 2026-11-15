@@ -32,6 +32,7 @@ struct CompileRequest
     const char* abi_path;
     const char* const* entries;
     size_t entry_count;
+    uint32_t precise_math;
 };
 
 static constexpr const char* CUDA_CAPABILITY = "cuda_sm_8_0";
@@ -272,7 +273,7 @@ static int compile(const CompileRequest& request)
     target.flags = SLANG_TARGET_FLAG_GENERATE_WHOLE_PROGRAM;
     target.compilerOptionEntries = options.data();
     target.compilerOptionEntryCount = static_cast<uint32_t>(options.size());
-    if (cuda)
+    if (cuda || request.precise_math)
         target.floatingPointMode = SLANG_FLOATING_POINT_MODE_PRECISE;
     if (spirv)
         target.profile = global_session->findProfile(word_storage || portable_spirv ? "spirv_1_3" : SPIRV_PROFILE);

@@ -192,28 +192,6 @@ jobs:
           path: .ci/vcpkg/binary-cache/ffmpeg
           key: ${{ steps.ffmpeg-cache.outputs.cache-primary-key }}
 
-      - name: Restore OpenCV cache
-        id: opencv-cache
-        uses: actions/cache/restore@v6
-        with:
-          path: .ci/vcpkg/binary-cache/opencv
-          key: windows-vcpkg-opencv-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1') }}
-
-      - name: Install OpenCV
-        shell: powershell
-        run: |
-          New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/opencv | Out-Null
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\opencv,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read"
-          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/opencv --x-install-root "$env:VCPKG_INSTALLED_DIR"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Save OpenCV cache
-        if: steps.opencv-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: .ci/vcpkg/binary-cache/opencv
-          key: ${{ steps.opencv-cache.outputs.cache-primary-key }}
-
       - name: Restore remaining native library cache
         id: runtime-cache
         uses: actions/cache/restore@v6
@@ -225,7 +203,7 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/runtime | Out-Null
-          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\runtime,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read;files,$pwd\.ci\vcpkg\binary-cache\opencv,read"
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\runtime,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read"
           & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/runtime --x-install-root "$env:VCPKG_INSTALLED_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

@@ -13,6 +13,14 @@ corresponding texts are available in the repository's `documentation licenses
 component is recorded in the `third-party notices
 <https://github.com/soirihiroka/shrimply/blob/main/THIRDPARTY.md>`__.
 
+The stabilization vision primitives are translated from OpenCV 4.13.0 into
+Rust and Slang. Their Apache-2.0 license and original legacy notices are
+retained in the `vision license
+<https://github.com/soirihiroka/shrimply/blob/main/vendor/vision/LICENSE>`__
+and included with application packages. The `source map
+<https://github.com/soirihiroka/shrimply/blob/main/vendor/vision/README.md>`__
+identifies the translated upstream routines.
+
 Non-free and separately licensed components
 --------------------------------------------
 

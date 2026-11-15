@@ -84,6 +84,15 @@ AUTHOR: Daniel Wolf
 
 ---
 
+COMPONENT: OpenCV-derived stabilization vision primitives (Rust and Slang port)
+SOURCE: https://github.com/opencv/opencv/tree/4.13.0
+VERSION: 4.13.0
+LICENSE: Apache License 2.0 and retained legacy BSD notices; see vendor/vision/LICENSE
+AUTHORS: OpenCV contributors; original per-source copyright notices retained in vendor/vision/LICENSE
+SOURCE MAP: vendor/vision/README.md
+
+---
+
 COMPONENT: PocketSphinx context-independent acoustic model
 SOURCE: https://cmusphinx.github.io/
 LICENSE: BSD 2-Clause License

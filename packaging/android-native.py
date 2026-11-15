@@ -28,8 +28,10 @@ PANGO_VERSION = "1.58.2"
 PANGO_SHA256 = "342385b6ca3b7c73455d7c80a13b7dbe4489e00bc3bd4c5bd6ed4dce421e374a"
 WRAPDB_REVISION = "cc81edad31940dce5d9595905529a5899a4319b4"
 WRAPDB_SHA256 = "a1f3dbf2c7385be2f612c50b7fa949d3e1fce27752d742d1739b2081437cb1db"
-OPENCV_VERSION = "4.13.0"
-OPENCV_SHA256 = "1d40ca017ea51c533cf9fd5cbde5b5fe7ae248291ddf2af99d4c17cf8e13017d"
+JPEG_VERSION = "3.1.2"
+JPEG_SHA256 = "560f6338b547544c4f9721b18d8b87685d433ec78b3c644c70d77adad22c55e6"
+OPENJPEG_VERSION = "2.5.3"
+OPENJPEG_SHA256 = "368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7aa707"
 POPPLER_VERSION = "26.01.0"
 POPPLER_SHA256 = "1cb944a4b88847f5fb6551683bc799db59f04990f5d8be07aba2acbf38601089"
 LCMS_VERSION = "2.20"
@@ -192,51 +194,6 @@ def build_audio_encoders(args, sources, root, compiler):
     subprocess.run(["make", "install"], cwd=build, env=environment, check=True)
 
 
-def build_opencv(args, sources, root):
-    ndk, prefix = args.ndk.resolve(), root / "install"
-    stamp = root / "opencv.sha256"
-    compatibility_patch = Path(__file__).resolve().with_name("opencv-ffmpeg9.patch")
-    identity = hashlib.sha256(Path(__file__).read_bytes() + compatibility_patch.read_bytes() + (ndk / "source.properties").read_bytes()).hexdigest()
-    if stamp.exists() and stamp.read_text() == identity and (prefix / "lib/pkgconfig/opencv4.pc").is_file():
-        print(f"Android OpenCV dependencies are current: {prefix}", flush=True)
-        return
-    directory = source(sources, f"opencv-{OPENCV_VERSION}", f"https://codeload.github.com/opencv/opencv/tar.gz/refs/tags/{OPENCV_VERSION}", OPENCV_SHA256)
-    patch_source(directory, compatibility_patch)
-    options = [
-        "-U*FFMPEG*",
-        "-DBUILD_LIST=core,imgproc,video,videoio,calib3d", "-DBUILD_TESTS=OFF",
-        "-DBUILD_PERF_TESTS=OFF", "-DBUILD_EXAMPLES=OFF", "-DBUILD_ANDROID_PROJECTS=OFF",
-        "-DBUILD_ANDROID_EXAMPLES=OFF", "-DBUILD_JAVA=OFF", "-DBUILD_opencv_apps=OFF",
-        "-DWITH_IPP=OFF", "-DWITH_TBB=OFF", "-DWITH_FFMPEG=ON", "-DWITH_GSTREAMER=OFF",
-        "-DOPENCV_GENERATE_PKGCONFIG=ON", "-DOPENCV_LIB_INSTALL_PATH=lib",
-        "-DOPENCV_LIB_ARCHIVE_INSTALL_PATH=lib", "-DOPENCV_3P_LIB_INSTALL_PATH=lib",
-        "-DOPENCV_INCLUDE_INSTALL_PATH=include/opencv4",
-    ]
-    build = cmake_build(args, root, "opencv", directory, options, "__VALID_FFMPEG:INTERNAL=TRUE")
-    # OpenCV generates this metadata but omits its installation on Android.
-    shutil.copy2(build / "unix-install/opencv4.pc", prefix / "lib/pkgconfig/opencv4.pc")
-    # Reuse these exact native image decoders in Poppler as well. OpenCV ships
-    # their archives but leaves out the public headers and package metadata.
-    jpeg = directory / "3rdparty/libjpeg-turbo"
-    openjpeg = directory / "3rdparty/openjpeg/openjp2"
-    for name, headers in {
-        "jpeg": [jpeg / "src" / header for header in ("jpeglib.h", "jmorecfg.h", "jerror.h")] + [build / "3rdparty/libjpeg-turbo/jconfig.h"],
-        "openjpeg": [openjpeg / header for header in ("openjpeg.h", "opj_stdint.h")] + [build / "3rdparty/openjpeg/openjp2/opj_config.h"],
-    }.items():
-        destination = prefix / "include" / name
-        destination.mkdir(parents=True, exist_ok=True)
-        for header in headers:
-            shutil.copy2(header, destination / header.name)
-    jpeg_version = re.search(r"set\(VERSION ([0-9.]+)\)", (jpeg / "CMakeLists.txt").read_text()).group(1)
-    openjpeg_version = ".".join(re.findall(r"#define OPJ_VERSION_\w+ (\d+)", (build / "3rdparty/openjpeg/openjp2/opj_config.h").read_text()))
-    for name, version, library, includes in (("libjpeg", jpeg_version, "libjpeg-turbo", "jpeg"), ("libopenjp2", openjpeg_version, "libopenjp2", "openjpeg")):
-        (prefix / "lib/pkgconfig" / f"{name}.pc").write_text(f"prefix={prefix}\nlibdir=${{prefix}}/lib\nincludedir=${{prefix}}/include/{includes}\nName: {name}\nDescription: Shared native {name} decoder\nVersion: {version}\nLibs: -L${{libdir}} -l{library}\nLibs.private: -lm\nCflags: -I${{includedir}}\n")
-    config = prefix / "lib/cmake/openjpeg"
-    config.mkdir(parents=True, exist_ok=True)
-    (config / "OpenJPEGConfig.cmake").write_text(f"set(OPENJPEG_MAJOR_VERSION {openjpeg_version.split('.')[0]})\nset(OPENJPEG_INCLUDE_DIRS \"{prefix}/include/openjpeg\")\nset(OPENJPEG_LIBRARIES openjp2)\nif(NOT TARGET openjp2)\nadd_library(openjp2 STATIC IMPORTED)\nset_target_properties(openjp2 PROPERTIES IMPORTED_LOCATION \"{prefix}/lib/liblibopenjp2.a\" INTERFACE_INCLUDE_DIRECTORIES \"{prefix}/include/openjpeg\")\nendif()\n")
-    stamp.write_text(identity)
-
-
 def build_pdf(args, sources, root):
     prefix, ndk = root / "install", args.ndk.resolve()
     stamp = root / "pdf.sha256"
@@ -244,6 +201,13 @@ def build_pdf(args, sources, root):
     if stamp.exists() and stamp.read_text() == identity and (prefix / "lib/libpoppler-glib.a").is_file():
         print(f"Android PDF dependencies are current: {prefix}", flush=True)
         return
+    # These existing PDF codecs used to be obtained incidentally from OpenCV.
+    # Build their pinned upstream sources directly, preserving JPEG/JPEG2000 PDF support.
+    # OpenCV built the v7 ABI; preserve it for Skia and the existing PDF backend.
+    jpeg = source(sources, f"libjpeg-turbo-{JPEG_VERSION}", f"https://codeload.github.com/libjpeg-turbo/libjpeg-turbo/tar.gz/refs/tags/{JPEG_VERSION}", JPEG_SHA256)
+    cmake_build(args, root, "jpeg", jpeg, ["-DENABLE_SHARED=OFF", "-DENABLE_STATIC=ON", "-DWITH_JPEG7=ON", "-DWITH_TURBOJPEG=OFF", "-DWITH_TOOLS=OFF", "-DWITH_TESTS=OFF"])
+    openjpeg = source(sources, f"openjpeg-{OPENJPEG_VERSION}", f"https://codeload.github.com/uclouvain/openjpeg/tar.gz/refs/tags/v{OPENJPEG_VERSION}", OPENJPEG_SHA256)
+    cmake_build(args, root, "openjpeg", openjpeg, ["-DBUILD_CODEC=OFF", "-DBUILD_TESTING=OFF"])
     lcms = source(sources, f"lcms2-{LCMS_VERSION}", f"https://github.com/mm2/Little-CMS/releases/download/lcms{LCMS_VERSION}/lcms2-{LCMS_VERSION}.tar.gz", LCMS_SHA256)
     lcms_build = root / "lcms-build"
     subprocess.run(["meson", "setup", str(lcms_build), str(lcms), "--reconfigure", "--cross-file", str(root / "text-cross.ini"), f"--prefix={prefix}", "--libdir=lib", f"--buildtype={'debug' if args.profile == 'debug' else 'release'}", "-Ddefault_library=static", "-Db_staticpic=true", "-Dauto_features=disabled", "-Dtests=disabled", "-Dutils=false"], check=True)
@@ -258,8 +222,8 @@ def build_pdf(args, sources, root):
         "-DENABLE_BOOST=OFF", "-DENABLE_LIBCURL=OFF", "-DENABLE_LIBTIFF=OFF",
         "-DENABLE_NSS3=OFF", "-DENABLE_GPGME=OFF", "-DCMAKE_DISABLE_FIND_PACKAGE_GTK=TRUE",
         "-DENABLE_LIBOPENJPEG=openjpeg2", "-DENABLE_LIBJPEG=ON", "-DENABLE_LCMS=ON",
-        f"-DOpenJPEG_DIR={prefix}/lib/cmake/openjpeg",
-        f"-DJPEG_LIBRARY={prefix}/lib/liblibjpeg-turbo.a", f"-DJPEG_INCLUDE_DIR={prefix}/include/jpeg",
+        f"-DOpenJPEG_DIR={prefix}/lib/cmake/openjpeg-2.5",
+        f"-DJPEG_LIBRARY={prefix}/lib/libjpeg.a", f"-DJPEG_INCLUDE_DIR={prefix}/include",
     ])
     if not (prefix / "lib/libpoppler-glib.a").is_file():
         raise RuntimeError("Android Poppler did not build the shared PDF crate's GLib/Cairo backend")
@@ -274,7 +238,6 @@ def main():
     parser.add_argument("--profile", choices=("debug", "release"), default="debug")
     parser.add_argument("--jobs", type=int, default=4)
     parser.add_argument("--text", action="store_true", help="Build the existing Pango/Cairo text dependencies")
-    parser.add_argument("--opencv", action="store_true", help="Build the existing OpenCV analysis dependencies")
     parser.add_argument("--pdf", action="store_true", help="Build the existing Poppler PDF dependencies")
     args = parser.parse_args()
     if args.jobs < 1:
@@ -306,9 +269,6 @@ def main():
         sources.mkdir(exist_ok=True)
         if args.text:
             build_text(args, sources, root, compiler)
-            return
-        if args.opencv:
-            build_opencv(args, sources, root)
             return
         if args.pdf:
             build_pdf(args, sources, root)

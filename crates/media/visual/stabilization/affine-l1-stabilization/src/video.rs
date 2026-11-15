@@ -1,7 +1,8 @@
-use opencv::core::{Mat, Vector};
-use opencv::prelude::*;
-use opencv::videoio;
-use shrimply_math_core::{Time, fraction_as_u32_ratio, frame_rate_from_f64};
+use ffmpeg_next::{format::Pixel, frame::Video, software::scaling};
+use shrimply_asset::Asset;
+use shrimply_math_core::{Time, fraction_as_u32_ratio};
+use shrimply_video_decoder::{DecodeOutcome, DecoderBackend, NextFrame, VideoDecoderSession};
+use shrimply_vision::{RgbaImage, math::rotate_rgba};
 use std::{ops::Range, path::Path};
 
 /// The same source stream, frame bounds, and overlap convention for both analyzers.
@@ -11,7 +12,9 @@ pub struct VideoChunk {
     pub first_frame: u64,
     pub frame_rate_numerator: u32,
     pub frame_rate_denominator: u32,
-    capture: videoio::VideoCapture,
+    decoder: VideoDecoderSession,
+    scaler: Option<scaling::Context>,
+    rotation_degrees: i32,
     analysis_start: u64,
     analysis_end: u64,
     central_end: u64,
@@ -26,45 +29,25 @@ impl VideoChunk {
         chunk_seconds: u32,
         overlap_seconds: u32,
     ) -> Result<Self, String> {
-        let input = input
-            .to_str()
-            .ok_or("video stabilization input path is not UTF-8")?;
-        let mut capture = if track_id == 0 {
-            videoio::VideoCapture::from_file(input, videoio::CAP_ANY)
+        let source = Asset::new(input).snapshot()?;
+        // The former VideoCapture path returned CPU pixels; use the same software
+        // decoding policy through the shared session rather than another FFmpeg loop.
+        let decoder =
+            VideoDecoderSession::open(&source, track_id, |_| Ok(DecoderBackend::Software), None)?;
+        let rotation_degrees = decoder.rotation_degrees();
+        let (width, height) = decoder.dimensions();
+        let (width, height) = if rotation_degrees % 180 == 90 {
+            (height, width)
         } else {
-            videoio::VideoCapture::from_file_with_params(
-                input,
-                videoio::CAP_FFMPEG,
-                &Vector::from_slice(&[
-                    videoio::CAP_PROP_VIDEO_STREAM,
-                    i32::try_from(track_id)
-                        .map_err(|_| "video stabilization stream index is too large")?,
-                ]),
-            )
-        }
-        .map_err(|error| error.to_string())?;
-        if !capture.is_opened().map_err(|error| error.to_string())? {
-            return Err("video stabilization could not open the selected stream".into());
-        }
-        let dimension = |property| -> Result<u32, String> {
-            let value = capture.get(property).map_err(|error| error.to_string())?;
-            if !value.is_finite() || value < 1.0 || value > f64::from(i32::MAX) {
-                return Err("video stabilization has invalid dimensions".into());
-            }
-            Ok(value.round() as u32)
+            (width, height)
         };
-        let width = dimension(videoio::CAP_PROP_FRAME_WIDTH)?;
-        let height = dimension(videoio::CAP_PROP_FRAME_HEIGHT)?;
-        let fps = capture
-            .get(videoio::CAP_PROP_FPS)
-            .map_err(|error| error.to_string())?;
-        if !fps.is_finite() || fps <= 0.0 {
-            return Err("video stabilization requires a positive frame rate".into());
+        if width == 0 || height == 0 || width > i32::MAX as u32 || height > i32::MAX as u32 {
+            return Err("video stabilization has invalid dimensions".into());
         }
-        let frame_rate =
-            frame_rate_from_f64(fps).ok_or("video stabilization frame rate is out of range")?;
+        let frame_rate = decoder.frame_rate();
         let (frame_rate_numerator, frame_rate_denominator) = fraction_as_u32_ratio(frame_rate)
-            .ok_or("video stabilization frame rate is out of range")?;
+            .filter(|(numerator, _)| *numerator > 0)
+            .ok_or("video stabilization requires a positive frame rate")?;
         let first_frame =
             Time::from_seconds_u64(chunk_index.saturating_mul(u64::from(chunk_seconds)))
                 .as_frame(frame_rate);
@@ -77,16 +60,15 @@ impl VideoChunk {
         let overlap = Time::from_seconds_u64(u64::from(overlap_seconds)).as_frame_ceil(frame_rate);
         let analysis_start = first_frame.saturating_sub(overlap);
         let analysis_end = central_end.saturating_add(overlap);
-        capture
-            .set(videoio::CAP_PROP_POS_FRAMES, analysis_start as f64)
-            .map_err(|error| error.to_string())?;
         Ok(Self {
             width,
             height,
             first_frame,
             frame_rate_numerator,
             frame_rate_denominator,
-            capture,
+            decoder,
+            scaler: None,
+            rotation_degrees,
             analysis_start,
             analysis_end,
             central_end,
@@ -94,21 +76,85 @@ impl VideoChunk {
         })
     }
 
-    pub fn read(&mut self) -> Result<Option<Mat>, String> {
+    pub fn read(&mut self) -> Result<Option<RgbaImage>, String> {
         if self.next_frame >= self.analysis_end {
             return Ok(None);
         }
-        let mut frame = Mat::default();
-        if !self
-            .capture
-            .read(&mut frame)
-            .map_err(|error| error.to_string())?
-            || frame.empty()
-        {
+        let decoded = if self.next_frame == self.analysis_start {
+            match self
+                .decoder
+                .frame_by_index(self.analysis_start, [None, None])?
+            {
+                DecodeOutcome::Frame(frame) => frame,
+                DecodeOutcome::Superseded(_) => {
+                    return Err("video stabilization decode was superseded".into());
+                }
+            }
+        } else {
+            match self.decoder.next_frame([None, None])? {
+                NextFrame::Frame(frame) => Some(frame),
+                NextFrame::EndOfStream => None,
+                NextFrame::Superseded => {
+                    return Err("video stabilization decode was superseded".into());
+                }
+            }
+        };
+        let Some((_, frame)) = decoded else {
+            self.next_frame = self.analysis_end;
             return Ok(None);
+        };
+        let frame = frame.native();
+        let (width, height) = if self.rotation_degrees % 180 == 90 {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        };
+        if frame.width() != width || frame.height() != height {
+            return Err("video stabilization frame dimensions changed".into());
         }
+        if self
+            .scaler
+            .as_ref()
+            .is_none_or(|scaler| scaler.input().format != frame.format())
+        {
+            self.scaler = Some(
+                scaling::Context::get(
+                    frame.format(),
+                    width,
+                    height,
+                    Pixel::BGR24,
+                    width,
+                    height,
+                    scaling::flag::Flags::BICUBIC,
+                )
+                .map_err(|error| format!("create stabilization color conversion: {error}"))?,
+            );
+        }
+        // Keep VideoCapture's BGR24 conversion before channel reordering; changing
+        // swscale's destination format can change its integer color rounding.
+        let mut bgr = Video::empty();
+        self.scaler
+            .as_mut()
+            .expect("stabilization scaler initialized")
+            .run(frame, &mut bgr)
+            .map_err(|error| format!("convert stabilization frame: {error}"))?;
+        let row_bytes = width as usize * 3;
+        let data = bgr
+            .data(0)
+            .chunks(bgr.stride(0))
+            .take(height as usize)
+            .flat_map(|row| row[..row_bytes].chunks_exact(3))
+            .flat_map(|pixel| [pixel[2], pixel[1], pixel[0], u8::MAX])
+            .collect();
         self.next_frame = self.next_frame.saturating_add(1);
-        Ok(Some(frame))
+        Ok(Some(rotate_rgba(
+            RgbaImage {
+                width: width as usize,
+                height: height as usize,
+                data,
+            },
+            self.rotation_degrees,
+        )?))
     }
 
     pub fn central_range(&self, frames: usize) -> Result<Range<usize>, String> {

@@ -50,13 +50,10 @@ $CudaHome = [IO.Path]::GetFullPath($CudaHome)
 $OptixRoot = [IO.Path]::GetFullPath($OptixRoot)
 $ffmpegRoot = Join-Path $InstalledDir "x64-windows"
 $pkgConfig = Join-Path $ffmpegRoot "tools/pkgconf/pkgconf.exe"
-$openCvDir = Join-Path $ffmpegRoot "share/opencv4"
 
 foreach ($path in @(
     (Join-Path $VcpkgRoot ".vcpkg-root"),
     $pkgConfig,
-    (Join-Path $ffmpegRoot "include/opencv4/opencv2/core/version.hpp"),
-    (Join-Path $openCvDir "OpenCVConfig.cmake"),
     (Join-Path $ffmpegRoot "share/ffmpeg/vcpkg-cmake-wrapper.cmake")
 )) {
     if (!(Test-Path $path)) {
@@ -100,21 +97,6 @@ $env:FFMPEG_DIR = $ffmpegRoot
 $env:PKG_CONFIG = $pkgConfig
 $env:PKG_CONFIG_PATH = "$(Join-Path $ffmpegRoot 'lib/pkgconfig');$(Join-Path $ffmpegRoot 'share/pkgconfig')"
 $env:PATH = "$(Join-Path $ffmpegRoot 'bin');$env:PATH"
-$env:OPENCV_DISABLE_PROBES = "environment,pkg_config,cmake,vcpkg"
-$cmakeInstalledDir = $InstalledDir.Replace('\', '/')
-$cmakeOpenCvDir = $openCvDir.Replace('\', '/')
-$env:OPENCV_CMAKE_ARGS = "-DVCPKG_INSTALLED_DIR=$cmakeInstalledDir -DVCPKG_TARGET_TRIPLET=x64-windows -DOpenCV_DIR=$cmakeOpenCvDir"
-$opencvLibraries = @(
-    Get-ChildItem -LiteralPath (Join-Path $ffmpegRoot "lib") -Filter "opencv_*.lib"
-)
-if ($opencvLibraries.Count -eq 0) {
-    throw "No OpenCV import libraries found in $ffmpegRoot\lib"
-}
-$env:OPENCV_LINK_LIBS = (
-    $opencvLibraries |
-        Sort-Object Name |
-        ForEach-Object { "dylib=$($_.BaseName)" }
-) -join ","
 $env:CUDA_HOME = $CudaHome
 $env:CUDA_TOOLKIT_PATH = $CudaHome
 $env:CUDA_IMAGE_FORMAT = $CudaImageFormat

@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 glam.workspace = true
-opencv.workspace = true
+shrimply-vision.workspace = true
 shrimply-affine-l1-stabilization.workspace = true
 shrimply-math-geometry = { workspace = true }
 tracing.workspace = true

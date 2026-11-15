@@ -1,0 +1,6 @@
+[package]
+name = "shrimply-vision"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 AND BSD-3-Clause AND BSD-2-Clause"
+description = "Source-derived stabilization primitives from OpenCV"

@@ -140,6 +140,7 @@ members = [
     "crates/media/visual/video/decoder-pool",
     "crates/gpu/cuda/gpu-cuda-memory",
     "crates/media/visual/visual-frame",
+    "vendor/vision",
     "vendor/pocketsphinx",
     "vendor/rhubarb-lip-sync",
     "crates/ui/3d/3d-control-core",
@@ -373,7 +374,7 @@ objc2-core-media = "0.3"
 objc2-screen-capture-kit = { version = "0.3", default-features = false }
 objc2-vision = "0.3"
 oklab = "1"
-opencv = { version = "0.101", default-features = false, features = ["calib3d", "clang-runtime", "imgproc", "video", "videoio"] }
+shrimply-vision = { path = "vendor/vision" }
 pango = "0.22"
 pangocairo = "0.22"
 pest = "2"

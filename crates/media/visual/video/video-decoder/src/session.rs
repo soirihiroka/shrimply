@@ -112,6 +112,53 @@ pub struct VideoDecoderSession {
 }
 
 impl VideoDecoderSession {
+    pub fn dimensions(&self) -> (u32, u32) {
+        (self.decoder.width(), self.decoder.height())
+    }
+
+    /// Clockwise display-matrix rotation; decoded pixels remain in coded orientation.
+    pub fn rotation_degrees(&self) -> i32 {
+        self.input
+            .stream(self.stream_index)
+            .expect("selected video stream")
+            .side_data()
+            .find(|data| data.kind() == ffmpeg::codec::packet::side_data::Type::DisplayMatrix)
+            .and_then(|data| crate::math::display_rotation(data.data()))
+            .unwrap_or(0)
+    }
+
+    /// Source metadata rate, following VideoCapture's rational fallback order.
+    pub fn frame_rate(&self) -> shrimply_math_core::Fraction {
+        let stream = self
+            .input
+            .stream(self.stream_index)
+            .expect("selected video stream");
+        let mut rate = stream.avg_frame_rate();
+        if !crate::math::usable_metadata_frame_rate(rate) {
+            // FFmpeg guesses codec cadence for field-coded streams rather than
+            // assuming that r_frame_rate describes complete decoded frames.
+            rate = unsafe {
+                ffmpeg::Rational::from(sys::av_guess_frame_rate(
+                    self.input.as_ptr().cast_mut(),
+                    stream.as_ptr().cast_mut(),
+                    ptr::null_mut(),
+                ))
+            };
+        }
+        if crate::math::usable_metadata_frame_rate(rate) {
+            shrimply_math_core::fraction_new(
+                i64::from(rate.numerator()),
+                i64::from(rate.denominator()),
+            )
+        } else {
+            let time_base = stream.time_base();
+            shrimply_math_core::fraction_new(
+                i64::from(time_base.denominator()),
+                i64::from(time_base.numerator()),
+            )
+        }
+    }
+
     pub fn next_frame_time(&self) -> Option<Time> {
         self.lookahead.as_ref().map(|frame| frame.0)
     }
@@ -208,6 +255,86 @@ impl VideoDecoderSession {
             active_request: None,
             nonadvancing_frames: 0,
         })
+    }
+
+    /// Frame-number access with VideoCapture's preroll and EOF conventions.
+    /// Timestamp-free elementary streams support forward frame-number reads.
+    pub fn frame_by_index(
+        &mut self,
+        index: u64,
+        controls: DecodeControls<'_>,
+    ) -> Result<DecodeOutcome, String> {
+        if self.cancel_if_superseded(controls) {
+            return Ok(DecodeOutcome::Superseded(None));
+        }
+        if unsafe { (*self.input.format().as_ptr()).flags } & sys::AVFMT_NOTIMESTAMPS != 0 {
+            // Raw elementary streams have frame ordinals but no seekable PTS.
+            // Reuse the normal decoder and retain its cancellation/lookahead policy.
+            loop {
+                let next_index = self
+                    .frame_index
+                    .saturating_sub(usize::from(self.lookahead.is_some()));
+                let next_index =
+                    u64::try_from(next_index).expect("decoded frame index exceeds u64");
+                if index < next_index {
+                    return Err("cannot seek backward in a video stream without timestamps".into());
+                }
+                match self.next_frame(controls)? {
+                    NextFrame::Frame(frame) if next_index == index => {
+                        return Ok(DecodeOutcome::Frame(Some(frame)));
+                    }
+                    NextFrame::Frame(_) => {}
+                    NextFrame::EndOfStream => return Ok(DecodeOutcome::Frame(None)),
+                    NextFrame::Superseded => return Ok(DecodeOutcome::Superseded(None)),
+                }
+            }
+        }
+        let frame_rate = self.frame_rate();
+        let position = crate::math::frame_center_time(index, frame_rate)
+            .ok_or("video decoder frame index is out of range")?;
+        let frame_duration = shrimply_math_core::time_from_frame(1, frame_rate)
+            .expect("frame rate validated by frame center calculation");
+        // VideoCapture starts 16 frames early and grows the preroll by 3/2
+        // when a demuxer lands after the needed random-access unit.
+        const INITIAL_PREROLL_FRAMES: u64 = 16;
+        let mut preroll = INITIAL_PREROLL_FRAMES;
+        loop {
+            let seek_position = crate::math::frame_seek_time(index, preroll, frame_rate)
+                .expect("frame index validated by frame center calculation");
+            self.seek(seek_position)?;
+            self.active_request
+                .as_mut()
+                .expect("seek initialized request")
+                .target = position;
+            self.seek_target = Some(position);
+            let outcome = self.frame(position, None, controls, DecodeMode::Accurate);
+            let needs_preroll = match &outcome {
+                Err(_) => self.decoder_eof && self.last_decoded_position.is_none(),
+                Ok(DecodeOutcome::Frame(Some(frame))) => frame.0 > position,
+                _ => false,
+            };
+            if needs_preroll && seek_position > Time::ZERO {
+                preroll = preroll.saturating_add(preroll / 2);
+                continue;
+            }
+            let outcome = outcome?;
+            if let DecodeOutcome::Frame(Some(frame)) = &outcome
+                && self
+                    .lookahead
+                    .as_ref()
+                    .is_some_and(|next| Arc::ptr_eq(&next.1, &frame.1))
+            {
+                self.lookahead = None;
+            }
+            return match outcome {
+                // Exact-time preview retains the final frame. Frame-number reads
+                // instead report end-of-stream once that frame's interval ends.
+                DecodeOutcome::Frame(frame) if self.decoder_eof => Ok(DecodeOutcome::Frame(
+                    cached_frame(frame.as_ref(), position, frame_duration),
+                )),
+                outcome => Ok(outcome),
+            };
+        }
     }
 
     pub fn frame(

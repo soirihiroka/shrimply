@@ -8,9 +8,10 @@ use objc2::{msg_send, rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::NSString;
 use objc2_metal::{
     MTLBinding, MTLBindingType, MTLBlitCommandEncoder, MTLBuffer, MTLCommandBuffer,
-    MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder, MTLComputePipelineState,
-    MTLDevice, MTLLibrary, MTLOrigin, MTLPipelineOption, MTLPixelFormat, MTLResource,
-    MTLResourceUsage, MTLSize, MTLStorageMode, MTLTexture, MTLTextureDescriptor, MTLTextureUsage,
+    MTLCommandEncoder, MTLCommandQueue, MTLCompileOptions, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLDevice, MTLLibrary, MTLMathFloatingPointFunctions, MTLMathMode,
+    MTLOrigin, MTLPipelineOption, MTLPixelFormat, MTLResource, MTLResourceUsage, MTLSize,
+    MTLStorageMode, MTLTexture, MTLTextureDescriptor, MTLTextureUsage,
 };
 use shrimply_render_core::Nv12LayerParams;
 use std::collections::HashMap;
@@ -387,10 +388,19 @@ impl Renderer {
                     kernel = name,
                     "Compiling shared Slang Metal module"
                 );
+                let options = (module.name == "tracking").then(|| {
+                    let options = MTLCompileOptions::new();
+                    options.setMathMode(MTLMathMode::Safe);
+                    options.setMathFloatingPointFunctions(MTLMathFloatingPointFunctions::Precise);
+                    options
+                });
                 let library = self
                     .context
                     .device
-                    .newLibraryWithSource_options_error(&NSString::from_str(module.source), None)
+                    .newLibraryWithSource_options_error(
+                        &NSString::from_str(module.source),
+                        options.as_deref(),
+                    )
                     .map_err(|error| format!("Compile Metal module {}: {error}", module.name))?;
                 self.libraries.insert(module.name, library);
                 tracing::info!(

@@ -1,13 +1,9 @@
 use glam::Mat3;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use glam::UVec2;
-use opencv::core::Mat;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-use opencv::core::{MatTraitConst, Point2f, Vector};
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-use opencv::prelude::MatTraitConstManual;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use shrimply_math_geometry::optical_flow::OpticalFlowField;
+use shrimply_vision::RgbaImage;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub struct Estimator {
@@ -22,41 +18,45 @@ pub struct Estimator {
 
 #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
 pub struct Estimator {
-    previous: Mat,
+    previous: RgbaImage,
+    tracker: super::sparse::Tracker,
 }
 
 impl Estimator {
-    pub fn new(previous: &Mat) -> Result<Self, String> {
+    pub fn new(previous: &RgbaImage) -> Result<Self, String> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             let renderer = shrimply_render_vulkan::Renderer::new()?;
-            let previous = renderer.upload(&rgba(previous)?)?;
+            let previous = renderer.upload(&previous.data)?;
             Ok(Self { renderer, previous })
         }
         #[cfg(target_os = "macos")]
         {
             Ok(Self {
-                previous: rgba(previous)?,
+                previous: previous.data.clone(),
             })
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             Ok(Self {
                 previous: previous.clone(),
+                tracker: super::sparse::Tracker::default(),
             })
         }
     }
 
-    pub fn estimate(&mut self, current: &Mat) -> Result<Mat3, String> {
+    pub fn estimate(&mut self, current: &RgbaImage) -> Result<Mat3, String> {
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
             let tracks = self.tracks(current)?;
-            let previous = Vector::<Point2f>::from_iter(
-                tracks.iter().map(|track| Point2f::new(track[0], track[1])),
-            );
-            let current = Vector::<Point2f>::from_iter(
-                tracks.iter().map(|track| Point2f::new(track[2], track[3])),
-            );
+            let previous = tracks
+                .iter()
+                .map(|track| [track[0], track[1]])
+                .collect::<Vec<_>>();
+            let current = tracks
+                .iter()
+                .map(|track| [track[2], track[3]])
+                .collect::<Vec<_>>();
             if current.len() < super::MINIMUM_TRACKED_FEATURES {
                 return Err(format!(
                     "GPU optical flow retained only {} reliable affine tracks",
@@ -67,21 +67,25 @@ impl Estimator {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
-            let motion = super::estimate_affine(&self.previous, current)?;
+            let motion = super::estimate_affine(&mut self.tracker, &self.previous, current)?;
             self.previous = current.clone();
             Ok(motion)
         }
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    pub fn tracks(&mut self, current: &Mat) -> Result<Vec<[f32; 6]>, String> {
-        let size = UVec2::new(current.cols() as u32, current.rows() as u32);
+    pub fn tracks(&mut self, current: &RgbaImage) -> Result<Vec<[f32; 6]>, String> {
+        let size = UVec2::new(current.width as u32, current.height as u32);
         Ok(self.estimate_flow(current, size)?.reliable_tracks(size))
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn estimate_flow(&mut self, current: &Mat, size: UVec2) -> Result<OpticalFlowField, String> {
-        let current = self.renderer.upload(&rgba(current)?)?;
+    fn estimate_flow(
+        &mut self,
+        current: &RgbaImage,
+        size: UVec2,
+    ) -> Result<OpticalFlowField, String> {
+        let current = self.renderer.upload(&current.data)?;
         let mut submissions = Vec::new();
         let field = self.renderer.optical_flow(
             self.previous.clone(),
@@ -116,22 +120,14 @@ impl Estimator {
     }
 
     #[cfg(target_os = "macos")]
-    fn estimate_flow(&mut self, current: &Mat, size: UVec2) -> Result<OpticalFlowField, String> {
-        let current = rgba(current)?;
+    fn estimate_flow(
+        &mut self,
+        current: &RgbaImage,
+        size: UVec2,
+    ) -> Result<OpticalFlowField, String> {
+        let current = current.data.clone();
         let flow = super::flow_metal::estimate_rgba(&self.previous, &current, size.x, size.y)?;
         self.previous = current;
         Ok(flow)
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-fn rgba(frame: &Mat) -> Result<Vec<u8>, String> {
-    let mut rgba = Mat::default();
-    opencv::imgproc::cvt_color_def(frame, &mut rgba, opencv::imgproc::COLOR_BGR2RGBA)
-        .map_err(|error| error.to_string())?;
-    let bytes = rgba.data_bytes().map_err(|error| error.to_string())?;
-    if bytes.len() != frame.cols() as usize * frame.rows() as usize * size_of::<u32>() {
-        return Err("GPU optical flow input is not tightly packed".into());
-    }
-    Ok(bytes.to_vec())
 }

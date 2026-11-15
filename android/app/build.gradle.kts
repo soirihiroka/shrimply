@@ -2,6 +2,14 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+val licenseAssetsDirectory = layout.buildDirectory.dir("generated/licenseAssets")
+val licenseAssets = tasks.register<Sync>("licenseAssets") {
+    from(rootProject.file("../vendor/vision/LICENSE")) {
+        into("licenses")
+        rename { "OpenCV-Vision.txt" }
+    }
+    into(licenseAssetsDirectory)
+}
 android {
     namespace = "dev.shrimply.app"
     compileSdk = 37
@@ -24,7 +32,9 @@ android {
         }
     }
     packaging { jniLibs.useLegacyPackaging = false }
+    sourceSets["main"].assets.directories.add(licenseAssetsDirectory.get().asFile.path)
 }
+tasks.named("preBuild") { dependsOn(licenseAssets) }
 dependencies {
     // The existing Rust TLS verifier requires its matching Android component.
     val verifierVersion = providers.fileContents(rootProject.layout.projectDirectory.file("../Cargo.lock")).asText.map { lock ->

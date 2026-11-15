@@ -4,6 +4,7 @@ pub mod flow;
 pub mod flow_metal;
 #[cfg(feature = "nvidia")]
 mod flow_nvidia;
+pub mod sparse;
 pub mod video;
 
 use glam::{Mat3, UVec2, Vec2, Vec3};
@@ -13,26 +14,16 @@ use good_lp::{
 };
 use std::path::Path;
 
-use opencv::core::{
-    self, Mat, MatTraitConst, Point2f, Size, TermCriteria, TermCriteria_Type, Vector,
-};
-use opencv::prelude::*;
-use opencv::{calib3d, imgproc, video as cv_video};
+use shrimply_vision::math::{AffineOptions, estimate_affine as fit_affine};
+use shrimply_vision::{FeatureOptions, FlowOptions, RgbaImage, good_features};
 
-opencv::opencv_branch_5! {
-    use opencv::features::good_features_to_track;
-}
-opencv::not_opencv_branch_5! {
-    use opencv::imgproc::good_features_to_track;
-}
-
-const MAXIMUM_FEATURES: i32 = 200;
+const MAXIMUM_FEATURES: usize = 200;
 const FEATURE_QUALITY: f64 = 0.01;
 const MINIMUM_FEATURE_DISTANCE: f64 = 30.0;
-const FEATURE_BLOCK_SIZE: i32 = 3;
-const OPTICAL_FLOW_WINDOW: i32 = 20;
-const OPTICAL_FLOW_PYRAMID_LEVELS: i32 = 3;
-const OPTICAL_FLOW_ITERATIONS: i32 = 10;
+const FEATURE_BLOCK_SIZE: usize = 3;
+const OPTICAL_FLOW_WINDOW: usize = 20;
+const OPTICAL_FLOW_PYRAMID_LEVELS: usize = 3;
+const OPTICAL_FLOW_ITERATIONS: usize = 10;
 const OPTICAL_FLOW_EPSILON: f64 = 0.03;
 const MINIMUM_TRACKED_FEATURES: usize = 4;
 const RANSAC_REPROJECTION_THRESHOLD: f64 = 3.0;
@@ -89,6 +80,8 @@ pub fn analyze_chunk(
     #[cfg(feature = "nvidia")]
     let mut previous = previous;
     #[cfg(feature = "nvidia")]
+    let mut tracker = None;
+    #[cfg(feature = "nvidia")]
     let mut nvidia =
         match flow_nvidia::NvidiaAffineEstimator::new(&previous, width as u32, height as u32) {
             Ok(estimator) => {
@@ -120,9 +113,17 @@ pub fn analyze_chunk(
             Some(Err(error)) => {
                 tracing::warn!("NVIDIA Optical Flow failed; using KLT fallback: {error}");
                 nvidia = None;
-                estimate_affine(&previous, &current)?
+                estimate_affine(
+                    tracker.get_or_insert_with(sparse::Tracker::default),
+                    &previous,
+                    &current,
+                )?
             }
-            None => estimate_affine(&previous, &current)?,
+            None => estimate_affine(
+                tracker.get_or_insert_with(sparse::Tracker::default),
+                &previous,
+                &current,
+            )?,
         };
         #[cfg(not(feature = "nvidia"))]
         let motion = estimator.estimate(&current)?;
@@ -157,118 +158,75 @@ pub fn analyze_chunk(
     }))
 }
 
-pub fn estimate_affine(previous: &Mat, current: &Mat) -> Result<Mat3, String> {
-    let previous_size = previous.size().map_err(|error| error.to_string())?;
-    let current_size = current.size().map_err(|error| error.to_string())?;
-    if previous.empty() || current.empty() || previous_size != current_size {
+pub fn estimate_affine(
+    tracker: &mut sparse::Tracker,
+    previous: &RgbaImage,
+    current: &RgbaImage,
+) -> Result<Mat3, String> {
+    if previous.width != current.width || previous.height != current.height {
         return Err("affine stabilization frames do not match".to_string());
     }
-    let mut previous_gray = Mat::default();
-    let mut current_gray = Mat::default();
-    imgproc::cvt_color_def(previous, &mut previous_gray, imgproc::COLOR_BGR2GRAY)
-        .map_err(|error| error.to_string())?;
-    imgproc::cvt_color_def(current, &mut current_gray, imgproc::COLOR_BGR2GRAY)
-        .map_err(|error| error.to_string())?;
-
-    let mut previous_points = Vector::<Point2f>::new();
-    good_features_to_track(
+    let previous_gray = previous.gray()?;
+    let current_gray = current.gray()?;
+    let points = good_features(
         &previous_gray,
-        &mut previous_points,
-        MAXIMUM_FEATURES,
-        FEATURE_QUALITY,
-        MINIMUM_FEATURE_DISTANCE,
-        &core::no_array(),
-        FEATURE_BLOCK_SIZE,
-        false,
-        0.04,
-    )
-    .map_err(|error| error.to_string())?;
-    if previous_points.len() < MINIMUM_TRACKED_FEATURES {
+        FeatureOptions {
+            maximum: MAXIMUM_FEATURES,
+            quality: FEATURE_QUALITY,
+            minimum_distance: MINIMUM_FEATURE_DISTANCE,
+            block_size: FEATURE_BLOCK_SIZE,
+        },
+    )?;
+    if points.len() < MINIMUM_TRACKED_FEATURES {
         return Err(format!(
             "affine stabilization found only {} trackable features",
-            previous_points.len()
+            points.len()
         ));
     }
-
-    let mut current_points = Vector::<Point2f>::new();
-    let mut status = Vector::<u8>::new();
-    let mut errors = Vector::<f32>::new();
-    cv_video::calc_optical_flow_pyr_lk(
+    let tracks = tracker.track(
         &previous_gray,
         &current_gray,
-        &previous_points,
-        &mut current_points,
-        &mut status,
-        &mut errors,
-        Size::new(OPTICAL_FLOW_WINDOW, OPTICAL_FLOW_WINDOW),
-        OPTICAL_FLOW_PYRAMID_LEVELS,
-        TermCriteria::new(
-            i32::from(TermCriteria_Type::COUNT) + i32::from(TermCriteria_Type::EPS),
-            OPTICAL_FLOW_ITERATIONS,
-            OPTICAL_FLOW_EPSILON,
-        )
-        .map_err(|error| error.to_string())?,
-        0,
-        1e-4,
-    )
-    .map_err(|error| error.to_string())?;
-
-    let mut valid_previous = Vector::<Point2f>::new();
-    let mut valid_current = Vector::<Point2f>::new();
-    for index in 0..status.len() {
-        if status.get(index).map_err(|error| error.to_string())? != 0 {
-            valid_previous.push(
-                previous_points
-                    .get(index)
-                    .map_err(|error| error.to_string())?,
-            );
-            valid_current.push(
-                current_points
-                    .get(index)
-                    .map_err(|error| error.to_string())?,
-            );
-        }
-    }
-    if valid_current.len() < MINIMUM_TRACKED_FEATURES {
+        &points,
+        FlowOptions {
+            window: OPTICAL_FLOW_WINDOW,
+            maximum_level: OPTICAL_FLOW_PYRAMID_LEVELS,
+            iterations: OPTICAL_FLOW_ITERATIONS,
+            epsilon: OPTICAL_FLOW_EPSILON,
+            minimum_eigenvalue: 1e-4,
+        },
+    )?;
+    let (previous, current): (Vec<_>, Vec<_>) = tracks
+        .into_iter()
+        .filter(|track| track.valid)
+        .map(|track| (track.previous, track.current))
+        .unzip();
+    if current.len() < MINIMUM_TRACKED_FEATURES {
         return Err(format!(
             "affine stabilization tracked only {} features",
-            valid_current.len()
+            current.len()
         ));
     }
-
-    estimate_affine_from_points(&valid_current, &valid_previous)
+    estimate_affine_from_points(&current, &previous)
 }
 
 fn estimate_affine_from_points(
-    current: &Vector<Point2f>,
-    previous: &Vector<Point2f>,
+    current: &[[f32; 2]],
+    previous: &[[f32; 2]],
 ) -> Result<Mat3, String> {
-    let mut inliers = Mat::default();
-    let affine = calib3d::estimate_affine_2d(
+    let affine = fit_affine(
         current,
         previous,
-        &mut inliers,
-        calib3d::RANSAC,
-        RANSAC_REPROJECTION_THRESHOLD,
-        RANSAC_MAXIMUM_ITERATIONS,
-        RANSAC_CONFIDENCE,
-        RANSAC_REFINEMENT_ITERATIONS,
-    )
-    .map_err(|error| error.to_string())?;
-    if affine.empty() || affine.rows() != 2 || affine.cols() != 3 {
-        return Err("affine stabilization could not estimate frame motion".to_string());
-    }
-    let mut affine_f64 = Mat::default();
-    affine
-        .convert_to(&mut affine_f64, core::CV_64F, 1.0, 0.0)
-        .map_err(|error| error.to_string())?;
-    let values = affine_f64
-        .data_typed::<f64>()
-        .map_err(|error| error.to_string())?;
+        AffineOptions {
+            reprojection_threshold: RANSAC_REPROJECTION_THRESHOLD,
+            maximum_iterations: RANSAC_MAXIMUM_ITERATIONS,
+            confidence: RANSAC_CONFIDENCE,
+            refinement_iterations: RANSAC_REFINEMENT_ITERATIONS,
+        },
+    )?;
     let motion = Mat3::from_cols(
-        Vec3::new(values[0] as f32, values[3] as f32, 0.0),
-        Vec3::new(values[1] as f32, values[4] as f32, 0.0),
-        Vec3::new(values[2] as f32, values[5] as f32, 1.0),
+        Vec3::new(affine[0][0] as f32, affine[1][0] as f32, 0.0),
+        Vec3::new(affine[0][1] as f32, affine[1][1] as f32, 0.0),
+        Vec3::new(affine[0][2] as f32, affine[1][2] as f32, 1.0),
     );
     if !motion.is_finite() {
         return Err("affine stabilization estimated non-finite frame motion".to_string());

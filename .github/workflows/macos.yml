@@ -72,7 +72,6 @@ jobs:
             ffmpeg \
             librsvg \
             llvm@22 \
-            opencv \
             pkgconf \
             poppler \
             ripgrep \
@@ -176,9 +175,10 @@ jobs:
         shell: bash
         run: |
           contents="${MACOS_APP}/Contents"
-          mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources"
+          mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources/licenses"
           install -m 755 target/release/shrimply "${contents}/MacOS/shrimply"
           install -m 644 packaging/macos/Info.plist "${contents}/Info.plist"
+          install -m 644 vendor/vision/LICENSE "${contents}/Resources/licenses/OpenCV-Vision.txt"
           install -m 755 "$(command -v uv)" "${contents}/MacOS/uv"
           python_project="crates/media/visual/manim/manim-bridge/python"
           bundled_project="${contents}/Resources/manim-worker"
@@ -226,6 +226,7 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "${contents}/Info.plist")" = "Shrimply"
           test -s "${contents}/Resources/Assets.car"
           test -s "${contents}/Resources/Shrimply.icns"
+          cmp vendor/vision/LICENSE "${contents}/Resources/licenses/OpenCV-Vision.txt"
           codesign --verify --deep --strict "${MACOS_APP}"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "shrimply"
           test "$(lipo -archs "${contents}/MacOS/shrimply")" = "arm64"

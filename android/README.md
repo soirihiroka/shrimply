@@ -4,7 +4,7 @@ Android 13+ application using the shared project backend and a Vulkan / Skia
 timeline. Normal launches show the project launcher, then open the selected real
 `.shrimp` project in the editor. Project storage, history, timeline actions, and
 exact playback state are shared with the desktop. Android uses the existing FFmpeg,
-audio engine, Pango/Cairo, OpenCV, Poppler, and Vulkan compositor crates, while
+audio engine, Pango/Cairo, shared Rust vision, Poppler, and Vulkan compositor crates, while
 excluding GTK and CUDA host code. Video export uses the shared export pipeline.
 
 The Rust `shrimply-timeline-skia::scene::Scene` owns the same timeline drawing,

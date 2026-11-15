@@ -558,16 +558,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clang"
-version = "2.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2ed30b30e1e17966b55ddd0b9dd2758fd824f0a6da6875c8abb17e6aba47c28"
-dependencies = [
- "clang-sys",
- "libc",
-]
-
-[[package]]
 name = "clang-format"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4010,41 +4000,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opencv"
-version = "0.101.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cac4182ca27a86f18c4f07f4ccf83ae8cc68fe8080734ca75745f617f6658c89"
-dependencies = [
- "cc",
- "dunce",
- "jobserver",
- "libc",
- "num-traits",
- "opencv-binding-generator",
- "pkg-config",
- "semver",
- "shlex 2.0.1",
- "vcpkg",
- "windows",
- "winsplit",
-]
-
-[[package]]
-name = "opencv-binding-generator"
-version = "0.107.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42973794347e82fc07e29700c422f1d2cdda9c4b124247ae4f66c5f08fb22856"
-dependencies = [
- "clang",
- "clang-sys",
- "dunce",
- "percent-encoding",
- "regex",
- "semver",
- "shlex 2.0.1",
-]
-
-[[package]]
 name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5623,6 +5578,7 @@ dependencies = [
 name = "shrimply-affine-l1-stabilization"
 version = "0.1.0"
 dependencies = [
+ "ffmpeg-next",
  "glam 0.34.1",
  "good_lp",
  "highs-sys",
@@ -5631,13 +5587,17 @@ dependencies = [
  "objc2-core-video",
  "objc2-foundation",
  "objc2-vision",
- "opencv",
+ "shrimply-asset",
  "shrimply-gpu-cuda",
  "shrimply-gpu-cuda-memory",
  "shrimply-math-core",
  "shrimply-math-geometry",
  "shrimply-nvidia-optical-flow",
+ "shrimply-render-kernels-cuda",
+ "shrimply-render-metal",
  "shrimply-render-vulkan",
+ "shrimply-video-decoder",
+ "shrimply-vision",
  "tracing",
 ]
 
@@ -7018,9 +6978,9 @@ name = "shrimply-mesh-flow-stabilization"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
- "opencv",
  "shrimply-affine-l1-stabilization",
  "shrimply-math-geometry",
+ "shrimply-vision",
  "tracing",
 ]
 
@@ -8094,6 +8054,10 @@ dependencies = [
  "windows",
  "windows-future",
 ]
+
+[[package]]
+name = "shrimply-vision"
+version = "0.1.0"
 
 [[package]]
 name = "shrimply-visual-core"
@@ -10202,12 +10166,6 @@ checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
 ]
-
-[[package]]
-name = "winsplit"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ab703352da6a72f35c39a533526393725640575bb211f61987a2748323ad956"
 
 [[package]]
 name = "wit-bindgen"

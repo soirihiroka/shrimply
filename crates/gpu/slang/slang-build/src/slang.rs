@@ -40,6 +40,7 @@ struct CompileRequest {
     abi_path: *const c_char,
     entries: *const *const c_char,
     entry_count: usize,
+    precise_math: u32,
 }
 
 pub struct Artifacts {
@@ -56,6 +57,7 @@ pub struct Compiler {
     api: libloading::Library,
     directory: PathBuf,
     output: PathBuf,
+    precise_math: bool,
 }
 
 impl Compiler {
@@ -91,7 +93,14 @@ impl Compiler {
             api,
             directory: directory.to_owned(),
             output: output.to_owned(),
+            precise_math: false,
         }
+    }
+
+    /// Preserve floating-point operation order for numerical kernels.
+    pub fn precise_math(mut self) -> Self {
+        self.precise_math = true;
+        self
     }
 
     pub fn compile(&self, source: &Path, target: Target, entries: &[&str]) -> Artifacts {
@@ -161,6 +170,7 @@ impl Compiler {
             abi_path: abi_path.as_ptr(),
             entries: entry_pointers.as_ptr(),
             entry_count: entry_pointers.len(),
+            precise_math: u32::from(self.precise_math),
         };
         // The synchronous C++ API call borrows only the strings owned above.
         let result = unsafe {

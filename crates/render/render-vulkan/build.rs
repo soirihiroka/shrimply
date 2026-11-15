@@ -25,8 +25,10 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SPIRV_OPT");
     println!("cargo:rerun-if-env-changed=SPIRV_VAL");
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../render-core/shaders");
+    println!("cargo:rerun-if-changed=../../../vendor/vision/shaders");
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Vulkan shader output"));
     let compiler = shrimply_slang_build::Compiler::new(&directory, &output);
+    let precise_compiler = shrimply_slang_build::Compiler::new(&directory, &output).precise_math();
     let mut generated = String::new();
     let mut object_abi = None;
     for (portable, target, table, suffix) in [
@@ -51,6 +53,11 @@ fn main() {
             .chain(["video", "denoise"])
             .chain(std::env::var_os("CARGO_FEATURE_ANDROID_MEDIA").map(|_| "sample_image"))
         {
+            let compiler = if module == "tracking" {
+                &precise_compiler
+            } else {
+                &compiler
+            };
             let artifacts = compiler.compile_as(
                 &directory.join(format!("{module}.slang")),
                 &format!("{module}{suffix}"),

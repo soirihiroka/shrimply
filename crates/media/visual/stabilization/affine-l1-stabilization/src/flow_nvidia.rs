@@ -1,13 +1,11 @@
 use super::estimate_affine_from_points;
 use glam::{Mat3, UVec2, Vec2};
-use opencv::core::{Mat, MatTraitConst, Point2f, Vector};
-use opencv::imgproc;
-use opencv::prelude::MatTraitConstManual;
 use shrimply_gpu_cuda::{CudaContext, CudaStream};
 use shrimply_gpu_cuda_memory::GpuBuffer as DeviceBuffer;
 use shrimply_nvidia_optical_flow::{
     FlowField, FlowVector, OpticalFlow, OutputGrid, Quality, Settings as OpticalFlowSettings,
 };
+use shrimply_vision::RgbaImage;
 use std::sync::Arc;
 
 const NVIDIA_FLOW_SAMPLE_SPACING: usize = 16;
@@ -25,7 +23,7 @@ pub(super) struct NvidiaAffineEstimator {
 }
 
 impl NvidiaAffineEstimator {
-    pub(super) fn new(previous: &Mat, width: u32, height: u32) -> Result<Self, String> {
+    pub(super) fn new(previous: &RgbaImage, width: u32, height: u32) -> Result<Self, String> {
         let context = CudaContext::new(shrimply_gpu_cuda::selected_device())
             .map_err(|error| format!("create CUDA context for optical flow: {error:?}"))?;
         let stream = context
@@ -61,8 +59,8 @@ impl NvidiaAffineEstimator {
         })
     }
 
-    pub(super) fn estimate(&mut self, current: &Mat) -> Result<Mat3, String> {
-        let image_size = UVec2::new(current.cols() as u32, current.rows() as u32);
+    pub(super) fn estimate(&mut self, current: &RgbaImage) -> Result<Mat3, String> {
+        let image_size = UVec2::new(current.width as u32, current.height as u32);
         let current = upload_optical_flow_frame(&self.stream, current)?;
         let field = self.optical_flow.estimate(
             self.previous.cu_deviceptr(),
@@ -78,13 +76,10 @@ impl NvidiaAffineEstimator {
 
 fn upload_optical_flow_frame(
     stream: &CudaStream,
-    frame: &Mat,
+    frame: &RgbaImage,
 ) -> Result<DeviceBuffer<u32>, String> {
-    let mut rgba = Mat::default();
-    imgproc::cvt_color_def(frame, &mut rgba, imgproc::COLOR_BGR2RGBA)
-        .map_err(|error| error.to_string())?;
-    let bytes = rgba.data_bytes().map_err(|error| error.to_string())?;
-    let expected = frame.cols() as usize * frame.rows() as usize * 4;
+    let bytes = &frame.data;
+    let expected = frame.width * frame.height * 4;
     if bytes.len() != expected {
         return Err("NVIDIA optical flow input is not tightly packed".to_string());
     }
@@ -117,8 +112,8 @@ fn estimate_affine_from_flow(field: &FlowField, size: UVec2) -> Result<Mat3, Str
         .max(1);
     let forward_limit = flow_cost_limit(&field.forward_cost, field.width, field.height, step);
     let backward_limit = flow_cost_limit(&field.backward_cost, field.width, field.height, step);
-    let mut previous = Vector::<Point2f>::new();
-    let mut current = Vector::<Point2f>::new();
+    let mut previous = Vec::<[f32; 2]>::new();
+    let mut current = Vec::<[f32; 2]>::new();
     for flow_y in (0..field.height).step_by(step) {
         for flow_x in (0..field.width).step_by(step) {
             let index = flow_y * field.width + flow_x;
@@ -160,8 +155,8 @@ fn estimate_affine_from_flow(field: &FlowField, size: UVec2) -> Result<Mat3, Str
             {
                 continue;
             }
-            previous.push(Point2f::new(x, y));
-            current.push(Point2f::new(destination.x, destination.y));
+            previous.push([x, y]);
+            current.push([destination.x, destination.y]);
         }
     }
     if current.len() < NVIDIA_FLOW_MINIMUM_TRACKS {

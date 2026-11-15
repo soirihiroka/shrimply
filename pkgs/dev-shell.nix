@@ -19,7 +19,6 @@
   llvmPackages,
   mkShell,
   ninja,
-  opencv,
   openssl,
   pkg-config,
   pipewire,
@@ -67,7 +66,6 @@ mkShell {
     libglvnd
     lld
     ninja
-    opencv
     openssl
     pkg-config
     pipewire
@@ -105,7 +103,6 @@ mkShell {
       lib.makeLibraryPath [
         gcc.cc.lib
         zlib
-        opencv
         shrimply-slang
         shrimply-oidn
         qtEnv

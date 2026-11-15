@@ -29,7 +29,6 @@
   manimSrc,
   makeShellWrapper,
   ninja,
-  opencv,
   openssl,
   optixSrc,
   pipewire,
@@ -141,7 +140,6 @@ rustPlatform.buildRustPackage {
     libpng
     libwebp
     libx11
-    opencv
     openssl
     pipewire
     poppler_gi
@@ -199,6 +197,8 @@ rustPlatform.buildRustPackage {
       "$out/share/licenses/shrimply/PocketSphinx-model.txt"
     install -Dm644 vendor/rhubarb-lip-sync/LICENSE \
       "$out/share/licenses/shrimply/Rhubarb-Lip-Sync.txt"
+    install -Dm644 vendor/vision/LICENSE \
+      "$out/share/licenses/shrimply/OpenCV-Vision.txt"
 
     # components-gtk resolves bundled icons relative to the binary.
     install -d "$out/share/shrimply/icons"

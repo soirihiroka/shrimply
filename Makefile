@@ -133,7 +133,6 @@ FEDORA_PACKAGES := \
 	gcc15-c++ \
 	lld \
 	ninja-build \
-	opencv-devel \
 	openssl-devel \
 	pkgconf-pkg-config \
 	gobject-introspection-devel \
@@ -253,10 +252,11 @@ appkit-icon:
 appkit-build: appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
-	mkdir -p "$(APPKIT_APP)/Contents/MacOS" "$(APPKIT_APP)/Contents/Resources"
+	mkdir -p "$(APPKIT_APP)/Contents/MacOS" "$(APPKIT_APP)/Contents/Resources/licenses"
 	cp $(CARGO_TARGET_DIR)/debug/$(APPKIT_BIN_NAME) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
 	cp packaging/macos/Info.plist "$(APPKIT_APP)/Contents/Info.plist"
 	cp "$(APPKIT_ICON_DIR)/Assets.car" "$(APPKIT_ICON_DIR)/Shrimply.icns" "$(APPKIT_APP)/Contents/Resources/"
+	cp vendor/vision/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/OpenCV-Vision.txt"
 
 appkit-release: appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "AppKit release requires macOS" >&2; exit 1; }
@@ -508,6 +508,10 @@ cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-inspector-document --lib
 
+.PHONY: vision-check
+vision-check: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-vision -p shrimply-affine-l1-stabilization -p shrimply-mesh-flow-stabilization --lib -- -D warnings
+
 intel-check: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-visual-cuda -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets
 	$(DEV_BUILD_ENV) $(CARGO) clippy -p shrimply-gpu-cuda -p $(EDITOR_PACKAGE) -p shrimply-visual-cuda -p shrimply-render-vulkan -p shrimply-preview-render-vulkan -p shrimply-preview-runtime-cuda -p shrimply-export-cuda --all-targets -- -D warnings
@@ -635,6 +639,7 @@ install: release desktop-icon project-mime
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
+	$(INSTALL) -Dm644 vendor/vision/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
 	$(INSTALL) -d "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	cp -a assets/icons/. "$(DESTDIR)$(ICONS_RESOURCE_DIR)/"
 	sed -e 's|^Exec=.*|Exec="$(BINDIR)/$(BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(BIN_NAME)|' $(DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
@@ -662,6 +667,7 @@ install-qt: qt-release desktop-icon project-mime
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
+	$(INSTALL) -Dm644 vendor/vision/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
 	sed -e 's|^Exec=.*|Exec="$(QT_BINDIR)/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(QT_BINDIR)/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
@@ -677,6 +683,7 @@ uninstall:
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
 	rm -rf "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
 	$(MAKE) uninstall-desktop-assets
@@ -722,7 +729,7 @@ ANDROID_PROFILE ?= debug
 ANDROID_DEV_SIGN ?= false
 ANDROID_GRADLE ?= $(CURDIR)/android/gradlew
 # rust-skia's unversioned target otherwise hides newer bionic declarations.
-ANDROID_SKIA_CFLAGS = "--target=$(ANDROID_TARGET)33","$(if $(filter release,$(ANDROID_PROFILE)),-O3,-O0)","-I$(ANDROID_MEDIA_PREFIX)/include/jpeg"
+ANDROID_SKIA_CFLAGS = "--target=$(ANDROID_TARGET)33","$(if $(filter release,$(ANDROID_PROFILE)),-O3,-O0)","-I$(ANDROID_MEDIA_PREFIX)/include"
 ifeq ($(ANDROID_ABI),arm64-v8a)
 ANDROID_SKIA_CFLAGS += ,"-mno-outline-atomics"
 endif
@@ -802,13 +809,13 @@ ANDROID_MEDIA_PREFIX = $(abspath $(CARGO_TARGET_DIR)/android-native/$(ANDROID_AB
 # ffmpeg-sys bundles static archives inside its rlib. A changed recipe must
 # change its watched pkg-config environment, rather than only relink the app.
 ANDROID_MEDIA_PKG_CONFIG = $(ANDROID_MEDIA_PREFIX)/../pkgconfig-$(shell cat "$(ANDROID_MEDIA_PREFIX)/../build.sha256" 2>/dev/null)
-ANDROID_MEDIA_ENV = SYSTEM_DEPS_LINK=static PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_LIBDIR="$(ANDROID_MEDIA_PKG_CONFIG)" PKG_CONFIG_PATH="$(ANDROID_MEDIA_PKG_CONFIG)" OPENCV_DISABLE_PROBES=cmake,vcpkg_cmake,vcpkg BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(ANDROID_TOOLCHAIN)/sysroot --target=$(ANDROID_TARGET)33"
+ANDROID_MEDIA_ENV = SYSTEM_DEPS_LINK=static PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_LIBDIR="$(ANDROID_MEDIA_PKG_CONFIG)" PKG_CONFIG_PATH="$(ANDROID_MEDIA_PKG_CONFIG)" BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$(ANDROID_TOOLCHAIN)/sysroot --target=$(ANDROID_TARGET)33"
 .PHONY: android-media-check
 android-media-check: android-media-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-video-decoder --target $(ANDROID_TARGET)
 
 .PHONY: android-text-deps
-android-text-deps: android-opencv-deps
+android-text-deps: android-media-deps
 	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --text
 
 .PHONY: android-text-check
@@ -816,15 +823,11 @@ android-text-check: android-text-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-fonts --features fontconfig --target $(ANDROID_TARGET) --lib -- -D warnings
 
 .PHONY: android-visual-check
-android-visual-check: android-media-deps android-text-deps android-opencv-deps
+android-visual-check: android-media-deps android-text-deps android-l1-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) check -p shrimply-visual-core --target $(ANDROID_TARGET)
 
-.PHONY: android-opencv-deps
-android-opencv-deps: android-media-deps android-l1-deps
-	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --opencv
-
 .PHONY: android-pdf-deps android-preview-check
-android-pdf-deps: android-text-deps android-opencv-deps
+android-pdf-deps: android-text-deps android-l1-deps
 	python3 packaging/android-native.py --ndk "$(ANDROID_NDK_HOME)" --cache "$(CARGO_TARGET_DIR)/android-native" --abi $(ANDROID_ABI) --profile $(ANDROID_PROFILE) --jobs $(or $(CARGO_BUILD_JOBS),4) --pdf
 
 .PHONY: android-l1-deps
@@ -851,5 +854,5 @@ android-audio-check: android-media-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-audio-engine --features ffmpeg-next/static --target $(ANDROID_TARGET)
 
 .PHONY: android-timeline-check
-android-timeline-check: android-opencv-deps
+android-timeline-check: android-media-deps android-l1-deps
 	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) $(CARGO) check -p shrimply-timeline-skia -p shrimply-video-decoder --no-default-features --target $(ANDROID_TARGET)
