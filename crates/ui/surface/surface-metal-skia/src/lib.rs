@@ -3,7 +3,7 @@
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_metal::{
     MTLCommandBuffer, MTLCommandQueue, MTLCreateSystemDefaultDevice, MTLDevice, MTLDrawable,
-    MTLPixelFormat,
+    MTLPixelFormat, MTLTexture,
 };
 use objc2_quartz_core::{CAMetalDrawable, CAMetalLayer};
 use skia_safe::{
