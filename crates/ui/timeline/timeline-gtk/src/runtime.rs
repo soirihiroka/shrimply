@@ -7,7 +7,7 @@ pub(super) struct TimelineRuntime {
     pub(super) renderer: TimelineRenderer,
     pub(super) animation_tick_active: bool,
     pub(super) screen_recording: Option<video_recording::ScreenRecording>,
-    pub(super) active_context_menu: Option<gtk::Popover>,
+    pub(super) active_context_menu: Option<crate::context_menu::PresentedMenu>,
 }
 impl TimelineRuntime {
     pub(super) fn new(

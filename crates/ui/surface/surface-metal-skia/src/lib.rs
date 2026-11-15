@@ -21,6 +21,7 @@ pub struct Renderer {
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     layer: Retained<CAMetalLayer>,
     last_slow_log: Option<Instant>,
+    presented_geometry: Option<(u64, u64, u64)>,
 }
 
 impl Default for Renderer {
@@ -47,6 +48,7 @@ impl Default for Renderer {
             queue,
             layer,
             last_slow_log: None,
+            presented_geometry: None,
         }
     }
 }
@@ -74,6 +76,18 @@ impl Renderer {
             };
             let size = self.layer.drawableSize();
             let texture = drawable.texture();
+            if texture.width() != size.width as usize || texture.height() != size.height as usize {
+                return None;
+            }
+            let geometry = (
+                size.width.to_bits(),
+                size.height.to_bits(),
+                self.layer.contentsScale().to_bits(),
+            );
+            let resized = self
+                .presented_geometry
+                .is_some_and(|previous| previous != geometry);
+            self.layer.setPresentsWithTransaction(resized);
             // The drawable retains its texture until Skia's work has been submitted.
             let texture =
                 unsafe { mtl::TextureInfo::new(Retained::as_ptr(&texture) as mtl::Handle) };
@@ -100,8 +114,17 @@ impl Renderer {
                 .commandBuffer()
                 .expect("create Metal presentation command");
             let drawable: Retained<ProtocolObject<dyn MTLDrawable>> = (&drawable).into();
-            command.presentDrawable(&drawable);
-            command.commit();
+            if resized {
+                // Keep the new drawable and native layout in the same CA transaction.
+                // Scheduling waits for queue submission, not GPU completion.
+                command.commit();
+                command.waitUntilScheduled();
+                drawable.present();
+            } else {
+                command.presentDrawable(&drawable);
+                command.commit();
+            }
+            self.presented_geometry = Some(geometry);
             Some((
                 acquired,
                 wrapped,

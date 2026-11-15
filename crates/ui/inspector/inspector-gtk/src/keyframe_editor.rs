@@ -1,9 +1,9 @@
 use std::{cell::RefCell, rc::Rc};
 
+use gtk::gio;
 use gtk::prelude::*;
-use gtk::{gdk, gio};
 use shrimply_components_gtk::tr;
-use shrimply_components_gtk::ui::{FrameGraph, SearchMenuItem, matches_query, searchable_popover};
+use shrimply_components_gtk::ui::{FrameGraph, SearchMenuItem, matches_query, searchable_menu_at};
 use shrimply_editor_state::preferences;
 use shrimply_inspector_core::keyframe_graph::{
     FrameGraphAction, FrameGraphComponentAction, FrameGraphState,
@@ -16,7 +16,7 @@ use uuid::Uuid;
 use super::{InspectorContext, keyframe_model};
 use crate::player_state;
 
-pub(crate) use super::keyframe_graph::{KeyframeGraph, KeyframePoint, RawSegment, SpeedSegment};
+pub(crate) use super::keyframe_graph::{KeyframeGraph, SpeedSegment};
 pub(crate) use keyframe_model::project_frame_step;
 
 thread_local! {
@@ -63,11 +63,14 @@ pub(crate) struct TextInterpolationActions {
 }
 
 struct GraphActionContext {
+    controller: shrimply_inspector_core::InspectorController,
+    target: shrimply_inspector_core::InspectorTarget,
+    edit: RefCell<shrimply_inspector_core::InspectorGraphEdit>,
     actions: Rc<KeyframeEditorActions>,
     project: Rc<RefCell<Project>>,
     selected_item: Option<ItemAddress>,
     select_time: Rc<dyn Fn(Time)>,
-    graph_area: Rc<RefCell<Option<gtk::GLArea>>>,
+    graph_area: Rc<RefCell<Option<gtk::glib::WeakRef<gtk::GLArea>>>>,
 }
 
 pub(crate) fn build(
@@ -104,6 +107,9 @@ pub(crate) fn build(
     );
 
     let action_context = Rc::new(GraphActionContext {
+        controller: context.inspector_core.clone(),
+        target: context.inspector_core.target(),
+        edit: RefCell::new(Default::default()),
         actions: Rc::new(actions),
         project: project.clone(),
         selected_item: selected_item.clone(),
@@ -116,7 +122,7 @@ pub(crate) fn build(
     });
     action_context
         .graph_area
-        .replace(Some(frame_graph.graph_area().clone()));
+        .replace(Some(frame_graph.graph_area().downgrade()));
 
     let update_graph = {
         let frame_graph = frame_graph.clone();
@@ -245,7 +251,28 @@ fn select_time(context: &InspectorContext) -> Rc<dyn Fn(Time)> {
 
 fn dispatch_action(context: &GraphActionContext, action: FrameGraphComponentAction) {
     assert_eq!(action.component, 0, "production keyframe graph is scalar");
-    match action.action {
+    context
+        .edit
+        .borrow_mut()
+        .apply(
+            &context.controller,
+            &context.target,
+            action.action,
+            |action| {
+                dispatch_graph_action(context, action);
+                Ok(())
+            },
+        )
+        .unwrap_or_else(|error| panic!("Keyframe graph edit failed: {error}"));
+}
+
+fn dispatch_graph_action(context: &GraphActionContext, action: FrameGraphAction) {
+    match action {
+        FrameGraphAction::EditStarted
+        | FrameGraphAction::EditCancelled
+        | FrameGraphAction::HistoryRequested { .. } => {
+            unreachable!("graph session handles lifecycle")
+        }
         FrameGraphAction::PlayheadChanged(time) => (context.select_time)(time),
         FrameGraphAction::KeysMoved(moves) => {
             for key_move in moves {
@@ -296,8 +323,13 @@ fn dispatch_action(context: &GraphActionContext, action: FrameGraphComponentActi
                 set(owner_id, interpolation);
             }
         }
-        FrameGraphAction::TextInterpolationRequested { owner_id, x, y } => {
-            show_text_interpolation(context, owner_id, x, y);
+        FrameGraphAction::TextInterpolationRequested {
+            owner_id,
+            x,
+            y,
+            touch,
+        } => {
+            show_text_interpolation(context, owner_id, x, y, touch);
         }
         FrameGraphAction::KeysChanged(_) | FrameGraphAction::KeysPasted(_) => {
             panic!("authoritative keyframe graph received a local-only mutation")
@@ -333,7 +365,12 @@ fn copy_keyframes(context: &GraphActionContext, selected: &[Time]) {
             count
         }
     };
-    let Some(area) = context.graph_area.borrow().clone() else {
+    let Some(area) = context
+        .graph_area
+        .borrow()
+        .as_ref()
+        .and_then(gtk::glib::WeakRef::upgrade)
+    else {
         return;
     };
     area.display()
@@ -364,7 +401,12 @@ fn paste_keyframes(context: &GraphActionContext, time: Time) {
             Rc::new(move || paste(time))
         }
     };
-    let Some(area) = context.graph_area.borrow().clone() else {
+    let Some(area) = context
+        .graph_area
+        .borrow()
+        .as_ref()
+        .and_then(gtk::glib::WeakRef::upgrade)
+    else {
         return;
     };
     area.display()
@@ -386,22 +428,33 @@ fn show_count_toast(area: &gtk::GLArea, count: usize, pasted: bool) {
     }
 }
 
-fn show_text_interpolation(context: &GraphActionContext, owner_id: Uuid, x: f64, y: f64) {
+fn show_text_interpolation(
+    context: &GraphActionContext,
+    owner_id: Uuid,
+    x: f64,
+    y: f64,
+    touch: bool,
+) {
     let Some(actions) = &context.actions.text_interpolation else {
         return;
     };
     let Some(selected) = (actions.get)(owner_id) else {
         return;
     };
-    let Some(area) = context.graph_area.borrow().clone() else {
+    let Some(area) = context
+        .graph_area
+        .borrow()
+        .as_ref()
+        .and_then(gtk::glib::WeakRef::upgrade)
+    else {
         return;
     };
     let set = actions.set.clone();
-    let popover = searchable_popover(
+    searchable_menu_at(
+        &area,
+        (x, y),
+        touch,
         tr!("Search interpolations").as_ref(),
-        280,
-        180,
-        240,
         move |query| {
             TextInterpolation::ALL
                 .into_iter()
@@ -415,8 +468,4 @@ fn show_text_interpolation(context: &GraphActionContext, owner_id: Uuid, x: f64,
                 .collect()
         },
     );
-    popover.set_parent(&area);
-    popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-    popover.connect_closed(|popover| popover.unparent());
-    popover.popup();
 }

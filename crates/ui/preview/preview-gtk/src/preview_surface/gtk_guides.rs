@@ -50,17 +50,17 @@ pub(super) fn finish(
     let mut project_state = project.borrow_mut();
     let state = state.borrow();
     let viewport = surface_viewport(area, &project_state, &state);
-    let changed = input
-        .borrow_mut()
-        .pointer_release(&mut project_state.preview_guides, viewport, position)
-        .expect("active guide input must finish a drag");
+    let changed =
+        input
+            .borrow_mut()
+            .pointer_release(&mut project_state.preview_guides, viewport, position);
     drop(project_state);
-    if changed {
+    if changed == Some(true) {
         guides::commit_edit(&project.borrow());
     }
     let mut controller = controller.borrow_mut();
     controller.core.sequence = PointerSequence::Idle;
-    controller.core.context_invalidated = changed;
+    controller.core.context_invalidated |= changed != Some(false);
     drop(controller);
     area.set_cursor_from_name(None);
     area.queue_render();

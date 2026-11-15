@@ -103,13 +103,14 @@ impl Server<'_> {
                     }
                 }
             }
+            self.workspace.snippet_support = params["capabilities"]["textDocument"]["completion"]["completionItem"]["snippetSupport"].as_bool().unwrap_or(false);
             self.initialized = true;
             return vec![response(
                 id,
                 json!({"serverInfo":{"name":"sanim-lsp","version":env!("CARGO_PKG_VERSION")},"capabilities":{
                     "positionEncoding":"utf-16","textDocumentSync":{"openClose":true,"change":2,"save":{"includeText":true}},
                     "experimental":{"sanimRuntime":self.runtime.is_some()},
-                    "completionProvider":{"triggerCharacters":[".","-"]},"hoverProvider":true,"definitionProvider":true,
+                    "completionProvider":{"triggerCharacters":[".","-","<","/"," ","=","\""]},"hoverProvider":true,"definitionProvider":true,
                 "signatureHelpProvider":{"triggerCharacters":["(",","]},"documentSymbolProvider":true,
                 "inlayHintProvider":true,
                 "documentFormattingProvider":true,
@@ -251,12 +252,21 @@ impl Server<'_> {
                         .as_str()
                         .ok_or("request requires textDocument.uri")?;
                     match method {
-                        "textDocument/completion" => {
-                            features::completion(&self.workspace, uri, &params["position"])
-                        }
+                        "textDocument/completion" => features::completion(
+                            &self.workspace,
+                            uri,
+                            &params["position"],
+                            params["context"]["triggerCharacter"].as_str(),
+                        ),
                         "textDocument/hover" => {
                             let mut hover =
                                 features::hover(&self.workspace, uri, &params["position"])?;
+                            features::animation_hover(
+                                &mut self.workspace,
+                                uri,
+                                &params["position"],
+                                &mut hover,
+                            );
                             if let Some(query) = self.runtime.as_mut() {
                                 runtime::hover(
                                     &self.workspace,
@@ -275,7 +285,7 @@ impl Server<'_> {
                             features::signature(&self.workspace, uri, &params["position"])
                         }
                         "textDocument/inlayHint" => {
-                            features::inlay_hints(&self.workspace, uri, &params["range"])
+                            features::inlay_hints(&mut self.workspace, uri, &params["range"])
                         }
                         "textDocument/formatting" => {
                             features::formatting(&self.workspace, uri, &params["options"])

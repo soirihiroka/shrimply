@@ -25,14 +25,22 @@ impl AudioRecording {
         project: &Project,
         player: &SharedPlayerState,
     ) -> Result<Self, String> {
+        Self::start_at(key, project, player, player_state::current_time(player))
+    }
+
+    pub fn start_at(
+        key: TrackKey,
+        project: &Project,
+        player: &SharedPlayerState,
+        position: Time,
+    ) -> Result<Self, String> {
         if project.audio_tracks.get(key.track_index).is_none() {
             return Err("Audio track no longer exists".into());
         }
-        let start = player_state::snapshot(player)
-            .position
-            .snapped(project.frame_step());
+        let start = position.snapped(project.frame_step());
         let recording = shrimply_audio_engine::recording::MicRecording::start()?;
         ensure_duration(player, start);
+        player_state::seek_time(player, start);
         player_state::set_playing(player, true);
         Ok(Self {
             key,
@@ -189,6 +197,17 @@ pub(crate) struct ActiveVideoRecording {
 
 impl Scene {
     pub fn toggle_video_recording(&mut self, key: TrackKey) -> Result<(), String> {
+        self.toggle_video_recording_at(key, player_state::current_time(&self.player))
+    }
+
+    pub fn toggle_video_recording_at(
+        &mut self,
+        key: TrackKey,
+        position: Time,
+    ) -> Result<(), String> {
+        if !self.recording_available.1 {
+            return Err("Screen recording is unavailable".into());
+        }
         if key.kind != TrackKind::Video {
             return Err("Screen recording requires a video track".into());
         }
@@ -197,9 +216,7 @@ impl Scene {
             return Ok(());
         }
         let project = self.project.borrow();
-        let start = player_state::snapshot(&self.player)
-            .position
-            .snapped(project.frame_step());
+        let start = position.snapped(project.frame_step());
         let track = project
             .video_tracks
             .get(key.track_index)

@@ -1,5 +1,4 @@
 use super::*;
-use gtk::gdk;
 use shrimply_components_gtk::ui::I18nWidgetExt;
 
 const TRACK_ADD_MENU_ICON_SIZE: i32 = 16;
@@ -7,8 +6,9 @@ const TRACK_ADD_MENU_ITEM_GAP: i32 = 12;
 
 #[derive(Clone)]
 struct TrackAddContext {
-    area: gtk::GLArea,
-    runtime: Rc<RefCell<TimelineRuntime>>,
+    area: gtk::glib::WeakRef<gtk::GLArea>,
+    runtime: std::rc::Weak<RefCell<TimelineRuntime>>,
+    position: crate::project::Time,
 }
 
 pub(super) fn timeline_sidebar(
@@ -153,31 +153,56 @@ pub(super) fn timeline_sidebar(
     toolbar
 }
 
-pub use shrimply_timeline_skia::track_controls::*;
-
-#[allow(clippy::too_many_arguments)]
 pub(super) fn show_track_add_menu(
     area: &gtk::GLArea,
-    project: &Rc<RefCell<Project>>,
     runtime: &Rc<RefCell<TimelineRuntime>>,
     request: TrackAddMenuRequest,
 ) {
     let TrackAddMenuRequest {
         key,
         import_targets,
+        position,
+        touch,
+        point,
     } = request;
-    let row = items::row_for_track(&project.borrow(), key.kind, key.track_index)
-        .expect("add menu track must exist");
-    let view = runtime.borrow().scene.view();
+    if let Some(existing) = runtime.borrow_mut().active_context_menu.take() {
+        existing.close();
+    }
     let context = TrackAddContext {
-        area: area.clone(),
-        runtime: runtime.clone(),
+        area: area.downgrade(),
+        runtime: Rc::downgrade(runtime),
+        position,
     };
-    let popover = gtk::Popover::builder()
-        .has_arrow(true)
-        .position(gtk::PositionType::Bottom)
-        .build();
     let menu = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let presented = if shrimply_components_gtk::layout::menu_uses_bottom_sheet(if touch {
+        "touch"
+    } else {
+        "pointer"
+    }) {
+        let dialog = crate::context_menu::bottom_sheet(area, &menu);
+        crate::context_menu::PresentedMenu::Sheet(dialog)
+    } else {
+        let parent = area.parent().expect("timeline GLArea must have a parent");
+        let point = area
+            .compute_point(&parent, &gtk::graphene::Point::new(point.x, point.y))
+            .expect("timeline coordinates must translate to its parent");
+        let popover = gtk::Popover::builder()
+            .has_arrow(true)
+            .position(gtk::PositionType::Bottom)
+            .halign(gtk::Align::Center)
+            .child(&menu)
+            .build();
+        popover.set_parent(&parent);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+            point.x() as i32,
+            point.y() as i32,
+            1,
+            1,
+        )));
+        shrimply_components_gtk::ui::unparent_on_close(&popover);
+        popover.popup();
+        crate::context_menu::PresentedMenu::Popover(popover)
+    };
     for entry in track_add_menu(key.kind) {
         let TrackAddMenuEntry::Action(action) = entry else {
             menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -187,35 +212,13 @@ pub(super) fn show_track_add_menu(
         let import_targets = import_targets.clone();
         append_add_menu_item_i18n(
             &menu,
-            &popover,
+            &presented,
             action.label(key.kind),
             action.icon(),
             move || activate_track_add_action(&context, key, &import_targets, *action),
         );
     }
-    popover.set_child(Some(&menu));
-
-    if let Some(existing) = runtime.borrow_mut().active_context_menu.take() {
-        existing.popdown();
-    }
-    let button_y = track_label_button_y(row_screen_y(row, view));
-    let parent = area.parent().expect("timeline GLArea must have a parent");
-    let point = area
-        .compute_point(
-            &parent,
-            &gtk::graphene::Point::new(TRACK_LABEL_ADD_X as f32, button_y as f32),
-        )
-        .expect("timeline coordinates must translate to its parent");
-    popover.set_halign(gtk::Align::Center);
-    popover.set_parent(&parent);
-    popover.set_pointing_to(Some(&gdk::Rectangle::new(
-        point.x() as i32,
-        point.y() as i32,
-        TRACK_LABEL_BUTTON_SIZE as i32,
-        TRACK_LABEL_BUTTON_SIZE as i32,
-    )));
-    popover.popup();
-    runtime.borrow_mut().active_context_menu = Some(popover);
+    runtime.borrow_mut().active_context_menu = Some(presented);
 }
 
 fn activate_track_add_action(
@@ -224,28 +227,31 @@ fn activate_track_add_action(
     import_targets: &[TrackKey],
     action: TrackAddAction,
 ) {
+    let (Some(area), Some(runtime)) = (context.area.upgrade(), context.runtime.upgrade()) else {
+        return;
+    };
     if action == TrackAddAction::Import {
         interaction::open_track_import_dialog(
-            &context.area,
-            &context.runtime,
+            &area,
+            &runtime,
             import_targets.to_vec(),
+            context.position,
         );
         return;
     }
-    let result = context
-        .runtime
+    let result = runtime
         .borrow_mut()
         .scene
-        .activate_track_add(key, action);
+        .activate_track_add_at(key, action, context.position);
     if let Err(error) = result {
-        interaction::show_error_dialog(&context.area, "Could not add timeline item", &error);
+        interaction::show_error_dialog(&area, "Could not add timeline item", &error);
     }
-    context.area.queue_render();
+    area.queue_render();
 }
 
 fn append_add_menu_item_i18n(
     menu: &gtk::Box,
-    popover: &gtk::Popover,
+    presented: &crate::context_menu::PresentedMenu,
     label: &str,
     icon: &str,
     activate: impl Fn() + 'static,
@@ -253,7 +259,7 @@ fn append_add_menu_item_i18n(
     let content = gtk::Box::new(gtk::Orientation::Horizontal, TRACK_ADD_MENU_ITEM_GAP);
     let image = gtk::Image::from_icon_name(icon);
     image.set_pixel_size(TRACK_ADD_MENU_ICON_SIZE);
-    let label = gtk::Label::new(Some(label));
+    let label = gtk::Label::new(Some(shrimply_components_gtk::i18n::text(label).as_ref()));
     label.set_hexpand(true);
     label.set_xalign(0.0);
     content.append(&image);
@@ -263,10 +269,7 @@ fn append_add_menu_item_i18n(
         .has_frame(false)
         .child(&content)
         .build();
-    let popover = popover.clone();
-    button.connect_clicked(move |_| {
-        popover.popdown();
-        activate();
-    });
+    presented.close_on_click(&button);
+    button.connect_clicked(move |_| activate());
     menu.append(&button);
 }

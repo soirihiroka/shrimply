@@ -71,6 +71,7 @@ pub struct Session {
     overrides: BTreeMap<String, Value>,
     json_overrides: Option<BTreeMap<String, serde_json::Value>>,
     last_error: Option<Diagnostic>,
+    preparation_error: Option<Diagnostic>,
     observed: BTreeMap<String, String>,
     previous_overrides: String,
     revision: u64,
@@ -84,6 +85,7 @@ impl Session {
             overrides: BTreeMap::new(),
             json_overrides: None,
             last_error: None,
+            preparation_error: None,
             observed: BTreeMap::new(),
             previous_overrides: String::new(),
             revision: 0,
@@ -92,6 +94,57 @@ impl Session {
     }
     pub fn current(&self) -> Option<&Arc<Prepared>> {
         self.current.as_ref()
+    }
+    /// Reflow the last valid immutable plan without touching source or evaluating code.
+    fn configuration_fingerprint(&self) -> String {
+        digest(
+            &serde_json::to_vec(&(
+                &self.overrides,
+                &self.json_overrides,
+                &self.engine.limits,
+                &self.engine.viewport,
+                self.engine.available_duration,
+                self.engine.preparation,
+            ))
+            .expect("serializable overrides"),
+        )
+    }
+    pub fn relayout(
+        &mut self,
+        viewport: &sanim_core::Viewport,
+        available: Option<sanim_core::Fraction>,
+    ) -> Reload {
+        self.engine.viewport = viewport.clone();
+        self.engine.available_duration = available;
+        self.previous_overrides = self.configuration_fingerprint();
+        let Some(current) = &self.current else {
+            return Reload::Unchanged;
+        };
+        match current.relayout(viewport, available) {
+            Ok(prepared) => {
+                self.last_error = self.preparation_error.clone();
+                let changed_elements = Elements::collect(&prepared.animation)
+                    .order
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+                self.revision += 1;
+                let prepared = Arc::new(prepared);
+                self.current = Some(prepared.clone());
+                Reload::Updated {
+                    revision: self.revision,
+                    prepared,
+                    changed_elements,
+                }
+            }
+            Err(diagnostic) => {
+                self.last_error = Some(diagnostic.clone());
+                Reload::Failed {
+                    diagnostic,
+                    last_good_revision: self.current.as_ref().map(|_| self.revision),
+                }
+            }
+        }
     }
     pub fn set(&mut self, key: impl Into<String>, value: Value) {
         self.json_overrides = None;
@@ -134,16 +187,7 @@ impl Session {
         sources: &dyn Sources,
         mut probe: Option<&mut dyn FnMut(sanim_core::Fraction)>,
     ) -> Reload {
-        let overrides = digest(
-            &serde_json::to_vec(&(
-                &self.overrides,
-                &self.json_overrides,
-                &self.engine.limits,
-                &self.engine.viewport,
-                self.engine.preparation,
-            ))
-            .expect("serializable overrides"),
-        );
+        let overrides = self.configuration_fingerprint();
         let mut changed = self.observed.is_empty()
             || self.font_environment_changed()
             || overrides != self.previous_overrides;
@@ -219,6 +263,7 @@ impl Session {
         match prepared {
             Ok(prepared) => {
                 self.last_error = None;
+                self.preparation_error = None;
                 self.observed = prepared.dependencies.clone();
                 let prepared = Arc::new(prepared);
                 if self
@@ -311,6 +356,7 @@ impl Session {
             }
             Err(diagnostic) => {
                 self.last_error = Some(diagnostic.clone());
+                self.preparation_error = Some(diagnostic.clone());
                 // Keep old dependencies too: a failed edit may stop before reading them.
                 self.observed.extend(self.engine.attempted.clone());
                 Reload::Failed {

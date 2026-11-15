@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 #[test]
 fn str_defaults_and_explicit_formats_share_the_bounded_native_formatter() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "let default_text=str(0.5)\nlet decimal=str(0.5,format=\"\")\nlet binary=str(42,format=\"08b\")\nlet fraction=str(0.125,format=\".1%\")\nlet quoted=str(\"é\",format=\"\",conversion=\"a\")");
+    sources.insert("main.sanim", "let default_text=str(0.5)\nlet decimal=str(0.5,format=\"\")\nlet binary=str(42,format=\"08b\")\nlet fraction=str(0.125,format=\".1%\")\nlet quoted=str(\"é\",format=\"\",conversion=\"a\")\nAnimation()");
     let prepared = Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
@@ -51,7 +51,7 @@ fn dynamic_formats_keep_runtime_validation_and_known_bad_conversions_fail_during
     let mut sources = MemorySources::default();
     sources.insert(
         "main.sanim",
-        "let spec=reflect(\".2f\")\nlet label=str(\"text\",format=spec)",
+        "let spec=reflect(\".2f\")\nlet label=str(\"text\",format=spec)\nAnimation()",
     );
     assert!(Engine::default().lint("main.sanim", &sources).is_ok());
     let error = Engine::default()
@@ -60,7 +60,7 @@ fn dynamic_formats_keep_runtime_validation_and_known_bad_conversions_fail_during
     assert!(error.message.contains("String"), "{error}");
     sources.insert(
         "main.sanim",
-        "let spec=reflect(\".2f\")\nlet label=str(42,format=spec,conversion=\"invalid\")",
+        "let spec=reflect(\".2f\")\nlet label=str(42,format=spec,conversion=\"invalid\")\nAnimation()",
     );
     assert_eq!(
         Engine::default()

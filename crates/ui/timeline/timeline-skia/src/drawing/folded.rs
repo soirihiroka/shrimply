@@ -138,6 +138,7 @@ pub fn draw_expanded_video_tracks(
                 draw.view,
                 selected,
             );
+            super::source_events::draw(draw, project, item, &address, y);
             if !matches!(
                 item.content,
                 VideoItemContent::Obj(_) | VideoItemContent::Gaussian(_)

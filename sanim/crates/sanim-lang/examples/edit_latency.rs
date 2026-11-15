@@ -87,8 +87,7 @@ fn main() -> Result<(), String> {
         .map(|index| format!("fn helper_{index}(value:Number):Number{{return value+{index}}}\n"))
         .collect::<String>();
     files.set("helpers.sanim", library);
-    let program =
-        "import \"helpers\" as helpers\nlet marker=Circle(radius=20pt)\nadd(marker)\nwait(1s)\n";
+    let program = "import \"helpers\" as helpers\nlet marker=Box(width=2*(20pt), height=2*(20pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(1s)\n";
     run(
         "imported-functions/tail",
         &mut files,
@@ -115,14 +114,18 @@ fn main() -> Result<(), String> {
         "data/early-color",
         &mut files,
         &[
-            format!("let tint=Color(\"blue3\")\n{data}add(Circle(fill=tint))\nwait(3s)"),
-            format!("let tint=Color(\"orange3\")\n{data}add(Circle(fill=tint))\nwait(3s)"),
+            format!(
+                "let tint=Color(\"blue3\")\n{data}Animation(children=[Box(fill=tint, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(3s)"
+            ),
+            format!(
+                "let tint=Color(\"orange3\")\n{data}Animation(children=[Box(fill=tint, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nwait(3s)"
+            ),
         ],
     )?;
 
     let scene = (0..200)
         .map(|i| {
-            format!("let item_{i}=Circle(radius=2pt,position=Vec2({i}pt,0pt))\nadd(item_{i})\n")
+            format!("let item_{i}=Box(width=4pt,height=4pt,radius=\"full\",position=[{i}pt, 0pt],fill=Color(\"light1\"),x_align=Align.Center,y_align=Align.Center)\nadd(item_{i})\n")
         })
         .collect::<String>();
     run(
@@ -134,8 +137,12 @@ fn main() -> Result<(), String> {
         "many-elements/late-radius",
         &mut files,
         &[
-            format!("{scene}let focus=Circle(radius=32pt)\nadd(focus)\nwait(3s)"),
-            format!("{scene}let focus=Circle(radius=48pt)\nadd(focus)\nwait(3s)"),
+            format!(
+                "{scene}let focus=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[focus])\nwait(3s)"
+            ),
+            format!(
+                "{scene}let focus=Box(width=2*(48pt), height=2*(48pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[focus])\nwait(3s)"
+            ),
         ],
     )?;
     run(

@@ -4,7 +4,7 @@ use sanim_render::{Options, Renderer};
 use std::collections::BTreeMap;
 fn animation(source: &str) -> Animation {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", source);
+    sources.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap()
@@ -16,7 +16,7 @@ fn point(x: f32, y: f32) -> [f32; 2] {
 #[test]
 fn topmost_visible_native_path_wins_and_keeps_ancestry() {
     let mut renderer = Renderer::default();
-    let scene = renderer.prepare(animation("let base=Rect(width=60pt,height=60pt)\nlet circle=Circle(radius=20pt)\nlet hidden=Rect(width=60pt,height=60pt,opacity=0)\nlet transparent=Circle(radius=30pt,fill=Color(\"transparent\"))\nlet gradient=Rect(width=60pt,height=60pt,fill=LinearGradient(from=Color(\"transparent\"),to=Color(\"transparent\")))\nlet panel=Box(children=[circle],width=40pt,height=40pt,x_align=Align.Center,y_align=Align.Center)\nadd(base)\nadd(panel)\nadd(hidden)\nadd(transparent)\nadd(gradient)\nwait(1s)")).unwrap();
+    let scene = renderer.prepare(animation("let base=Box(width=60pt, height=60pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet circle=Box(width=2*(20pt), height=2*(20pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet hidden=Box(width=60pt, height=60pt, opacity=0, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet transparent=Box(fill=Color(\"transparent\"), width=2*(30pt), height=2*(30pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nlet gradient=Box(width=60pt, height=60pt, fill=LinearGradient(from=Color(\"transparent\"),to=Color(\"transparent\")), x_align=Align.Center, y_align=Align.Center)\nlet panel=Box(children=[circle],width=40pt,height=40pt,x_align=Align.Center,y_align=Align.Center)\nAnimation(children=[base])\nAnimation(children=[panel])\nAnimation(children=[hidden])\nAnimation(children=[transparent])\nAnimation(children=[gradient])\nwait(1s)")).unwrap();
     let options = Options::for_animation(scene.animation());
     let center = renderer
         .pick(&scene, 0.into(), &options, point(0., 0.), 0.)
@@ -45,7 +45,7 @@ fn topmost_visible_native_path_wins_and_keeps_ancestry() {
 fn transform_resize_reveal_and_stroke_match_actual_rendered_coverage() {
     let mut renderer = Renderer::default();
     let mut animation = animation(
-        "let line=Line(end=Vec2(50pt,0pt),width=0.75pt,position=Vec2(-25pt,20pt))\nlet shape=Rect(width=50pt,height=30pt,radius=8pt,rotation=30deg)\nlet group=Box(children=[shape,line],rotation=20deg,position=Vec2(10pt,-8pt))\nCreate(group,duration=1s,ease=\"linear\")",
+        "let line=Line(end=[50pt, 0pt],width=0.75pt,position=[-25pt, 20pt])\nlet shape=Box(width=50pt, height=30pt, radius=8pt, rotation=30deg, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet group=Box(children=[shape,line],rotation=20deg,position=[10pt, -8pt])\ngroup.create(duration=1s, ease=\"linear\")",
     );
     animation.background = Color::parse("transparent").unwrap();
     let scene = renderer.prepare(animation).unwrap();
@@ -84,7 +84,7 @@ fn thin_lines_have_device_pixel_tolerance_and_no_invisible_future_hits() {
     let mut renderer = Renderer::default();
     let scene = renderer
         .prepare(animation(
-            "wait(1s)\nlet line=Line(end=Vec2(100pt,0pt),width=0.25pt)\nadd(line)\nwait(1s)",
+            "wait(1s)\nlet line=Line(end=[100pt, 0pt],width=0.25pt)\nAnimation(children=[line])\nwait(1s)",
         ))
         .unwrap();
     let options = Options::for_animation(scene.animation());
@@ -114,7 +114,7 @@ fn reverse_seek_and_hot_patch_retain_unaffected_prefix_state() {
     let mut renderer = Renderer::default();
     let source = |radius| {
         format!(
-            "let first=Circle(radius=10pt)\nadd(first)\nwait(1s)\nlet second=Circle(radius={radius}pt,position=Vec2(50pt,0pt))\nadd(second)\nwait(1s)"
+            "let first=Box(width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[first])\nwait(1s)\nlet second=Box(width=2*({radius}pt),height=2*({radius}pt),radius=\"full\",position=[50pt, 0pt],fill=Color(\"light1\"),x_align=Align.Center,y_align=Align.Center)\nAnimation(children=[second])\nwait(1s)"
         )
     };
     let old = renderer.prepare(animation(&source(10))).unwrap();
@@ -149,7 +149,7 @@ fn reverse_seek_and_hot_patch_retain_unaffected_prefix_state() {
 #[ignore]
 fn picking_benchmark() {
     for count in [1000, 10_000] {
-        let prototype = animation("add(Circle(radius=1pt))\nwait(1s)").layers[0]
+        let prototype = animation("Animation(children=[Box(width=2*(1pt), height=2*(1pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)").layers[0]
             .element
             .clone();
         let mut animation = Animation::for_viewport(&Default::default());
@@ -198,7 +198,7 @@ fn picking_benchmark() {
 #[test]
 fn nested_parent_relative_layout_tracks_external_canvas_resizing() {
     let mut renderer = Renderer::default();
-    let scene=renderer.prepare(animation("let marker=Circle(radius=10pt,position=Vec2(25%,0%))\nadd(Rect(width=50%,height=50%,fill=Color(\"transparent\"),children=[marker]))\nwait(1s)")).unwrap();
+    let scene=renderer.prepare(animation("let marker=Box(position_mode=\"absolute\",position=[25%, 0%], width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(width=50%, height=50%, fill=Color(\"transparent\"), children=[marker], x_align=Align.Center, y_align=Align.Center)])\nwait(1s)")).unwrap();
     let mut options = Options::for_animation(scene.animation());
     for width in [960u32, 1920] {
         options.width = width;

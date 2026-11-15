@@ -93,7 +93,7 @@ fn lint_is_static_and_exposes_unused_expensive_work() {
 #[test]
 fn profile_measures_requested_frames_and_warm_cache_reuse() {
     let (output, bytes) = run(
-        "add(Circle(radius=4pt))\nwait(1s)",
+        "add(Box(width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\nwait(1s)",
         &["profile", "--json", "--samples", "5"],
     );
     assert!(
@@ -161,7 +161,7 @@ fn malformed_profile_and_duplicate_options_have_argument_exit_status() {
 #[test]
 fn render_writes_actual_png() {
     let (output, png) = run(
-        "add(Circle(radius= 4pt))\n",
+        "add(Box(width=2*(4pt), height=2*(4pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\n",
         &["render", "--output", "OUTPUT"],
     );
     assert!(
@@ -199,7 +199,7 @@ fn invalid_override_fails() {
 #[test]
 fn bounded_watch_produces_initial_revision() {
     let (output, png) = run(
-        "add(Circle(radius= 2pt))\n",
+        "add(Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\n",
         &["watch", "--output", "OUTPUT", "--cycles", "1"],
     );
     assert!(
@@ -256,7 +256,7 @@ fn script_filename_with_spaces() {
 #[test]
 fn video_renders_complete_independent_h264_stream() {
     let (output, mp4) = run(
-        "let marker=Circle(radius=4pt,fill=Color(\"red\"))\nMoveTo(marker, Vec2(25%,0%), duration=300ms, ease=\"linear\")\n",
+        "let marker=Box(fill=Color(\"red\"), width=2*(4pt), height=2*(4pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([25%, 0%], duration=300ms, ease=\"linear\")\n",
         &["video", "--output", "OUTPUT"],
     );
     assert!(
@@ -373,7 +373,7 @@ fn event_watch_reports_repeated_failure_after_recovery_to_same_good_source() {
     }
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("main.sanim");
-    let good = "add(Circle(radius=2pt))\nwait(1s)\n";
+    let good = "add(Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n";
     std::fs::write(&source, good).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_sanim"))
         .arg("watch")
@@ -533,4 +533,64 @@ fn formatter_supports_stdin_and_validates_its_options() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn indefinite_sources_report_extent_and_require_an_export_length() {
+    let (output, _) = run(
+        r#"return Animation(children=[wait(100ms),wait(forever)],flow="sequence")"#,
+        &["duration", "--json"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["indefinite"], true);
+    assert_eq!(json["seconds"], "1/10");
+    let (output, _) = run("return wait(forever)", &["video", "--output", "OUTPUT"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--duration 10s"));
+    let (output, png) = run(
+        "return wait(forever)",
+        &["render", "--time", "60s", "--output", "OUTPUT"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!png.is_empty());
+}
+
+#[test]
+fn inspect_exports_compiled_ir_without_expanding_unused_builder_dags() {
+    use std::time::{Duration, Instant};
+    let mut source = String::from("let p0=wait(1ms)\n");
+    for depth in 1..=16 {
+        source.push_str(&format!(
+            "let p{depth}=Animation(children=[p{},p{}])\n",
+            depth - 1,
+            depth - 1
+        ));
+    }
+    source.push_str("wait(1s)\n");
+    let started = Instant::now();
+    let (output, _) = run(&source, &["inspect"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stdout.len() < 65536,
+        "inspect output follows the compiled scene, not unused builder DAG occurrences"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(value.get("animation").is_some());
+    assert!(value.get("symbols").is_some());
+    assert!(value.get("plan").is_none());
+    assert!(value.get("bindings").is_none());
 }

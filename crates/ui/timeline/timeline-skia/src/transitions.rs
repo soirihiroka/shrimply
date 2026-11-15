@@ -20,7 +20,7 @@ pub fn update_clip_transition_drag(
         let Some(timeline_cut) = project.sequence_time_to_timeline(&track, drag.cut) else {
             return;
         };
-        let cut_x = timeline_x()
+        let cut_x = timeline_x(view)
             + (timeline_cut.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
         let target = crate::math::time_at_x(view, cut_x + x - view.drag_start_x);
         let target = snap_repository.snap(target).unwrap_or(target);
@@ -188,8 +188,9 @@ pub fn update_transition_drag(
         return;
     };
     let start_x =
-        timeline_x() + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
-    let end_x = timeline_x() + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+        timeline_x(view) + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+    let end_x =
+        timeline_x(view) + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
     drag.remove = x <= start_x || x >= end_x;
     if drag.remove {
         return;

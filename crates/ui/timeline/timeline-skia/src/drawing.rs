@@ -3,6 +3,7 @@ use super::*;
 #[path = "drawing/items.rs"]
 mod clip_items;
 mod folded;
+mod source_events;
 use shrimply_timeline_paint_skia::icons;
 mod previews;
 use shrimply_timeline_paint_skia::track_controls;
@@ -95,7 +96,7 @@ pub fn draw_timeline(input: TimelineInput<'_, '_>) {
         vertical_scrollbar,
         software_cursor,
     } = input;
-    let timeline_x = timeline_x();
+    let timeline_x = timeline_x(view);
     let content_height = height.max(0.0);
     let visible_track_height = (height - RULER_HEIGHT).max(0.0);
     let track_clip = rect(

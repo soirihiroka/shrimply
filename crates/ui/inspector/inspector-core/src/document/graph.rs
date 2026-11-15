@@ -217,6 +217,11 @@ impl InspectorController {
                 Ok(())
             }
             FrameGraphAction::EditFinished => self.finish_live_inspector_edit(target),
+            FrameGraphAction::EditStarted
+            | FrameGraphAction::EditCancelled
+            | FrameGraphAction::HistoryRequested { .. } => {
+                Err("Graph lifecycle actions require an InspectorGraphEdit session".into())
+            }
             FrameGraphAction::KeysMoved(moves) => self
                 .move_control_graph_keys(target, control, &moves)
                 .map(|_| ()),

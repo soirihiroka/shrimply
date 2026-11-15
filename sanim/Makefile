@@ -4,6 +4,10 @@ CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
 
 .PHONY: headless-check
+.PHONY: event-boundaries-check
+event-boundaries-check:
+	$(CARGO) test -p sanim-core --test time_map
+	$(CARGO) test -p sanim-lang --no-default-features --test event_clocks
 headless-check:
 	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
 	$(CARGO) test -p sanim-data --no-default-features --no-fail-fast
@@ -401,14 +405,6 @@ wrapped-token-check:
 wrapped-token-bench:
 	$(CARGO) test --release -p sanim-data --lib long_wrapped_token_scaling_benchmark -- --ignored --nocapture
 
-.PHONY: symbolic-duration-check symbolic-duration-bench
-symbolic-duration-check:
-	$(CARGO) test -p sanim-core --test symbolic_duration
-	$(CARGO) test -p sanim-core --lib duration::
-	$(CARGO) clippy -p sanim-core --lib -- -D warnings
-symbolic-duration-bench:
-	$(CARGO) test --release -p sanim-core --test symbolic_duration symbolic_duration_resolution_benchmark -- --ignored --nocapture
-
 .PHONY: guarded-runtime-check
 guarded-runtime-check:
 	$(CARGO) test -p sanim-lang --test guarded_runtime
@@ -417,18 +413,94 @@ guarded-runtime-check:
 guarded-runtime-bench:
 	$(CARGO) test --release -p sanim-lang --test guarded_runtime guarded_call_benchmark -- --ignored --nocapture
 
-.PHONY: duration-effects-check
-duration-effects-check:
-	$(CARGO) test -p sanim-lang --test duration --test duration_scene_state --test symbolic_effects --test language --test literal_types
+.PHONY: anonymous-functions-check anonymous-functions-test anonymous-functions-bench
+anonymous-functions-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(MAKE) anonymous-functions-test
+anonymous-functions-test:
+	$(CARGO) test -p sanim-lang --no-default-features --test anonymous_functions
+anonymous-functions-bench:
+	$(CARGO) test -p sanim-lang --no-default-features --test anonymous_functions closure_reload_benchmark -- --ignored --nocapture
+
+.PHONY: pure-functions-check pure-functions-test pure-functions-bench
+pure-functions-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(MAKE) pure-functions-test
+pure-functions-test:
+	$(CARGO) test -p sanim-lang --no-default-features --test pure_functions
+pure-functions-bench:
+	$(CARGO) test -p sanim-lang --no-default-features --test pure_functions pure_call_benchmark -- --ignored --nocapture
+
+.PHONY: element-animation-check element-animation-bench
+element-animation-check:
+	$(CARGO) clippy -p sanim-lang --all-targets -- -D warnings
+	$(CARGO) test -p sanim-lang --test element_animation_methods --no-fail-fast
+element-animation-bench:
+	$(CARGO) test -p sanim-lang --test element_animation_methods method_reload_benchmark -- --ignored --nocapture
+
+.PHONY: boolean-assertions-check
+boolean-assertions-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(CARGO) test -p sanim-lang --no-default-features --test boolean_assertions --test pure_functions
+
+.PHONY: gradient-utilities-check gradient-utilities-bench
+gradient-utilities-check:
+	$(CARGO) test -p sanim-lang --test gradient_utilities --test markup --no-fail-fast
 	$(CARGO) clippy -p sanim-lang --lib -- -D warnings
+gradient-utilities-bench:
+	$(CARGO) test -p sanim-lang --test gradient_utilities gradient_utility_benchmark -- --ignored --nocapture
 
-.PHONY: duration-memory-check
-duration-memory-check:
-	$(CARGO) test -p sanim-core --test symbolic_duration
-	$(CARGO) test -p sanim-core --lib duration::
-	$(CARGO) test -p sanim-lang --lib effects::duration_memory_tests
-	$(CARGO) clippy -p sanim-core -p sanim-lang --lib -- -D warnings
+.PHONY: xml-completion-check xml-completion-bench
+xml-completion-check:
+	$(CARGO) clippy -p sanim-lsp --all-targets -- -D warnings
+	$(CARGO) test -p sanim-lsp --lib text::tests
+	$(CARGO) test -p sanim-lsp --test xml_completion
+xml-completion-bench:
+	$(CARGO) test -p sanim-lsp --lib indexed_offset_benchmark -- --ignored --nocapture
+	$(CARGO) test -p sanim-lsp --test xml_completion xml_completion_benchmark -- --ignored --nocapture
 
-.PHONY: duration-memory-bench
-duration-memory-bench:
-	$(CARGO) test --release -p sanim-core --test symbolic_duration duration_heap_accounting_benchmark -- --ignored --nocapture
+.PHONY: animation-plans-check animation-plans-bench
+animation-plans-check:
+	$(CARGO) clippy -p sanim-core -p sanim-lang --no-default-features --lib -- -D warnings
+	$(CARGO) test -p sanim-core --test animation_plan
+	$(CARGO) test -p sanim-lang --no-default-features --test animation_plans
+animation-plans-bench:
+	$(CARGO) test --release -p sanim-core --test animation_plan temporal_layout_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test animation_plans viewport_relayout_benchmark -- --ignored --nocapture
+
+.PHONY: animation-plan-lifecycle-check animation-plan-lifecycle-bench
+animation-plan-lifecycle-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib -- -D warnings
+	$(CARGO) test -p sanim-lang --no-default-features --test forever --test duration --test boolean_assertions
+	$(CARGO) test -p sanim-lang --no-default-features --test animation_plans
+	$(CARGO) check -p sanim-runtime -p sanim-cli
+	$(CARGO) test -p sanim-cli --test commands inspect_exports_compiled_ir_without_expanding_unused_builder_dags
+	$(CARGO) test -p sanim-lang --test forever reflow_rechecks_visual_contracts_with_the_canonical_native_text_resolver
+	$(CARGO) test -p sanim-lang --lib font_tests::changing_native_font_epoch_invalidates_retained_text_prefixes
+animation-plan-lifecycle-bench:
+	$(CARGO) test --release -p sanim-lang --no-default-features --test forever reflow_reuses_builder_and_bounds_retained_revisions -- --ignored --nocapture
+
+.PHONY: temporal-index-check
+temporal-index-check:
+	$(CARGO) clippy -p sanim-core --lib -- -D warnings
+	$(CARGO) test -p sanim-core --test time_map
+	$(CARGO) test -p sanim-runtime --test watching temporal_viewports_reuse_the_pure_plan_and_preserve_indefinite_sources
+.PHONY: temporal-index-bench
+temporal-index-bench:
+	$(CARGO) test --release -p sanim-core --test time_map compact_source_lookup_benchmark -- --ignored --nocapture
+
+.PHONY: runtime-event-check runtime-event-bench
+runtime-event-check:
+	$(CARGO) clippy -p sanim-runtime --all-targets -- -D warnings
+	$(CARGO) test -p sanim-runtime --lib
+	$(CARGO) test -p sanim-runtime --test watching
+runtime-event-bench:
+	$(CARGO) test --release -p sanim-runtime --lib pending_event_benchmark -- --ignored --nocapture
+
+.PHONY: fixture-migration-check
+fixture-migration-check:
+	$(CARGO) test -p sanim-lang --tests --no-fail-fast
+
+.PHONY: visual-fixture-check
+visual-fixture-check:
+	$(CARGO) test -p sanim-lang --test absolute_layout --test code --test range_edits --test literal_types --test media --test reactive_labels --test reactive_vectors --test scrolling --test signal_functions --no-fail-fast

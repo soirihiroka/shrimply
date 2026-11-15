@@ -93,10 +93,12 @@ impl Device {
             let native = unsafe { &*context.hwctx.cast::<sys::AVVulkanDeviceContext>() };
             let mut next = native.device_features.pNext.cast::<vk::BaseInStructure>();
             let mut shader_features = false;
+            let mut timeline_semaphores = false;
             let mut subgroup_size_control = false;
             while let Some(header) = unsafe { next.as_ref() } {
                 if header.s_type == vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_2_FEATURES {
                     let features = unsafe { &*next.cast::<vk::PhysicalDeviceVulkan12Features>() };
+                    timeline_semaphores = features.timeline_semaphore != 0;
                     shader_features = features.scalar_block_layout != 0
                         && features.buffer_device_address != 0
                         && features.storage_buffer8_bit_access != 0
@@ -180,6 +182,8 @@ impl Device {
                 limits: properties.limits,
                 compute_subgroup,
                 portable_indices: false,
+                word_storage: false,
+                timeline_semaphores,
                 api_version: vk::API_VERSION_1_3,
                 submission: Mutex::new(()),
                 pipeline_cache: Mutex::new(None),

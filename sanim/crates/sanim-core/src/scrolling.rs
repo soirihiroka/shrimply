@@ -12,7 +12,7 @@ pub fn validate(element: &Element, offset: Vec2) -> Result<(), String> {
         || offset.values.iter().any(|value| !value.is_finite())
     {
         return Err(
-            "scroll requires a finite Vec2 of pt offsets or percentages of the scroll range".into(),
+            "scroll requires a finite two-element List of pt offsets or percentages of the scroll range".into(),
         );
     }
     for (axis, overflow) in [element.layout.overflow_x, element.layout.overflow_y]
@@ -31,27 +31,14 @@ pub fn validate(element: &Element, offset: Vec2) -> Result<(), String> {
     Ok(())
 }
 
-/// Local viewport edges. Rect children use centered coordinates; other containers use top-left.
+/// Local viewport edges use the same top-left coordinate system as Box layout.
 pub fn viewport(element: &Element) -> Result<[f64; 4], String> {
-    let (width, height, origin) = match element.geometry.as_ref() {
-        Geometry::Rectangle { width, height, .. } => {
-            (math::to_f64(*width)?, math::to_f64(*height)?, true)
-        }
-        _ => (
-            dimension(element.layout.width, "width")?,
-            dimension(element.layout.height, "height")?,
-            false,
-        ),
-    };
+    let width = dimension(element.layout.width, "width")?;
+    let height = dimension(element.layout.height, "height")?;
     if width < 0. || height < 0. {
         return Err("scroll viewport dimensions must be nonnegative".into());
     }
-    let [left, top] = if origin {
-        [-width / 2., -height / 2.]
-    } else {
-        [0., 0.]
-    };
-    Ok([left, top, left + width, top + height])
+    Ok([0., 0., width, height])
 }
 
 fn dimension(value: Option<crate::Number>, name: &str) -> Result<f64, String> {

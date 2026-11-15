@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, hint::black_box, time::Instant};
 
 fn main() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim","let tint: Color = reflect(Color(\"red\"))\nfor i in range(1000) {\nlet marker = Circle(id= str(i), radius= 2pt, position= Vec2(0%, 0%), fill= tint)\nFadeIn(marker, duration=1ms, ease=\"linear\")\n}\n");
+    sources.insert("main.sanim","let tint: Color = reflect(Color(\"red\"))\nfor i in range(1000) {\nlet marker = Box(id=str(i), width=4pt, height=4pt, radius=\"full\", position=[0%, 0%], fill=tint)\nmarker.fade_in(duration=1ms, ease=\"linear\")\n}\n\nAnimation()");
     let mut engine = Engine::default();
     let start = Instant::now();
     let prepared = engine

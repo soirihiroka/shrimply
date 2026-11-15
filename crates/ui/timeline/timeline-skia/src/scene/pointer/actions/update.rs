@@ -26,26 +26,12 @@ pub(in crate::scene::pointer) fn update_pointer_action(
     match drag_mode {
         DragMode::None => {}
         DragMode::Seek => {
-            let position = Time::from_seconds_f64(
-                x_to_time(
-                    x,
-                    runtime.view.scroll_seconds,
-                    runtime.view.seconds_per_pixel,
-                )
-                .max(0.0),
-            );
+            let position = Time::from_seconds_f64(x_to_time(x, runtime.view).max(0.0));
             let position = runtime.snap_repository.snap(position).unwrap_or(position);
             runtime.pending_seek = Some(position);
         }
         DragMode::Select => {
-            let end = Time::from_seconds_f64(
-                x_to_time(
-                    x,
-                    runtime.view.scroll_seconds,
-                    runtime.view.seconds_per_pixel,
-                )
-                .max(0.0),
-            );
+            let end = Time::from_seconds_f64(x_to_time(x, runtime.view).max(0.0));
             let end = runtime.snap_repository.snap(end).unwrap_or(end);
             let end_y = content_y(runtime.view, y);
             if let Some(selection) = runtime.view.selection.as_mut() {

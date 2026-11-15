@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Surface
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.unit.DpOffset
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
 import java.util.concurrent.Executors
@@ -33,6 +34,7 @@ internal object NativeTimeline {
 internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoCloseable {
     val identity = java.util.UUID.randomUUID().toString()
     val snapshot = mutableStateOf(JSONObject())
+    var menuOrigin = DpOffset.Zero
     private val main = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
     private val closed = AtomicBoolean(false)
@@ -53,6 +55,9 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
             if (posted.compareAndSet(false, true)) main.post(update)
         }
     }))
+
+    suspend fun request(command: JSONObject): JSONObject = request(command.getString("op"),
+        *command.keys().asSequence().filter { it != "op" }.map { it to command.get(it) }.toList().toTypedArray())
 
     suspend fun request(operation: String, vararg arguments: Pair<String, Any>, descriptor: java.io.FileDescriptor? = null): JSONObject = suspendCancellableCoroutine { continuation ->
         val request = JSONObject().put("op", operation)
@@ -96,7 +101,7 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
         val closing = handle.getAndSet(0)
         if (closing == 0L) return
         // Surface release acknowledges on the Vulkan worker, independently of queued imports.
-        for (role in 0..1) NativeTimeline.surface(closing, role, null, 0, 0, 1f)
+        for (role in 0..2) NativeTimeline.surface(closing, role, null, 0, 0, 1f)
         executor.execute { NativeTimeline.destroy(closing) }
         executor.shutdown()
     }

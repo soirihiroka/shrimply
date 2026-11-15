@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use adw::prelude::{ActionRowExt, ComboRowExt, PreferencesRowExt};
+use adw::prelude::{ActionRowExt, PreferencesRowExt};
 use gtk::glib;
 use gtk::prelude::*;
 
@@ -39,7 +39,6 @@ use super::{
 
 mod blender;
 mod pdf;
-mod playback;
 mod source_parameters;
 
 const SVG_COLOR_DELIVERY_INTERVAL: Duration = Duration::from_millis(50);
@@ -104,11 +103,6 @@ impl Inspectable for VideoItem {
     fn inspect(&self, context: &InspectorContext) -> Vec<gtk::Widget> {
         let mut visual_items = Vec::new();
         let mut playback_items = Vec::new();
-        let static_visual = self.is_static_visual_media() || self.is_generated();
-        let stream_rows = match &self.content {
-            VideoItemContent::Media => video_stream_rows(self, context),
-            _ => Vec::new(),
-        };
         if let Some(settings) = &self.video_generation {
             let id = self.id;
             visual_items.push(
@@ -152,29 +146,7 @@ impl Inspectable for VideoItem {
                 .boxed(),
             );
         }
-        let info_items = vec![super::info::item(
-            context,
-            super::info::ItemInfo {
-                leading: stream_rows,
-                kind: self.title(),
-                natural_duration: (!static_visual).then_some(self.source_duration),
-                start: self.start,
-                end: self.end,
-                source_offset: Some(self.time_offset),
-                dimensions: Some(glam::UVec2::new(self.source_width, self.source_height)),
-                file: (!matches!(self.content, VideoItemContent::FoldedSequence(_)))
-                    .then(|| self.file.clone()),
-                source_metadata: if matches!(
-                    self.content,
-                    shrimply_project_document::project::VideoItemContent::Media
-                        | shrimply_project_document::project::VideoItemContent::Gif
-                ) {
-                    super::info::SourceMetadata::Video(self.track_id)
-                } else {
-                    super::info::SourceMetadata::None
-                },
-            },
-        )];
+        let info_items = vec![super::info::item(context)];
         if let Some(manim) = shrimply_inspector_core::manim_parameters::presentation(self) {
             visual_items.push(manim_item(manim.clone()));
             if let Some((card, reset)) =
@@ -185,19 +157,6 @@ impl Inspectable for VideoItem {
         }
         if let Some(card) = context.inspector_core.sanim_card(self) {
             visual_items.push(source_parameters::sanim_item(card));
-            let controller = context.inspector_core.clone();
-            let listener_scope = Rc::downgrade(&context.listener_scope);
-            let refresh = context.refresh.clone();
-            const REFLECTION_REFRESH_INTERVAL: Duration = Duration::from_millis(50);
-            glib::timeout_add_local(REFLECTION_REFRESH_INTERVAL, move || {
-                if listener_scope.upgrade().is_none() {
-                    return glib::ControlFlow::Break;
-                }
-                if controller.poll_sanim_parameters() {
-                    refresh();
-                }
-                glib::ControlFlow::Continue
-            });
         }
         if let VideoItemContent::Blender(blender) = &self.content {
             visual_items.push(blender::item(blender, self.file.clone(), context));
@@ -213,7 +172,13 @@ impl Inspectable for VideoItem {
                     visual_items.extend(super::paint::items(paint));
                 }
                 shrimply_project_document::project::VideoItemContent::Background(background) => {
-                    visual_items.push(super::background::item(background));
+                    visual_items.push(super::item::video_card(
+                        shrimply_inspector_core::background::card(
+                            background,
+                            context.inspector_core.snapshot().runtime,
+                        ),
+                        context,
+                    ));
                 }
                 shrimply_project_document::project::VideoItemContent::Obj(scene) => {
                     visual_items.extend(super::scene_3d::items(scene, context));
@@ -234,7 +199,10 @@ impl Inspectable for VideoItem {
                 | shrimply_project_document::project::VideoItemContent::LayeredImage(_)
                 | shrimply_project_document::project::VideoItemContent::FoldedSequence(_) => {
                     if !self.is_static_visual_media() {
-                        playback_items.push(playback::speed_item(self));
+                        playback_items.push(super::item::video_card(
+                            shrimply_inspector_core::video::playback::speed(self),
+                            context,
+                        ));
                     }
                     if matches!(
                         self.content,
@@ -292,7 +260,10 @@ impl Inspectable for VideoItem {
             self.content,
             VideoItemContent::Media | VideoItemContent::Gif | VideoItemContent::Background(_)
         ) {
-            playback_items.push(playback::frame_rate_item(self));
+            playback_items.push(super::item::video_card(
+                shrimply_inspector_core::video::playback::frame_rate(self),
+                context,
+            ));
         }
         match self.source_visual_kind() {
             shrimply_visual_modifiers::VisualKind::Vector => visual_items.push(
@@ -320,10 +291,16 @@ impl Inspectable for VideoItem {
                 | VideoItemContent::Gaussian(_)
                 | VideoItemContent::Background(_)
         ) {
-            playback_items.push(playback::motion_blur_item(self));
+            playback_items.push(super::item::video_card(
+                shrimply_inspector_core::video::playback::motion_blur(self),
+                context,
+            ));
         }
         if !matches!(self.content, VideoItemContent::Background(_)) {
-            playback_items.push(playback::repeat_item(self));
+            playback_items.push(super::item::video_card(
+                shrimply_inspector_core::video::playback::repeat(self),
+                context,
+            ));
         }
         let mut compositing_item = DefaultInspectorItem::new(
             "compositing",
@@ -1157,114 +1134,6 @@ fn next_video_generation_group(project: &Project) -> u64 {
         .max()
         .unwrap_or(0)
         .saturating_add(1)
-}
-
-fn video_stream_rows(item: &VideoItem, context: &InspectorContext) -> Vec<gtk::Widget> {
-    let stream_count = super::info::video_stream_count(&item.file) as u32;
-    if stream_count < 2 {
-        return Vec::new();
-    }
-    let labels = (0..stream_count)
-        .map(|stream| {
-            shrimply_components_gtk::i18n::text_args(
-                "Video stream %{number}",
-                &[("number", (stream + 1).to_string())],
-            )
-        })
-        .collect::<Vec<_>>();
-    let label_refs = labels.iter().map(String::as_str).collect::<Vec<_>>();
-    let stream = adw::ComboRow::builder()
-        .title(tr!("Video Stream").as_ref())
-        .model(&gtk::StringList::new(&label_refs))
-        .selected(item.track_id.min(stream_count - 1))
-        .build();
-
-    let mut alpha_options = vec![None];
-    alpha_options.extend(
-        (0..stream_count)
-            .filter(|candidate| *candidate != item.track_id)
-            .map(Some),
-    );
-    let alpha_labels = alpha_options
-        .iter()
-        .map(|stream| {
-            stream.map_or_else(
-                || tr!("None").into_owned(),
-                |stream| {
-                    shrimply_components_gtk::i18n::text_args(
-                        "Video stream %{number}",
-                        &[("number", (stream + 1).to_string())],
-                    )
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-    let alpha_label_refs = alpha_labels.iter().map(String::as_str).collect::<Vec<_>>();
-    let alpha = adw::ComboRow::builder()
-        .title(tr!("Alpha Mask Stream").as_ref())
-        .model(&gtk::StringList::new(&alpha_label_refs))
-        .selected(
-            alpha_options
-                .iter()
-                .position(|candidate| *candidate == item.alpha_mask_video)
-                .unwrap_or_default() as u32,
-        )
-        .build();
-
-    if let Some(key) = context.selected_item.clone() {
-        let project = context.project.clone();
-        let player_state = context.player_state.clone();
-        let refresh = context.refresh.clone();
-        let stream_key = key.clone();
-        stream.connect_selected_notify(move |stream| {
-            let track_id = stream.selected();
-            update_video_item(
-                &project,
-                &player_state,
-                stream_key.clone(),
-                "video-stream",
-                move |item| {
-                    if item.track_id == track_id {
-                        return false;
-                    }
-                    item.track_id = track_id;
-                    if item.alpha_mask_video == Some(track_id) {
-                        item.alpha_mask_video = None;
-                    }
-                    true
-                },
-            );
-            refresh();
-        });
-
-        let project = context.project.clone();
-        let player_state = context.player_state.clone();
-        let alpha_key = key;
-        alpha.connect_selected_notify(move |alpha| {
-            let alpha_mask_video = alpha_options
-                .get(alpha.selected() as usize)
-                .copied()
-                .flatten();
-            update_video_item(
-                &project,
-                &player_state,
-                alpha_key.clone(),
-                "video-alpha-mask-stream",
-                move |item| {
-                    if item.alpha_mask_video == alpha_mask_video {
-                        return false;
-                    }
-                    item.alpha_mask_video = alpha_mask_video;
-                    true
-                },
-            );
-        });
-    } else {
-        stream.set_sensitive(false);
-        alpha.set_sensitive(false);
-    }
-
-    vec![stream.upcast(), alpha.upcast()]
 }
 
 #[derive(Default)]

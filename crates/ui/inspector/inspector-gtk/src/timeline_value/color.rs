@@ -32,9 +32,6 @@ pub(crate) enum ColorAccess {
         id: Uuid,
         value_id: Uuid,
     },
-    Background {
-        value_id: Uuid,
-    },
     PaintPalette {
         value_id: Uuid,
     },
@@ -60,14 +57,6 @@ impl ColorAccess {
                     .effect,
                 value_id,
             ),
-            Self::Background { value_id } => {
-                let shrimply_project_document::project::VideoItemContent::Background(background) =
-                    &mut p.video_item_mut(&k)?.content
-                else {
-                    return None;
-                };
-                background.generator.color_mut(value_id)
-            }
             Self::PaintPalette { value_id } => {
                 let shrimply_project_document::project::VideoItemContent::Paint(paint) =
                     &mut p.video_item_mut(&k)?.content

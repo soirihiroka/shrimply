@@ -15,7 +15,10 @@ impl Arguments {
             .iter()
             .find(|f| f.name == name)
             .ok_or_else(|| format!("Unknown {} argument {name}", self.layout.name))?;
-        if field.boolean && field.size == size_of::<u32>() && bytes.len() == 1 {
+        if (field.boolean || (self.portable && field.unsigned))
+            && field.size == size_of::<u32>()
+            && bytes.len() == 1
+        {
             self.bytes[field.offset..field.offset + field.size]
                 .copy_from_slice(&u32::from(bytes[0]).to_ne_bytes());
             return Ok(self);

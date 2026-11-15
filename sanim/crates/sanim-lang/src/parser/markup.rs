@@ -84,22 +84,42 @@ fn dedent_literal(text: &str) -> String {
         .collect()
 }
 
-fn merge_utilities(
-    mut args: Vec<(Option<String>, Expr)>,
-    defaults: Vec<(String, Expr)>,
-) -> Vec<(Option<String>, Expr)> {
-    for (key, value) in defaults {
-        if !args
-            .iter()
-            .any(|(name, _)| name.as_deref() == Some(key.as_str()))
-        {
-            args.push((Some(key), value));
+impl Parser<'_> {
+    fn recover_markup_error(&mut self, error: Diagnostic) -> Result<(), Diagnostic> {
+        if self.markup.is_some() {
+            self.markup_diagnostic.get_or_insert(error);
+            Ok(())
+        } else {
+            Err(error)
         }
     }
-    args
-}
+    fn merge_utilities(
+        &mut self,
+        mut args: Vec<(Option<String>, Expr)>,
+        mut defaults: Vec<(String, Expr)>,
+        gradient: &crate::utilities::Gradient,
+    ) -> Result<Vec<(Option<String>, Expr)>, Diagnostic> {
+        match gradient.finish(args.iter().any(|(name, _)| name.as_deref() == Some("fill"))) {
+            Ok(Some(fill)) => {
+                defaults.retain(|(name, _)| name != "fill");
+                defaults.push(("fill".into(), fill));
+            }
+            Ok(None) => {}
+            Err((message, span)) => {
+                self.recover_markup_error(Diagnostic::new("S002", message, self.source, span))?
+            }
+        }
+        for (key, value) in defaults {
+            if !args
+                .iter()
+                .any(|(name, _)| name.as_deref() == Some(key.as_str()))
+            {
+                args.push((Some(key), value));
+            }
+        }
+        Ok(args)
+    }
 
-impl Parser<'_> {
     pub(super) fn markup_expression(&mut self) -> Result<Expr, Diagnostic> {
         self.depth += 1;
         if self.depth > 96 {
@@ -107,7 +127,13 @@ impl Parser<'_> {
                 "native markup nesting exceeds 96 elements; split the component into functions",
             ));
         }
+        if let Some(openings) = &self.markup {
+            self.markup_stack.push(openings.len());
+        }
         let result = self.markup_element();
+        if self.markup.is_some() {
+            self.markup_stack.pop();
+        }
         self.depth -= 1;
         result
     }
@@ -116,31 +142,46 @@ impl Parser<'_> {
         self.charge();
         self.highlight(self.offset, self.offset + 1, "punctuation");
         self.advance(1);
-        if !self.name_start() {
-            return Err(
-                self.error("expected a native element name after '<', such as Rect or Label")
-            );
-        }
         let mut tag_span = self.span();
-        let tag = self.name()?;
-        tag_span.end = tag_span.start + tag.len();
-        self.highlight(tag_span.start, tag_span.end, "tag");
-        let constructor = tag.as_str();
+        tag_span.end = tag_span.start;
+        let parent = self.markup_stack.iter().rev().nth(1).copied();
         let opening = self.markup.as_mut().map(|openings| {
             let index = openings.len();
             openings.push(super::MarkupOpening {
-                name: tag.clone(),
+                name: String::new(),
+                name_span: tag_span,
+                parent,
                 span: Span {
-                    start: tag_span.end,
                     end: usize::MAX,
                     ..tag_span
                 },
+                element_span: Span {
+                    end: usize::MAX,
+                    ..span
+                },
+                closing: None,
+                self_closing: false,
                 attributes: vec![],
             });
             index
         });
+        if !self.name_start() {
+            return Err(
+                self.error("expected a native element name after '<', such as Box or Label")
+            );
+        }
+        let tag = self.name()?;
+        tag_span.end = tag_span.start + tag.len();
+        self.highlight(tag_span.start, tag_span.end, "tag");
+        let constructor = tag.as_str();
+        if let (Some(index), Some(openings)) = (opening, &mut self.markup) {
+            openings[index].name = tag.clone();
+            openings[index].name_span = tag_span;
+            openings[index].span.start = tag_span.end;
+        }
         let mut args: Vec<(Option<String>, Expr)> = Vec::new();
         let mut utilities: Vec<(String, Expr)> = Vec::new();
+        let mut gradient = crate::utilities::Gradient::default();
         loop {
             self.trivia();
             self.skip_lines();
@@ -150,10 +191,12 @@ impl Parser<'_> {
                 span.end = self.offset;
                 if let (Some(index), Some(openings)) = (opening, &mut self.markup) {
                     openings[index].span.end = self.offset - 2;
+                    openings[index].element_span.end = self.offset;
+                    openings[index].self_closing = true;
                 }
                 return Ok(tagged_call(
                     constructor,
-                    merge_utilities(args, utilities),
+                    self.merge_utilities(args, utilities, &gradient)?,
                     span,
                     tag_span,
                 ));
@@ -212,10 +255,27 @@ impl Parser<'_> {
                 None
             };
             if !assigned && !boolean {
-                let lowered = crate::utilities::lower(constructor, &attribute, attribute_span)
-                    .map_err(|message| {
-                        Diagnostic::new("S002", message, self.source, attribute_span)
-                    })?;
+                let lowered = gradient
+                    .apply(constructor, &attribute, attribute_span)
+                    .and_then(|handled| {
+                        if handled {
+                            Ok(Vec::new())
+                        } else {
+                            crate::utilities::lower(constructor, &attribute, attribute_span)
+                        }
+                    });
+                let lowered = match lowered {
+                    Ok(lowered) => lowered,
+                    Err(message) => {
+                        self.recover_markup_error(Diagnostic::new(
+                            "S002",
+                            message,
+                            self.source,
+                            attribute_span,
+                        ))?;
+                        continue;
+                    }
+                };
                 for (key, value) in lowered {
                     utilities.retain(|(previous, _)| *previous != key);
                     utilities.push((key, value));
@@ -244,6 +304,15 @@ impl Parser<'_> {
                 if self.quoted() {
                     self.string_expression()?
                 } else if self.eat("{") {
+                    if let (Some(index), Some(attribute), Some(openings)) =
+                        (opening, attribute_index, &mut self.markup)
+                    {
+                        openings[index].attributes[attribute]
+                            .value
+                            .as_mut()
+                            .expect("attribute value metadata")
+                            .start = self.offset;
+                    }
                     let expression = self.expr(0)?;
                     self.expect("}")?;
                     expression
@@ -290,9 +359,25 @@ impl Parser<'_> {
         {
             let mut body_span = self.span();
             let closing = format!("</{tag}>");
-            let count = self.rest().find(&closing).ok_or_else(|| {
-                self.error(format!("unclosed <{tag}> literal body; expected {closing}"))
-            })?;
+            let count = if let Some(count) = self.rest().find(&closing) {
+                count
+            } else {
+                if let Some(start) = self.rest().rfind("</")
+                    && self.rest()[start + 2..]
+                        .chars()
+                        .all(|ch| ch.is_alphanumeric() || ch == '_')
+                    && let (Some(index), Some(openings)) = (opening, &mut self.markup)
+                {
+                    openings[index].closing = Some(Span {
+                        start: self.offset + start + 2,
+                        end: self.text.len(),
+                        ..span
+                    });
+                }
+                return Err(
+                    self.error(format!("unclosed <{tag}> literal body; expected {closing}"))
+                );
+            };
             let raw = &self.text[self.offset..self.offset + count];
             let body = if dedent {
                 dedent_literal(raw)
@@ -322,11 +407,19 @@ impl Parser<'_> {
                 self.offset + closing.len(),
                 "punctuation",
             );
+            if let (Some(index), Some(openings)) = (opening, &mut self.markup) {
+                openings[index].closing = Some(Span {
+                    start: self.offset + 2,
+                    end: self.offset + 2 + tag.len(),
+                    ..span
+                });
+                openings[index].element_span.end = self.offset + closing.len();
+            }
             self.advance(closing.len());
             span.end = self.offset;
             return Ok(tagged_call(
                 constructor,
-                merge_utilities(args, utilities),
+                self.merge_utilities(args, utilities, &gradient)?,
                 span,
                 tag_span,
             ));
@@ -349,7 +442,21 @@ impl Parser<'_> {
                 self.highlight(self.offset, self.offset + 2, "punctuation");
                 self.advance(2);
                 let start = self.offset;
+                if let (Some(index), Some(openings)) = (opening, &mut self.markup) {
+                    openings[index].closing = Some(Span {
+                        start,
+                        end: start,
+                        ..span
+                    });
+                }
                 let closing = self.name()?;
+                if let (Some(index), Some(openings)) = (opening, &mut self.markup) {
+                    openings[index]
+                        .closing
+                        .as_mut()
+                        .expect("closing tag metadata")
+                        .end = self.offset;
+                }
                 self.highlight(start, start + closing.len(), "tag");
                 if closing != tag {
                     return Err(self.error(format!(
@@ -361,6 +468,9 @@ impl Parser<'_> {
                 }
                 self.highlight(self.offset, self.offset + 1, "punctuation");
                 self.advance(1);
+                if let (Some(index), Some(openings)) = (opening, &mut self.markup) {
+                    openings[index].element_span.end = self.offset;
+                }
                 break;
             }
             if self.rest().starts_with('<') {
@@ -479,7 +589,7 @@ impl Parser<'_> {
         }
         Ok(tagged_call(
             constructor,
-            merge_utilities(args, utilities),
+            self.merge_utilities(args, utilities, &gradient)?,
             span,
             tag_span,
         ))

@@ -61,6 +61,7 @@ pub struct Request<'a> {
 #[derive(Default)]
 pub struct Cache {
     revision: Option<u64>,
+    source_revision: u64,
     scope: Option<SequenceScopeId>,
     ignored: HashSet<uuid::Uuid>,
     beats: Vec<Time>,
@@ -161,11 +162,13 @@ pub fn update(
     };
 
     if cache.revision != Some(revision)
+        || cache.source_revision != shrimply_project_document::source_events::revision()
         || cache.scope.as_ref() != Some(&scope)
         || cache.ignored != ignored
         || cache.beats != request.beats
     {
         cache.revision = Some(revision);
+        cache.source_revision = shrimply_project_document::source_events::revision();
         cache.scope = Some(scope.clone());
         cache.ignored = ignored;
         cache.beats = request.beats;
@@ -173,10 +176,45 @@ pub fn update(
             duration: project.duration(),
             beats: cache.beats.clone(),
         }];
+        let mut nearest_sources = Vec::<Box<dyn Fn(Time) -> Option<Time>>>::new();
         for track in SequenceTimeline::new(scope).tracks(project) {
             if let Some(items) = project.track(&track) {
                 for item in items.items() {
                     if !cache.ignored.contains(&item.id()) {
+                        if let ItemRef::Video(video) = &item
+                            && let Some(events) = shrimply_project_document::source_events::for_item(
+                                video,
+                                project.canvas_size,
+                            )
+                        {
+                            let timing = crate::project::GeneratedEventTiming::from(*video);
+                            // Sequence placement is affine; retain only the exact transform, not the project.
+                            if let (Some(origin), Some(one)) = (
+                                project.sequence_time_to_timeline(&track, Time::ZERO),
+                                project.sequence_time_to_timeline(&track, Time::from_seconds(1)),
+                            ) {
+                                let scale = one.signed_sub(origin).seconds;
+                                if scale != shrimply_math_core::Fraction::from(0) {
+                                    nearest_sources.push(Box::new(move |at| {
+                                        let local = Time {
+                                            seconds: (at.seconds - origin.seconds) / scale,
+                                        };
+                                        crate::project::generated_event_neighbors(
+                                            timing,
+                                            &events.index,
+                                            events.duration,
+                                            local,
+                                        )
+                                        .into_iter()
+                                        .flatten()
+                                        .map(|time| Time {
+                                            seconds: origin.seconds + time.seconds * scale,
+                                        })
+                                        .min_by_key(|target| (at.abs_diff(*target), *target))
+                                    }));
+                                }
+                            }
+                        }
                         snappables.push(TimelineSnappable::Item {
                             project,
                             track: track.clone(),
@@ -193,6 +231,7 @@ pub fn update(
             frame_step: project.frame_step(),
             distance: request.distance,
         });
+        repository.set_nearest_sources(nearest_sources);
     }
     repository.update_query(SnapQuery {
         candidates,

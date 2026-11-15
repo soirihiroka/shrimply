@@ -16,6 +16,8 @@ pub(crate) struct Context<'a> {
     pub retained_bytes: &'a mut usize,
     pub duration: Fraction,
     pub easing: Easing,
+    pub cycle: Option<math::cycle::Cycle>,
+    pub clip: Option<(Fraction, Fraction)>,
     pub list_edit: &'a mut Option<crate::lists::EditDelta>,
     /// Native algorithms reserve bounded work before entering their expensive loops.
     pub native_work: &'a mut u64,
@@ -68,30 +70,6 @@ pub(crate) fn fraction(
     )?))
 }
 
-pub(crate) fn vector(
-    name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    _context: Context<'_>,
-) -> Result<Value, String> {
-    let n = match name {
-        "Vec2" => 2,
-        "Vec3" => 3,
-        _ => 4,
-    };
-    let names = ["x", "y", "z", "w"];
-    let unit = names[..n]
-        .iter()
-        .find_map(|name| args.get(*name))
-        .map(Value::number)
-        .transpose()?
-        .map_or(Unit::Number, |n| n.unit);
-    let values = names[..n]
-        .iter()
-        .map(|name| number(args, name, Fraction::from(0)).and_then(math::to_f64))
-        .collect::<Result<Vec<_>, _>>()?;
-    Value::from_vector(values, unit)
-}
-
 pub(crate) fn matrix(
     _name: &str,
     args: &imbl::OrdMap<String, Value>,
@@ -117,23 +95,41 @@ pub(crate) fn matrix(
     Ok(Value::Matrix4(Box::new(matrix)))
 }
 
-pub(crate) fn dot(
-    _name: &str,
+pub(crate) fn list_math(
+    name: &str,
     args: &imbl::OrdMap<String, Value>,
-    _context: Context<'_>,
+    mut context: Context<'_>,
 ) -> Result<Value, String> {
-    let required = |name: &str| {
-        args.get(name)
-            .ok_or_else(|| format!("missing argument '{name}'"))
+    let function = math::linear::list_function(name).expect("registered numeric List function");
+    let values = ["a", "b"]
+        .into_iter()
+        .take(function.arity())
+        .map(|name| {
+            args.get(name)
+                .cloned()
+                .ok_or_else(|| format!("missing List argument '{name}'"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let work = if matches!(function, math::linear::ListFunction::Concat) {
+        let count = values[0]
+            .list()?
+            .len()
+            .checked_add(values[1].list()?.len())
+            .ok_or("concat length overflow")?;
+        if count > context.limits.data.max_values {
+            return Err("concat exceeds the List value limit".into());
+        }
+        count
+    } else {
+        values[0]
+            .list()?
+            .len()
+            .checked_mul(3)
+            .ok_or("numeric List work overflow")?
     };
-    let (a, _) = required("a")?.vector()?;
-    let (b, _) = required("b")?.vector()?;
-    Ok(Value::Number(Number {
-        value: math::from_f64(math::linear::dot(a, b)?)?,
-        unit: Unit::Number,
-    }))
+    context.charge_work(work)?;
+    function.evaluate(&values)
 }
-
 pub(crate) fn matrix_operation(
     name: &str,
     args: &imbl::OrdMap<String, Value>,
@@ -320,14 +316,6 @@ pub(crate) fn str(
         .map(|text| Value::String(text.into()))
 }
 
-pub(crate) fn unit(
-    _name: &str,
-    _args: &imbl::OrdMap<String, Value>,
-    _context: Context<'_>,
-) -> Result<Value, String> {
-    Ok(Value::Unit)
-}
-
 pub(crate) fn bg(
     _name: &str,
     args: &imbl::OrdMap<String, Value>,
@@ -337,34 +325,6 @@ pub(crate) fn bg(
         return Err("bg requires a Color".into());
     };
     context.animation.background = color.clone();
-    Ok(Value::Unit)
-}
-
-pub(crate) fn add(
-    _name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    context: Context<'_>,
-) -> Result<Value, String> {
-    let Context {
-        animation,
-        cursor,
-        limits,
-        ..
-    } = context;
-    let required = |name: &str| {
-        args.get(name)
-            .ok_or_else(|| format!("missing argument '{name}'"))
-    };
-    let Value::Element(element) = required("element")? else {
-        return Err("add requires Element".into());
-    };
-    animation.add(element.as_ref().clone(), *cursor)?;
-    if animation.element_count() > limits.max_elements {
-        return Err(format!(
-            "element count exceeds limit {}",
-            limits.max_elements
-        ));
-    }
     Ok(Value::Unit)
 }
 
@@ -494,28 +454,6 @@ pub(crate) fn make_element(
         "Circle" => Geometry::Circle {
             radius: positive(args, "radius", Fraction::from(32))?,
         },
-        "Rectangle" | "Rect" => Geometry::Rectangle {
-            width: positive(args, "width", Fraction::from(64))?,
-            height: positive(args, "height", Fraction::from(64))?,
-            radius: radius()?,
-            children: args
-                .get("children")
-                .map(|value| {
-                    value
-                        .list()?
-                        .iter()
-                        .map(|value| {
-                            if let Value::Element(element) = value {
-                                Ok(element.as_ref().clone())
-                            } else {
-                                Err("Rect children must be Elements".to_string())
-                            }
-                        })
-                        .collect::<Result<imbl::Vector<_>, _>>()
-                })
-                .transpose()?
-                .unwrap_or_default(),
-        },
         "Box" => Geometry::Box {
             children: args
                 .get("children")
@@ -604,6 +542,18 @@ pub(crate) fn make_element(
         }
         _ => return Err(format!("native '{name}' has no implementation")),
     };
+    make_element_with_geometry(name, args, geometry, module, identity, span)
+}
+
+/// All native elements share one layout/style initializer; media supplies its real geometry.
+pub(crate) fn make_element_with_geometry(
+    name: &str,
+    args: &imbl::OrdMap<String, Value>,
+    geometry: Geometry,
+    module: &str,
+    identity: &[String],
+    span: Span,
+) -> Result<Value, String> {
     let id = args
         .get("id")
         .map(Value::string)
@@ -620,7 +570,9 @@ pub(crate) fn make_element(
         .transpose()?
         .unwrap_or(Vec2::zero(Unit::Length));
     if !matches!(position.unit, Unit::Length | Unit::Percent) {
-        return Err("position Vec2 components require pt or % units".into());
+        return Err(
+            "position requires a two-element numeric List with matching pt or % units".into(),
+        );
     }
     let fill = match args.get("fill") {
         Some(value) => sanim_core::Paint::from_value(value)?,

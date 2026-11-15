@@ -16,6 +16,12 @@ FFMPEG_VERSION = "9.0.2"
 FFMPEG_SHA256 = "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
 OPUS_VERSION = "1.6.1"
 OPUS_SHA256 = "6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1"
+LAME_VERSION = "3.100"
+LAME_SHA256 = "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e"
+OGG_VERSION = "1.3.6"
+OGG_SHA256 = "5c8253428e181840cd20d41f3ca16557a9cc04bad4a3d04cce84808677fa1061"
+VORBIS_VERSION = "1.3.7"
+VORBIS_SHA256 = "b33cc4934322bcbf6efcbacf49e3ca01aadbea4114ec9589d1b1e9d20f72954b"
 RUBBERBAND_VERSION = "4.0.0"
 RUBBERBAND_SHA256 = "af050313ee63bc18b35b2e064e5dce05b276aaf6d1aa2b8a82ced1fe2f8028e9"
 PANGO_VERSION = "1.58.2"
@@ -167,6 +173,25 @@ cpp_link_args = ['-Wl,-z,max-page-size=16384']
     stamp.write_text(identity)
 
 
+def build_audio_encoders(args, sources, root, compiler):
+    prefix, toolchain = root / "install", compiler.parent
+    ogg = source(sources, f"libogg-{OGG_VERSION}", f"https://downloads.xiph.org/releases/ogg/libogg-{OGG_VERSION}.tar.xz", OGG_SHA256)
+    vorbis = source(sources, f"libvorbis-{VORBIS_VERSION}", f"https://downloads.xiph.org/releases/vorbis/libvorbis-{VORBIS_VERSION}.tar.xz", VORBIS_SHA256)
+    lame = source(sources, f"lame-{LAME_VERSION}", f"https://downloads.sourceforge.net/project/lame/lame/{LAME_VERSION}/lame-{LAME_VERSION}.tar.gz", LAME_SHA256)
+    cmake_build(args, root, "ogg", ogg, ["-DBUILD_TESTING=OFF", "-DINSTALL_DOCS=OFF"])
+    cmake_build(args, root, "vorbis", vorbis, [f"-DOGG_ROOT={prefix}", "-DVORBIS_LIBS=-lm"])
+    build = root / "lame-build"
+    build.mkdir(exist_ok=True)
+    environment = os.environ.copy()
+    environment.update(CC=str(compiler), AR=str(toolchain / "llvm-ar"), RANLIB=str(toolchain / "llvm-ranlib"), NM=str(toolchain / "llvm-nm"),
+        CFLAGS="-fPIC -g -O0" if args.profile == "debug" else "-fPIC -O3")
+    subprocess.run([str(lame / "configure"), f"--host={ABIS[args.abi][1]}", f"--prefix={prefix}",
+        "--disable-shared", "--enable-static", "--with-pic", "--disable-frontend", "--disable-decoder", "--disable-analyzer-hooks", "--disable-nasm"],
+        cwd=build, env=environment, check=True)
+    subprocess.run(["make", f"-j{args.jobs}"], cwd=build, env=environment, check=True)
+    subprocess.run(["make", "install"], cwd=build, env=environment, check=True)
+
+
 def build_opencv(args, sources, root):
     ndk, prefix = args.ndk.resolve(), root / "install"
     stamp = root / "opencv.sha256"
@@ -287,16 +312,18 @@ def main():
             build_pdf(args, sources, root)
             return
         build_rubberband(sources, root, prefix, compiler, toolchain, args.profile, ndk)
-        if stamp.exists() and stamp.read_text() == identity and (prefix / "lib/libavcodec.a").is_file():
+        if stamp.exists() and stamp.read_text() == identity and all(
+            (prefix / "lib" / name).is_file()
+            for name in ("libavcodec.a", "libopus.a", "libmp3lame.a", "libogg.a", "libvorbis.a", "libvorbisenc.a")
+        ):
             print(f"Android media dependencies are current: {prefix}", flush=True)
             return
-        sources = cache / "sources"
-        sources.mkdir(exist_ok=True)
         opus = source(sources, f"opus-{OPUS_VERSION}", f"https://downloads.xiph.org/releases/opus/opus-{OPUS_VERSION}.tar.gz", OPUS_SHA256)
         ffmpeg = source(sources, f"ffmpeg-{FFMPEG_VERSION}", f"https://ffmpeg.org/releases/ffmpeg-{FFMPEG_VERSION}.tar.xz", FFMPEG_SHA256)
         patch_source(ffmpeg, hardware_patch)
         patch_source(ffmpeg, encoder_patch)
         cmake_build(args, root, "opus", opus, ["-DOPUS_BUILD_TESTING=OFF", "-DOPUS_BUILD_PROGRAMS=OFF"])
+        build_audio_encoders(args, sources, root, compiler)
         ffmpeg_build = root / "ffmpeg"
         ffmpeg_build.mkdir(exist_ok=True)
         environment = os.environ.copy()
@@ -314,12 +341,13 @@ def main():
             f"--nm={toolchain}/llvm-nm", f"--ranlib={toolchain}/llvm-ranlib",
             f"--strip={toolchain}/llvm-strip", "--enable-pic", "--enable-static", "--disable-shared",
             "--disable-autodetect", "--disable-programs", "--disable-doc", "--disable-stripping",
-            "--enable-mediacodec", "--enable-jni", "--enable-libopus", "--enable-debug=2",
+            "--enable-mediacodec", "--enable-jni", "--enable-libopus", "--enable-libmp3lame", "--enable-libvorbis", "--enable-debug=2",
             "--pkg-config-flags=--static",
-            "--extra-ldflags=-Wl,-z,max-page-size=16384",
+            f"--extra-ldflags=-L{prefix}/lib -Wl,-z,max-page-size=16384",
+            f"--extra-cflags=-I{prefix}/include" + (" -O0 -g" if args.profile == "debug" else ""),
         ]
         if args.profile == "debug":
-            flags += ["--disable-optimizations", "--extra-cflags=-O0 -g"]
+            flags += ["--disable-optimizations"]
         subprocess.run(flags, cwd=ffmpeg_build, env=environment, check=True)
         subprocess.run(["make", f"-j{args.jobs}"], cwd=ffmpeg_build, env=environment, check=True)
         subprocess.run(["make", "install"], cwd=ffmpeg_build, env=environment, check=True)

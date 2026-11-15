@@ -1,11 +1,11 @@
 # A fixed native viewport; the source and its syntax tree remain shared while it scrolls.
-let title = <Label font_size={28pt} position={Vec2(0%, -37%)}>Scroll to the code that matters.</Label>
+let title = <Label font_size={28pt} position={[0%, -37%]}>Scroll to the code that matters.</Label>
 let code = <CodeView src="./code_view_sample.sanim" width={78%} height={55%}
-    font_size={20pt} position={Vec2(0%, 5%)} />
-let caption = <Label font_size={14pt} position={Vec2(0%, 40%)} fill="light4">Clipped native paths · bounded offsets · cached reverse playback</Label>
-add(title)
-add(code)
-add(caption)
+    font_size={20pt} position={[0%, 5%]} />
+let caption = <Label font_size={14pt} position={[0%, 40%]} fill="light4">Clipped native paths · bounded offsets · cached reverse playback</Label>
+Animation(children=[title])
+Animation(children=[code])
+Animation(children=[caption])
 wait(500ms)
 code.scroll_to(line=16, align="center", duration=1s)
 wait(500ms)

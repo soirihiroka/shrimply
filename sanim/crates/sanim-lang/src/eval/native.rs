@@ -10,47 +10,24 @@ impl Runtime<'_, '_> {
     ) -> Result<Value, Diagnostic> {
         self.list_edit = None;
         let builtin = prelude::builtin(name).expect("checked builtin");
-        let duration = builtin
-            .timing
-            .value(builtin.duration_argument(&arguments))
-            .map_err(|e| self.error("S304", e, span))?;
-        if duration > Fraction::from(0) && !self.root_active {
-            return Err(self.error(
-                "S115",
-                "imported modules cannot schedule animation while being imported",
-                span,
-            ));
+        let duration = Fraction::from(0);
+        let easing = Easing::default();
+        let mut value = self.native_inner(builtin, arguments, duration, easing, span)?;
+        if let Value::Animation(plan) = &mut value {
+            let binding = self
+                .named_constructor
+                .as_ref()
+                .filter(|(offset, _)| *offset == span.start)
+                .map(|(_, name)| name.as_str().into());
+            std::sync::Arc::make_mut(plan).origin = Some(sanim_core::plan::Origin {
+                checkpoint: self.root_statement,
+                location: self.source_location(span),
+                binding,
+            });
         }
-        let start = self.cursor;
-        let has_envelope = !matches!(builtin.execute, prelude::Execution::List)
-            || builtin.duration_argument(&arguments).is_some();
-        let easing = crate::timing::easing(builtin.easing_argument(&arguments))
-            .map_err(|error| self.error("S304", error, span))?;
-        let mut controls = [
-            builtin.duration_argument(&arguments),
-            builtin.easing_argument(&arguments),
-        ]
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            arguments
-                .iter()
-                .position(|(_, candidate)| std::ptr::eq(value, candidate))
-        })
-        .collect::<Vec<_>>();
-        controls.sort_unstable();
-        controls.dedup();
-        let mut arguments = arguments;
-        for index in controls.into_iter().rev() {
-            arguments.remove(index);
-        }
-        let requested = has_envelope.then_some(duration);
-        let value = self.native_inner(builtin, arguments, duration, easing, span)?;
         if builtin.result == Type::Element {
             self.record_element_source(&value, span)?;
         }
-        self.finish_call_duration(start, requested, self.cursor, span)?;
-        self.last_call.easing = easing;
         Ok(value)
     }
     fn native_inner(
@@ -62,8 +39,8 @@ impl Runtime<'_, '_> {
         span: Span,
     ) -> Result<Value, Diagnostic> {
         let name = builtin.name;
-        if builtin.schedule && !self.root_active {
-            return Err(self.error("S115","imported modules cannot schedule or assert while being imported; call a helper from the root script instead",span));
+        if builtin.state_effect && !self.root_active {
+            return Err(self.error("S115","imported modules cannot mutate external state or register visual assertions while being imported; call a helper from the root script instead",span));
         }
         let arguments = if name == "DataFrame.assign" {
             let mut arguments = arguments.into_iter();
@@ -214,10 +191,7 @@ impl Runtime<'_, '_> {
                 )
             };
         }
-        if self.duration_only && builtin.schedule {
-            return Ok(Value::Unit);
-        }
-        if matches!(name, "assert" | "check") {
+        if let prelude::Execution::Assertion { required } = builtin.execute {
             let condition = args
                 .remove("condition")
                 .ok_or_else(|| self.error("S305", "missing assertion condition", span))?;
@@ -227,8 +201,28 @@ impl Runtime<'_, '_> {
                 .transpose()
                 .map_err(|e| self.error("S305", e, span))?
                 .map(str::to_string);
+            let time = args
+                .get("at")
+                .map(|value| value.number().map(|number| number.value))
+                .transpose()
+                .and_then(|time| sanim_core::math::temporal::viewport(time.unwrap_or(self.cursor)))
+                .map_err(|message| self.error("S305", message, span))?;
             match condition {
                 Value::Bool(value) => {
+                    if args.contains_key("at") {
+                        return Err(self.error("S305","at applies to visual relationships; boolean assertions validate immediately",span));
+                    }
+                    if required {
+                        return if value {
+                            Ok(Value::Unit)
+                        } else {
+                            Err(self.error(
+                                "S306",
+                                message.unwrap_or_else(|| "boolean assertion must be true".into()),
+                                span,
+                            ))
+                        };
+                    }
                     let verification = Verification {
                         evidence: if value {
                             verify::Evidence::Proved
@@ -238,15 +232,12 @@ impl Runtime<'_, '_> {
                         message: message.unwrap_or_else(|| "boolean assertion must be true".into()),
                         time: Some(self.cursor),
                     };
-                    if !value && name == "assert" {
-                        return Err(self.error("S350", verification.message, span));
-                    }
                     self.checks.push_back(verification);
                 }
                 Value::Predicate(predicate) => self.assertions.push_back(Assertion {
                     predicate: predicate.as_ref().clone(),
-                    time: self.cursor,
-                    required: name == "assert",
+                    time,
+                    required,
                     module: self.module.clone(),
                     span,
                     message,
@@ -289,6 +280,8 @@ impl Runtime<'_, '_> {
                 retained_bytes: &mut self.retained_bytes,
                 duration,
                 easing,
+                cycle: None,
+                clip: None,
                 list_edit: &mut list_edit,
                 created: &mut created,
                 native_work: &mut native_work,
@@ -305,7 +298,7 @@ impl Runtime<'_, '_> {
                 self.retain_binding_value(&value, span)?;
                 self.record_element_source(&value, span)?;
             }
-            if builtin.schedule {
+            if builtin.state_effect {
                 self.check_elements(span)?;
             }
             self.list_edit = list_edit.map(|delta| crate::lists::EditReceipt {

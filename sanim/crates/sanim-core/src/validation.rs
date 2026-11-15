@@ -128,11 +128,6 @@ fn validate(
         {
             return Err("color channels must be in [0, 1]".into());
         }
-        (Type::Vector(..), vector @ (Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)))
-            if vector.vector()?.0.iter().any(|v| !v.is_finite()) =>
-        {
-            return Err("vector components must be finite".into());
-        }
         (Type::Enum { variants, .. }, Value::Variant { tag, fields, .. }) => {
             let types = variants.get(tag).ok_or("unknown enum variant")?;
             if types.len() != fields.len() {

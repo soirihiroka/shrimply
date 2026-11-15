@@ -1,64 +1,13 @@
+mod common;
+use common::*;
 use serde_json::{Value, json};
-use std::io::{BufRead, Read};
-
-fn session(messages: &[Value]) -> (u8, Vec<Value>) {
-    let mut input = Vec::new();
-    for message in messages {
-        let bytes = serde_json::to_vec(message).unwrap();
-        input.extend_from_slice(format!("Content-Length: {}\r\n\r\n", bytes.len()).as_bytes());
-        input.extend(bytes);
-    }
-    let mut output = Vec::new();
-    let status = sanim_lsp::run(std::io::Cursor::new(input), &mut output).unwrap();
-    let mut reader = std::io::Cursor::new(output);
-    let mut replies = Vec::new();
-    loop {
-        let mut header = String::new();
-        if reader.read_line(&mut header).unwrap() == 0 {
-            break;
-        }
-        let length = header
-            .strip_prefix("Content-Length: ")
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let mut empty = String::new();
-        reader.read_line(&mut empty).unwrap();
-        assert_eq!(empty, "\r\n");
-        let mut body = vec![0; length];
-        reader.read_exact(&mut body).unwrap();
-        replies.push(serde_json::from_slice(&body).unwrap());
-    }
-    (status, replies)
-}
-fn request(id: u64, method: &str, params: Value) -> Value {
-    json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
-}
-fn notification(method: &str, params: Value) -> Value {
-    json!({"jsonrpc":"2.0","method":method,"params":params})
-}
-fn initialize(root: &std::path::Path) -> Value {
-    request(
-        1,
-        "initialize",
-        json!({"rootUri":format!("file://{}",root.display())}),
-    )
-}
-fn finish(messages: &mut Vec<Value>) {
-    messages.push(request(999, "shutdown", Value::Null));
-    messages.push(notification("exit", Value::Null));
-}
-fn reply(replies: &[Value], id: u64) -> &Value {
-    replies.iter().find(|reply| reply["id"] == id).unwrap()
-}
 
 #[test]
 fn native_definitions_cover_functions_methods_constants_types_and_both_markup_tags() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
     let source = concat!(
-        "let marker=Circle(radius=2pt)\n",
+        "let marker=Box(width=2*(2pt), height=2*(2pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n",
         "let df=DataFrame([{n=1}])\n",
         "let rows=df[\"n\"].to_list()\n",
         "fn twice(value:Number):Number{return value*2}\n",
@@ -79,8 +28,8 @@ fn native_definitions_cover_functions_methods_constants_types_and_both_markup_ta
         ),
     ];
     let cases = [
-        (0, "Circle", "Circle"),
-        (0, "radius", "Circle"),
+        (0, "Box", "Box"),
+        (0, "width", "Box"),
         (2, "to_list", "DataFrame.to_list"),
         (4, "map", "List.map"),
         (5, "CodeView", "CodeView"),
@@ -244,14 +193,14 @@ fn inferred_type_hint_edits_round_trip_through_the_actual_checker() {
     let source = concat!(
         "let greeting=\"🚀\"\n",
         "let delay=250ms\n",
-        "let offset=Vec2(2pt,3pt)\n",
+        "let offset=[2pt, 3pt]\n",
         "let record={distance=4pt,enabled=true}\n",
         "let items=[1,2,3]\n",
         "mut phase=0deg\n",
         "sig wave=sin(phase)\n",
-        "fn live():sig Number{return wave}\n",
+        "fn<sig, ref> live():sig Number{return wave}\n",
         "let linked=live()\n",
-        "let xs=LinearScale(domain=Vec2(0,1),range=Vec2(0pt,100pt))\n",
+        "let xs=LinearScale(domain=[0, 1],range=[0pt, 100pt])\n",
         "let annotated:Number=7\n",
     );
     let mut messages = vec![
@@ -268,6 +217,16 @@ fn inferred_type_hint_edits_round_trip_through_the_actual_checker() {
     ];
     finish(&mut messages);
     let (_, replies) = session(&messages);
+    assert!(
+        !replies.iter().any(
+            |reply| reply["params"]["diagnostics"]
+                .as_array()
+                .is_some_and(|diagnostics| diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic["severity"] == 1))
+        ),
+        "{replies:?}"
+    );
     let hints = reply(&replies, 2)["result"].as_array().unwrap();
     assert!(!hints.iter().any(|hint| hint["position"]["line"] == 10));
     let mut edited = source.to_owned();
@@ -307,7 +266,7 @@ fn inferred_type_hint_edits_round_trip_through_the_actual_checker() {
         edited.insert_str(start + byte, edit["newText"].as_str().unwrap());
     }
     assert!(edited.contains("delay: Duration"), "{edited}");
-    assert!(edited.contains("offset: Vec2<Length>"), "{edited}");
+    assert!(edited.contains("offset: List<Length,2>"), "{edited}");
     assert!(edited.contains("linked: sig (Number)"), "{edited}");
     assert!(!edited.contains('…'));
     let mut sources = sanim_lang::MemorySources::default();
@@ -329,7 +288,7 @@ fn inferred_type_hint_edits_round_trip_through_the_actual_checker() {
 fn real_stdio_session_reports_types_completion_hover_definition_and_symbols() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "let size=10pt\nlet marker=Circle(radius=size)\nadd(marker)\nwait(1s)";
+    let source = "let size=10pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)";
     let mut messages = vec![
         initialize(dir.path()),
         notification("initialized", json!({})),
@@ -339,10 +298,18 @@ fn real_stdio_session_reports_types_completion_hover_definition_and_symbols() {
         ),
     ];
     for (id, method, character) in [
-        (2, "textDocument/completion", 15),
-        (3, "textDocument/hover", 15),
-        (4, "textDocument/definition", 26),
-        (6, "textDocument/signatureHelp", 26),
+        (2, "textDocument/completion", "let marker=Box".len()),
+        (3, "textDocument/hover", "let marker=Bo".len()),
+        (
+            4,
+            "textDocument/definition",
+            "let marker=Box(width=2*(si".len(),
+        ),
+        (
+            6,
+            "textDocument/signatureHelp",
+            "let marker=Box(width=".len(),
+        ),
     ] {
         messages.push(request(
             id,
@@ -376,7 +343,7 @@ fn real_stdio_session_reports_types_completion_hover_definition_and_symbols() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|item| item["label"] == "Circle")
+            .any(|item| item["label"] == "Box")
     );
     assert!(
         reply(&replies, 3)["result"]["contents"]["value"]
@@ -397,7 +364,7 @@ fn real_stdio_session_reports_types_completion_hover_definition_and_symbols() {
         reply(&replies, 6)["result"]["signatures"][0]["label"]
             .as_str()
             .unwrap()
-            .contains("Circle")
+            .contains("Box")
     );
     assert!(replies.iter().any(|reply| {
         reply["method"] == "textDocument/publishDiagnostics"
@@ -423,7 +390,7 @@ fn unsaved_import_edits_recheck_dependents_without_evaluating_data() {
     let main = format!("file://{}", dir.path().join("main.sanim").display());
     let helper = format!("file://{}", dir.path().join("helper.sanim").display());
     std::fs::write(dir.path().join("helper.sanim"), "let size=10pt").unwrap();
-    let source = "import \"helper.sanim\" as helper\nlet marker=Circle(radius=helper.size)\nadd(marker)\nwait(1s)";
+    let source = "import \"helper.sanim\" as helper\nlet marker=Box(width=2*(helper.size), height=2*(helper.size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -501,7 +468,7 @@ fn transport_rejects_ambiguous_or_truncated_frames() {
 fn semantic_tokens_and_inlays_use_utf16_types_and_exact_timeline_effects() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "let size=10pt\nlet title=\"😊 {size}\"\nlet marker=Circle(radius=size)\nadd(marker)\nwait(0.5s)\n";
+    let source = "let size=10pt\nlet title=\"😊 {size}\"\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(0.5s)\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -586,7 +553,7 @@ fn semantic_tokens_and_inlays_use_utf16_types_and_exact_timeline_effects() {
 fn inline_types_are_named_and_hover_shows_the_full_structure() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "let xs=LinearScale(domain=Vec2(0,1),range=Vec2(0pt,100pt))\nlet custom={value=1,enabled=true}\nfn current_scale():sig LinearScale {return xs}\nlet live_scale=current_scale()\n";
+    let source = "let xs=LinearScale(domain=[0, 1],range=[0pt, 100pt])\nlet custom={value=1,enabled=true}\nfn<sig> current_scale():sig LinearScale {return xs}\nlet live_scale=current_scale()\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -655,11 +622,11 @@ fn incremental_analysis_benchmark() {
         initialize(dir.path()),
         notification(
             "textDocument/didOpen",
-            json!({"textDocument":{"uri":uri,"version":1,"text":"let size=1pt\nlet marker=Circle(radius=size)\nadd(marker)\nwait(1s)"}}),
+            json!({"textDocument":{"uri":uri,"version":1,"text":"let size=1pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)"}}),
         ),
     ];
     for version in 2..=101 {
-        messages.push(notification("textDocument/didChange",json!({"textDocument":{"uri":uri,"version":version},"contentChanges":[{"text":format!("let size={version}pt\nlet marker=Circle(radius=size)\nadd(marker)\nwait(1s)")}]})));
+        messages.push(notification("textDocument/didChange",json!({"textDocument":{"uri":uri,"version":version},"contentChanges":[{"text":format!("let size={version}pt\nlet marker=Box(width=2*(size), height=2*(size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)")}]})));
     }
     finish(&mut messages);
     let started = std::time::Instant::now();
@@ -739,7 +706,7 @@ fn unsaved_symlink_uri_overlays_keep_client_uris_and_recheck_imports() {
     std::fs::write(root.join("helper.sanim"), "let size=10pt").unwrap();
     let main = format!("file://{}", alias.join("main.sanim").display()).replace(' ', "%20");
     let helper = format!("file://{}", alias.join("helper.sanim").display()).replace(' ', "%20");
-    let source = "import \"helper.sanim\" as helper\nlet marker=Circle(radius=helper.size)\nadd(marker)\nwait(1s)";
+    let source = "import \"helper.sanim\" as helper\nlet marker=Box(width=2*(helper.size), height=2*(helper.size), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nadd(marker)\nwait(1s)";
     let mut messages = vec![
         initialize(&root),
         notification(
@@ -799,8 +766,8 @@ fn unsaved_symlink_uri_overlays_keep_client_uris_and_recheck_imports() {
 fn unfinished_calls_keep_typed_prefix_completion_and_native_user_signatures() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let prefix = "let size=10pt\nfn delayed(period:Duration):Unit{wait(period)}\n";
-    let native = format!("{prefix}let marker=Circle(radius=");
+    let prefix = "let size=10pt\nfn<mut> delayed(period:Duration):Unit{wait(period)}\n";
+    let native = format!("{prefix}let marker=Box(width=");
     let user = format!("{prefix}delayed(");
     let mut messages = vec![
         initialize(dir.path()),
@@ -809,7 +776,7 @@ fn unfinished_calls_keep_typed_prefix_completion_and_native_user_signatures() {
             json!({"textDocument":{"uri":uri,"version":1,"text":native}}),
         ),
     ];
-    let position = json!({"line":2,"character":"let marker=Circle(radius=".len()});
+    let position = json!({"line":2,"character":"let marker=Box(width=".len()});
     messages.push(request(
         2,
         "textDocument/signatureHelp",
@@ -836,14 +803,14 @@ fn unfinished_calls_keep_typed_prefix_completion_and_native_user_signatures() {
         native["signatures"][0]["label"]
             .as_str()
             .unwrap()
-            .contains("Circle")
+            .contains("Box")
     );
     let active = native["activeParameter"].as_u64().unwrap() as usize;
     assert!(
         native["signatures"][0]["parameters"][active]["label"]
             .as_str()
             .unwrap()
-            .starts_with("radius")
+            .starts_with("width")
     );
     assert!(
         reply(&replies, 3)["result"]["items"]
@@ -1017,7 +984,7 @@ fn dataframe_and_series_methods_use_the_typed_native_registry() {
 fn a_type_error_keeps_earlier_typed_declarations_available_for_navigation() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "let size=12pt\nlet invalid=Circle(radius=false)\nlet value=size\n";
+    let source = "let size=12pt\nlet invalid=Box(width=2*(false), height=2*(false), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet value=size\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -1235,7 +1202,7 @@ fn markup_utility_completion_replaces_full_hyphenated_tokens_and_hover_resolves_
     assert_eq!(width["textEdit"]["range"]["end"], position("w-180.5", 7));
     let align = reply(&replies, 3)["result"]["items"].as_array().unwrap();
     assert!(align.iter().any(|item| item["label"] == "items-end"));
-    assert!(!align.iter().any(|item| item["label"] == "Circle"));
+    assert!(!align.iter().any(|item| item["label"] == "Box"));
     let hover = reply(&replies, 4)["result"]["contents"]["value"]
         .as_str()
         .unwrap();
@@ -1487,7 +1454,7 @@ fn closed_string_union_arguments_complete_from_checked_signatures_in_complete_an
             .find(|item| item["label"] == "\"center\"")
             .unwrap_or_else(|| panic!("{call}: {items:?}"));
         assert_eq!(center["textEdit"]["newText"], "\"center\"");
-        assert!(!items.iter().any(|item| item["label"] == "Circle"));
+        assert!(!items.iter().any(|item| item["label"] == "Box"));
     }
 }
 
@@ -1604,7 +1571,7 @@ fn code_ranges_expose_named_types_actions_and_timing_from_the_native_registry() 
 fn guarded_clauses_expose_all_signatures_and_their_own_parameter_types_and_durations() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "fn choose(mode:\"before\"):Number{wait(1s);return 1}\nfn choose(mode:\"after\"):Number{wait(2s);return 2}\nlet mode=reflect(\"before\")\nlet selected=choose(mode)\nlet _before=choose(\"before\")\nlet _after=choose(\"after\")\n";
+    let source = "fn<mut> choose(mode:\"before\"):Number{wait(1s);return 1}\nfn<mut> choose(mode:\"after\"):Number{wait(2s);return 2}\nlet mode=reflect(\"before\")\nlet selected=choose(mode)\nlet _before=choose(\"before\")\nlet _after=choose(\"after\")\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -1615,8 +1582,18 @@ fn guarded_clauses_expose_all_signatures_and_their_own_parameter_types_and_durat
     for (id, method, line, character) in [
         (2, "textDocument/signatureHelp", 4, 22),
         (3, "textDocument/completion", 4, 22),
-        (4, "textDocument/hover", 0, 11),
-        (5, "textDocument/hover", 1, 11),
+        (
+            4,
+            "textDocument/hover",
+            0,
+            source.lines().next().unwrap().find("mode").unwrap() + 1,
+        ),
+        (
+            5,
+            "textDocument/hover",
+            1,
+            source.lines().nth(1).unwrap().find("mode").unwrap() + 1,
+        ),
         (6, "textDocument/hover", 3, 15),
         (8, "textDocument/definition", 3, 15),
         (9, "textDocument/signatureHelp", 5, 21),
@@ -1751,7 +1728,7 @@ fn literal_completion_filters_other_known_arguments_without_executing_the_progra
 fn symbolic_duration_contracts_and_generic_list_results_reach_real_lsp_clients() {
     let dir = tempfile::tempdir().unwrap();
     let uri = format!("file://{}", dir.path().join("main.sanim").display());
-    let source = "fn beat(n:Number):Unit{repeat n {wait(250ms)}}\n@duration(n*250ms)\nfn contracted(n:Number):Unit{repeat n {wait(250ms)}}\nfn identity<T>(value:T):T{return value}\nlet values=[1,2,3]\nlet mapped=values.map(identity)\n";
+    let source = "fn<mut> beat(n:Number):Unit{repeat n {wait(250ms)}}\n@duration(n*250ms)\nfn<mut> contracted(n:Number):Unit{repeat n {wait(250ms)}}\nfn identity<T>(value:T):T{return value}\nlet values=[1,2,3]\nlet mapped=values.map(identity)\n";
     let mut messages = vec![
         initialize(dir.path()),
         notification(
@@ -1761,7 +1738,7 @@ fn symbolic_duration_contracts_and_generic_list_results_reach_real_lsp_clients()
         request(
             2,
             "textDocument/hover",
-            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":4}}),
+            json!({"textDocument":{"uri":uri},"position":{"line":0,"character":source.lines().next().unwrap().find("beat").unwrap()+1}}),
         ),
         request(
             3,
@@ -1897,4 +1874,50 @@ fn exact_list_cardinality_is_visible_in_hover_inference_generics_and_mutability(
         .flat_map(|reply| reply["params"]["diagnostics"].as_array().unwrap())
         .collect::<Vec<_>>();
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn anonymous_parameters_have_navigation_hover_and_signature_help() {
+    let dir = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", dir.path().join("main.sanim").display());
+    let source = "let offset=2\nlet double=fn(value:Number):Number {\n    return value*2+offset\n}\nlet answer=double(20)\n";
+    let mut messages = vec![
+        initialize(dir.path()),
+        notification(
+            "textDocument/didOpen",
+            json!({"textDocument":{"uri":uri,"version":1,"text":source}}),
+        ),
+        request(
+            2,
+            "textDocument/definition",
+            json!({"textDocument":{"uri":uri},"position":{"line":2,"character":12}}),
+        ),
+        request(
+            3,
+            "textDocument/hover",
+            json!({"textDocument":{"uri":uri},"position":{"line":2,"character":12}}),
+        ),
+        request(
+            5,
+            "textDocument/signatureHelp",
+            json!({"textDocument":{"uri":uri},"position":{"line":4,"character":20}}),
+        ),
+    ];
+    finish(&mut messages);
+    let (_, replies) = session(&messages);
+    assert_eq!(
+        reply(&replies, 2)["result"]["range"]["start"]["line"],
+        1,
+        "{replies:?}"
+    );
+    assert!(
+        reply(&replies, 3)["result"].to_string().contains("Number"),
+        "{replies:?}"
+    );
+    assert!(
+        reply(&replies, 5)["result"]
+            .to_string()
+            .contains("value: Number"),
+        "{replies:?}"
+    );
 }

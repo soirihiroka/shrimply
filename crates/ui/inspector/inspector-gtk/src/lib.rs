@@ -1,7 +1,6 @@
 mod alpha_mask;
 mod audio;
 mod audio_cache;
-mod background;
 mod benchmarking;
 mod camera_source;
 mod caption;
@@ -205,7 +204,6 @@ pub fn new(
         .hexpand(true)
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
-        .min_content_width(INSPECTOR_MIN_WIDTH)
         .build();
     let layout = gtk::Box::new(gtk::Orientation::Vertical, 0);
     layout.append(&category_bar);

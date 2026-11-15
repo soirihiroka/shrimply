@@ -13,6 +13,8 @@ pub struct RecentProject {
     #[serde(default)]
     pub tags: Vec<String>,
     pub path: PathBuf,
+    #[serde(skip)]
+    pub modified_at: Option<i64>,
     opened_at: u64,
 }
 
@@ -34,13 +36,32 @@ pub fn load() -> Result<Vec<RecentProject>, String> {
         .unwrap_or_default()
         .unwrap_or_default();
     let previous_len = projects.len();
-    projects.retain(|project: &RecentProject| project.path.is_file());
+    projects.retain_mut(|project: &mut RecentProject| {
+        let Ok(metadata) = project.path.metadata() else {
+            return false;
+        };
+        if !metadata.is_file() {
+            return false;
+        }
+        project.modified_at = modified_timestamp(&metadata);
+        true
+    });
     projects.sort_by_key(|project| std::cmp::Reverse(project.opened_at));
     projects.truncate(LIMIT);
     if projects.len() != previous_len {
         store(&conn, &projects)?;
     }
     Ok(projects)
+}
+
+/// Filesystem modification time, independent of when history last opened it.
+pub fn modified_at(path: &Path) -> Option<i64> {
+    modified_timestamp(&path.metadata().ok()?)
+}
+
+fn modified_timestamp(metadata: &fs::Metadata) -> Option<i64> {
+    let elapsed = metadata.modified().ok()?.duration_since(UNIX_EPOCH).ok()?;
+    i64::try_from(elapsed.as_secs()).ok()
 }
 
 pub fn settings_db_path() -> PathBuf {
@@ -57,6 +78,7 @@ pub fn touch(path: &Path, name: &str, tags: &[String]) -> Result<(), String> {
         RecentProject {
             name: name.to_string(),
             tags: tags.to_vec(),
+            modified_at: None,
             path,
             opened_at: SystemTime::now()
                 .duration_since(UNIX_EPOCH)

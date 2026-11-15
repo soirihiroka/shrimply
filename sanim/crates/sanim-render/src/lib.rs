@@ -1,8 +1,9 @@
 //! Skia command recording, native bitmap/SVG assets and explicit headless raster output.
-use sanim_core::{math::to_f64, *};
+use sanim_core::*;
 use skia_safe::{Canvas, Picture, PictureRecorder, Rect};
 use std::{collections::BTreeMap, rc::Rc, sync::Arc};
 mod draw;
+mod history;
 mod pick;
 pub use pick::Hit;
 use sanim_core::cache::Cache;
@@ -36,6 +37,7 @@ pub struct Scene {
     animation: Arc<Animation>,
     key: String,
     times: SampleTimes,
+    layer_times: Vec<SampleTimes>,
 }
 impl Scene {
     pub fn animation(&self) -> &Animation {
@@ -63,6 +65,9 @@ pub struct Recording {
     pub record_micros: u64,
     id: u64,
     picture: Picture,
+    work: usize,
+    nested_bytes: usize,
+    resources: draw::RecordingOutput,
 }
 impl Recording {
     pub fn id(&self) -> u64 {
@@ -92,6 +97,9 @@ impl Recording {
                 NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
                     .expect("recording identity overflow")
             },
+            work: 0,
+            nested_bytes: 0,
+            resources: draw::RecordingOutput::default(),
             picture: recorder
                 .finish_recording_as_picture(None)
                 .ok_or("Skia recording failed")?,
@@ -181,6 +189,7 @@ impl Default for CacheLimits {
 /// A calculated layout snapshot, independent of raster output and recording work limits.
 pub struct FrameState {
     elements: Vec<Element>,
+    roots: Vec<usize>,
     pub compute_micros: u64,
 }
 impl FrameState {
@@ -192,6 +201,7 @@ impl FrameState {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct StateKey {
     scene: String,
+    root: Option<usize>,
     // Lazy text/code can acquire glyphs after the initial scene was prepared.
     // Their native font environment must also identify cached future states.
     font_epoch: Option<sanim_data::font::FontEpoch>,
@@ -223,14 +233,21 @@ pub struct Renderer {
     pub cache_hits: u64,
     pub state_cache_hits: u64,
     pub states_computed: u64,
+    pub layer_state_hits: u64,
+    pub layer_recording_hits: u64,
+    pub layers_computed: u64,
+    pub layers_recorded: u64,
     pub geometry_cache_hits: u64,
     /// Paths built only after drawing or explicit geometry validation demands them.
     pub geometries_prepared: u64,
     /// Stable shared geometry avoids serialization and hashing on repeated draws.
     pub geometry_key_hits: u64,
-    geometry_cache: BTreeMap<String, Rc<shrimply_drawing_skia::path::PreparedPath>>,
-    geometry_hints: BTreeMap<usize, draw::GeometryHint>,
-    geometry_cache_bytes: usize,
+    geometry_cache: Cache<
+        String,
+        shrimply_drawing_skia::path::PreparedPath,
+        Rc<shrimply_drawing_skia::path::PreparedPath>,
+    >,
+    geometry_hints: BTreeMap<draw::GeometryIdentity, draw::GeometryHint>,
 }
 impl Default for Renderer {
     fn default() -> Self {
@@ -248,20 +265,33 @@ impl Renderer {
             cache_hits: 0,
             state_cache_hits: 0,
             states_computed: 0,
+            layer_state_hits: 0,
+            layer_recording_hits: 0,
+            layers_computed: 0,
+            layers_recorded: 0,
             geometry_cache_hits: 0,
             geometries_prepared: 0,
             geometry_key_hits: 0,
-            geometry_cache: BTreeMap::new(),
+            geometry_cache: Cache::new(
+                draw::MAX_GEOMETRY_CACHE_BYTES,
+                draw::MAX_GEOMETRY_CACHE_ENTRIES,
+            ),
             geometry_hints: BTreeMap::new(),
-            geometry_cache_bytes: 0,
         }
     }
     /// Preserve immutable path geometry across source, style, timing and viewport edits.
     pub fn prepare(&mut self, animation: Animation) -> Result<Scene, String> {
-        self.geometry_hints
-            .retain(|_, hint| hint._geometry.strong_count() > 0 && hint.path.strong_count() > 0);
+        self.geometry_hints.retain(|_, hint| hint.alive());
+        let live_paths: std::collections::BTreeSet<_> = self
+            .geometry_hints
+            .values()
+            .map(|hint| hint.key.as_str())
+            .collect();
+        self.geometry_cache
+            .rekey(|key| live_paths.contains(key.as_str()).then_some(key));
         let key = digest(&animation.visual_key()?);
         let times = SampleTimes::new(&animation);
+        let layer_times = SampleTimes::for_layers(&animation);
         if let Some((old_key, old)) = &self.previous
             && old_key != &key
         {
@@ -272,7 +302,12 @@ impl Renderer {
                         return None;
                     }
                     state.scene = key.clone();
-                    state.time = times.canonical(state.time).expect("cached sample time");
+                    state.time = if let Some(root) = state.root {
+                        layer_times.get(root)?.canonical(state.time)
+                    } else {
+                        times.canonical(state.time)
+                    }
+                    .expect("cached sample time");
                 }
                 Some(state)
             };
@@ -296,16 +331,22 @@ impl Renderer {
             animation,
             key,
             times,
+            layer_times,
         })
     }
     /// Force every current/future path for full CLI validation. Interactive scene
     /// preparation leaves geometry deferred until a frame actually draws it.
     pub fn validate_geometry(&mut self, scene: &Scene) -> Result<(), String> {
         fn visit(element: &Element, renderer: &mut Renderer) -> Result<(), String> {
-            if !matches!(
-                element.geometry.as_ref(),
-                Geometry::Box { .. } | Geometry::Code { .. } | Geometry::Media { .. }
-            ) {
+            let path = match element.geometry.as_ref() {
+                // Percent/automatic containers need their actual parent constraints first.
+                Geometry::Box { .. } => [element.layout.width, element.layout.height]
+                    .into_iter()
+                    .all(|dimension| dimension.is_some_and(|number| number.unit == Unit::Length)),
+                Geometry::Code { .. } | Geometry::Media { .. } => false,
+                _ => true,
+            };
+            if path {
                 draw::prepared_path(element, renderer)?;
             }
             if let Some(children) = element.geometry.children() {
@@ -330,7 +371,6 @@ impl Renderer {
         self.frames.clear();
         self.geometry_cache.clear();
         self.geometry_hints.clear();
-        self.geometry_cache_bytes = 0;
         self.previous = None;
     }
     pub fn frame_state(
@@ -345,33 +385,11 @@ impl Renderer {
             return Ok(state);
         }
         let started = std::time::Instant::now();
-        let limits = sanim_data::Limits::default();
-        let mut generated_bytes = limits.max_bytes;
-        let mut generated_items = limits.max_values;
-        let mut fonts = sanim_core::value_budget::Budget::default();
-        let elements =
-            scene
-                .animation
-                .layout_with(key.time, key.width, key.height, |element, time| {
-                    let pending = sanim_data::requires_resolution(element);
-                    sanim_data::resolve_pending(element, time)?;
-                    if pending {
-                        sanim_core::value_budget::charge_with_budget(
-                            &Value::Element(Arc::new(element.clone())),
-                            &mut generated_bytes,
-                            &mut generated_items,
-                            limits.max_depth,
-                            &mut fonts,
-                        )
-                        .map_err(|error| {
-                            format!("native frame geometry for '{}': {error}", element.id)
-                        })?;
-                    }
-                    Ok(())
-                })?;
-        let bytes = state_bytes(&elements, limits.max_depth)?;
+        let (elements, roots) = self.layout_history(scene, &key, options)?;
+        let bytes = state_bytes(&elements, sanim_data::Limits::default().max_depth)?;
         let state = Arc::new(FrameState {
             elements,
+            roots,
             compute_micros: started.elapsed().as_micros().try_into().unwrap_or(u64::MAX),
         });
         self.states_computed += 1;
@@ -403,33 +421,20 @@ impl Renderer {
             return Ok(recording);
         }
         let state = self.frame_state(scene, time, options)?;
-        let mut media_bytes = 0;
+        let mut resources = draw::RecordingOutput::default();
+        let mut work = 0;
+        let mut nested_bytes = 0;
         let mut recording = Recording::capture(options.width, options.height, |canvas| {
-            let logical_width = to_f64(options.logical_width)? as f32;
-            let logical_height = to_f64(options.logical_height)? as f32;
-            canvas.scale((
-                options.width as f32 / logical_width,
-                options.height as f32 / logical_height,
-            ));
-            let background = draw::paint(&scene.animation.background, Fraction::from(1))?;
-            canvas.draw_rect(Rect::from_wh(logical_width, logical_height), &background);
-            let mut drawing = draw::Drawing {
-                renderer: self,
-                pixels,
-                work: options.max_work,
-                output: draw::RecordingOutput::default(),
-            };
-            for element in &state.elements {
-                draw::element_draw(canvas, element, Reveal::default(), &mut drawing)?;
-            }
-            media_bytes = drawing.output.media_bytes;
+            (work, resources, nested_bytes) =
+                self.draw_history(canvas, scene, &state, &key, options)?;
             Ok(())
         })?;
+        recording.work = work;
+        recording.resources = resources;
+        recording.nested_bytes = nested_bytes;
         recording.record_micros = started.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
         let recording = Arc::new(recording);
-        let bytes = recording.picture.approximate_bytes_used()
-            + std::mem::size_of::<Recording>()
-            + media_bytes;
+        let bytes = recording.bytes();
         self.recordings.insert(key, recording.clone(), bytes);
         Ok(recording)
     }
@@ -487,6 +492,7 @@ impl Renderer {
 fn state_key(scene: &Scene, time: Fraction, options: &Options) -> Result<StateKey, String> {
     Ok(StateKey {
         scene: scene.key.clone(),
+        root: None,
         font_epoch: sanim_data::font::system_font_epoch(),
         time: scene.times.canonical(time)?,
         width: options.logical_width,

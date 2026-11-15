@@ -1,9 +1,9 @@
 use super::*;
 use std::ffi::CStr;
 
-/// The shared shaders use Vulkan 1.2 scalar layout, byte storage and device
-/// addresses. Android API level alone says nothing about those capabilities.
-pub const API_VERSION: u32 = vk::API_VERSION_1_2;
+/// Vulkan 1.1 devices can use the same GPU kernels through promoted extensions
+/// and word-backed sub-byte storage. Capabilities are queried independently.
+pub const API_VERSION: u32 = vk::API_VERSION_1_1;
 
 pub struct HardwareBufferProperties {
     pub allocation_size: u64,
@@ -43,7 +43,7 @@ impl Device {
             .map_err(|error| format!("query Vulkan loader: {error:?}"))?
             .unwrap_or(vk::API_VERSION_1_0);
         if version < API_VERSION {
-            return Err("The shared GPU renderer requires Vulkan 1.2".into());
+            return Err("The shared GPU renderer requires Vulkan 1.1".into());
         }
         let extensions = [
             ash::khr::surface::NAME.as_ptr(),
@@ -51,7 +51,7 @@ impl Device {
         ];
         let application = vk::ApplicationInfo::default()
             .application_name(c"Shrimply")
-            .api_version(API_VERSION);
+            .api_version(version.min(vk::API_VERSION_1_2));
         let instance = unsafe {
             entry.create_instance(
                 &vk::InstanceCreateInfo::default()
@@ -81,22 +81,50 @@ impl Device {
                     unsafe { instance.enumerate_device_extension_properties(physical) }
                         .map_err(|error| format!("query Vulkan extensions: {error:?}"))?;
                 if required_extensions.iter().any(|required| !extensions.iter().any(|extension| unsafe { CStr::from_ptr(extension.extension_name.as_ptr()) } == *required)) { continue; }
-                let mut features11 = vk::PhysicalDeviceVulkan11Features::default();
-                let mut features12 = vk::PhysicalDeviceVulkan12Features::default();
-                let mut features = vk::PhysicalDeviceFeatures2::default()
-                    .push_next(&mut features11)
-                    .push_next(&mut features12);
-                unsafe { instance.get_physical_device_features2(physical, &mut features) };
-                let core = features.features;
-                if core.shader_int16 == 0
-                    || features11.sampler_ycbcr_conversion == 0
-                    || features12.buffer_device_address == 0
-                    || features12.scalar_block_layout == 0
-                    || features12.storage_buffer8_bit_access == 0
-                    || features12.shader_int8 == 0
+                let api_version = properties.api_version.min(version).min(vk::API_VERSION_1_2);
+                let promoted = api_version >= vk::API_VERSION_1_2;
+                let has_extension = |name: &CStr| {
+                    extensions.iter().any(|extension| unsafe {
+                        CStr::from_ptr(extension.extension_name.as_ptr()) == name
+                    })
+                };
+                if !promoted
+                    && (!has_extension(ash::khr::buffer_device_address::NAME)
+                        || !has_extension(ash::ext::scalar_block_layout::NAME))
                 {
                     continue;
                 }
+                let mut address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+                let mut scalar = vk::PhysicalDeviceScalarBlockLayoutFeatures::default();
+                let mut ycbcr = vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default();
+                let mut storage16 = vk::PhysicalDevice16BitStorageFeatures::default();
+                let mut storage8 = vk::PhysicalDevice8BitStorageFeatures::default();
+                let mut int8 = vk::PhysicalDeviceShaderFloat16Int8Features::default();
+                let mut timeline = vk::PhysicalDeviceTimelineSemaphoreFeatures::default();
+                let mut features = vk::PhysicalDeviceFeatures2::default()
+                    .push_next(&mut address)
+                    .push_next(&mut scalar)
+                    .push_next(&mut ycbcr)
+                    .push_next(&mut storage16);
+                if promoted {
+                    features = features
+                        .push_next(&mut storage8)
+                        .push_next(&mut int8)
+                        .push_next(&mut timeline);
+                }
+                unsafe { instance.get_physical_device_features2(physical, &mut features) };
+                let core = features.features;
+                if address.buffer_device_address == 0
+                    || scalar.scalar_block_layout == 0
+                    || ycbcr.sampler_ycbcr_conversion == 0
+                {
+                    continue;
+                }
+                let word_storage = !promoted
+                    || storage8.storage_buffer8_bit_access == 0
+                    || storage16.storage_buffer16_bit_access == 0
+                    || int8.shader_int8 == 0
+                    || core.shader_int16 == 0;
                 let families =
                     unsafe { instance.get_physical_device_queue_family_properties(physical) };
                 let Some(family) = families.iter().position(|family| {
@@ -117,31 +145,46 @@ impl Device {
                 if presentation_timing {
                     extension_names.push(ash::google::display_timing::NAME.as_ptr());
                 }
-                let mut enabled = vk::PhysicalDeviceVulkan12Features::default()
-                    .buffer_device_address(true)
-                    .scalar_block_layout(true)
-                    .storage_buffer8_bit_access(true)
-                    .shader_int8(true)
-                    .timeline_semaphore(features12.timeline_semaphore != 0)
-                    .storage_push_constant8(features12.storage_push_constant8 != 0);
-                let mut enabled11 =
-                    vk::PhysicalDeviceVulkan11Features::default().sampler_ycbcr_conversion(true);
-                let core = vk::PhysicalDeviceFeatures::default()
-                    .shader_int64(core.shader_int64 != 0)
-                    .shader_int16(true);
-                let raw = unsafe {
-                    instance.create_device(
-                        physical,
-                        &vk::DeviceCreateInfo::default()
-                            .queue_create_infos(&queues)
-                            .enabled_extension_names(&extension_names)
-                            .enabled_features(&core)
-                            .push_next(&mut enabled11)
-                            .push_next(&mut enabled),
-                        None,
-                    )
+                if !promoted {
+                    extension_names.extend([
+                        ash::khr::buffer_device_address::NAME.as_ptr(),
+                        ash::ext::scalar_block_layout::NAME.as_ptr(),
+                    ]);
                 }
-                .map_err(|error| format!("create shared Vulkan device: {error:?}"))?;
+                let mut enabled_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default()
+                    .buffer_device_address(true);
+                let mut enabled_scalar = vk::PhysicalDeviceScalarBlockLayoutFeatures::default()
+                    .scalar_block_layout(true);
+                let mut enabled_ycbcr = vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default()
+                    .sampler_ycbcr_conversion(true);
+                let mut enabled_storage16 = vk::PhysicalDevice16BitStorageFeatures::default()
+                    .storage_buffer16_bit_access(!word_storage);
+                let mut enabled_storage8 = vk::PhysicalDevice8BitStorageFeatures::default()
+                    .storage_buffer8_bit_access(!word_storage)
+                    .storage_push_constant8(!word_storage && storage8.storage_push_constant8 != 0);
+                let mut enabled_int8 = vk::PhysicalDeviceShaderFloat16Int8Features::default()
+                    .shader_int8(!word_storage);
+                let mut enabled_timeline = vk::PhysicalDeviceTimelineSemaphoreFeatures::default()
+                    .timeline_semaphore(timeline.timeline_semaphore != 0);
+                let enabled_core = vk::PhysicalDeviceFeatures::default()
+                    .shader_int64(core.shader_int64 != 0)
+                    .shader_int16(!word_storage);
+                let mut create = vk::DeviceCreateInfo::default()
+                    .queue_create_infos(&queues)
+                    .enabled_extension_names(&extension_names)
+                    .enabled_features(&enabled_core)
+                    .push_next(&mut enabled_address)
+                    .push_next(&mut enabled_scalar)
+                    .push_next(&mut enabled_ycbcr)
+                    .push_next(&mut enabled_storage16);
+                if promoted {
+                    create = create
+                        .push_next(&mut enabled_storage8)
+                        .push_next(&mut enabled_int8)
+                        .push_next(&mut enabled_timeline);
+                }
+                let raw = unsafe { instance.create_device(physical, &create, None) }
+                    .map_err(|error| format!("create shared Vulkan device: {error:?}"))?;
                 let queue = unsafe { raw.get_device_queue(family, 0) };
                 let memory = unsafe { instance.get_physical_device_memory_properties(physical) };
                 return Ok(Self {
@@ -153,16 +196,19 @@ impl Device {
                     memory,
                     limits: properties.limits,
                     compute_subgroup: None,
-                    api_version: API_VERSION,
+                    api_version,
                     presentation_timing,
-                    portable_indices: core.shader_int64 == 0
-                        || features12.storage_push_constant8 == 0,
+                    portable_indices: word_storage
+                        || core.shader_int64 == 0
+                        || storage8.storage_push_constant8 == 0,
+                    word_storage,
+                    timeline_semaphores: promoted && timeline.timeline_semaphore != 0,
                     submission: Mutex::new(()),
                     pipeline_cache: Mutex::new(None),
                     entry: entry.clone(),
                 });
             }
-            Err("No GPU supports the shared renderer's Vulkan 1.2 shader features and Android hardware-buffer interop".into())
+            Err("No GPU supports the shared renderer's device addresses, scalar layout and Android hardware-buffer interop".into())
         })();
         if result.is_err() {
             unsafe { instance.destroy_instance(None) };

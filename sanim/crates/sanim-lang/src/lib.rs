@@ -1,4 +1,6 @@
 //! Sanim: a bounded, typed animation scripting language, independent of any editor.
+mod analysis;
+pub(crate) mod animation_plan;
 mod animations;
 pub mod ast;
 mod cache;
@@ -6,9 +8,8 @@ mod charts;
 mod checker;
 mod code_view;
 pub mod dataframe;
-mod effects;
 mod eval;
-#[cfg(test)]
+#[cfg(all(test, feature = "native-text"))]
 mod font_tests;
 pub mod formatter;
 mod lint;
@@ -39,6 +40,26 @@ pub use source::{ElementSource, SourceLocation};
 pub use source::{FileSources, MemorySources, Sources};
 use std::{collections::BTreeMap, sync::Arc, time::Instant};
 pub use watch::{Reload, Session};
+
+fn layout_diagnostic(
+    error: sanim_core::plan::LayoutError,
+    plan: &sanim_core::plan::Animation,
+    source: &str,
+) -> Diagnostic {
+    use sanim_core::plan::LayoutError;
+    let code = match &error {
+        LayoutError::MissingParent => "S138",
+        LayoutError::CyclicParent => "S139",
+        LayoutError::Invalid(_) => "S304",
+    };
+    let (source, span) = plan
+        .origin
+        .as_ref()
+        .map_or((source, Span::default()), |origin| {
+            (origin.location.source.as_ref(), origin.location.span)
+        });
+    Diagnostic::new(code, error.to_string(), source, span)
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Limits {
@@ -122,16 +143,20 @@ pub struct PerformanceWarning {
     pub operations: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct Prepared {
     /// Normalized animation entry path relative to its source root.
     pub source: String,
     pub animation: Animation,
+    pub plan: Arc<sanim_core::plan::Animation>,
+    pub temporal_layout: Arc<[sanim_core::plan::Receipt]>,
+    plan_base: Arc<Animation>,
+    plan_limits: Arc<Limits>,
+    plan_fingerprint: String,
     pub time_map: sanim_core::TimeMap,
     /// Constructor provenance is editor metadata, independent of visual cache identity.
     pub element_sources: imbl::OrdMap<String, Arc<ElementSource>>,
     /// Immutable source bytes from this preparation, including imported modules.
-    #[serde(skip)]
     pub source_texts: BTreeMap<String, Arc<Vec<u8>>>,
     pub bindings: imbl::OrdMap<String, Value>,
     /// Values intentionally left unevaluated by demand preparation.
@@ -139,8 +164,6 @@ pub struct Prepared {
     pub reflected: imbl::Vector<ReflectedInput>,
     pub types: BTreeMap<String, Type>,
     pub symbols: BTreeMap<String, Type>,
-    pub scheduling_helpers: Vec<String>,
-    pub durations: BTreeMap<String, Vec<sanim_core::NodeDuration>>,
     pub checks: imbl::Vector<sanim_core::verify::Verification>,
     pub contracts: imbl::Vector<sanim_core::verify::Contract>,
     pub dependencies: BTreeMap<String, String>,
@@ -194,6 +217,51 @@ impl Prepared {
         }
         Ok(())
     }
+    pub fn natural_extent(&self) -> sanim_core::plan::Extent {
+        self.temporal_layout
+            .first()
+            .expect("prepared root has a temporal receipt")
+            .natural_extent()
+    }
+    /// Infinite and parent-sized sources keep their own clock while the host crops a window.
+    pub fn source_extent(&self) -> Option<sanim_core::Fraction> {
+        bounded_source_extent(&self.temporal_layout, self.animation.duration)
+    }
+    /// Reuse the immutable built plan; no source read, parsing or language evaluation.
+    pub fn relayout(
+        &self,
+        viewport: &sanim_core::Viewport,
+        available: Option<sanim_core::Fraction>,
+    ) -> Result<Self, Diagnostic> {
+        viewport
+            .validate()
+            .map_err(|message| Diagnostic::new("S304", message, &self.source, Span::default()))?;
+        let mut base = self.plan_base.as_ref().clone();
+        base.width = viewport.width;
+        base.height = viewport.height;
+        base.dpi = viewport.dpi;
+        base.rate = viewport.rate;
+        let lowered = animation_plan::lower(&self.plan, &base, available, &self.plan_limits)
+            .map_err(|error| layout_diagnostic(error, &self.plan, &self.source))?;
+        let time_map = layout_time_map(
+            &lowered.layout,
+            &lowered.animation,
+            self.plan_limits.max_time_map_bytes,
+            true,
+        )
+        .map_err(|message| Diagnostic::new("S303", message, &self.source, Span::default()))?;
+        self.validate_contracts(&lowered.animation)?;
+        let mut result = self.clone();
+        result.animation = lowered.animation;
+        result.temporal_layout = lowered.layout;
+        result.time_map = time_map;
+        result.fingerprint = digest(
+            &serde_json::to_vec(&(&self.plan_fingerprint, viewport, available))
+                .expect("layout inputs serialize"),
+        );
+        result.statistics = Statistics::default();
+        Ok(result)
+    }
     /// Reflow into an external viewport and revalidate required visual contracts.
     pub fn animation_for_viewport(&self, width: u32, height: u32) -> Result<Animation, Diagnostic> {
         if width == 0 || height == 0 {
@@ -207,31 +275,111 @@ impl Prepared {
         let mut animation = self.animation.clone();
         animation.width = width;
         animation.height = height;
+        self.validate_contracts(&animation)?;
+        Ok(animation)
+    }
+    fn validate_contracts(&self, animation: &Animation) -> Result<(), Diagnostic> {
         for contract in &self.contracts {
             if !contract.required {
                 continue;
             }
-            let result =
-                sanim_core::verify::evaluate(&animation, &contract.predicate, contract.time);
-            if result.evidence != sanim_core::verify::Evidence::Proved {
-                return Err(Diagnostic::new(
-                    "S350",
-                    format!(
-                        "visual assertion for {width} × {height} viewport: {}",
-                        result.message
-                    ),
-                    &contract.module,
-                    contract.span,
-                ));
-            }
+            validate_contract(animation, contract)?;
         }
-        Ok(animation)
+        Ok(())
     }
+}
+
+fn validate_contract(
+    animation: &Animation,
+    contract: &sanim_core::verify::Contract,
+) -> Result<sanim_core::verify::Verification, Diagnostic> {
+    use sanim_core::verify;
+    let verification = verify::evaluate_with(
+        animation,
+        &contract.predicate,
+        contract.time,
+        sanim_data::resolve_pending,
+    );
+    if contract.required && verification.evidence != verify::Evidence::Proved {
+        return Err(Diagnostic::new(
+            "S350",
+            format!(
+                "visual assertion {:?} for {} × {} viewport: {}{}",
+                verification.evidence,
+                animation.width,
+                animation.height,
+                verification.message,
+                contract
+                    .message
+                    .as_ref()
+                    .map(|message| format!(". {message}"))
+                    .unwrap_or_default()
+            ),
+            &contract.module,
+            contract.span,
+        ));
+    }
+    Ok(verification)
+}
+
+fn bounded_source_extent(
+    layout: &[sanim_core::plan::Receipt],
+    duration: sanim_core::Fraction,
+) -> Option<sanim_core::Fraction> {
+    let root = layout
+        .first()
+        .expect("prepared root has a temporal receipt");
+    (root.requested != sanim_core::plan::TimeDimension::MatchParent
+        && root.natural_extent() != sanim_core::plan::Extent::Infinite)
+        .then_some(duration)
+}
+
+fn layout_time_map(
+    layout: &[sanim_core::plan::Receipt],
+    animation: &Animation,
+    budget: usize,
+    frames: bool,
+) -> Result<sanim_core::TimeMap, String> {
+    let mut map = sanim_core::TimeMap::default();
+    let source_end = bounded_source_extent(layout, animation.duration);
+    for (index, receipt) in layout.iter().enumerate() {
+        let Some(origin) = &receipt.origin else {
+            continue;
+        };
+        let (start, end) = if receipt.clip.is_none()
+            && (receipt.resolved == sanim_core::plan::Extent::Infinite
+                || index == 0 && source_end.is_none())
+        {
+            (receipt.start, None)
+        } else {
+            let Some((start, end)) = receipt.active_interval(animation.duration)? else {
+                continue;
+            };
+            (start, Some(end))
+        };
+        map.push(
+            sanim_core::TimeMapEntry {
+                source: origin.location.source.to_string(),
+                span: origin.location.span,
+                start,
+                end,
+                statement: origin.checkpoint,
+                call_path: Default::default(),
+                clock: receipt.clock.clone(),
+            },
+            budget,
+        )?;
+    }
+    map.index(frames.then_some(animation.rate), source_end, budget)?;
+    Ok(map)
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DurationReport {
     pub duration: sanim_core::Fraction,
+    pub indefinite: bool,
+    pub event_index: std::sync::Arc<sanim_core::EventIndex>,
+    pub temporal_layout: Arc<[sanim_core::plan::Receipt]>,
     pub frames: u64,
     pub viewport: sanim_core::Viewport,
     pub dependencies: BTreeMap<String, String>,
@@ -245,6 +393,9 @@ impl DurationReport {
             .map_err(|e| Diagnostic::new("S304", e, "", Span::default()))?;
         Ok(Self {
             duration: animation.duration,
+            indefinite: animation.indefinite,
+            event_index: prepared.time_map.event_index(),
+            temporal_layout: prepared.temporal_layout,
             frames,
             viewport: sanim_core::Viewport {
                 width: animation.width,
@@ -263,6 +414,8 @@ impl DurationReport {
 pub struct Engine {
     pub limits: Limits,
     pub preparation: Preparation,
+    /// External temporal viewport; None measures the returned root intrinsically.
+    pub available_duration: Option<sanim_core::Fraction>,
     pub viewport: sanim_core::Viewport,
     parsed: sanim_core::cache::Cache<String, ast::Module>,
     checked: sanim_core::cache::Cache<String, cache::checked::Module>,
@@ -356,8 +509,7 @@ impl Engine {
             )
         })
     }
-    /// Resolve timeline length without rendering pixels. Data-only timing skips scene
-    /// construction; timing that reads scene state uses normal preparation and emits P004.
+    /// Build the pure plan and resolve its temporal layout without lowering or rendering it.
     pub fn duration_json(
         &mut self,
         entry: &str,
@@ -395,7 +547,7 @@ impl Engine {
         sources: &dyn Sources,
         overrides: &BTreeMap<String, Value>,
         json: Option<&BTreeMap<String, serde_json::Value>>,
-        duration_only: bool,
+        measure_only: bool,
         reporter: &progress::Reporter,
     ) -> Result<Prepared, Diagnostic> {
         let started = reporter.started;
@@ -431,16 +583,25 @@ impl Engine {
                 &mut vec![],
                 (&mut statistics, &type_budget, reporter),
             )?;
-            let duration_needed = duration_only.then(|| eval::duration::duration_needs(&loaded));
-            let scene_timing = duration_needed
-                .as_ref()
-                .and_then(|needed| eval::duration::scene_dependency(&loaded, needed));
-            let duration_only = duration_only && scene_timing.is_none();
-            let family_fonts = !duration_only
+            if loaded
+                .last()
+                .is_none_or(|module| module.checked.output_type.is_none())
+            {
+                return Err(Diagnostic::new(
+                    "S134",
+                    "the entry script must produce an Animation value; leave an Animation expression unassigned or return it explicitly",
+                    &entry,
+                    loaded
+                        .last()
+                        .and_then(|module| module.ast.statements.last())
+                        .map_or(Span::default(), |statement| statement.span),
+                ));
+            }
+            let family_fonts = !measure_only
                 && loaded.iter().any(|module| {
                     module.ast.statements.iter().any(|statement| {
                         let mut uses_family = false;
-                        statement.visit_expressions(&mut |expression| {
+                        statement.visit_all_expressions(&mut |expression| {
                         if let ast::ExprKind::Call { callee, .. } = &expression.kind
                             && matches!(&callee.kind, ast::ExprKind::Name(name) if prelude::builtin(name).is_some_and(prelude::Builtin::uses_font_environment))
                         {
@@ -484,11 +645,16 @@ impl Engine {
                 &loaded,
                 &mut snapshot,
                 &converted,
-                self.preparation,
+                if measure_only {
+                    Preparation::Demand
+                } else {
+                    self.preparation
+                },
                 (
                     &self.limits,
                     &self.viewport,
-                    duration_needed.filter(|_| duration_only),
+                    self.available_duration,
+                    measure_only,
                     reporter,
                 ),
                 (
@@ -499,15 +665,6 @@ impl Engine {
                 ),
                 &mut statistics,
             )?;
-            if let Some((source, span)) = scene_timing {
-                prepared.performance.push(PerformanceWarning {
-                    code: "P004".into(),
-                    message: "timeline duration depends on scene state; prepared animation tracks and layout to sample it accurately. Use data-only duration expressions to keep duration discovery independent of scene preparation".into(),
-                    source,
-                    span,
-                    operations: prepared.statistics.operations,
-                });
-            }
             if family_fonts {
                 let after = sanim_data::font::system_font_epoch();
                 // Lazy native face loading may change the map serial during
@@ -524,6 +681,7 @@ impl Engine {
                         .expect("native font environment serializes"),
                 );
             }
+            prepared.plan_fingerprint = prepared.fingerprint.clone();
             prepared.dependencies = snapshot.fingerprints();
             prepared.statistics = statistics.clone();
             Ok(prepared)
@@ -727,8 +885,12 @@ impl Engine {
             statistics.checked_modules += 1;
             let cache_started = Instant::now();
             let interface_key = digest(
-                &serde_json::to_vec(&(&checked.exports, &checked.schemas, &checked.effects))
-                    .expect("serializable module interface"),
+                &serde_json::to_vec(&(
+                    &checked.exports,
+                    &checked.dynamic_exports,
+                    &checked.schemas,
+                ))
+                .expect("serializable module interface"),
             );
             if self.limits.max_cache_entries > 0
                 && let Some(bytes) = cache::checked::retained_bytes(

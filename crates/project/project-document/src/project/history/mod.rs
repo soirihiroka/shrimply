@@ -2,13 +2,13 @@ mod memory;
 mod status;
 mod storage;
 
-pub use memory::history_destination;
+pub use memory::{history_destination, history_revision};
 pub use status::{CommitStatus, connect_commit_status, poll as poll_commit_status};
 pub use storage::{create_new_project_file, create_project_file, serialize_project_json};
 
 use super::*;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender, SyncSender};
@@ -28,6 +28,7 @@ static NEXT_HISTORY_STEP: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     static HISTORY_WORKER: RefCell<Option<HistoryWorker>> = const { RefCell::new(None) };
+    static PROVISIONAL_EDIT: Cell<bool> = const { Cell::new(false) };
 }
 
 struct HistoryWorker {
@@ -168,6 +169,20 @@ pub fn activate_project(mut prepared: PreparedProject) -> Project {
     project
 }
 
+/// Preview a synchronous inspector mutation without advancing autosave or history.
+/// Saved external/API writes deliberately do not participate in this scope.
+pub fn with_provisional_edit<R>(edit: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PROVISIONAL_EDIT.set(self.0);
+        }
+    }
+    let previous = PROVISIONAL_EDIT.replace(true);
+    let _restore = Restore(previous);
+    edit()
+}
+
 pub fn commit_edit(project: &Project, message: &str) -> bool {
     commit(project, message, None)
 }
@@ -176,6 +191,9 @@ pub fn commit_edit_checked(project: &Project, message: &str) -> Result<(), Strin
     project
         .validate()
         .map_err(|error| format!("cannot commit invalid project: {error}"))?;
+    if PROVISIONAL_EDIT.get() {
+        return Ok(());
+    }
     if !queue_project(project, message) {
         return Err("project history worker rejected the edit".to_string());
     }
@@ -402,6 +420,9 @@ fn commit(project: &Project, message: &str, coalesce_group: Option<&str>) -> boo
     project
         .validate()
         .unwrap_or_else(|error| panic!("cannot commit invalid project: {error}"));
+    if PROVISIONAL_EDIT.get() {
+        return true;
+    }
     memory::commit(project, coalesce_group);
     queue_project(project, message)
 }
@@ -666,8 +687,10 @@ fn save_view_state_project(
     fingerprint: &Mutex<Option<String>>,
 ) -> Result<(), String> {
     let started = Instant::now();
-    let result = storage::write_project(path, project)
-        .map(|saved| *fingerprint.lock().expect("project receipt lock poisoned") = Some(saved));
+    let result = {
+        let mut receipt = fingerprint.lock().expect("project receipt lock poisoned");
+        storage::write_project(path, project).map(|saved| *receipt = Some(saved))
+    };
     tracing::info!(
         elapsed_us = started.elapsed().as_micros(),
         success = result.is_ok(),
@@ -702,8 +725,11 @@ fn write_project(
     request_save_status_update(SaveStatus::Saving);
     let started = Instant::now();
     tracing::info!(path = %path.display(), "Saving project");
-    let result = storage::write_project(path, project)
-        .map(|saved| *fingerprint.lock().expect("project receipt lock poisoned") = Some(saved));
+    let result = {
+        // A watcher must not observe our replacement file with the previous receipt.
+        let mut receipt = fingerprint.lock().expect("project receipt lock poisoned");
+        storage::write_project(path, project).map(|saved| *receipt = Some(saved))
+    };
     request_save_status_update(match &result {
         Ok(()) => SaveStatus::Saved,
         Err(error) => SaveStatus::Failed(error.clone()),

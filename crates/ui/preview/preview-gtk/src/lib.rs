@@ -6,6 +6,8 @@ use std::cell::{Cell, RefCell};
 
 mod fullscreen;
 mod preview_surface;
+mod transport;
+use shrimply_preview_render_core::playback::toolbar::{self as preview_toolbar, ContextAction};
 use shrimply_preview_runtime_cuda::{PreviewMedia, StepDirection};
 pub use shrimply_preview_runtime_cuda::{
     playback_speed_label, playback_time_label, rendered_frame_rate_label,
@@ -57,7 +59,6 @@ use shrimply_preview_provider_skia::playback::{
 const LOADING_SPINNER_SIZE: i32 = 16;
 const PREVIEW_FULLSCREEN_ICON: &str = "arrows-pointing-outward-symbolic";
 const PREVIEW_TOOLBAR_ICON_SIZE: i32 = 20;
-use shrimply_paint_edit_skia::DEFAULT_PAINT_ERASER_SCALE;
 type PaintPaletteStructure = Rc<RefCell<Option<(uuid::Uuid, Vec<uuid::Uuid>)>>>;
 
 trait PaintSurfaceState {
@@ -184,13 +185,6 @@ fn player(
         preferences.clone(),
         video_tx.clone(),
     );
-    video_surface.install_preview_state(
-        PAINT_PREVIEW_STATE,
-        PaintPreviewState {
-            eraser_scale: DEFAULT_PAINT_ERASER_SCALE,
-            ..PaintPreviewState::default()
-        },
-    );
 
     let duration = initial_project.duration();
     let progress_scale = gtk::Scale::with_range(
@@ -278,19 +272,12 @@ fn player(
     frame_rate_button.set_tooltip_i18n("Frame rate");
     frame_rate_button.set_child(Some(&frame_rate_label));
 
-    let playbar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    playbar.set_margin_top(8);
-    playbar.set_margin_bottom(8);
-    playbar.set_margin_start(8);
-    playbar.set_margin_end(8);
-    playbar.append(&step_back_button);
-    playbar.append(&play_button);
-    playbar.append(&step_forward_button);
-    playbar.append(&progress_scale);
-    playbar.append(&time_label);
-    playbar.append(&fullscreen_button);
-
-    let playbar_controls = playbar;
+    let playbar_controls = transport::controls(
+        [&step_back_button, &play_button, &step_forward_button],
+        &progress_scale,
+        &time_label,
+        &fullscreen_button,
+    );
     playbar_controls.set_valign(gtk::Align::Start);
     playbar_controls.set_vexpand(false);
     let left_bar = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -708,6 +695,7 @@ fn player(
     side_controls.set_halign(gtk::Align::Start);
     side_controls.set_valign(gtk::Align::Start);
     side_controls.append(&left_bar);
+    side_controls.set_visible(preferences_store::snapshot(&preferences).preview_controls_visible);
 
     let video_overlay = gtk::Overlay::new();
     video_overlay.set_hexpand(true);
@@ -734,6 +722,7 @@ fn player(
     );
 
     let preview_area = gtk::Overlay::new();
+    preview_area.set_width_request(shrimply_components_gtk::layout::MIN_PREVIEW_WIDTH as i32);
     preview_area.set_hexpand(true);
     preview_area.set_vexpand(true);
     preview_area.set_child(Some(&layout));
@@ -837,6 +826,7 @@ fn player(
             left_bar: left_bar.clone(),
             button: fullscreen_button.clone(),
             video_surface: video_surface.clone(),
+            preferences: preferences.clone(),
         },
         player_state.clone(),
     );
@@ -1110,7 +1100,7 @@ fn error_page(error: &str) -> adw::StatusPage {
         .hexpand(true)
         .vexpand(true)
         .build();
-    view.set_width_request(640);
+    view.set_width_request(shrimply_components_gtk::layout::MIN_PREVIEW_WIDTH as i32);
     view
 }
 
@@ -1118,16 +1108,45 @@ fn attach_preview_context_menu(
     video_surface: &PreviewController,
     preferences: preferences_store::SharedPreferences,
 ) {
-    let click = gtk::GestureClick::new();
-    click.set_button(3);
-    let area = video_surface.widget().clone();
-    let surface = video_surface.clone();
-    click.connect_pressed(move |_, _, x, y| {
+    let surface = video_surface.weak();
+    let open = gio::SimpleAction::new(
+        "open",
+        Some(glib::VariantTy::new("(ddb)").expect("preview context parameters")),
+    );
+    open.connect_activate(move |_, parameter| {
+        let Some(surface) = surface() else {
+            return;
+        };
+        let area = surface.widget().clone();
+        let (x, y, touch) = parameter
+            .and_then(|value| value.get::<(f64, f64, bool)>())
+            .expect("preview context source and position");
         let menu = gio::Menu::new();
-        menu.append_i18n("Copy Preview Image", "preview.copy-image");
-        menu.append_i18n("Save Preview Image…", "preview.save-image");
-
         let actions = gio::SimpleActionGroup::new();
+        for item in preview_toolbar::context_menu(&preferences, true) {
+            menu.append(
+                Some(&item.label),
+                Some(&format!("preview.{}", item.action.id())),
+            );
+            if item.checked.is_some() {
+                let preferences = preferences.clone();
+                let action = shrimply_components_gtk::ui::menu_action(
+                    item.action.id(),
+                    item.checked,
+                    move || {
+                        assert!(
+                            item.action.activate(&preferences).is_none(),
+                            "checked preview action completes in shared core"
+                        );
+                        preview_toolbar::context_menu(&preferences, true)
+                            .into_iter()
+                            .find(|entry| entry.action == item.action)
+                            .and_then(|entry| entry.checked)
+                    },
+                );
+                actions.add_action(&action);
+            }
+        }
         if surface.can_inspect_sanim() {
             menu.append_i18n("Inspect Sanim Element", "preview.inspect-sanim");
             let inspect = gio::SimpleAction::new("inspect-sanim", None);
@@ -1142,7 +1161,7 @@ fn attach_preview_context_menu(
             });
             actions.add_action(&inspect);
         }
-        let copy = gio::SimpleAction::new("copy-image", None);
+        let copy = gio::SimpleAction::new(ContextAction::CopyImage.id(), None);
         copy.set_enabled(surface.has_frame());
         let copy_area = area.clone();
         let copy_surface = surface.clone();
@@ -1155,7 +1174,7 @@ fn attach_preview_context_menu(
         });
         actions.add_action(&copy);
 
-        let save = gio::SimpleAction::new("save-image", None);
+        let save = gio::SimpleAction::new(ContextAction::SaveImage.id(), None);
         save.set_enabled(surface.has_frame());
         let save_area = area.clone();
         let save_surface = surface.clone();
@@ -1228,6 +1247,16 @@ fn attach_preview_context_menu(
         });
         actions.add_action(&save);
 
+        if shrimply_components_gtk::layout::menu_uses_bottom_sheet(if touch {
+            "touch"
+        } else {
+            "pointer"
+        }) {
+            let dialog =
+                shrimply_components_gtk::ui::action_menu_sheet(&menu, "preview", &actions, &[]);
+            dialog.present(Some(&area));
+            return;
+        }
         let parent = area.parent().expect("preview GLArea must have a parent");
         let point = area
             .compute_point(&parent, &gtk::graphene::Point::new(x as f32, y as f32))
@@ -1244,8 +1273,23 @@ fn attach_preview_context_menu(
             1,
             1,
         )));
-        popover.connect_closed(|popover| popover.unparent());
+        shrimply_components_gtk::ui::unparent_on_close(&popover);
         popover.popup();
+    });
+    let actions = gio::SimpleActionGroup::new();
+    actions.add_action(&open);
+    video_surface
+        .widget()
+        .insert_action_group("preview-context", Some(&actions));
+    let click = gtk::GestureClick::new();
+    click.set_button(3);
+    let area = video_surface.widget().downgrade();
+    click.connect_pressed(move |_, _, x, y| {
+        let Some(area) = area.upgrade() else {
+            return;
+        };
+        area.activate_action("preview-context.open", Some(&(x, y, false).to_variant()))
+            .expect("preview context menu is installed");
     });
     video_surface.widget().add_controller(click);
 }

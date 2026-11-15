@@ -6,6 +6,7 @@ mod metadata;
 mod modifiers;
 mod project;
 pub mod remote;
+pub mod timeline_service;
 mod track;
 mod video;
 
@@ -17,6 +18,7 @@ use shrimply_inspector_core::{
 use shrimply_project_document::project::ItemAddress;
 
 pub use shrimply_inspector_core::BasicInspectorAction;
+pub use video::inspector_item as video_item;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InspectorDocument {

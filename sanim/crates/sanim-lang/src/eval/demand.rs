@@ -6,9 +6,7 @@ use reactive::{Node, Signal};
 impl Runtime<'_, '_> {
     pub(super) fn should_defer(&self, expression: &Expr, env: &Env, span: Span) -> bool {
         if self.preparation != crate::Preparation::Demand
-            || self.duration_only
             || self.expression_mutates(expression)
-            || self.expression_schedules(expression)
             || self
                 .binding_type(span)
                 .is_ok_and(|ty| ty.contains_element() || ty.contains_function())
@@ -52,9 +50,8 @@ impl Runtime<'_, '_> {
                 // Like direct user calls, callbacks can read module globals not
                 // captured by the deferred expression's lexical snapshot.
                 pure &= crate::list_functions::callback_argument(&call).is_none()
-                    && !call.schedules()
                     && !builtin.result.contains_element()
-                    && !matches!(builtin.execute, prelude::Execution::Assertion);
+                    && !matches!(builtin.execute, prelude::Execution::Assertion { .. });
                 expensive |= self
                     .checked_native_method(callee.span)
                     .is_some_and(|method| method.materializes)

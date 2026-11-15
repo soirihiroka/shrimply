@@ -18,19 +18,20 @@ pub(super) struct Menu {
 impl Menu {
     pub fn snapshot(&self) -> Value {
         let sections: Vec<_> = self.model.sections.iter().map(|section| section.iter().enumerate().map(|(index, entry)| match entry {
-            ContextMenuEntry::Action(item) => json!({"action":item.action.id(),"label":item.label(),"enabled":item.enabled}),
+            ContextMenuEntry::Action(item) => json!({"action":item.action.id(),"label":item.label(),"enabled":item.enabled,"checked":item.checked}),
             ContextMenuEntry::Control(control) => json!({"control":index,"label":control.label(),"value":control.value(),"minimum":control.minimum(),"maximum":control.maximum(),"step":control.step(),"mixed":control.mixed()}),
         }).collect::<Vec<_>>()).collect();
-        json!({"serial":self.serial,"touch":self.touch,"x":self.point.x,"y":self.point.y,"sections":sections,"delete_count":self.delete_count,"clipboard_marker":shrimply_timeline_skia::TIMELINE_CLIPBOARD_MARKER})
+        json!({"serial":self.serial,"bottom_sheet":shrimply_components_core::layout::menu_uses_bottom_sheet(if self.touch { "touch" } else { "pointer" }),"x":self.point.x,"y":self.point.y,"sections":sections,"delete_count":self.delete_count,"clipboard_marker":shrimply_timeline_skia::TIMELINE_CLIPBOARD_MARKER})
     }
 }
 
 impl Runtime {
     pub fn show_context_menu(&mut self, point: Vec2, touch: bool) {
+        self.preview_context = None;
         let Some(scene) = self.timeline.as_mut() else {
             return;
         };
-        let model = scene.prepare_context_menu(point);
+        let model = scene.prepare_context_menu_for_input(point, touch);
         self.context_serial = self
             .context_serial
             .checked_add(1)
@@ -56,6 +57,9 @@ impl Runtime {
         }
         let scene = self.timeline.as_mut().ok_or("Open a project first")?;
         let mut result = json!({});
+        let mut service = None;
+        #[cfg(target_os = "android")]
+        let mut capture = None;
         match request["op"].as_str().expect("request operation") {
             "context_dismiss" => {}
             "context_delete" => {
@@ -109,18 +113,59 @@ impl Runtime {
                     .ok_or("Context action is unavailable")?;
                 let action = scene.activate_context_menu_action(item.action)?;
                 match action {
-                    Some(ContextMenuRequest::DeleteTracks {clip_count} | ContextMenuRequest::DeleteFoldedTrack {clip_count}) => {
+                    Some(
+                        ContextMenuRequest::DeleteTracks { clip_count }
+                        | ContextMenuRequest::DeleteFoldedTrack { clip_count },
+                    ) => {
                         menu.deletion = Some(scene.track_deletion());
                         menu.delete_count = Some(clip_count);
                         return Ok(result);
                     }
-                    Some(ContextMenuRequest::SetTimelineClipboardMarker) => result["clipboard"] = json!(shrimply_timeline_skia::TIMELINE_CLIPBOARD_MARKER),
+                    Some(ContextMenuRequest::SetTimelineClipboardMarker) => {
+                        result["clipboard"] =
+                            json!(shrimply_timeline_skia::TIMELINE_CLIPBOARD_MARKER)
+                    }
                     Some(ContextMenuRequest::PasteFromClipboard) => {
-                        if request["clipboard_marker"] != true { return Err("The clipboard does not contain timeline items".into()); }
+                        if request["clipboard_marker"] != true {
+                            return Err("The clipboard does not contain timeline items".into());
+                        }
                         scene.paste_context_clipboard()?;
                     }
-                    Some(_) => return Err("This timeline action requires a native service that is still being integrated".into()),
-                    None => {},
+                    Some(
+                        ContextMenuRequest::CopyFrame(selection)
+                        | ContextMenuRequest::SaveFrame(selection),
+                    ) => {
+                        #[cfg(target_os = "android")]
+                        {
+                            capture = Some((
+                                selection,
+                                if item.action == ContextMenuAction::CopyFrame {
+                                    shrimply_preview_render_core::playback::toolbar::ContextRequest::CopyImage
+                                } else {
+                                    shrimply_preview_render_core::playback::toolbar::ContextRequest::SaveImage
+                                },
+                            ));
+                        }
+                        #[cfg(not(target_os = "android"))]
+                        {
+                            let _ = selection;
+                            return Err("Image capture requires the native GPU host".into());
+                        }
+                    }
+                    Some(ContextMenuRequest::ShowInFolder) => {
+                        result["show_in_files"] = json!(
+                            scene
+                                .context_file_path()
+                                .ok_or("The selected item has no file location")?
+                        );
+                    }
+                    Some(
+                        request @ (ContextMenuRequest::GenerateSpeech
+                        | ContextMenuRequest::Transcribe
+                        | ContextMenuRequest::RemoveSilences
+                        | ContextMenuRequest::ExportAudio),
+                    ) => service = Some(request),
+                    None => {}
                 }
                 if item.action == ContextMenuAction::InspectProperties {
                     self.inspector_visible = true;
@@ -135,6 +180,13 @@ impl Runtime {
         }
         self.context_menu = None;
         self.timeline_changed()?;
+        if let Some(request) = service {
+            self.open_timeline_service(request)?;
+        }
+        #[cfg(target_os = "android")]
+        if let Some((selection, request)) = capture {
+            self.capture_selected_frame(selection, request)?;
+        }
         Ok(result)
     }
 }

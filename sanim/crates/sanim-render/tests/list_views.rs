@@ -8,9 +8,7 @@ use std::sync::Arc;
 fn tile(id: &str) -> Element {
     Element {
         id: id.into(),
-        geometry: Arc::new(Geometry::Rectangle {
-            width: 10.into(),
-            height: 10.into(),
+        geometry: Arc::new(Geometry::Box {
             children: Default::default(),
             radius: Default::default(),
         }),
@@ -22,7 +20,17 @@ fn tile(id: &str) -> Element {
         stroke: None,
         reveal: Default::default(),
         horizontal: Default::default(),
-        layout: Layout::default(),
+        layout: Layout {
+            width: Some(sanim_core::Number {
+                value: 10.into(),
+                unit: Unit::Length,
+            }),
+            height: Some(sanim_core::Number {
+                value: 10.into(),
+                unit: Unit::Length,
+            }),
+            ..Default::default()
+        },
     }
 }
 fn items(ids: &[&str]) -> List {

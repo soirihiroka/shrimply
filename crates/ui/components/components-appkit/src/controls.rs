@@ -323,7 +323,7 @@ define_class!(
                 125 => self.focus_sibling(1),
                 126 => self.focus_sibling(-1),
                 53 => {
-                    if let Some(popover) = self.ivars().popover.load() { popover.close(); }
+                    if let Some(popover) = self.ivars().popover.load() { dismiss_search(&popover); }
                 }
                 _ => unsafe { let _: () = msg_send![super(self), keyDown: event]; },
             }
@@ -459,7 +459,7 @@ fn search_popover(
                     126 => focus_result(&list, true),
                     53 => {
                         if let Some(popover) = popover.load() {
-                            popover.close();
+                            dismiss_search(&popover);
                         }
                         true
                     }
@@ -630,6 +630,100 @@ pub fn show_searchable_popover_at(
     }
 }
 
+/// Direct-touch choices reuse the searchable content in a native window sheet.
+pub fn show_searchable_menu_at(
+    view: &NSView,
+    (point, touch): (NSPoint, bool),
+    placeholder: &str,
+    choices: Vec<StringChoice>,
+    selected: String,
+    on_select: impl Fn(String) + 'static,
+    mtm: MainThreadMarker,
+) {
+    if !shrimply_components_core::layout::menu_uses_bottom_sheet(if touch {
+        "touch"
+    } else {
+        "pointer"
+    }) {
+        show_searchable_popover_at(view, point, placeholder, choices, selected, on_select, mtm);
+        return;
+    }
+    use objc2_app_kit::{NSApplication, NSBackingStoreType, NSWindow, NSWindowStyleMask};
+    let parts = search_popover(
+        placeholder,
+        Rc::new(choices.into()),
+        Rc::new(RefCell::new(Some(selected))),
+        None,
+        false,
+        Rc::new(move |value| {
+            NSApplication::sharedApplication(mtm).stopModal();
+            on_select(value);
+        }),
+        mtm,
+    );
+    let content = parts
+        .popover
+        .contentViewController()
+        .expect("search chooser has content")
+        .view();
+    let root = column_stack(SEARCH_FIELD_VERTICAL_INSET, mtm);
+    column_append(&root, &content);
+    let cancel = crate::ActionButton::new(
+        &shrimply_components_core::presentation::choice_label("Cancel", None),
+        move || NSApplication::sharedApplication(mtm).stopModal(),
+        mtm,
+    );
+    cancel
+        .view()
+        .setKeyEquivalent(&NSString::from_str("\u{1b}"));
+    column_append(&root, cancel.view());
+    let size = parts.popover.contentSize();
+    let window = unsafe {
+        NSWindow::initWithContentRect_styleMask_backing_defer(
+            NSWindow::alloc(mtm),
+            NSRect::new(
+                NSPoint::ZERO,
+                NSSize::new(
+                    size.width,
+                    size.height + CONTROL_HEIGHT + SEARCH_FIELD_VERTICAL_INSET,
+                ),
+            ),
+            NSWindowStyleMask::Titled,
+            NSBackingStoreType::Buffered,
+            false,
+        )
+    };
+    unsafe {
+        window.setReleasedWhenClosed(false);
+    }
+    window.setContentView(Some(&root));
+    let parent = view.window().expect("search sheet host must be attached");
+    (parts.refresh)();
+    parent.beginSheet_completionHandler(&window, None);
+    window.makeFirstResponder(Some(&parts.search));
+    NSApplication::sharedApplication(mtm).runModalForWindow(&window);
+    parent.endSheet(&window);
+    window.orderOut(None);
+}
+
+fn dismiss_search(popover: &NSPopover) {
+    if popover.isShown() {
+        popover.close();
+    } else if let Some(window) = popover
+        .contentViewController()
+        .and_then(|controller| controller.view().window())
+    {
+        let application = objc2_app_kit::NSApplication::sharedApplication(popover.mtm());
+        if application
+            .modalWindow()
+            .as_deref()
+            .is_some_and(|modal| std::ptr::eq(&*window, modal))
+        {
+            application.stopModal();
+        }
+    }
+}
+
 fn first_result(list: &NSView) -> Option<Retained<NSButton>> {
     list.subviews()
         .iter()
@@ -734,7 +828,7 @@ fn populate_search_results(
                 }
                 on_select(value.clone());
                 if let Some(popover) = popover.load() {
-                    popover.close();
+                    dismiss_search(&popover);
                 }
             },
             mtm,

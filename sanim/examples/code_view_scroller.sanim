@@ -1,9 +1,9 @@
 # A normal Box owns overflow. Its code child keeps its natural content height.
-mut scroll = Vec2(0%, 0%)
+mut scroll = [0%, 0%]
 mut stage = "Scroll through the source"
 
-let heading = <Label font_size={28pt} position={Vec2(0%, -43%)}>Code, inside a box.</Label>
-let subtitle = <Label font_size={14pt} fill="light4" position={Vec2(0%, -36%)}>Native syntax trees · animated scopes · optional line numbers</Label>
+let heading = <Label font_size={28pt} position={[0%, -43%]}>Code, inside a box.</Label>
+let subtitle = <Label font_size={14pt} fill="light4" position={[0%, -36%]}>Native syntax trees · animated scopes · optional line numbers</Label>
 
 let code = <CodeView lang="python" font_size={15pt} line_height={24pt} width={100%}>
     from collections import deque
@@ -56,9 +56,9 @@ let code = <CodeView lang="python" font_size={15pt} line_height={24pt} width={10
         main()
 </CodeView>
 
-let panel = <Box w-84% h-70% p-24 gap-16 rounded-xl bg-card_bg_dark position={Vec2(8%, 20%)}>
+let panel = <Box w-84% h-70% p-24 gap-16 rounded-xl bg-card_bg_dark position={[8%, 20%]}>
     <Box flex flex-row gap-12 h-28 items-center>
-        <Circle radius={5pt} fill="green3" />
+        <Box fill="green3" width={2*(5pt)} height={2*(5pt)} rounded-full x_align={Align.Center} y_align={Align.Center}/>
         <Label font_size={17pt}>work_queue.py</Label>
     </Box>
     <Box w-full h-400 p-12 rounded-lg bg-view_bg_dark overflow-x-hidden overflow-y-scroll scroll={scroll}>
@@ -70,15 +70,15 @@ let panel = <Box w-84% h-70% p-24 gap-16 rounded-xl bg-card_bg_dark position={Ve
     </Box>
 </Box>
 
-add(heading)
-add(subtitle)
-add(panel)
+Animation(children=[heading])
+Animation(children=[subtitle])
+Animation(children=[panel])
 wait(400ms)
 stage = "Reveal the gutter"
 code.style(line_numbers=true, scope_indicators=true, duration=350ms, ease="smooth")
-animate(scroll, to=Vec2(0%, 100%), duration=1800ms, ease="smooth")
+animate(scroll, to=[0%, 100%], duration=1800ms, ease="smooth")
 wait(500ms)
-animate(scroll, to=Vec2(0%, 25%), duration=1200ms, ease="smooth")
+animate(scroll, to=[0%, 25%], duration=1200ms, ease="smooth")
 wait(400ms)
 let push = code.range(name="WorkQueue.push")
 let pop_range = code.range(name="WorkQueue.pop")
@@ -105,7 +105,7 @@ pop_range.unfold(duration=600ms, ease="smooth")
 code.style(line_numbers=true, duration=400ms, ease="smooth")
 wait(500ms)
 stage = "Insert one word; unchanged code stays visible"
-animate(scroll, to=Vec2(0%, 45%), duration=600ms, ease="smooth")
+animate(scroll, to=[0%, 45%], duration=600ms, ease="smooth")
 wait(400ms)
 code.range(name="WorkQueue.run_next").edit(src="code_view_scroller.py.patch", animation="morph", duration=1200ms, ease="smooth")
 wait(1s)

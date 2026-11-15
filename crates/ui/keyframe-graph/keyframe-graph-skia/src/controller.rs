@@ -78,17 +78,24 @@ pub enum FrameGraphAction {
     CopyRequested(Vec<Time>),
     PasteRequested(Time),
     TogglePlayback,
+    EditStarted,
     EditFinished,
+    EditCancelled,
+    HistoryRequested {
+        redo: bool,
+    },
     InterpolationRequested {
         owner_id: Uuid,
         interpolation: Interpolation,
         x: f64,
         y: f64,
+        touch: bool,
     },
     TextInterpolationRequested {
         owner_id: Uuid,
         x: f64,
         y: f64,
+        touch: bool,
     },
 }
 
@@ -269,6 +276,10 @@ impl FrameGraphComponents {
 
     pub fn active_component(&self) -> usize {
         self.active_component
+    }
+
+    pub fn playhead(&self) -> Time {
+        self.states[self.active_component].playhead
     }
 
     pub fn activate(&mut self, component: usize) {
@@ -696,13 +707,19 @@ impl FrameGraphState {
                     interpolation,
                     x,
                     y,
+                    touch: false,
                 }]
             } else if self.text_interpolation
                 && y > CURSOR_LANE_HEIGHT
                 && y < content_height
                 && let Some(owner_id) = self.segment_owner_at_x(width, x)
             {
-                vec![FrameGraphAction::TextInterpolationRequested { owner_id, x, y }]
+                vec![FrameGraphAction::TextInterpolationRequested {
+                    owner_id,
+                    x,
+                    y,
+                    touch: false,
+                }]
             } else {
                 Vec::new()
             };

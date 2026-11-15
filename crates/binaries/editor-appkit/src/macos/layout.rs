@@ -17,17 +17,19 @@ const PLAYBACK_SLIDER_PADDING: f64 = 6.0;
 const SOLID_SELECTION_CORNER_RADIUS: f64 = 7.0;
 
 pub const WINDOW_SIZE: NSSize = NSSize::new(1280.0, 800.0);
-pub const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(960.0, 640.0);
+pub const MINIMUM_WINDOW_SIZE: NSSize = NSSize::new(
+    shrimply_components_core::layout::MIN_PREVIEW_WIDTH as f64,
+    640.0,
+);
 const TOP_MIN_HEIGHT: f64 = 260.0;
 const TIMELINE_MIN_HEIGHT: f64 = 260.0;
-const TIMELINE_FRACTION: f64 = 0.4;
 pub const GAP: f64 = 6.0;
 pub const TOOLBAR_WIDTH: f64 = 44.0;
 pub const BUTTON_SIZE: f64 = 28.0;
-const PLAYBAR_HEIGHT: f64 = 44.0;
 
 pub struct Layout {
     pub root: Retained<NSSplitViewController>,
+    pub root_split: Retained<super::layout_split::LayoutSplit>,
     pub inspector_controller: shrimply_inspector_appkit::Inspector,
     pub canvases: Vec<Retained<canvas::CanvasView>>,
     pub progress: Retained<NSSlider>,
@@ -188,6 +190,10 @@ pub fn build(editor: &Editor) -> Layout {
 
     // GTK: preview tools on the left, playback strip directly below the viewer.
     let preview_tools = stack(true, mtm);
+    preview_tools.setHidden(
+        !shrimply_editor_state::preferences::snapshot(&session.preferences)
+            .preview_controls_visible,
+    );
     preview_tools.setSpacing(GAP);
     preview_tools.setAlignment(NSLayoutAttribute::CenterX);
     preview_tools
@@ -330,24 +336,16 @@ pub fn build(editor: &Editor) -> Layout {
         preview_canvas.register_paint_tool(tool, button);
     }
 
-    let playbar = stack(false, mtm);
-    playbar.setAlignment(NSLayoutAttribute::CenterY);
-    playbar.setDistribution(NSStackViewDistribution::Fill);
-    playbar.setContentHuggingPriority_forOrientation(
+    let transport = stack(false, mtm);
+    transport.setSpacing(GAP);
+    transport.setAlignment(NSLayoutAttribute::CenterY);
+    let seek = stack(false, mtm);
+    seek.setSpacing(PLAYBACK_SLIDER_PADDING);
+    seek.setAlignment(NSLayoutAttribute::CenterY);
+    seek.setContentHuggingPriority_forOrientation(
         NSLayoutPriorityDefaultLow,
         NSLayoutConstraintOrientation::Horizontal,
     );
-    playbar.setSpacing(GAP);
-    playbar.setEdgeInsets(NSEdgeInsets {
-        top: GAP,
-        left: GAP,
-        bottom: GAP,
-        right: GAP,
-    });
-    playbar
-        .heightAnchor()
-        .constraintEqualToConstant(PLAYBAR_HEIGHT)
-        .setActive(true);
     let mut play_button = None;
     for (icon, label, action) in [
         ("backward.fill", "Step backward", sel!(stepBackward:)),
@@ -371,10 +369,7 @@ pub fn build(editor: &Editor) -> Layout {
             );
         }
         let glass = circular_glass_button(&control, mtm);
-        playbar.addArrangedSubview(&glass);
-        if label == "Step forward" {
-            playbar.setCustomSpacing_afterView(PLAYBACK_SLIDER_PADDING, &glass);
-        }
+        transport.addArrangedSubview(&glass);
     }
     let progress = unsafe { NSSlider::sliderWithTarget_action(None, None, mtm) };
     progress.setEnabled(true);
@@ -394,15 +389,14 @@ pub fn build(editor: &Editor) -> Layout {
         progress.setTarget(Some(editor));
         progress.setAction(Some(sel!(seek:)));
     }
-    playbar.addArrangedSubview(&progress);
-    playbar.setCustomSpacing_afterView(PLAYBACK_SLIDER_PADDING, &progress);
+    seek.addArrangedSubview(&progress);
     let time = NSTextField::labelWithString(&NSString::from_str("—:—:— / —:—:—"), mtm);
     time.setFont(Some(&NSFont::monospacedSystemFontOfSize_weight(
         NSFont::systemFontSize(),
         unsafe { objc2_app_kit::NSFontWeightRegular },
     )));
     time.setTextColor(Some(&NSColor::secondaryLabelColor()));
-    playbar.addArrangedSubview(&time);
+    seek.addArrangedSubview(&time);
     let fullscreen = button(
         "arrow.up.left.and.arrow.down.right",
         "Fullscreen Preview",
@@ -413,7 +407,21 @@ pub fn build(editor: &Editor) -> Layout {
         fullscreen.setTarget(Some(editor));
         fullscreen.setAction(Some(sel!(togglePreviewFullscreen:)));
     }
-    playbar.addArrangedSubview(&circular_glass_button(&fullscreen, mtm));
+    seek.addArrangedSubview(&circular_glass_button(&fullscreen, mtm));
+    let playbar = super::transport::build(&transport, &seek, &time, mtm);
+    playbar.setAlignment(NSLayoutAttribute::CenterY);
+    playbar.setDistribution(NSStackViewDistribution::Fill);
+    playbar.setContentHuggingPriority_forOrientation(
+        NSLayoutPriorityDefaultLow,
+        NSLayoutConstraintOrientation::Horizontal,
+    );
+    playbar.setSpacing(GAP);
+    playbar.setEdgeInsets(NSEdgeInsets {
+        top: GAP,
+        left: GAP,
+        bottom: GAP,
+        right: GAP,
+    });
     let preview_host = NSView::initWithFrame(NSView::alloc(mtm), NSRect::ZERO);
     preview_host.setTranslatesAutoresizingMaskIntoConstraints(false);
     preview_host.setContentHuggingPriority_forOrientation(
@@ -452,7 +460,7 @@ pub fn build(editor: &Editor) -> Layout {
         constraint.setActive(true);
     }
     let controls_overlay = EffectView::new(NSRect::ZERO, EffectRole::Controls, mtm);
-    controls_overlay.set_corner_radius(PLAYBAR_HEIGHT / 2.0);
+    controls_overlay.set_corner_radius(super::transport::ROW_HEIGHT / 2.0);
     let overlay_view = controls_overlay.view();
     overlay_view.setContentHuggingPriority_forOrientation(
         NSLayoutPriorityDefaultLow,
@@ -481,15 +489,13 @@ pub fn build(editor: &Editor) -> Layout {
         overlay_view
             .bottomAnchor()
             .constraintEqualToAnchor(&preview_host.bottomAnchor()),
-        overlay_view
-            .heightAnchor()
-            .constraintEqualToConstant(PLAYBAR_HEIGHT),
     ];
     let preview_layout = stack(true, mtm);
     preview_layout.setDistribution(NSStackViewDistribution::Fill);
     preview_layout.addArrangedSubview(&preview_host);
     preview_layout.addArrangedSubview(&playbar);
     let inspector = super::inspector_split::InspectorSplit::new(
+        editor,
         inspector_controller.view(),
         &preview_layout,
         WINDOW_SIZE,
@@ -501,9 +507,14 @@ pub fn build(editor: &Editor) -> Layout {
         timeline::build(session.clone(), editor.ivars().imports.clone(), mtm);
     let timeline = split_item(&timeline_view, mtm);
     timeline.setMinimumThickness(TIMELINE_MIN_HEIGHT);
-    timeline.setPreferredThicknessFraction(TIMELINE_FRACTION);
     timeline.setCanCollapse(true);
     let root = NSSplitViewController::new(mtm);
+    let root_split = super::layout_split::LayoutSplit::new(
+        editor,
+        super::layout_split::Dimension::Timeline,
+        WINDOW_SIZE,
+    );
+    root.setSplitView(&root_split);
     root.splitView().setVertical(false);
     root.splitView()
         .setDividerStyle(NSSplitViewDividerStyle::Thin);
@@ -511,6 +522,17 @@ pub fn build(editor: &Editor) -> Layout {
     root.addSplitViewItem(&timeline);
     root.view()
         .setFrame(NSRect::new(NSPoint::ZERO, WINDOW_SIZE));
+    let timeline_extent = shrimply_components_core::math::split_pane_extent(
+        root_split.bounds().size.height as f32,
+        root_split.dividerThickness() as f32,
+        shrimply_editor_state::preferences::snapshot(&session.preferences)
+            .editor_layout
+            .timeline_fraction,
+    );
+    timeline.setPreferredThicknessFraction(
+        f64::from(timeline_extent) / root_split.bounds().size.height,
+    );
+    root_split.restore();
     let fullscreen_constraints = vec![
         preview_host
             .leadingAnchor()
@@ -527,6 +549,7 @@ pub fn build(editor: &Editor) -> Layout {
     ];
     Layout {
         root,
+        root_split,
         inspector_controller,
         canvases: vec![preview_canvas, timeline_canvas, meter_canvas],
         progress,

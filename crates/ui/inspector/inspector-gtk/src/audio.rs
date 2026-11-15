@@ -51,34 +51,25 @@ fn controls(
         };
         return super::audio_cache::rows(cache, modifier.id, context);
     }
-    let section = InspectorSection::controls();
-    for control in model.controls.iter().filter(|control| control.visible) {
-        match control.kind {
-            ControlKind::TtsEditor => {
-                let project = context.project.borrow();
-                let item = project
-                    .audio_item(context.selected_item.as_ref().expect("TTS item"))
-                    .expect("TTS item exists");
-                let AudioSource::Tts(settings) = &item.source else {
-                    panic!("TTS control requires TTS source");
-                };
-                section.add_wide_control(&tts_editor(item.id, settings, context));
-            }
-            ControlKind::BeatDetection => {
-                section.add_wide_control(&beat_detection(control, context));
-            }
-            ControlKind::AudioModifierMenu => {
-                section.add_wide_control(&modifier_menu(control, context))
-            }
-            _ => super::control::add_control(
-                &section,
-                context,
-                &context.list_target,
-                control.clone(),
-            ),
+    super::control::section(model, context)
+}
+
+pub(super) fn control(control: &InspectorControl, context: &InspectorContext) -> gtk::Widget {
+    match control.kind {
+        ControlKind::TtsEditor => {
+            let project = context.project.borrow();
+            let item = project
+                .audio_item(context.selected_item.as_ref().expect("TTS item"))
+                .expect("TTS item exists");
+            let AudioSource::Tts(settings) = &item.source else {
+                panic!("TTS control requires TTS source");
+            };
+            tts_editor(item.id, settings, context)
         }
+        ControlKind::BeatDetection => beat_detection(control, context),
+        ControlKind::AudioModifierMenu => modifier_menu(control, context),
+        _ => panic!("unsupported audio widget kind: {:?}", control.kind),
     }
-    vec![section.into_widget()]
 }
 
 fn beat_detection(control: &InspectorControl, context: &InspectorContext) -> gtk::Widget {

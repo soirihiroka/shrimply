@@ -6,13 +6,14 @@ use std::time::{Duration, Instant};
 use gtk::gdk;
 use gtk::gdk::prelude::*;
 use gtk::glib;
-use gtk::glib::translate::ToGlibPtr;
+use gtk::glib::translate::{ToGlibPtr, from_glib};
 use gtk::prelude::*;
 use shrimply_pointer_lock_wayland::WaylandPointerLock;
 
 const SLOW_POINTER_LOCK_LOG_THRESHOLD: Duration = Duration::from_millis(16);
 
 unsafe extern "C" {
+    fn gdk_wayland_display_get_type() -> glib::ffi::GType;
     fn gdk_wayland_display_get_wl_display(display: *mut gdk::ffi::GdkDisplay) -> *mut c_void;
     fn gdk_wayland_surface_get_wl_surface(surface: *mut gdk::ffi::GdkSurface) -> *mut c_void;
     fn gdk_wayland_seat_get_wl_seat(seat: *mut gdk::ffi::GdkSeat) -> *mut c_void;
@@ -31,10 +32,15 @@ impl PointerLock {
         widget: &impl IsA<gtk::Widget>,
         on_delta: impl Fn(f64, f64) + 'static,
     ) -> Option<Self> {
-        std::env::var_os("WAYLAND_DISPLAY")?;
         let native = widget.as_ref().native()?;
         let gdk_surface = native.surface()?;
         let gdk_display = gdk_surface.display();
+        if !gdk_display
+            .type_()
+            .is_a(unsafe { from_glib(gdk_wayland_display_get_type()) })
+        {
+            return None;
+        }
         let gdk_seat = gdk_display.default_seat()?;
         let wl_display =
             unsafe { gdk_wayland_display_get_wl_display(gdk_display.to_glib_none().0) };

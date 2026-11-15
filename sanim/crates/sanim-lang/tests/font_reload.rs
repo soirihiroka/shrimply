@@ -5,7 +5,7 @@ fn font_activation_reprepares_unchanged_sources_and_invalidates_state_prefixes()
     let mut sources = MemorySources::default();
     sources.insert(
         "main.sanim",
-        "let typeface=Font()\nlet label=Text(\"Shared fonts\",font=typeface)\nadd(label)\nwait(1s)",
+        "let typeface=Font()\nlet label=Text(\"Shared fonts\",font=typeface)\nAnimation(children=[label])\nwait(1s)",
     );
     let mut session = Session::new("main.sanim");
     assert!(matches!(

@@ -252,33 +252,7 @@ impl EditorSession {
     }
 }
 
-pub fn change_history(
-    project: &Rc<RefCell<Project>>,
-    player: &player_state::SharedPlayerState,
-    change: fn(&mut Project) -> bool,
-) {
-    if !change(&mut project.borrow_mut()) {
-        return;
-    }
-    let (duration, frame_rate) = {
-        let project = project.borrow();
-        (project.duration(), project.fps)
-    };
-    player_state::refresh_project(
-        player,
-        player_state::ProjectChange {
-            duration: Some(duration),
-            frame_rate: Some(frame_rate),
-            audio: true,
-            audio_beats: true,
-            audio_waveforms: true,
-            video: true,
-            live_preview: false,
-            captions: true,
-            inspector: true,
-        },
-    );
-}
+pub use shrimply_editor_state::player_state::change_history;
 
 pub fn suggested_save_as_path() -> PathBuf {
     let current = project::active_project_path();

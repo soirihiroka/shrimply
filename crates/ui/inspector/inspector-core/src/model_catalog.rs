@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::mpsc,
+    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 
@@ -10,7 +10,7 @@ type Models<T> = Result<Vec<T>, String>;
 type Response<T> = (String, Models<T>);
 
 /// URL-scoped asynchronous catalogs survive inspector document rebuilds.
-pub(crate) struct ModelCatalog<T = String> {
+pub struct ModelCatalog<T = String> {
     states: HashMap<String, Option<Models<T>>>,
     failed_at: HashMap<String, Instant>,
     sender: mpsc::Sender<Response<T>>,
@@ -57,6 +57,16 @@ impl<T: Clone + Send + 'static> ModelCatalog<T> {
         cached: Option<Models<T>>,
         load: fn(&str) -> Models<T>,
     ) -> Option<Models<T>> {
+        self.request_with_waker(server_url, cached, load, None)
+    }
+
+    pub fn request_with_waker(
+        &mut self,
+        server_url: &str,
+        cached: Option<Models<T>>,
+        load: fn(&str) -> Models<T>,
+        wake: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Option<Models<T>> {
         if self
             .failed_at
             .get(server_url)
@@ -74,7 +84,11 @@ impl<T: Clone + Send + 'static> ModelCatalog<T> {
                 let sender = self.sender.clone();
                 std::thread::spawn(move || {
                     let result = load(&url);
-                    let _ = sender.send((url, result));
+                    if sender.send((url, result)).is_ok()
+                        && let Some(wake) = wake
+                    {
+                        wake();
+                    }
                 });
                 None
             })

@@ -189,7 +189,7 @@ impl Scene {
     }
 
     fn toggle_zoom(&mut self) {
-        let width = timeline_width(f64::from(self.viewport.width()));
+        let width = timeline_width(f64::from(self.viewport.width()), self.view);
         if width <= 0.0 {
             return;
         }

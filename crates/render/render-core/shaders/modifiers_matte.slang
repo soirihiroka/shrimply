@@ -228,7 +228,7 @@ alpha_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 sam2_apply_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
-                uniform int8_t *masks, uniform uint *output,
+                uniform SignedByteStorage *masks, uniform uint *output,
                 uniform BufferIndex output_count, uniform Sam2MaskParams params) {
   uint i = id.x;
   if (i >= output_count)
@@ -246,12 +246,12 @@ sam2_apply_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
        x1 = min(x0 + 1u, params.mask_size - 1u),
        y1 = min(y0 + 1u, params.mask_size - 1u);
   float top =
-      lerp(float(masks[y0 * params.mask_size + x0]) / params.quantization_scale,
-           float(masks[y0 * params.mask_size + x1]) / params.quantization_scale,
+      lerp(float(load_signed_byte(masks, y0 * params.mask_size + x0)) / params.quantization_scale,
+           float(load_signed_byte(masks, y0 * params.mask_size + x1)) / params.quantization_scale,
            mx - float(x0));
   float bottom =
-      lerp(float(masks[y1 * params.mask_size + x0]) / params.quantization_scale,
-           float(masks[y1 * params.mask_size + x1]) / params.quantization_scale,
+      lerp(float(load_signed_byte(masks, y1 * params.mask_size + x0)) / params.quantization_scale,
+           float(load_signed_byte(masks, y1 * params.mask_size + x1)) / params.quantization_scale,
            mx - float(x0));
   float logit = lerp(top, bottom, my - float(y0)),
         half_softness = max(params.softness, 0.0f) * 0.5f;
@@ -267,7 +267,7 @@ sam2_apply_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
 
     [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void transparent_fill_apply_mask(
         uint3 id : SV_DispatchThreadID, uniform uint *input,
-        uniform uint8_t *mask_bits, uniform uint *output,
+        uniform ByteStorage *mask_bits, uniform uint *output,
         uniform BufferIndex output_count,
         uniform TransparentFillMaskParams params) {
   uint i = id.x;
@@ -276,9 +276,9 @@ sam2_apply_mask(uint3 id : SV_DispatchThreadID, uniform uint *input,
   uint x = i % params.width, y = i / params.width;
   if (y >= params.height)
     return;
-  uint8_t byte = mask_bits[y * params.stride + x / 8u];
+  uint byte = load_byte(mask_bits, y * params.stride + x / 8u);
   output[i] =
-      (byte & (uint8_t(0x80u) >> uint8_t(x % 8u))) != 0u ? 0u : input[i];
+      (byte & (0x80u >> (x % 8u))) != 0u ? 0u : input[i];
 }
 
 float wipe_alpha(float x, float y, uint width, uint height, float visibility,

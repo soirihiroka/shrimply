@@ -16,7 +16,6 @@ pub(super) struct State {
 }
 
 struct Restore {
-    tools_hidden: bool,
     controls_hidden: bool,
     toolbar_visible: bool,
 }
@@ -81,7 +80,6 @@ impl Editor {
         }
         if active {
             let restore = Restore {
-                tools_hidden: layout.preview_tools.isHidden(),
                 controls_hidden: layout.playbar.isHidden(),
                 toolbar_visible: window.toolbar().is_some_and(|toolbar| toolbar.isVisible()),
             };
@@ -159,7 +157,15 @@ impl Editor {
             layout
                 .viewer
                 .insertArrangedSubview_atIndex(&layout.preview_tools, 0);
-            layout.preview_tools.setHidden(restore.tools_hidden);
+            let preferences = &self
+                .ivars()
+                .session
+                .get()
+                .expect("project loaded")
+                .preferences;
+            layout.preview_tools.setHidden(
+                !shrimply_editor_state::preferences::snapshot(preferences).preview_controls_visible,
+            );
             if let Some(toolbar) = window.toolbar() {
                 toolbar.setVisible(restore.toolbar_visible);
             }

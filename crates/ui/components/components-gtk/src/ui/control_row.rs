@@ -1,12 +1,14 @@
-use gtk::prelude::*;
+use adw::prelude::*;
 
 pub fn control_row(label: &str, child: &impl IsA<gtk::Widget>) -> gtk::Widget {
     let label = crate::i18n::text(label);
-    let row = gtk::Box::new(
-        gtk::Orientation::Horizontal,
-        shrimply_components_core::layout::CONTROL_ROW_GAP,
-    );
-    row.set_hexpand(true);
+    let row = adw::WrapBox::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .child_spacing(shrimply_components_core::layout::CONTROL_ROW_GAP)
+        .line_spacing(shrimply_components_core::layout::CONTROL_ROW_GAP)
+        .wrap_policy(adw::WrapPolicy::Minimum)
+        .hexpand(true)
+        .build();
     row.append(
         &gtk::Label::builder()
             .label(label.as_ref())

@@ -253,7 +253,8 @@ fn nested_list_refinement_preserves_original_values() {
 #[test]
 fn concatenating_empty_typed_lists_keeps_the_element_schema() {
     let values = Value::List(List::typed(number(), vec![]));
-    let result = math::operations::binary("+", values.clone(), Value::List(vec![].into())).unwrap();
+    let result =
+        math::operations::binary("concat", values.clone(), Value::List(vec![].into())).unwrap();
     assert_eq!(result.ty(), values.ty());
     assert!(result.list().unwrap().is_empty());
 }

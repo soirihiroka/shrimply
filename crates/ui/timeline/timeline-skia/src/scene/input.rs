@@ -40,8 +40,8 @@ pub struct Requests {
     pub context_menu: Option<(Vec2, bool)>,
     pub pause_playback: bool,
     pub track_add: Option<TrackAddMenuRequest>,
-    pub audio_record: Option<TrackKey>,
-    pub video_record: Option<TrackKey>,
+    pub audio_record: Option<TrackRecordingRequest>,
+    pub video_record: Option<TrackRecordingRequest>,
 }
 
 #[derive(Clone, Copy)]
@@ -80,9 +80,11 @@ impl Scene {
             return;
         };
         let bounds = Rect::from_min_max(
-            vec2(timeline_x() as f32, 0.0),
+            vec2(timeline_x(self.view) as f32, 0.0),
             vec2(
-                (timeline_x() + timeline_width(f64::from(self.viewport.width()))) as f32,
+                (timeline_x(self.view)
+                    + timeline_width(f64::from(self.viewport.width()), self.view))
+                    as f32,
                 self.viewport.max.y,
             ),
         );
@@ -104,12 +106,16 @@ impl Scene {
 
     /// Queue toolkit input for the next update. Native hosts never implement gesture rules.
     pub fn event(&mut self, event: Event) {
+        self.process_event(event, false);
+    }
+
+    fn process_event(&mut self, event: Event, touch: bool) {
         self.media_refresh.redraw.set(true);
         self.sync_revision();
         match event {
             Event::ContextMenu { point, touch } => {
                 self.pointer_cancelled();
-                self.pending_context_menu = Some((point, touch));
+                self.pending_context_menu = self.context_target(point).map(|_| (point, touch));
             }
             Event::Touch(changes) => self.touch(&changes),
             Event::Modifiers(modifiers) => self.modifiers = modifiers,
@@ -127,6 +133,7 @@ impl Scene {
                 self.modifiers = modifiers;
                 self.pointer_pos = Some(point);
                 self.pointer_press_origin = Some(point);
+                self.pointer_touch = touch;
                 self.pointer_release_pos = None;
                 match button {
                     PointerButton::Primary => {
@@ -148,6 +155,7 @@ impl Scene {
                 self.modifiers = modifiers;
                 self.pointer_pos = Some(point);
                 self.pointer_release_pos = Some(point);
+                self.pointer_touch = touch;
                 match button {
                     PointerButton::Primary => {
                         self.primary_released = true;
@@ -172,17 +180,28 @@ impl Scene {
         use shrimply_components_skia::input::{TouchAction, TouchCancelReason};
         for action in self.touch_input.update(changes) {
             match action {
+                TouchAction::History { redo } => {
+                    self.cancel_touch_drag();
+                    player_state::change_history(
+                        &self.project,
+                        &self.player,
+                        if redo { project::redo } else { project::undo },
+                    );
+                }
                 TouchAction::Press(point) => {
                     self.touch_selection = Some(selection_state::snapshot(&self.selection));
                     let player = player_state::snapshot(&self.player);
                     self.touch_playhead = Some(player.position);
                     self.touch_playing = Some(player.playing);
-                    self.event(Event::Press {
-                        point,
-                        button: PointerButton::Primary,
-                        double: false,
-                        modifiers: self.modifiers,
-                    });
+                    self.process_event(
+                        Event::Press {
+                            point,
+                            button: PointerButton::Primary,
+                            double: false,
+                            modifiers: self.modifiers,
+                        },
+                        true,
+                    );
                     self.update_input();
                 }
                 TouchAction::Move(point) => {
@@ -193,11 +212,14 @@ impl Scene {
                     self.update_input();
                 }
                 TouchAction::Release(point) => {
-                    self.event(Event::Release {
-                        point,
-                        button: PointerButton::Primary,
-                        modifiers: self.modifiers,
-                    });
+                    self.process_event(
+                        Event::Release {
+                            point,
+                            button: PointerButton::Primary,
+                            modifiers: self.modifiers,
+                        },
+                        true,
+                    );
                     self.update_input();
                     self.touch_selection = None;
                     self.touch_playhead = None;
@@ -272,6 +294,17 @@ impl Scene {
     }
 
     pub fn toggle_audio_recording(&mut self, key: TrackKey) -> Result<(), String> {
+        self.toggle_audio_recording_at(key, player_state::current_time(&self.player))
+    }
+
+    pub fn toggle_audio_recording_at(
+        &mut self,
+        key: TrackKey,
+        position: Time,
+    ) -> Result<(), String> {
+        if !self.recording_available.0 {
+            return Err("Microphone recording is unavailable".into());
+        }
         if key.kind != TrackKind::Audio {
             return Err("Microphone recording requires an audio track".into());
         }
@@ -287,10 +320,11 @@ impl Scene {
                 return Ok(());
             }
         }
-        self.active_audio_recording = Some(crate::recording::AudioRecording::start(
+        self.active_audio_recording = Some(crate::recording::AudioRecording::start_at(
             key,
             &self.project.borrow(),
             &self.player,
+            position,
         )?);
         Ok(())
     }
@@ -479,6 +513,7 @@ impl Scene {
         !self.pending_scrolls.is_empty()
             || self.touch_input.waiting_long_press()
             || self.track_controls_animating
+            || self.controls_animation.is_some()
             || self.horizontal_scrollbar.animating()
             || self.vertical_scrollbar.animating()
             || self.overscroll.is_some_and(|overscroll| {
@@ -629,12 +664,12 @@ impl Scene {
             .or_else(|| {
                 self.pending_audio_record
                     .take()
-                    .map(|key| (key, TrackLabelAction::AudioRecord))
+                    .map(|request| (request.key, TrackLabelAction::AudioRecord))
             })
             .or_else(|| {
                 self.pending_video_record
                     .take()
-                    .map(|key| (key, TrackLabelAction::VideoRecord))
+                    .map(|request| (request.key, TrackLabelAction::VideoRecord))
             }))
     }
 
@@ -729,7 +764,7 @@ impl Scene {
             &selection,
             self,
             width,
-            timeline_width(width),
+            timeline_width(width, self.view),
             height,
             track_height,
             duration,
@@ -751,7 +786,7 @@ impl Scene {
     }
 
     pub fn magnify(&mut self, point: Vec2, magnification: f64) {
-        if f64::from(point.x) < timeline_x() {
+        if f64::from(point.x) < timeline_x(self.view) {
             return;
         }
         self.media_refresh.redraw.set(true);

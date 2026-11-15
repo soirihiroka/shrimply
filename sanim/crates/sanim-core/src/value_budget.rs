@@ -1,14 +1,19 @@
 use crate::{Element, Geometry, Value};
-use std::sync::{Arc, Weak};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Weak},
+};
 
-/// COW allocation guards for shared native font, text and encoded-media payloads. A guard never keeps
-/// the font bytes alive and cannot confuse a reused address with an older asset.
+/// COW allocation guards for shared font, text, media and captured type payloads.
+/// Weak guards preserve allocation identity without keeping expired payloads alive.
 #[derive(Clone, Debug, Default)]
 pub struct Budget {
     assets: imbl::OrdMap<usize, Weak<Vec<u8>>>,
     media: imbl::OrdMap<usize, Weak<crate::media::Asset>>,
     text: imbl::OrdMap<usize, Weak<str>>,
     range_origins: imbl::OrdMap<usize, Weak<crate::code::view::RangeOrigin>>,
+    type_environments: imbl::OrdMap<usize, Weak<BTreeMap<String, crate::Type>>>,
+    plans: imbl::OrdMap<usize, Weak<crate::plan::Animation>>,
     shared_visits: u64,
     minimum_depth: Option<usize>,
 }
@@ -34,6 +39,43 @@ impl Budget {
             + self.media.len() * MEDIA_ENTRY_BYTES
             + self.text.len() * TEXT_ENTRY_BYTES
             + self.range_origins.len() * RANGE_ORIGIN_ENTRY_BYTES
+            + self.type_environments.len() * TYPE_ENVIRONMENT_ENTRY_BYTES
+            + self.plans.len() * PLAN_ENTRY_BYTES
+    }
+    /// Charge a captured immutable type environment once per COW execution budget.
+    pub fn charge_types(
+        &mut self,
+        types: &Arc<BTreeMap<String, crate::Type>>,
+        bytes: &mut usize,
+    ) -> Result<(), String> {
+        if types.is_empty() {
+            return Ok(());
+        }
+        let id = Arc::as_ptr(types) as usize;
+        if self
+            .type_environments
+            .get(&id)
+            .and_then(Weak::upgrade)
+            .is_some_and(|previous| Arc::ptr_eq(&previous, types))
+        {
+            return Ok(());
+        }
+        let mut remaining = *bytes;
+        for (name, ty) in types.iter() {
+            crate::type_budget::charge(ty, &mut remaining)?;
+            remaining = remaining
+                .checked_sub(name.len() + std::mem::size_of::<String>())
+                .ok_or("captured type environment exceeds the retained-data budget")?;
+        }
+        *bytes = remaining
+            .checked_sub(
+                TYPE_ENVIRONMENT_ENTRY_BYTES
+                    + std::mem::size_of::<BTreeMap<String, crate::Type>>()
+                    + 2 * std::mem::size_of::<usize>(),
+            )
+            .ok_or("captured type environment exceeds the retained-data budget")?;
+        self.type_environments.insert(id, Arc::downgrade(types));
+        Ok(())
     }
     fn contains(&self, bytes: &Arc<Vec<u8>>) -> bool {
         self.assets
@@ -42,6 +84,11 @@ impl Budget {
             .is_some_and(|existing| Arc::ptr_eq(&existing, bytes))
     }
 }
+const PLAN_ENTRY_BYTES: usize = std::mem::size_of::<(usize, Weak<crate::plan::Animation>)>()
+    + std::mem::size_of::<imbl::OrdMap<usize, Weak<crate::plan::Animation>>>();
+const TYPE_ENVIRONMENT_ENTRY_BYTES: usize =
+    std::mem::size_of::<imbl::OrdMap<usize, Weak<BTreeMap<String, crate::Type>>>>()
+        + std::mem::size_of::<(usize, Weak<BTreeMap<String, crate::Type>>)>();
 const RANGE_ORIGIN_ENTRY_BYTES: usize =
     std::mem::size_of::<imbl::OrdMap<usize, Weak<crate::code::view::RangeOrigin>>>()
         + std::mem::size_of::<(usize, Weak<crate::code::view::RangeOrigin>)>();
@@ -140,6 +187,81 @@ pub fn charge_with_budget(
             }
             _ => {}
         }
+        Ok(())
+    }
+    fn plan(
+        value: &Arc<crate::plan::Animation>,
+        bytes: &mut usize,
+        items: &mut usize,
+        depth: usize,
+        budget: &mut Budget,
+    ) -> Result<(), String> {
+        if depth == 0 {
+            return Err("animation plan nesting limit exceeded".into());
+        }
+        budget.shared();
+        budget.observe_depth(depth);
+        let id = Arc::as_ptr(value) as usize;
+        if budget
+            .plans
+            .get(&id)
+            .and_then(Weak::upgrade)
+            .is_some_and(|old| Arc::ptr_eq(&old, value))
+        {
+            return Ok(());
+        }
+        take(
+            bytes,
+            items,
+            PLAN_ENTRY_BYTES
+                + std::mem::size_of::<crate::plan::Animation>()
+                + std::mem::size_of::<crate::plan::Node>(),
+        )?;
+        if let Some(origin) = &value.origin {
+            shared_text(&origin.location.source, bytes, items, budget)?;
+            if let Some(binding) = &origin.binding {
+                shared_text(binding, bytes, items, budget)?;
+            }
+        }
+        use crate::plan::Node;
+        match value.node.as_ref() {
+            Node::Element(element) => visit(
+                &Value::Element(element.clone()),
+                bytes,
+                items,
+                depth - 1,
+                budget,
+            )?,
+            Node::Container(children)
+            | Node::Scope { children, .. }
+            | Node::Effect { children, .. } => {
+                if let Node::Scope { elements, .. } = value.node.as_ref() {
+                    for element in elements {
+                        visit(
+                            &Value::Element(element.clone()),
+                            bytes,
+                            items,
+                            depth - 1,
+                            budget,
+                        )?;
+                    }
+                }
+                if let Node::Effect { effect, .. } = value.node.as_ref() {
+                    shared_text(&effect.operation, bytes, items, budget)?;
+                    for (key, arg) in &effect.arguments {
+                        take(bytes, items, key.len())?;
+                        visit(arg, bytes, items, depth - 1, budget)?;
+                    }
+                }
+                for child in children {
+                    plan(child, bytes, items, depth - 1, budget)?;
+                }
+            }
+            Node::Cell { to, .. } => visit(to, bytes, items, depth - 1, budget)?,
+            Node::Repeat { animation, .. } => plan(animation, bytes, items, depth - 1, budget)?,
+            Node::Hold(_) => {}
+        }
+        budget.plans.insert(id, Arc::downgrade(value));
         Ok(())
     }
     fn code_range(
@@ -302,9 +424,7 @@ pub fn charge_with_budget(
                     fonts.media.insert(id, Arc::downgrade(asset));
                 }
             }
-            Geometry::Box { children, .. }
-            | Geometry::Rectangle { children, .. }
-            | Geometry::Code { children, .. } => {
+            Geometry::Box { children, .. } | Geometry::Code { children, .. } => {
                 for child in children {
                     element(child, bytes, items, depth - 1, fonts)?;
                 }
@@ -502,6 +622,7 @@ pub fn charge_with_budget(
                 }
             }
             Value::Element(value) => element(value, bytes, items, depth - 1, fonts)?,
+            Value::Animation(value) => plan(value, bytes, items, depth - 1, fonts)?,
             Value::Predicate(value) => {
                 element(&value.left, bytes, items, depth - 1, fonts)?;
                 if let Some(right) = &value.right {

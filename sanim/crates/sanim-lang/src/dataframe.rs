@@ -191,7 +191,7 @@ fn registry() -> &'static [Builtin] {
                         })
                         .collect(),
                     result: Type::Unknown,
-                    schedule: false,
+                    state_effect: false,
                     timing: Default::default(),
                     content: Default::default(),
                     execute: Execution::Access(execute),

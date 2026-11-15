@@ -5238,6 +5238,7 @@ dependencies = [
  "serde_json",
  "shrimply-fonts",
  "shrimply-math-color",
+ "shrimply-math-core",
  "shrimply-resource-pipeline",
  "taffy",
 ]
@@ -5797,6 +5798,7 @@ dependencies = [
 name = "shrimply-components-core"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "shrimply-i18n",
  "shrimply-math-color",
  "shrimply-math-core",
@@ -6123,6 +6125,7 @@ dependencies = [
  "shrimply-editing-api",
  "shrimply-export-core",
  "shrimply-fonts",
+ "shrimply-framegraph-skia",
  "shrimply-i18n",
  "shrimply-inspector-core",
  "shrimply-inspector-document",
@@ -6175,6 +6178,7 @@ dependencies = [
  "shrimply-export-appkit",
  "shrimply-export-core",
  "shrimply-export-metal",
+ "shrimply-i18n",
  "shrimply-inspector-appkit",
  "shrimply-math-core",
  "shrimply-paint-edit-skia",
@@ -6266,6 +6270,7 @@ dependencies = [
  "shrimply-math-core",
  "shrimply-preferences-qt",
  "shrimply-preview-qt",
+ "shrimply-preview-render-core",
  "shrimply-preview-runtime-cuda",
  "shrimply-process-reporting",
  "shrimply-project-document",
@@ -6575,14 +6580,22 @@ name = "shrimply-inspector-document"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "shrimply-asset",
  "shrimply-audio-modifiers",
  "shrimply-components-core",
+ "shrimply-components-skia",
+ "shrimply-export-core",
+ "shrimply-framegraph-skia",
  "shrimply-i18n",
  "shrimply-inspector-core",
  "shrimply-math-core",
+ "shrimply-path-core",
+ "shrimply-preferences-core",
  "shrimply-preview-provider-skia",
  "shrimply-project-document",
  "shrimply-property-model",
+ "shrimply-timeline-skia",
+ "shrimply-tts",
  "shrimply-visual-modifiers",
  "uuid",
 ]
@@ -6592,7 +6605,6 @@ name = "shrimply-inspector-gtk"
 version = "0.1.0"
 dependencies = [
  "async-channel",
- "ffmpeg-next",
  "glam 0.34.1",
  "gtk4",
  "hashbrown 0.17.1",
@@ -6616,7 +6628,6 @@ dependencies = [
  "shrimply-math-core",
  "shrimply-math-geometry",
  "shrimply-math-interpolation",
- "shrimply-media-info",
  "shrimply-process-reporting",
  "shrimply-profiling",
  "shrimply-project-document",
@@ -7189,7 +7200,9 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "rusqlite",
+ "serde_json",
  "shrimply-blender-core",
+ "shrimply-components-core",
  "shrimply-compute-client",
  "shrimply-i18n",
  "shrimply-math-color",
@@ -7248,6 +7261,7 @@ dependencies = [
  "shrimply-playback-performance",
  "shrimply-preview-interaction-skia",
  "shrimply-preview-provider-skia",
+ "shrimply-preview-render-core",
  "shrimply-preview-runtime-cuda",
  "shrimply-profiling",
  "shrimply-project-document",
@@ -7302,6 +7316,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
  "shrimply-audio-engine",
+ "shrimply-components-core",
  "shrimply-components-skia",
  "shrimply-cross-ui-core",
  "shrimply-cross-ui-theme",
@@ -7873,6 +7888,7 @@ name = "shrimply-timeline-qt"
 version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
+ "shrimply-components-core",
  "shrimply-components-skia",
  "shrimply-cross-ui-theme",
  "shrimply-editor-state",
@@ -7900,6 +7916,7 @@ dependencies = [
  "serde_json",
  "shrimply-asset",
  "shrimply-audio-engine",
+ "shrimply-components-core",
  "shrimply-components-skia",
  "shrimply-compute-client",
  "shrimply-cross-ui-theme",

@@ -9,7 +9,7 @@ fn images_are_watched_typed_elements_with_layout_and_shared_encoded_assets() {
         "sample.png",
         include_bytes!("../../../tests/fixtures/media-sample.png").as_slice(),
     );
-    files.insert("main.sanim", "let a=<Image src=\"sample.png\" width={120pt}/>\nlet b=<Image src=\"sample.png\" width={120pt}/>\nadd(a)\nadd(b)\nwait(1s)");
+    files.insert("main.sanim", "let a=<Image src=\"sample.png\" width={120pt}/>\nlet b=<Image src=\"sample.png\" width={120pt}/>\nAnimation(children=[a])\nAnimation(children=[b])\nwait(1s)");
     let mut engine = Engine::default();
     let prepared = engine
         .prepare("main.sanim", &files, &Default::default())
@@ -74,7 +74,7 @@ fn remote_image_urls_share_one_download_and_remain_pinned_source_dependencies() 
         stream.write_all(body).unwrap();
     });
     let mut files = MemorySources::default();
-    files.insert("main.sanim",format!("let first=<Image src=\"{url}\"/>\nlet second=<Image src=\"{url}\"/>\nadd(first)\nadd(second)\nwait(1s)"));
+    files.insert("main.sanim",format!("let first=<Image src=\"{url}\"/>\nlet second=<Image src=\"{url}\"/>\nAnimation(children=[first])\nAnimation(children=[second])\nwait(1s)"));
     struct RemoteSources(MemorySources);
     impl Sources for RemoteSources {
         fn read(&self, path: &str) -> Result<Vec<u8>, String> {
@@ -110,7 +110,7 @@ fn custom_source_providers_keep_control_of_url_reads() {
     );
     files.insert(
         "main.sanim",
-        format!("let image=<Image src=\"{url}\"/>\nadd(image)\nwait(1s)"),
+        format!("let image=<Image src=\"{url}\"/>\nAnimation(children=[image])\nwait(1s)"),
     );
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
@@ -126,7 +126,7 @@ fn relative_image_width_and_signal_changes_preserve_intrinsic_aspect_ratio() {
         "image.svg",
         include_bytes!("../../../tests/fixtures/media-sample.svg").as_slice(),
     );
-    files.insert("main.sanim","mut width=50%\nlet image=<Image src=\"image.svg\" width={width}/>\nadd(image)\nwait(1s)\nwidth=75%\nwait(1s)");
+    files.insert("main.sanim","mut width=50%\nlet image=<Image src=\"image.svg\" width={width}/>\nAnimation(children=[image])\nwait(1s)\nanimate(width,to=75%,duration=0s)\nwait(1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-components-core.workspace = true
 shrimply-surface-gl-skia = { workspace = true }
 glam.workspace = true
 shrimply-audio-engine = { workspace = true }

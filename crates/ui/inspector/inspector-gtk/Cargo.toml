@@ -7,7 +7,6 @@ edition = "2024"
 hashbrown.workspace = true
 adw.workspace = true
 async-channel.workspace = true
-ffmpeg-next.workspace = true
 glam.workspace = true
 gtk.workspace = true
 num-traits.workspace = true
@@ -24,7 +23,6 @@ shrimply-discrete-keyframe-graph-skia = { workspace = true }
 shrimply-math-interpolation = { workspace = true }
 shrimply-inspector-core = { workspace = true, default-features = true }
 shrimply-inspector-document.workspace = true
-shrimply-media-info = { workspace = true }
 shrimply-property-transfer = { workspace = true }
 shrimply-project-document = { workspace = true, default-features = true }
 shrimply-resource-pipeline = { workspace = true }

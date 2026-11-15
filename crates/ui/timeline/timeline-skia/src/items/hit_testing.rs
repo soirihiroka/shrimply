@@ -52,8 +52,12 @@ pub fn timeline_cursor(project: &Project, state: CursorState, x: f64, y: f64) ->
             .or_else(|| {
                 crate::folded_sequence::hit_projected_item(project, state.view, x, y)
                     .and_then(|hit| {
-                        let (item_x, item_width) =
-                            crate::drawing::item_rect(hit.start, hit.end, timeline_x(), state.view);
+                        let (item_x, item_width) = crate::drawing::item_rect(
+                            hit.start,
+                            hit.end,
+                            timeline_x(state.view),
+                            state.view,
+                        );
                         if x <= item_x + ITEM_RESIZE_HANDLE_WIDTH {
                             Some(TimelineCursor::ResizeStart)
                         } else if x >= item_x + item_width - ITEM_RESIZE_HANDLE_WIDTH {
@@ -111,12 +115,12 @@ pub fn is_item_dragged(
 }
 
 pub fn hit_item_at(project: &Project, view: TimelineViewState, x: f64, y: f64) -> Option<ItemKey> {
-    if x < super::timeline_x() || y < super::RULER_HEIGHT {
+    if x < super::timeline_x(view) || y < super::RULER_HEIGHT {
         return None;
     }
     let y = y + view.scroll_y;
     let (kind, track_index, _) = track_at_y(project, y)?;
-    let time = Time::from_seconds_f64(x_to_time(x, view.scroll_seconds, view.seconds_per_pixel));
+    let time = Time::from_seconds_f64(x_to_time(x, view));
 
     match kind {
         TrackKind::Comment => timeline_search::overlapping(
@@ -168,14 +172,14 @@ pub fn hit_gap_at(
     x: f64,
     y: f64,
 ) -> Option<shrimply_timeline_edit::TrackGap> {
-    if x < super::timeline_x() || y < super::RULER_HEIGHT {
+    if x < super::timeline_x(view) || y < super::RULER_HEIGHT {
         return None;
     }
     let (kind, track_index, _) = track_at_y(project, y + view.scroll_y)?;
     track_gap_at(
         project,
         TrackKey { kind, track_index },
-        Time::from_seconds_f64(x_to_time(x, view.scroll_seconds, view.seconds_per_pixel).max(0.0)),
+        Time::from_seconds_f64(x_to_time(x, view).max(0.0)),
     )
 }
 
@@ -186,7 +190,7 @@ pub fn hit_resize_handle_at(
     y: f64,
     handle_width: f64,
 ) -> Option<(ItemKey, ItemEdge)> {
-    if x < super::timeline_x() || y < super::RULER_HEIGHT {
+    if x < super::timeline_x(view) || y < super::RULER_HEIGHT {
         return None;
     }
     let y = y + view.scroll_y;
@@ -233,9 +237,9 @@ pub fn hit_resize_handle_at(
     let mut hit: Option<(ItemKey, ItemEdge, f64, f64)> = None;
     for (item_index, start, end) in items {
         let start_x =
-            timeline_x() + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+            timeline_x(view) + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
         let end_x =
-            timeline_x() + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+            timeline_x(view) + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
         let start_distance = (x - start_x).abs();
         let end_distance = (x - end_x).abs();
         let (edge, edge_distance, edge_x) = if start_distance <= end_distance {
@@ -304,16 +308,17 @@ pub fn hit_transition_at(
         return None;
     }
     let start_x =
-        timeline_x() + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
-    let end_x = timeline_x() + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+        timeline_x(view) + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+    let end_x =
+        timeline_x(view) + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
     let (intro, outro) = transition_durations(project, &key)?;
     let intro_x = intro.map(|duration| {
-        timeline_x()
+        timeline_x(view)
             + (start.saturating_add(duration).as_secs_f64() - view.scroll_seconds)
                 / view.seconds_per_pixel
     });
     let outro_x = outro.map(|duration| {
-        timeline_x()
+        timeline_x(view)
             + (end.saturating_sub(duration).as_secs_f64() - view.scroll_seconds)
                 / view.seconds_per_pixel
     });
@@ -457,7 +462,7 @@ pub fn hit_clip_transition_at(
         let incoming_address = track.item(incoming.id);
         let context = SequenceTimeline::for_item(project, &outgoing_address)?;
         let (_, timeline_cut) = context.timeline_item_times(project, &outgoing_address)?;
-        let cut_x = timeline_x()
+        let cut_x = timeline_x(view)
             + (timeline_cut.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
         let duration = outgoing
             .to_next
@@ -469,10 +474,10 @@ pub fn hit_clip_transition_at(
                 project.sequence_time_to_timeline(&track, outgoing.end.saturating_sub(half))?;
             let end =
                 project.sequence_time_to_timeline(&track, incoming.start.saturating_add(half))?;
-            let start_x =
-                timeline_x() + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
-            let end_x =
-                timeline_x() + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+            let start_x = timeline_x(view)
+                + (start.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
+            let end_x = timeline_x(view)
+                + (end.as_secs_f64() - view.scroll_seconds) / view.seconds_per_pixel;
             let action = if top_strip && (x - start_x).abs() <= TRANSITION_HANDLE_RADIUS {
                 ClipTransitionHitAction::StartHandle
             } else if top_strip && (x - end_x).abs() <= TRANSITION_HANDLE_RADIUS {

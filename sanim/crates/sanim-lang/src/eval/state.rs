@@ -5,10 +5,15 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ExecutionState {
     scope: Env,
+    closures: imbl::OrdMap<String, Arc<FunctionGroup>>,
+    anonymous_definitions: imbl::OrdMap<(String, usize, usize), Arc<ClosureDefinition>>,
+    next_closure: u64,
+    source_ids: imbl::OrdMap<String, Arc<str>>,
     reactive: reactive::Store,
     pub animation: Animation,
     pub cursor: Fraction,
-    pub time_map: TimeMap,
+    outputs: imbl::Vector<Arc<sanim_core::plan::Animation>>,
+    entry_returned: bool,
     pub element_sources: imbl::OrdMap<String, Arc<crate::ElementSource>>,
     pub statements: usize,
     reflected: imbl::Vector<ReflectedInput>,
@@ -22,7 +27,7 @@ pub struct ExecutionState {
     retained_bytes: usize,
     retained_items: usize,
     retained_frames: imbl::OrdSet<String>,
-    retained_fonts: sanim_core::value_budget::Budget,
+    retained_resources: sanim_core::value_budget::Budget,
     logical_operations: u64,
     overhead: usize,
     payload: usize,
@@ -111,9 +116,27 @@ impl Store {
                     .globals
                     .iter()
                     .filter(|(id, _)| *id != &root.id)
+                    .map(|(id, env)| {
+                        (
+                            id,
+                            env.iter()
+                                .filter_map(|(name, binding)| match binding {
+                                    Binding::Reactive(cell) | Binding::Deferred(cell) => {
+                                        Some((name, *cell))
+                                    }
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                    })
                     .collect::<Vec<_>>(),
-                &runtime.reflected,
-                &runtime.reactive,
+                &runtime.used_resources,
+                &runtime.input_versions,
+                (
+                    runtime.reactive.next,
+                    runtime.reactive.revision,
+                    runtime.next_closure,
+                ),
                 runtime.limits,
                 runtime.preparation,
                 runtime.animation.dpi,
@@ -186,6 +209,7 @@ impl Store {
                 if runtime
                     .functions
                     .get(key)
+                    .or_else(|| saved.closures.get(key))
                     .is_none_or(|function| &function.fingerprint != version)
                 {
                     invalid_at = Some(
@@ -241,13 +265,18 @@ impl Store {
             let declarations = env.clone();
             *env = saved.scope.clone();
             runtime.reactive = saved.reactive.clone();
+            runtime.closures = saved.closures.clone();
+            runtime.anonymous_definitions = saved.anonymous_definitions.clone();
+            runtime.next_closure = saved.next_closure;
+            runtime.source_ids = saved.source_ids.clone();
             for name in &saved.declarations {
                 env.remove(name);
             }
             env.extend(declarations);
             runtime.animation = saved.animation.clone();
             runtime.cursor = saved.cursor;
-            runtime.time_map = saved.time_map.clone();
+            runtime.outputs = saved.outputs.clone();
+            runtime.entry_returned = saved.entry_returned;
             runtime.element_sources = saved.element_sources.clone();
             runtime.reflected = saved.reflected.clone();
             runtime.assertions = saved.assertions.clone();
@@ -257,7 +286,7 @@ impl Store {
             runtime.retained_bytes = saved.retained_bytes;
             runtime.retained_items = saved.retained_items;
             runtime.retained_frames = saved.retained_frames.clone();
-            runtime.retained_fonts = saved.retained_fonts.clone();
+            runtime.retained_resources = saved.retained_resources.clone();
             runtime.logical_operations = saved.logical_operations;
             runtime.completed_statements += index as u64;
             runtime.statistics.restored_statements = index as u64;
@@ -289,6 +318,7 @@ impl Store {
         // This deliberately overcounts shared tree nodes rather than silently growing without a bound.
         let overhead = std::mem::size_of::<ExecutionState>()
             + runtime.reactive.overhead()
+            + runtime.outputs.len() * std::mem::size_of::<Arc<sanim_core::plan::Animation>>()
             + runtime.animation.reactive.metadata_bytes()
             + env.len() * (std::mem::size_of::<Value>() + std::mem::size_of::<String>() * 2)
             + runtime.animation.element_count()
@@ -305,7 +335,6 @@ impl Store {
                         + state.metadata_bytes()
                 })
                 .sum::<usize>()
-            + runtime.time_map.entries.len() * std::mem::size_of::<TimeMapEntry>()
             + runtime.element_sources.len()
                 * (std::mem::size_of::<String>()
                     + std::mem::size_of::<Arc<crate::ElementSource>>())
@@ -340,10 +369,15 @@ impl Store {
         self.age = self.age.saturating_add(1);
         let saved = Arc::new(ExecutionState {
             scope: env.clone(),
+            closures: runtime.closures.clone(),
+            anonymous_definitions: runtime.anonymous_definitions.clone(),
+            next_closure: runtime.next_closure,
+            source_ids: runtime.source_ids.clone(),
             reactive: runtime.reactive.clone(),
             animation: runtime.animation.clone(),
             cursor: runtime.cursor,
-            time_map: runtime.time_map.clone(),
+            outputs: runtime.outputs.clone(),
+            entry_returned: runtime.entry_returned,
             element_sources: runtime.element_sources.clone(),
             statements,
             reflected: runtime.reflected.clone(),
@@ -357,7 +391,7 @@ impl Store {
             retained_bytes: runtime.retained_bytes,
             retained_items: runtime.retained_items,
             retained_frames: runtime.retained_frames.clone(),
-            retained_fonts: runtime.retained_fonts.clone(),
+            retained_resources: runtime.retained_resources.clone(),
             logical_operations: runtime.logical_operations,
             overhead,
             payload,

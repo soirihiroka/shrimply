@@ -58,9 +58,9 @@ impl InspectorController {
         if !required {
             return Ok(());
         }
-        let id = control
-            .timeline_id
-            .ok_or("inspector control timeline ID is unavailable")?;
+        let Some(id) = control.timeline_id else {
+            return Ok(());
+        };
         if modifier {
             match control.kind {
                 ControlKind::LayeredNumber => self.ensure_visual_modifier_number(target, path, id),

@@ -11,13 +11,10 @@ impl Runtime<'_, '_> {
         ty: &Type,
         span: Span,
     ) -> Result<(), Diagnostic> {
+        self.charge_capture_types(span)?;
         let mut remaining = self.retained_bytes;
         sanim_core::type_budget::charge(ty, &mut remaining)
             .map_err(|message| self.error("S303", message, span))?;
-        for ty in self.type_bindings.values() {
-            sanim_core::type_budget::charge(ty, &mut remaining)
-                .map_err(|message| self.error("S303", message, span))?;
-        }
         let metadata = serde_json::to_vec(expression)
             .map_err(|error| self.error("S303", error.to_string(), span))?
             .len()
@@ -27,12 +24,6 @@ impl Runtime<'_, '_> {
                     .saturating_mul(std::mem::size_of::<Binding>() + std::mem::size_of::<String>()),
             )
             .saturating_add(scope.keys().map(String::len).sum::<usize>())
-            .saturating_add(
-                self.type_bindings
-                    .keys()
-                    .map(|name| name.len() + std::mem::size_of::<String>())
-                    .sum::<usize>(),
-            )
             .saturating_add(
                 self.identity
                     .iter()
@@ -117,29 +108,23 @@ impl Runtime<'_, '_> {
         name: &str,
         span: Span,
     ) -> Result<Type, Diagnostic> {
-        let function = self
-            .functions
-            .get(key)
-            .and_then(|group| group.clauses.first())
+        let group = self
+            .function_group(key)
             .ok_or_else(|| self.error("S140", "unknown signal helper", span))?;
-        let signature = self
-            .loaded
+        let substitutions = self.call_type_bindings(span, &group.types);
+        let types = group
+            .clauses
             .iter()
-            .find(|module| module.id == function.module)
-            .and_then(|module| module.checked.exports.get(&function.name));
-        let Some(signature) = signature else {
-            return Err(self.error("S140", "function is missing its checked signature", span));
-        };
-        let substitutions = self.call_type_bindings(span);
-        let types = signature.signatures().iter().filter_map(|signature| {
-            signature
-                .parameters
-                .iter()
-                .find(|parameter| parameter.name == name)
-                .map(|parameter| parameter.ty.substitute(&substitutions))
-        });
+            .filter_map(|function| self.function_signature(function))
+            .filter_map(|signature| {
+                signature
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.name == name)
+                    .map(|parameter| parameter.ty.substitute(&substitutions))
+            });
         let ty = Type::union(types).map_err(|error| self.error("S140", error, span))?;
-        Ok(if signature.signatures().len() > 1 {
+        Ok(if group.clauses.len() > 1 {
             ty.widen_literals()
         } else {
             ty
@@ -178,7 +163,6 @@ impl Runtime<'_, '_> {
                 module: self.module.clone(),
                 span,
                 sampled_at: None,
-                creation_background_depth: self.background_depth,
             }),
             span,
         )
@@ -226,7 +210,7 @@ impl Runtime<'_, '_> {
                 .loaded
                 .iter()
                 .find(|module| module.id == self.module)
-                .and_then(|module| crate::effects::lookup(callee, &module.checked.exports));
+                .and_then(|module| crate::analysis::lookup(callee, module.checked.as_ref()));
             if declared.is_some_and(|ty| {
                 ty.signatures()
                     .iter()
@@ -238,7 +222,7 @@ impl Runtime<'_, '_> {
                     .map_err(|message| self.error("S140", message, expr.span));
             }
         }
-        if self.expression_mutates(expr) || self.expression_schedules(expr) {
+        if self.expression_mutates(expr) {
             return Err(self.error("S140", "sig arguments and returns require pure expressions; evaluate effects into a let binding first", expr.span));
         }
         let mut names = BTreeSet::new();

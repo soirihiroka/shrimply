@@ -4,15 +4,15 @@ pub mod code;
 mod collection;
 pub use collection::{List, ListEdit, ListEditResult, Values};
 pub mod dataframe;
-pub mod duration;
 pub mod font;
 pub use font::Font;
 pub mod layout;
 pub mod list_views;
-pub use duration::{DurationExpr, DurationSymbol, NodeDuration, TimelineEffect};
 pub mod math;
+pub use shrimply_math_core::events::Index as EventIndex;
 pub mod media;
 pub mod paint;
+pub mod plan;
 pub use paint::{GradientStop, Paint};
 pub mod reactive;
 pub mod reflection;
@@ -20,7 +20,7 @@ pub mod scene;
 pub mod scrolling;
 pub mod time_map;
 pub mod timeline_diff;
-pub use time_map::{TimeMap, TimeMapEntry, TimeMapKind};
+pub use time_map::{TimeMap, TimeMapEntry};
 pub use timeline_diff::{SampleTimes, TimeRange, TimelineDiff};
 pub mod type_budget;
 pub mod types;
@@ -46,6 +46,13 @@ pub struct Span {
     pub end: usize,
     pub line: usize,
     pub column: usize,
+}
+
+/// Source identity shared by visual and temporal layout metadata.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceLocation {
+    pub source: std::sync::Arc<str>,
+    pub span: Span,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

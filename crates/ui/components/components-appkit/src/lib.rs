@@ -17,8 +17,8 @@ pub use controls::{
     ActionButton, ColorPicker, ProgressButton, ProgressButtonState, ReadOnlyField, SearchChoices,
     StringChoice, StringSelector, Switch, Tab, Tabs, choice_menu, column_append,
     column_append_intrinsic, column_stack, control_row, control_row_with_suffix, inset,
-    live_performance, modifier_menu, playback_shortcuts, row_stack, show_searchable_popover_at,
-    split_button, switch_row,
+    live_performance, modifier_menu, playback_shortcuts, row_stack, show_searchable_menu_at,
+    show_searchable_popover_at, split_button, switch_row,
 };
 pub use effect::{EffectRole, EffectView};
 pub use font_picker::{FontPicker, FontPickerBuilder, FontPickerItem};

@@ -28,8 +28,8 @@ impl Checker<'_> {
                 if definition.callback.is_none_or(|callback|callback.name!=parameter.name) {
                     if ty.contains_function() { return Err(self.error("S111","only the declared callback parameter accepts a function; other List arguments must be values",value.span)); }
                     self.expect(&parameter.ty,&ty,value.span)?;
-                } else if !direct_callee(value) || ty.signatures().is_empty() {
-                    return Err(self.error("S106",format!("{} requires a declared function name, such as items.map(double); found {ty}",parameter.name),value.span));
+                } else if ty.signatures().is_empty() {
+                    return Err(self.error("S106",format!("{} requires a function, such as items.map(fn(value:Number):Number {{ return value * 2 }}); found {ty}",parameter.name),value.span));
                 }
                 ty
             } else { Type::Unit });
@@ -104,7 +104,6 @@ impl Checker<'_> {
             let mut results = Vec::new();
             let mut substitutions = None;
             let mut reasons = Vec::new();
-            let mut schedules = false;
             let mut mutates = false;
             let mut actual_arguments = arguments.iter().cloned().map(Some).collect::<Vec<_>>();
             if accumulating {
@@ -184,7 +183,6 @@ impl Checker<'_> {
                     }
                     domains.push(parameters);
                     results.push(result);
-                    schedules |= signature.schedules;
                     mutates |= signature.mutates;
                     progressed = true;
                 }
@@ -230,9 +228,6 @@ impl Checker<'_> {
                 self.copy_substitutions(&substitutions.unwrap_or_default(), expr.span)?,
             );
             if let Some(function) = &self.function {
-                if schedules {
-                    self.effects.insert(function.clone());
-                }
                 if mutates {
                     self.mutations.insert(function.clone());
                 }

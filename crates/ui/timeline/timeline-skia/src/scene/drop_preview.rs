@@ -25,11 +25,7 @@ impl Scene {
             return None;
         }
         let (kind, track_index, _) = items::track_at_y(&project, y + self.view.scroll_y)?;
-        let start = Time::from_seconds_f64(x_to_time(
-            x,
-            self.view.scroll_seconds,
-            self.view.seconds_per_pixel,
-        ));
+        let start = Time::from_seconds_f64(x_to_time(x, self.view));
         let start = self.snap_repository.snap(start).unwrap_or(start);
         let mut end = start
             .saturating_add(self.default_visual_duration)
@@ -98,7 +94,7 @@ impl Scene {
     }
 
     pub(crate) fn drop_surface_target(&self, point: Vec2) -> bool {
-        f64::from(point.x) >= timeline_x()
+        f64::from(point.x) >= timeline_x(self.view)
             && self.pointer_in_viewport(point)
             && self.scrollbar_at(point).is_none()
     }

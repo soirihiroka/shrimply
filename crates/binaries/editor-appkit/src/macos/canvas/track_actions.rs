@@ -1,11 +1,10 @@
 use super::*;
 use objc2::sel;
 use objc2_app_kit::{NSImage, NSMenu, NSMenuItem};
-use objc2_foundation::{NSData, NSPoint, NSString, ns_string};
+use objc2_foundation::{NSData, NSString, ns_string};
 use shrimply_components_skia::{Color, Rect, icon};
 use shrimply_timeline_skia::{
-    TrackAddAction, TrackAddMenuEntry, TrackAddSettings, TrackKey,
-    draw_state::{TrackButtonId, TrackLabelAction},
+    TrackAddAction, TrackAddMenuEntry, TrackAddSettings, scene::TrackAddMenuRequest,
     selection_state,
 };
 
@@ -38,44 +37,47 @@ fn menu_icon(action: TrackAddAction, label: &str) -> Retained<NSImage> {
 }
 
 impl CanvasView {
-    pub(super) fn activate_track_button(
-        &self,
-        (key, action): TrackButtonId,
-        point: glam::Vec2,
-    ) -> Result<(), String> {
-        match action {
-            TrackLabelAction::Add => self.show_track_add_menu(key, point),
-            TrackLabelAction::AudioRecord => {
+    pub(super) fn handle_timeline_requests(&self) -> Result<(), String> {
+        let requests = {
+            let mut content = self.ivars().content.borrow_mut();
+            let Content::Timeline(scene) = &mut *content else {
+                return Ok(());
+            };
+            scene.take_requests()
+        };
+        if requests.pause_playback {
+            player_state::set_playing(&self.ivars().session.player_state, false);
+        }
+        if let Some((point, touch)) = requests.context_menu {
+            self.open_timeline_context_menu(point, touch);
+        }
+        if let Some(request) = requests.track_add {
+            self.show_track_add_menu(request)?;
+        }
+        if let Some(request) = requests.audio_record {
+            let mut content = self.ivars().content.borrow_mut();
+            let Content::Timeline(scene) = &mut *content else {
+                return Err("Microphone recording requires the timeline".into());
+            };
+            scene.toggle_audio_recording_at(request.key, request.position)?;
+        }
+        if let Some(request) = requests.video_record {
+            {
                 let mut content = self.ivars().content.borrow_mut();
                 let Content::Timeline(scene) = &mut *content else {
-                    return Err("Microphone recording requires the timeline".into());
+                    return Err("Screen recording requires the timeline".into());
                 };
-                scene.toggle_audio_recording(key)
+                scene.toggle_video_recording_at(request.key, request.position)?;
             }
-            TrackLabelAction::VideoRecord => {
-                {
-                    let mut content = self.ivars().content.borrow_mut();
-                    let Content::Timeline(scene) = &mut *content else {
-                        return Err("Screen recording requires the timeline".into());
-                    };
-                    scene.toggle_video_recording(key)?;
-                }
-                self.update_screen_recording()
-            }
-            TrackLabelAction::Toggle | TrackLabelAction::Select => {
-                unreachable!("track state actions are handled by the shared scene")
-            }
+            self.update_screen_recording()?;
         }
+        Ok(())
     }
 
-    fn show_track_add_menu(&self, key: TrackKey, point: glam::Vec2) -> Result<(), String> {
+    fn show_track_add_menu(&self, request: TrackAddMenuRequest) -> Result<(), String> {
+        let key = request.key;
         let session = &self.ivars().session;
-        let selected = selection_state::selected_tracks(&session.selection_state);
-        let import_targets = if selected.contains(&key) {
-            selected
-        } else {
-            vec![key]
-        };
+        let import_targets = request.import_targets;
         let (address, import_addresses) = {
             let project = session.project.borrow();
             let address =
@@ -100,7 +102,7 @@ impl CanvasView {
             let item = unsafe {
                 NSMenuItem::initWithTitle_action_keyEquivalent(
                     NSMenuItem::alloc(self.mtm()),
-                    &NSString::from_str(action.label(key.kind)),
+                    &NSString::from_str(shrimply_i18n::text(action.label(key.kind)).as_ref()),
                     Some(sel!(chooseTrackAdd:)),
                     ns_string!(""),
                 )
@@ -114,11 +116,7 @@ impl CanvasView {
         }
         self.ivars().menu_choice.set(None);
         // Native menus run a nested event loop; hold no scene or project borrow here.
-        menu.popUpMenuPositioningItem_atLocation_inView(
-            None,
-            NSPoint::new(point.x.into(), point.y.into()),
-            Some(self),
-        );
+        super::super::menu_sheet::present(self, &menu, request.point, request.touch);
         let Some(index) = self.ivars().menu_choice.take() else {
             return Ok(());
         };
@@ -143,11 +141,12 @@ impl CanvasView {
                 &self.ivars().imports,
                 session,
                 &import_targets,
+                request.position,
                 self.mtm(),
             );
         }
         let preferences = shrimply_editor_state::preferences::snapshot(&session.preferences);
-        shrimply_timeline_skia::activate_track_add_checked(
+        shrimply_timeline_skia::activate_track_add_checked_at(
             &session.project,
             &session.player_state,
             &session.selection_state,
@@ -157,6 +156,7 @@ impl CanvasView {
                 default_visual_duration: preferences.default_visual_duration,
                 default_text_font_family: &preferences.default_text_font_family,
             },
+            request.position,
         )?;
         Ok(())
     }

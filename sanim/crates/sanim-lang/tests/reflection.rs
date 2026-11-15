@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 fn run(source: &str) -> Prepared {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap_or_else(|e| panic!("{e}"))
@@ -41,7 +41,7 @@ fn default_keys_use_normalized_relative_paths_for_root_and_imports() {
     let mut files = MemorySources::default();
     files.insert(
         "nested/main.sanim",
-        "import \"../theme.sanim\" as theme\nlet primaryColor1=reflect(theme.tint)\n",
+        "import \"../theme.sanim\" as theme\nlet primaryColor1=reflect(theme.tint)\nAnimation()\n",
     );
     files.insert("theme.sanim", "let tint=reflect(Color(\"blue3\"))\n");
     let p = Engine::default()
@@ -103,12 +103,12 @@ fn explicit_key_survives_variable_rename_and_key_defaults_do_not_depend_on_label
     let inputs = BTreeMap::from([("theme.accent".into(), serde_json::json!("green3"))]);
     files.insert(
         "main.sanim",
-        "let old_color=reflect(Color(\"red3\"), label=\"Old Label\", key=\"theme.accent\")\n",
+        "let old_color=reflect(Color(\"red3\"), label=\"Old Label\", key=\"theme.accent\")\n\nAnimation()",
     );
     let old = engine.prepare_json("main.sanim", &files, &inputs).unwrap();
     files.insert(
         "main.sanim",
-        "let new_color=reflect(Color(\"red3\"), label=\"New Label\", key=\"theme.accent\")\n",
+        "let new_color=reflect(Color(\"red3\"), label=\"New Label\", key=\"theme.accent\")\n\nAnimation()",
     );
     let new = engine.prepare_json("main.sanim", &files, &inputs).unwrap();
     assert_eq!(old.reflected[0].key, new.reflected[0].key);
@@ -123,14 +123,14 @@ fn metadata_changes_restore_before_binding_and_refresh_the_reflection_without_vi
     let mut engine = Engine::default();
     let script = |label: &str| {
         format!(
-            "wait(1s)\nlet tint=reflect(Color(\"red3\"), label=\"{label}\", key=\"accent\")\nlet marker=Circle(id=\"dot\",fill=tint)\nadd(marker)\nwait(2s)\n"
+            "wait(1s)\nlet tint=reflect(Color(\"red3\"), label=\"{label}\", key=\"accent\")\nlet marker=Box(id=\"dot\", fill=tint, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nwait(2s)\n"
         )
     };
     let inputs = BTreeMap::from([("accent".into(), serde_json::json!("blue3"))]);
-    files.insert("main.sanim", script("Before"));
+    files.insert("main.sanim", format!("{}\nAnimation()", script("Before")));
     let old = engine.prepare_json("main.sanim", &files, &inputs).unwrap();
     let prefix = engine.execution_state(1).unwrap();
-    files.insert("main.sanim", script("After"));
+    files.insert("main.sanim", format!("{}\nAnimation()", script("After")));
     let updated = engine.prepare_json("main.sanim", &files, &inputs).unwrap();
     assert_eq!(updated.statistics.restored_statements, 1);
     assert!(Arc::ptr_eq(&prefix, &engine.execution_state(1).unwrap()));
@@ -155,7 +155,7 @@ fn metadata_changes_restore_before_binding_and_refresh_the_reflection_without_vi
 #[test]
 fn duplicate_keys_are_rejected_across_files_before_loading_defaults() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","import \"theme\" as theme\nlet tint:Color=reflect(read<Color>(\"missing.json\"), key=\"accent\")\n");
+    files.insert("main.sanim","import \"theme\" as theme\nlet tint:Color=reflect(read<Color>(\"missing.json\"), key=\"accent\")\n\nAnimation()");
     files.insert("theme.sanim", "let tint=reflect(Color(), key=\"accent\")\n");
     let error = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -202,7 +202,7 @@ fn metadata_and_override_errors_explain_how_to_fix_the_declaration() {
         ),
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap_err();
@@ -211,7 +211,7 @@ fn metadata_and_override_errors_explain_how_to_fix_the_declaration() {
         assert!(error.span.column > 0);
     }
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let count=reflect(1)\n");
+    files.insert("main.sanim", "let count=reflect(1)\n\nAnimation()");
     let unknown_alias = BTreeMap::from([
         ("count".into(), serde_json::json!(2)),
         ("main.sanim::count".into(), serde_json::json!(3)),
@@ -233,7 +233,7 @@ fn metadata_and_override_errors_explain_how_to_fix_the_declaration() {
 #[test]
 fn compound_types_keep_full_schema_and_validate_all_nested_values() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","type Settings={palette:List<Color>,offset:Vec2<Length>}\nlet settings:Settings=reflect({palette=[Color()],offset=Vec2(0pt,0pt)}, label=\"Plot Style\", key=\"plot.style\")\n");
+    files.insert("main.sanim","type Settings={palette:List<Color>,offset:List<Length,2>}\nlet settings:Settings=reflect({palette=[Color()],offset=[0pt, 0pt]}, label=\"Plot Style\", key=\"plot.style\")\n\nAnimation()");
     let inputs = BTreeMap::from([(
         "plot.style".into(),
         serde_json::json!({"palette":["red3","blue3"],"offset":["2pt","4pt"]}),
@@ -260,7 +260,7 @@ fn explicit_keys_are_independent_of_other_inputs_variable_names() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "import \"theme\" as theme\nlet tint=reflect(Color(\"red3\"))\n",
+        "import \"theme\" as theme\nlet tint=reflect(Color(\"red3\"))\n\nAnimation()",
     );
     files.insert(
         "theme.sanim",
@@ -293,7 +293,7 @@ fn null_is_an_optional_value_and_omission_resets_to_the_default() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let maybe_value:Option<Number>=reflect(None, label=\"Optional Count\")\n",
+        "let maybe_value:Option<Number>=reflect(None, label=\"Optional Count\")\n\nAnimation()",
     );
     let mut engine = Engine::default();
     let null = BTreeMap::from([("main.sanim::maybe_value".into(), serde_json::Value::Null)]);
@@ -313,7 +313,7 @@ fn null_is_an_optional_value_and_omission_resets_to_the_default() {
         .prepare_json("main.sanim", &files, &BTreeMap::new())
         .unwrap();
     assert_eq!(reset.reflected[0].value, Value::None);
-    files.insert("main.sanim", "let count:Number=reflect(1)\n");
+    files.insert("main.sanim", "let count:Number=reflect(1)\n\nAnimation()");
     let error = engine
         .prepare_json(
             "main.sanim",
@@ -329,7 +329,7 @@ fn metadata_freshness_checks_cover_imports_and_default_data_without_repreparing(
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "import \"theme\" as theme\nlet tint:Color=reflect(read<Color>(\"tint.json\"))\n",
+        "import \"theme\" as theme\nlet tint:Color=reflect(read<Color>(\"tint.json\"))\n\nAnimation()",
     );
     files.insert("theme.sanim", "let size=1pt\n");
     files.insert("tint.json", "\"red3\"");
@@ -355,7 +355,7 @@ fn expression_reflection_exposes_the_wrapped_value_before_composition() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let title=reflect(\"title\",label=\"Heading\")+\"test\"\n",
+        "let title=reflect(\"title\",label=\"Heading\")+\"test\"\n\nAnimation()",
     );
     let mut engine = Engine::default();
     let default = engine
@@ -387,7 +387,7 @@ fn expression_reflection_exposes_the_wrapped_value_before_composition() {
 #[test]
 fn expression_reflection_accepts_native_values_and_stable_explicit_keys() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let color=reflect(Color(),label=\"Display Color\",key=\"theme.accent\")\nadd(Circle(id=\"dot\",fill=color))\n");
+    files.insert("main.sanim", "let color=reflect(Color(),label=\"Display Color\",key=\"theme.accent\")\nAnimation(children=[Box(id=\"dot\", fill=color, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\n");
     let p = Engine::default()
         .prepare_json(
             "main.sanim",
@@ -418,7 +418,7 @@ fn removed_reflection_declaration_syntax_is_rejected() {
         "reflect() color=Color()",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap_err();
@@ -433,7 +433,7 @@ fn contextual_types_resolve_optional_and_empty_expression_defaults() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let maybe:Option<Number>=reflect(None)\nlet values:List<Number>=reflect([])\n",
+        "let maybe:Option<Number>=reflect(None)\nlet values:List<Number>=reflect([])\n\nAnimation()",
     );
     let mut engine = Engine::default();
     let default = engine
@@ -470,7 +470,7 @@ fn contextual_types_resolve_optional_and_empty_expression_defaults() {
 #[test]
 fn nested_record_and_constructor_arguments_infer_distinct_field_keys() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let style={fill=reflect(Color(\"red3\")),radius=reflect(12pt)}\nlet marker=Circle(id=\"dot\",fill=reflect(Color(\"orange3\")),radius=style.radius)\nadd(marker)\n");
+    files.insert("main.sanim", "let style={fill=reflect(Color(\"red3\")),radius=reflect(12pt)}\nlet marker=Box(id=\"dot\", fill=reflect(Color(\"orange3\")), width=2*(style.radius), height=2*(style.radius), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\n");
     let inputs = BTreeMap::from([
         ("main.sanim::style.fill".into(), serde_json::json!("green3")),
         ("main.sanim::style.radius".into(), serde_json::json!("20pt")),
@@ -504,7 +504,7 @@ fn inline_constructor_reflection_uses_an_explicit_key_without_a_binding() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "add(Circle(id=\"dot\",fill=reflect(Color(\"red3\"),key=\"dot.fill\")))\n",
+        "Animation(children=[Box(id=\"dot\", fill=reflect(Color(\"red3\"),key=\"dot.fill\"), width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\n",
     );
     let p = Engine::default()
         .prepare_json(
@@ -608,11 +608,11 @@ fn expression_reflection_rejects_nonstatic_metadata_and_nonreflectable_defaults(
         "let title=reflect(\"title\",key=\"\")",
         "let title=reflect(\"title\",label=\"  \")",
         "let title=reflect()",
-        "let title=reflect(Circle())",
+        "let title=reflect(Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center))",
         "let title:Number=reflect(\"title\")",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap_err();
@@ -634,10 +634,10 @@ fn reflection_in_repeated_or_conditional_execution_is_rejected_before_evaluation
         "fn title():String{return reflect(\"title\",key=\"title\")}\nlet result=title()",
         "let selected=false and reflect(true)",
         "let value=reflect(reflect(1))",
-        "fn computed():Number{wait(1s);return 1}\nlet value=reflect(computed())",
+        "fn<mut> computed():Number{check(true);return 1}\nlet value=reflect(computed())",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap_err();
@@ -654,7 +654,7 @@ fn expression_reflection_reports_duplicate_canonical_keys() {
         "let condition=reflect(true)\nif reflect(true,key=\"main.sanim::condition\") {wait(1s)}",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap_err();
@@ -671,14 +671,16 @@ fn expression_reflection_reports_duplicate_canonical_keys() {
 
 #[test]
 fn multiple_operator_inputs_and_anonymous_constructor_fields_have_semantic_keys() {
-    let p = run("let total=reflect(1)+reflect(2)\nadd(Circle(id=\"dot\",fill=reflect(Color())))\n");
+    let p = run(
+        "let total=reflect(1)+reflect(2)\nAnimation(children=[Box(id=\"dot\", fill=reflect(Color()), width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\n",
+    );
     let keys: Vec<_> = p.reflected.iter().map(|input| input.key.as_str()).collect();
     assert_eq!(
         keys,
         [
             "main.sanim::total.left",
             "main.sanim::total.right",
-            "main.sanim::Circle.fill"
+            "main.sanim::Box.fill"
         ]
     );
     assert_eq!(
@@ -720,7 +722,7 @@ fn expression_reflection_has_one_canonical_ast_node() {
 #[test]
 fn anonymous_fields_accept_only_their_explicit_config_keys() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "add(Circle(id=\"first\",fill=reflect(Color(),key=\"palette.first\")))\nadd(Circle(id=\"second\",fill=reflect(Color(),key=\"palette.second\")))\n");
+    files.insert("main.sanim", "Animation(children=[Box(id=\"first\", fill=reflect(Color(),key=\"palette.first\"), width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\nAnimation(children=[Box(id=\"second\", fill=reflect(Color(),key=\"palette.second\"), width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])\n");
     let inputs = BTreeMap::from([
         ("palette.first".into(), serde_json::json!("blue3")),
         ("palette.second".into(), serde_json::json!("green3")),
@@ -728,8 +730,8 @@ fn anonymous_fields_accept_only_their_explicit_config_keys() {
     let mut engine = Engine::default();
     let p = engine.prepare_json("main.sanim", &files, &inputs).unwrap();
     assert_eq!(p.reflected.len(), 2);
-    assert_eq!(p.reflected[0].name, "Circle.fill");
-    assert_eq!(p.reflected[1].name, "Circle.fill");
+    assert_eq!(p.reflected[0].name, "Box.fill");
+    assert_eq!(p.reflected[1].name, "Box.fill");
     assert_eq!(
         p.animation.layers[0].element.fill,
         sanim_core::Paint::Solid(Color::parse("blue3").unwrap())
@@ -742,7 +744,7 @@ fn anonymous_fields_accept_only_their_explicit_config_keys() {
         .prepare_json(
             "main.sanim",
             &files,
-            &BTreeMap::from([("Circle.fill".into(), serde_json::json!("orange3"))]),
+            &BTreeMap::from([("Box.fill".into(), serde_json::json!("orange3"))]),
         )
         .unwrap_err();
     assert_eq!(error.code, "S302");
@@ -757,7 +759,7 @@ fn generic_arguments_infer_a_concrete_reflected_type_from_the_default() {
         let mut files = MemorySources::default();
         files.insert(
             "main.sanim",
-            format!("fn identity<{generic}>(value:T):T{{return value}}\nlet result=identity(reflect(2))\n"),
+            format!("fn identity<{generic}>(value:T):T{{return value}}\nlet result=identity(reflect(2))\n\nAnimation()"),
         );
         let mut engine = Engine::default();
         let default = engine
@@ -797,7 +799,7 @@ fn generic_optional_defaults_require_a_concrete_inner_type_before_reflection() {
         let mut files = MemorySources::default();
         files.insert(
             "main.sanim",
-            format!("fn identity<{generic}>(value:Option<T>):Option<T>{{return value}}\nlet result=identity(reflect(None))\n"),
+            format!("fn identity<{generic}>(value:Option<T>):Option<T>{{return value}}\nlet result=identity(reflect(None))\n\nAnimation()"),
         );
         let error = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
@@ -821,7 +823,7 @@ fn read_color_defaults_infer_reflection_schema_without_annotations() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let accent=reflect(read<Color>(\"accent.json\"))",
+        "let accent=reflect(read<Color>(\"accent.json\"))\nAnimation()",
     );
     files.insert("accent.json", "\"red3\"");
     let prepared = Engine::default()

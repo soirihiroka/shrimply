@@ -1,5 +1,7 @@
+mod capabilities;
 mod clauses;
 mod environment;
+mod functions;
 pub(crate) use environment::{Environment, TypeScope};
 mod dataframe;
 mod list_functions;
@@ -7,7 +9,8 @@ mod lists;
 mod native;
 mod templates;
 use crate::{ast::*, prelude};
-use clauses::infer;
+use clauses::{generic_variable, generic_variables, infer};
+use functions::check_signal_purity;
 use sanim_core::{Diagnostic, GenericParameter, Number, Signature, Span, Type, TypeBound, Unit};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -26,7 +29,9 @@ pub struct NativeMethod {
 pub struct Checked {
     /// Statement start -> index in the named export's canonical signatures.
     pub function_clauses: BTreeMap<usize, usize>,
+    pub anonymous_functions: BTreeMap<(usize, usize), Signature>,
     pub exports: BTreeMap<String, Type>,
+    pub dynamic_exports: BTreeSet<String>,
     pub schemas: BTreeMap<String, Type>,
     pub result_types: BTreeMap<(usize, usize), Type>,
     pub template_expressions: BTreeMap<(usize, usize), Type>,
@@ -34,10 +39,8 @@ pub struct Checked {
     pub call_types: BTreeMap<(usize, usize), BTreeMap<String, Type>>,
     pub reflected: BTreeMap<usize, std::sync::Arc<sanim_core::reflection::Declaration>>,
     pub binding_types: BTreeMap<usize, Type>,
-    pub effects: BTreeSet<String>,
-    pub durations: Vec<sanim_core::NodeDuration>,
-    pub duration_needed: BTreeSet<String>,
-    pub value_dependencies: BTreeMap<String, BTreeSet<String>>,
+    /// Present when entry execution can collect or return an Animation value.
+    pub output_type: Option<Type>,
 }
 
 pub fn check(
@@ -59,13 +62,20 @@ pub fn check(
         call_types: BTreeMap::new(),
         reflected: BTreeMap::new(),
         binding_types: BTreeMap::new(),
+        anonymous_functions: BTreeMap::new(),
+        anonymous_names: BTreeMap::new(),
+        callable_origins: BTreeMap::new(),
+        callable_bindings: BTreeMap::new(),
+        callable_substitutions: BTreeMap::new(),
         binding_scopes: vec![BTreeMap::new()],
         mutations: BTreeSet::new(),
         reflection_names: crate::reflection::identities(source, module)?,
         function: None,
+        function_capabilities: None,
+        external_reads: BTreeSet::new(),
         calls: BTreeMap::new(),
-        effects: BTreeSet::new(),
         root,
+        collects_output: false,
     };
     let mut env = Environment::new();
     // Type declarations are resolved in declaration order; recursive types are deliberately rejected.
@@ -126,10 +136,8 @@ pub fn check(
                         result
                     } else {
                         Type::Function(Signature {
-                            duration: sanim_core::TimelineEffect::default(),
-                            schedules: false,
+                            capabilities: Default::default(),
                             mutates: false,
-                            duration_parameters: BTreeSet::new(),
                             generics: vec![],
                             default_count: 0,
                             parameters: fields
@@ -170,6 +178,14 @@ pub fn check(
                         .schemas
                         .insert(format!("{alias}.{name}"), ty.clone());
                 }
+                for name in &imported.dynamic_exports {
+                    let name = format!("{alias}.{name}");
+                    checker.environment_bytes(
+                        name.len() + std::mem::size_of::<String>(),
+                        statement.span,
+                    )?;
+                    checker.external_reads.insert(name);
+                }
                 checker.insert_environment(
                     &mut env,
                     alias.clone(),
@@ -188,10 +204,8 @@ pub fn check(
                     &mut env,
                     name.clone(),
                     Type::Function(Signature {
-                        duration: sanim_core::TimelineEffect::default(),
-                        schedules: false,
+                        capabilities: Default::default(),
                         mutates: false,
-                        duration_parameters: BTreeSet::new(),
                         generics: vec![],
                         default_count: 0,
                         parameters: fields
@@ -209,101 +223,25 @@ pub fn check(
             }
         }
     }
-    let function_clauses = checker.declare_clauses(module, &mut env)?;
+    let function_clauses = checker.declare_clauses(module, &mut env, &BTreeMap::new())?;
+    let mut entry_returns = false;
     for statement in &module.statements {
         match &statement.kind {
             StatementKind::Alias { .. }
             | StatementKind::Enum { .. }
             | StatementKind::Import { .. } => {}
-            StatementKind::Function {
-                name,
-                generics: _,
-                parameters,
-                duration,
-                body,
-                ..
-            } => {
-                let declaration =
-                    &env[name.as_str()].signatures()[function_clauses[&statement.span.start]];
-                let declaration_variables = generic_variables(&declaration.generics);
-                checker.function = Some(name.clone());
-                let mut saw_default = false;
-                for parameter in parameters {
-                    let ty = &parameter.ty;
-                    let default = &parameter.default;
-                    if let Some(default) = default {
-                        saw_default = true;
-                        let expected =
-                            checker.resolve(ty, &declaration_variables, 0, default.span)?;
-                        let actual = checker.expression(
-                            default,
-                            &env,
-                            Some(&expected),
-                            &declaration_variables,
-                        )?;
-                        checker.expect(&expected, &actual, default.span)?;
-                    } else if saw_default {
-                        return Err(checker.error(
-                            "S124",
-                            "required parameters must precede parameters with defaults",
-                            statement.span,
-                        ));
-                    }
-                }
-                let signature = env[name.as_str()].signatures()
-                    [function_clauses[&statement.span.start]]
-                    .clone();
-                let mut scope = checker.fork_environment(&env, statement.span)?;
-                // A single-clause signal accepts the complete source schema.
-                // Overload guards prove only the sample used to dispatch.
-                let entry_guards = env[name.as_str()].signatures().len() > 1;
-                for parameter in &signature.parameters {
-                    let name = &parameter.name;
-                    let ty = &parameter.ty;
-                    checker.fresh(name, &scope, statement.span)?;
-                    checker.insert_environment(
-                        &mut scope,
-                        name.clone(),
-                        if parameter.kind == BindingKind::Sig && entry_guards {
-                            ty.clone().signal_schema()
-                        } else {
-                            ty.clone()
-                        },
-                        statement.span,
-                    )?;
-                }
-                checker.function = Some(name.clone());
-                let variables = generic_variables(&signature.generics);
-                if let Some(duration) = duration {
-                    let actual = checker.expression(
-                        duration,
-                        &scope,
-                        Some(&Type::Numeric(Unit::Duration)),
-                        &variables,
-                    )?;
-                    checker.expect(&Type::Numeric(Unit::Duration), &actual, duration.span)?;
-                }
-                checker.binding_scopes.push(BTreeMap::new());
-                for parameter in &signature.parameters {
-                    checker.bind_kind(&parameter.name, parameter.kind);
-                }
-                let returns =
-                    checker.block(body, &mut scope, Some(&signature.result), &variables)?;
-                checker.binding_scopes.pop();
-                if *signature.result != Type::Unit && !returns {
-                    return Err(checker.error(
-                        "S110",
-                        format!(
-                            "function '{name}' must return {:?} on every path",
-                            signature.result
-                        ),
-                        statement.span,
-                    ));
-                }
-                checker.function = None;
+            StatementKind::Function { name, .. } => {
+                let signatures = env[name.as_str()].signatures();
+                checker.check_function(
+                    statement,
+                    &env,
+                    &signatures[function_clauses[&statement.span.start]],
+                    signatures.len() > 1,
+                    &BTreeMap::new(),
+                )?;
             }
             _ => {
-                checker.block(
+                entry_returns |= checker.block(
                     std::slice::from_ref(statement),
                     &mut env,
                     None,
@@ -358,28 +296,33 @@ pub fn check(
         }
     }
     loop {
-        let before = (checker.effects.len(), checker.mutations.len());
+        let before = checker.mutations.len();
         for (name, calls) in &checker.calls {
-            if calls.iter().any(|v| checker.effects.contains(v)) {
-                checker.effects.insert(name.clone());
-            }
             if calls.iter().any(|v| checker.mutations.contains(v)) {
                 checker.mutations.insert(name.clone());
             }
         }
-        if before == (checker.effects.len(), checker.mutations.len()) {
+        if before == checker.mutations.len() {
             break;
         }
     }
-    for name in checker.effects.union(&checker.mutations) {
-        for signature in checker
-            .mutate_environment(&mut env, name, Span::default())?
-            .signatures_mut()
-        {
-            signature.schedules = checker.effects.contains(name);
-            signature.mutates = checker.mutations.contains(name);
+    for name in checker.mutations.clone() {
+        if let Some(location) = checker.anonymous_names.get(&name) {
+            checker
+                .anonymous_functions
+                .get_mut(location)
+                .expect("checked anonymous function")
+                .mutates = true;
+        } else if env.contains_key(name.as_str()) {
+            for signature in checker
+                .mutate_environment(&mut env, &name, Span::default())?
+                .signatures_mut()
+            {
+                signature.mutates = true;
+            }
         }
     }
+    checker.refresh_callable_effects(&mut env)?;
     for statement in &module.statements {
         let mut invalid = None;
         statement.visit_expressions(&mut |expr| {
@@ -392,25 +335,10 @@ pub fn check(
             }
         });
         if let Some(span) = invalid {
-            return Err(checker.error("S113","a reflected default must not mutate captured cells, schedule animations, change the scene, or run assertions; compute a pure default value and schedule it outside reflect(...) instead",span));
+            return Err(checker.error("S113","a reflected default must not mutate captured cells, change scene configuration, or register visual assertions; compute its default with pure value-building functions",span));
         }
     }
     for statement in &module.statements {
-        if let StatementKind::Function {
-            duration: Some(duration),
-            ..
-        } = &statement.kind
-        {
-            let mut invalid = None;
-            duration.visit(&mut |expression| {
-                if checker.call_state_effect(expression, &env) {
-                    invalid.get_or_insert(expression.span);
-                }
-            });
-            if let Some(span) = invalid {
-                return Err(checker.error("S128","@duration(...) must be a pure Duration expression; it must not schedule timeline work or mutate state",span));
-            }
-        }
         check_signal_purity(&checker, statement, &env)?;
     }
     if !root {
@@ -423,40 +351,35 @@ pub fn check(
             });
         }
         if let Some(span) = invalid {
-            return Err(checker.error("S115","imported modules cannot schedule or assert while being imported; call a helper from the root script instead",span));
+            return Err(checker.error("S115","imported modules cannot mutate external state or register visual assertions during initialization; export a helper and call it from the entry script instead",span));
         }
     }
-    let duration_analysis = crate::effects::analyze(
-        source,
-        module,
-        &env,
-        imports,
-        &checker.native_methods,
-        type_budget,
-        limits,
-    )?;
-    for statement in &module.statements {
-        if let StatementKind::Function { name, .. } = &statement.kind {
-            let signature = &mut checker
-                .mutate_environment(&mut env, name, statement.span)?
-                .signatures_mut()[function_clauses[&statement.span.start]];
-            signature.duration = duration_analysis.clauses[&statement.span.start].clone();
-            signature.schedules = checker.effects.contains(name);
-            signature.mutates = checker.mutations.contains(name);
-            signature.duration_parameters = signature
-                .parameters
+    for (location, signature) in &checker.anonymous_functions {
+        checker
+            .result_types
+            .insert(*location, Type::Function(signature.clone()));
+    }
+    let dynamic_exports = checker
+        .external_reads
+        .iter()
+        .cloned()
+        .chain(
+            checker.binding_scopes[0]
                 .iter()
-                .enumerate()
-                .filter(|(_, parameter)| duration_analysis.needed.contains(&parameter.name))
-                .map(|(index, _)| index)
-                .collect();
-        }
-    }
+                .filter(|(name, binding)| {
+                    binding.kind != BindingKind::Let
+                        || env
+                            .get(name.as_str())
+                            .is_some_and(|ty| ty.contains_signal())
+                })
+                .map(|(name, _)| name.clone()),
+        )
+        .collect();
     Ok(Checked {
+        output_type: (entry_returns || checker.collects_output).then_some(Type::Animation),
+        dynamic_exports,
         function_clauses,
-        durations: duration_analysis.nodes,
-        duration_needed: duration_analysis.needed,
-        value_dependencies: duration_analysis.value_dependencies,
+        anonymous_functions: checker.anonymous_functions,
         exports: env
             .into_iter()
             .map(|(name, ty)| (name.to_string(), std::sync::Arc::unwrap_or_clone(ty)))
@@ -468,7 +391,6 @@ pub fn check(
         call_types: checker.call_types,
         reflected: checker.reflected,
         binding_types: checker.binding_types,
-        effects: checker.effects,
     })
 }
 
@@ -476,6 +398,7 @@ pub fn check(
 struct BindingInfo {
     kind: BindingKind,
     function: Option<String>,
+    callable: BTreeSet<String>,
 }
 struct Checker<'a> {
     source: &'a str,
@@ -489,40 +412,23 @@ struct Checker<'a> {
     reflected: BTreeMap<usize, std::sync::Arc<sanim_core::reflection::Declaration>>,
     reflection_names: BTreeMap<usize, String>,
     binding_types: BTreeMap<usize, Type>,
+    anonymous_functions: BTreeMap<(usize, usize), Signature>,
+    anonymous_names: BTreeMap<String, (usize, usize)>,
+    callable_origins: BTreeMap<(usize, usize), BTreeSet<String>>,
+    callable_bindings: BTreeMap<usize, BTreeSet<String>>,
+    callable_substitutions: BTreeMap<(usize, usize), BTreeMap<String, BTreeSet<String>>>,
     binding_scopes: Vec<BTreeMap<String, BindingInfo>>,
     mutations: BTreeSet<String>,
     function: Option<String>,
+    function_capabilities: Option<sanim_core::FnCapabilities>,
+    external_reads: BTreeSet<String>,
     calls: BTreeMap<String, BTreeSet<String>>,
-    effects: BTreeSet<String>,
     root: bool,
+    collects_output: bool,
 }
 impl Checker<'_> {
     fn error(&self, code: &str, message: impl Into<String>, span: Span) -> Diagnostic {
         Diagnostic::new(code, message, self.source, span)
-    }
-    fn call_schedules(&self, expr: &Expr, env: &Environment) -> bool {
-        let ExprKind::Call { callee, args, .. } = &expr.kind else {
-            return false;
-        };
-        if crate::timing::builtin_call(callee, args, &self.native_methods).is_some_and(|call| {
-            call.schedules()
-                || crate::list_functions::callback_type(&call, env)
-                    .is_some_and(|ty| ty.signatures().iter().any(|signature| signature.schedules))
-        }) || matches!(&callee.kind,ExprKind::Name(name) if self.effects.contains(name))
-        {
-            return true;
-        }
-        crate::effects::lookup(callee, env).is_some_and(|ty| {
-            ty.signatures().iter().any(|signature| {
-                signature.schedules
-                    || !signature
-                        .parameters
-                        .iter()
-                        .any(|parameter| parameter.name == "duration")
-                        && crate::timing::envelope(args)
-                            .is_some_and(|expr| !crate::timing::known_zero(expr))
-            })
-        })
     }
     fn call_mutates(&self, expr: &Expr, env: &Environment) -> bool {
         let ExprKind::Call { callee, args, .. } = &expr.kind else {
@@ -530,14 +436,15 @@ impl Checker<'_> {
         };
         matches!(&callee.kind, ExprKind::Name(name) if self.mutations.contains(name))
             || crate::timing::builtin_call(callee, args, &self.native_methods).is_some_and(|call| {
-                crate::list_functions::callback_type(&call, env)
+                crate::list_functions::callback_type(&call, &(&*env, &self.result_types))
                     .is_some_and(|ty| ty.signatures().iter().any(|signature| signature.mutates))
             })
-            || crate::effects::lookup(callee, env)
+            || crate::analysis::lookup(callee, &(env, &self.result_types))
                 .is_some_and(|ty| ty.signatures().iter().any(|signature| signature.mutates))
     }
     fn call_state_effect(&self, expr: &Expr, env: &Environment) -> bool {
-        self.call_schedules(expr, env) || self.call_mutates(expr, env)
+        self.call_mutates(expr, env)
+            || matches!(&expr.kind, ExprKind::Call { callee, args, .. } if crate::timing::builtin_call(callee,args,&self.native_methods).is_some_and(|call| call.capabilities(&(env,&self.result_types)).contains(sanim_core::FnCapability::Mut)))
     }
     fn bind_kind(&mut self, name: &str, kind: BindingKind) {
         self.binding_scopes
@@ -548,6 +455,7 @@ impl Checker<'_> {
                 BindingInfo {
                     kind,
                     function: self.function.clone(),
+                    callable: BTreeSet::new(),
                 },
             );
     }
@@ -573,6 +481,11 @@ impl Checker<'_> {
         if let Some(function) = &self.function
             && binding.is_some_and(|binding| binding.function.as_ref() != Some(function))
         {
+            self.require_capability(
+                sanim_core::FnCapability::Mut,
+                span,
+                &format!("assigning outer mutable binding '{name}' changes external state"),
+            )?;
             self.mutations.insert(function.clone());
         }
         self.copy_type(ty, span)
@@ -701,6 +614,10 @@ impl Checker<'_> {
             }
             TypeExpr::StringLiteral(_) => false,
             TypeExpr::Signal(inner) => self.validate_template(inner, variables, depth + 1, span)?,
+            TypeExpr::Function(_,parameters,result) => {
+                for (_,_,ty) in parameters { self.validate_template(ty,variables,depth+1,span)?; }
+                self.validate_template(result,variables,depth+1,span)?
+            }
             TypeExpr::Named(name, args) => {
                 if matches!(prelude::types().get(name.as_str()),Some(prelude::TypeDefinition::List)) {
                     let (inner,_)=self.list_type_arguments(args,span)?;
@@ -848,6 +765,9 @@ impl Checker<'_> {
                 let right = self.resolve(right, variables, depth + 1, span)?;
                 crate::type_algebra::difference(left, right, self.type_budget)
                     .map_err(|message| self.error("S105", message, span))
+            }
+            TypeExpr::Function(capabilities, parameters, result) => {
+                self.resolve_callable_type(*capabilities, parameters, result, variables, depth, span)
             }
             TypeExpr::Record(fields) => {
                 let mut out = BTreeMap::new();
@@ -1027,11 +947,12 @@ impl Checker<'_> {
                     if *kind == BindingKind::Let
                         && expected.is_none()
                         && let ExprKind::Call { callee, .. } = &value.kind
-                        && crate::effects::lookup(callee, env).is_some_and(|ty| {
-                            ty.signatures().iter().any(|signature| {
-                                matches!(signature.result.as_ref(), Type::Signal(_))
+                        && crate::analysis::lookup(callee, &(&*env, &self.result_types))
+                            .is_some_and(|ty| {
+                                ty.signatures().iter().any(|signature| {
+                                    matches!(signature.result.as_ref(), Type::Signal(_))
+                                })
                             })
-                        })
                     {
                         ty = Type::Signal(Box::new(ty));
                     }
@@ -1052,8 +973,10 @@ impl Checker<'_> {
                             && let ExprKind::String(value) = &value.kind
                         {
                             Type::StringLiteral(value.clone().into())
-                        } else if *kind != BindingKind::Let {
+                        } else if *kind == BindingKind::Mut {
                             ty.editable_schema()
+                        } else if *kind == BindingKind::Sig {
+                            ty.widen_literals()
                         } else {
                             ty
                         }
@@ -1064,12 +987,29 @@ impl Checker<'_> {
                     if ty.unresolved() {
                         return Err(self.error("S107",format!("cannot infer a complete static type for '{name}'; add an annotation, for example let {name}: List<Number> = [] or let {name}: Option<Number> = None"),statement.span));
                     }
-                    if ty.contains_function() {
-                        return Err(self.error("S111","functions cannot be copied into bindings or containers; call them directly so the compiler can verify the complete call graph is acyclic",statement.span));
+                    if ty.contains_function()
+                        && (*kind != BindingKind::Let || ty.signatures().is_empty())
+                    {
+                        return Err(self.error("S111","function values require an immutable let binding; callable containers and mutable function cells are not supported",statement.span));
                     }
                     self.binding_types
                         .insert(statement.span.start, self.copy_type(&ty, statement.span)?);
                     self.bind_kind(name, *kind);
+                    if let Some(origin) = self
+                        .callable_origins
+                        .get(&(value.span.start, value.span.end))
+                        .cloned()
+                    {
+                        self.charge_callable_origins(&origin, statement.span)?;
+                        self.callable_bindings
+                            .insert(statement.span.start, origin.clone());
+                        self.binding_scopes
+                            .last_mut()
+                            .expect("binding scope")
+                            .get_mut(name)
+                            .expect("declared binding")
+                            .callable = origin;
+                    }
                     self.insert_environment(env, name.clone(), ty, statement.span)?;
                 }
                 StatementKind::Assign { name, value } => {
@@ -1080,69 +1020,26 @@ impl Checker<'_> {
                         return Err(self.error("S115", "imported modules may initialize mutable cells but cannot reassign them while importing; perform the edit in a helper called from the root script", statement.span));
                     }
                 }
-                StatementKind::Animate {
-                    name,
-                    value,
-                    duration,
-                    easing,
-                } => {
-                    let expected = self.writable(name, env, statement.span)?;
-                    if !matches!(
-                        expected,
-                        Type::Numeric(_) | Type::Vector(2, Some(_)) | Type::Color
-                    ) {
-                        return Err(self.error("S131", format!("animate requires a numeric, Vec2, or Color mut binding, found {expected}"), statement.span));
-                    }
-                    let actual = self.expression(value, env, Some(&expected), variables)?;
-                    self.expect(&expected, &actual, value.span)?;
-                    let duration_type = self.expression(
-                        duration,
-                        env,
-                        Some(&Type::Numeric(Unit::Duration)),
-                        variables,
-                    )?;
-                    self.expect(
-                        &Type::Numeric(Unit::Duration),
-                        &duration_type,
-                        duration.span,
-                    )?;
-                    if let Some(easing) = easing {
-                        let easing_type =
-                            self.expression(easing, env, Some(&Type::String), variables)?;
-                        self.expect(&Type::String, &easing_type, easing.span)?;
-                        if let ExprKind::String(name) = &easing.kind {
-                            sanim_core::Easing::parse(name)
-                                .map_err(|message| self.error("S131", message, easing.span))?;
-                        }
-                    }
-                    if let Some(function) = &self.function {
-                        self.effects.insert(function.clone());
-                    }
-                    if !self.root && self.function.is_none() {
-                        return Err(self.error("S115", "imported modules cannot animate cells during import; call a helper from the root script", statement.span));
-                    }
-                }
-                StatementKind::Background { body } => {
-                    if crate::effects::has_return(body) {
-                        return Err(self.error("S132", "background jobs cannot return from their enclosing function; finish the bounded job body, then return on the main timeline", statement.span));
-                    }
-                    self.scoped_block(
-                        body,
-                        &mut self.fork_environment(env, statement.span)?,
-                        result,
-                        variables,
-                    )?;
-                }
                 StatementKind::Expr(expr) => {
                     let ty = self.expression(expr, env, None, variables)?;
-                    if ty != Type::Unit {
-                        return Err(self.error("S114",format!("unused {ty:?} value; bind it with 'let', insert it with add, or pass it to an animation function"),expr.span));
-                    }
-                    if !self.root && self.function.is_none() {
-                        return Err(self.error("S115","imported modules may define helpers but cannot execute scheduling or assertion statements",statement.span));
+                    if ty == Type::Animation {
+                        if self.root && self.function.is_none() {
+                            self.collects_output = true;
+                        }
+                    } else if ty != Type::Unit {
+                        return Err(self.error(
+                            "S114",
+                            format!(
+                                "unused {ty} value; bind it with let or return it from a function"
+                            ),
+                            expr.span,
+                        ));
                     }
                 }
                 StatementKind::Return(expr) => {
+                    let entry_type = Type::Animation;
+                    let result = result
+                        .or_else(|| (self.root && self.function.is_none()).then_some(&entry_type));
                     let Some(expected) = result else {
                         return Err(self.error(
                             "S110",
@@ -1191,17 +1088,9 @@ impl Checker<'_> {
                     self.insert_environment(&mut scope, name.clone(), inner, statement.span)?;
                     self.scoped_block(body, &mut scope, result, variables)?;
                 }
-                StatementKind::Repeat {
-                    count,
-                    period,
-                    body,
-                } => {
+                StatementKind::Repeat { count, body } => {
                     let ty = self.expression(count, env, None, variables)?;
                     self.expect(&Type::Numeric(Unit::Number), &ty, count.span)?;
-                    if let Some(period) = period {
-                        let ty = self.expression(period, env, None, variables)?;
-                        self.expect(&Type::Numeric(Unit::Duration), &ty, period.span)?;
-                    }
                     self.scoped_block(
                         body,
                         &mut self.fork_environment(env, statement.span)?,
@@ -1297,6 +1186,12 @@ impl Checker<'_> {
         variables: &BTreeMap<String, Type>,
     ) -> Result<Type, Diagnostic> {
         let mut actual = self.expression_inner(expr, env, expected, variables)?;
+        self.check_call_capabilities(expr, env)?;
+        if !actual.signatures().is_empty() || actual.contains_animation() {
+            let ty = self.copy_type(&actual, expr.span)?;
+            self.result_types
+                .insert((expr.span.start, expr.span.end), ty);
+        }
         if !expected.is_some_and(|ty| matches!(ty, Type::Signal(_)))
             && let Type::Signal(inner) = actual
         {
@@ -1318,10 +1213,55 @@ impl Checker<'_> {
         variables: &BTreeMap<String, Type>,
     ) -> Result<Type, Diagnostic> {
         match &expr.kind {
+            ExprKind::Function(declaration) => {
+                let StatementKind::Function { name, .. } = &declaration.kind else {
+                    unreachable!("anonymous function AST")
+                };
+                let mut scope = self.fork_environment(env, expr.span)?;
+                self.declare_clauses(
+                    &Module {
+                        statements: vec![*declaration.clone()],
+                        comments: vec![],
+                    },
+                    &mut scope,
+                    variables,
+                )?;
+                let mut signature = scope[name.as_str()].signatures()[0].clone();
+                self.check_function(declaration, env, &signature, false, variables)?;
+                let mutates = 'search: {
+                    let mut pending = vec![name.as_str()];
+                    let mut seen = BTreeSet::new();
+                    while let Some(current) = pending.pop() {
+                        if self.mutations.contains(current) {
+                            break 'search true;
+                        }
+                        if seen.insert(current)
+                            && let Some(calls) = self.calls.get(current)
+                        {
+                            pending.extend(calls.iter().map(String::as_str));
+                        }
+                    }
+                    false
+                };
+                signature.mutates = mutates;
+                let origin = BTreeSet::from([name.clone()]);
+                self.charge_callable_origins(&origin, expr.span)?;
+                self.callable_origins
+                    .insert((expr.span.start, expr.span.end), origin);
+                self.anonymous_names
+                    .insert(name.clone(), (expr.span.start, expr.span.end));
+                self.anonymous_functions
+                    .insert((expr.span.start, expr.span.end), signature.clone());
+                Ok(Type::Function(signature))
+            }
             ExprKind::Reflect { value, options } => {
                 let actual = self.expression(value, env, expected, variables)?;
                 let ty = expected
-                    .filter(|ty| crate::reflection::concrete_schema(ty) && ty.accepts(&actual))
+                    .filter(|ty| {
+                        crate::reflection::concrete_schema(ty)
+                            && ty.reflectable()
+                            && ty.accepts(&actual)
+                    })
                     .cloned()
                     .unwrap_or_else(|| actual.editable_schema());
                 if !crate::reflection::concrete_schema(&ty) {
@@ -1346,7 +1286,7 @@ impl Checker<'_> {
                 })
             }
             ExprKind::String(value) => {
-                if expected.is_some_and(|ty| ty.string_literals().is_some()) {
+                if expected.is_some_and(|ty| !ty.string_literal_choices().is_empty()) {
                     Ok(Type::StringLiteral(value.clone().into()))
                 } else if crate::templates::expected(expected) {
                     self.template_expressions
@@ -1363,12 +1303,37 @@ impl Checker<'_> {
                 .cloned()
                 .unwrap_or(Type::Option(Box::new(Type::Unknown)))),
             ExprKind::Name(name) => {
+                self.check_name_capture(name, env, expr.span)?;
+                // References can escape through aliases, parameters and returned callables.
+                // Include their lexical origin in the same bounded call graph.
+                if env
+                    .get(name.as_str())
+                    .is_some_and(|ty| !ty.signatures().is_empty())
+                {
+                    let origin = self
+                        .binding_scopes
+                        .iter()
+                        .rev()
+                        .find_map(|scope| scope.get(name))
+                        .map(|binding| binding.callable.clone())
+                        .filter(|origin| !origin.is_empty())
+                        .unwrap_or_else(|| BTreeSet::from([name.clone()]));
+                    self.charge_callable_origins(&origin, expr.span)?;
+                    self.callable_origins
+                        .insert((expr.span.start, expr.span.end), origin.clone());
+                    if let Some(function) = &self.function {
+                        self.calls
+                            .entry(function.clone())
+                            .or_default()
+                            .extend(origin);
+                    }
+                }
                 if let Some(value) = prelude::values().get(name.as_str()) {
                     Ok(value.ty())
                 } else {
                     env.get(name.as_str()).ok_or_else(|| {
-                        let hint=expected.and_then(Type::string_literals).filter(|values|values.contains(&name.as_str())).map(|_|format!(" Did you mean {name:?}? This argument expects a quoted string value ({expected}).",expected=expected.expect("literal context"))).unwrap_or_default();
-                        self.error("S120",format!("unknown name '{name}'.{hint} Standard constructors such as Circle and Color need no import; user names are case-sensitive."),expr.span)
+                        let hint=expected.map(Type::string_literal_choices).filter(|values|values.contains(&name.as_str())).map(|_|format!(" Did you mean {name:?}? This argument expects a quoted string value ({expected}).",expected=expected.expect("literal context"))).unwrap_or_default();
+                        self.error("S120",format!("unknown name '{name}'.{hint} Standard constructors such as Box and Color need no import; user names are case-sensitive."),expr.span)
                     }).and_then(|ty|self.copy_type(if let Type::Signal(inner)=ty.as_ref() {inner.as_ref()}else{ty.as_ref()},expr.span))
                 }
             }
@@ -1435,7 +1400,16 @@ impl Checker<'_> {
                     .map_err(|e| self.error("S106", e, expr.span))
             }
             ExprKind::Member(base, name) => {
+                if expr
+                    .qualified_name()
+                    .is_some_and(|name| self.external_reads.contains(&name))
+                {
+                    self.require_capability(sanim_core::FnCapability::Ref, expr.span, "reading a mutable or signal export from an imported module is an external read")?;
+                }
                 let ty = self.expression(base, env, None, variables)?;
+                if ty == Type::Element {
+                    self.require_capability(sanim_core::FnCapability::Ref, expr.span, "element getters sample the external animation timeline; pass an explicit snapshot to a pure function")?;
+                }
                 crate::type_algebra::member(ty, name)
                     .map_err(|message| self.error("S121", message, expr.span))
             }
@@ -1458,6 +1432,17 @@ impl Checker<'_> {
                     return Ok(Type::Data);
                 }
                 self.expect(&Type::Numeric(Unit::Number), &idx, index.span)?;
+                if let Some(index) = crate::list_functions::constant_count(Some(index), None)
+                    && let Some(inner) = ty
+                        .fixed_index(index)
+                        .map_err(|message| self.error("S122", message, expr.span))?
+                {
+                    // Preserve the checked cardinality proof for runtime indexing.
+                    let checked = self.copy_type(&ty, base.span)?;
+                    self.result_types
+                        .insert((base.span.start, base.span.end), checked);
+                    return Ok(inner);
+                }
                 let inner = match ty {
                     Type::List(t, _) | Type::Array(t) => t,
                     _ => {
@@ -1540,6 +1525,15 @@ impl Checker<'_> {
                 all.extend(method_args);
                 return self.native(expr, builtin.name, &all, env, expected, variables);
             }
+            if crate::animations::definition(name).is_some()
+                && !matches!(&receiver, Type::Record(fields) if fields.contains_key(name))
+            {
+                return Err(self.error(
+                    "S123",
+                    format!("{name} is an animation method for Element or List<Element>; this receiver has type {receiver}"),
+                    base.span,
+                ));
+            }
             if receiver == Type::Element
                 && prelude::builtin(name).is_some_and(|v| v.result == Type::Predicate)
             {
@@ -1555,7 +1549,9 @@ impl Checker<'_> {
                 return self.native(expr, name, &all, env, expected, variables);
             }
         }
-        if !direct_callee(callee) {
+        if !direct_callee(callee)
+            && !matches!(callee.kind, ExprKind::Function(_) | ExprKind::Call { .. })
+        {
             return Err(self.error("S111","indirect function calls are forbidden; call a declared function or imported module function directly so the compiler can verify the call graph",callee.span));
         }
         if let ExprKind::Name(name) = &callee.kind
@@ -1569,38 +1565,6 @@ impl Checker<'_> {
         };
         let mut signature = first_signature.clone();
         let overloaded = ty.signatures().len() > 1;
-        let enveloped = !signature
-            .parameters
-            .iter()
-            .any(|parameter| parameter.name == "duration");
-        let eased = !signature
-            .parameters
-            .iter()
-            .any(|parameter| parameter.name == "ease");
-        if enveloped && let Some(duration) = crate::timing::envelope(args) {
-            let ty = self.expression(
-                duration,
-                env,
-                Some(&Type::Numeric(Unit::Duration)),
-                variables,
-            )?;
-            self.expect(&Type::Numeric(Unit::Duration), &ty, duration.span)?;
-        }
-        if eased && let Some(ease) = crate::timing::ease_argument(args) {
-            let ty = self.expression(ease, env, Some(&Type::String), variables)?;
-            self.expect(&Type::String, &ty, ease.span)?;
-        }
-        let normal = args
-            .iter()
-            .filter(|(name, _)| {
-                !(enveloped && name.as_deref() == Some("duration")
-                    || eased && name.as_deref() == Some("ease"))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let timed = enveloped
-            && crate::timing::envelope(args).is_some_and(|expr| !crate::timing::known_zero(expr));
-        let args = &normal;
         let pretyped = if overloaded {
             let (selected, actual) =
                 self.clause_signature(ty.signatures(), args, env, variables, expr.span)?;
@@ -1609,19 +1573,10 @@ impl Checker<'_> {
         } else {
             None
         };
-        if let Some(function) = &self.function {
-            if signature.schedules || timed {
-                self.effects.insert(function.clone());
-            }
-            if signature.mutates {
-                self.mutations.insert(function.clone());
-            }
-        }
-        if let (Some(function), ExprKind::Name(name)) = (&self.function, &callee.kind) {
-            self.calls
-                .entry(function.clone())
-                .or_default()
-                .insert(name.clone());
+        if let Some(function) = &self.function
+            && signature.mutates
+        {
+            self.mutations.insert(function.clone());
         }
         let ordered = self.arguments(
             args,
@@ -1676,8 +1631,18 @@ impl Checker<'_> {
                 } else {
                     self.expression(value, env, Some(&wanted), variables)?
                 };
-            if actual.contains_function() {
-                return Err(self.error("S111","function values cannot be passed as arguments or stored in containers; call the function directly",value.span));
+            if let Type::Variable(generic) | Type::BoundedVariable(generic, _) = parameter
+                && let Some(origins) = self
+                    .callable_origins
+                    .get(&(value.span.start, value.span.end))
+            {
+                self.charge_callable_origins(origins, expr.span)?;
+                self.callable_substitutions
+                    .entry((expr.span.start, expr.span.end))
+                    .or_default()
+                    .entry(generic.clone())
+                    .or_default()
+                    .extend(origins.iter().cloned());
             }
             infer(parameter, &actual, &mut substitutions, self.type_budget)
                 .map_err(|e| self.error("S106", e, value.span))?;
@@ -1685,6 +1650,18 @@ impl Checker<'_> {
             if !(overloaded && expected.overlaps(&actual)) {
                 self.expect(&expected, &actual, value.span)?;
             }
+        }
+        if let Type::Variable(generic) | Type::BoundedVariable(generic, _) =
+            signature.result.as_ref()
+            && let Some(origins) = self
+                .callable_substitutions
+                .get(&(expr.span.start, expr.span.end))
+                .and_then(|values| values.get(generic))
+                .cloned()
+        {
+            self.charge_callable_origins(&origins, expr.span)?;
+            self.callable_origins
+                .insert((expr.span.start, expr.span.end), origins);
         }
         self.complete_generics(&signature, &mut substitutions, expr.span)?;
         let stored = self.copy_substitutions(&substitutions, expr.span)?;
@@ -1790,173 +1767,10 @@ impl Checker<'_> {
     }
 }
 
-fn generic_variable(parameter: &GenericParameter<Type, TypeBound>) -> Type {
-    parameter.constraint.as_ref().map_or_else(
-        || Type::Variable(parameter.name.clone()),
-        |bound| Type::BoundedVariable(parameter.name.clone(), Box::new(bound.clone())),
-    )
-}
-fn generic_variables(parameters: &[GenericParameter<Type, TypeBound>]) -> BTreeMap<String, Type> {
-    parameters
-        .iter()
-        .map(|p| (p.name.clone(), generic_variable(p)))
-        .collect()
-}
-
 fn direct_callee(expr: &Expr) -> bool {
     match &expr.kind {
         ExprKind::Name(_) => true,
         ExprKind::Member(base, _) => direct_callee(base),
         _ => false,
     }
-}
-
-impl Checked {
-    pub(crate) fn charge_import_interface(
-        &self,
-        budget: &std::cell::Cell<usize>,
-        alias: &str,
-    ) -> Result<(), String> {
-        let mut remaining = budget.get();
-        // Imports clone only this interface. Private checked maps stay shared
-        // with the defining module and are charged by that module's check.
-        for (name, ty) in &self.exports {
-            remaining = remaining
-                .checked_sub(name.len() + std::mem::size_of::<String>())
-                .ok_or("resolved type budget exceeded while copying an imported interface")?;
-            sanim_core::type_budget::charge(ty, &mut remaining)?;
-        }
-        for (name, ty) in &self.schemas {
-            remaining = remaining
-                .checked_sub(alias.len() + 1 + name.len() + std::mem::size_of::<String>())
-                .ok_or("resolved type budget exceeded while qualifying an imported schema")?;
-            sanim_core::type_budget::charge(ty, &mut remaining)?;
-        }
-        budget.set(remaining);
-        Ok(())
-    }
-}
-
-fn check_signal_capture(
-    checker: &Checker<'_>,
-    expression: &Expr,
-    env: &Environment,
-) -> Result<(), Diagnostic> {
-    if let ExprKind::Call { callee, .. } = &expression.kind
-        && crate::effects::lookup(callee, env).is_some_and(|ty| {
-            ty.signatures()
-                .iter()
-                .any(|signature| matches!(signature.result.as_ref(), Type::Signal(_)))
-        })
-    {
-        return Ok(());
-    }
-    let mut invalid = None;
-    expression.visit(&mut |expr| {
-        if matches!(expr.kind, ExprKind::Reflect { .. }) || checker.call_state_effect(expr, env) {
-            invalid.get_or_insert(expr.span);
-        }
-    });
-    if let Some(span) = invalid {
-        return Err(checker.error("S131","sig captures must be pure: compute scheduling, mutation, assertions and reflected defaults into a let binding before capturing the result",span));
-    }
-    Ok(())
-}
-fn check_signal_purity(
-    checker: &Checker<'_>,
-    statement: &Statement,
-    env: &Environment,
-) -> Result<(), Diagnostic> {
-    fn statements(
-        checker: &Checker<'_>,
-        body: &[Statement],
-        env: &Environment,
-        live_return: bool,
-    ) -> Result<(), Diagnostic> {
-        for statement in body {
-            match &statement.kind {
-                StatementKind::Bind {
-                    kind: BindingKind::Sig,
-                    value,
-                    ..
-                } => check_signal_capture(checker, value, env)?,
-                StatementKind::Return(value) if live_return => {
-                    check_signal_capture(checker, value, env)?
-                }
-                StatementKind::Function {
-                    parameters,
-                    name,
-                    body,
-                    ..
-                } => {
-                    for parameter in parameters.iter().filter(|p| p.kind == BindingKind::Sig) {
-                        if let Some(default) = &parameter.default {
-                            check_signal_capture(checker, default, env)?;
-                        }
-                    }
-                    statements(
-                        checker,
-                        body,
-                        env,
-                        env.get(name.as_str()).is_some_and(|ty| {
-                            ty.signatures().iter().any(|signature| {
-                                matches!(signature.result.as_ref(), Type::Signal(_))
-                            })
-                        }),
-                    )?;
-                }
-                StatementKind::Background { body }
-                | StatementKind::For { body, .. }
-                | StatementKind::Repeat { body, .. } => {
-                    statements(checker, body, env, live_return)?
-                }
-                StatementKind::If { yes, no, .. } => {
-                    statements(checker, yes, env, live_return)?;
-                    statements(checker, no, env, live_return)?;
-                }
-                StatementKind::Match { cases, .. } => {
-                    for case in cases {
-                        statements(checker, &case.body, env, live_return)?;
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-    statements(checker, std::slice::from_ref(statement), env, false)?;
-    let mut invalid = None;
-    let mut visit = |expr: &Expr| {
-        let ExprKind::Call { callee, args, .. } = &expr.kind else {
-            return;
-        };
-        let Some(signature) =
-            crate::effects::lookup(callee, env).and_then(|ty| ty.signatures().first())
-        else {
-            return;
-        };
-        let mut positional = 0;
-        for (label, value) in args {
-            let parameter = if let Some(label) = label {
-                signature.parameters.iter().find(|p| &p.name == label)
-            } else {
-                let parameter = signature.parameters.get(positional);
-                positional += 1;
-                parameter
-            };
-            if parameter.is_some_and(|p| p.kind == BindingKind::Sig)
-                && let Err(error) = check_signal_capture(checker, value, env)
-            {
-                invalid.get_or_insert(error);
-            }
-        }
-    };
-    if let StatementKind::Function { body, .. } = &statement.kind {
-        for child in body {
-            child.visit_expressions(&mut visit);
-        }
-    } else {
-        statement.visit_expressions(&mut visit);
-    }
-    invalid.map_or(Ok(()), Err)
 }

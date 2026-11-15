@@ -6,7 +6,6 @@ use crate::InspectedItem as SelectedItem;
 use crate::player_state::{self, ProjectChange, SharedPlayerState};
 use crate::timeline_value::*;
 use crate::ui::{NumberPicker, NumberPickerHandle};
-use shrimply_project_document::project::VisualAlphaMaskTarget;
 use shrimply_project_document::project::{Project, Time};
 
 use crate::keyframe_editor::{self, KeyframeEditorActions};
@@ -37,13 +36,6 @@ pub(crate) enum ScalarAccess {
         id: Uuid,
         value_id: Uuid,
     },
-    AlphaMask {
-        target: VisualAlphaMaskTarget,
-        value_id: Uuid,
-    },
-    Background {
-        value_id: Uuid,
-    },
     PaintPalette {
         value_id: Uuid,
     },
@@ -69,18 +61,6 @@ impl ScalarAccess {
                     .find(|m| m.id == id)?,
                 value_id,
             ),
-            Self::AlphaMask { target, value_id } => project
-                .video_item(&key)?
-                .alpha_mask(target)?
-                .number(value_id),
-            Self::Background { value_id } => {
-                let shrimply_project_document::project::VideoItemContent::Background(background) =
-                    &project.video_item(&key)?.content
-                else {
-                    return None;
-                };
-                background.generator.number(value_id)
-            }
             Self::PaintPalette { value_id } => {
                 let shrimply_project_document::project::VideoItemContent::Paint(paint) =
                     &project.video_item(&key)?.content
@@ -114,18 +94,6 @@ impl ScalarAccess {
                     .find(|m| m.id == id)?,
                 value_id,
             ),
-            Self::AlphaMask { target, value_id } => project
-                .video_item_mut(&key)?
-                .alpha_mask_mut(target)?
-                .number_mut(value_id),
-            Self::Background { value_id } => {
-                let shrimply_project_document::project::VideoItemContent::Background(background) =
-                    &mut project.video_item_mut(&key)?.content
-                else {
-                    return None;
-                };
-                background.generator.number_mut(value_id)
-            }
             Self::PaintPalette { value_id } => {
                 let shrimply_project_document::project::VideoItemContent::Paint(paint) =
                     &mut project.video_item_mut(&key)?.content

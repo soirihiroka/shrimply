@@ -17,7 +17,7 @@ pub(crate) fn register(output: &mut Vec<Builtin>) {
         name: "Image",
         parameters,
         result: Type::Element,
-        schedule: false,
+        state_effect: false,
         timing: Default::default(),
         content: Default::default(),
         execute: Execution::Source(execute),
@@ -31,17 +31,19 @@ pub(crate) fn resource(path: &str, asset: Arc<media::Asset>) -> Result<Value, St
         "id".into(),
         Value::String(format!("media:{path}:{}", asset.fingerprint()).into()),
     );
-    let Value::Element(mut root) = native::make_element("Rect", &args, path, &[], Span::default())?
-    else {
-        unreachable!()
-    };
     let [width, height] = math::media::intrinsic_size([asset.width, asset.height])?;
-    Arc::make_mut(&mut root).geometry = Arc::new(Geometry::Media {
-        asset,
-        width,
-        height,
-    });
-    Ok(Value::Element(root))
+    native::make_element_with_geometry(
+        "Image",
+        &args,
+        Geometry::Media {
+            asset,
+            width,
+            height,
+        },
+        path,
+        &[],
+        Span::default(),
+    )
 }
 
 fn execute(
@@ -92,9 +94,14 @@ fn execute(
         value: height,
         unit: Unit::Length,
     }));
-    let Value::Element(mut root) = native::make_element(
-        "Rect",
+    let Value::Element(mut root) = native::make_element_with_geometry(
+        "Image",
         &args,
+        Geometry::Media {
+            asset: asset.clone(),
+            width,
+            height,
+        },
         context.module,
         context.identity,
         context.span,
@@ -103,11 +110,6 @@ fn execute(
         unreachable!()
     };
     let element = Arc::make_mut(&mut root);
-    element.geometry = Arc::new(Geometry::Media {
-        asset: asset.clone(),
-        width,
-        height,
-    });
     if !explicit_width {
         element.layout.width = None;
     }

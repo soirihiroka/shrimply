@@ -23,6 +23,8 @@ pub(super) fn open_dialog(
         ]))
         .selected(0)
         .build();
+    shrimply_components_gtk::ui::adaptive_choice(&format);
+    shrimply_components_gtk::ui::adaptive_choice(&mode);
     let options = gtk::ListBox::new();
     options.add_css_class("boxed-list");
     options.set_selection_mode(gtk::SelectionMode::None);

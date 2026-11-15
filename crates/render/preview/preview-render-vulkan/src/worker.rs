@@ -13,6 +13,7 @@ use std::{
 };
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct Frame {
     pub display: Texture,
     pub rendered: Buffer,
@@ -20,6 +21,21 @@ pub struct Frame {
     pub height: u32,
     pub serial: u64,
     pub sanim_sources: Arc<shrimply_visual_core::sanim::inspection::FrameSources>,
+}
+
+impl Frame {
+    /// Explicit capture reads the completed GPU composite; presentation stays on the GPU.
+    pub fn png(&self) -> Result<Vec<u8>, String> {
+        let pixels = shrimply_render_vulkan::Renderer::new()?.readback(&self.rendered)?;
+        let width = i32::try_from(self.width).map_err(|_| "Preview width is too large")?;
+        let height = i32::try_from(self.height).map_err(|_| "Preview height is too large")?;
+        shrimply_preview_render_core::capture::RgbaFrame {
+            width,
+            height,
+            pixels,
+        }
+        .png()
+    }
 }
 
 pub fn spawn_worker(

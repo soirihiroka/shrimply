@@ -26,14 +26,6 @@ pub enum Geometry {
     Circle {
         radius: Fraction,
     },
-    Rectangle {
-        width: Fraction,
-        height: Fraction,
-        #[serde(default)]
-        radius: CornerRadius,
-        #[serde(default)]
-        children: Vector<Element>,
-    },
     Line {
         end: Vec2,
         width: Fraction,
@@ -100,17 +92,13 @@ impl CornerRadius {
 impl Geometry {
     pub fn children(&self) -> Option<&Vector<Element>> {
         match self {
-            Self::Box { children, .. }
-            | Self::Rectangle { children, .. }
-            | Self::Code { children, .. } => Some(children),
+            Self::Box { children, .. } | Self::Code { children, .. } => Some(children),
             _ => None,
         }
     }
     pub fn children_mut(&mut self) -> Option<&mut Vector<Element>> {
         match self {
-            Self::Box { children, .. }
-            | Self::Rectangle { children, .. }
-            | Self::Code { children, .. } => Some(children),
+            Self::Box { children, .. } | Self::Code { children, .. } => Some(children),
             _ => None,
         }
     }
@@ -447,6 +435,11 @@ impl Easing {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Track {
+    /// Original interpolation extent when a temporal viewport clips the writer.
+    #[serde(default)]
+    pub interpolation: Option<(Fraction, Fraction)>,
+    #[serde(default)]
+    pub cycle: Option<crate::math::cycle::Cycle>,
     pub start: Fraction,
     pub end: Fraction,
     pub from: Value,
@@ -463,8 +456,16 @@ pub struct Track {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
+    #[serde(default)]
+    pub cycle: Option<crate::math::cycle::Cycle>,
     pub birth: Fraction,
     pub element: Element,
+}
+
+impl Layer {
+    pub fn visible_at(&self, time: Fraction) -> Result<bool, String> {
+        Ok(self.birth <= self.cycle.map_or(Ok(time), |cycle| cycle.time(time))?)
+    }
 }
 
 /// Host-supplied output settings. Scripts cannot modify these values.
@@ -516,6 +517,9 @@ pub struct Animation {
     pub height: u32,
     pub rate: Fraction,
     pub duration: Fraction,
+    /// Finite compiled prefix followed by an explicit indefinite hold or cycle.
+    #[serde(default)]
+    pub indefinite: bool,
     pub background: Color,
     pub layers: Vector<Layer>,
     /// Each property has its own sorted track index; sampling uses binary search.
@@ -545,6 +549,7 @@ impl Animation {
             height: viewport.height,
             rate: viewport.rate,
             duration: Fraction::zero(),
+            indefinite: false,
             background: Color::parse("window_bg_dark").expect("shared Adwaita background color"),
             layers: Vector::new(),
             tracks: OrdMap::new(),
@@ -567,10 +572,7 @@ impl Element {
         if property == Property::Radius
             && matches!(
                 self.geometry.as_ref(),
-                Geometry::Rectangle {
-                    radius: CornerRadius::Pill,
-                    ..
-                } | Geometry::Box {
+                Geometry::Box {
                     radius: CornerRadius::Pill,
                     ..
                 }
@@ -592,7 +594,9 @@ impl Element {
             return Ok(Value::Number(number));
         }
         Ok(match property {
-            Property::Position => Value::Vec2(self.position),
+            Property::Position => {
+                Value::from_vector(self.position.values.to_vec(), self.position.unit)?
+            }
             Property::PositionMode => Value::String(self.layout.position_mode.name().into()),
             Property::WhiteSpace => Value::String(
                 self.layout
@@ -623,11 +627,13 @@ impl Element {
                     .into(),
                 )
             }
-            Property::Scroll => Value::Vec2(
-                self.layout
+            Property::Scroll => {
+                let scroll = self
+                    .layout
                     .scroll
-                    .unwrap_or(Vec2::zero(crate::Unit::Length)),
-            ),
+                    .unwrap_or(Vec2::zero(crate::Unit::Length));
+                Value::from_vector(scroll.values.to_vec(), scroll.unit)?
+            }
             Property::Rotation => Value::Number(crate::Number {
                 value: self.rotation,
                 unit: crate::Unit::Angle,
@@ -685,11 +691,10 @@ impl Element {
             Property::Radius | Property::Width | Property::Height => {
                 let value = match (property, self.geometry.as_ref()) {
                     (Property::Radius, Geometry::Circle { radius }) => *radius,
-                    (Property::Radius, Geometry::Rectangle {width,height,radius,..})=>radius.resolve(*width,*height),
                     (Property::Radius, Geometry::Box {radius,..})=>radius.resolve(self.layout.width.ok_or("Box radius needs resolved width")?.value,self.layout.height.ok_or("Box radius needs resolved height")?.value),
-                    (Property::Width, Geometry::Rectangle { width, .. } | Geometry::Media { width, .. }) => *width,
+                    (Property::Width, Geometry::Media { width, .. }) => *width,
                     (Property::Width, Geometry::Line { width, .. } | Geometry::Polyline { width, .. }) => *width,
-                    (Property::Height, Geometry::Rectangle { height, .. } | Geometry::Media { height, .. }) => *height,
+                    (Property::Height, Geometry::Media { height, .. }) => *height,
                     (Property::Width, Geometry::Box { .. } | Geometry::Code { .. }) => self.layout.width.map(|number|number.value).ok_or_else(|| format!("{}.width is automatic; provide an explicit width before reading it",self.id))?,
                     (Property::Height, Geometry::Box { .. } | Geometry::Code { .. }) => self.layout.height.map(|number|number.value).ok_or_else(|| format!("{}.height is automatic; provide an explicit height before reading it",self.id))?,
                     _ => {
@@ -938,7 +943,7 @@ impl Element {
                 if property == Property::Radius
                     && !matches!(
                         self.geometry.as_ref(),
-                        Geometry::Circle { .. } | Geometry::Rectangle { .. } | Geometry::Box { .. }
+                        Geometry::Circle { .. } | Geometry::Box { .. }
                     )
                 {
                     return Err(format!(
@@ -952,16 +957,12 @@ impl Element {
                         Property::Height => self.layout.height = Some(number),
                         _ => unreachable!("layout dimension"),
                     }
-                    if !matches!(
-                        self.geometry.as_ref(),
-                        Geometry::Rectangle { .. } | Geometry::Media { .. }
-                    ) {
+                    if !matches!(self.geometry.as_ref(), Geometry::Media { .. }) {
                         return Ok(());
                     }
                 }
                 match (property, Arc::make_mut(&mut self.geometry)) {
                     (Property::Radius, Geometry::Circle { radius }) => *radius = number.value,
-                    (Property::Width, Geometry::Rectangle { width, .. }) => *width = number.value,
                     (
                         Property::Width,
                         Geometry::Media {
@@ -979,17 +980,13 @@ impl Element {
                             )?;
                         }
                     }
-                    (
-                        Property::Radius,
-                        Geometry::Rectangle { radius, .. } | Geometry::Box { radius, .. },
-                    ) => *radius = CornerRadius::Fixed(number.value),
+                    (Property::Radius, Geometry::Box { radius, .. }) => {
+                        *radius = CornerRadius::Fixed(number.value)
+                    }
                     (
                         Property::Width,
                         Geometry::Line { width, .. } | Geometry::Polyline { width, .. },
                     ) => *width = number.value,
-                    (Property::Height, Geometry::Rectangle { height, .. }) => {
-                        *height = number.value
-                    }
                     (
                         Property::Height,
                         Geometry::Media {
@@ -1058,13 +1055,16 @@ impl Animation {
         let mut sampler = self.reactive.sampler(time)?;
         self.layers
             .iter()
-            .filter(|v| v.birth <= time)
             .map(|v| {
+                if !v.visible_at(time)? {
+                    return Ok(None);
+                }
                 let mut out = v.element.clone();
                 self.sample_in_place(&mut out, time, &mut sampler, &mut native)?;
-                Ok(out)
+                Ok(Some(out))
             })
-            .collect()
+            .collect::<Result<Vec<_>, String>>()
+            .map(|elements| elements.into_iter().flatten().collect())
     }
     pub fn sample_element(&self, element: &Element, time: Fraction) -> Result<Element, String> {
         self.sample_element_with(element, time, |_, _| Ok(()))
@@ -1105,10 +1105,12 @@ impl Animation {
         self.tracks
             .get(&element.id)
             .and_then(|properties| properties.get(&property))
-            .and_then(|tracks| Track::at(tracks, time))
+            .map(|tracks| Track::at(tracks, time))
+            .transpose()?
+            .flatten()
             .map_or_else(|| element.property(property), |track| track.sample(time))
     }
-    fn sample_in_place(
+    pub(crate) fn sample_in_place(
         &self,
         out: &mut Element,
         time: Fraction,
@@ -1149,7 +1151,7 @@ impl Animation {
         }
         if let Some(properties) = self.tracks.get(&out.id) {
             for (property, tracks) in properties {
-                if let Some(track) = Track::at(tracks, time) {
+                if let Some(track) = Track::at(tracks, time)? {
                     out.set(*property, track.sample(time)?)?;
                     if let Some(horizontal) = track.horizontal {
                         out.horizontal.origin = horizontal.origin;
@@ -1238,7 +1240,11 @@ impl Animation {
         }
         index(&element, vec![self.layers.len()], &mut self.element_index);
         self.flow_controlled.extend(flow);
-        self.layers.push_back(Layer { birth, element });
+        self.layers.push_back(Layer {
+            cycle: None,
+            birth,
+            element,
+        });
         Ok(())
     }
     pub fn schedule(
@@ -1248,10 +1254,27 @@ impl Animation {
         duration: Fraction,
         easing: Easing,
     ) -> Result<(), String> {
+        self.schedule_in_window(motions, start, duration, easing, Default::default())
+    }
+    /// All writer validation is shared; a matching cycle permits its own successive actions.
+    pub fn schedule_in_window(
+        &mut self,
+        motions: &[Motion],
+        natural_start: Fraction,
+        duration: Fraction,
+        easing: Easing,
+        window: crate::math::temporal::Window,
+    ) -> Result<(), String> {
         if !math::finite(&duration) || duration < Fraction::zero() {
             return Err("animation duration must be nonnegative".into());
         }
-        let end = math::timeline_end(start, duration)?;
+        crate::math::temporal::writer_end(natural_start, duration)?;
+        let Some(interval) = window.interval(natural_start, duration)? else {
+            return Ok(());
+        };
+        let start = interval.start;
+        let end = interval.end;
+        let cycle = interval.cycle;
         // Validate a small write set before committing; do not clone the whole scene.
         let mut additions: Vec<Element> = vec![];
         let mut writes = vec![];
@@ -1334,8 +1357,24 @@ impl Animation {
                 }
             } else {
                 return Err(format!(
-                    "duplicate or cyclic element identity '{}' in pending groups",
+                    "duplicate or cyclic element identity '{}' in pending visual roots",
                     motion.element.id
+                ));
+            }
+            if self
+                .tracks
+                .get(&motion.element.id)
+                .and_then(|properties| properties.get(&motion.property))
+                .and_then(Vector::back)
+                .is_some_and(|track| {
+                    track.cycle.is_some_and(|previous| {
+                        Some(previous) != cycle && previous.until().is_none_or(|end| end > start)
+                    })
+                })
+            {
+                return Err(format!(
+                    "{}.{:?} has a repeating animation that owns this property until its cropped end; end or crop the repeat first, or use a separate element",
+                    motion.element.id, motion.property
                 ));
             }
             if !targets.insert((motion.element.id.clone(), motion.property)) {
@@ -1353,14 +1392,14 @@ impl Animation {
                 let pending = motions
                     .iter()
                     .any(|other| other.property == Property::Reveal && related(&other.element));
-                let existing = self.tracks.iter().any(|(id, properties)| {
-                    self.find(id).is_some_and(related)
-                        && properties.get(&Property::Reveal).is_some_and(|tracks| {
-                            tracks
-                                .iter()
-                                .any(|track| track.start < end && track.end > start)
-                        })
-                });
+                let existing = writer_overlap(
+                    self.tracks
+                        .iter()
+                        .filter(|(id, _)| self.find(id).is_some_and(related))
+                        .filter_map(|(_, properties)| properties.get(&Property::Reveal))
+                        .flatten(),
+                    interval,
+                )?;
                 if pending || existing {
                     return Err(format!(
                         "overlapping ancestor/descendant reveals for '{}'; reveal the containing group, or animate parent and child in separate plays",
@@ -1401,7 +1440,7 @@ impl Animation {
                 }
             }
             let element = self.find(&motion.element.id).unwrap_or(&motion.element);
-            let current = self.sample_property(element, motion.property, start)?;
+            let current = self.sample_property(element, motion.property, natural_start)?;
             if motion.property == Property::Rotation
                 && motion.to.number()?.value != Fraction::zero()
                 && self
@@ -1410,13 +1449,32 @@ impl Animation {
                     .and_then(|properties| properties.get(&Property::Scale))
                     .is_some_and(|tracks| {
                         tracks.iter().any(|track| {
-                            (track.start < end || duration.is_zero() && track.start == start)
-                                && track.end > start
+                            track
+                                .cycle
+                                .is_some_and(|clock| clock.until().is_none_or(|end| end > start))
                                 && [&track.from, &track.to].iter().any(|value| {
                                     value.number().is_ok_and(|number| number.value.is_zero())
                                 })
                         })
                     })
+            {
+                return Err("rotation must remain zero until the repeating centered growth ends; crop the repeat first or use scale_to without a zero endpoint".into());
+            }
+            if motion.property == Property::Rotation
+                && motion.to.number()?.value != Fraction::zero()
+                && writer_overlap(
+                    self.tracks
+                        .get(&motion.element.id)
+                        .and_then(|properties| properties.get(&Property::Scale))
+                        .into_iter()
+                        .flatten()
+                        .filter(|track| {
+                            [&track.from, &track.to].iter().any(|value| {
+                                value.number().is_ok_and(|number| number.value.is_zero())
+                            })
+                        }),
+                    interval,
+                )?
             {
                 return Err("GrowFromCenter/ShrinkToCenter require zero rotation throughout the motion; sequence rotation outside the centered growth interval".into());
             }
@@ -1430,41 +1488,55 @@ impl Animation {
                         other.element.id == motion.element.id
                             && other.property == Property::Rotation
                     })
-                    || self
-                        .tracks
-                        .get(&motion.element.id)
-                        .and_then(|properties| properties.get(&Property::Rotation))
-                        .is_some_and(|tracks| {
-                            tracks
-                                .iter()
-                                .any(|track| track.start < end && track.end > start)
-                        }))
+                    || writer_overlap(
+                        self.tracks
+                            .get(&motion.element.id)
+                            .and_then(|properties| properties.get(&Property::Rotation))
+                            .into_iter()
+                            .flatten(),
+                        interval,
+                    )?)
             {
                 return Err("GrowFromCenter/ShrinkToCenter require zero rotation throughout the motion; use ScaleTo for rotated geometry, or reset rotation in an earlier animation call".into());
             }
             let mut from = motion.from.clone().unwrap_or(current);
             let mut to = motion.to.clone();
-            if let (Value::Vec2(a), Value::Vec2(b)) = (&mut from, &mut to) {
+            if motion.property == Property::Position || motion.property == Property::Scroll {
+                let mut a = from.vec2()?;
+                let mut b = to.vec2()?;
                 if !matches!(b.unit, crate::Unit::Length | crate::Unit::Percent) {
-                    return Err("position motion requires a Vec2 with pt or % components".into());
+                    return Err("position motion requires a List of two pt or % components".into());
                 }
                 if a.unit != b.unit {
-                    if a.values.iter().all(|v| *v == 0.0) {
+                    if a.values.iter().all(|value| *value == 0.) {
                         a.unit = b.unit;
-                    } else if b.values.iter().all(|v| *v == 0.0) {
+                    } else if b.values.iter().all(|value| *value == 0.) {
                         b.unit = a.unit;
                     } else {
                         return Err(
                             "position track endpoints must use matching pt or % units".into()
                         );
                     }
+                    from = Value::from_vector(a.values.to_vec(), a.unit)?;
+                    to = Value::from_vector(b.values.to_vec(), b.unit)?;
                 }
             }
             let tracks = self
                 .tracks
                 .get(&motion.element.id)
                 .and_then(|v| v.get(&motion.property));
-            if tracks.and_then(|v| v.back()).is_some_and(|v| v.end > start) {
+            if tracks
+                .and_then(|values| values.back())
+                .is_some_and(|last| last.start > start)
+            {
+                return Err("compiled property writers must be chronological; compose them inside Animation to order them".into());
+            }
+            if writer_overlap(
+                tracks
+                    .and_then(|values| values.back())
+                    .filter(|last| last.end != last.start || last.start != start),
+                interval,
+            )? {
                 return Err(format!(
                     "overlapping writers for {}.{:?}",
                     motion.element.id, motion.property
@@ -1483,6 +1555,8 @@ impl Animation {
                 motion.element.id.clone(),
                 motion.property,
                 Track {
+                    interpolation: interval.interpolation,
+                    cycle,
                     start,
                     end,
                     from,
@@ -1558,24 +1632,68 @@ pub(crate) fn collect_flow_positions(
     }
 }
 
+fn writer_overlap<'a>(
+    tracks: impl IntoIterator<Item = &'a Track>,
+    interval: crate::math::temporal::Interval,
+) -> Result<bool, String> {
+    for track in tracks {
+        if (crate::math::temporal::Interval {
+            start: track.start,
+            end: track.end,
+            cycle: track.cycle,
+            interpolation: track.interpolation,
+        })
+        .overlaps(interval)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl Track {
-    pub fn at(tracks: &Vector<Self>, time: Fraction) -> Option<&Self> {
-        let count = tracks
-            .binary_search_by(|track| {
-                if track.start <= time {
-                    std::cmp::Ordering::Less
-                } else {
-                    std::cmp::Ordering::Greater
-                }
-            })
-            .unwrap_err();
-        count.checked_sub(1).map(|index| &tracks[index])
+    pub fn at(tracks: &Vector<Self>, time: Fraction) -> Result<Option<&Self>, String> {
+        let search = |time| {
+            tracks
+                .binary_search_by(|track| {
+                    if track.start <= time {
+                        std::cmp::Ordering::Less
+                    } else {
+                        std::cmp::Ordering::Greater
+                    }
+                })
+                .unwrap_err()
+        };
+        let count = search(time);
+        let Some(candidate) = count.checked_sub(1).map(|index| &tracks[index]) else {
+            return Ok(None);
+        };
+        let count = if let Some(cycle) = candidate.cycle {
+            search(cycle.time(time)?)
+        } else {
+            count
+        };
+        Ok(count.checked_sub(1).map(|index| &tracks[index]))
+    }
+    pub fn progress(&self, time: Fraction) -> Result<Fraction, String> {
+        let time = self.cycle.map_or(Ok(time), |cycle| cycle.time(time))?;
+        let (start, end) = self.interpolation.unwrap_or((self.start, self.end));
+        let time = if self.interpolation.is_some() {
+            time.max(self.start).min(self.end)
+        } else {
+            time
+        };
+        if time >= end {
+            Ok(Fraction::from(1))
+        } else {
+            math::progress(time, start, end)
+        }
     }
     pub fn sample(&self, time: Fraction) -> Result<Value, String> {
-        if time >= self.end {
+        let p = self.progress(time)?;
+        if p >= Fraction::from(1) {
             return Ok(self.to.clone());
         }
-        let p = math::progress(time, self.start, self.end)?;
         let one = Fraction::from(1);
         let p = self.easing.apply(p)?;
         let bounded_progress = p.max(Fraction::zero()).min(one);
@@ -1603,18 +1721,50 @@ impl Track {
                 }))
             }
             (Value::Fraction(a), Value::Fraction(b)) => Ok(Value::Fraction(scalar_lerp(*a, *b)?)),
-            (Value::Vec2(a), Value::Vec2(b)) if a.unit == b.unit => Ok(Value::Vec2(Vec2 {
-                values: math::motion_vector_lerp(a.values, b.values, p, overshooting)?,
-                unit: a.unit,
-            })),
-            (Value::Vec3(a), Value::Vec3(b)) if a.unit == b.unit => Ok(Value::Vec3(crate::Vec3 {
-                values: math::motion_vector_lerp(a.values, b.values, p, overshooting)?,
-                unit: a.unit,
-            })),
-            (Value::Vec4(a), Value::Vec4(b)) if a.unit == b.unit => Ok(Value::Vec4(crate::Vec4 {
-                values: math::motion_vector_lerp(a.values, b.values, p, overshooting)?,
-                unit: a.unit,
-            })),
+            (Value::List(a), Value::List(b))
+                if a.len() == b.len()
+                    && math::operations::scalar_unit(&a.element_type).is_some()
+                    && math::operations::scalar_unit(&a.element_type)
+                        == math::operations::scalar_unit(&b.element_type) =>
+            {
+                let fraction = a.element_type.as_ref() == &crate::Type::Fraction
+                    && b.element_type.as_ref() == &crate::Type::Fraction;
+                let inner = if fraction {
+                    crate::Type::Fraction
+                } else {
+                    crate::Type::Numeric(
+                        math::operations::scalar_unit(&a.element_type)
+                            .expect("checked numeric List"),
+                    )
+                };
+                let mut values = a.values.clone();
+                for (index, (from, to)) in a.values.iter().zip(&b.values).enumerate() {
+                    let from = from.number()?;
+                    let to = to.number()?;
+                    let value = if overshooting {
+                        math::visual_lerp(from.value, to.value, p)?
+                    } else {
+                        math::lerp(from.value, to.value, p)?
+                    };
+                    let changed = if fraction {
+                        Value::Fraction(value)
+                    } else {
+                        Value::Number(crate::Number {
+                            value,
+                            unit: from.unit,
+                        })
+                    };
+                    if changed != a[index] {
+                        values.set(index, changed);
+                    }
+                }
+                let inner = if inner == *a.element_type {
+                    a.element_type.clone()
+                } else {
+                    std::sync::Arc::new(inner)
+                };
+                Ok(Value::List(crate::List::from_values(inner, values)))
+            }
             (Value::Color(a), Value::Color(b)) => Ok(Value::Color(math::paint::color_lerp(
                 a,
                 b,

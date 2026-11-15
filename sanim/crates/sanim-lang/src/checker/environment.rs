@@ -6,6 +6,25 @@ pub(crate) type Environment = imbl::OrdMap<Arc<str>, Arc<Type>>;
 
 pub(crate) trait TypeScope {
     fn get_type(&self, name: &str) -> Option<&Type>;
+    fn expression_type(&self, _span: Span) -> Option<&Type> {
+        None
+    }
+}
+impl TypeScope for Checked {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.exports.get(name)
+    }
+    fn expression_type(&self, span: Span) -> Option<&Type> {
+        self.result_types.get(&(span.start, span.end))
+    }
+}
+impl TypeScope for (&Environment, &BTreeMap<(usize, usize), Type>) {
+    fn get_type(&self, name: &str) -> Option<&Type> {
+        self.0.get_type(name)
+    }
+    fn expression_type(&self, span: Span) -> Option<&Type> {
+        self.1.get(&(span.start, span.end))
+    }
 }
 impl TypeScope for Environment {
     fn get_type(&self, name: &str) -> Option<&Type> {
@@ -19,7 +38,7 @@ impl TypeScope for BTreeMap<String, Type> {
 }
 
 impl Checker<'_> {
-    fn environment_bytes(&self, bytes: usize, span: Span) -> Result<(), Diagnostic> {
+    pub(super) fn environment_bytes(&self, bytes: usize, span: Span) -> Result<(), Diagnostic> {
         self.type_budget
             .set(self.type_budget.get().checked_sub(bytes).ok_or_else(|| {
                 self.error(
@@ -115,6 +134,37 @@ impl Checker<'_> {
     }
 }
 
+impl Checked {
+    pub(crate) fn charge_import_interface(
+        &self,
+        budget: &std::cell::Cell<usize>,
+        alias: &str,
+    ) -> Result<(), String> {
+        let mut remaining = budget.get();
+        // Imports clone only this interface. Private checked maps stay shared
+        // with the defining module and are charged by that module's check.
+        for name in &self.dynamic_exports {
+            remaining = remaining
+                .checked_sub(name.len() + std::mem::size_of::<String>())
+                .ok_or("resolved type budget exceeded while copying imported binding modes")?;
+        }
+        for (name, ty) in &self.exports {
+            remaining = remaining
+                .checked_sub(name.len() + std::mem::size_of::<String>())
+                .ok_or("resolved type budget exceeded while copying an imported interface")?;
+            sanim_core::type_budget::charge(ty, &mut remaining)?;
+        }
+        for (name, ty) in &self.schemas {
+            remaining = remaining
+                .checked_sub(alias.len() + 1 + name.len() + std::mem::size_of::<String>())
+                .ok_or("resolved type budget exceeded while qualifying an imported schema")?;
+            sanim_core::type_budget::charge(ty, &mut remaining)?;
+        }
+        budget.set(remaining);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,7 +206,7 @@ mod tests {
         sources.insert("helpers.sanim", helpers(500));
         sources.insert(
             "main.sanim",
-            "import \"helpers\" as helpers\nlet result=helpers.helper_499(1)\nassert(result==500)",
+            "import \"helpers\" as helpers\nlet result=helpers.helper_499(1)\nassert(result==500)\nAnimation()",
         );
         let prepared = Engine::default()
             .prepare("main.sanim", &sources, &BTreeMap::new())

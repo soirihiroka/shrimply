@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
 pub const EDITOR_OPEN_CANCELED_EXIT_CODE: u8 = 2;
-use std::time::UNIX_EPOCH;
 
 pub const PROJECT_FILE_PATTERNS: [&str; 5] =
     ["*.shrimp", "*.sjson", "*.json", "*.otio", "*.kdenlive"];
@@ -96,7 +95,7 @@ impl Launcher {
     }
 
     pub fn recent_last_edited(&self, index: usize) -> Option<String> {
-        self.recent_path(index).and_then(last_edited)
+        self.recents.get(index).and_then(recent_last_edited)
     }
 
     pub fn desktop_action(&self, index: usize) -> Result<crate::desktop_open::Action, String> {
@@ -214,12 +213,16 @@ pub fn default_project_path(directory: &Path, name: &str) -> PathBuf {
 }
 
 pub fn last_edited(path: &Path) -> Option<String> {
-    path.metadata()
-        .and_then(|metadata| metadata.modified())
+    recent_projects::modified_at(path).and_then(format_modified)
+}
+
+pub fn recent_last_edited(recent: &RecentProject) -> Option<String> {
+    recent.modified_at.and_then(format_modified)
+}
+
+fn format_modified(seconds: i64) -> Option<String> {
+    glib::DateTime::from_unix_local(seconds)
         .ok()
-        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .and_then(|modified| i64::try_from(modified.as_secs()).ok())
-        .and_then(|seconds| glib::DateTime::from_unix_local(seconds).ok())
         .and_then(|date| date.format("%x %X").ok())
         .map(|date| date.to_string())
 }

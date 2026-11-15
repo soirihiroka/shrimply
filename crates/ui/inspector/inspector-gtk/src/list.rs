@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use gtk::prelude::*;
+use adw::prelude::*;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::InspectorCard;
 use shrimply_project_document::project::ItemAddress;
@@ -60,18 +60,12 @@ pub(super) fn render_categories(
     categories: Vec<InspectorCategory>,
     context: &InspectorContext,
 ) -> Vec<gtk::Widget> {
-    let selector = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    selector.set_hexpand(true);
-    selector.set_homogeneous(true);
-    selector.set_margin_top(12);
-    selector.set_margin_bottom(8);
-    selector.set_margin_start(16);
-    selector.set_margin_end(16);
-    selector.add_css_class("linked");
-    let stack = gtk::Stack::new();
-    stack.set_hexpand(true);
-    stack.set_vexpand(true);
-    stack.set_vhomogeneous(false);
+    let stack = gtk::Stack::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .hhomogeneous(false)
+        .vhomogeneous(false)
+        .build();
 
     let active = {
         let state = context.list_state.borrow();
@@ -82,40 +76,33 @@ pub(super) fn render_categories(
             .unwrap_or_default() as u32
     };
 
-    let mut first_button = None;
-    for (index, category) in categories.into_iter().enumerate() {
-        let toggle_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        toggle_content.set_halign(gtk::Align::Center);
-        toggle_content.append(&gtk::Image::from_icon_name(category.icon));
-        toggle_content.append(&gtk::Label::new(Some(tr!(category.label).as_ref())));
-        stack.add_named(&render_list(category.items, context), Some(category.key));
-        if index as u32 == active {
-            stack.set_visible_child_name(category.key);
-        }
-
-        let mut button = gtk::ToggleButton::builder()
-            .hexpand(true)
-            .tooltip_text(tr!(category.label).as_ref())
-            .child(&toggle_content);
-        if let Some(first_button) = &first_button {
-            button = button.group(first_button);
-        }
-        let button = button.active(index as u32 == active).build();
-        let target = context.list_target.clone();
-        let list_state = context.list_state.clone();
-        let category_stack = stack.clone();
-        button.connect_toggled(move |button| {
-            if !button.is_active() {
-                return;
+    let toggles = categories
+        .into_iter()
+        .enumerate()
+        .map(|(index, category)| {
+            stack.add_named(&render_list(category.items, context), Some(category.key));
+            if index as u32 == active {
+                stack.set_visible_child_name(category.key);
             }
-            category_stack.set_visible_child_name(category.key);
+            let label = tr!(category.label);
+            adw::Toggle::builder()
+                .name(category.key)
+                .label(label.as_ref())
+                .tooltip(label.as_ref())
+                .icon_name(category.icon)
+                .build()
+        })
+        .collect::<Vec<_>>();
+    let selector = shrimply_components_gtk::ui::stack_tabs(&stack, toggles);
+    let target = context.list_target.clone();
+    let list_state = context.list_state.clone();
+    stack.connect_visible_child_name_notify(move |stack| {
+        if let Some(category) = stack.visible_child_name() {
             list_state
                 .borrow_mut()
-                .set_active_category(&target, category.key);
-        });
-        first_button.get_or_insert_with(|| button.clone());
-        selector.append(&button);
-    }
+                .set_active_category(&target, &category);
+        }
+    });
 
     context.category_bar.append(&selector);
     context.category_bar.set_visible(true);

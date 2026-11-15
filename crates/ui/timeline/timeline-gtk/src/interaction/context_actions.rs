@@ -5,7 +5,6 @@ use shrimply_components_gtk::ui::I18nAlertDialogExt;
 use shrimply_components_gtk::ui::I18nFileFilterExt;
 use shrimply_timeline_skia::{ContextMenuControl, ContextMenuRequest, VideoFrameSelection};
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn show_timeline_item_context_menu(
     area: &gtk::GLArea,
     project: &Rc<RefCell<Project>>,
@@ -13,103 +12,128 @@ pub(crate) fn show_timeline_item_context_menu(
     selection_state: &SharedSelectionState,
     runtime: &Rc<RefCell<TimelineRuntime>>,
     preferences: &preferences_store::SharedPreferences,
-    x: f64,
-    y: f64,
+    (point, touch): (Vec2, bool),
 ) {
     let existing = runtime.borrow_mut().active_context_menu.take();
     if let Some(existing) = existing {
-        existing.popdown();
+        existing.close();
     }
     let contract = runtime
         .borrow_mut()
         .scene
-        .prepare_context_menu(vec2(x as f32, y as f32));
+        .prepare_context_menu_for_input(point, touch);
     if contract.sections.is_empty() {
         return;
     }
-    let menu = crate::native_menu::menu_model(&contract).menu;
+    let menu = crate::native_menu::menu_model(&contract);
     let actions = gio::SimpleActionGroup::new();
     for item in contract.actions() {
-        let area = area.clone();
+        let area = area.downgrade();
         let project = project.clone();
         let player_state = player_state.clone();
         let selection_state = selection_state.clone();
         let runtime = Rc::downgrade(runtime);
         let preferences = preferences.clone();
-        add_menu_action_enabled(&actions, item.action.id(), item.enabled, move || {
-            let Some(runtime) = runtime.upgrade() else {
-                return;
-            };
-            let result = runtime
-                .borrow_mut()
-                .scene
-                .activate_context_menu_action(item.action);
-            handle_action_result(
-                &area,
-                &project,
-                &player_state,
-                &selection_state,
-                &runtime,
-                &preferences,
-                result,
-            );
-        });
+        let action =
+            shrimply_components_gtk::ui::menu_action(item.action.id(), item.checked, move || {
+                let (Some(runtime), Some(area)) = (runtime.upgrade(), area.upgrade()) else {
+                    return None;
+                };
+                let result = runtime
+                    .borrow_mut()
+                    .scene
+                    .activate_context_menu_action(item.action);
+                let checked = runtime.borrow().scene.context_menu_checked(item.action);
+                handle_action_result(
+                    &area,
+                    &project,
+                    &player_state,
+                    &selection_state,
+                    &runtime,
+                    &preferences,
+                    result,
+                );
+                checked
+            });
+        action.set_enabled(item.enabled);
+        actions.add_action(&action);
     }
-    let control = contract
+    let controls = contract
         .sections
         .iter()
         .flatten()
-        .find_map(|entry| match entry {
+        .filter_map(|entry| match entry {
             crate::ContextMenuEntry::Control(control) => Some(*control),
             _ => None,
         });
-    let custom_child = control.map(|control| {
-        let row = adw::ActionRow::builder()
-            .title(tr!(control.label()).as_ref())
-            .build();
-        let scale = gtk::Scale::with_range(
-            gtk::Orientation::Horizontal,
-            control.minimum(),
-            control.maximum(),
-            control.step(),
-        );
-        scale.set_width_request(260);
-        scale.set_draw_value(false);
-        if matches!(control, ContextMenuControl::PlaybackSpeed { .. }) {
-            for (value, label) in [
-                (-2.0, "0.25×"),
-                (-1.0, "0.5×"),
-                (0.0, "1×"),
-                (1.0, "2×"),
-                (2.0, "4×"),
-            ] {
-                scale.add_mark(value, gtk::PositionType::Bottom, Some(label));
+    let custom_children = controls
+        .map(|control| {
+            let row = adw::ActionRow::builder()
+                .title(tr!(control.label()).as_ref())
+                .build();
+            let scale = gtk::Scale::with_range(
+                gtk::Orientation::Horizontal,
+                control.minimum(),
+                control.maximum(),
+                control.step(),
+            );
+            scale.set_width_request(260);
+            scale.set_draw_value(false);
+            if matches!(control, ContextMenuControl::PlaybackSpeed { .. }) {
+                for (value, label) in [
+                    (-2.0, "0.25×"),
+                    (-1.0, "0.5×"),
+                    (0.0, "1×"),
+                    (1.0, "2×"),
+                    (2.0, "4×"),
+                ] {
+                    scale.add_mark(value, gtk::PositionType::Bottom, Some(label));
+                }
             }
-        }
-        scale.set_value(control.value());
-        if control.mixed() {
-            scale.add_css_class("dim-label");
-        }
-        let area = area.clone();
-        let runtime = Rc::downgrade(runtime);
-        scale.connect_value_changed(move |scale| {
-            let Some(runtime) = runtime.upgrade() else {
-                return;
-            };
-            scale.remove_css_class("dim-label");
-            let result = runtime
-                .borrow_mut()
-                .scene
-                .set_context_menu_control(control, scale.value());
-            if let Err(error) = result {
-                show_error_dialog(&area, "Timeline edit failed", &error);
+            scale.set_value(control.value());
+            if control.mixed() {
+                scale.add_css_class("dim-label");
             }
-            area.queue_render();
-        });
-        row.add_suffix(&scale);
-        row.upcast::<gtk::Widget>()
-    });
-    popup_timeline_context_menu(area, runtime, &menu, &actions, custom_child.as_ref(), x, y);
+            let area = area.downgrade();
+            let runtime = Rc::downgrade(runtime);
+            scale.connect_value_changed(move |scale| {
+                let (Some(runtime), Some(area)) = (runtime.upgrade(), area.upgrade()) else {
+                    return;
+                };
+                scale.remove_css_class("dim-label");
+                let result = runtime
+                    .borrow_mut()
+                    .scene
+                    .set_context_menu_control(control, scale.value());
+                if let Err(error) = result {
+                    show_error_dialog(&area, "Timeline edit failed", &error);
+                }
+                area.queue_render();
+            });
+            row.add_suffix(&scale);
+            row.upcast::<gtk::Widget>()
+        })
+        .collect::<Vec<_>>();
+    let presented = if shrimply_components_gtk::layout::menu_uses_bottom_sheet(if touch {
+        "touch"
+    } else {
+        "pointer"
+    }) {
+        context_menu::sheet(area, &menu, &actions, &custom_children)
+    } else {
+        context_menu::PresentedMenu::Popover(
+            context_menu::popup(
+                area,
+                &menu,
+                &actions,
+                &custom_children,
+                f64::from(point.x),
+                f64::from(point.y),
+            )
+            .upcast(),
+        )
+    };
+    runtime.borrow_mut().active_context_menu = Some(presented);
 }
 
 pub(super) fn handle_action_result(
@@ -375,23 +399,20 @@ fn show_export_audio_dialog(
             &selected_timeline_tracks(selection_state),
         )
     };
-    let Some(mut selection) = selection else {
+    let Some(selection) = selection else {
         show_error_dialog(area, "Could not export audio", "No audio is selected.");
         return;
     };
-    for track in &mut selection.project.audio_tracks {
-        for item in &mut track.items {
-            item.start = item.start.saturating_sub(selection.start);
-            item.end = item.end.saturating_sub(selection.start);
-        }
-    }
+    let export_project = selection.at_zero();
 
-    let formats = gtk::StringList::new(&["WAV", "FLAC", "MP3", "OGG Vorbis", "Opus"]);
+    let formats =
+        gtk::StringList::new(&export::audio::Format::ALL.map(export::audio::Format::label));
     let format_row = adw::ComboRow::builder()
         .title(tr!("Format").as_ref())
         .model(&formats)
         .selected(0)
         .build();
+    shrimply_components_gtk::ui::adaptive_choice(&format_row);
     let group = adw::PreferencesGroup::new();
     group.add(&format_row);
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -425,7 +446,7 @@ fn show_export_audio_dialog(
                 .initial_name(format!("selected-audio.{}", format.extension()))
                 .build();
             let area = area.clone();
-            let export_project = selection.project.clone();
+            let export_project = export_project.clone();
             shrimply_components_gtk::file_picker::save(
                 label,
                 &file_dialog,
@@ -582,39 +603,11 @@ fn show_export_audio_dialog(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-fn popup_timeline_context_menu(
-    area: &gtk::GLArea,
-    runtime: &Rc<RefCell<TimelineRuntime>>,
-    menu: &gio::Menu,
-    actions: &gio::SimpleActionGroup,
-    custom_child: Option<&gtk::Widget>,
-    x: f64,
-    y: f64,
-) {
-    let popover = context_menu::popup(area, menu, actions, custom_child, x, y);
-    runtime.borrow_mut().active_context_menu = Some(popover.upcast());
-}
-
 pub(super) fn add_menu_action<F>(group: &gio::SimpleActionGroup, name: &str, activate: F)
 where
     F: Fn() + 'static,
 {
     let action = gio::SimpleAction::new(name, None);
-    action.connect_activate(move |_, _| activate());
-    group.add_action(&action);
-}
-
-fn add_menu_action_enabled<F>(
-    group: &gio::SimpleActionGroup,
-    name: &str,
-    enabled: bool,
-    activate: F,
-) where
-    F: Fn() + 'static,
-{
-    let action = gio::SimpleAction::new(name, None);
-    action.set_enabled(enabled);
     action.connect_activate(move |_, _| activate());
     group.add_action(&action);
 }

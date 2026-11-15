@@ -27,7 +27,7 @@ mod tests {
         files.insert("lib.sanim", "fn amount():Number{return 1}");
         files.insert(
             "main.sanim",
-            "import \"lib\" as lib\nlet value=lib.amount()+1",
+            "import \"lib\" as lib\nlet value=lib.amount()+1\nAnimation()",
         );
         let mut engine = Engine::default();
         let cold = engine.lint("main.sanim", &files).unwrap();
@@ -40,7 +40,7 @@ mod tests {
         assert!(Arc::ptr_eq(&main, &warm.modules["main.sanim"].checked));
         files.insert(
             "main.sanim",
-            "import \"lib\" as lib\nlet value=lib.amount()+2",
+            "import \"lib\" as lib\nlet value=lib.amount()+2\nAnimation()",
         );
         let edit = engine.lint("main.sanim", &files).unwrap();
         assert_eq!(
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn cached_checks_preserve_root_rules_limits_and_aggregate_budget() {
         let mut files = MemorySources::default();
-        files.insert("lib.sanim", "wait(1s)");
+        files.insert("lib.sanim", "bg(Color(\"red\"))");
         files.insert("main.sanim", "import \"lib\" as lib");
         let mut engine = Engine::default();
         engine.lint("lib.sanim", &files).unwrap();

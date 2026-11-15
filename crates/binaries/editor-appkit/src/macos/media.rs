@@ -5,7 +5,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{MainThreadMarker, NSArray, NSDictionary, NSString, NSURL};
 use shrimply_cross_ui_core::editor::EditorSession;
-use shrimply_editor_state::{player_state, preferences};
+use shrimply_editor_state::preferences;
 use shrimply_timeline_skia::{
     DragCollisionMode, TrackKey, import,
     import_queue::{ImportQueue, ImportStart, Placement, SourceDeletion},
@@ -49,7 +49,7 @@ pub struct Imports {
 
 pub enum Destination {
     Timeline(Placement),
-    Tracks(Vec<TrackKey>),
+    Tracks(Vec<TrackKey>, shrimply_math_core::Time),
 }
 
 impl Imports {
@@ -73,13 +73,9 @@ impl Imports {
             Destination::Timeline(placement) => {
                 self.queue.enqueue(paths, &project, placement, duration)?
             }
-            Destination::Tracks(tracks) => self.queue.enqueue_tracks(
-                paths,
-                &project,
-                &tracks,
-                player_state::current_time(&session.player_state),
-                duration,
-            )?,
+            Destination::Tracks(tracks, position) => self
+                .queue
+                .enqueue_tracks(paths, &project, &tracks, position, duration)?,
         };
         self.pending_urls.push((started.batch, scopes));
         Ok(started)
@@ -251,6 +247,7 @@ pub fn choose_files(
     imports: &std::cell::RefCell<Imports>,
     session: &EditorSession,
     tracks: &[TrackKey],
+    position: shrimply_math_core::Time,
     mtm: MainThreadMarker,
 ) -> Result<(), String> {
     let addresses = {
@@ -284,12 +281,12 @@ pub fn choose_files(
         session,
         if tracks.is_empty() {
             Destination::Timeline(Placement {
-                start: player_state::current_time(&session.player_state),
+                start: position,
                 target: NewItemTarget::Automatic,
                 collision: DragCollisionMode::NewTrack,
             })
         } else {
-            Destination::Tracks(tracks.to_vec())
+            Destination::Tracks(tracks.to_vec(), position)
         },
     )?;
     if started.needs_remux {

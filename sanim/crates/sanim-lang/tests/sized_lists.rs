@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 fn files(source: &str) -> MemorySources {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     files
 }
 fn lint(source: &str) -> Result<sanim_lang::LintReport, sanim_core::Diagnostic> {
@@ -32,7 +32,7 @@ fn list_literals_and_generic_identity_retain_exact_static_lengths() {
 #[test]
 fn nested_literals_join_only_lengths_that_vary() {
     let report =
-        lint("let rows=[[1,2],[3]]\nlet with_empty=[[],[1]]\nlet uniform=[[1,2],[3,4]]\nlet combined=[[1,2]]+[[3]]\nlet uniform_combined=[[1,2]]+[[3,4]]\nlet choices:List<\"a\"|\"b\",1>=[\"a\"]\nlet joined_choices=choices+[\"b\"]").unwrap();
+        lint("let rows=[[1,2],[3]]\nlet with_empty=[[],[1]]\nlet uniform=[[1,2],[3,4]]\nlet combined=concat([[1,2]],[[3]])\nlet uniform_combined=concat([[1,2]],[[3,4]])\nlet choices:List<\"a\"|\"b\",1>=[\"a\"]\nlet joined_choices=concat(choices,[\"b\"])").unwrap();
     let exports = &report.modules["main.sanim"].checked.exports;
     for name in ["rows", "with_empty", "combined"] {
         assert!(
@@ -143,15 +143,15 @@ fn list_lengths_are_disjoint_guards_and_sig_body_facts_are_live_safe() {
         Fraction::from(1)
     );
     assert!(
-        lint("fn retain(sig values:List<Number,1>):sig List<Number,1>{return values}\nfn retain(sig values:List<Number,2>):sig List<Number,2>{return values}").is_err()
+        lint("fn<sig> retain(sig values:List<Number,1>):sig List<Number,1>{return values}\nfn<sig> retain(sig values:List<Number,2>):sig List<Number,2>{return values}").is_err()
     );
-    assert!(lint("fn retain(sig value:Number >= 0):sig Number >= 0{return value}\nfn retain(sig value:Number < 0):sig Number < 0{return value}").is_err());
-    lint("fn retain(sig values:List<Number,1>):sig List<Number>{return values}").unwrap();
+    assert!(lint("fn<sig> retain(sig value:Number >= 0):sig Number >= 0{return value}\nfn<sig> retain(sig value:Number < 0):sig Number < 0{return value}").is_err());
+    lint("fn<sig> retain(sig values:List<Number,1>):sig List<Number>{return values}").unwrap();
 }
 
 #[test]
 fn ordinary_signal_functions_preserve_declared_lifetime_schemas() {
-    let source = "fn retain(sig values:List<Number,1>):sig List<Number,1>{return values}\nmut items:List<Number,1>=[1]\nlet mirrored=retain(items)\nitems=[2]\nlet result=mirrored";
+    let source = "fn<sig> retain(sig values:List<Number,1>):sig List<Number,1>{return values}\nmut items:List<Number,1>=[1]\nlet mirrored=retain(items)\nitems=[2]\nlet result=mirrored";
     let prepared = Engine::default()
         .prepare("main.sanim", &files(source), &BTreeMap::new())
         .unwrap();
@@ -166,12 +166,12 @@ fn ordinary_signal_functions_preserve_declared_lifetime_schemas() {
             .value,
         Fraction::from(2)
     );
-    lint("type Mode=\"hidden\"|\"scroll\"\nfn live(sig value:Mode):sig Mode{return value}\nmut mode:Mode=\"hidden\"\nlet mirrored=live(mode)").unwrap();
+    lint("type Mode=\"hidden\"|\"scroll\"\nfn<sig> live(sig value:Mode):sig Mode{return value}\nmut mode:Mode=\"hidden\"\nlet mirrored=live(mode)").unwrap();
 }
 
 #[test]
 fn overloaded_signal_dispatch_does_not_freeze_the_entry_value() {
-    let source = "fn live(sig value:\"a\"):sig String{return \"first={value}\"}\nfn live(sig value:\"b\"):sig String{return \"second={value}\"}\nmut state=\"a\"\nlet result=live(state)\nstate=\"b\"\nlet sampled=result";
+    let source = "fn<sig> live(sig value:\"a\"):sig String{return \"first={value}\"}\nfn<sig> live(sig value:\"b\"):sig String{return \"second={value}\"}\nmut state=\"a\"\nlet result=live(state)\nstate=\"b\"\nlet sampled=result";
     let prepared = Engine::default()
         .prepare("main.sanim", &files(source), &BTreeMap::new())
         .unwrap();

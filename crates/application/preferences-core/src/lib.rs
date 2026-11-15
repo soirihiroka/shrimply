@@ -11,7 +11,10 @@ use std::rc::Rc;
 use std::str::FromStr;
 
 pub mod cli;
+mod editor_layout;
+pub mod remote;
 mod ui;
+pub use editor_layout::{EditorLayout, set_editor_layout, update_editor_layout};
 pub use ui::*;
 
 const KEY_CAPTION_FONT_SIZE: &str = "caption_font_size";
@@ -34,6 +37,7 @@ const KEY_PREVIEW_UPSAMPLE_METHOD: &str = "preview_upsample_method";
 const KEY_PREVIEW_DOWNSAMPLE_METHOD: &str = "preview_downsample_method";
 const KEY_PREVIEW_ZOOM_PAN_ENABLED: &str = "preview_zoom_pan_enabled";
 const KEY_PREVIEW_GUIDES_VISIBLE: &str = "preview_guides_visible";
+const KEY_PREVIEW_CONTROLS_VISIBLE: &str = "preview_controls_visible";
 const KEY_TEMPORAL_DECODER_POOL_SIZE: &str = "temporal_decoder_pool_size";
 const KEY_ACCELERATION_DEVICE: &str = "acceleration_device";
 const KEY_GPU_HOST_MEMORY_GIB: &str = "gpu_host_memory_gib";
@@ -123,6 +127,7 @@ impl PreviewDownsampleMethod {
 
 #[derive(Clone)]
 pub struct PreferencesSnapshot {
+    pub editor_layout: EditorLayout,
     pub caption_font_size: f32,
     pub caption_background_color: Color<u8>,
     pub timeline_magnet: String,
@@ -142,6 +147,7 @@ pub struct PreferencesSnapshot {
     pub preview_downsample_method: PreviewDownsampleMethod,
     pub preview_zoom_pan_enabled: bool,
     pub preview_guides_visible: bool,
+    pub preview_controls_visible: bool,
     pub temporal_decoder_pool_size: u32,
     pub gpu_host_memory_gib: Fraction,
     pub acceleration_device: String,
@@ -157,6 +163,7 @@ struct PreferenceListenerEntry {
 }
 
 pub struct PreferencesStore {
+    editor_layout: EditorLayout,
     caption_font_size: f32,
     caption_background_color: Color<u8>,
     timeline_magnet: String,
@@ -176,6 +183,7 @@ pub struct PreferencesStore {
     preview_downsample_method: PreviewDownsampleMethod,
     preview_zoom_pan_enabled: bool,
     preview_guides_visible: bool,
+    preview_controls_visible: bool,
     temporal_decoder_pool_size: u32,
     gpu_host_memory_gib: Fraction,
     acceleration_device: String,
@@ -186,6 +194,7 @@ pub struct PreferencesStore {
 
 impl PreferencesStore {
     fn new_with_conn(conn: Option<Connection>) -> Self {
+        let editor_layout = editor_layout::load(conn.as_ref());
         let caption_font_size = conn.as_ref().map_or(DEFAULT_CAPTION_FONT_SIZE, |conn| {
             read_f32_or_default(
                 conn,
@@ -362,6 +371,11 @@ impl PreferencesStore {
                 matches!(value, "true" | "false")
             }) == "true"
         });
+        let preview_controls_visible = conn.as_ref().is_none_or(|conn| {
+            read_string_or_default(conn, KEY_PREVIEW_CONTROLS_VISIBLE, "true", |value| {
+                matches!(value, "true" | "false")
+            }) == "true"
+        });
         let preview_guides_visible = conn.as_ref().is_some_and(|conn| {
             read_string_or_default(
                 conn,
@@ -411,6 +425,7 @@ impl PreferencesStore {
         );
         let blender_binary = (!blender_binary.is_empty()).then(|| PathBuf::from(blender_binary));
         Self {
+            editor_layout,
             caption_font_size,
             caption_background_color,
             timeline_magnet,
@@ -430,6 +445,7 @@ impl PreferencesStore {
             preview_downsample_method,
             preview_zoom_pan_enabled,
             preview_guides_visible,
+            preview_controls_visible,
             temporal_decoder_pool_size,
             gpu_host_memory_gib,
             acceleration_device,
@@ -615,25 +631,15 @@ pub fn set_preview_downsample_method(store: &SharedPreferences, method: PreviewD
 }
 
 pub fn set_preview_guides_visible(store: &SharedPreferences, visible: bool) {
-    let mut state = store.borrow_mut();
-    if state.preview_guides_visible == visible {
-        return;
-    }
+    set_boolean(store, KEY_PREVIEW_GUIDES_VISIBLE, visible, |state| {
+        &mut state.preview_guides_visible
+    });
+}
 
-    let previous = state.preview_guides_visible;
-    state.preview_guides_visible = visible;
-    if let Some(conn) = &state.conn
-        && let Err(error) = write_string(
-            conn,
-            KEY_PREVIEW_GUIDES_VISIBLE,
-            if visible { "true" } else { "false" },
-        )
-    {
-        tracing::warn!("Could not write preview guide visibility preference: {error}");
-        state.preview_guides_visible = previous;
-        return;
-    }
-    notify_listeners(state);
+pub fn set_preview_controls_visible(store: &SharedPreferences, visible: bool) {
+    set_boolean(store, KEY_PREVIEW_CONTROLS_VISIBLE, visible, |state| {
+        &mut state.preview_controls_visible
+    });
 }
 
 pub fn set_temporal_decoder_pool_size(store: &SharedPreferences, size: u32) {
@@ -1024,6 +1030,7 @@ fn notify_listeners(state: std::cell::RefMut<'_, PreferencesStore>) {
 
 fn snapshot_from_state(state: &PreferencesStore) -> PreferencesSnapshot {
     PreferencesSnapshot {
+        editor_layout: state.editor_layout,
         caption_font_size: state.caption_font_size,
         caption_background_color: state.caption_background_color,
         timeline_magnet: state.timeline_magnet.clone(),
@@ -1043,6 +1050,7 @@ fn snapshot_from_state(state: &PreferencesStore) -> PreferencesSnapshot {
         preview_downsample_method: state.preview_downsample_method,
         preview_zoom_pan_enabled: state.preview_zoom_pan_enabled,
         preview_guides_visible: state.preview_guides_visible,
+        preview_controls_visible: state.preview_controls_visible,
         temporal_decoder_pool_size: state.temporal_decoder_pool_size,
         gpu_host_memory_gib: state.gpu_host_memory_gib,
         acceleration_device: state.acceleration_device.clone(),
@@ -1222,23 +1230,27 @@ fn write_string(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<u
     )
 }
 pub fn set_preview_zoom_pan_enabled(store: &SharedPreferences, visible: bool) {
-    let mut state = store.borrow_mut();
-    if state.preview_zoom_pan_enabled == visible {
-        return;
-    }
+    set_boolean(store, KEY_PREVIEW_ZOOM_PAN_ENABLED, visible, |state| {
+        &mut state.preview_zoom_pan_enabled
+    });
+}
 
-    let previous = state.preview_zoom_pan_enabled;
-    state.preview_zoom_pan_enabled = visible;
-    if let Some(conn) = &state.conn
-        && let Err(error) = write_string(
-            conn,
-            KEY_PREVIEW_ZOOM_PAN_ENABLED,
-            if visible { "true" } else { "false" },
-        )
-    {
-        tracing::warn!("Could not write preview zoom and pan preference: {error}");
-        state.preview_zoom_pan_enabled = previous;
+fn set_boolean(
+    store: &SharedPreferences,
+    key: &str,
+    value: bool,
+    field: fn(&mut PreferencesStore) -> &mut bool,
+) {
+    let mut state = store.borrow_mut();
+    if *field(&mut state) == value {
         return;
     }
+    if let Some(conn) = &state.conn
+        && let Err(error) = write_string(conn, key, if value { "true" } else { "false" })
+    {
+        tracing::warn!("Could not write boolean preference {key}: {error}");
+        return;
+    }
+    *field(&mut state) = value;
     notify_listeners(state);
 }

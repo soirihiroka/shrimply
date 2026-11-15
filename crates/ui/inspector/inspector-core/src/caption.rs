@@ -1,6 +1,11 @@
 use shrimply_project_document::project::{
     CaptionEdgeStyle, CaptionFont, CaptionItem, CaptionWritingDirection, Color, HorizontalAlign,
-    Time, VerticalAlign,
+    ItemAddress, Time, VerticalAlign,
+};
+
+use crate::{
+    ControlKind, InspectorCommit, InspectorControl, InspectorController, InspectorTarget,
+    model::{EditKind, parsed_value, target_value},
 };
 
 #[derive(Clone, Copy)]
@@ -336,3 +341,113 @@ pub const EDGE_STYLES: &[CaptionChoice<CaptionEdgeStyle>] = &[
         icon: None,
     },
 ];
+
+pub const EDIT_COMMIT: &str = "caption";
+
+impl InspectorController {
+    pub(crate) fn set_caption_control_value(
+        &self,
+        target: &InspectorTarget,
+        control: &InspectorControl,
+        text: &str,
+    ) -> Option<Result<(), String>> {
+        if !matches!(target, InspectorTarget::Item(ItemAddress::Caption { .. }))
+            || control.commit_name != EDIT_COMMIT
+        {
+            return None;
+        }
+        Some((|| {
+            let replacement = {
+                let project = self.project.borrow();
+                let root = target_value(&project, target)
+                    .ok_or("caption is no longer available")?
+                    .1;
+                let current = root
+                    .pointer(&control.path)
+                    .ok_or("caption field is no longer available")?;
+                if control.kind == ControlKind::Number {
+                    let value = text.parse::<f64>().map_err(|_| "invalid caption number")?;
+                    if !value.is_finite() {
+                        return Err("caption number must be finite".into());
+                    }
+                    serde_json::Value::from(control.store_number(value) as u16)
+                } else {
+                    parsed_value(current, text)?
+                }
+            };
+            self.replace_value_with_commit(
+                target,
+                EditKind::Live,
+                &control.path,
+                replacement,
+                None,
+                if control.kind == ControlKind::MultilineText {
+                    InspectorCommit::Deferred
+                } else {
+                    InspectorCommit::Coalesced(EDIT_COMMIT)
+                },
+            )
+        })())
+    }
+
+    pub(crate) fn set_caption_control_components(
+        &self,
+        target: &InspectorTarget,
+        control: &InspectorControl,
+        values: &[f64],
+    ) -> Option<Result<(), String>> {
+        if !matches!(target, InspectorTarget::Item(ItemAddress::Caption { .. }))
+            || control.kind != ControlKind::Color
+            || control.commit_name != EDIT_COMMIT
+        {
+            return None;
+        }
+        Some((|| {
+            let [red, green, blue, alpha] = values else {
+                return Err("caption color needs four components".into());
+            };
+            if values
+                .iter()
+                .any(|value| !value.is_finite() || !(0.0..=f64::from(u8::MAX)).contains(value))
+            {
+                return Err("caption color components must be between 0 and 255".into());
+            }
+            self.replace_value_with_commit(
+                target,
+                EditKind::Live,
+                &control.path,
+                serde_json::to_value(Color::from_rgba(
+                    *red as u8,
+                    *green as u8,
+                    *blue as u8,
+                    *alpha as u8,
+                ))
+                .expect("caption color must serialize"),
+                None,
+                InspectorCommit::Coalesced(EDIT_COMMIT),
+            )
+        })())
+    }
+
+    pub(crate) fn commit_caption_control(
+        &self,
+        target: &InspectorTarget,
+        control: &InspectorControl,
+    ) -> Option<Result<(), String>> {
+        if !matches!(target, InspectorTarget::Item(ItemAddress::Caption { .. }))
+            || control.commit_name != EDIT_COMMIT
+        {
+            return None;
+        }
+        Some((|| {
+            let project = self.project.borrow();
+            target_value(&project, target)
+                .and_then(|(_, root)| root.pointer(&control.path).cloned())
+                .ok_or("caption field is no longer available")?;
+            if control.kind == ControlKind::MultilineText {
+                shrimply_project_document::project::commit_edit(&project, EDIT_COMMIT);
+            }
+            Ok(())
+        })())
+    }
+}

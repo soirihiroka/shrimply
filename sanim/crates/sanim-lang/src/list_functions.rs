@@ -184,7 +184,7 @@ pub(crate) fn definitions() -> &'static [Definition] {
                     name,
                     parameters,
                     result: Type::Unknown,
-                    schedule: false,
+                    state_effect: false,
                     timing: Default::default(),
                     content: Default::default(),
                     execute: Execution::List,
@@ -222,7 +222,7 @@ pub(crate) fn callback_type<'a>(
     call: &crate::timing::BuiltinCall<'_>,
     env: &'a impl crate::checker::TypeScope,
 ) -> Option<&'a Type> {
-    crate::effects::lookup(callback_argument(call)?, env)
+    crate::analysis::lookup(callback_argument(call)?, env)
 }
 pub(crate) fn ordered(ty: &Type) -> bool {
     *ty == Type::Unknown || sanim_core::math::operations::binary_type("<", ty, ty).is_ok()
@@ -242,7 +242,7 @@ pub(crate) fn constant_count(
     let Some(expression) = expression else {
         return default;
     };
-    let number = crate::effects::constant(expression, &std::collections::BTreeMap::new())?
+    let number = crate::analysis::constant(expression, &std::collections::BTreeMap::new())?
         .number()
         .ok()?;
     if number.unit == Unit::Number {

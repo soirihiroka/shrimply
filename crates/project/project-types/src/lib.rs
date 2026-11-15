@@ -66,6 +66,17 @@ pub const COMMON_FRAME_RATES: &[FrameRate] = &[
     FrameRate::new(Fraction::new_raw(120, 1), "120"),
 ];
 
+pub fn frame_rate_choices(current: Fraction) -> Vec<(Fraction, String)> {
+    let mut rates = COMMON_FRAME_RATES
+        .iter()
+        .map(|rate| (rate.value, rate.label.to_string()))
+        .collect::<Vec<_>>();
+    if !rates.iter().any(|(rate, _)| *rate == current) {
+        rates.push((current, shrimply_math_core::fraction_as_label(current)));
+    }
+    rates
+}
+
 #[derive(Clone, Copy)]
 pub struct ProjectPreset {
     pub label: &'static str,

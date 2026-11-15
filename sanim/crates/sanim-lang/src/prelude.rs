@@ -23,10 +23,13 @@ pub(crate) enum Execution {
     Access(Evaluator),
     /// Higher-order list operations call declared functions through the runtime.
     List,
+    CellAnimation,
     Read,
     Decode,
     Query,
-    Assertion,
+    Assertion {
+        required: bool,
+    },
 }
 #[derive(Clone, Copy, Debug, Default)]
 pub enum MarkupContent {
@@ -43,13 +46,52 @@ pub struct Builtin {
     pub parameters: Vec<Parameter>,
     pub result: Type,
     /// Scene/assertion effects remain impure even when they consume zero timeline time.
-    pub schedule: bool,
+    pub state_effect: bool,
     pub timing: Timing,
     pub content: MarkupContent,
     pub(crate) execute: Execution,
     pub(crate) check: TypeRule,
 }
 impl Builtin {
+    /// Capabilities arise from the one native execution registration, not a second name list.
+    pub fn capabilities(&self) -> sanim_core::FnCapabilities {
+        self.requirements(true)
+    }
+    fn requirements(&self, source_read: bool) -> sanim_core::FnCapabilities {
+        let mut capabilities = sanim_core::FnCapabilities::default();
+        if self.state_effect {
+            capabilities.insert(sanim_core::FnCapability::Mut);
+        }
+        if matches!(self.execute, Execution::Read)
+            || source_read && matches!(self.execute, Execution::Source(_))
+        {
+            capabilities.insert(sanim_core::FnCapability::Ref);
+        }
+        capabilities
+    }
+    /// Assertions are effect-polymorphic: a Bool is immediate validation, while a
+    /// Predicate registers a visual contract. This rule is shared by compiler clients.
+    pub fn capabilities_for_arguments<'a>(
+        &self,
+        actuals: impl IntoIterator<Item = &'a Type>,
+    ) -> sanim_core::FnCapabilities {
+        let actuals = actuals.into_iter().collect::<Vec<_>>();
+        let source_read = self
+            .parameters
+            .iter()
+            .position(|parameter| parameter.name == "src")
+            .is_none_or(|index| actuals.get(index).is_none_or(|ty| **ty != Type::Unit));
+        let mut capabilities = self.requirements(source_read);
+        if matches!(self.execute, Execution::Assertion { .. })
+            && !actuals
+                .first()
+                .copied()
+                .is_some_and(|ty| sanim_core::TypeBound::Type(Box::new(Type::Bool)).accepts(ty))
+        {
+            capabilities.insert(sanim_core::FnCapability::Mut);
+        }
+        capabilities
+    }
     pub(crate) fn uses_font_environment(&self) -> bool {
         self.result == Type::Font
             || self
@@ -76,7 +118,7 @@ pub(crate) fn element_parameters() -> Vec<Parameter> {
     let overflow = sanim_core::Overflow::ty();
     vec![
         p("id", String),
-        p("position", Vector(2, None)),
+        p("position", Type::coordinates()),
         p("position_mode", sanim_core::PositionMode::ty()),
         p("x_align", sanim_core::Align::ty()),
         p("y_align", sanim_core::Align::ty()),
@@ -105,8 +147,14 @@ pub(crate) fn element_parameters() -> Vec<Parameter> {
         p(
             "scroll",
             Type::union([
-                Vector(2, Some(Dimension::Length)),
-                Vector(2, Some(Dimension::Percent)),
+                List(
+                    Box::new(Numeric(Dimension::Length)),
+                    sanim_core::ListLength::Exact(2),
+                ),
+                List(
+                    Box::new(Numeric(Dimension::Percent)),
+                    sanim_core::ListLength::Exact(2),
+                ),
             ])
             .expect("scroll units"),
         ),
@@ -117,17 +165,16 @@ fn build_builtins() -> Vec<Builtin> {
     use Type::*;
     let num = Numeric(Dimension::Number);
     let length = Numeric(Dimension::Length);
-    let duration = Numeric(Dimension::Duration);
     let p = |name, ty, required| Parameter { name, ty, required };
     let mut out = vec![];
     crate::dataframe::register(&mut out);
     crate::templates::register(&mut out);
-    let mut add = |name, parameters, result, schedule, execute, check| {
+    let mut add = |name, parameters, result, state_effect, execute, check| {
         out.push(Builtin {
             name,
             parameters,
             result,
-            schedule,
+            state_effect,
             timing: Default::default(),
             content: Default::default(),
             execute,
@@ -162,20 +209,6 @@ fn build_builtins() -> Vec<Builtin> {
         Execution::Native(native::fraction),
         native_types::fixed,
     );
-    for (name, n) in [("Vec2", 2), ("Vec3", 3), ("Vec4", 4)] {
-        let names = ["x", "y", "z", "w"];
-        add(
-            name,
-            names[..n]
-                .iter()
-                .map(|name| p(name, Unknown, false))
-                .collect(),
-            Vector(n, None),
-            false,
-            Execution::Native(native::vector),
-            native_types::vector,
-        );
-    }
     add(
         "Matrix4",
         vec![p(
@@ -191,14 +224,25 @@ fn build_builtins() -> Vec<Builtin> {
         Execution::Native(native::matrix),
         native_types::fixed,
     );
-    add(
-        "dot",
-        vec![p("a", Unknown, true), p("b", Unknown, true)],
-        num.clone(),
-        false,
-        Execution::Native(native::dot),
-        native_types::dot,
-    );
+    for &(name, function) in sanim_core::math::linear::LIST_FUNCTIONS {
+        let argument = function.argument_type();
+        let parameters = ["a", "b"]
+            .into_iter()
+            .take(function.arity())
+            .map(|name| p(name, argument.clone(), true))
+            .collect();
+        let result = function
+            .result_type(&vec![argument; function.arity()])
+            .expect("registered numeric List signature");
+        add(
+            name,
+            parameters,
+            result,
+            false,
+            Execution::Native(native::list_math),
+            native_types::list_math,
+        );
+    }
     for name in ["inverse", "transpose"] {
         add(
             name,
@@ -210,39 +254,6 @@ fn build_builtins() -> Vec<Builtin> {
         );
     }
     let common = element_parameters;
-    let mut params = common();
-    params.push(p("radius", length.clone(), false));
-    add(
-        "Circle",
-        params,
-        Element,
-        false,
-        Execution::Native(native::element),
-        native_types::fixed,
-    );
-    for name in ["Rectangle", "Rect"] {
-        let mut params = common();
-        params.extend([
-            p(
-                "radius",
-                Type::union([length.clone(), String]).expect("corner radius"),
-                false,
-            ),
-            p(
-                "children",
-                List(Box::new(Element), sanim_core::ListLength::Unknown),
-                false,
-            ),
-        ]);
-        add(
-            name,
-            params,
-            Element,
-            false,
-            Execution::Native(native::element),
-            native_types::fixed,
-        );
-    }
     let mut params = common();
     params.extend([
         p(
@@ -266,7 +277,14 @@ fn build_builtins() -> Vec<Builtin> {
     );
     let mut params = common();
     params.extend([
-        p("end", Vector(2, Some(Dimension::Length)), true),
+        p(
+            "end",
+            List(
+                Box::new(Numeric(Dimension::Length)),
+                sanim_core::ListLength::Exact(2),
+            ),
+            true,
+        ),
         p("width", length.clone(), false),
     ]);
     add(
@@ -281,7 +299,10 @@ fn build_builtins() -> Vec<Builtin> {
     params.push(p(
         "points",
         List(
-            Box::new(Vector(2, Some(Dimension::Length))),
+            Box::new(List(
+                Box::new(Numeric(Dimension::Length)),
+                sanim_core::ListLength::Exact(2),
+            )),
             sanim_core::ListLength::Unknown,
         ),
         true,
@@ -307,22 +328,6 @@ fn build_builtins() -> Vec<Builtin> {
             native_types::fixed,
         );
     }
-    add(
-        "wait",
-        vec![p("duration", duration, true)],
-        Unit,
-        false,
-        Execution::Native(native::unit),
-        native_types::fixed,
-    );
-    add(
-        "add",
-        vec![p("element", Element, true)],
-        Unit,
-        true,
-        Execution::Native(native::add),
-        native_types::fixed,
-    );
     add(
         "bg",
         vec![p("color", Color, true)],
@@ -436,18 +441,26 @@ fn build_builtins() -> Vec<Builtin> {
     );
     add(
         "assert",
-        vec![p("condition", Unknown, true), p("message", String, false)],
+        vec![
+            p("condition", Unknown, true),
+            p("message", String, false),
+            p("at", Type::Numeric(sanim_core::Unit::Duration), false),
+        ],
         Unit,
-        true,
-        Execution::Assertion,
+        false,
+        Execution::Assertion { required: true },
         native_types::assertion,
     );
     add(
         "check",
-        vec![p("condition", Unknown, true), p("message", String, false)],
+        vec![
+            p("condition", Unknown, true),
+            p("message", String, false),
+            p("at", Type::Numeric(sanim_core::Unit::Duration), false),
+        ],
         Unit,
         true,
-        Execution::Assertion,
+        Execution::Assertion { required: false },
         native_types::assertion,
     );
     for name in [
@@ -501,7 +514,7 @@ fn build_builtins() -> Vec<Builtin> {
     crate::media::register(&mut out);
     out.extend(crate::utilities::builtins());
     crate::lists::register(&mut out);
-    crate::animations::register(&mut out);
+    crate::animation_plan::register(&mut out);
     for builtin in &mut out {
         finalize(builtin);
     }
@@ -515,33 +528,19 @@ pub(crate) fn finalize(builtin: &mut Builtin) {
         .parameters
         .retain(|parameter| names.insert(parameter.name));
     builtin.parameters.reverse();
-
-    if !builtin.parameters.iter().any(|p| p.name == "duration") {
-        builtin.parameters.push(Parameter {
-            name: "duration",
-            ty: Type::Numeric(Dimension::Duration),
-            required: false,
-        });
-    }
-    if !builtin.parameters.iter().any(|p| p.name == "ease") {
-        builtin.parameters.push(Parameter {
-            name: "ease",
-            ty: Type::String,
-            required: false,
-        });
-    }
-    builtin.timing.parameter = builtin
-        .parameters
-        .iter()
-        .position(|p| p.name == "duration")
-        .expect("registered duration parameter");
 }
 
 /// All native declarations, including receiver methods, from their owning registries.
 pub fn all_builtins() -> impl Iterator<Item = &'static Builtin> {
     builtins()
         .iter()
+        .chain(
+            crate::animations::definitions()
+                .iter()
+                .map(|definition| &definition.builtin),
+        )
         .chain(crate::dataframe::methods())
+        .chain(crate::animation_plan::methods())
         .chain(crate::code_view::methods().iter())
         .chain(crate::scrolling::methods().iter())
         .chain(
@@ -565,7 +564,9 @@ pub fn builtin(name: &str) -> Option<&'static Builtin> {
 }
 
 pub fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
-    crate::dataframe::methods_for(receiver)
+    crate::animation_plan::methods_for(receiver)
+        .chain(crate::animations::methods_for(receiver))
+        .chain(crate::dataframe::methods_for(receiver))
         .chain(crate::code_view::methods_for(receiver))
         .chain(crate::scrolling::methods_for(receiver))
         .chain(crate::list_functions::methods_for(receiver))
@@ -576,7 +577,6 @@ pub enum TypeDefinition {
     Plain(Type),
     List,
     Container(fn(Box<Type>) -> Type),
-    Vector(usize),
     Bound(sanim_core::TypeBound),
 }
 impl TypeDefinition {
@@ -585,13 +585,10 @@ impl TypeDefinition {
             (Self::Plain(ty), []) => Ok(ty.clone()),
             (Self::List,[inner])=>Ok(Type::List(Box::new(inner.clone()),sanim_core::ListLength::Unknown)),
             (Self::Container(build), [inner]) => Ok(build(Box::new(inner.clone()))),
-            (Self::Vector(n), []) => Ok(Type::Vector(*n, Some(Dimension::Number))),
-            (Self::Vector(n), [Type::Numeric(unit)]) => Ok(Type::Vector(*n, Some(*unit))),
             (Self::Plain(_), _) => Err("takes no type arguments".into()),
             (Self::Container(_), _) => Err("requires exactly one type argument".into()),
             (Self::List,_)=>Err("requires an element type and optional nonnegative integer length: List<Number> or List<Number,3>".into()),
             (Self::Bound(_), _) => Err("is a generic constraint, not a value type".into()),
-            (Self::Vector(_), _) => Err("expects zero arguments or one numeric unit type".into()),
         }
     }
 }
@@ -630,6 +627,8 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
             ("Data", Type::Data),
             ("Dict", Type::Dict),
             ("Unit", Type::Unit),
+            ("Animation", Type::Animation),
+            ("Forever", Type::Forever),
             ("Predicate", Type::Predicate),
         ] {
             out.insert(name, Plain(ty));
@@ -644,11 +643,6 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
                 && matches!(builtin.result, Type::Record(_))
         }) {
             out.insert(builtin.name, Plain(builtin.result.clone()));
-        }
-        for builtin in builtins() {
-            if let Type::Vector(n, _) = builtin.result {
-                out.insert(builtin.name, Vector(n));
-            }
         }
         out.insert("List", List);
         out.insert(
@@ -677,6 +671,7 @@ pub fn values() -> &'static std::collections::BTreeMap<&'static str, sanim_core:
     > = std::sync::OnceLock::new();
     VALUES.get_or_init(|| {
         let mut out = std::collections::BTreeMap::new();
+        out.insert("forever", sanim_core::Value::Forever);
         for (name, definition) in types() {
             if let TypeDefinition::Plain(ty @ Type::Enum { .. }) = definition {
                 out.insert(*name, sanim_core::enum_namespace(ty));

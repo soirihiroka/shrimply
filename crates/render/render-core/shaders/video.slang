@@ -1,16 +1,16 @@
 import abi;
 import color;
 
-float2 video_chroma(uint8_t *plane, BufferIndex pitch, uint width, uint height,
+float2 video_chroma(ByteStorage *plane, BufferIndex pitch, uint width, uint height,
                     int x, int y) {
   BufferIndex offset = BufferIndex(clamp(y, 0, int((height + 1u) / 2u) - 1)) * pitch +
                     BufferIndex(clamp(x, 0, int((width + 1u) / 2u) - 1)) * 2u;
-  return float2(plane[offset], plane[offset + 1u]) / 255.0f;
+  return float2(load_byte(plane, offset), load_byte(plane, offset + 1u)) / 255.0f;
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
-                  uniform uint8_t *y_plane, uniform uint8_t *uv_plane,
+                  uniform ByteStorage *y_plane, uniform ByteStorage *uv_plane,
                   uniform BufferIndex y_pitch, uniform BufferIndex uv_pitch,
                   uniform uint width, uniform uint height, uniform uint *output,
                   uniform int4 coefficients, uniform bool full_range,
@@ -29,7 +29,7 @@ void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
            video_chroma(uv_plane, uv_pitch, width, height, low.x + 1, low.y + 1), amount.x),
       amount.y);
   output[i] = color_to_rgba(from_ycbcr(
-      float(y_plane[BufferIndex(y) * y_pitch + x]) / 255.0f,
+      float(load_byte(y_plane, BufferIndex(y) * y_pitch + x)) / 255.0f,
       chroma, coefficients, full_range));
 }
 
@@ -37,11 +37,11 @@ void nv12_to_rgba(uint3 id : SV_DispatchThreadID,
 // retaining its original limited/full range coding for the shared YUV sampler.
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void p010_to_nv12(uint3 id : SV_DispatchThreadID,
-                  uniform uint16_t *input, uniform uint8_t *output,
+                  uniform HalfStorage *input, uniform ByteStorage *output,
                   uniform BufferIndex count, uniform BufferIndex y_count,
                   uniform BufferIndex uv_offset) {
   if (id.x < count)
-    output[id.x] = uint8_t(input[id.x < y_count ? id.x : uv_offset + id.x - y_count] >> 8u);
+    store_byte(output, id.x, load_half(input, id.x < y_count ? id.x : uv_offset + id.x - y_count) >> 8u);
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]

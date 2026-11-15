@@ -30,7 +30,7 @@ pub fn toggle_timeline_zoom(
 pub fn time_at_x(view: crate::view::TimelineViewState, x: f64) -> Time {
     Time::from_big_fraction(
         BigFraction::from_fraction(fraction_from_f64(view.scroll_seconds))
-            + BigFraction::from_fraction(fraction_from_f64(x - crate::geometry::timeline_x()))
+            + BigFraction::from_fraction(fraction_from_f64(x - crate::geometry::timeline_x(view)))
                 * BigFraction::from_fraction(fraction_from_f64(view.seconds_per_pixel)),
     )
     .max(Time::ZERO)
@@ -38,7 +38,7 @@ pub fn time_at_x(view: crate::view::TimelineViewState, x: f64) -> Time {
 
 /// Conservative bounds include the minimum-width pixel used for subpixel clips.
 pub fn visible_item_times(view: crate::view::TimelineViewState, width: f64) -> (Time, Time) {
-    let origin = crate::geometry::timeline_x();
+    let origin = crate::geometry::timeline_x(view);
     let padding = shrimply_timeline_paint_skia::MIN_ITEM_PIXEL_WIDTH;
     (
         time_at_x(view, origin - padding),
@@ -63,7 +63,7 @@ pub fn zoom_at_x(
     if !factor.is_finite() || factor <= 0.0 {
         return;
     }
-    let x = x.max(crate::geometry::timeline_x());
+    let x = x.max(crate::geometry::timeline_x(*view));
     let anchor = time_at_x(*view, x);
     view.seconds_per_pixel = (view.seconds_per_pixel / factor).clamp(
         minimum_seconds_per_pixel,
@@ -71,7 +71,7 @@ pub fn zoom_at_x(
     );
     view.scroll_seconds = Time::from_big_fraction(
         BigFraction::from_fraction(anchor.seconds)
-            - BigFraction::from_fraction(fraction_from_f64(x - crate::geometry::timeline_x()))
+            - BigFraction::from_fraction(fraction_from_f64(x - crate::geometry::timeline_x(*view)))
                 * BigFraction::from_fraction(fraction_from_f64(view.seconds_per_pixel)),
     )
     .max(Time::ZERO)
@@ -131,4 +131,29 @@ pub fn touch_transform(
         .max(shrimply_math_core::Time::ZERO)
         .as_secs_f64();
     view.scroll_y = (view.scroll_y - f64::from(delta.y)).max(0.0);
+}
+
+/// Match the shared painted playhead handle, including its triangular tip.
+pub fn playhead_handle_contains(
+    view: crate::TimelineViewState,
+    time: Time,
+    x: f64,
+    y: f64,
+) -> bool {
+    use crate::metrics::{
+        PLAYHEAD_HANDLE_HEIGHT, PLAYHEAD_HANDLE_TOP, PLAYHEAD_HANDLE_TRIANGLE_HEIGHT,
+        PLAYHEAD_HANDLE_WIDTH,
+    };
+    if x < view.timeline_x() || y < PLAYHEAD_HANDLE_TOP {
+        return false;
+    }
+    let handle_x = time_to_x(time.as_secs_f64(), view.timeline_x(), view);
+    let bottom = PLAYHEAD_HANDLE_TOP + PLAYHEAD_HANDLE_HEIGHT;
+    let half_width = PLAYHEAD_HANDLE_WIDTH * 0.5;
+    if y <= bottom {
+        (x - handle_x).abs() <= half_width
+    } else {
+        let tip = (y - bottom) / PLAYHEAD_HANDLE_TRIANGLE_HEIGHT;
+        tip <= 1.0 && (x - handle_x).abs() <= half_width * (1.0 - tip)
+    }
 }

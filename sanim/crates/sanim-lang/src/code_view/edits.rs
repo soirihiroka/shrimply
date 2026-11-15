@@ -21,8 +21,17 @@ pub(super) fn execute(
             view.id
         ));
     };
-    let start = *context.cursor;
-    let end = math::timeline_end(start, context.duration)?;
+    math::temporal::writer_end(*context.cursor, context.duration)?;
+    let Some(interval) = (math::temporal::Window {
+        cycle: context.cycle,
+        clip: context.clip,
+    })
+    .interval(*context.cursor, context.duration)?
+    else {
+        return Ok(Value::Unit);
+    };
+    let start = interval.start;
+    let end = interval.end;
     let mut state = if let Some(state) = context.animation.code_views.get(&view.id) {
         state.as_ref().clone()
     } else {
@@ -38,6 +47,23 @@ pub(super) fn execute(
             events: Default::default(),
         }
     };
+    if state.events.values().next_back().is_some_and(|event| {
+        event
+            .interpolation
+            .is_some_and(|(_, natural_end)| natural_end > event.end)
+            && start >= event.end
+    }) {
+        return Err("previous CodeView transition was clipped before completion; finish it or start from a new CodeView snapshot".into());
+    }
+    if state.events.values().next_back().is_some_and(|event| {
+        event.cycle.is_some_and(|previous| {
+            Some(previous) != context.cycle && previous.until().is_none_or(|until| until > start)
+        })
+    }) {
+        return Err(format!(
+            "{name}: CodeView already has a repeat forever writer; use a separate view or a finite animation"
+        ));
+    }
     if start < state.end {
         return Err(format!(
             "{name}: CodeView '{}' already has a pending edit ending at {}s; sequence edits or use separate views",
@@ -186,8 +212,7 @@ pub(super) fn execute(
     };
     let after = state.snapshot();
     if before == after {
-        // The call still advances its declared duration, but keeps no event or
-        // duplicate payload receipt when the presentation is unchanged.
+        // Temporal layout retains the plan's extent without a duplicate presentation event.
         context.created.clear();
         return Ok(Value::Unit);
     }
@@ -225,6 +250,8 @@ pub(super) fn execute(
     state.events.insert(
         start,
         sanim_core::code::view::PresentationEvent {
+            cycle: interval.cycle,
+            interpolation: interval.interpolation,
             start,
             end,
             easing: context.easing,

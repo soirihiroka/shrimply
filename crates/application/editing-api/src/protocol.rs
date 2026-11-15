@@ -315,6 +315,9 @@ pub struct SanimClipResponse {
     pub parameters_ready: bool,
     pub preparing: bool,
     pub parameters: Vec<Value>,
+    /// Resolved temporal layout receipts from the current immutable animation plan.
+    #[serde(default)]
+    pub temporal_layout: Vec<Value>,
     pub error: Option<String>,
 }
 

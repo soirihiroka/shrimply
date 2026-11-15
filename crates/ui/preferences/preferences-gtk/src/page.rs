@@ -31,7 +31,12 @@ pub fn show_preferences_dialog(
             .expect("GPU host memory must be numeric");
 
     let default_font_row = adw::ActionRow::builder()
-        .title(tr!("Default Text Font").as_ref())
+        .title(
+            tr!(preferences_store::PreferenceId::DefaultTextFontFamily
+                .presentation()
+                .label)
+            .as_ref(),
+        )
         .build();
     let default_font =
         shrimply_inspector_gtk::font_family_selector(&snapshot.default_text_font_family, {
@@ -50,11 +55,21 @@ pub fn show_preferences_dialog(
         caption_size_range.maximum as f64,
         caption_size_range.step as f64,
     );
-    caption_font_size.set_title(tr!("Font Size").as_ref());
+    caption_font_size.set_title(
+        tr!(preferences_store::PreferenceId::CaptionFontSize
+            .presentation()
+            .label)
+        .as_ref(),
+    );
     caption_font_size.set_digits(0);
 
     let caption_background_color_row = adw::ActionRow::builder()
-        .title(tr!("Background Color").as_ref())
+        .title(
+            tr!(preferences_store::PreferenceId::CaptionBackgroundColor
+                .presentation()
+                .label)
+            .as_ref(),
+        )
         .build();
 
     let caption_group = adw::PreferencesGroup::new();
@@ -67,7 +82,12 @@ pub fn show_preferences_dialog(
         duration_range.maximum as f64 / duration_range.scale as f64,
         duration_range.step as f64 / duration_range.scale as f64,
     );
-    default_visual_duration.set_title(tr!("Default Visual Duration").as_ref());
+    default_visual_duration.set_title(
+        tr!(preferences_store::PreferenceId::DefaultVisualDuration
+            .presentation()
+            .label)
+        .as_ref(),
+    );
     default_visual_duration.set_digits(1);
 
     let snap_radius = adw::SpinRow::with_range(
@@ -75,9 +95,18 @@ pub fn show_preferences_dialog(
         snap_range.maximum as f64,
         snap_range.step as f64,
     );
-    snap_radius.set_title(tr!("Snap Attraction Radius").as_ref());
-    snap_radius
-        .set_subtitle(tr!("Distance in pixels for timeline, beat, and preview snapping").as_ref());
+    snap_radius.set_title(
+        tr!(preferences_store::PreferenceId::TimelineSnapRadius
+            .presentation()
+            .label)
+        .as_ref(),
+    );
+    snap_radius.set_subtitle(
+        tr!(preferences_store::PreferenceId::TimelineSnapRadius
+            .presentation()
+            .subtitle)
+        .as_ref(),
+    );
     snap_radius.set_digits(0);
 
     let timeline_group = adw::PreferencesGroup::new();
@@ -90,8 +119,18 @@ pub fn show_preferences_dialog(
         padding_range.maximum as f64,
         padding_range.step as f64,
     );
-    preview_padding.set_title(tr!("Padding").as_ref());
-    preview_padding.set_subtitle(tr!("Space around the video frame in pixels").as_ref());
+    preview_padding.set_title(
+        tr!(preferences_store::PreferenceId::PreviewPadding
+            .presentation()
+            .label)
+        .as_ref(),
+    );
+    preview_padding.set_subtitle(
+        tr!(preferences_store::PreferenceId::PreviewPadding
+            .presentation()
+            .subtitle)
+        .as_ref(),
+    );
     preview_padding.set_digits(0);
 
     let preview_shadow_size = adw::SpinRow::with_range(
@@ -99,16 +138,39 @@ pub fn show_preferences_dialog(
         shadow_range.maximum as f64,
         shadow_range.step as f64,
     );
-    preview_shadow_size.set_title(tr!("Shadow Size").as_ref());
-    preview_shadow_size
-        .set_subtitle(tr!("Drop shadow extent around the video frame in pixels").as_ref());
+    preview_shadow_size.set_title(
+        tr!(preferences_store::PreferenceId::PreviewShadowSize
+            .presentation()
+            .label)
+        .as_ref(),
+    );
+    preview_shadow_size.set_subtitle(
+        tr!(preferences_store::PreferenceId::PreviewShadowSize
+            .presentation()
+            .subtitle)
+        .as_ref(),
+    );
     preview_shadow_size.set_digits(0);
 
     let preview_upsample_method = adw::ComboRow::new();
-    preview_upsample_method.set_title(tr!("Preview Upsample Method").as_ref());
-    preview_upsample_method
-        .set_subtitle(tr!("Filter used when the preview is larger than the video").as_ref());
-    let upsample_labels = [tr!("Nearest"), tr!("Bilinear")];
+    preview_upsample_method.set_title(
+        tr!(preferences_store::PreferenceId::PreviewUpsampleMethod
+            .presentation()
+            .label)
+        .as_ref(),
+    );
+    preview_upsample_method.set_subtitle(
+        tr!(preferences_store::PreferenceId::PreviewUpsampleMethod
+            .presentation()
+            .subtitle)
+        .as_ref(),
+    );
+    let upsample_labels = preferences_store::PreferenceId::PreviewUpsampleMethod
+        .presentation()
+        .choices
+        .iter()
+        .map(|label| tr!(*label))
+        .collect::<Vec<_>>();
     preview_upsample_method.set_model(Some(&gtk::StringList::new(
         &upsample_labels
             .iter()
@@ -116,11 +178,27 @@ pub fn show_preferences_dialog(
             .collect::<Vec<_>>(),
     )));
 
+    shrimply_components_gtk::ui::adaptive_choice(&preview_upsample_method);
+
     let preview_downsample_method = adw::ComboRow::new();
-    preview_downsample_method.set_title(tr!("Preview Downsample Method").as_ref());
-    preview_downsample_method
-        .set_subtitle(tr!("Filter used when the preview is smaller than the video").as_ref());
-    let downsample_labels = [tr!("Nearest"), tr!("Bilinear"), tr!("Trilinear")];
+    preview_downsample_method.set_title(
+        tr!(preferences_store::PreferenceId::PreviewDownsampleMethod
+            .presentation()
+            .label)
+        .as_ref(),
+    );
+    preview_downsample_method.set_subtitle(
+        tr!(preferences_store::PreferenceId::PreviewDownsampleMethod
+            .presentation()
+            .subtitle)
+        .as_ref(),
+    );
+    let downsample_labels = preferences_store::PreferenceId::PreviewDownsampleMethod
+        .presentation()
+        .choices
+        .iter()
+        .map(|label| tr!(*label))
+        .collect::<Vec<_>>();
     preview_downsample_method.set_model(Some(&gtk::StringList::new(
         &downsample_labels
             .iter()
@@ -128,11 +206,23 @@ pub fn show_preferences_dialog(
             .collect::<Vec<_>>(),
     )));
 
+    shrimply_components_gtk::ui::adaptive_choice(&preview_downsample_method);
+
     let preview_group = adw::PreferencesGroup::new();
     preview_group.set_title(tr!("Preview").as_ref());
     let preview_zoom_pan = adw::SwitchRow::builder()
-        .title(tr!("Preview zoom and pan").as_ref())
-        .subtitle(tr!("Scroll to zoom; middle-drag to pan; middle-click to fit.").as_ref())
+        .title(
+            tr!(preferences_store::PreferenceId::PreviewZoomPan
+                .presentation()
+                .label)
+            .as_ref(),
+        )
+        .subtitle(
+            tr!(preferences_store::PreferenceId::PreviewZoomPan
+                .presentation()
+                .subtitle)
+            .as_ref(),
+        )
         .active(snapshot.preview_zoom_pan_enabled)
         .build();
     let zoom_preferences = preferences.clone();
@@ -150,9 +240,18 @@ pub fn show_preferences_dialog(
         decoder_range.maximum as f64,
         decoder_range.step as f64,
     );
-    temporal_decoder_pool_size.set_title(tr!("Temporal Decoder Pool Size").as_ref());
-    temporal_decoder_pool_size
-        .set_subtitle(tr!("Maximum number of active video decoder sessions").as_ref());
+    temporal_decoder_pool_size.set_title(
+        tr!(preferences_store::PreferenceId::TemporalDecoderPoolSize
+            .presentation()
+            .label)
+        .as_ref(),
+    );
+    temporal_decoder_pool_size.set_subtitle(
+        tr!(preferences_store::PreferenceId::TemporalDecoderPoolSize
+            .presentation()
+            .subtitle)
+        .as_ref(),
+    );
     temporal_decoder_pool_size.set_digits(0);
 
     let gpu_host_memory = adw::SpinRow::with_range(
@@ -160,10 +259,17 @@ pub fn show_preferences_dialog(
         memory_range.maximum as f64 / memory_range.scale as f64,
         memory_range.step as f64 / memory_range.scale as f64,
     );
-    gpu_host_memory.set_title(tr!("GPU Host Memory Budget").as_ref());
+    gpu_host_memory.set_title(
+        tr!(preferences_store::PreferenceId::GpuHostMemory
+            .presentation()
+            .label)
+        .as_ref(),
+    );
     gpu_host_memory.set_subtitle(
-        tr!("Maximum system RAM available for CUDA spill and reconstructible GPU resources")
-            .as_ref(),
+        tr!(preferences_store::PreferenceId::GpuHostMemory
+            .presentation()
+            .subtitle)
+        .as_ref(),
     );
     gpu_host_memory.set_digits(2);
 
@@ -192,7 +298,12 @@ pub fn show_preferences_dialog(
     performance_page.add(&performance_group);
 
     let blender_row = adw::ActionRow::builder()
-        .title(tr!("Blender Binary").as_ref())
+        .title(
+            tr!(preferences_store::PreferenceId::BlenderBinary
+                .presentation()
+                .label)
+            .as_ref(),
+        )
         .subtitle(shrimply_blender_core::binary_label(
             snapshot.blender_binary.as_deref(),
         ))

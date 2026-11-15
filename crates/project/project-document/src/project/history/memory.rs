@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use crate::project::Project;
 
@@ -6,6 +6,21 @@ const HISTORY_LIMIT: usize = 1000;
 
 thread_local! {
     static HISTORY: RefCell<Option<MemoryHistory>> = const { RefCell::new(None) };
+    static REVISION: Cell<u64> = const {Cell::new(0)};
+}
+
+/// Changes whenever durable history adopts, replaces or commits document state.
+pub fn history_revision() -> u64 {
+    REVISION.get()
+}
+
+fn advance_revision() {
+    REVISION.set(
+        REVISION
+            .get()
+            .checked_add(1)
+            .expect("project history revision overflow"),
+    );
 }
 
 struct MemoryHistory {
@@ -16,6 +31,7 @@ struct MemoryHistory {
 }
 
 pub(super) fn seed(project: &Project, base_index: usize) {
+    advance_revision();
     HISTORY.with(|slot| {
         *slot.borrow_mut() = Some(MemoryHistory {
             snapshots: vec![project.clone()],
@@ -27,10 +43,12 @@ pub(super) fn seed(project: &Project, base_index: usize) {
 }
 
 pub(super) fn clear() {
+    advance_revision();
     HISTORY.with(|slot| *slot.borrow_mut() = None);
 }
 
 pub(super) fn commit(project: &Project, coalesce_group: Option<&str>) {
+    advance_revision();
     HISTORY.with(|slot| {
         let mut slot = slot.borrow_mut();
         let Some(history) = slot.as_mut() else {
@@ -84,11 +102,19 @@ pub fn history_destination(redo: bool) -> Option<Project> {
 }
 
 pub(super) fn undo(project: &mut Project) -> Option<usize> {
-    HISTORY.with(|slot| slot.borrow_mut().as_mut()?.undo(project))
+    let result = HISTORY.with(|slot| slot.borrow_mut().as_mut()?.undo(project));
+    if result.is_some() {
+        advance_revision();
+    }
+    result
 }
 
 pub(super) fn redo(project: &mut Project) -> Option<usize> {
-    HISTORY.with(|slot| slot.borrow_mut().as_mut()?.redo(project))
+    let result = HISTORY.with(|slot| slot.borrow_mut().as_mut()?.redo(project));
+    if result.is_some() {
+        advance_revision();
+    }
+    result
 }
 
 impl MemoryHistory {

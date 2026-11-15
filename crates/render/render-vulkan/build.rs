@@ -26,12 +26,19 @@ fn main() {
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("Vulkan shader output"));
     let compiler = shrimply_slang_build::Compiler::new(&directory, &output);
     let mut generated = String::new();
-    for (portable, target, table) in [
-        (false, shrimply_slang_build::Target::Vulkan, "MODULES"),
+    for (portable, target, table, suffix) in [
+        (false, shrimply_slang_build::Target::Vulkan, "MODULES", ""),
         (
             true,
             shrimply_slang_build::Target::VulkanPortable,
             "PORTABLE_MODULES",
+            "_portable",
+        ),
+        (
+            true,
+            shrimply_slang_build::Target::VulkanWordStorage,
+            "WORD_STORAGE_MODULES",
+            "_word_storage",
         ),
     ] {
         writeln!(generated, "static {table}: &[Module] = &[\n").unwrap();
@@ -41,7 +48,6 @@ fn main() {
             .chain(["video", "denoise"])
             .chain(std::env::var_os("CARGO_FEATURE_ANDROID_MEDIA").map(|_| "sample_image"))
         {
-            let suffix = if portable { "_portable" } else { "" };
             let artifacts = compiler.compile_as(
                 &directory.join(format!("{module}.slang")),
                 &format!("{module}{suffix}"),
@@ -210,6 +216,10 @@ fn main() {
     for (target, suffix) in [
         (shrimply_slang_build::Target::Vulkan, ""),
         (shrimply_slang_build::Target::VulkanPortable, "_portable"),
+        (
+            shrimply_slang_build::Target::VulkanWordStorage,
+            "_word_storage",
+        ),
     ] {
         let abi = compiler.compile_as(
             &directory.join("reflection.slang"),
@@ -219,31 +229,15 @@ fn main() {
         );
         let reflected: serde_json::Value =
             serde_json::from_slice(&abi.reflection).expect("Vulkan ABI reflection");
-        let layout = reflected["entryPoints"][0]["parameters"]
-            .as_array()
-            .expect("ABI parameters")
-            .iter()
-            .map(|parameter| {
-                let fields = parameter["type"]["fields"].as_array().map(|fields| {
-                    fields
-                        .iter()
-                        .map(|field| (field["name"].clone(), field["binding"].clone()))
-                        .collect::<Vec<_>>()
-                });
-                (
-                    parameter["name"].clone(),
-                    parameter["binding"].clone(),
-                    fields,
-                )
-            })
-            .collect::<Vec<_>>();
+        let word_storage = matches!(target, shrimply_slang_build::Target::VulkanWordStorage);
         if let Some(reference) = &reference_abi {
             assert_eq!(
-                reference, &layout,
+                reflected_abi(reference, word_storage),
+                reflected_abi(&reflected, word_storage),
                 "Portable Vulkan must preserve uploaded structure layouts"
             );
         } else {
-            reference_abi = Some(layout);
+            reference_abi = Some(reflected.clone());
         }
         let layer = reflected["entryPoints"][0]["parameters"]
             .as_array()
@@ -259,9 +253,69 @@ fn main() {
                 .expect("layer field offset");
             writeln!(generated, "assert!(std::mem::offset_of!(shrimply_render_core::Nv12LayerParams, {name}) == {offset}, \"Vulkan layer ABI mismatch: {name}\");").unwrap();
         }
+        let layer_size = layer["binding"]["size"]
+            .as_u64()
+            .expect("layer structure size");
+        writeln!(generated, "assert!(std::mem::size_of::<shrimply_render_core::Nv12LayerParams>() == {layer_size}usize.next_multiple_of(std::mem::align_of::<shrimply_render_core::Nv12LayerParams>()), \"Vulkan layer ABI stride\");").unwrap();
+        if word_storage {
+            for (field, byte) in [("sample_method", 1), ("address_mode", 2), ("kind", 3)] {
+                writeln!(generated, "assert!(std::mem::offset_of!(shrimply_render_core::Nv12LayerParams, {field}) == std::mem::offset_of!(shrimply_render_core::Nv12LayerParams, blend_mode) + {byte}, \"Packed Vulkan layer byte offset\");").unwrap();
+            }
+        }
         generated.push_str("};\n");
     }
     std::fs::write(output.join("kernels.rs"), generated).expect("write Vulkan kernel layouts");
+}
+
+#[cfg(target_os = "linux")]
+fn reflected_abi(reflection: &serde_json::Value, word_storage: bool) -> serde_json::Value {
+    let parameters = reflection["entryPoints"][0]["parameters"]
+        .as_array()
+        .expect("ABI parameters");
+    serde_json::Value::Array(
+        parameters
+            .iter()
+            .map(|parameter| {
+                let ty = parameter["type"]["name"].as_str().unwrap_or_default();
+                let mut binding = parameter["binding"].clone();
+                if word_storage && ty == "LayerCompositeParams" {
+                    // Reflection reports live bytes, while array/upload strides include
+                    // the existing trailing pointer-alignment padding in both layouts.
+                    binding["size"] = binding["size"]
+                        .as_u64()
+                        .expect("composite size")
+                        .next_multiple_of(size_of::<u64>() as u64)
+                        .into();
+                }
+                if word_storage && parameter["name"] == "layer_blend_mode" {
+                    binding["size"] = 4.into();
+                }
+                let fields = parameter["type"]["fields"].as_array().map(|fields| {
+                    fields
+                        .iter()
+                        .filter_map(|field| {
+                            let name = field["name"].as_str().expect("ABI field name");
+                            if word_storage
+                                && ty == "Nv12LayerParams"
+                                && matches!(name, "sample_method" | "address_mode" | "kind")
+                            {
+                                return None;
+                            }
+                            let mut binding = field["binding"].clone();
+                            if word_storage
+                                && ((ty == "Nv12LayerParams" && name == "blend_mode")
+                                    || (ty == "LayerCompositeParams" && name == "mode"))
+                            {
+                                binding["size"] = 4.into();
+                            }
+                            Some(serde_json::json!([field["name"], binding]))
+                        })
+                        .collect::<Vec<_>>()
+                });
+                serde_json::json!([parameter["name"], binding, fields])
+            })
+            .collect(),
+    )
 }
 
 #[cfg(target_os = "linux")]

@@ -35,6 +35,28 @@ pub const PREVIEW_ZOOM_PER_STEP: f32 = 1.2;
 pub const PREVIEW_DRAG_THRESHOLD: f32 = 3.0;
 pub const SCROLL_PIXELS_PER_STEP: f32 = 120.0;
 
+/// Convert surface-pixel scrolling into the same wheel steps on each host.
+pub fn preview_scroll_delta(
+    delta: glam::Vec2,
+    surface: bool,
+    navigation_enabled: bool,
+) -> glam::Vec2 {
+    if surface && navigation_enabled {
+        delta / SCROLL_PIXELS_PER_STEP
+    } else {
+        delta
+    }
+}
+
+/// Angular stylus tilt: azimuth is clockwise from screen-up; output uses the
+/// normalized X/Y axis tilts supplied by desktop tablet devices.
+pub fn pen_tilt(tilt: f32, azimuth: f32) -> glam::Vec2 {
+    let (inclination, normal) = tilt.clamp(0.0, std::f32::consts::FRAC_PI_2).sin_cos();
+    let direction = glam::vec2(azimuth.sin(), -azimuth.cos()) * inclination;
+    (glam::vec2(direction.x.atan2(normal), direction.y.atan2(normal)) / std::f32::consts::FRAC_PI_2)
+        .clamp(glam::Vec2::NEG_ONE, glam::Vec2::ONE)
+}
+
 pub fn padded_preview_rect(surface: glam::Vec2, padding: u32) -> Rect {
     let size = (surface - glam::Vec2::splat(padding as f32 * 2.0)).max(glam::Vec2::ONE);
     Rect::from_min_size((surface - size) * 0.5, size)
@@ -62,7 +84,19 @@ pub fn preview_zoom(zoom: f32, steps: f32) -> f32 {
     (zoom * PREVIEW_ZOOM_PER_STEP.powf(-steps)).clamp(MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM)
 }
 
+pub fn preview_pinch_zoom(zoom: f32, scale: f32) -> f32 {
+    (zoom * scale).clamp(MIN_PREVIEW_ZOOM, MAX_PREVIEW_ZOOM)
+}
+
 pub fn cursor_zoom_rect(rect: Rect, previous_zoom: f32, zoom: f32, cursor: glam::Vec2) -> Rect {
     let ratio = zoom / previous_zoom;
     Rect::from_min_size(cursor + (rect.min - cursor) * ratio, rect.size() * ratio)
+}
+
+/// Keep desktop caption metrics while fitting the same overlay into compact previews.
+pub fn caption_preview_scale(size: glam::Vec2) -> f32 {
+    const REFERENCE_PREVIEW_SIZE: glam::Vec2 = glam::Vec2::new(640.0, 360.0);
+    (size / REFERENCE_PREVIEW_SIZE)
+        .min_element()
+        .clamp(0.0, 1.0)
 }

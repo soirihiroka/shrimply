@@ -55,7 +55,7 @@ fn demand_publication_does_not_expand_unused_import_namespaces() {
 #[test]
 fn deferred_lets_capture_mutables_and_signals_at_declaration() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "mut factor=2\nsig multiplier=factor+1\nlet result=decode<Number>(Data(14))*multiplier\nfactor=9\nlet label=Text(str(result))\nadd(label)\nwait(1s)");
+    sources.insert("main.sanim", "mut factor=2\nsig multiplier=factor+1\nlet result=decode<Number>(Data(14))*multiplier\nfactor=9\nlet label=Text(str(result))\nAnimation(children=[label])\nwait(1s)");
     let lazy = demand()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
@@ -92,7 +92,7 @@ fn forcing_shared_values_keeps_timeline_and_reflection_order() {
     let lazy = demand()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
-    assert_eq!(lazy.animation.duration, Fraction::from(2));
+    assert_eq!(lazy.animation.duration, Fraction::from(1));
     assert_eq!(lazy.statistics.decoded_assets, 1);
     assert_eq!(lazy.statistics.forced_values, 1);
     assert_eq!(lazy.reflected.len(), 1);
@@ -141,14 +141,14 @@ fn hot_reload_restores_before_first_demand_and_rechecks_resource_versions() {
 }
 
 #[test]
-fn timed_initializers_and_effectful_helpers_keep_eager_program_order() {
+fn effectful_helpers_remain_eager_and_pure_reads_follow_demand() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "mut count=0\nfn effect():Number{count=count+1;wait(0.5s);return count}\nlet unused=effect()\nlet timed=read<Number>(\"value.json\",duration=0.5s)\nwait(1s)");
+    sources.insert("main.sanim", "mut count=0\nfn<mut, ref> effect():Number{count=count+1;return count}\nlet unused=effect()\nlet timed=read<Number>(\"value.json\")\nassert(timed==7)\nwait(1s)");
     sources.insert("value.json", "7");
     let lazy = demand()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
-    assert_eq!(lazy.animation.duration, Fraction::from(2));
+    assert_eq!(lazy.animation.duration, Fraction::from(1));
     assert_eq!(
         lazy.bindings["count"].number().unwrap().value,
         Fraction::from(1)
@@ -157,7 +157,7 @@ fn timed_initializers_and_effectful_helpers_keep_eager_program_order() {
         lazy.bindings["timed"].number().unwrap().value,
         Fraction::from(7)
     );
-    assert_eq!(lazy.statistics.deferred_values, 0);
+    assert!(lazy.statistics.forced_values > 0);
 }
 
 #[test]
@@ -165,9 +165,12 @@ fn unforced_values_still_obey_the_retained_memory_budget() {
     let mut sources = MemorySources::default();
     sources.insert(
         "main.sanim",
-        (0..32)
-            .map(|index| format!("let pending_{index}=read<Number>(\"absent_{index}.json\")\n"))
-            .collect::<String>(),
+        format!(
+            "{}\nAnimation()",
+            (0..32)
+                .map(|index| format!("let pending_{index}=read<Number>(\"absent_{index}.json\")\n"))
+                .collect::<String>()
+        ),
     );
     let mut engine = demand();
     engine.limits.data.max_bytes = 2_048;

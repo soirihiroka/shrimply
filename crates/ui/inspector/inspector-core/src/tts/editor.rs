@@ -8,6 +8,8 @@ use crate::{InspectorController, InspectorTarget, model_catalog::ModelCatalog};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditorPresentation {
+    pub server_url: String,
+    pub generation: GenerationPresentation,
     pub models: Vec<TtsChoice>,
     pub model: Option<TtsModel>,
     pub controls: Vec<TtsEditorControl>,
@@ -75,6 +77,12 @@ impl InspectorController {
             super::editor_controls(&super::synchronized_settings(&settings, model), model)
         });
         Ok(EditorPresentation {
+            server_url: server_url.to_owned(),
+            generation: runtime
+                .jobs
+                .get(target)
+                .map(|job| job.presentation.clone())
+                .unwrap_or_default(),
             models: models
                 .iter()
                 .map(|model| TtsChoice {
@@ -208,6 +216,7 @@ impl InspectorController {
                 match event {
                     GenerationEvent::Progress(status) => {
                         if !job.presentation.cancelling {
+                            changed |= job.presentation.status != status;
                             job.presentation.status = status;
                         }
                     }

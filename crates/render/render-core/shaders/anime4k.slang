@@ -21,15 +21,15 @@ float4 image_sample(ImageDescriptor image, uint x, uint y, uint output_width,
            fx),
       fy);
 }
-float2 chroma_load(uint8_t *source, BufferIndex pitch, uint width, uint height,
+float2 chroma_load(ByteStorage *source, BufferIndex pitch, uint width, uint height,
                    int x, int y) {
   x = clamp(x, 0, int(width) - 1);
   y = clamp(y, 0, int(height) - 1);
   BufferIndex address = BufferIndex(y) * pitch + BufferIndex(x) * 2u;
-  return float2(float(source[address]) / 255.0f - 0.5f,
-                float(source[address + 1u]) / 255.0f - 0.5f);
+  return float2(float(load_byte(source, address)) / 255.0f - 0.5f,
+                float(load_byte(source, address + 1u)) / 255.0f - 0.5f);
 }
-float2 chroma_sample(uint8_t *source, BufferIndex pitch, uint width, uint height,
+float2 chroma_sample(ByteStorage *source, BufferIndex pitch, uint width, uint height,
                      float x, float y) {
   int x0 = int(floor(x)), y0 = int(floor(y));
   float fx = x - float(x0), fy = y - float(y0);
@@ -40,13 +40,13 @@ float2 chroma_sample(uint8_t *source, BufferIndex pitch, uint width, uint height
                    fx),
               fy);
 }
-float alpha_load(uint8_t *source, BufferIndex pitch, uint width, uint height,
+float alpha_load(ByteStorage *source, BufferIndex pitch, uint width, uint height,
                  int x, int y) {
   x = clamp(x, 0, int(width) - 1);
   y = clamp(y, 0, int(height) - 1);
-  return float(source[BufferIndex(y) * pitch + BufferIndex(x) * 4u + 3u]) / 255.0f;
+  return float(load_byte(source, BufferIndex(y) * pitch + BufferIndex(x) * 4u + 3u)) / 255.0f;
 }
-float alpha_sample(uint8_t *source, BufferIndex pitch, uint width, uint height,
+float alpha_sample(ByteStorage *source, BufferIndex pitch, uint width, uint height,
                    float x, float y) {
   int x0 = int(floor(x)), y0 = int(floor(y));
   float fx = x - float(x0), fy = y - float(y0);
@@ -59,7 +59,7 @@ float alpha_sample(uint8_t *source, BufferIndex pitch, uint width, uint height,
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void rgba_to_float(uint3 id : SV_DispatchThreadID,
-                                uniform uint8_t *source, uniform BufferIndex pitch,
+                                uniform ByteStorage *source, uniform BufferIndex pitch,
                                 uniform uint width, uniform float4 *output,
                                 uniform BufferIndex output_count) {
   uint i = id.x;
@@ -67,14 +67,14 @@ float alpha_sample(uint8_t *source, BufferIndex pitch, uint width, uint height,
     return;
   uint x = i % width, y = i / width;
   BufferIndex address = BufferIndex(y) * pitch + BufferIndex(x) * 4u;
-  uint pixel = uint(source[address]) | (uint(source[address + 1u]) << 8) |
-               (uint(source[address + 2u]) << 16) |
-               (uint(source[address + 3u]) << 24);
+  uint pixel = uint(load_byte(source, address)) | (uint(load_byte(source, address + 1u)) << 8) |
+               (uint(load_byte(source, address + 2u)) << 16) |
+               (uint(load_byte(source, address + 3u)) << 24);
   Color c = color_premultiply(color_from_rgba(pixel));
   output[i] = float4(c.r, c.g, c.b, c.a);
 }[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void nv12_to_float(uint3 id : SV_DispatchThreadID,
-                                 uniform uint8_t *y_plane,
-                                 uniform uint8_t *uv_plane,
+                                 uniform ByteStorage *y_plane,
+                                 uniform ByteStorage *uv_plane,
                                  uniform BufferIndex y_pitch,
                                  uniform BufferIndex uv_pitch, uniform uint width,
                                  uniform uint height, uniform float4 *output,
@@ -83,7 +83,7 @@ float alpha_sample(uint8_t *source, BufferIndex pitch, uint width, uint height,
   if (i >= output_count)
     return;
   uint x = i % width, y = i / width;
-  float luma = float(y_plane[BufferIndex(y) * y_pitch + x]) / 255.0f;
+  float luma = float(load_byte(y_plane, BufferIndex(y) * y_pitch + x)) / 255.0f;
   float2 chroma =
       chroma_sample(uv_plane, uv_pitch, (width + 1u) / 2u, (height + 1u) / 2u,
                     (float(x) - 0.5f) * 0.5f, (float(y) - 0.5f) * 0.5f);
@@ -159,7 +159,7 @@ void convolution(uint3 id : SV_DispatchThreadID, uniform ConvolutionParams param
   uint x = i % params.width, y = i / params.width;
   float4 value = ((float4 *)params.source)[i];
   float alpha = alpha_sample(
-      (uint8_t *)params.alpha_source, buffer_pitch(params.alpha_pitch), params.alpha_width,
+      (ByteStorage *)params.alpha_source, buffer_pitch(params.alpha_pitch), params.alpha_width,
       params.alpha_height,
       (float(x) + 0.5f) * float(params.alpha_width) / float(params.width) -
           0.5f,

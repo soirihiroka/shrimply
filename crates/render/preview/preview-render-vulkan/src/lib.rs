@@ -197,6 +197,23 @@ impl Compositor {
         })
     }
 
+    pub fn render_rgba(
+        &mut self,
+        project: &Project,
+        position: Time,
+        target: Option<shrimply_preview_render_core::CaptureTarget>,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> Result<shrimply_preview_render_core::capture::RgbaFrame, String> {
+        self.set_capture_target(target);
+        let rendered = self.render_accurate(project, position, 0, cancelled)?;
+        rendered.wait()?;
+        Ok(shrimply_preview_render_core::capture::RgbaFrame {
+            width: i32::try_from(rendered.width).map_err(|_| "Frame width is too large")?,
+            height: i32::try_from(rendered.height).map_err(|_| "Frame height is too large")?,
+            pixels: self.renderer.readback(&rendered.buffer)?,
+        })
+    }
+
     pub fn capture_rgba(
         &mut self,
         project: &Project,

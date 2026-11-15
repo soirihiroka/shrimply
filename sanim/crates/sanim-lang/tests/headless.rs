@@ -11,9 +11,9 @@ fn data_dependent_duration_does_not_require_font_assets_or_text_layout() {
         r#"
 type Row = {delay: Number}
 let rows = read<List<Row>>("delays.csv")
-let typeface = read<Font>("not-installed.ttf")
+let typeface = Font("sans-serif")
 let title = <Label font={typeface}>Native text is deferred</Label>
-FadeIn(title, duration=250ms)
+title.fade_in(duration=250ms)
 for row in rows { wait(row.delay * 1ms) }
 "#,
     );
@@ -82,7 +82,10 @@ fn unavailable_geometry_capabilities_return_errors_instead_of_fake_metrics() {
             .contains("native-text")
     );
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "let title=Text(\"text\")\nadd(title)");
+    sources.insert(
+        "main.sanim",
+        "let title=Text(\"text\")\nAnimation(children=[title])",
+    );
     let error = Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap_err();
@@ -111,7 +114,7 @@ wait({tail}ms)
 "#
         )
     };
-    sources.insert("main.sanim", script(0));
+    sources.insert("main.sanim", format!("{}\nAnimation()", script(0)));
     let mut engine = Engine::default();
     let initial = engine
         .duration("main.sanim", &sources, &BTreeMap::new())
@@ -119,7 +122,7 @@ wait({tail}ms)
     assert_eq!(initial.statistics.executed_queries, 1);
     let start = Instant::now();
     for edit in 1..=EDITS {
-        sources.insert("main.sanim", script(edit));
+        sources.insert("main.sanim", format!("{}\nAnimation()", script(edit)));
         let changed = engine
             .duration("main.sanim", &sources, &BTreeMap::new())
             .unwrap();

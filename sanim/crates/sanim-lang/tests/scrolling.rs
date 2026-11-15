@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources};
 
 fn prepare(source: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic> {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::new(Viewport {
         width: 200,
         height: 120,
@@ -12,17 +12,17 @@ fn prepare(source: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic>
     })
     .prepare("main.sanim", &files, &Default::default())
 }
-const CONTENT: &str = r#"let first=Rect(width=20pt,height=20pt,x_align=Align.Start,y_align=Align.Start)
-let last=Rect(width=20pt,height=20pt,position=Vec2(0pt,80pt),x_align=Align.Start,y_align=Align.Start)
+const CONTENT: &str = r#"let first=Box(width=20pt, height=20pt, x_align=Align.Start, y_align=Align.Start, fill=Color("light1"))
+let last=Box(width=20pt, height=20pt, position=[0pt, 80pt], x_align=Align.Start, y_align=Align.Start, fill=Color("light1"))
 let spacer=Box(width=20pt,height=3*20pt)
 let clip=Box(overflow="auto",width=100pt,height=60pt,children=[first,spacer,last])
-add(clip)
+Animation(children=[clip])
 "#;
 
 #[test]
 fn bounded_scroll_methods_use_normal_tracks_and_resolve_percentages_after_resize() {
     let prepared = prepare(&format!(
-        "{CONTENT}clip.scroll_to(to=Vec2(0pt,500pt),duration=1s,ease=\"linear\")\nwait(1s)\n"
+        "{CONTENT}clip.scroll_to(to=[0pt, 500pt],duration=1s,ease=\"linear\")\nwait(1s)\n"
     ))
     .unwrap();
     let clip = prepared.animation.find("clip").unwrap();
@@ -46,7 +46,7 @@ fn bounded_scroll_methods_use_normal_tracks_and_resolve_percentages_after_resize
     assert_eq!(prepared.animation.duration, 2.into());
     let relative = CONTENT.replace("height=60pt", "height=50%");
     let percent = prepare(&format!(
-        "{relative}clip.scroll_to(to=Vec2(0%,100%),duration=1s)\n"
+        "{relative}clip.scroll_to(to=[0%, 100%],duration=1s)\n"
     ))
     .unwrap();
     assert_eq!(
@@ -75,12 +75,12 @@ fn bounded_scroll_methods_use_normal_tracks_and_resolve_percentages_after_resize
 
 #[test]
 fn scroll_signal_and_code_line_targets_are_supported() {
-    let source = r#"mut offset=Vec2(0pt,0pt)
-let shape=Rect(width=20pt,height=20pt,position=Vec2(0pt,80pt),x_align=Align.Start,y_align=Align.Start)
+    let source = r#"mut offset:List<Length,2>=[0pt, 0pt]
+let shape=Box(width=20pt, height=20pt, position=[0pt, 80pt], x_align=Align.Start, y_align=Align.Start, fill=Color("light1"))
 let spacer=Box(width=20pt,height=80pt)
 let clip=Box(overflow="auto",width=100pt,height=60pt,children=[spacer,shape],scroll=offset)
-add(clip)
-animate(offset,to=Vec2(0pt,40pt),duration=1s,ease="linear")
+Animation(children=[clip])
+animate(offset,to=[0pt, 40pt],duration=1s,ease="linear")
 "#;
     let prepared = prepare(source).unwrap();
     assert_eq!(
@@ -106,7 +106,7 @@ h=8
 i=9
 j=10
 """,lang="python",width=100pt,height=40pt,font_size=10pt,line_height=12pt,line_numbers=false)
-add(view)
+Animation(children=[view])
 view.scroll_to(line=6,align="start",duration=1s,ease="linear")
 "#,
     )
@@ -127,11 +127,11 @@ view.scroll_to(line=6,align="start",duration=1s,ease="linear")
 fn invalid_viewports_and_ambiguous_scroll_targets_fail_with_helpful_errors() {
     for (source, expected) in [
         (
-            "let c=Circle()\nc.scroll_to(to=Vec2(0pt,1pt))",
+            "let c=Text(\"leaf\")\nc.scroll_to(to=[0pt, 1pt])",
             "requires a container",
         ),
         (
-            "let v=Box(overflow=\"auto\",width=10pt,height=10pt,children=[])\nv.scroll_to(to=Vec2(0pt,0pt),y=2pt)",
+            "let v=Box(overflow=\"auto\",width=10pt,height=10pt,children=[])\nv.scroll_to(to=[0pt, 0pt],y=2pt)",
             "one target",
         ),
         (
@@ -160,7 +160,7 @@ g=7
 h=8
 i=9
 </CodeView>
-add(view)
+Animation(children=[view])
 let selected=view.range(name="target")
 "#;
     let prepared = prepare(&format!("{VIEW}selected.scroll_to(align=\"start\",duration=1s,ease=\"linear\")\nview.scroll_to(range=selected,align=\"end\",duration=1s,ease=\"linear\")")).unwrap();
@@ -222,7 +222,7 @@ fn source_range_scroll_targets_follow_native_wrap_rows_blank_lines_and_fold_head
     let tail = "tail\n".repeat(12);
     let view = |content: &str, language: &str| {
         format!(
-            "let view=<CodeView lang=\"{language}\" width={{100pt}} height={{40pt}} font_size={{12pt}} line_height={{18pt}} whitespace-pre-wrap wrap-anywhere>\n{content}</CodeView>\nadd(view)\n"
+            "let view=<CodeView lang=\"{language}\" width={{100pt}} height={{40pt}} font_size={{12pt}} line_height={{18pt}} whitespace-pre-wrap wrap-anywhere>\n{content}</CodeView>\nAnimation(children=[view])\n"
         )
     };
     let source = view(&format!("{prefix}\nTARGET\n{tail}"), "plain");
@@ -257,7 +257,7 @@ fn scrolling_collapsed_source_whitespace_uses_its_native_visible_row() {
     for mode in ["normal", "pre-line"] {
         let source = format!(
             r#"let view=<CodeView code={{r"    hello          world    "}} lang="plain" width={{50pt}} height={{20pt}} whitespace-{mode}/>
-add(view)
+Animation(children=[view])
 view.range(character=2).scroll_to(duration=100ms)
 view.range(character=12).scroll_to(duration=100ms)
 view.range(character=27).scroll_to(duration=100ms)
@@ -270,14 +270,14 @@ wait(1s)"#
 #[test]
 fn ordinary_container_overflow_shorthand_and_axis_overrides_are_explicit() {
     use sanim_core::Overflow;
-    let prepared = prepare(r#"let pane=<Rect width={100pt} height={60pt} overflow="scroll" overflow_x="hidden" overflow_y="auto">
-        <Rect width={200pt} height={120pt}/>
-    </Rect>
-    let plain=<Box width={100pt} height={60pt}><Circle/></Box>
-    let clipped=<Box width={100pt} height={60pt} overflow-hidden overflow-y-scroll><Circle/></Box>
-    add(pane)
-    add(plain)
-    add(clipped)
+    let prepared = prepare(r#"let pane=<Box width={100pt} height={60pt} overflow="scroll" overflow_x="hidden" overflow_y="auto" fill="light1" x_align={Align.Center} y_align={Align.Center}>
+        <Box width={200pt} height={120pt} fill="light1" x_align={Align.Center} y_align={Align.Center}/>
+    </Box>
+    let plain=<Box width={100pt} height={60pt}><Box width={2*(32pt)} height={2*(32pt)} rounded-full fill="light1" x_align={Align.Center} y_align={Align.Center}/></Box>
+    let clipped=<Box width={100pt} height={60pt} overflow-hidden overflow-y-scroll><Box width={2*(32pt)} height={2*(32pt)} rounded-full fill="light1" x_align={Align.Center} y_align={Align.Center}/></Box>
+    Animation(children=[pane])
+    Animation(children=[plain])
+    Animation(children=[clipped])
     wait(1s)"#).unwrap();
     let pane = &prepared.animation.find("pane").unwrap().layout;
     assert_eq!(pane.overflow_x, Overflow::Hidden);
@@ -296,11 +296,11 @@ fn ordinary_container_overflow_shorthand_and_axis_overrides_are_explicit() {
 fn overflow_errors_explain_required_container_and_dimensions() {
     for (source, reason) in [
         (
-            r#"let x=Circle(width=20pt,height=20pt,overflow="hidden")"#,
+            r#"let x=Text("leaf", width=20pt, height=20pt, overflow="hidden")"#,
             "no scrollable children",
         ),
         (
-            r#"let x=Box(children=[],width=20pt,height=20pt,scroll=Vec2(0pt,1pt))"#,
+            r#"let x=Box(children=[],width=20pt,height=20pt,scroll=[0pt, 1pt])"#,
             "scroll requires overflow",
         ),
         (
@@ -325,19 +325,19 @@ fn overflow_errors_explain_required_container_and_dimensions() {
 
 #[test]
 fn heterogeneous_flow_uses_intrinsic_paint_and_explicit_leaf_boxes() {
-    use sanim_core::{Geometry, math::to_f64, verify};
-    let prepared=prepare(r#"let dot_shape=<Circle radius={10pt} width={40pt} height={40pt} padding={4pt}/>
+    use sanim_core::{math::to_f64, verify};
+    let prepared=prepare(r#"let dot_shape=<Box width={40pt} height={40pt} padding={4pt} rounded-full fill="light1" x_align={Align.Center} y_align={Align.Center}/>
 let label=<Label font_size={12pt} padding={4pt}>Label</Label>
-let rect=<Rect width={40pt} height={40pt}/>
+let rect=<Box width={40pt} height={40pt} fill="light1" x_align={Align.Center} y_align={Align.Center}/>
 let code=<CodeView lang="python" font_size={10pt}>value = 1</CodeView>
-let xs=LinearScale(domain=Vec2(0,1),range=Vec2(0pt,40pt))
-let ys=LinearScale(domain=Vec2(0,1),range=Vec2(0pt,40pt))
+let xs=LinearScale(domain=[0, 1],range=[0pt, 40pt])
+let ys=LinearScale(domain=[0, 1],range=[0pt, 40pt])
 let plot=Scatter(data=[{x=0.5,y=0.5}],x_scale=xs,y_scale=ys,radius=2pt)
 let plot_box=<Box width={40pt} height={40pt}>{plot}</Box>
 let row=<Box flex flex-row width={600pt} height={60pt} gap={8pt} wrap={false}>{dot_shape}{label}{rect}{code}{plot_box}</Box>
-let column=<Box flex flex-col width={100pt} height={120pt} gap={8pt} position={Vec2(0pt,70pt)}><Circle radius={6pt}/><Label font_size={10pt}>Next</Label></Box>
-add(row)
-add(column)
+let column=<Box flex flex-col width={100pt} height={120pt} gap={8pt} position={[0pt, 70pt]}><Box width={2*(6pt)} height={2*(6pt)} rounded-full fill="light1" x_align={Align.Center} y_align={Align.Center}/><Label font_size={10pt}>Next</Label></Box>
+Animation(children=[row])
+Animation(children=[column])
 wait(1s)"#).unwrap();
     let laid = prepared
         .animation
@@ -361,13 +361,15 @@ wait(1s)"#).unwrap();
         right = bounds.max.values[0];
     }
     let dot_shape = &children[0];
-    let Geometry::Circle { radius } = dot_shape.geometry.as_ref() else {
-        panic!("circle")
-    };
     assert_eq!(
-        *radius,
-        10.into(),
-        "layout boxes do not resize intrinsic circle geometry"
+        dot_shape
+            .property(Property::Radius)
+            .unwrap()
+            .number()
+            .unwrap()
+            .value,
+        20.into(),
+        "rounded Box radius follows its allocated layout dimensions"
     );
     assert_eq!(to_f64(dot_shape.layout.width.unwrap().value).unwrap(), 40.);
     let column = laid.iter().find(|item| item.id == "column").unwrap();
@@ -382,12 +384,12 @@ wait(1s)"#).unwrap();
 fn unstyled_box_fills_available_width_and_measures_block_height() {
     let prepared = prepare(
         r#"let pane=<Box padding={3pt} gap={7pt}>
-    <Rect width={20pt} height={20pt}/>
-    <Rect width={30pt} height={30pt}/>
+    <Box width={20pt} height={20pt} fill="light1" x_align={Align.Center} y_align={Align.Center}/>
+    <Box width={30pt} height={30pt} fill="light1" x_align={Align.Center} y_align={Align.Center}/>
 </Box>
 let empty=<Box/>
-add(pane)
-add(empty)
+Animation(children=[pane])
+Animation(children=[empty])
 wait(1s)"#,
     )
     .unwrap();
@@ -426,7 +428,7 @@ wait(1s)"#,
 fn automatic_height_percent_cycle_fails_with_the_parent_constraint_reason() {
     let prepared = prepare(
         r#"let pane=<Box><Box height={50%}/></Box>
-add(pane)
+Animation(children=[pane])
 wait(1s)"#,
     )
     .unwrap();
@@ -448,10 +450,10 @@ wait(1s)"#,
 #[test]
 fn flex_resizing_remeasures_nested_percentage_constraints() {
     let prepared = prepare(
-        r#"let left=<Box flex_grow={1} flex_shrink={1}><Rect width={100%} height={20pt}/></Box>
-let right=<Box flex_grow={1} flex_shrink={1}><Rect width={100%} height={30pt}/></Box>
+        r#"let left=<Box flex_grow={1} flex_shrink={1}><Box width={100%} height={20pt} fill="light1" x_align={Align.Center} y_align={Align.Center}/></Box>
+let right=<Box flex_grow={1} flex_shrink={1}><Box width={100%} height={30pt} fill="light1" x_align={Align.Center} y_align={Align.Center}/></Box>
 let pane=<Box flex_direction="row" width={200pt}>{left}{right}</Box>
-add(pane)
+Animation(children=[pane])
 wait(1s)"#,
     )
     .unwrap();
@@ -474,10 +476,11 @@ wait(1s)"#,
             100.into(),
             "percentage width must use the allocated flex width"
         );
-        let sanim_core::Geometry::Rectangle { width, .. } = rect.geometry.as_ref() else {
-            panic!("rectangle")
-        };
-        assert_eq!(*width, 100.into());
+        assert!(matches!(
+            rect.geometry.as_ref(),
+            sanim_core::Geometry::Box { .. }
+        ));
+        assert_eq!(rect.layout.width.unwrap().value, 100.into());
     }
 }
 
@@ -485,10 +488,10 @@ wait(1s)"#,
 fn box_dimension_signals_accept_zero_and_keep_a_zero_sized_clip() {
     let prepared = prepare(
         r#"mut height=20pt
-let pane=<Box w-100 height={height} overflow-hidden><Rect width={20pt} height={20pt}/></Box>
-add(pane)
+let pane=<Box w-100 height={height} overflow-hidden><Box width={20pt} height={20pt} fill="light1" x_align={Align.Center} y_align={Align.Center}/></Box>
+Animation(children=[pane])
 wait(100ms)
-height=0pt
+animate(height,to=0pt,duration=0s)
 wait(100ms)"#,
     )
     .unwrap();

@@ -15,12 +15,12 @@ pub fn max_scroll_y(track_content_height: f64, height: f64) -> f64 {
     (track_content_height - visible_track_height(height)).max(0.0)
 }
 
-pub fn timeline_x() -> f64 {
-    LABEL_WIDTH + TIMELINE_PADDING_LEFT
+pub fn timeline_x(view: TimelineViewState) -> f64 {
+    view.timeline_x()
 }
 
-pub fn timeline_width(width: f64) -> f64 {
-    (width - timeline_x() - TIMELINE_PADDING_RIGHT).max(0.0)
+pub fn timeline_width(width: f64, view: TimelineViewState) -> f64 {
+    (width - timeline_x(view) - TIMELINE_PADDING_RIGHT).max(0.0)
 }
 
 pub fn vertical_scrollbar(
@@ -37,7 +37,7 @@ pub fn vertical_scrollbar(
 
     Some(shrimply_components_skia::Scrollbar {
         axis: shrimply_components_skia::Axis::Vertical,
-        bounds: scrollbar_bounds(timeline_width(width), height),
+        bounds: scrollbar_bounds(timeline_width(width, view), height, view),
         content_length: track_content_height,
         viewport_length: visible_height,
         value: view.scroll_y,
@@ -57,7 +57,7 @@ pub fn horizontal_scrollbar(
     let visible_seconds = timeline_width * view.seconds_per_pixel;
     shrimply_components_skia::Scrollbar {
         axis: shrimply_components_skia::Axis::Horizontal,
-        bounds: scrollbar_bounds(timeline_width, height),
+        bounds: scrollbar_bounds(timeline_width, height, view),
         content_length: duration_seconds.max(visible_seconds) + visible_seconds * 2.0,
         viewport_length: visible_seconds,
         value: view.scroll_seconds,
@@ -74,17 +74,21 @@ pub fn ruler_scale(view: TimelineViewState) -> ruler::TimelineScale {
     )
 }
 
-pub fn scrollbar_bounds(timeline_width: f64, height: f64) -> shrimply_components_skia::Rect {
+pub fn scrollbar_bounds(
+    timeline_width: f64,
+    height: f64,
+    view: TimelineViewState,
+) -> shrimply_components_skia::Rect {
     shrimply_components_skia::Rect::from_xywh(
-        timeline_x() as f32,
+        timeline_x(view) as f32,
         RULER_HEIGHT as f32,
         timeline_width.max(0.0) as f32,
         visible_track_height(height) as f32,
     )
 }
 
-pub fn x_to_time(x: f64, scroll_seconds: f64, seconds_per_pixel: f64) -> f64 {
-    scroll_seconds + (x - timeline_x()) * seconds_per_pixel
+pub fn x_to_time(x: f64, view: TimelineViewState) -> f64 {
+    view.scroll_seconds + (x - timeline_x(view)) * view.seconds_per_pixel
 }
 
 pub use crate::math::{frame_width, time_to_x};

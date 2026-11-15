@@ -393,7 +393,7 @@ pub(crate) fn bounds_at(
                 unit: crate::Unit::Length,
             },
         ),
-        Geometry::Rectangle { width, height, .. } | Geometry::Media { width, height, .. } => (
+        Geometry::Media { width, height, .. } => (
             Vec2 {
                 values: [
                     -calc("/", to_f64(*width)?, 2.0)?,

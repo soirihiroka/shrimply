@@ -7,6 +7,8 @@ pub enum Type {
     /// Internal inference hole, never a user-declarable type or a dynamic top type.
     Unknown,
     Unit,
+    Task,
+    Forever,
     Bool,
     String,
     StringLiteral(Arc<str>),
@@ -18,10 +20,10 @@ pub enum Type {
     Numeric(Unit),
     RefinedNumeric(crate::math::domain::NumericDomain),
     Fraction,
-    Vector(usize, Option<Unit>),
     Matrix4,
     Color,
     Element,
+    Animation,
     Predicate,
     Font,
     Data,
@@ -160,17 +162,94 @@ pub struct SignalRef {
     pub ty: Arc<Type>,
 }
 
+/// Explicit effects a function may observe. An empty set is a pure contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FnCapability {
+    Mut,
+    Sig,
+    Ref,
+}
+impl FnCapability {
+    pub const ALL: [Self; 3] = [Self::Mut, Self::Sig, Self::Ref];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mut => "mut",
+            Self::Sig => "sig",
+            Self::Ref => "ref",
+        }
+    }
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|capability| capability.name() == name)
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FnCapabilities(u8);
+impl FnCapabilities {
+    pub fn contains(self, capability: FnCapability) -> bool {
+        self.0 & (1 << capability as u8) != 0
+    }
+    pub fn insert(&mut self, capability: FnCapability) -> bool {
+        let old = self.0;
+        self.0 |= 1 << capability as u8;
+        old != self.0
+    }
+    pub fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+    pub fn allows(self, required: Self) -> bool {
+        self.0 & required.0 == required.0
+    }
+    pub fn is_pure(self) -> bool {
+        self.0 == 0
+    }
+}
+impl std::fmt::Display for FnCapabilities {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut separator = "";
+        for capability in FnCapability::ALL
+            .into_iter()
+            .filter(|capability| self.contains(*capability))
+        {
+            write!(f, "{separator}{}", capability.name())?;
+            separator = ", ";
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature {
-    pub duration: crate::TimelineEffect,
-    pub schedules: bool,
+    #[serde(default)]
+    pub capabilities: FnCapabilities,
     #[serde(default)]
     pub mutates: bool,
-    pub duration_parameters: std::collections::BTreeSet<usize>,
     pub generics: Vec<GenericParameter<Type, TypeBound>>,
     pub default_count: usize,
     pub parameters: Vec<FunctionParameter>,
     pub result: Box<Type>,
+}
+
+impl Signature {
+    fn substitute(&self, bindings: &BTreeMap<String, Type>) -> Self {
+        let bindings = bindings
+            .iter()
+            .filter(|(name, _)| {
+                !self
+                    .generics
+                    .iter()
+                    .any(|parameter| &parameter.name == *name)
+            })
+            .map(|(name, ty)| (name.clone(), ty.clone()))
+            .collect();
+        let mut signature = self.clone();
+        for parameter in &mut signature.parameters {
+            parameter.ty = parameter.ty.substitute(&bindings);
+        }
+        signature.result = Box::new(signature.result.substitute(&bindings));
+        signature
+    }
 }
 
 impl Type {
@@ -187,6 +266,55 @@ impl Type {
             Self::Overloaded(signatures) => signatures,
             _ => &mut [],
         }
+    }
+    /// Parent-local 2D coordinates are ordinary homogeneous numeric Lists.
+    pub fn coordinates() -> Self {
+        Self::union(
+            [Unit::Length, Unit::Percent]
+                .map(|unit| Self::List(Box::new(Self::Numeric(unit)), ListLength::Exact(2))),
+        )
+        .expect("nonempty coordinate units")
+    }
+    /// A fixed, checked index is total; unknown cardinality still requires Option.
+    pub fn fixed_index(&self, index: usize) -> Result<Option<Self>, String> {
+        match self {
+            Self::List(inner, ListLength::Exact(length)) => {
+                if index >= *length {
+                    return Err(format!(
+                        "index {index} is out of bounds for List length {length}"
+                    ));
+                }
+                Ok(Some(inner.as_ref().clone()))
+            }
+            Self::Union(types) => {
+                let mut elements = Vec::with_capacity(types.len());
+                for ty in types {
+                    let Some(inner) = ty.fixed_index(index)? else {
+                        return Ok(None);
+                    };
+                    elements.push(inner);
+                }
+                Self::union(elements).map(Some)
+            }
+            _ => Ok(None),
+        }
+    }
+    pub fn concatenate(&self, other: &Self) -> Result<Self, String> {
+        let (Self::List(left, a), Self::List(right, b)) = (self, other) else {
+            return Err("concat requires two Lists".into());
+        };
+        let inner = if **left == Self::Unknown {
+            right.as_ref().clone()
+        } else if **right == Self::Unknown || left.accepts(right) {
+            left.as_ref().clone()
+        } else if right.accepts(left) {
+            right.as_ref().clone()
+        } else {
+            left.join_list_lengths(right).ok_or_else(|| {
+                format!("concat requires compatible element types, found {left} and {right}")
+            })?
+        };
+        Ok(Self::List(Box::new(inner), a.checked_add(*b)?))
     }
     pub fn numeric_unit(&self) -> Option<Unit> {
         match self {
@@ -354,16 +482,33 @@ impl Type {
             _ => Ok(Self::Union(alternatives)),
         }
     }
-    /// Closed string choices, shared by diagnostics, completions and editors.
-    /// An unrestricted String or a mixed non-string union has no finite choices.
+    /// Literal branches remain useful to editors inside mixed numeric/enum unions.
+    pub fn string_literal_choices(&self) -> Vec<&str> {
+        let mut values = Vec::new();
+        self.collect_string_literals(&mut values);
+        values
+    }
+    /// Finite choices only when the entire type is a closed string-literal domain.
     pub fn string_literals(&self) -> Option<Vec<&str>> {
+        let mut values = Vec::new();
+        self.collect_string_literals(&mut values).then_some(values)
+    }
+    fn collect_string_literals<'a>(&'a self, values: &mut Vec<&'a str>) -> bool {
         match self {
-            Self::StringLiteral(value) => Some(vec![value.as_ref()]),
-            Self::Union(types) => types.iter().try_fold(Vec::new(), |mut values, ty| {
-                values.extend(ty.string_literals()?);
-                Some(values)
+            Self::StringLiteral(value) => {
+                values.push(value.as_ref());
+                true
+            }
+            Self::Union(types) => types.iter().fold(true, |closed, ty| {
+                ty.collect_string_literals(values) & closed
             }),
-            _ => None,
+            Self::BoundedVariable(_, bound) => {
+                if let TypeBound::Type(ty) = bound.as_ref() {
+                    ty.collect_string_literals(values);
+                }
+                false
+            }
+            _ => false,
         }
     }
     /// Editable values infer primitive string schemas; explicit annotations can
@@ -420,7 +565,7 @@ impl Type {
     }
     fn incomplete(&self, symbolic_parameters: bool) -> bool {
         match self {
-            Self::Unknown | Self::Vector(_, None) => true,
+            Self::Unknown => true,
             Self::Variable(_) | Self::BoundedVariable(..) => !symbolic_parameters,
             Self::List(t, _)
             | Self::Option(t)
@@ -448,6 +593,9 @@ impl Type {
     pub fn contains_element(&self) -> bool {
         self.contains(&|ty| matches!(ty, Self::Element))
     }
+    pub fn contains_animation(&self) -> bool {
+        self.contains(&|ty| matches!(ty, Self::Animation))
+    }
     fn contains(&self, predicate: &impl Fn(&Type) -> bool) -> bool {
         if predicate(self) {
             return true;
@@ -464,13 +612,8 @@ impl Type {
             Self::Enum { variants, .. } => {
                 variants.values().flatten().any(|ty| ty.contains(predicate))
             }
-            Self::Function(_) | Self::Overloaded(_) => self.signatures().iter().any(|signature| {
-                signature.result.contains(predicate)
-                    || signature
-                        .parameters
-                        .iter()
-                        .any(|parameter| parameter.ty.contains(predicate))
-            }),
+            // A callable's arguments and result are future values, not payloads it contains.
+            Self::Function(_) | Self::Overloaded(_) => false,
             Self::BoundedVariable(_, bound) => {
                 matches!(bound.as_ref(), TypeBound::Type(ty) if ty.contains(predicate))
             }
@@ -492,8 +635,21 @@ impl Type {
             || matches!(self, Type::Unknown)
             || match (self, actual) {
                 (Self::String, Self::StringLiteral(_)) => true,
+                (Self::Function(expected), Self::Function(actual)) => {
+                    expected.capabilities.allows(actual.capabilities)
+                        && expected.generics == actual.generics
+                        && expected.parameters.len() == actual.parameters.len()
+                        && expected.default_count <= actual.default_count
+                        && expected.parameters.iter().zip(&actual.parameters).all(
+                            |(expected, actual)| {
+                                expected.name == actual.name
+                                    && expected.kind == actual.kind
+                                    && actual.ty.accepts(&expected.ty)
+                            },
+                        )
+                        && expected.result.accepts(&actual.result)
+                }
                 (Self::Code(crate::code::Language::Auto), Self::Code(_)) => true,
-                (Self::Vector(n, None), Self::Vector(m, _)) => n == m,
                 (Self::Signal(a), Self::Signal(b)) => a.accepts(b),
                 (Self::List(a, la), Self::List(b, lb)) => {
                     la.accepts(*lb) && (**b == Self::Unknown || a.accepts(b))
@@ -522,7 +678,6 @@ impl Type {
             | Self::Numeric(_)
             | Self::RefinedNumeric(_)
             | Self::Fraction
-            | Self::Vector(..)
             | Self::Matrix4
             | Self::Color
             | Self::Font => true,
@@ -583,6 +738,13 @@ impl Type {
                     Self::BoundedVariable(name.clone(), Box::new(bound.substitute(bindings)))
                 })
             }
+            Self::Function(signature) => Self::Function(signature.substitute(bindings)),
+            Self::Overloaded(signatures) => Self::Overloaded(
+                signatures
+                    .iter()
+                    .map(|signature| signature.substitute(bindings))
+                    .collect(),
+            ),
             Self::List(t, length) => Self::List(Box::new(t.substitute(bindings)), *length),
             Self::Option(t) => Self::Option(Box::new(t.substitute(bindings))),
             Self::Array(t) => Self::Array(Box::new(t.substitute(bindings))),
@@ -612,6 +774,8 @@ impl std::fmt::Display for Type {
         match self {
             Self::Unknown => write!(f, "an inferred value"),
             Self::Unit => write!(f, "Unit"),
+            Self::Task => write!(f, "Task"),
+            Self::Forever => write!(f, "Forever"),
             Self::Bool => write!(f, "Bool"),
             Self::String => write!(f, "String"),
             Self::StringLiteral(value) => f.write_str(&crate::template::quote_string(value)),
@@ -647,11 +811,10 @@ impl std::fmt::Display for Type {
                 }
                 Ok(())
             }
-            Self::Vector(n, None) => write!(f, "Vec{n}"),
-            Self::Vector(n, Some(unit)) => write!(f, "Vec{n}<{}>", Self::Numeric(*unit)),
             Self::Matrix4 => write!(f, "Matrix4"),
             Self::Color => write!(f, "Color"),
             Self::Element => write!(f, "Element"),
+            Self::Animation => write!(f, "Animation"),
             Self::Predicate => write!(f, "visual relationship"),
             Self::Font => write!(f, "Font"),
             Self::Data => write!(f, "Data"),
@@ -691,7 +854,11 @@ impl std::fmt::Display for Type {
                 write!(f, "{name}")
             }
             Self::Function(sig) => {
-                write!(f, "fn(")?;
+                write!(f, "fn")?;
+                if !sig.capabilities.is_pure() {
+                    write!(f, "<{}>", sig.capabilities)?;
+                }
+                write!(f, "(")?;
                 for (i, parameter) in sig.parameters.iter().enumerate() {
                     let name = &parameter.name;
                     let ty = &parameter.ty;
@@ -781,37 +948,29 @@ impl Color {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "[f64; N]: Serialize",
-    deserialize = "[f64; N]: Deserialize<'de>"
-))]
-pub struct Vector<const N: usize> {
-    pub values: [f64; N],
+pub struct Vec2 {
+    pub values: [f64; 2],
     pub unit: Unit,
 }
-impl<const N: usize> Vector<N> {
+impl Vec2 {
     pub fn zero(unit: Unit) -> Self {
         Self {
-            values: [0.0; N],
+            values: [0.0; 2],
             unit,
         }
     }
 }
-pub type Vec2 = Vector<2>;
-pub type Vec3 = Vector<3>;
-pub type Vec4 = Vector<4>;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Unit,
+    Forever,
+    Task(Option<Fraction>),
     Bool(bool),
     String(Arc<str>),
     Code(Arc<crate::code::Document>),
     Number(Number),
     Fraction(Fraction),
-    Vec2(Vec2),
-    Vec3(Vec3),
-    Vec4(Vec4),
     Matrix4(Box<crate::math::linear::Matrix4>),
     Color(Color),
     List(List),
@@ -829,6 +988,7 @@ pub enum Value {
         fields: Arc<[Value]>,
     },
     Element(Arc<Element>),
+    Animation(Arc<crate::plan::Animation>),
     Predicate(Arc<crate::verify::Predicate>),
     Function(String),
     Font(crate::Font),
@@ -846,6 +1006,8 @@ impl Value {
     pub fn ty(&self) -> Type {
         match self {
             Self::Unit => Type::Unit,
+            Self::Task(_) => Type::Task,
+            Self::Forever => Type::Forever,
             Self::Bool(_) => Type::Bool,
             Self::String(_) => Type::String,
             Self::Code(document) => Type::Code(document.language),
@@ -855,9 +1017,6 @@ impl Value {
             Self::SqlIdent(_) => Type::SqlIdent,
             Self::Number(n) => Type::Numeric(n.unit),
             Self::Fraction(_) => Type::Fraction,
-            Self::Vec2(v) => Type::Vector(2, Some(v.unit)),
-            Self::Vec3(v) => Type::Vector(3, Some(v.unit)),
-            Self::Vec4(v) => Type::Vector(4, Some(v.unit)),
             Self::Matrix4(_) => Type::Matrix4,
             Self::Color(_) => Type::Color,
             Self::List(v) => Type::List(
@@ -872,6 +1031,7 @@ impl Value {
             Self::None => Type::Option(Box::new(Type::Unknown)),
             Self::Variant { ty, .. } => ty.as_ref().clone(),
             Self::Element(_) => Type::Element,
+            Self::Animation(_) => Type::Animation,
             Self::Predicate(_) => Type::Predicate,
             Self::Function(_) => Type::Unknown,
             Self::Font(_) => Type::Font,
@@ -983,40 +1143,52 @@ impl Value {
             Err("expected Bool".into())
         }
     }
-    pub fn vector(&self) -> Result<(&[f64], Unit), String> {
-        match self {
-            Self::Vec2(v) => Ok((&v.values, v.unit)),
-            Self::Vec3(v) => Ok((&v.values, v.unit)),
-            Self::Vec4(v) => Ok((&v.values, v.unit)),
-            _ => Err("expected a vector".into()),
-        }
+    /// Convert canonical numeric Lists at the native geometry boundary only.
+    pub fn vector(&self) -> Result<(Vec<f64>, Unit), String> {
+        let values = self.list()?;
+        let mut unit = None;
+        let values = values
+            .iter()
+            .map(|value| {
+                let number = value.number()?;
+                if unit.is_some_and(|unit| unit != number.unit) {
+                    return Err("numeric List components must have matching units".into());
+                }
+                unit = Some(number.unit);
+                crate::math::to_f64(number.value)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok((values, unit.unwrap_or(Unit::Number)))
     }
     pub fn vec2(&self) -> Result<Vec2, String> {
-        if let Self::Vec2(v) = self {
-            Ok(*v)
-        } else {
-            Err("expected Vec2".into())
+        let values = self.list()?;
+        if values.len() != 2 {
+            return Err(format!(
+                "expected a numeric List of length 2, found {} items",
+                values.len()
+            ));
         }
+        let x = values[0].number()?;
+        let y = values[1].number()?;
+        if x.unit != y.unit {
+            return Err("coordinate List components must have matching units".into());
+        }
+        Ok(Vec2 {
+            values: [crate::math::to_f64(x.value)?, crate::math::to_f64(y.value)?],
+            unit: x.unit,
+        })
     }
     pub fn from_vector(values: Vec<f64>, unit: Unit) -> Result<Self, String> {
-        if values.iter().any(|v| !v.is_finite()) {
-            return Err("vector components must be finite".into());
-        }
-        Ok(match values.len() {
-            2 => Self::Vec2(Vec2 {
-                values: values.try_into().map_err(|_| "invalid Vec2")?,
-                unit,
-            }),
-            3 => Self::Vec3(Vec3 {
-                values: values.try_into().map_err(|_| "invalid Vec3")?,
-                unit,
-            }),
-            4 => Self::Vec4(Vec4 {
-                values: values.try_into().map_err(|_| "invalid Vec4")?,
-                unit,
-            }),
-            _ => return Err("vectors must have 2, 3 or 4 components".into()),
-        })
+        let values = values
+            .into_iter()
+            .map(|value| {
+                Ok(Value::Number(Number {
+                    value: crate::math::from_f64(value)?,
+                    unit,
+                }))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self::List(List::typed(Type::Numeric(unit), values)))
     }
     pub fn list(&self) -> Result<&crate::Values, String> {
         match self {

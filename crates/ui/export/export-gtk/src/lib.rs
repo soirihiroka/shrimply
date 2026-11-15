@@ -51,6 +51,7 @@ pub fn build_export_button(
         .has_frame(false)
         .popover(&popover)
         .build();
+    shrimply_components_gtk::ui::adaptive_menu(&button, "export", &actions);
     button.add_css_class("flat");
     button
 }
@@ -92,6 +93,7 @@ impl<T: Copy + PartialEq + 'static> TypedComboRow<T> {
         row.set_title(tr!(title).as_ref());
         row.set_model(Some(&gtk::StringList::new(&labels)));
         row.set_selected(selected);
+        shrimply_components_gtk::ui::adaptive_choice(&row);
         Self {
             row,
             values: choices.into_iter().map(|(value, _)| value).collect(),

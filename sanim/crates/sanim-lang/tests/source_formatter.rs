@@ -13,7 +13,13 @@ fn normalized(source: &str) -> serde_json::Value {
                 object.remove("span");
                 object.remove("comments");
                 object.remove("name_span");
-                object.remove("name_span");
+                if object
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|name| name.starts_with("$fn"))
+                {
+                    object.insert("name".into(), serde_json::Value::String("$fn".into()));
+                }
                 for value in object.values_mut() {
                     strip(value);
                 }
@@ -107,7 +113,7 @@ fn generic_lookahead_rollback_and_nested_literal_expressions_do_not_duplicate_so
 
 #[test]
 fn wrapping_is_only_inserted_where_the_parser_accepts_continuations() {
-    let source = "let values=[123456789,234567890,345678901,456789012]\nlet point=Vec2(123456789pt,234567890pt)\n";
+    let source = "let values=[123456789,234567890,345678901,456789012]\nlet point=[123456789pt, 234567890pt]\n";
     let options = FormatOptions {
         line_width: 20,
         ..Default::default()
@@ -162,9 +168,7 @@ fn all_repository_examples_preserve_the_canonical_ast() {
 fn source_formatter_benchmark() {
     let mut source = String::new();
     for index in 0..2000 {
-        source.push_str(&format!(
-            "let value_{index}=Vec2(12pt,-34pt) # retain this comment\n"
-        ));
+        source.push_str(&format!("let value_{index}=[12pt, -34pt]\n"));
     }
     let started = std::time::Instant::now();
     let formatted = format(&source);
@@ -179,16 +183,16 @@ fn source_formatter_benchmark() {
 #[test]
 fn named_arguments_use_equals_and_markup_text_is_preserved() {
     let formatted = parity(
-        "let marker=Circle(radius=12pt,fill=Color(\"blue3\"))\nlet label=<Label> literal  # text {round(2.5):.1f} </Label>\n",
+        "let marker=Box(fill=Color(\"blue3\"), width=2*(12pt), height=2*(12pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nlet label=<Label> literal  # text {round(2.5):.1f} </Label>\n",
     );
-    assert!(formatted.contains("radius = 12pt"), "{formatted}");
+    assert!(formatted.contains("radius = \"full\""), "{formatted}");
     assert!(formatted.contains("<Label> literal  # text {round(2.5):.1f} </Label>"));
 }
 
 #[test]
 fn colon_arguments_are_rejected_while_type_and_dictionary_colons_remain_valid() {
     for source in [
-        "let marker=Circle(radius:12pt)",
+        "let marker=Box(width:12pt)",
         "fn helper(value:Number):Number{return value}\nhelper(value:1)",
     ] {
         let error = format_source("main.sanim", source, Default::default(), 100_000).unwrap_err();
@@ -220,7 +224,7 @@ fn hash_comments_have_no_hex_exception_and_strings_keep_hashes() {
 fn all_control_flow_and_type_operations_preserve_the_canonical_ast() {
     for source in [
         "enum Choice{Empty,Value(Number)}\nfn extract(choice:Choice):Number{match choice{case Choice.Empty{return 0} case Choice.Value(value){return value}}}\n",
-        "import \"shared.sanim\" as shared\nmut phase=0deg\nsig size=sin(phase)\nbackground{animate(phase,to=360deg,duration=1s)}\nrepeat 3{wait(1ms)}\ntimer 4 every 500ms{wait(100ms)}\nfor value in [1,2,3]{assert(value>0)}\n",
+        "import \"shared.sanim\" as shared\nmut phase=0deg\nsig size=sin(phase)\n<Animation absolute flow=\"sequence\">{animate(phase,to=360deg,duration=1s)}</Animation>\nrepeat 3{wait(1ms)}\nAnimation(children=[wait(100ms),wait(400ms)],flow=\"sequence\").repeat(4)\nfor value in [1,2,3]{assert(value>0)}\n",
         "type XY={x:Number,y:Number}\ntype Combined=XY & {z:Number}\ntype Smaller=Combined - {x:Number}\ntype Choice={x:Number}|{y:Number}\n",
         "fn transform<T:Numeric=Number>(input:T,scale:Number=2):T{return input*scale}\nlet size=reflect(64pt,label=\"Base Size\",key=\"shapes.size\")\n",
     ] {

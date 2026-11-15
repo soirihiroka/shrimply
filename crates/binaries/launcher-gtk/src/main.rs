@@ -1,5 +1,6 @@
 use adw::prelude::*;
 use gtk::{gio, glib};
+use shrimply_components_gtk::presentation::{self, RecentProjectAction};
 use shrimply_components_gtk::project_settings::ProjectSettingsSelector;
 use shrimply_components_gtk::tr;
 use shrimply_components_gtk::ui::{SingleLineTextInput, control_row};
@@ -237,16 +238,8 @@ fn refresh_recents(
     }
 
     for recent in projects {
-        let last_edited = shrimply_cross_ui_core::launcher::last_edited(&recent.path);
-        let last_edited_subtitle = last_edited
-            .as_ref()
-            .map(|date| {
-                shrimply_components_gtk::i18n::text_args(
-                    "Last edited %{date}",
-                    &[("date", date.clone())],
-                )
-            })
-            .unwrap_or_else(|| tr!("Last edited time unavailable").into_owned());
+        let last_edited = shrimply_cross_ui_core::launcher::recent_last_edited(&recent);
+        let last_edited_subtitle = presentation::recent_project_subtitle(last_edited.as_deref());
         let details = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(4)
@@ -296,17 +289,17 @@ fn refresh_recents(
             .build();
         let menu = gtk::MenuButton::builder()
             .icon_name("view-more-symbolic")
-            .tooltip_text(tr!("Project options").as_ref())
+            .tooltip_text(tr!(presentation::RECENT_PROJECT_MENU_LABEL).as_ref())
             .valign(gtk::Align::Center)
             .has_frame(false)
             .build();
         let popover = gtk::Popover::new();
         let options = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let info = gtk::Button::with_label(tr!("Info").as_ref());
+        let info = gtk::Button::with_label(&RecentProjectAction::Info.label());
         info.set_has_frame(false);
-        let show_in_files = gtk::Button::with_label(tr!("Show in Files").as_ref());
+        let show_in_files = gtk::Button::with_label(&RecentProjectAction::ShowInFiles.label());
         show_in_files.set_has_frame(false);
-        let delete = gtk::Button::with_label(tr!("Delete").as_ref());
+        let delete = gtk::Button::with_label(&RecentProjectAction::Delete.label());
         delete.set_has_frame(false);
         options.append(&info);
         options.append(&show_in_files);
@@ -375,46 +368,43 @@ fn show_project_info(
     path: &Path,
     last_edited: Option<&str>,
 ) {
-    let unavailable = tr!("Unavailable");
+    let info = presentation::recent_project_info(name, &path.to_string_lossy(), last_edited);
     let details = adw::PreferencesGroup::new();
-    details.add(
-        &adw::ActionRow::builder()
-            .title(tr!("Last Edited").as_ref())
-            .subtitle(last_edited.unwrap_or(unavailable.as_ref()))
-            .build(),
-    );
-
-    let location = adw::ActionRow::builder()
-        .title(tr!("File Location").as_ref())
-        .subtitle(path.to_string_lossy())
-        .subtitle_lines(PROJECT_PATH_LINES)
-        .build();
-    let show_in_files = gtk::Button::builder()
-        .icon_name("folder-open-symbolic")
-        .tooltip_text(tr!("Show in Files").as_ref())
-        .valign(gtk::Align::Center)
-        .css_classes(["flat"])
-        .build();
-    show_in_files.connect_clicked({
-        let path = path.to_path_buf();
-        let window = window.clone();
-        move |button| {
-            if let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
-                button.upcast_ref(),
-                path.clone(),
-            ) {
-                show_error(&window, "Could not show project file", &error);
-            }
+    for field in info.fields {
+        let row = adw::ActionRow::builder()
+            .title(&field.label)
+            .subtitle(&field.value)
+            .build();
+        if let Some(action) = field.action {
+            row.set_subtitle_lines(PROJECT_PATH_LINES);
+            let show_in_files = gtk::Button::builder()
+                .icon_name(action.icon())
+                .tooltip_text(action.label())
+                .valign(gtk::Align::Center)
+                .css_classes(["flat"])
+                .build();
+            show_in_files.connect_clicked({
+                let path = path.to_path_buf();
+                let window = window.clone();
+                move |button| {
+                    if let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
+                        button.upcast_ref(),
+                        path.clone(),
+                    ) {
+                        show_error(&window, "Could not show project file", &error);
+                    }
+                }
+            });
+            row.add_suffix(&show_in_files);
+            row.set_activatable_widget(Some(&show_in_files));
         }
-    });
-    location.add_suffix(&show_in_files);
-    location.set_activatable_widget(Some(&show_in_files));
-    details.add(&location);
+        details.add(&row);
+    }
 
     let page = adw::PreferencesPage::new();
     page.add(&details);
     let dialog = adw::PreferencesDialog::builder()
-        .title(name)
+        .title(&info.title)
         .search_enabled(false)
         .content_width(PROJECT_INFO_WIDTH)
         .build();

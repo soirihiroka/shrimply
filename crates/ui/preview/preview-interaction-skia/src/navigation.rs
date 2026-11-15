@@ -1,6 +1,7 @@
 use glam::Vec2;
 use shrimply_preview_provider_skia::{
-    Cursor, CursorUpdate, PointerButton, PointerEvent, PreviewResponse, PreviewViewport, Rect, math,
+    Cursor, CursorUpdate, Key, KeyboardEvent, PointerButton, PointerEvent, PreviewResponse,
+    PreviewViewport, Rect, math,
 };
 
 #[derive(Clone, Copy)]
@@ -28,6 +29,19 @@ impl Default for Navigation {
 }
 
 impl Navigation {
+    pub fn keyboard(&mut self, event: KeyboardEvent) -> Option<PreviewResponse> {
+        if !self.active() {
+            return None;
+        }
+        let mut response = PreviewResponse::handled();
+        if event.key == Key::Escape {
+            self.cancel();
+            response.redraw = true;
+            response.cursor = CursorUpdate::Clear;
+        }
+        Some(response)
+    }
+
     pub fn pointer(
         &mut self,
         fit: PreviewViewport,
@@ -101,6 +115,28 @@ impl Navigation {
         } else {
             Rect::from_min_size(Vec2::ZERO, surface)
         }
+    }
+
+    /// Native touch contacts use the same clamped viewport as mouse navigation.
+    pub fn transform(
+        &mut self,
+        fit: PreviewViewport,
+        bounds: Rect,
+        previous: Vec2,
+        center: Vec2,
+        scale: f32,
+    ) -> bool {
+        if !scale.is_finite() || scale <= 0.0 || !previous.is_finite() || !center.is_finite() {
+            return false;
+        }
+        let before = self.viewport(fit, bounds).content_rect;
+        let zoom = math::preview_pinch_zoom(self.zoom, scale);
+        let rect =
+            math::cursor_zoom_rect(before, self.zoom, zoom, previous).translated(center - previous);
+        self.zoom = zoom;
+        self.center = math::preview_center(rect, bounds);
+        self.center = math::preview_center(self.viewport(fit, bounds).content_rect, bounds);
+        self.viewport(fit, bounds).content_rect != before
     }
 
     pub fn reset(&mut self) {

@@ -45,14 +45,11 @@ impl State {
         frame_rate_label: Retained<objc2_app_kit::NSTextField>,
         playback_performance: shrimply_playback_performance::SharedCollector,
     ) -> Self {
-        use shrimply_paint_edit_skia::{
-            DEFAULT_PAINT_ERASER_SCALE, PAINT_PREVIEW_STATE, PaintPreviewState,
-        };
         let renderer =
             shrimply_preview_render_metal::Renderer::new(Some(std::sync::Arc::new(move |event| {
                 shrimply_playback_performance::record_render_event(&playback_performance, event);
             })));
-        let mut state = Self {
+        Self {
             renderer,
             viewport: None,
             navigation: Default::default(),
@@ -75,15 +72,7 @@ impl State {
             last_sample: None,
             modifiers: shrimply_preview_provider_skia::Modifiers::NONE,
             caption_split_hover: None,
-        };
-        state.controller.extensions.insert(
-            PAINT_PREVIEW_STATE,
-            Box::new(PaintPreviewState {
-                eraser_scale: DEFAULT_PAINT_ERASER_SCALE,
-                ..Default::default()
-            }),
-        );
-        state
+        }
     }
 
     pub fn sync_loading(&mut self, tolerance: shrimply_math_core::Time) {

@@ -14,7 +14,7 @@ use crate::{
         ExpressionOutput, LayeredSections, evaluate_expression, expression_section, layered_control,
     },
 };
-use shrimply_project_document::project::{Project, Time, VisualAlphaMaskTarget};
+use shrimply_project_document::project::{Project, Time};
 
 use crate::keyframe_editor::{self, KeyframeEditorActions};
 
@@ -40,13 +40,6 @@ pub(crate) enum VecAccess {
         id: Uuid,
         value_id: Uuid,
     },
-    AlphaMask {
-        target: VisualAlphaMaskTarget,
-        value_id: Uuid,
-    },
-    Background {
-        value_id: Uuid,
-    },
 }
 impl VecAccess {
     fn get(self, p: &Project, k: SelectedItem) -> Option<&TimelineValue<glam::Vec2>> {
@@ -59,17 +52,6 @@ impl VecAccess {
                 p.video_item(&k)?.modifiers.iter().find(|m| m.id == id)?,
                 value_id,
             ),
-            Self::AlphaMask { target, value_id } => {
-                p.video_item(&k)?.alpha_mask(target)?.number2(value_id)
-            }
-            Self::Background { value_id } => {
-                let shrimply_project_document::project::VideoItemContent::Background(background) =
-                    &p.video_item(&k)?.content
-                else {
-                    return None;
-                };
-                background.generator.number2(value_id)
-            }
         }
     }
     fn get_mut(self, p: &mut Project, k: SelectedItem) -> Option<&mut TimelineValue<glam::Vec2>> {
@@ -87,18 +69,6 @@ impl VecAccess {
                     .find(|m| m.id == id)?,
                 value_id,
             ),
-            Self::AlphaMask { target, value_id } => p
-                .video_item_mut(&k)?
-                .alpha_mask_mut(target)?
-                .number2_mut(value_id),
-            Self::Background { value_id } => {
-                let shrimply_project_document::project::VideoItemContent::Background(background) =
-                    &mut p.video_item_mut(&k)?.content
-                else {
-                    return None;
-                };
-                background.generator.number2_mut(value_id)
-            }
         }
     }
 

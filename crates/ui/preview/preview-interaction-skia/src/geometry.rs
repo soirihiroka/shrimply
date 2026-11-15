@@ -17,3 +17,5 @@ pub fn preview_viewport(surface: IVec2, canvas: CanvasSize, padding_px: u32) -> 
         video_content_rect(surface, canvas, padding_px),
     )
 }
+
+pub(crate) use shrimply_preview_provider_skia::math::caption_preview_scale;

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[test]
 fn native_font_constructor_infers_font_and_shapes_without_file_dependencies() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let typeface=Font(\"Sanim Missing Preferred\",\"sans-serif\")\nlet label=Text(\"Stack & Queue\",font=typeface)\nadd(label)\nwait(1s)");
+    files.insert("main.sanim","let typeface=Font(\"Sanim Missing Preferred\",\"sans-serif\")\nlet label=Text(\"Stack & Queue\",font=typeface)\nAnimation(children=[label])\nwait(1s)");
     let mut engine = Engine::default();
     let prepared = engine
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -35,7 +35,10 @@ fn font_defaults_fallback_types_and_diagnostics_are_explicit() {
         "Font(\"sans-serif\",\"sans-serif\")",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", format!("let typeface={expression}"));
+        files.insert(
+            "main.sanim",
+            format!("let typeface={expression}\nAnimation()"),
+        );
         let prepared = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap();
@@ -51,7 +54,10 @@ fn font_defaults_fallback_types_and_diagnostics_are_explicit() {
         "Font(\"Arial,\")",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", format!("let typeface={expression}"));
+        files.insert(
+            "main.sanim",
+            format!("let typeface={expression}\nAnimation()"),
+        );
         assert!(
             Engine::default()
                 .prepare("main.sanim", &files, &BTreeMap::new())
@@ -66,7 +72,7 @@ fn css_family_fallback_lists_are_native_font_values() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let typeface=Font(\"'Google Sans', Arial, sans-serif\")",
+        "let typeface=Font(\"'Google Sans', Arial, sans-serif\")\nAnimation()",
     );
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -84,7 +90,7 @@ fn text_without_font_uses_the_sans_default_without_asset_dependencies() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let label=Text(\"Hello\")\nadd(label)\nwait(0.5s)",
+        "let label=Text(\"Hello\")\nAnimation(children=[label])\nwait(0.5s)",
     );
     let mut engine = Engine::default();
     let default = engine
@@ -97,7 +103,7 @@ fn text_without_font_uses_the_sans_default_without_asset_dependencies() {
     assert_eq!(planned.duration, default.animation.duration);
     files.insert(
         "main.sanim",
-        "let label=Text(\"Hello\",font=Font())\nadd(label)\nwait(0.5s)",
+        "let label=Text(\"Hello\",font=Font())\nAnimation(children=[label])\nwait(0.5s)",
     );
     let explicit = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -108,7 +114,7 @@ fn text_without_font_uses_the_sans_default_without_asset_dependencies() {
 #[test]
 fn axis_labels_share_the_same_optional_font_default() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let scale=LinearScale(domain=Vec2(0,10),range=Vec2(0pt,300pt))\nlet axis=Axis(scale=scale)\nadd(axis)\nwait(1s)");
+    files.insert("main.sanim","let scale=LinearScale(domain=[0, 10],range=[0pt, 300pt])\nlet axis=Axis(scale=scale)\nAnimation(children=[axis])\nwait(1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();

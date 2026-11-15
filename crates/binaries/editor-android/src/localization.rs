@@ -2,6 +2,95 @@ use jni::sys::{JNIEnv, jclass, jstring};
 
 static VM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
 
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeLayout_splitPaneExtent(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    total: jni::sys::jfloat,
+    divider: jni::sys::jfloat,
+    fraction: jni::sys::jfloat,
+) -> jni::sys::jfloat {
+    shrimply_components_core::math::split_pane_extent(total, divider, fraction)
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeLayout_inspectorOverlay(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    width: jni::sys::jfloat,
+    inspector_width: jni::sys::jfloat,
+) -> jni::sys::jboolean {
+    shrimply_components_core::layout::inspector_overlay(width, inspector_width)
+        as jni::sys::jboolean
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeLayout_transportStacked(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    width: jni::sys::jfloat,
+) -> jni::sys::jboolean {
+    shrimply_components_core::layout::transport_stacked(width) as jni::sys::jboolean
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_shrimply_app_NativeLayout_menuUsesBottomSheet(
+    env: *mut JNIEnv,
+    _class: jclass,
+    input_source: jstring,
+) -> jni::sys::jboolean {
+    let source = unsafe { string(env, input_source) };
+    shrimply_components_core::layout::menu_uses_bottom_sheet(&source) as jni::sys::jboolean
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeLayout_compactControls(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    width: jni::sys::jfloat,
+    height: jni::sys::jfloat,
+) -> jni::sys::jboolean {
+    shrimply_components_core::layout::compact_controls(width, height) as jni::sys::jboolean
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeLayout_choiceSearchable(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    count: jni::sys::jint,
+) -> jni::sys::jboolean {
+    shrimply_components_core::selector::searchable(
+        count.try_into().expect("nonnegative choice count"),
+    ) as jni::sys::jboolean
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_shrimply_app_NativeLayout_matchingChoices(
+    env: *mut JNIEnv,
+    _class: jclass,
+    labels: jstring,
+    query: jstring,
+) -> jstring {
+    let labels: Vec<String> = serde_json::from_str(&unsafe { string(env, labels) })
+        .expect("choice labels must be strings");
+    let query = unsafe { string(env, query) };
+    let indices = shrimply_components_core::selector::ranked_matching_indices(&labels, &[], &query);
+    let characters = serde_json::to_string(&indices)
+        .expect("serialize matching choices")
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    unsafe {
+        ((**env).v1_1.NewString)(
+            env,
+            characters.as_ptr(),
+            characters
+                .len()
+                .try_into()
+                .expect("matching choices fit JNI"),
+        )
+    }
+}
+
 pub(crate) fn initialize_vm(vm: jni::JavaVM) {
     let _ = VM.set(vm);
 }

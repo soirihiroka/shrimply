@@ -30,6 +30,17 @@ pub(super) enum InspectorListItem {
     Flat(gtk::Widget),
 }
 
+pub(super) fn video_card(
+    card: shrimply_inspector_core::VideoCard,
+    context: &InspectorContext,
+) -> InspectorListItem {
+    InspectorListItem::Item(Box::new(DocumentItem::new(
+        shrimply_inspector_document::video_item(card),
+        context,
+        super::control::section,
+    )))
+}
+
 pub(super) type RenderControls =
     fn(&shrimply_inspector_core::InspectorSection, &InspectorContext) -> Vec<gtk::Widget>;
 
@@ -208,11 +219,6 @@ impl<T: 'static> DefaultInspectorItem<T> {
 
     pub(super) fn actions(mut self, actions: Vec<HeaderAction>) -> Self {
         self.actions = actions;
-        self
-    }
-
-    pub(super) fn toggle(mut self, toggle: HeaderToggle) -> Self {
-        self.toggle = Some(toggle);
         self
     }
 

@@ -24,6 +24,7 @@ struct Args {
     frame: u64,
     ffmpeg: Option<PathBuf>,
     time: Option<Fraction>,
+    duration: Option<Fraction>,
     width: Option<u32>,
     height: Option<u32>,
     fps: Option<Fraction>,
@@ -169,6 +170,16 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
                 }
                 args.time = Some(time.value);
             }
+            "--duration" => {
+                let duration = Number::parse(value)?;
+                if duration.unit != sanim_core::Unit::Duration
+                    || duration.value <= Fraction::from(0)
+                {
+                    return Err("--duration requires a positive finite time, such as 10s".into());
+                }
+                sanim_core::math::temporal::viewport(duration.value)?;
+                args.duration = Some(duration.value);
+            }
             "--width" => args.width = Some(dimension()?),
             "--height" => args.height = Some(dimension()?),
             "--dpi" => args.dpi = Some(dimension()?),
@@ -247,6 +258,7 @@ fn execute(args: Args) -> Result<u8, String> {
     if args.command == "watch" {
         let runtime =
             sanim_runtime::Runtime::with_viewport(&args.path, args.viewport(), args.limits())?;
+        runtime.set_time_extent(args.duration)?;
         let mut lint_engine = Engine::new(args.viewport());
         args.configure(&mut lint_engine);
         if !args.sets.is_empty() {
@@ -355,10 +367,17 @@ fn execute(args: Args) -> Result<u8, String> {
         if args.json {
             println!(
                 "{}",
-                serde_json::json!({"ok":!args.deny_warnings || lint.warning_count()+report.performance.len()==0,"seconds":report.duration.to_string(),"frames":report.frames,"viewport":report.viewport,"dependencies":report.dependencies,"statistics":report.statistics,"diagnostics":lint.diagnostics,"performance":performance_diagnostics(&report.performance)})
+                serde_json::json!({"ok":!args.deny_warnings || lint.warning_count()+report.performance.len()==0,"seconds":report.duration.to_string(),"indefinite":report.indefinite,"frames":report.frames,"viewport":report.viewport,"dependencies":report.dependencies,"statistics":report.statistics,"diagnostics":lint.diagnostics,"performance":performance_diagnostics(&report.performance)})
             );
         } else {
-            println!("{}s ({} frames)", report.duration, report.frames);
+            if report.indefinite {
+                println!(
+                    "forever ({}s compiled prefix, {} frames)",
+                    report.duration, report.frames
+                );
+            } else {
+                println!("{}s ({} frames)", report.duration, report.frames);
+            }
             print_diagnostics(
                 &serde_json::to_value(&lint.diagnostics).map_err(|error| error.to_string())?,
             );
@@ -413,11 +432,23 @@ fn execute(args: Args) -> Result<u8, String> {
     }
     match args.command.as_str() {
         "inspect" => {
-            let mut value = serde_json::to_value(&prepared).map_err(|error| error.to_string())?;
-            value["diagnostics"] =
-                serde_json::to_value(&lint.diagnostics).map_err(|error| error.to_string())?;
-            value["performance"] =
-                serde_json::json!(performance_diagnostics(&prepared.performance));
+            let value = serde_json::json!({
+                "source":prepared.source,
+                "animation":prepared.animation,
+                "temporal_layout":prepared.temporal_layout,
+                "time_map":prepared.time_map,
+                "element_sources":prepared.element_sources,
+                "reflected":prepared.reflected,
+                "types":prepared.types,
+                "symbols":prepared.symbols,
+                "checks":prepared.checks,
+                "contracts":prepared.contracts,
+                "dependencies":prepared.dependencies,
+                "fingerprint":prepared.fingerprint,
+                "statistics":prepared.statistics,
+                "diagnostics":lint.diagnostics,
+                "performance":performance_diagnostics(&prepared.performance),
+            });
             println!(
                 "{}",
                 serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?
@@ -520,7 +551,7 @@ fn render(prepared: &Prepared, args: &Args, renderer: &mut Renderer) -> Result<u
     } else {
         scene.animation().frame_time(args.frame)?
     };
-    if time > scene.animation().duration {
+    if !scene.animation().indefinite && time > scene.animation().duration {
         return Err(format!(
             "requested time {time}s exceeds animation duration {}s",
             scene.animation().duration
@@ -554,6 +585,7 @@ impl Args {
     }
     fn configure(&self, engine: &mut Engine) {
         engine.limits = self.limits();
+        engine.available_duration = self.duration;
         if matches!(self.command.as_str(), "render" | "video" | "profile") {
             engine.preparation = sanim_lang::Preparation::Demand;
         }

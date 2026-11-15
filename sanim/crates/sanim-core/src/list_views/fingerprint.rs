@@ -103,12 +103,6 @@ enum GeometryKey<'a> {
     Leaf(&'a Geometry),
     Text(TextKey<'a>),
     Code(Vec<&'a str>, String),
-    Rectangle(
-        &'a Fraction,
-        &'a Fraction,
-        &'a crate::CornerRadius,
-        Vec<&'a str>,
-    ),
 }
 impl Serialize for CatalogEntry<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -148,17 +142,6 @@ impl Serialize for CatalogEntry<'_> {
                     .code(document, options)
                     .map_err(serde::ser::Error::custom)?,
             ),
-            Geometry::Rectangle {
-                width,
-                height,
-                radius,
-                children,
-            } => GeometryKey::Rectangle(
-                width,
-                height,
-                radius,
-                children.iter().map(|child| child.id.as_str()).collect(),
-            ),
             geometry @ Geometry::Text { .. } => GeometryKey::Text(TextKey(geometry, self.1)),
             geometry => GeometryKey::Leaf(geometry),
         };
@@ -180,12 +163,6 @@ enum VisualGeometry<'a> {
     Leaf(&'a Geometry),
     Text(TextKey<'a>),
     Code(Vec<VisualElement<'a>>, String),
-    Rectangle(
-        &'a Fraction,
-        &'a Fraction,
-        &'a crate::CornerRadius,
-        Vec<VisualElement<'a>>,
-    ),
 }
 impl Serialize for VisualElement<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -228,20 +205,6 @@ impl Serialize for VisualElement<'_> {
                 self.1
                     .code(document, options)
                     .map_err(serde::ser::Error::custom)?,
-            ),
-            Geometry::Rectangle {
-                width,
-                height,
-                radius,
-                children,
-            } => VisualGeometry::Rectangle(
-                width,
-                height,
-                radius,
-                children
-                    .iter()
-                    .map(|child| VisualElement(child, self.1))
-                    .collect(),
             ),
             geometry @ Geometry::Text { .. } => VisualGeometry::Text(TextKey(geometry, self.1)),
             geometry => VisualGeometry::Leaf(geometry),
@@ -359,6 +322,8 @@ impl Serialize for CodeEvents<'_> {
                     Ok((
                         event.start,
                         event.end,
+                        event.cycle,
+                        event.interpolation,
                         event.easing,
                         event.animation,
                         self.1.snapshot(&event.from)?,
@@ -389,6 +354,7 @@ impl Animation {
             height,
             rate,
             duration,
+            indefinite,
             background,
             layers,
             tracks,
@@ -405,10 +371,17 @@ impl Animation {
             height,
             rate,
             duration,
+            indefinite,
             background,
             layers
                 .iter()
-                .map(|layer| (&layer.birth, VisualElement(&layer.element, &signatures)))
+                .map(|layer| {
+                    (
+                        &layer.birth,
+                        &layer.cycle,
+                        VisualElement(&layer.element, &signatures),
+                    )
+                })
                 .collect::<Vec<_>>(),
             tracks,
             reactive,

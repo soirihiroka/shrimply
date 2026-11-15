@@ -151,6 +151,6 @@ Immediate signal assignments still commit immediately; use a timed ``.style`` ca
    add(code)
    code.scroll_to(line=40, duration=500ms)
 
-Provide both width and height for a clipped viewport. ``scroll=Vec2(...)`` accepts lengths or percentages of the overflow range. Scrolling shares the native layout, clipping and picking pipeline; offscreen glyph paths are culled.
+Provide both width and height for a clipped viewport. ``scroll=[x, y]`` accepts lengths or percentages of the overflow range. Scrolling shares the native layout, clipping and picking pipeline; offscreen glyph paths are culled.
 
 The headless ``sanim-data`` grammar adapter exposes ``Grammar::new``, ``parse_with`` and native parser registration for custom queries or parsers under a registered language identifier. Adding a new language name currently requires extending the core language registry and its grammar configuration. It keeps the actual native tree instead of copying it into a second generic AST. Syntax, shape and frame caches are byte- and entry-bounded; persistent snapshots share their source, trees, options and event maps.

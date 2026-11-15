@@ -5,7 +5,11 @@ use serde_json::{Value, json};
 use shrimply_i18n::text;
 use shrimply_inspector_core::{ControlKind, InspectorControl, InspectorController};
 
+pub mod graph;
+mod numeric;
 mod presentation;
+pub use numeric::Interaction;
+pub(crate) mod tts;
 pub use presentation::performance_request;
 
 fn item_key(document: &InspectorDocument, category: &str, item: &str) -> String {
@@ -49,6 +53,42 @@ pub fn snapshot(document: &InspectorDocument) -> Value {
     json!({"target":format!("{:?}",document.target),"title":text(&document.title),"categories":categories})
 }
 
+/// A native picker may only complete a file command currently advertised by
+/// this selection. Writable paths and toolkit-defined inspector actions fail.
+pub fn validate_file_command(
+    controller: &InspectorController,
+    document: &InspectorDocument,
+    command: &Value,
+) -> Result<(), String> {
+    fn advertised(value: &Value, command: &Value, enabled: bool) -> bool {
+        let enabled = enabled
+            && value
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+        if value["widget"] == "file"
+            && enabled
+            && value["editable"] == true
+            && value["command"] == *command
+        {
+            return true;
+        }
+        match value {
+            Value::Object(fields) => fields
+                .values()
+                .any(|value| advertised(value, command, enabled)),
+            Value::Array(values) => values
+                .iter()
+                .any(|value| advertised(value, command, enabled)),
+            _ => false,
+        }
+    }
+    if controller.target() != document.target || !advertised(&snapshot(document), command, true) {
+        return Err("File selection changed; open the inspector again".into());
+    }
+    Ok(())
+}
+
 /// Resolve controls anew; requests carry no writable property paths or indices
 /// into the project. A selection change, removed effect or changed kind fails.
 pub fn apply(
@@ -59,6 +99,33 @@ pub fn apply(
     if controller.target() != document.target {
         return Err("inspector selection changed; refresh the controls".into());
     }
+    let action = request["action"]
+        .as_str()
+        .ok_or("inspector action is required")?;
+    if request["control"].is_string() {
+        let control = resolve_control(document, request)?;
+        return apply_control(controller, document, control, action, request).map(|()| None);
+    }
+    let (_, header) = resolve_item(document, request)?;
+    apply_header(
+        controller,
+        document,
+        header.ok_or("inspector section has no header")?,
+        action,
+        request,
+    )
+}
+
+fn resolve_item<'a>(
+    document: &'a InspectorDocument,
+    request: &Value,
+) -> Result<
+    (
+        &'a shrimply_inspector_core::InspectorSection,
+        Option<&'a InspectorItem>,
+    ),
+    String,
+> {
     let id = request["item"]
         .as_str()
         .ok_or("inspector item is required")?;
@@ -72,36 +139,53 @@ pub fn apply(
                 ),
                 InspectorListItem::Flat(section) => (format!("flat:{index}"), section, None),
             };
-            if item_key(document, category.key, &key) != id {
-                continue;
+            if item_key(document, category.key, &key) == id {
+                return Ok((section, header));
             }
-            let action = request["action"]
-                .as_str()
-                .ok_or("inspector action is required")?;
-            if let Some(control_id) = request["control"].as_str() {
-                let control = section
-                    .controls
-                    .iter()
-                    .enumerate()
-                    .find(|(index, control)| control_key(control, *index) == control_id)
-                    .map(|(_, control)| control)
-                    .ok_or("inspector control is no longer available")?;
-                if !control.visible || !control.sensitive {
-                    return Err("inspector control is unavailable".into());
-                }
-                return apply_control(controller, document, control, action, request)
-                    .map(|()| None);
-            }
-            return apply_header(
-                controller,
-                document,
-                header.ok_or("inspector section has no header")?,
-                action,
-                request,
-            );
         }
     }
     Err("inspector item is no longer available".into())
+}
+
+pub(super) fn resolve_control<'a>(
+    document: &'a InspectorDocument,
+    request: &Value,
+) -> Result<&'a InspectorControl, String> {
+    let (section, _) = resolve_item(document, request)?;
+    let id = request["control"]
+        .as_str()
+        .ok_or("inspector control is required")?;
+    let control = section
+        .controls
+        .iter()
+        .enumerate()
+        .find(|(index, control)| control_key(control, *index) == id)
+        .map(|(_, control)| control)
+        .ok_or("inspector control is no longer available")?;
+    if !control.visible || !control.sensitive {
+        return Err("inspector control is unavailable".into());
+    }
+    Ok(control)
+}
+
+/// Resolve canonical inspector preview focus without exposing facet semantics to a host.
+pub fn preview_focus(
+    controller: &InspectorController,
+    document: &InspectorDocument,
+    request: &Value,
+) -> Option<(
+    shrimply_project_document::ItemAddress,
+    shrimply_preview_provider_skia::PreviewTarget,
+)> {
+    if controller.target() != document.target {
+        return None;
+    }
+    let focus = resolve_control(document, request)
+        .ok()?
+        .preview_focus
+        .as_ref()?;
+    let focused = controller.resolve_preview_focus(&document.target, focus)?;
+    Some((focused.item, focused.target))
 }
 
 fn apply_header(
@@ -154,6 +238,9 @@ fn apply_control(
     request: &Value,
 ) -> Result<(), String> {
     let target = &document.target;
+    if control.kind == ControlKind::TtsEditor {
+        return tts::apply(controller, target, control, action, request);
+    }
     if action == "edit" {
         let values = request["values"]
             .as_array()
@@ -167,7 +254,20 @@ fn apply_control(
             request["value"] = values[0].clone();
             "expression_source"
         } else if control.kind == ControlKind::ProjectSettings {
-            request["components"] = json!(values);
+            if values.len() != 3 {
+                return Err("project settings require dimensions and a frame rate".into());
+            }
+            let rate: shrimply_math_core::Fraction = values[2]
+                .as_str()
+                .expect("editor values are text")
+                .parse()
+                .map_err(|_| "invalid project frame rate")?;
+            request["components"] = json!([
+                values[0],
+                values[1],
+                shrimply_math_core::fraction_numerator(rate).to_string(),
+                shrimply_math_core::fraction_denominator(rate).to_string()
+            ]);
             "settings"
         } else if !control.components.is_empty() {
             if values.len() != control.components.len() {

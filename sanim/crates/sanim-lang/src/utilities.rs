@@ -1,9 +1,11 @@
 //! Bounded native design utilities. Explicit constructor arguments always win.
+mod gradient;
 use crate::{
     native::Context,
     native_types,
     prelude::{Builtin, Execution, Parameter, Timing},
 };
+pub(crate) use gradient::Gradient;
 use imbl::OrdMap;
 use sanim_core::{paint::MAX_GRADIENT_STOPS, *};
 fn parameter(name: &'static str, ty: Type, required: bool) -> Parameter {
@@ -22,7 +24,7 @@ pub(crate) fn builtins() -> Vec<Builtin> {
             parameter("stops", fields["stops"].clone(), false),
         ],
         result: Paint::gradient_type(),
-        schedule: false,
+        state_effect: false,
         timing: Timing::default(),
         content: Default::default(),
         execute: Execution::Native(gradient),
@@ -278,9 +280,19 @@ const FAMILIES: &[Family] = &[
 pub struct Description {
     pub token: String,
     pub properties: Vec<(String, String)>,
+    pub note: Option<String>,
 }
 impl Description {
+    pub fn property_names(&self) -> impl Iterator<Item = &str> {
+        self.properties
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .chain(self.note.iter().map(|_| "fill"))
+    }
     pub fn detail(&self) -> String {
+        if let Some(note) = &self.note {
+            return note.clone();
+        }
         self.properties
             .iter()
             .map(|(name, value)| format!("{name}={value}"))
@@ -288,6 +300,9 @@ impl Description {
             .join(", ")
     }
     pub fn markdown(&self) -> String {
+        if let Some(note) = &self.note {
+            return format!("Native gradient utility `{}`.\n\n{note}", self.token);
+        }
         format!(
             "```sanim\n{}\n```\n\nNative utility `{}`. Numeric sizes use logical **pt**, independent of output resolution; `%` sizes use the parent layout box. Explicit properties override utilities.",
             self.detail(),
@@ -297,6 +312,13 @@ impl Description {
 }
 /// Describe a valid utility, including target-element compatibility checks.
 pub fn describe(element: &str, token: &str) -> Result<Description, String> {
+    if let Some(note) = gradient::description(element, token)? {
+        return Ok(Description {
+            token: token.into(),
+            properties: vec![],
+            note: Some(note),
+        });
+    }
     fn literal(expression: &crate::ast::Expr) -> String {
         use crate::ast::ExprKind;
         match &expression.kind {
@@ -317,6 +339,7 @@ pub fn describe(element: &str, token: &str) -> Result<Description, String> {
     }
     Ok(Description {
         token: token.into(),
+        note: None,
         properties: lower(element, token, Span::default())?
             .into_iter()
             .map(|(name, value)| (name, literal(&value)))
@@ -355,7 +378,7 @@ pub fn completions(element: &str, prefix: &str) -> Vec<Description> {
             values.extend(["full", "25%", "50%", "75%", "100%"].map(str::to_owned));
         }
         if matches!(family.values, Values::Color | Values::Border) {
-            values.extend(Color::names().map(str::to_owned));
+            values.extend(Color::names().map(str::to_ascii_lowercase));
         }
         tokens.extend(
             values
@@ -363,6 +386,7 @@ pub fn completions(element: &str, prefix: &str) -> Vec<Description> {
                 .map(|value| format!("{}{value}", family.prefix)),
         );
     }
+    tokens.extend(gradient::completions(prefix));
     tokens
         .into_iter()
         .filter(|token| token.starts_with(prefix))
@@ -378,11 +402,7 @@ pub(crate) fn lower(
     span: Span,
 ) -> Result<Vec<(String, crate::ast::Expr)>, String> {
     use crate::ast::{Expr, ExprKind};
-    let expression = |kind| Expr {
-        cache_id: crate::ast::next_expr_identity(),
-        kind,
-        span,
-    };
+    let expression = |kind| Expr::new(kind, span);
     let text = |value: &str| expression(ExprKind::String(value.into()));
     let number = |value: String| expression(ExprKind::Number(value));
     let color = |value: &str| -> Result<Expr, String> {
@@ -397,14 +417,6 @@ pub(crate) fn lower(
     let mut set = |key: &str, value: Expr| {
         args.push((key.to_owned(), value));
     };
-    if ["bg-gradient-", "from-", "via-", "to-"]
-        .iter()
-        .any(|prefix| token.starts_with(prefix))
-    {
-        return Err(format!(
-            "gradient utility '{token}' is not supported; use fill={{LinearGradient(...)}} instead"
-        ));
-    }
     if let Some((_, utilities)) = PRESETS.iter().find(|(name, _)| *name == token) {
         for utility in *utilities {
             match utility {
@@ -528,4 +540,9 @@ fn unknown(token: &str) -> String {
     format!(
         "unknown native utility '{token}'; use a native preset such as flex, or {families}. Numeric sizes are nonnegative logical pt; w-, h- and basis- also accept percentages/full."
     )
+}
+
+/// Whether native utility tokens or an explicit fill occupy an exclusive slot.
+pub fn conflicts(existing: &str, candidate: &str) -> bool {
+    gradient::conflicts(existing, candidate)
 }

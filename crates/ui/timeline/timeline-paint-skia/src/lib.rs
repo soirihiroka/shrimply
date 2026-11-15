@@ -39,6 +39,7 @@ pub const TRACK_LABEL_TOGGLE_X: f64 = TRACK_LABEL_BUTTON_START_X;
 pub const TRACK_LABEL_ADD_X: f64 = TRACK_LABEL_BUTTON_START_X + TRACK_LABEL_BUTTON_STRIDE;
 pub const TRACK_LABEL_RECORD_X: f64 = TRACK_LABEL_BUTTON_START_X + TRACK_LABEL_BUTTON_STRIDE * 2.0;
 pub const LABEL_WIDTH: f64 = TRACK_LABEL_RECORD_X + TRACK_LABEL_BUTTON_SIZE + TRACK_LABEL_PADDING_X;
+pub const COMPACT_LABEL_WIDTH: f64 = TRACK_INDEX_COLUMN_WIDTH;
 pub const TIMELINE_PADDING_LEFT: f64 = 2.0;
 pub const TIMELINE_X: f64 = LABEL_WIDTH + TIMELINE_PADDING_LEFT;
 const LABEL_FONT_SIZE: f32 = 12.0;
@@ -49,6 +50,17 @@ const LABEL_INSET: f64 = 4.0;
 pub struct Viewport {
     pub scale: ruler::TimelineScale,
     pub scroll_y: f64,
+    pub track_controls_progress: f64,
+}
+
+impl Viewport {
+    pub fn label_width(self) -> f64 {
+        math::track_label_width(self.track_controls_progress)
+    }
+
+    pub fn timeline_x(self) -> f64 {
+        self.label_width() + TIMELINE_PADDING_LEFT
+    }
 }
 
 #[derive(Clone, Copy)]

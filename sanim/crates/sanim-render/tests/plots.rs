@@ -5,12 +5,15 @@ use sanim_render::{Options, Renderer};
 #[test]
 fn batched_curves_render_and_reveal_without_closing_the_path() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim",r#"
+    files.insert(
+        "main.sanim",
+        r#"
 bg(Color("transparent"))
-let p=Polyline(points=[Vec2(-30pt,20pt),Vec2(0pt,-20pt),Vec2(30pt,20pt)],width=3pt,fill=Color("blue3"))
-Create(p,duration=1s,ease="linear")
+let p=Polyline(points=[[-30pt, 20pt],[0pt, -20pt],[30pt, 20pt]],width=3pt,fill=Color("blue3"))
+p.create(duration=1s, ease="linear")
 wait(1s)
-"#);
+"#,
+    );
     let prepared = Engine::new(Viewport {
         width: 100,
         height: 100,

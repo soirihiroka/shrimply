@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources};
 use sanim_render::{Options, Renderer};
 fn animation(source: &str, width: u32, height: u32) -> sanim_core::Animation {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::new(Viewport {
         width,
         height,
@@ -27,8 +27,8 @@ fn pixel(frame: &sanim_render::Frame, x: usize, y: usize) -> &[u8] {
 #[test]
 fn markup_gradients_rounding_borders_and_labels_render_natively() {
     let source = r#"bg(Color("transparent"))
-let card=<Rect width={100pt} height={50pt} pill border-2 border-light1 fill={LinearGradient(from=Color("blue3"),to=Color("orange3"))}><Label font_size={12pt}>native</Label></Rect>
-add(card)
+let card=<Box width={100pt} height={50pt} pill border-2 border-light1 fill={LinearGradient(from=Color("blue3"),to=Color("orange3"))} x_align={Align.Center} y_align={Align.Center}><Label font_size={12pt}>native</Label></Box>
+Animation(children=[card])
 wait(1s)"#;
     let image = frame(source, 160, 100);
     assert_eq!(pixel(&image, 31, 26)[3], 0);
@@ -48,8 +48,8 @@ wait(1s)"#;
 #[test]
 fn relative_sizes_resolve_under_external_resizing_and_pills_remain_round() {
     let source = r#"bg(Color("transparent"))
-let card=<Rect w-50% h-50% pill bg-blue3/>
-add(card)
+let card=<Box w-50% h-50% pill bg-blue3 x_align={Align.Center} y_align={Align.Center}/>
+Animation(children=[card])
 wait(1s)"#;
     let small = frame(source, 200, 100);
     let large = frame(source, 400, 200);
@@ -59,23 +59,19 @@ wait(1s)"#;
     assert!(pixel(&large, 200, 100)[3] > 0);
     let animation = animation(source, 200, 100);
     let laid_out = animation.layout(0.into(), 400.into(), 200.into()).unwrap();
-    let Geometry::Rectangle {
-        width,
-        height,
-        radius,
-        ..
-    } = laid_out[0].geometry.as_ref()
-    else {
-        panic!("Rect")
+    let Geometry::Box { radius, .. } = laid_out[0].geometry.as_ref() else {
+        panic!("Box")
     };
-    assert_eq!((*width, *height), (200.into(), 100.into()));
-    assert_eq!(radius.resolve(*width, *height), 50.into());
+    let width = laid_out[0].layout.width.unwrap().value;
+    let height = laid_out[0].layout.height.unwrap().value;
+    assert_eq!((width, height), (200.into(), 100.into()));
+    assert_eq!(radius.resolve(width, height), 50.into());
 }
 #[test]
 fn native_content_layout_and_container_opacity_are_shared() {
     let source = r#"bg(Color("transparent"))
-let card=<Rect opacity={0.5} w-160 h-70 rounded-lg flex flex-row items-center justify-between p-10 bg-blue3><Circle radius={8pt} fill="orange3"/><Label font_size={16pt}>native</Label></Rect>
-add(card)
+let card=<Box opacity={0.5} w-160 h-70 rounded-lg flex flex-row items-center justify-between p-10 bg-blue3 x_align={Align.Center} y_align={Align.Center}><Box fill="orange3" width={2*(8pt)} height={2*(8pt)} rounded-full x_align={Align.Center} y_align={Align.Center}/><Label font_size={16pt}>native</Label></Box>
+Animation(children=[card])
 wait(1s)"#;
     let animation = animation(source, 240, 140);
     let layout = animation
@@ -99,8 +95,8 @@ wait(1s)"#;
 #[test]
 fn percentage_signal_sizes_resolve_after_sampling_at_each_viewport() {
     let source = r#"mut width=25%
-let shape=<Rect width={width} height={40pt} pill bg-blue3/>
-add(shape)
+let shape=<Box width={width} height={40pt} pill bg-blue3 x_align={Align.Center} y_align={Align.Center}/>
+Animation(children=[shape])
 animate(width,to=75%,duration=1s,ease="linear")"#;
     let animation = animation(source, 200, 100);
     for (time, viewport, expected) in [
@@ -111,16 +107,16 @@ animate(width,to=75%,duration=1s,ease="linear")"#;
         let laid = animation
             .layout(time, Fraction::from(viewport as u32), 100.into())
             .unwrap();
-        let Geometry::Rectangle { width, .. } = laid[0].geometry.as_ref() else {
-            panic!("Rect")
-        };
-        assert_eq!(*width, Fraction::from(expected as u32));
+        assert_eq!(
+            laid[0].layout.width.unwrap().value,
+            Fraction::from(expected as u32)
+        );
     }
 }
 #[test]
 fn borders_are_included_in_scaled_verification_and_flow_extents() {
     let animation = animation(
-        "let shape=<Rect width={20pt} height={10pt} scale={2} border-4/>\nadd(shape)\nwait(1s)",
+        "let shape=<Box width={20pt} height={10pt} scale={2} border-4 fill=\"light1\" x_align={Align.Center} y_align={Align.Center}/>\nAnimation(children=[shape])\nwait(1s)",
         100,
         100,
     );

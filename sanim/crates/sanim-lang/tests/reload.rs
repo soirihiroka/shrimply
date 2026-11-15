@@ -108,7 +108,7 @@ fn source_comments_publish_new_provenance_without_visual_changes() {
 #[test]
 fn reflected_patch_reports_changed_elements() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let tint: Color=reflect(Color(\"red\"))\nlet marker = Circle(id= \"marker\", fill= tint)\nadd(marker)\n");
+    files.insert("main.sanim","let tint: Color=reflect(Color(\"red\"))\nlet marker = Box(id=\"marker\", fill=tint, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(
@@ -131,7 +131,7 @@ fn warm_prepare_reuses_assets_and_expressions() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let data = read<List<Number>>(\"data.json\")\nlet result = len(data) * 2\n",
+        "let data = read<List<Number>>(\"data.json\")\nlet result = len(data) * 2\n\nAnimation()",
     );
     files.insert("data.json", "[1,2]");
     let mut engine = Engine::default();
@@ -185,7 +185,7 @@ fn work_warnings_have_source_locations() {
 #[test]
 fn cyclic_import_fails_with_chain() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "import \"other\" as other\n");
+    files.insert("main.sanim", "import \"other\" as other\n\nAnimation()");
     files.insert("other.sanim", "import \"main\" as main\n");
     let e = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -199,8 +199,11 @@ fn cyclic_import_fails_with_chain() {
 #[test]
 fn imported_helpers_can_schedule_when_called() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "import \"lib\" as lib\nlib.pause()\n");
-    files.insert("lib.sanim", "fn pause(): Unit { wait(1s) }\n");
+    files.insert(
+        "main.sanim",
+        "import \"lib\" as lib\nlib.pause()\n\nAnimation()",
+    );
+    files.insert("lib.sanim", "fn pause(): Animation { return wait(1s) }\n");
     let p = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -210,7 +213,7 @@ fn imported_helpers_can_schedule_when_called() {
 #[test]
 fn viewport_changes_report_all_affected_elements() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "add(Circle(id= \"a\"))\n");
+    files.insert("main.sanim", "Animation(children=[Box(id=\"a\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\n");
     let mut session = Session::new("main.sanim");
     session.engine.viewport.width = 100;
     session.engine.viewport.height = 100;
@@ -227,7 +230,7 @@ fn viewport_changes_report_all_affected_elements() {
 #[test]
 fn parent_changes_report_descendant_dependencies() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","let offset: Length=reflect(0pt)\nlet child = Circle(id= \"child\")\nadd(Box(id= \"parent\", children= [child], position= Vec2(offset, 0pt)))\n");
+    files.insert("main.sanim","let offset: Length=reflect(0pt)\nlet child = Box(id=\"child\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[Box(id= \"parent\", children= [child], position= [offset, 0pt])])\n");
     let mut session = Session::new("main.sanim");
     session.poll(&files);
     session.set(
@@ -251,16 +254,16 @@ fn reactive_cell_track_edits_report_bound_elements_but_not_unbound_cells() {
     for bound in [true, false] {
         let program = |turns| {
             format!(
-                "mut phase=0deg\nsig size=32pt+8pt*sin(phase)\nlet shape=Rect(width={},height=32pt)\nadd(shape)\nanimate(phase,to={turns}deg,duration=1s)",
+                "mut phase=0deg\nsig size=32pt+8pt*sin(phase)\nlet shape=Box(width={}, height=32pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[shape])\nanimate(phase,to={turns}deg,duration=1s)",
                 if bound { "size" } else { "32pt" }
             )
         };
         let mut files = MemorySources::default();
-        files.insert("main.sanim", program(360));
+        files.insert("main.sanim", format!("{}\nAnimation()", program(360)));
         let mut session = Session::new("main.sanim");
         assert!(matches!(session.poll(&files), Reload::Updated { .. }));
         let old = session.current().unwrap().clone();
-        files.insert("main.sanim", program(720));
+        files.insert("main.sanim", format!("{}\nAnimation()", program(720)));
         let Reload::Updated {
             prepared,
             changed_elements,
@@ -285,11 +288,11 @@ fn reactive_cell_track_edits_report_bound_elements_but_not_unbound_cells() {
 fn reactive_edits_report_future_mounted_list_items_and_exclude_unmounted_catalogs() {
     let program = |turns| {
         format!(
-            "mut phase=0deg\nsig size=32pt+8pt*sin(phase)\nlet future=Rect(width=size,height=32pt)\nlet hidden_item=Rect(width=size,height=32pt)\nmut items:List<Element>=[]\nmut hidden_items:List<Element>=[]\nlet view=Box(children=items,width=100pt,height=100pt)\nlet hidden_view=Box(children=hidden_items,width=100pt,height=100pt)\nadd(view)\nwait(1s)\nitems=append(items,future)\nhidden_items=append(hidden_items,hidden_item)\nanimate(phase,to={turns}deg,duration=1s)"
+            "mut phase=0deg\nsig size=32pt+8pt*sin(phase)\nlet future=Box(width=size, height=32pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet hidden_item=Box(width=size, height=32pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmut items:List<Element>=[]\nmut hidden_items:List<Element>=[]\nlet view=Box(children=items,width=100pt,height=100pt)\nlet hidden_view=Box(children=hidden_items,width=100pt,height=100pt)\nAnimation(children=[view])\nwait(1s)\nitems=append(items,future)\nhidden_items=append(hidden_items,hidden_item)\nanimate(phase,to={turns}deg,duration=1s)"
         )
     };
     let mut files = MemorySources::default();
-    files.insert("main.sanim", program(360));
+    files.insert("main.sanim", format!("{}\nAnimation()", program(360)));
     let mut session = Session::new("main.sanim");
     assert!(matches!(session.poll(&files), Reload::Updated { .. }));
     let old = session.current().unwrap().clone();
@@ -298,7 +301,7 @@ fn reactive_edits_report_future_mounted_list_items_and_exclude_unmounted_catalog
         old.animation.layers[0].element.find("future").is_none(),
         "item must be absent from the static initial tree"
     );
-    files.insert("main.sanim", program(720));
+    files.insert("main.sanim", format!("{}\nAnimation()", program(720)));
     let Reload::Updated {
         changed_elements, ..
     } = session.poll(&files)

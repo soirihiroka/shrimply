@@ -2,7 +2,8 @@ use sanim_lang::{ast::*, parser};
 
 #[test]
 fn recovery_retains_canonical_declarations_and_nested_call_context() {
-    let text = "fn helper(value:Number):Number {return value}\nlet amount=1\nlet dot=Circle(radius=helper(";
+    let text =
+        "fn helper(value:Number):Number {return value}\nlet amount=1\nlet dot=Box(width=helper(";
     let recovered = parser::parse_recovering("main.sanim", text, 100_000);
     assert!(recovered.diagnostic.is_some());
     assert_eq!(recovered.module.statements.len(), 2);
@@ -12,7 +13,7 @@ fn recovery_retains_canonical_declarations_and_nested_call_context() {
     assert_eq!(inner.argument, 0);
     assert_eq!(
         recovered.pending_calls[0].argument_name.as_deref(),
-        Some("radius")
+        Some("width")
     );
     assert!(parser::parse("main.sanim", &text[..recovered.prefix_end], 100_000).is_ok());
 }

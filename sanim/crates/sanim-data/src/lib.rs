@@ -329,21 +329,6 @@ fn convert(
             };
             Ok(Value::Fraction(fraction))
         }
-        Type::Vector(n, unit) => {
-            let values = value.as_array().filter(|v| v.len() == *n).ok_or_else(bad)?;
-            let unit = unit.unwrap_or(Unit::Number);
-            let values = values
-                .iter()
-                .enumerate()
-                .map(|(i, v)| {
-                    *budget = budget
-                        .checked_sub(1)
-                        .ok_or("decoded value limit exceeded")?;
-                    floating(v, unit).map_err(|e| format!("{path}[{i}]: {e}"))
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            Value::from_vector(values, unit)
-        }
         Type::Matrix4 => {
             let rows = value.as_array().filter(|v| v.len() == 4).ok_or_else(bad)?;
             let mut matrix = [[0.0; 4]; 4];
@@ -518,24 +503,6 @@ pub fn to_json(value: &Value) -> Result<Json, String> {
             serde_json::json!({"variant":tag,"fields":fields.iter().map(to_json).collect::<Result<Vec<_>,_>>()?})
         }
         Value::Fraction(value) => Json::String(value.to_string()),
-        Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_) => {
-            let (values, unit) = value.vector()?;
-            Json::Array(
-                values
-                    .iter()
-                    .map(|v| {
-                        if unit == Unit::Number {
-                            serde_json::to_value(v).map_err(|e| e.to_string())
-                        } else {
-                            to_json(&Value::Number(Number {
-                                value: sanim_core::math::from_f64(*v)?,
-                                unit,
-                            }))
-                        }
-                    })
-                    .collect::<Result<_, String>>()?,
-            )
-        }
         Value::Matrix4(matrix) => serde_json::to_value(matrix).map_err(|e| e.to_string())?,
         Value::List(_) | Value::Array { .. } => Json::Array(
             value
@@ -594,14 +561,14 @@ fn floating(value: &Json, unit: Unit) -> Result<f64, String> {
         Json::String(value) => {
             let number = Number::parse(value)?;
             if number.unit != unit {
-                return Err(format!("expected {unit:?} vector component"));
+                return Err(format!("expected {unit:?} numeric component"));
             }
             sanim_core::math::to_f64(number.value)?
         }
-        _ => return Err("expected numeric vector or matrix component".into()),
+        _ => return Err("expected numeric List or Matrix4 component".into()),
     };
     if !value.is_finite() {
-        return Err("vector and matrix components must be finite".into());
+        return Err("numeric List and Matrix4 components must be finite".into());
     }
     Ok(value)
 }

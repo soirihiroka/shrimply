@@ -108,6 +108,11 @@ pub const OPTIONS: &[OptionDefinition] = &[
         summary: "PNG or MP4 destination (required for render/video/watch)",
     },
     OptionDefinition {
+        name: "duration",
+        kind: "string",
+        summary: "External time viewport, e.g. 10s (required for indefinite video)",
+    },
+    OptionDefinition {
         name: "ffmpeg",
         kind: "string",
         summary: "FFmpeg executable for video (default ffmpeg)",
@@ -171,6 +176,7 @@ pub(crate) fn options_for(command: &str) -> impl Iterator<Item = &'static Option
         "indent-width" | "line-width" | "tabs" => matches!(command, "fmt" | "lint" | "check"),
         "output" => matches!(command, "render" | "video" | "watch"),
         "ffmpeg" => command == "video",
+        "duration" => command != "fmt",
         "frame" | "time" => matches!(command, "render" | "watch"),
         "cycles" => command == "watch",
         "samples" => command == "profile",

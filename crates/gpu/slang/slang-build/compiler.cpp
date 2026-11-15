@@ -18,6 +18,7 @@ enum class Target
     Host,
     Vulkan,
     VulkanPortable,
+    VulkanWordStorage,
 };
 
 struct CompileRequest
@@ -219,7 +220,8 @@ static bool reflect_type(
 static int compile(const CompileRequest& request)
 {
     const bool cuda = request.target == Target::Cuda;
-    const bool vulkan = request.target == Target::Vulkan || request.target == Target::VulkanPortable;
+    const bool word_storage = request.target == Target::VulkanWordStorage;
+    const bool vulkan = request.target == Target::Vulkan || request.target == Target::VulkanPortable || word_storage;
     const bool spirv = request.target == Target::Spirv || vulkan;
 
     Slang::ComPtr<slang::IGlobalSession> global_session;
@@ -235,7 +237,11 @@ static int compile(const CompileRequest& request)
         entry.value.intValue0 = value;
         options.push_back(entry);
     };
-    option(slang::CompilerOptionName::Optimization, SLANG_OPTIMIZATION_LEVEL_HIGH);
+    // Older Vulkan compilers reject aggressively inlined physical-pointer loops.
+    // Preserve function boundaries in the word-storage compatibility path; the
+    // device driver still optimizes the resulting native GPU instructions.
+    option(slang::CompilerOptionName::Optimization,
+        word_storage ? SLANG_OPTIMIZATION_LEVEL_NONE : SLANG_OPTIMIZATION_LEVEL_HIGH);
     if (vulkan)
     {
         option(slang::CompilerOptionName::GLSLForceScalarLayout, 1);
@@ -254,7 +260,8 @@ static int compile(const CompileRequest& request)
     {
     case Target::Spirv:
     case Target::Vulkan:
-    case Target::VulkanPortable: target.format = SLANG_SPIRV; break;
+    case Target::VulkanPortable:
+    case Target::VulkanWordStorage: target.format = SLANG_SPIRV; break;
     case Target::Cuda: target.format = SLANG_CUDA_SOURCE; break;
     case Target::Metal: target.format = SLANG_METAL; break;
     case Target::Host: target.format = SLANG_CPP_SOURCE; break;
@@ -265,7 +272,7 @@ static int compile(const CompileRequest& request)
     if (cuda)
         target.floatingPointMode = SLANG_FLOATING_POINT_MODE_PRECISE;
     if (spirv)
-        target.profile = global_session->findProfile(SPIRV_PROFILE);
+        target.profile = global_session->findProfile(word_storage ? "spirv_1_3" : SPIRV_PROFILE);
     slang::SessionDesc description = {};
     description.defaultMatrixLayoutMode = cuda || request.target == Target::Host
         ? SLANG_MATRIX_LAYOUT_ROW_MAJOR : SLANG_MATRIX_LAYOUT_COLUMN_MAJOR;
@@ -276,11 +283,12 @@ static int compile(const CompileRequest& request)
     // Physical pointers remain native device addresses. The portable variant
     // uses 32-bit buffer indices on GPUs without shaderInt64.
     const slang::PreprocessorMacroDesc vulkan_macros[] = {
-        {"SHRIMPLY_VULKAN", "1"}, {"SHRIMPLY_PORTABLE_INDICES", "1"}};
+        {"SHRIMPLY_VULKAN", "1"}, {"SHRIMPLY_PORTABLE_INDICES", "1"},
+        {"SHRIMPLY_WORD_STORAGE", "1"}};
     if (vulkan)
     {
         description.preprocessorMacros = vulkan_macros;
-        description.preprocessorMacroCount = request.target == Target::VulkanPortable ? 2 : 1;
+        description.preprocessorMacroCount = word_storage ? 3 : request.target == Target::VulkanPortable ? 2 : 1;
     }
     Slang::ComPtr<slang::ISession> session;
     if (SLANG_FAILED(global_session->createSession(description, session.writeRef())))

@@ -71,6 +71,7 @@ pub fn page(
         .use_subtitle(true)
         .build();
     device.set_sensitive(false);
+    shrimply_components_gtk::ui::adaptive_choice(&device);
 
     let factory_handlers = Rc::new(RefCell::new(HashMap::new()));
     device_factory.connect_setup(|_, item| {

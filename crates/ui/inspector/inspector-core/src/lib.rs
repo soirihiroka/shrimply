@@ -8,6 +8,7 @@ pub mod camera_source;
 pub mod caption;
 pub mod comment;
 pub mod document;
+mod edit_transaction;
 pub mod file_selection;
 pub mod font_cache;
 pub mod font_selector;
@@ -22,7 +23,7 @@ pub mod list;
 #[path = "video/manim_parameters.rs"]
 pub mod manim_parameters;
 mod model;
-mod model_catalog;
+pub mod model_catalog;
 pub mod paint;
 pub mod project;
 mod refresh;
@@ -42,6 +43,7 @@ pub mod transform;
 pub mod transition;
 pub mod tts;
 mod value;
+pub use edit_transaction::{InspectorEditTransaction, InspectorGraphEdit};
 pub mod video;
 pub mod visual_modifiers;
 

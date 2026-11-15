@@ -28,9 +28,6 @@ pub(crate) enum BoolTarget {
         mutated: fn(&mut Project, SelectedItem),
     },
     ItemVisibility,
-    Background {
-        value_id: Uuid,
-    },
     Layer {
         id: Uuid,
         path: String,
@@ -47,12 +44,6 @@ impl BoolTarget {
         match self {
             Self::ItemValue { get, .. } => get(project, key),
             Self::ItemVisibility => Some(&item.visibility),
-            Self::Background { value_id } => {
-                let VideoItemContent::Background(background) = &item.content else {
-                    return None;
-                };
-                background.generator.boolean(*value_id)
-            }
             Self::Layer { id, path, .. } => {
                 let VideoItemContent::LayeredImage(image) = &item.content else {
                     return None;
@@ -76,13 +67,6 @@ impl BoolTarget {
         match self {
             Self::ItemValue { get_mut, .. } => get_mut(project, key),
             Self::ItemVisibility => Some(&mut project.video_item_mut(&key)?.visibility),
-            Self::Background { value_id } => {
-                let item = project.video_item_mut(&key)?;
-                let VideoItemContent::Background(background) = &mut item.content else {
-                    return None;
-                };
-                background.generator.boolean_mut(*value_id)
-            }
             Self::Layer { id, path } => {
                 let item = project.video_item_mut(&key)?;
                 let VideoItemContent::LayeredImage(image) = &mut item.content else {
@@ -111,7 +95,6 @@ impl BoolTarget {
         match self {
             Self::ItemValue { scope, .. } => (*scope).to_string(),
             Self::ItemVisibility => "item".to_string(),
-            Self::Background { value_id } => format!("background:{value_id}"),
             Self::Layer { path, .. } => format!("layered-image:{path}"),
         }
     }

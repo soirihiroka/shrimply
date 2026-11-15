@@ -6,7 +6,8 @@ use sanim_runtime::{
 };
 use shrimply_asset::Asset;
 use shrimply_project_document::project::{
-    CanvasSize, Time, VideoItem, VideoItemContent, generated_source_time_with_duration,
+    CanvasSize, RepeatStrategy, Time, VideoItem, VideoItemContent,
+    generated_source_time_with_extent, generated_time_viewport,
 };
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -17,6 +18,7 @@ pub enum Status {
     Ready(Arc<Recording>),
 }
 
+mod events;
 mod feedback;
 pub mod inspection;
 #[cfg(test)]
@@ -30,7 +32,9 @@ pub struct Source {
     runtime: Runtime,
     observation: Arc<sanim_runtime::Observation>,
     published: bool,
+    event_publication: Arc<events::Publication>,
     viewport: sanim_core::Viewport,
+    time_extent: sanim_core::Fraction,
     waker: Option<crate::generated::SourceWake>,
     renderer: Renderer,
     scene: Option<(String, Scene)>,
@@ -51,16 +55,20 @@ impl Source {
         };
         let runtime =
             Runtime::with_viewport(item.file.path(), viewport.clone(), Default::default())?;
+        let time_extent = generated_time_viewport(item).seconds;
+        runtime.set_time_extent(Some(time_extent))?;
         if !settings.parameters.is_empty() {
             runtime.set_inputs(settings.parameters.clone())?;
         }
-        Ok(Self {
+        let mut source = Self {
             file: item.file.clone(),
             parameters: settings.parameters.clone(),
             observation: Arc::new(runtime.observe()),
             runtime,
             published: false,
+            event_publication: Arc::default(),
             viewport,
+            time_extent,
             waker: None,
             renderer: Renderer::default(),
             scene: None,
@@ -70,10 +78,20 @@ impl Source {
             export: None,
             feedback: None,
             inspection: None,
-        })
+        };
+        source.set_waker(None);
+        Ok(source)
     }
     pub fn set_waker(&mut self, wake: Option<crate::generated::SourceWake>) {
-        self.runtime.set_waker(wake.clone());
+        let observation = self.observation.clone();
+        let publication = self.event_publication.clone();
+        let host = wake.clone();
+        self.runtime.set_waker(Some(Arc::new(move || {
+            publication.update(&observation.snapshot());
+            if let Some(wake) = &host {
+                wake();
+            }
+        })));
         self.waker = wake;
     }
     pub fn needs_update(&self) -> bool {
@@ -111,6 +129,12 @@ impl Source {
             self.runtime.set_viewport(viewport.clone())?;
             self.viewport = viewport;
         }
+        let time_extent = generated_time_viewport(item).seconds;
+        if self.time_extent != time_extent {
+            self.export = None;
+            self.runtime.set_time_extent(Some(time_extent))?;
+            self.time_extent = time_extent;
+        }
         let VideoItemContent::Sanim(settings) = &item.content else {
             return Err("Sanim source received another clip type".into());
         };
@@ -128,6 +152,11 @@ impl Source {
             prepared
         } else {
             let mut state = self.runtime.snapshot();
+            if !strict {
+                self.event_publication
+                    .configure(item, canvas, state.requested_inputs);
+                self.event_publication.update(&state);
+            }
             // Exports wait for preparation; interactive preview never blocks on compilation.
             if strict && state.preparing {
                 const PREPARATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -174,13 +203,7 @@ impl Source {
             }
             prepared
         };
-        let Some(time) = generated_source_time_with_duration(
-            item,
-            position,
-            Time {
-                seconds: prepared.animation.duration,
-            },
-        ) else {
+        let Some(time) = sample_time(item, position, &prepared) else {
             return Ok(Status::Empty);
         };
         let key = format!(
@@ -207,11 +230,7 @@ impl Source {
         options.width = canvas.width;
         options.height = canvas.height;
         (options.logical_width, options.logical_height) = scene.animation().logical_size();
-        let frame = self.renderer.record(
-            scene,
-            time.seconds.min(prepared.animation.duration),
-            &options,
-        )?;
+        let frame = self.renderer.record(scene, time, &options)?;
         if !strict {
             let state = self.runtime.snapshot();
             if !state.preparing && state.diagnostic.is_some() {
@@ -221,7 +240,7 @@ impl Source {
         self.inspection = Some(inspection::FrameSource::new(
             item,
             prepared.clone(),
-            time.seconds.min(prepared.animation.duration),
+            time,
             self.viewport.clone(),
             &self.observation,
         ));
@@ -278,4 +297,24 @@ impl crate::generated::GeneratedVisual for RecordedVisual {
     ) {
         self.0.draw(canvas);
     }
+}
+
+/// Preview and inspection must use exactly the same source clock.
+fn sample_time(
+    item: &VideoItem,
+    position: Time,
+    prepared: &sanim_runtime::sanim_lang::Prepared,
+) -> Option<sanim_core::Fraction> {
+    let repeat_prefix = matches!(
+        item.repeat_strategy,
+        RepeatStrategy::Repeat | RepeatStrategy::PingPong
+    );
+    let extent = if repeat_prefix {
+        Some(Time {
+            seconds: prepared.animation.duration,
+        })
+    } else {
+        prepared.source_extent().map(|seconds| Time { seconds })
+    };
+    generated_source_time_with_extent(item, position, extent).map(|time| time.seconds)
 }

@@ -7,7 +7,7 @@ use objc2_app_kit::{
     NSPasteboardTypeString, NSPopUpButton, NSProgressIndicator, NSProgressIndicatorStyle, NSSlider,
     NSTextField, NSTextView, NSWorkspace,
 };
-use objc2_foundation::{NSPoint, NSString, NSURL, ns_string};
+use objc2_foundation::{NSNumber, NSPoint, NSString, NSURL, ns_string};
 use shrimply_timeline_skia::{ContextMenuEntry, ContextMenuRequest, TIMELINE_CLIPBOARD_MARKER};
 use std::sync::mpsc::{self, TryRecvError};
 
@@ -43,13 +43,16 @@ impl CanvasView {
             self.open_preview_context_menu(event);
             return;
         }
-        let point = self.point(event);
+        self.open_timeline_context_menu(self.point(event), false);
+    }
+
+    pub(super) fn open_timeline_context_menu(&self, point: glam::Vec2, touch: bool) {
         let definition = {
             let mut content = self.ivars().content.borrow_mut();
             let Content::Timeline(scene) = &mut *content else {
                 return;
             };
-            scene.prepare_context_menu(point)
+            scene.prepare_context_menu_for_input(point, touch)
         };
         if definition.sections.is_empty() {
             return;
@@ -73,7 +76,7 @@ impl CanvasView {
                         let item = unsafe {
                             NSMenuItem::initWithTitle_action_keyEquivalent(
                                 NSMenuItem::alloc(self.mtm()),
-                                &NSString::from_str(action.label()),
+                                &NSString::from_str(shrimply_i18n::text(action.label()).as_ref()),
                                 Some(sel!(chooseCanvasContext:)),
                                 ns_string!(""),
                             )
@@ -85,6 +88,16 @@ impl CanvasView {
                                 .expect("menu action index fits NSInteger"),
                         );
                         item.setEnabled(action.enabled);
+                        if let Some(checked) = action.checked {
+                            unsafe {
+                                item.setRepresentedObject(Some(&NSNumber::new_bool(checked)));
+                            }
+                            item.setState(if checked {
+                                NSControlStateValueOn
+                            } else {
+                                NSControlStateValueOff
+                            });
+                        }
                         unsafe {
                             item.setTarget(Some(self));
                         }
@@ -102,7 +115,7 @@ impl CanvasView {
                         let label = NSTextField::labelWithString(
                             &NSString::from_str(&format!(
                                 "{}{}",
-                                control.label(),
+                                shrimply_i18n::text(control.label()),
                                 if control.mixed() { " — Mixed" } else { "" }
                             )),
                             self.mtm(),
@@ -150,7 +163,7 @@ impl CanvasView {
                         let item = unsafe {
                             NSMenuItem::initWithTitle_action_keyEquivalent(
                                 NSMenuItem::alloc(self.mtm()),
-                                &NSString::from_str(control.label()),
+                                &NSString::from_str(shrimply_i18n::text(control.label()).as_ref()),
                                 None,
                                 ns_string!(""),
                             )
@@ -162,11 +175,7 @@ impl CanvasView {
             }
         }
         // Native menus run a nested event loop; no scene/project borrow crosses it.
-        menu.popUpMenuPositioningItem_atLocation_inView(
-            None,
-            NSPoint::new(point.x.into(), point.y.into()),
-            Some(self),
-        );
+        super::super::menu_sheet::present(self, &menu, point, touch);
         let context_error = self.ivars().context_error.borrow_mut().take();
         let result = if let Some(error) = context_error {
             Err(error)

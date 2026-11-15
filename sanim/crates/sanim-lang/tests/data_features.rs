@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources};
 use std::collections::BTreeMap;
 fn run(text: &str) -> Result<sanim_lang::Prepared, sanim_core::Diagnostic> {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", text);
+    sources.insert("main.sanim", format!("{}\nAnimation()", text));
     sources.insert("rows.csv", "name,value\na,1\nb,2\na,3\n");
     Engine::default().prepare("main.sanim", &sources, &BTreeMap::new())
 }
@@ -103,7 +103,7 @@ fn yaml_toml_and_json_use_same_dynamic_access() {
         ("data.json", "{\"settings\":{\"count\":3}}"),
     ] {
         let mut sources = MemorySources::default();
-        sources.insert("main.sanim",format!("let d = read<Dict>({path:?})\nlet n = decode<Number>(d[\"settings\"][\"count\"])\nassert(n == 3)\n"));
+        sources.insert("main.sanim",format!("let d = read<Dict>({path:?})\nlet n = decode<Number>(d[\"settings\"][\"count\"])\nassert(n == 3)\n\nAnimation()"));
         sources.insert(path, data);
         Engine::default()
             .prepare("main.sanim", &sources, &BTreeMap::new())
@@ -113,7 +113,10 @@ fn yaml_toml_and_json_use_same_dynamic_access() {
 #[test]
 fn scalar_data_is_not_a_dictionary() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "let d = read<Dict>(\"data.json\")\n");
+    sources.insert(
+        "main.sanim",
+        "let d = read<Dict>(\"data.json\")\n\nAnimation()",
+    );
     sources.insert("data.json", "3");
     assert!(
         Engine::default()
@@ -141,7 +144,7 @@ fn dictionary_data_accepts_heterogeneous_arrays_and_null() {
 #[test]
 fn sql_preserves_large_integer_inputs() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","type Sample={value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nlet result=query(\"SELECT value FROM samples\",tables= {samples=samples})\nfor row in result { assert(decode<Number>(row[\"value\"]) == 9007199254740993) }\n");
+    files.insert("main.sanim","type Sample={value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nlet result=query(\"SELECT value FROM samples\",tables= {samples=samples})\nfor row in result { assert(decode<Number>(row[\"value\"]) == 9007199254740993) }\n\nAnimation()");
     files.insert("data.csv", "value\n9007199254740993\n");
     Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -161,7 +164,7 @@ fn sql_clock_keywords_are_rejected() {
 #[test]
 fn warm_query_cache_reuses_results_but_data_changes_invalidate() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","type Sample = {value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nlet result=query(\"SELECT SUM(value) AS total FROM samples\",tables= {samples=samples})\n");
+    files.insert("main.sanim","type Sample = {value: Number}\nlet samples=read<List<Sample>>(\"data.csv\")\nlet result=query(\"SELECT SUM(value) AS total FROM samples\",tables= {samples=samples})\n\nAnimation()");
     files.insert("data.csv", "value\n1\n");
     let mut engine = Engine::default();
     let first = engine
@@ -171,7 +174,7 @@ fn warm_query_cache_reuses_results_but_data_changes_invalidate() {
     let warm = engine
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
-    assert_eq!(warm.statistics.restored_statements, 2);
+    assert_eq!(warm.statistics.restored_statements, 3);
     assert_eq!(warm.statistics.executed_queries, 0);
     assert_eq!(warm.statistics.reused_queries, 0);
     assert_eq!(warm.statistics.operations, 0);

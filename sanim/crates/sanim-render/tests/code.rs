@@ -12,7 +12,7 @@ fn animation() -> sanim_core::Animation {
 print(main())
 """
 let view=CodeView(code=source,lang="python",font_size=18pt,line_numbers=false)
-add(view)
+Animation(children=[view])
 wait(1s)
 view.range(name="main").fold(duration=1s)
 wait(1s)
@@ -90,7 +90,7 @@ mut size=14pt
 mut tint=Color("blue3")
 sig source="def main():\n    return {number:d}\n\nprint(main())\n"
 let view=CodeView(code=source,lang="python",font_size=size,line_numbers=false,theme=CodeTheme(rules=[CodeRule("number",CodeStyle(fill=tint))]))
-add(view)
+Animation(children=[view])
 wait(1s)
 number=2
 size=18pt
@@ -130,7 +130,7 @@ fn custom_highlight_queries_participate_in_visual_and_native_endpoint_keys() {
     };
     use std::sync::Arc;
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let view=CodeView(code=\"answer = 1\",lang=\"python\",line_numbers=false)\nadd(view)\nwait(1s)\n");
+    files.insert("main.sanim", "let view=CodeView(code=\"answer = 1\",lang=\"python\",line_numbers=false)\nAnimation(children=[view])\nwait(1s)\n");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();
@@ -190,7 +190,7 @@ fn core_verification_never_proves_using_unresolved_code_children() {
     use sanim_core::verify::{Evidence, Predicate, Relation};
     let mut files = MemorySources::default();
     files.insert("after.txt", "a".repeat(200));
-    files.insert("main.sanim", "let view=CodeView(code=\"x\",lang=\"plain\",font_size=20pt,line_numbers=false)\nadd(view)\nwait(1s)\nview.patch(src=\"after.txt\",duration=1s)\nwait(1s)\n");
+    files.insert("main.sanim", "let view=CodeView(code=\"x\",lang=\"plain\",font_size=20pt,line_numbers=false)\nAnimation(children=[view])\nwait(1s)\nview.patch(src=\"after.txt\",duration=1s)\nwait(1s)\n");
     let prepared = Engine::new(Viewport {
         width: 640,
         height: 360,

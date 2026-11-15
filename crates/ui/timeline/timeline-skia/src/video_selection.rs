@@ -5,6 +5,15 @@ use shrimply_project_document::project::Project;
 use shrimply_timeline_edit::{TrackKind, selection_state::SharedSelectionState};
 use std::{cell::RefCell, rc::Rc};
 
+impl crate::scene::Scene {
+    pub fn selected_video_frame(
+        &self,
+        kind: VideoFrameSelection,
+    ) -> (Project, Time, Vec<uuid::Uuid>) {
+        prepare_selected_video_frame(&self.project, &self.player, &self.selection, kind)
+    }
+}
+
 pub fn prepare_selected_video_frame(
     project: &Rc<RefCell<Project>>,
     player_state: &SharedPlayerState,

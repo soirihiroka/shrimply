@@ -22,6 +22,33 @@ pub enum SnapSource {
     AudioAndVideo,
 }
 
+pub const SNAP_SOURCES: [(&str, &str, SnapSource); 3] = [
+    ("audio", "Audio cuts", SnapSource::Audio),
+    ("video", "Video cuts", SnapSource::Video),
+    ("both", "Audio and video cuts", SnapSource::AudioAndVideo),
+];
+
+pub const FOLLOW_CUTS_LABEL: &str = "Follow cuts";
+pub const SNAP_SOURCE_LABEL: &str = "Snap source";
+pub const NUMBER_FIELDS: [shrimply_components_core::presentation::NumberField; 2] = [
+    shrimply_components_core::presentation::NumberField {
+        key: "snap_tolerance",
+        label: "Snap tolerance",
+        minimum: "0",
+        maximum: "2",
+        step: "0.01",
+        digits: 2,
+    },
+    shrimply_components_core::presentation::NumberField {
+        key: "continue_threshold",
+        label: "Continue cut threshold",
+        minimum: "0",
+        maximum: "10",
+        step: "0.1",
+        digits: 1,
+    },
+];
+
 #[derive(Clone, Copy)]
 pub struct Options {
     pub chunked: bool,
@@ -42,6 +69,49 @@ impl Default for Options {
 }
 
 impl Options {
+    pub fn field_value(self, key: &str) -> shrimply_math_core::Fraction {
+        match key {
+            "snap_tolerance" => self.snap_tolerance.seconds,
+            "continue_threshold" => self.continue_threshold.seconds,
+            _ => unreachable!("transcription numeric field"),
+        }
+    }
+
+    pub fn set_field(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let mut next = *self;
+        match key {
+            "chunked" => {
+                next.chunked = value
+                    .parse()
+                    .map_err(|_| "Follow cuts requires a boolean")?
+            }
+            "snap_source" => {
+                next.snap_source = SNAP_SOURCES
+                    .iter()
+                    .find(|(id, _, _)| *id == value)
+                    .map(|(_, _, source)| *source)
+                    .ok_or("Unknown transcription snap source")?
+            }
+            "snap_tolerance" | "continue_threshold" => {
+                let seconds: shrimply_math_core::Fraction = value
+                    .parse()
+                    .map_err(|_| "Invalid transcription duration")?;
+                if !shrimply_math_core::fraction_is_finite(seconds) {
+                    return Err("Transcription duration must be finite".into());
+                }
+                let duration = Time { seconds };
+                if key == "snap_tolerance" {
+                    next.snap_tolerance = duration;
+                } else {
+                    next.continue_threshold = duration;
+                }
+            }
+            _ => return Err("Unknown transcription field".into()),
+        }
+        *self = next.validate()?;
+        Ok(())
+    }
+
     fn validate(self) -> Result<Self, String> {
         if self.snap_tolerance < Time::ZERO || self.snap_tolerance > Time::from_seconds(2) {
             return Err("Snap tolerance must be between 0 and 2 seconds".into());

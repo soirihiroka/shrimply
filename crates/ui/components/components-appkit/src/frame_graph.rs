@@ -1,6 +1,5 @@
 use crate::{
-    StringChoice, action, column_append, column_stack, controls::show_searchable_popover_at,
-    row_stack,
+    StringChoice, action, column_append, column_stack, controls::show_searchable_menu_at, row_stack,
 };
 use objc2::rc::{Retained, Weak};
 use objc2_app_kit::{NSButton, NSImage, NSLayoutConstraint, NSStackView};
@@ -91,6 +90,7 @@ impl FrameGraph {
                     interpolation,
                     x,
                     y,
+                    touch,
                 } = component_action.action
                 {
                     if let Some(view) = action_view.borrow().as_ref().and_then(Weak::load) {
@@ -101,7 +101,7 @@ impl FrameGraph {
                             component_action.component,
                             owner_id,
                             interpolation,
-                            NSPoint::new(x, y),
+                            (NSPoint::new(x, y), touch),
                             mtm,
                         );
                     }
@@ -327,7 +327,7 @@ fn show_interpolation_menu(
     component: usize,
     owner_id: uuid::Uuid,
     selected: Interpolation,
-    point: NSPoint,
+    (point, touch): (NSPoint, bool),
     mtm: MainThreadMarker,
 ) {
     let choices = Interpolation::KEYFRAME
@@ -339,9 +339,9 @@ fn show_interpolation_menu(
         .collect();
     let view = Weak::new(view);
     let host = view.load().expect("interpolation graph must be attached");
-    show_searchable_popover_at(
+    show_searchable_menu_at(
         &host,
-        point,
+        (point, touch),
         "Search interpolations",
         choices,
         selected.label().to_string(),
@@ -358,6 +358,7 @@ fn show_interpolation_menu(
                     interpolation,
                     x: point.x,
                     y: point.y,
+                    touch,
                 },
             });
             if let Some(view) = view.load() {

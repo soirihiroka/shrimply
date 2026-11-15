@@ -58,6 +58,15 @@ pub fn video_source_time_at(item: &VideoItem, position: Time) -> Option<Time> {
     )
 }
 
+/// External clip duration expressed on the generated source clock; offsets are a crop.
+pub fn generated_time_viewport(item: &VideoItem) -> Time {
+    let mut duration = scaled_time_delta(item.end.signed_sub(item.start), item.playback_speed);
+    if duration.seconds < FRACTION_ZERO {
+        duration.seconds = -duration.seconds;
+    }
+    duration
+}
+
 pub fn generated_source_time_at(item: &VideoItem, position: Time) -> Option<Time> {
     generated_source_time_with_duration(item, position, item.source_duration)
 }
@@ -67,18 +76,140 @@ pub fn generated_source_time_with_duration(
     position: Time,
     duration: Time,
 ) -> Option<Time> {
+    generated_source_time_with_extent(item, position, Some(duration))
+}
+
+/// Adjacent compiled events without expanding repeated clips into per-cycle arrays.
+/// Lookup is O(log events), including reverse playback and ping-pong repeats.
+#[derive(Clone, Copy)]
+pub struct GeneratedEventTiming {
+    pub start: Time,
+    pub end: Time,
+    pub animation_time_offset: Time,
+    pub playback_speed: Fraction,
+    pub repeat_strategy: RepeatStrategy,
+}
+impl From<&VideoItem> for GeneratedEventTiming {
+    fn from(item: &VideoItem) -> Self {
+        Self {
+            start: item.start,
+            end: item.end,
+            animation_time_offset: item.animation_time_offset,
+            playback_speed: item.playback_speed,
+            repeat_strategy: item.repeat_strategy,
+        }
+    }
+}
+pub fn generated_event_neighbors(
+    item: GeneratedEventTiming,
+    index: &shrimply_math_core::events::Index,
+    duration: Time,
+    position: Time,
+) -> [Option<Time>; 2] {
+    if index.is_empty() || playback_speed_is_zero(item.playback_speed) || item.end < item.start {
+        return [None, None];
+    }
+    let position = position.max(item.start).min(item.end);
+    let elapsed = item
+        .animation_time_offset
+        .saturating_add(scaled_time_delta(
+            position.signed_sub(item.start),
+            item.playback_speed,
+        ))
+        .seconds;
+    let mut neighbors = [None::<Time>; 2];
+    let mut branch = |base: Fraction, reverse: bool, period: Option<Fraction>| {
+        let wanted = if reverse {
+            base - elapsed
+        } else {
+            elapsed - base
+        };
+        let adjacent = index.neighbors_in(wanted, FRACTION_ZERO, duration.seconds);
+        for (boundary, base) in [
+            adjacent[0].map(|boundary| (boundary, base)).or_else(|| {
+                period
+                    .zip(index.neighbors_in(duration.seconds, FRACTION_ZERO, duration.seconds)[0])
+                    .map(|(period, boundary)| (boundary, base - period))
+            }),
+            adjacent[1].map(|boundary| (boundary, base)).or_else(|| {
+                period
+                    .zip(index.neighbors_in(FRACTION_ZERO, FRACTION_ZERO, duration.seconds)[1])
+                    .map(|(period, boundary)| (boundary, base + period))
+            }),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let source = if reverse {
+                base - boundary
+            } else {
+                base + boundary
+            };
+            let at = item.start.saturating_add(unscaled_time_delta(
+                Time { seconds: source }.signed_sub(item.animation_time_offset),
+                item.playback_speed,
+            ));
+            if at < item.start || at > item.end {
+                continue;
+            }
+            if at <= position {
+                neighbors[0] = Some(neighbors[0].map_or(at, |previous| previous.max(at)));
+            }
+            if at >= position {
+                neighbors[1] = Some(neighbors[1].map_or(at, |next| next.min(at)));
+            }
+        }
+    };
+    let repeating = matches!(
+        item.repeat_strategy,
+        RepeatStrategy::Repeat | RepeatStrategy::PingPong
+    );
+    if !repeating || duration <= Time::ZERO {
+        branch(FRACTION_ZERO, false, None);
+    } else {
+        let period = duration.seconds
+            * fraction_from_integer(if item.repeat_strategy == RepeatStrategy::PingPong {
+                2
+            } else {
+                1
+            });
+        if let Some(cycle) = fraction_floor_i64(elapsed / period) {
+            if item.repeat_strategy == RepeatStrategy::Repeat {
+                branch(fraction_from_integer(cycle) * period, false, Some(period));
+            } else {
+                for cycle in [cycle.checked_sub(1), Some(cycle), cycle.checked_add(1)]
+                    .into_iter()
+                    .flatten()
+                {
+                    let base = fraction_from_integer(cycle) * period;
+                    branch(base, false, None);
+                    if item.repeat_strategy == RepeatStrategy::PingPong {
+                        branch(base + period, true, None);
+                    }
+                }
+            }
+        }
+    }
+    neighbors
+}
+
+/// None is an explicitly indefinite source, so its source clock keeps advancing.
+pub fn generated_source_time_with_extent(
+    item: &VideoItem,
+    position: Time,
+    duration: Option<Time>,
+) -> Option<Time> {
     if playback_speed_is_zero(item.playback_speed) {
         return None;
     }
-    repeat_source_time(
-        Time::ZERO,
-        duration,
-        item.animation_time_offset.saturating_add(scaled_time_delta(
-            position.signed_sub(item.start),
-            item.playback_speed,
-        )),
-        item.repeat_strategy,
-    )
+    let elapsed = item.animation_time_offset.saturating_add(scaled_time_delta(
+        position.signed_sub(item.start),
+        item.playback_speed,
+    ));
+    match duration {
+        Some(duration) => repeat_source_time(Time::ZERO, duration, elapsed, item.repeat_strategy),
+        None => Some(elapsed),
+    }
 }
 
 pub fn audio_source_time(item: &AudioItem, position: Time) -> Time {

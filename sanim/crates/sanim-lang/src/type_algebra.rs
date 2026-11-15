@@ -158,14 +158,6 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
                 fields.keys().cloned().collect::<Vec<_>>().join(", ")
             )
         }),
-        Type::Vector(n, Some(unit))
-            if ["x", "y", "z", "w"]
-                .iter()
-                .take(n)
-                .any(|field| *field == name) =>
-        {
-            Ok(Type::Numeric(unit))
-        }
         Type::Fraction if matches!(name, "numerator" | "denominator") => {
             Ok(Type::Numeric(Unit::Number))
         }
@@ -190,8 +182,14 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
         }
         Type::Element => match name {
             "position" | "scroll" => Type::union([
-                Type::Vector(2, Some(Unit::Length)),
-                Type::Vector(2, Some(Unit::Percent)),
+                Type::List(
+                    Box::new(Type::Numeric(Unit::Length)),
+                    sanim_core::ListLength::Exact(2),
+                ),
+                Type::List(
+                    Box::new(Type::Numeric(Unit::Percent)),
+                    sanim_core::ListLength::Exact(2),
+                ),
             ]),
             "opacity" | "scale" => Ok(Type::Numeric(Unit::Number)),
             "rotation" => Ok(Type::Numeric(Unit::Angle)),

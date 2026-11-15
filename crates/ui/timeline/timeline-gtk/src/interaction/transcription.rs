@@ -1,13 +1,7 @@
 use super::*;
 use shrimply_components_gtk::{tr, ui::I18nAlertDialogExt};
 pub(super) use shrimply_timeline_skia::audio_selection::selected_audio_project;
-use shrimply_timeline_skia::transcription::{Handle, Options, SnapSource, Update};
-
-const SNAP_SOURCES: [(SnapSource, &str); 3] = [
-    (SnapSource::Audio, "Audio cuts"),
-    (SnapSource::Video, "Video cuts"),
-    (SnapSource::AudioAndVideo, "Audio and video cuts"),
-];
+use shrimply_timeline_skia::transcription::{Handle, Options, Update};
 
 pub(super) fn add_caption_item_context_actions(
     actions: &gio::SimpleActionGroup,
@@ -96,12 +90,15 @@ fn show_options(
             .unwrap_or(0) as u32,
     );
 
+    shrimply_components_gtk::ui::adaptive_choice(&model);
+
+    let defaults = Options::default();
     let chunked = adw::SwitchRow::new();
-    chunked.set_title(tr!("Follow cuts").as_ref());
-    chunked.set_active(true);
-    let snap_labels = SNAP_SOURCES
+    chunked.set_title(tr!(shrimply_timeline_skia::transcription::FOLLOW_CUTS_LABEL).as_ref());
+    chunked.set_active(defaults.chunked);
+    let snap_labels = shrimply_timeline_skia::transcription::SNAP_SOURCES
         .iter()
-        .map(|(_, label)| tr!(*label))
+        .map(|(_, label, _)| tr!(*label))
         .collect::<Vec<_>>();
     let snap_labels = snap_labels
         .iter()
@@ -109,17 +106,15 @@ fn show_options(
         .collect::<Vec<_>>();
     let snap_list = gtk::StringList::new(&snap_labels);
     let snap = adw::ComboRow::new();
-    snap.set_title(tr!("Snap source").as_ref());
+    snap.set_title(tr!(shrimply_timeline_skia::transcription::SNAP_SOURCE_LABEL).as_ref());
     snap.set_model(Some(&snap_list));
 
-    let tolerance = adw::SpinRow::with_range(0.0, 2.0, 0.01);
-    tolerance.set_title(tr!("Snap tolerance").as_ref());
-    tolerance.set_value(1.0);
-    tolerance.set_digits(2);
-    let threshold = adw::SpinRow::with_range(0.0, 10.0, 0.1);
-    threshold.set_title(tr!("Continue cut threshold").as_ref());
-    threshold.set_value(2.0);
-    threshold.set_digits(1);
+    shrimply_components_gtk::ui::adaptive_choice(&snap);
+
+    let [tolerance, threshold] =
+        shrimply_timeline_skia::transcription::NUMBER_FIELDS.map(|field| {
+            shrimply_components_gtk::ui::number_field_row(&field, defaults.field_value(field.key))
+        });
 
     let count = gtk::Label::new(None);
     count.set_halign(gtk::Align::Start);
@@ -201,14 +196,23 @@ fn options(
     tolerance: &adw::SpinRow,
     threshold: &adw::SpinRow,
 ) -> Options {
-    Options {
-        chunked: chunked.is_active(),
-        snap_source: SNAP_SOURCES
-            .get(snap.selected() as usize)
-            .map_or(SnapSource::Audio, |(source, _)| *source),
-        snap_tolerance: Time::from_seconds_f64(tolerance.value()),
-        continue_threshold: Time::from_seconds_f64(threshold.value()),
+    let mut options = Options::default();
+    for (key, value) in [
+        ("chunked", chunked.is_active().to_string()),
+        (
+            "snap_source",
+            shrimply_timeline_skia::transcription::SNAP_SOURCES[snap.selected() as usize]
+                .0
+                .to_owned(),
+        ),
+        ("snap_tolerance", tolerance.value().to_string()),
+        ("continue_threshold", threshold.value().to_string()),
+    ] {
+        options
+            .set_field(key, &value)
+            .expect("native transcription values are bounded");
     }
+    options
 }
 
 fn show_progress(

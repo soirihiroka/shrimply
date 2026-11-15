@@ -16,8 +16,15 @@ async function main(): Promise<void> {
     const tokens = (line: string) => grammar.tokenizeLine(line, INITIAL).tokens.map(token => ({ text: line.slice(token.startIndex, token.endIndex), scopes: token.scopes }));
     const has = (line: string, text: string, scope: string) => tokens(line).some(token => token.text === text && token.scopes.includes(scope));
     assert.ok(has('let duration = 4m1s', '4m1s', 'constant.numeric.duration.sanim'));
-    assert.ok(has('let marker = Circle(radius=12pt)', 'Circle', 'support.function.sanim'));
+    assert.ok(has('let marker = Box(width=24pt)', 'Box', 'support.function.sanim'));
     assert.ok(has('fn draw(): Unit {', 'draw', 'entity.name.function.sanim'));
+    assert.ok(has('let double = fn (value: Number): Number {', 'fn', 'keyword.declaration.function.sanim'));
+    assert.ok(!has('spawn', 'spawn', 'keyword.control.sanim'));
+    assert.ok(has('return <Animation flow="parallel">', 'Animation', 'entity.name.tag.sanim'));
+    assert.ok(has('before_dots.fade_in()', 'fade_in', 'entity.name.function.sanim'));
+    assert.ok(has('fn<mut, ref> increment(): Unit {', 'increment', 'entity.name.function.sanim'));
+    assert.ok(has('fn<mut, ref> increment(): Unit {', 'ref', 'storage.modifier.sanim'));
+    assert.ok(!has('background {', 'background', 'keyword.control.sanim'));
     assert.ok(has('#3584e4', '#3584e4', 'comment.line.number-sign.sanim'));
     assert.ok(!tokens('Color("#3584e4")').some(token => token.scopes.includes('comment.line.number-sign.sanim')));
     assert.ok(has('# ordinary comment', '# ordinary comment', 'comment.line.number-sign.sanim'));

@@ -8,7 +8,9 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use shrimply_math_core::{Fraction, time_from_frame};
-use shrimply_project_document::project::{Time, default_playback_speed, scaled_time_delta};
+use shrimply_project_document::project::{
+    Project, Time, default_playback_speed, scaled_time_delta,
+};
 
 pub type SharedPlayerState = Rc<RefCell<PlayerState>>;
 
@@ -387,4 +389,32 @@ fn update(state: &SharedPlayerState, change: impl FnOnce(&mut PlayerState) -> Op
             "player listener end {label} event={event:?}"
         ));
     }
+}
+
+pub fn change_history(
+    project: &Rc<RefCell<Project>>,
+    player: &SharedPlayerState,
+    change: fn(&mut Project) -> bool,
+) {
+    if !change(&mut project.borrow_mut()) {
+        return;
+    }
+    let (duration, frame_rate) = {
+        let project = project.borrow();
+        (project.duration(), project.fps)
+    };
+    refresh_project(
+        player,
+        ProjectChange {
+            duration: Some(duration),
+            frame_rate: Some(frame_rate),
+            audio: true,
+            audio_beats: true,
+            audio_waveforms: true,
+            video: true,
+            live_preview: false,
+            captions: true,
+            inspector: true,
+        },
+    );
 }

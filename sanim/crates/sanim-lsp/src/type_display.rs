@@ -74,9 +74,6 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
         Type::Series(inner) => format!("Series<{}>", compact(module, inner)),
         Type::Signal(inner) => format!("sig {}", compact(module, inner)),
         Type::DataFrame { row, .. } => format!("DataFrame<{}>", compact(module, row)),
-        Type::Vector(n, Some(unit)) => {
-            format!("Vec{n}<{}>", compact(module, &Type::Numeric(*unit)))
-        }
         Type::Union(types) => types
             .iter()
             .map(|ty| compact(module, ty))
@@ -87,7 +84,7 @@ pub(crate) fn compact(module: &AnalyzedModule, ty: &Type) -> String {
 }
 
 /// Source annotations have stricter syntax than display labels (no ellipses or unit hints).
-/// Do not offer an edit for internal/callable types the surface grammar cannot express.
+/// Offer annotations only when the surface grammar can preserve their static capabilities.
 pub(crate) fn annotation(module: &AnalyzedModule, ty: &Type) -> Option<String> {
     if let Some((name, _)) = module
         .checked
@@ -103,16 +100,39 @@ pub(crate) fn annotation(module: &AnalyzedModule, ty: &Type) -> Option<String> {
     let inner = |ty: &Type| annotation(module, ty);
     let container = |name: &str, ty: &Type| Some(format!("{name}<{}>", inner(ty)?));
     match ty {
-        Type::Unknown | Type::Function(_) | Type::Overloaded(_) | Type::Code(_) => None,
+        Type::Unknown | Type::Overloaded(_) | Type::Code(_) => None,
+        Type::Function(signature)
+            if signature.generics.is_empty() && signature.default_count == 0 =>
+        {
+            let parameters = signature
+                .parameters
+                .iter()
+                .map(|parameter| {
+                    Some(format!(
+                        "{}{}: {}",
+                        match parameter.kind {
+                            sanim_lang::ast::BindingKind::Let => "",
+                            sanim_lang::ast::BindingKind::Mut => "mut ",
+                            sanim_lang::ast::BindingKind::Sig => "sig ",
+                        },
+                        parameter.name,
+                        inner(&parameter.ty)?
+                    ))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!(
+                "fn({}): {}",
+                parameters.join(", "),
+                inner(&signature.result)?
+            ))
+        }
+        Type::Function(_) => None,
         Type::Numeric(_) | Type::RefinedNumeric(_) => {
             prelude::types().iter().find_map(|(name, definition)| {
                 matches!(definition, prelude::TypeDefinition::Plain(schema) if schema == ty)
                     .then(|| (*name).into())
             })
         }
-        Type::Vector(n, Some(unit)) => Some(format!("Vec{n}<{}>", inner(&Type::Numeric(*unit))?)),
-        // A unit-polymorphic vector cannot be annotated Vec2: that means Vec2<Number>.
-        Type::Vector(_, None) => None,
         Type::List(ty, length) => Some(match length {
             sanim_lang::core::ListLength::Unknown => format!("List<{}>", inner(ty)?),
             sanim_lang::core::ListLength::Exact(length) => format!("List<{},{length}>", inner(ty)?),
@@ -159,13 +179,7 @@ fn expanded(module: &AnalyzedModule, ty: &Type, depth: usize) -> String {
         Type::StringLiteral(_) => ty.to_string(),
         Type::Overloaded(signatures) => signatures
             .iter()
-            .map(|signature| {
-                format!(
-                    "{}  # duration: {}",
-                    Type::Function(signature.clone()),
-                    signature.duration
-                )
-            })
+            .map(|signature| Type::Function(signature.clone()).to_string())
             .collect::<Vec<_>>()
             .join("\n"),
         Type::Record(fields) => {

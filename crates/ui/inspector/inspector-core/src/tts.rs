@@ -240,6 +240,12 @@ pub fn editor_controls(settings: &TtsSettings, model: &TtsModel) -> Vec<TtsEdito
         .collect()
 }
 
+pub fn caption_editor_controls(settings: &TtsSettings, model: &TtsModel) -> Vec<TtsEditorControl> {
+    let mut model = model.clone();
+    model.inputs.retain(shrimply_tts::is_caption_input);
+    editor_controls(settings, &model)
+}
+
 pub fn edit_input(
     settings: &mut TtsSettings,
     model: &TtsModel,

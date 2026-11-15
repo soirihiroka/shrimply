@@ -4,11 +4,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.AndroidExternalSurface
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.KeyEvent
@@ -20,8 +21,13 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.core.view.WindowCompat
 
 private class EditorModel(context: android.content.Context, stress: Boolean, benchmark: Boolean) : ViewModel() {
     val timeline = TimelineSession(stress, benchmark)
@@ -48,7 +54,27 @@ class MainActivity : ComponentActivity() {
         timeline = model.timeline
         projects = model.projects
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xff80b8ff))) {
+            val context = LocalContext.current
+            val dark = isSystemInDarkTheme()
+            val colors = if (dark) dynamicDarkColorScheme(context)
+                else dynamicLightColorScheme(context)
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+            val palette = arrayOf(
+                "window_bg" to colors.surfaceContainerLowest, "window_fg" to colors.onSurface,
+                "view_bg" to colors.surfaceContainerLow, "view_fg" to colors.onSurface,
+                "alternate_bg" to colors.surfaceContainer, "button_bg" to colors.surfaceContainerHigh,
+                "button_fg" to colors.onSurface, "border" to colors.outlineVariant,
+                "accent_bg" to colors.primary, "accent_fg" to colors.onPrimary,
+            ).map { (key, color) -> key to color.toArgb().toUInt().toLong() }
+            LaunchedEffect(timeline.identity, dark, palette) {
+                timeline.request("native_palette", "dark" to dark, *palette.toTypedArray())
+            }
+            MaterialTheme(colorScheme = colors) {
                 Surface(Modifier.fillMaxSize()) {
                     if (benchmark) NativeSurface(timeline, Modifier.fillMaxSize())
                     else ProjectApp(timeline, projects)
@@ -62,12 +88,17 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier) {
+internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: Int = 0) {
+    val graph = role == 2
     val density = LocalDensity.current.density
     val viewConfiguration = android.view.ViewConfiguration.get(LocalContext.current)
     val focus = remember { FocusRequester() }
-    val mouseButton = remember { intArrayOf(0) }
+    val mouseButton = remember { intArrayOf(-1) }
     AndroidExternalSurface(modifier
+        .onGloballyPositioned { coordinates ->
+            val origin = coordinates.positionInRoot()
+            if (!graph) timeline.menuOrigin = DpOffset((origin.x / density).dp, (origin.y / density).dp)
+        }
         .focusRequester(focus)
         .onPreviewKeyEvent { key ->
             val event = key.nativeKeyEvent
@@ -78,9 +109,9 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier) {
                 KeyEvent.KEYCODE_FORWARD_DEL -> 127
                 else -> event.getUnicodeChar(event.metaState and KeyEvent.META_CTRL_MASK.inv())
             }
-            if (character == 0) return@onPreviewKeyEvent false
+            if (!graph && character == 0) return@onPreviewKeyEvent false
             val flags = (if (event.metaState and KeyEvent.META_CTRL_MASK != 0) 1 else 0) or (if (event.metaState and KeyEvent.META_SHIFT_MASK != 0) 2 else 0)
-            timeline.input(floatArrayOf(8f, 0f, 0f, character.toFloat(), flags.toFloat(), 0f))
+            timeline.input(floatArrayOf(if (graph) 28f else 8f, if (graph) event.keyCode.toFloat() else 0f, 0f, character.toFloat(), flags.toFloat(), 0f))
         }
         .focusable()
         .pointerInteropFilter { event ->
@@ -92,23 +123,24 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier) {
                 val kind = when (action) {
                     MotionEvent.ACTION_DOWN -> {
                         mouseButton[0] = when {
-                            event.buttonState and MotionEvent.BUTTON_SECONDARY != 0 -> 3
+                            event.buttonState and MotionEvent.BUTTON_SECONDARY != 0 -> if (graph) 2 else 3
                             event.buttonState and MotionEvent.BUTTON_TERTIARY != 0 -> 1
                             else -> 0
                         }
-                        if (mouseButton[0] == 3) 10f else 5f
+                        if (graph) 25f else if (mouseButton[0] == 3) 10f else 5f
                     }
-                    MotionEvent.ACTION_UP -> if (mouseButton[0] == 3) return@pointerInteropFilter true else 6f
-                    MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_ENTER -> 4f
-                    MotionEvent.ACTION_SCROLL -> 7f
-                    MotionEvent.ACTION_HOVER_EXIT -> 9f
-                    MotionEvent.ACTION_CANCEL -> 3f
+                    MotionEvent.ACTION_UP -> if (graph) 26f else if (mouseButton[0] == 3) return@pointerInteropFilter true else 6f
+                    MotionEvent.ACTION_MOVE, MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_ENTER -> if (graph) 24f else 4f
+                    MotionEvent.ACTION_SCROLL -> if (graph) 27f else 7f
+                    MotionEvent.ACTION_HOVER_EXIT -> if (graph) 30f else 9f
+                    MotionEvent.ACTION_CANCEL -> if (graph) 29f else 3f
                     else -> return@pointerInteropFilter true
                 }
                 val touchpad = event.isFromSource(InputDevice.SOURCE_TOUCHPAD)
                 val horizontal = event.getAxisValue(MotionEvent.AXIS_HSCROLL) * (if (touchpad) viewConfiguration.scaledHorizontalScrollFactor / density else 1f)
                 val vertical = -event.getAxisValue(MotionEvent.AXIS_VSCROLL) * (if (touchpad) viewConfiguration.scaledVerticalScrollFactor / density else 1f)
-                timeline.input(floatArrayOf(kind, event.x / density, event.y / density, if (kind == 7f) horizontal else mouseButton[0].toFloat(), (flags or (if (touchpad) 4 else 0)).toFloat(), vertical))
+                timeline.input(floatArrayOf(kind, event.x / density, event.y / density, if (kind == 7f || kind == 27f) horizontal else mouseButton[0].toFloat(), (flags or (if (touchpad) 4 else 0)).toFloat(), vertical))
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) mouseButton[0] = -1
             } else {
                 val batch = FloatArray(event.pointerCount * 6)
                 for (index in 0 until event.pointerCount) {
@@ -119,7 +151,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier) {
                         else -> 1f
                     }
                     val offset = index * 6
-                    batch[offset] = phase
+                    batch[offset] = phase + if (graph) 20f else 0f
                     batch[offset + 1] = event.getX(index) / density
                     batch[offset + 2] = event.getY(index) / density
                     batch[offset + 3] = event.getPointerId(index).toFloat()
@@ -129,9 +161,9 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier) {
             true
         }) {
         onSurface { surface, width, height ->
-            timeline.surface(0, surface, width, height, density)
-            surface.onChanged { w, h -> timeline.resize(0, w, h) }
-            surface.onDestroyed { timeline.surface(0, null, 0, 0, density) }
+            timeline.surface(role, surface, width, height, density)
+            surface.onChanged { w, h -> timeline.resize(role, w, h) }
+            surface.onDestroyed { timeline.surface(role, null, 0, 0, density) }
         }
     }
 }
@@ -139,7 +171,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier) {
 @Composable
 internal fun NativePreview(timeline: TimelineSession, modifier: Modifier) {
     val density = LocalDensity.current.density
-    AndroidExternalSurface(modifier) {
+    AndroidExternalSurface(modifier.previewInput(timeline)) {
         onSurface { surface, width, height ->
             timeline.surface(1, surface, width, height, density)
             surface.onChanged { w, h -> timeline.resize(1, w, h) }

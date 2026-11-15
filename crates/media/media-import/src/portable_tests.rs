@@ -71,7 +71,7 @@ fn data_dependent_sanim_duration_import_does_not_need_a_renderer() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("steps.csv"), "value\n1\n2\n3\n4\n").unwrap();
     let path = directory.path().join("source.sanim");
-    fs::write(&path, "type Step={value:Number}\nlet steps=read<List<Step>>(\"steps.csv\")\nlet marker_shape=Circle(radius=20pt)\nadd(marker_shape)\nrepeat len(steps) { wait(250ms) }\n").unwrap();
+    fs::write(&path, "type Step={value:Number}\nlet steps=read<List<Step>>(\"steps.csv\")\nlet marker_shape=Box(width=2*(20pt), height=2*(20pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker_shape])\nrepeat len(steps) { wait(250ms) }\n").unwrap();
     let canvas = CanvasSize {
         width: 1920,
         height: 1080,

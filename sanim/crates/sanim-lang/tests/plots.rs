@@ -2,12 +2,12 @@ use sanim_core::{Fraction, Geometry, Unit};
 use sanim_lang::{Engine, MemorySources};
 
 const SCALES: &str = r#"
-let xs=LinearScale(domain=Vec2(-4,4),range=Vec2(-200pt,200pt))
-let ys=LinearScale(domain=Vec2(0,1),range=Vec2(120pt,-120pt))
+let xs=LinearScale(domain=[-4, 4],range=[-200pt, 200pt])
+let ys=LinearScale(domain=[0, 1],range=[120pt, -120pt])
 "#;
 fn prepare(source: &str) -> sanim_lang::Prepared {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", format!("{SCALES}\n{source}"));
+    files.insert("main.sanim", format!("{SCALES}\n{source}\nAnimation()"));
     Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_or_else(|error| panic!("{error}"))
@@ -26,14 +26,14 @@ let density=DensityPlot(values=[-2,-1,0,1,2],bandwidth=0.6,x_scale=xs,y_scale=ys
 let normal=NormalCurve(x_scale=xs,y_scale=ys)
 let ecdf=ECDFPlot(values=[-2,0,0,2],x_scale=xs,y_scale=ys)
 let legend=Legend(labels=["Measured","Normal"],colors=[Color("blue3"),Color("orange3")])
-add(curve)
-add(area)
-add(band)
-add(histogram)
-add(density)
-add(normal)
-add(ecdf)
-add(legend)
+Animation(children=[curve])
+Animation(children=[area])
+Animation(children=[band])
+Animation(children=[histogram])
+Animation(children=[density])
+Animation(children=[normal])
+Animation(children=[ecdf])
+Animation(children=[legend])
 wait(1s)
 "#,
     );
@@ -60,7 +60,7 @@ wait(1s)
             .unwrap()
             .geometry
             .as_ref(),
-        Geometry::Rectangle { .. }
+        Geometry::Box { .. }
     ));
     assert!(prepared.animation.find("legend/label/1").is_some());
     assert_eq!(prepared.animation.duration, Fraction::from(1));
@@ -73,8 +73,8 @@ fn plot_and_scatter_share_exact_coordinates_despite_asymmetric_bounds() {
 let data=[{x=-3,y=0.2},{x=1,y=0.4}]
 let curve=LinePlot(data=data,x_scale=xs,y_scale=ys)
 let markers=Scatter(data=data,x_scale=xs,y_scale=ys)
-add(curve)
-add(markers)
+Animation(children=[curve])
+Animation(children=[markers])
 "#,
     );
     let elements = prepared
@@ -142,7 +142,7 @@ fn plot_errors_report_statistics_and_scaling_reasons() {
         ("let p=Legend(labels=[\"x\"],colors=[])", "exactly one"),
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", format!("{SCALES}\n{source}"));
+        files.insert("main.sanim", format!("{SCALES}\n{source}\nAnimation()"));
         let error = Engine::default()
             .prepare("main.sanim", &files, &Default::default())
             .unwrap_err();
@@ -156,10 +156,10 @@ fn histogram_empty_lists_and_range_inference_have_defined_behavior() {
     let prepared = prepare(
         r#"
 let domain=DataRange([2,4,6],padding=0.1,include_zero=true)
-assert(abs(domain.x + 0.6) < 0.0001)
-assert(abs(domain.y - 6.6) < 0.0001)
+assert(abs(domain[0] + 0.6) < 0.0001)
+assert(abs(domain[1] - 6.6) < 0.0001)
 let empty=Histogram(values=[],x_scale=xs,y_scale=ys,normalization="density")
-add(empty)
+Animation(children=[empty])
 "#,
     );
     assert!(
@@ -170,7 +170,7 @@ add(empty)
 #[test]
 fn native_statistics_reserve_cumulative_work_and_feed_performance_advice() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim",format!("{SCALES}\nrepeat 3 {{let curve=DensityPlot(values=[-2,-1.5,-1,-0.5,0,0.5,1,1.5,2,2.5],bandwidth=0.6,points=32,x_scale=xs,y_scale=ys)}}"));
+    files.insert("main.sanim",format!("{SCALES}\nrepeat 3 {{let curve=DensityPlot(values=[-2,-1.5,-1,-0.5,0,0.5,1,1.5,2,2.5],bandwidth=0.6,points=32,x_scale=xs,y_scale=ys)}}\nAnimation()"));
     let mut engine = Engine::new(Default::default());
     engine.limits.max_operations = 1000;
     let error = engine
@@ -185,7 +185,7 @@ fn native_statistics_reserve_cumulative_work_and_feed_performance_advice() {
             .iter()
             .any(|warning| warning.code == "P101" && warning.message.contains("Gaussian"))
     );
-    files.insert("main.sanim",format!("{SCALES}\nlet curve=DensityPlot(values=[-2,-1,0,1,2],bandwidth=0.6,points=32,x_scale=xs,y_scale=ys)\nadd(curve)"));
+    files.insert("main.sanim",format!("{SCALES}\nlet curve=DensityPlot(values=[-2,-1,0,1,2],bandwidth=0.6,points=32,x_scale=xs,y_scale=ys)\nAnimation(children=[curve])"));
     engine.limits.max_operations = 10_000;
     engine.limits.warn_operations = 100;
     let prepared = engine

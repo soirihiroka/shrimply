@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 fn animation(source: &str) -> Animation {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", source);
+    sources.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap()
@@ -15,7 +15,7 @@ fn animation(source: &str) -> Animation {
 #[test]
 fn future_and_transparent_geometry_is_prepared_only_when_drawn() {
     let animation = animation(
-        "add(Circle(radius=10pt))\nadd(Rect(width=17pt,height=9pt,opacity=0))\nwait(1s)\nadd(Rect(width=20pt,height=12pt))\nwait(1s)",
+        "Animation(children=[Box(width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nAnimation(children=[Box(width=17pt, height=9pt, opacity=0, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\nAnimation(children=[Box(width=20pt, height=12pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)",
     );
     let mut renderer = Renderer::default();
     let scene = renderer.prepare(animation).unwrap();
@@ -34,7 +34,7 @@ fn future_and_transparent_geometry_is_prepared_only_when_drawn() {
 #[test]
 fn stable_geometry_avoids_hashing_again_on_a_new_animated_frame() {
     let mut renderer = Renderer::default();
-    let scene = renderer.prepare(animation("let marker=Circle(radius=10pt)\nMoveTo(marker,Vec2(30pt,0pt),duration=1s,ease=\"linear\")")).unwrap();
+    let scene = renderer.prepare(animation("let marker=Box(width=2*(10pt), height=2*(10pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([30pt, 0pt], duration=1s, ease=\"linear\")")).unwrap();
     let options = Options::for_animation(scene.animation());
     renderer.record(&scene, 0.into(), &options).unwrap();
     assert_eq!(renderer.geometries_prepared, 1);
@@ -50,11 +50,11 @@ fn stable_geometry_avoids_hashing_again_on_a_new_animated_frame() {
 fn many_elements_sharing_one_path_keep_their_identity_hints_between_frames() {
     const ELEMENTS: usize = 1500;
     let circles = (0..ELEMENTS)
-        .map(|index| format!("Circle(id=\"dot_{index}\",radius=1pt)"))
+        .map(|index| format!("Box(id=\"dot_{index}\", width=2pt,height=2pt,radius=\"full\",fill=Color(\"light1\"))"))
         .collect::<Vec<_>>()
         .join(",");
     let source = format!(
-        "let dots=Box(children=[{circles}])\nMoveTo(dots,Vec2(30pt,0pt),duration=1s,ease=\"linear\")"
+        "let dots=Box(children=[{circles}])\ndots.move_to([30pt, 0pt], duration=1s, ease=\"linear\")"
     );
     let mut renderer = Renderer::default();
     let scene = renderer.prepare(animation(&source)).unwrap();
@@ -71,12 +71,8 @@ fn many_elements_sharing_one_path_keep_their_identity_hints_between_frames() {
 #[test]
 fn exceeding_the_identity_hint_budget_keeps_admitted_geometry_cached() {
     const ELEMENTS: usize = 9000;
-    let circles = (0..ELEMENTS)
-        .map(|index| format!("Circle(id=\"marker_{index}\",radius=1pt)"))
-        .collect::<Vec<_>>()
-        .join(",");
     let source = format!(
-        "let markers=Box(children=[{circles}])\nMoveTo(markers,Vec2(30pt,0pt),duration=1s,ease=\"linear\")"
+        "fn marker(index:Number):Element{{return Box(id=\"marker_{{index}}\",width=2pt,height=2pt,radius=\"full\",fill=Color(\"light1\"))}}\nlet markers=Box(children=range({ELEMENTS}).map(marker))\nmarkers.move_to([30pt, 0pt], duration=1s, ease=\"linear\")"
     );
     let mut renderer = Renderer::default();
     let scene = renderer.prepare(animation(&source)).unwrap();
@@ -95,7 +91,7 @@ fn exceeding_the_identity_hint_budget_keeps_admitted_geometry_cached() {
 #[test]
 fn dimensions_use_current_geometry_and_reuse_previous_content_on_reverse_seek() {
     let mut renderer = Renderer::default();
-    let scene = renderer.prepare(animation("mut radius=10pt\nlet marker=Circle(radius=radius)\nadd(marker)\nanimate(radius,to=20pt,duration=1s,ease=\"linear\")")).unwrap();
+    let scene = renderer.prepare(animation("mut radius=10pt\nlet marker=Box(width=2*(radius), height=2*(radius), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nanimate(radius,to=20pt,duration=1s,ease=\"linear\")")).unwrap();
     let options = Options::for_animation(scene.animation());
     renderer.record(&scene, 0.into(), &options).unwrap();
     renderer

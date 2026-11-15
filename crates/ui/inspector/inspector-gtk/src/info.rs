@@ -1,155 +1,74 @@
-use std::{path::PathBuf, thread};
+use std::path::PathBuf;
 
 use adw::prelude::*;
-use ffmpeg::{format, media};
-use ffmpeg_next as ffmpeg;
-use glam::UVec2;
 use gtk::glib;
 use shrimply_components_gtk::tr;
-use shrimply_media_info::FileInfo;
-use shrimply_project_document::project::{Asset, Time};
 
 use super::{
     InspectorContext,
     item::{InspectorListItem, flat},
 };
 
-pub(super) use shrimply_inspector_core::info::SourceMetadata;
-
 const ARTWORK_HEIGHT: i32 = 220;
+const INLINE_VALUE_MAX_CHARS: usize = 24;
 
-pub(super) struct ItemInfo {
-    pub(super) leading: Vec<gtk::Widget>,
-    pub(super) kind: &'static str,
-    pub(super) natural_duration: Option<Time>,
-    pub(super) start: Time,
-    pub(super) end: Time,
-    pub(super) source_offset: Option<Time>,
-    pub(super) dimensions: Option<UVec2>,
-    pub(super) file: Option<Asset>,
-    pub(super) source_metadata: SourceMetadata,
+pub(super) fn item(context: &InspectorContext) -> InspectorListItem {
+    let preferences = shrimply_editor_state::preferences::snapshot(&context.preferences);
+    let document = shrimply_inspector_document::document(
+        &context.inspector_core,
+        format_date,
+        &preferences.compute_server_url,
+        &preferences.last_tts_model,
+    );
+    let category = document
+        .categories
+        .into_iter()
+        .find(|category| category.icon == shrimply_inspector_document::CategoryIcon::Info)
+        .expect("inspected target has an information category");
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    for item in category.items {
+        let shrimply_inspector_document::InspectorListItem::Flat(section) = item else {
+            panic!("information document contains an editable card");
+        };
+        for widget in super::control::section(&section, context) {
+            content.append(&widget);
+        }
+    }
+    flat(content)
 }
 
-pub(super) fn item(context: &InspectorContext, info: ItemInfo) -> InspectorListItem {
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    let summary = adw::PreferencesGroup::new();
-    for leading in info.leading {
-        summary.add(&leading);
-    }
-    add_row(&summary, "Type", info.kind);
-    if let Some(address) = &context.selected_item {
-        add_row(&summary, "Item ID", &address.item_id().to_string());
-        add_row(&summary, "Track ID", &address.track_id().to_string());
-        if !address.sequence_path().is_empty() {
-            add_row(
-                &summary,
-                "Sequence Path",
-                &address
-                    .sequence_path()
-                    .iter()
-                    .map(uuid::Uuid::to_string)
-                    .collect::<Vec<_>>()
-                    .join(" / "),
-            );
-        }
-        if let Some((start, end)) = context.project.borrow().projected_item_times(address) {
-            add_row(
-                &summary,
-                "Timeline Start",
-                &crate::time_format::playback_time(start),
-            );
-            add_row(
-                &summary,
-                "Timeline End",
-                &crate::time_format::playback_time(end),
-            );
-        }
-    }
-    add_row(
-        &summary,
-        "Local Start",
-        &crate::time_format::playback_time(info.start),
-    );
-    add_row(
-        &summary,
-        "Local End",
-        &crate::time_format::playback_time(info.end),
-    );
-    if let Some(duration) = info.natural_duration {
-        add_row(
-            &summary,
-            "Natural Duration",
-            &crate::time_format::playback_time(duration),
-        );
-    }
-    add_row(
-        &summary,
-        "Timeline Duration",
-        &crate::time_format::playback_time(info.end.saturating_sub(info.start)),
-    );
-    if let Some(offset) = info.source_offset {
-        add_row(
-            &summary,
-            "Source Offset",
-            &crate::time_format::playback_time(offset),
-        );
-    }
-    if let Some(size) = info.dimensions.filter(|size| size.x > 0 && size.y > 0) {
-        add_row(&summary, "Dimensions", &format!("{} × {}", size.x, size.y));
-    }
-    content.append(&summary);
-
-    if let Some(file) = info.file.filter(|file| !file.path().as_os_str().is_empty()) {
-        content.append(&file_row(file.path().to_path_buf(), &tr!("File Location")));
-        let metadata = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        let loading = adw::PreferencesGroup::new();
-        let loading_row = adw::ActionRow::builder()
-            .title(tr!("File Metadata").as_ref())
-            .subtitle(tr!("Loading…").as_ref())
+pub(super) fn property_row(title: &str, value: &str) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(tr!(title).as_ref())
+        .use_markup(false)
+        .build();
+    if value.chars().count() <= INLINE_VALUE_MAX_CHARS && !value.contains('\n') {
+        let value = gtk::Label::builder()
+            .label(value)
+            .selectable(true)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .max_width_chars(INLINE_VALUE_MAX_CHARS as i32)
+            .xalign(1.0)
+            .valign(gtk::Align::Center)
             .build();
-        loading_row.add_suffix(&adw::Spinner::new());
-        loading.add(&loading_row);
-        metadata.append(&loading);
-        content.append(&metadata);
-
-        let revision = file.snapshot().ok().map(|snapshot| snapshot.revision());
-        let path = file.path().to_path_buf();
-        let (sender, receiver) = async_channel::bounded(1);
-        thread::spawn(move || {
-            let _ = sender.send_blocking(shrimply_media_info::inspect(&path, revision));
-        });
-        let weak_metadata = metadata.downgrade();
-        glib::spawn_future_local(async move {
-            let Ok(result) = receiver.recv().await else {
-                return;
-            };
-            let Some(metadata) = weak_metadata.upgrade() else {
-                return;
-            };
-            while let Some(child) = metadata.first_child() {
-                metadata.remove(&child);
-            }
-            match result {
-                Ok(file) => render_file_info(&metadata, &file, info.source_metadata),
-                Err(error) => {
-                    let group = adw::PreferencesGroup::builder()
-                        .title(tr!("Diagnostics").as_ref())
-                        .build();
-                    add_row(&group, "Metadata", &error);
-                    metadata.append(&group);
-                }
-            }
-        });
+        row.add_suffix(&value);
+    } else {
+        row.set_subtitle(value);
+        row.set_subtitle_selectable(true);
+        row.set_subtitle_lines(0);
     }
-
-    flat(content)
+    row
 }
 
 pub(super) fn file_row(path: PathBuf, label: &str) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();
     let row = adw::ActionRow::builder()
-        .title(label)
+        .title(tr!(label).as_ref())
         .subtitle(path.to_string_lossy())
+        .subtitle_selectable(true)
+        .subtitle_lines(0)
+        .use_markup(false)
         .build();
     let button = gtk::Button::builder()
         .icon_name("folder-open-symbolic")
@@ -172,30 +91,14 @@ pub(super) fn file_row(path: PathBuf, label: &str) -> adw::PreferencesGroup {
     group
 }
 
-fn render_file_info(container: &gtk::Box, info: &FileInfo, selected: SourceMetadata) {
-    let presentation = shrimply_inspector_core::info::media_info_presentation(info, format_date);
-    if let Some(image) = presentation.artwork
-        && let Some(group) = artwork(image.data, &tr!("Artwork"))
-    {
-        container.append(&group);
-    }
-    for info_group in presentation.groups {
-        let group = adw::PreferencesGroup::builder()
-            .title(tr!(&info_group.display_title(selected)).as_ref())
-            .build();
-        for row in info_group.rows {
-            add_row(&group, &row.label, &row.value);
-        }
-        container.append(&group);
-    }
-}
-
 pub(super) fn artwork(
     data: impl AsRef<[u8]> + Send + 'static,
     label: &str,
 ) -> Option<adw::PreferencesGroup> {
     let texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_owned(data)).ok()?;
-    let group = adw::PreferencesGroup::builder().title(label).build();
+    let group = adw::PreferencesGroup::builder()
+        .title(tr!(label).as_ref())
+        .build();
     let picture = gtk::Picture::for_paintable(&texture);
     picture.set_content_fit(gtk::ContentFit::Contain);
     picture.set_can_shrink(true);
@@ -204,32 +107,9 @@ pub(super) fn artwork(
     Some(group)
 }
 
-fn add_row(group: &adw::PreferencesGroup, title: &str, value: &str) {
-    group.add(
-        &adw::ActionRow::builder()
-            .title(tr!(title).as_ref())
-            .subtitle(value)
-            .build(),
-    );
-}
-
 pub(super) fn format_date(seconds: i64) -> Option<String> {
     glib::DateTime::from_unix_local(seconds)
         .ok()
         .and_then(|date| date.format("%x %X").ok())
         .map(|date| date.to_string())
-}
-
-pub(super) fn video_stream_count(file: &std::path::Path) -> usize {
-    format::input(file).map_or(0, |input| {
-        input
-            .streams()
-            .filter(|stream| stream.parameters().medium() == media::Type::Video)
-            .filter(|stream| {
-                !stream
-                    .disposition()
-                    .contains(format::stream::Disposition::ATTACHED_PIC)
-            })
-            .count()
-    })
 }

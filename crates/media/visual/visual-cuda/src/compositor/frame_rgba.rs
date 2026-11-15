@@ -3,11 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const FRAME_RENDER_AUDIO_SAMPLE_RATE: u32 = 48_000;
 
-pub struct RgbaVideoFrame {
-    pub width: i32,
-    pub height: i32,
-    pub pixels: Vec<u8>,
-}
+pub use shrimply_preview_render_core::capture::RgbaFrame as RgbaVideoFrame;
 
 pub fn render_project_rgba(
     project: &Project,
@@ -65,13 +61,7 @@ fn read_intel_frame(
     cancelled: &AtomicBool,
 ) -> Result<RgbaVideoFrame, String> {
     let mut compositor = shrimply_preview_render_vulkan::Compositor::new()?;
-    compositor.set_capture_target(target);
-    let rendered = compositor.render_accurate(project, position, 0, cancelled)?;
-    Ok(RgbaVideoFrame {
-        width: i32::try_from(rendered.width).map_err(|_| "frame width is too large")?,
-        height: i32::try_from(rendered.height).map_err(|_| "frame height is too large")?,
-        pixels: compositor.renderer.readback(&rendered.buffer)?,
-    })
+    compositor.render_rgba(project, position, target, cancelled)
 }
 
 fn read_cuda_frame(

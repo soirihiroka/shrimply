@@ -274,11 +274,7 @@ impl Sink {
         self.state.keyword.is_some_and(|keyword| {
             !matches!(
                 keyword,
-                Keyword::Reflect
-                    | Keyword::Animate
-                    | Keyword::True
-                    | Keyword::False
-                    | Keyword::None
+                Keyword::Reflect | Keyword::True | Keyword::False | Keyword::None
             )
         })
     }

@@ -3,8 +3,10 @@ use super::*;
 #[test]
 fn changing_native_font_epoch_invalidates_retained_text_prefixes() {
     for source in [
-        "let typeface=Font()\nlet label=Text(\"Epoch test\",font=typeface)\nadd(label)\nwait(1s)",
-        "let label=Text(\"Epoch test\")\nadd(label)\nwait(1s)",
+        "let typeface=Font()\nlet label=Label(\"Epoch test\",font=typeface)\nAnimation(children=[label])\nwait(1s)",
+        "let label=Label(\"Epoch test\")\nAnimation(children=[label])\nwait(1s)",
+        "fn caption():Element{return Label(\"Epoch test\")}\nlet label=caption()\nAnimation(children=[label])\nwait(1s)",
+        "fn snippet():Element{return CodeView(code=r\"print(1)\",lang=\"python\")}\nlet label=snippet()\nAnimation(children=[label])\nwait(1s)",
     ] {
         let mut files = MemorySources::default();
         files.insert("main.sanim", source);

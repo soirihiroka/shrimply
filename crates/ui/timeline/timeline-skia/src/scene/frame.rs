@@ -3,6 +3,34 @@ use crate::drawing::{TimelineInput, active_virtual_tracks, draw_timeline};
 use crate::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 
 pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, frame: Frame<'_>) {
+    scene.source_events.take();
+    if let Some((started, tools, controls, monitor)) = scene.controls_animation {
+        let (tools, tools_active) =
+            shrimply_components_skia::animate_scroll(shrimply_components_skia::ScrollAnimation {
+                source: tools,
+                target: if scene.show_tools { 1.0 } else { 0.0 },
+                elapsed: started.elapsed(),
+            });
+        let (controls, controls_active) =
+            shrimply_components_skia::animate_scroll(shrimply_components_skia::ScrollAnimation {
+                source: controls,
+                target: if scene.show_track_controls { 1.0 } else { 0.0 },
+                elapsed: started.elapsed(),
+            });
+        let (monitor, monitor_active) =
+            shrimply_components_skia::animate_scroll(shrimply_components_skia::ScrollAnimation {
+                source: monitor,
+                target: if scene.show_audio_monitor { 1.0 } else { 0.0 },
+                elapsed: started.elapsed(),
+            });
+        scene.audio_monitor_progress = monitor;
+        scene.tools_progress = tools;
+        scene.view.track_controls_progress = controls;
+        scene.track_controls_animating = tools_active || controls_active || monitor_active;
+        if !scene.track_controls_animating {
+            scene.controls_animation = None;
+        }
+    }
     let playback_performance = scene.performance.snapshot();
     let project = scene.project.clone();
     let player_state = scene.player.clone();
@@ -14,7 +42,7 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
     let width = f64::from(size.x);
     let height = f64::from(size.y);
     let accent_color = frame.accent_color;
-    let timeline_width = timeline_width(width);
+    let timeline_width = timeline_width(width, runtime.view);
     if timeline_width <= 0.0 {
         return;
     }

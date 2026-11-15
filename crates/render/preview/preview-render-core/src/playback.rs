@@ -1,3 +1,5 @@
+pub mod toolbar;
+
 use crate::{
     CompositeAccuracy,
     worker::{

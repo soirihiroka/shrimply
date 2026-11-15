@@ -33,8 +33,14 @@ impl Buffer {
         }
         let mut external = vk::ExternalMemoryBufferCreateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD);
+        // Word-backed sub-byte shader access may touch the last partial word.
+        let storage_size = if device.word_storage {
+            size.next_multiple_of(size_of::<u32>())
+        } else {
+            size
+        };
         let mut info = vk::BufferCreateInfo::default()
-            .size(size as u64)
+            .size(storage_size as u64)
             .usage(
                 vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
                     | vk::BufferUsageFlags::STORAGE_BUFFER
@@ -100,11 +106,7 @@ impl Buffer {
             }
             return Err(format!("bind Intel Vulkan memory: {e:?}"));
         }
-        let address = unsafe {
-            device
-                .raw
-                .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer))
-        };
+        let address = device.buffer_address(buffer);
         if address == 0 {
             unsafe {
                 device.raw.destroy_buffer(buffer, None);

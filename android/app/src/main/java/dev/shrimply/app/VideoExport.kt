@@ -66,15 +66,9 @@ internal fun VideoExportSettings(timeline: TimelineSession, projectPath: String,
 
 @Composable
 internal fun ExportChoice(label: String, value: String, choices: JSONArray, select: (String) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
     val options = (0 until choices.length()).map { choices.getJSONObject(it) }
     val selected = options.firstOrNull { it.getString("value") == value } ?: error("Unknown export choice: $value")
-    Box {
-        OutlinedButton(onClick = { expanded = true }) { Text("${tr(label)}: ${tr(selected.getString("label"))}") }
-        DropdownMenu(expanded, { expanded = false }) { options.forEach { option ->
-            DropdownMenuItem(text = { Text(tr(option.getString("label"))) }, onClick = { expanded = false; select(option.getString("value")) })
-        } }
-    }
+    ChoiceInput(tr(label), tr(selected.getString("label")), options.map { tr(it.getString("label")) }) { select(options[it].getString("value")) }
 }
 
 @Composable

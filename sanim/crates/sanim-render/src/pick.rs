@@ -50,7 +50,6 @@ impl draw::Output for Collector {
     fn enter(&mut self, element: &Element) {
         let kind = match element.geometry.as_ref() {
             Geometry::Circle { .. } => "Circle",
-            Geometry::Rectangle { .. } => "Rect",
             Geometry::Line { .. } => "Line",
             Geometry::Polyline { .. } => "Polyline",
             Geometry::Polygon { .. } => "Polygon",

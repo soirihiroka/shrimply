@@ -4,8 +4,8 @@ use super::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use shrimply_math_core::Fraction;
-use shrimply_project_document::project::{self, Project};
+use shrimply_project_document::project::Project;
+pub use shrimply_project_document::project::frame_rate_choices as frame_rates;
 use std::path::PathBuf;
 
 pub const DEFAULT_VIDEO_BITRATE_KBPS: u32 = 10_000;
@@ -60,17 +60,6 @@ pub fn parse(project: &Project, path: PathBuf, request: &Value) -> Result<Export
     };
     super::validate_settings(project, &settings)?;
     Ok(settings)
-}
-
-pub fn frame_rates(current: Fraction) -> Vec<(Fraction, String)> {
-    let mut rates = project::COMMON_FRAME_RATES
-        .iter()
-        .map(|rate| (rate.value, rate.label.to_string()))
-        .collect::<Vec<_>>();
-    if !rates.iter().any(|(rate, _)| *rate == current) {
-        rates.push((current, project::fraction_as_label(current)));
-    }
-    rates
 }
 
 pub fn schema(project: &Project) -> Value {

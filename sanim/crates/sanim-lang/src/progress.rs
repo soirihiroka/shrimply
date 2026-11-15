@@ -51,7 +51,7 @@ pub struct Progress {
     pub state: State,
     pub phase: Phase,
     /// Actual completed phase units: modules for Sources/Checking, top-level
-    /// statements for Duration/Evaluating, bytes for Reading, contracts for
+    /// temporal placements for Duration, statements for Evaluating, bytes for Reading, contracts for
     /// Verifying, and dependencies for Finalizing. Other phases are indeterminate.
     /// None means the operation provides no count.
     pub completed: Option<u64>,

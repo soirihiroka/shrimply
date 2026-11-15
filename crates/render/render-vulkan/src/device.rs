@@ -23,6 +23,8 @@ pub struct Device {
     pub limits: vk::PhysicalDeviceLimits,
     pub compute_subgroup: Option<(u32, u32)>,
     pub portable_indices: bool,
+    pub word_storage: bool,
+    pub timeline_semaphores: bool,
     pub api_version: u32,
     #[cfg(target_os = "android")]
     pub presentation_timing: bool,
@@ -60,6 +62,18 @@ unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
 impl Device {
+    pub fn buffer_address(&self, buffer: vk::Buffer) -> u64 {
+        let info = vk::BufferDeviceAddressInfo::default().buffer(buffer);
+        unsafe {
+            if self.api_version >= vk::API_VERSION_1_2 {
+                self.raw.get_buffer_device_address(&info)
+            } else {
+                ash::khr::buffer_device_address::Device::new(&self.instance, &self.raw)
+                    .get_buffer_device_address(&info)
+            }
+        }
+    }
+
     pub fn device_uuid(&self) -> [u8; vk::UUID_SIZE] {
         let mut identity = vk::PhysicalDeviceIDProperties::default();
         let mut properties = vk::PhysicalDeviceProperties2::default().push_next(&mut identity);

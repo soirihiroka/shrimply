@@ -881,11 +881,17 @@ impl qobject::FrameGraphItem {
                 }
                 FrameGraphAction::TogglePlayback => self.as_mut().toggle_playback(),
                 FrameGraphAction::EditFinished => self.as_mut().edit_finished(),
+                FrameGraphAction::EditStarted
+                | FrameGraphAction::EditCancelled
+                | FrameGraphAction::HistoryRequested { .. } => unreachable!(
+                    "Qt pointer controller does not produce shared touch lifecycle actions"
+                ),
                 FrameGraphAction::InterpolationRequested {
                     owner_id,
                     interpolation,
                     x,
                     y,
+                    ..
                 } => {
                     self.as_mut().interpolation_requested(
                         component,
@@ -895,7 +901,7 @@ impl qobject::FrameGraphItem {
                         y,
                     );
                 }
-                FrameGraphAction::TextInterpolationRequested { owner_id, x, y } => {
+                FrameGraphAction::TextInterpolationRequested { owner_id, x, y, .. } => {
                     self.as_mut().text_interpolation_requested(
                         component,
                         QString::from(owner_id.to_string()),

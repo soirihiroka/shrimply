@@ -1911,6 +1911,7 @@ dependencies = [
  "serde_json",
  "shrimply-fonts",
  "shrimply-math-color",
+ "shrimply-math-core",
  "shrimply-resource-pipeline",
  "taffy",
 ]
@@ -2183,6 +2184,15 @@ dependencies = [
  "oklab",
  "serde",
  "skia-safe",
+]
+
+[[package]]
+name = "shrimply-math-core"
+version = "0.1.0"
+dependencies = [
+ "fraction",
+ "num-traits",
+ "serde",
 ]
 
 [[package]]

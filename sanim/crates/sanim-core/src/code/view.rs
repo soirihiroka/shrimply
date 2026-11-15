@@ -506,6 +506,10 @@ impl PatchAnimation {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PresentationEvent {
+    #[serde(default)]
+    pub cycle: Option<crate::math::cycle::Cycle>,
+    #[serde(default)]
+    pub interpolation: Option<(Fraction, Fraction)>,
     pub start: Fraction,
     pub end: Fraction,
     pub easing: crate::Easing,
@@ -565,16 +569,24 @@ impl State {
 
     /// O(log n) predecessor lookup, independent of seek direction or previous samples.
     pub fn presentation(&self, time: Fraction) -> Result<Option<Presentation>, String> {
+        let time = self
+            .events
+            .range(..=time)
+            .next_back()
+            .and_then(|(_, event)| event.cycle)
+            .map_or(Ok(time), |cycle| cycle.time(time))?;
         let Some((_, event)) = self.events.range(..=time).next_back() else {
             return Ok(None);
         };
         if event.end < event.start {
             return Err("CodeView presentation ends before it starts".into());
         }
-        let raw = if time >= event.end {
+        let (start, end) = event.interpolation.unwrap_or((event.start, event.end));
+        let time = time.min(event.end);
+        let raw = if time >= end {
             1.into()
         } else {
-            crate::math::progress(time, event.start, event.end)?
+            crate::math::progress(time, start, end)?
         };
         let (progress, appearance) = crate::math::eased_progress(event.easing, raw)?;
         Ok(Some(Presentation {

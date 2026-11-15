@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 fn prepare(script: &str) -> sanim_lang::Prepared {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", script);
+    sources.insert("main.sanim", format!("{}\nAnimation()", script));
     Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap()
@@ -121,7 +121,7 @@ fn invalid_columns_and_schemas_fail_before_sql_execution() {
         ),
     ] {
         let mut sources = MemorySources::default();
-        sources.insert("main.sanim", code);
+        sources.insert("main.sanim", format!("{}\nAnimation()", code));
         let error = Engine::default()
             .prepare("main.sanim", &sources, &BTreeMap::new())
             .unwrap_err();
@@ -133,11 +133,14 @@ fn grouped_column_selection_cannot_silently_drop_groups() {
     let mut sources = MemorySources::default();
     sources.insert(
         "main.sanim",
-        [
-            INPUT,
-            "let invalid=df.groupby(\"kind\")[\"value\"].mean()\n",
-        ]
-        .concat(),
+        format!(
+            "{}\nAnimation()",
+            [
+                INPUT,
+                "let invalid=df.groupby(\"kind\")[\"value\"].mean()\n",
+            ]
+            .concat()
+        ),
     );
     let error = Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
@@ -196,7 +199,7 @@ wait(1s)
     ]
     .concat();
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", script);
+    sources.insert("main.sanim", format!("{}\nAnimation()", script));
     let error = Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap_err();
@@ -238,14 +241,14 @@ wait(1s)
 "#
         )
     };
-    sources.insert("main.sanim", make(1));
+    sources.insert("main.sanim", format!("{}\nAnimation()", make(1)));
     let mut engine = Engine::default();
     let first = engine
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
     assert_eq!(first.statistics.executed_queries, 2);
     assert_eq!(first.statistics.reused_databases, 1);
-    sources.insert("main.sanim", make(2));
+    sources.insert("main.sanim", format!("{}\nAnimation()", make(2)));
     let changed = engine
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
@@ -296,7 +299,7 @@ wait(1s)
     ]
     .concat();
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", script);
+    sources.insert("main.sanim", format!("{}\nAnimation()", script));
     let prepared = Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
@@ -350,13 +353,13 @@ wait(1s)
         )
     };
     let mut engine = Engine::default();
-    sources.insert("main.sanim", script(100));
+    sources.insert("main.sanim", format!("{}\nAnimation()", script(100)));
     engine
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap();
     let start = Instant::now();
     for count in 101..111 {
-        sources.insert("main.sanim", script(count));
+        sources.insert("main.sanim", format!("{}\nAnimation()", script(count)));
         let updated = engine
             .prepare("main.sanim", &sources, &BTreeMap::new())
             .unwrap();
@@ -368,7 +371,7 @@ wait(1s)
     let hot = start.elapsed();
     let start = Instant::now();
     for count in 101..111 {
-        sources.insert("main.sanim", script(count));
+        sources.insert("main.sanim", format!("{}\nAnimation()", script(count)));
         black_box(
             Engine::default()
                 .prepare("main.sanim", &sources, &BTreeMap::new())

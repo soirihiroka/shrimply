@@ -8,7 +8,10 @@ fn main() {
         let prefix =
             format!("mut items=range({size})\nrepeat {EDITS} {{items=append(items,-1)}}\n");
         let mut files = MemorySources::default();
-        files.insert("main.sanim", format!("{prefix}let count=len(items)\n"));
+        files.insert(
+            "main.sanim",
+            format!("{prefix}let count=len(items)\n\nAnimation()"),
+        );
         let mut engine = Engine::default();
         let start = Instant::now();
         let first = engine
@@ -23,7 +26,10 @@ fn main() {
             first.statistics.cache_key_micros,
             first.statistics.checkpoint_bytes
         );
-        files.insert("main.sanim", format!("{prefix}let count=len(items)+1\n"));
+        files.insert(
+            "main.sanim",
+            format!("{prefix}let count=len(items)+1\n\nAnimation()"),
+        );
         let start = Instant::now();
         let hot = engine
             .prepare("main.sanim", &files, &BTreeMap::new())
@@ -39,7 +45,7 @@ fn main() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "mut items=range(20000)\nrepeat 1000 {items=move_item(items,0,0)}\n",
+        "mut items=range(20000)\nrepeat 1000 {items=move_item(items,0,0)}\n\nAnimation()",
     );
     let start = Instant::now();
     let no_op = Engine::default()

@@ -10,6 +10,36 @@ pub struct SelectedAudioProject {
     pub audio_cut_points: Vec<Time>,
     pub video_cut_points: Vec<Time>,
 }
+
+impl SelectedAudioProject {
+    pub fn at_zero(mut self) -> Project {
+        for track in &mut self.project.audio_tracks {
+            for item in &mut track.items {
+                item.start = item.start.saturating_sub(self.start);
+                item.end = item.end.saturating_sub(self.start);
+            }
+        }
+        self.project
+    }
+}
+
+impl crate::scene::Scene {
+    pub fn references_asset(&self, path: &std::path::Path) -> bool {
+        self.project
+            .borrow()
+            .assets()
+            .iter()
+            .any(|asset| asset.path() == path)
+    }
+
+    pub fn selected_audio_project(&self) -> Option<SelectedAudioProject> {
+        selected_audio_project(
+            &self.project.borrow(),
+            &crate::scene::selected_timeline_items(&self.selection),
+            &crate::scene::selected_timeline_tracks(&self.selection),
+        )
+    }
+}
 pub fn selected_audio_project(
     project: &Project,
     selected_items: &[ItemKey],

@@ -4,12 +4,15 @@ pub(super) fn handle_video_recording(
     area: &gtk::GLArea,
     runtime_shared: &Rc<RefCell<TimelineRuntime>>,
     runtime: &mut TimelineRuntime,
-    key: TrackKey,
+    request: shrimply_timeline_skia::scene::TrackRecordingRequest,
 ) -> bool {
-    if key.kind != TrackKind::Video {
+    if request.key.kind != TrackKind::Video {
         return false;
     }
-    if let Err(error) = runtime.scene.toggle_video_recording(key) {
+    if let Err(error) = runtime
+        .scene
+        .toggle_video_recording_at(request.key, request.position)
+    {
         interaction::show_error_dialog(area, "Could not record screen or application", &error);
         return true;
     }

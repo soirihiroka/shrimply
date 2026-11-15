@@ -1,6 +1,8 @@
 package dev.shrimply.app
 
 import android.content.Context
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.FileObserver
@@ -145,6 +147,34 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         }
     }
 
+    suspend fun showInFiles(path: String) = withContext(Dispatchers.IO) {
+        val directory = mutex.withLock {
+            check(!closing) { "Project session closed" }
+            val file = File(path).canonicalFile
+            check(file.exists()) { "The selected file is unavailable." }
+            val directory = if (file.isDirectory) file else file.parentFile!!
+            val folder = projectRoot(file)
+            val tree = origins.getString(folder.absolutePath, null)?.let(Uri::parse)
+            if (tree == null) ProjectDocumentsProvider.directoryUri(context, directory)
+            else {
+                val original = if (directory == folder) null else mirrorDatabase.value.rawQuery(
+                    "SELECT uri FROM source_entries WHERE tree=? AND path=? AND mime=? LIMIT 1",
+                    arrayOf(tree.toString(), directory.absolutePath, DocumentsContract.Document.MIME_TYPE_DIR)
+                ).use { if (it.moveToFirst()) Uri.parse(it.getString(0)) else null }
+                original ?: if (directory == folder) DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+                    else ProjectDocumentsProvider.directoryUri(context, directory)
+            }
+        }
+        withContext(Dispatchers.Main) {
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(directory, DocumentsContract.Document.MIME_TYPE_DIR)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION))
+            } catch (failure: ActivityNotFoundException) {
+                throw IllegalStateException("No installed file manager can display this project folder.", failure)
+            }
+        }
+    }
+
     fun attach(projectPath: String?, error: (String) -> Unit): Int {
         detach()
         check(!closing) { "Project session closed" }
@@ -272,7 +302,8 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
 
     private fun projectRoot(file: File): File {
         val canonicalRoot = root.canonicalFile
-        return generateSequence(file.canonicalFile.parentFile) { it.parentFile }
+        val canonical = file.canonicalFile
+        return generateSequence(if (canonical.isDirectory) canonical else canonical.parentFile) { it.parentFile }
             .firstOrNull { it.parentFile == canonicalRoot }
             ?: throw IllegalArgumentException("Project is outside Android's managed project directory.")
     }

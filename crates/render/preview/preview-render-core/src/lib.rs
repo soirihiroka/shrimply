@@ -1,3 +1,4 @@
+pub mod capture;
 mod decode;
 pub use decode::DecodedImage;
 mod generated;

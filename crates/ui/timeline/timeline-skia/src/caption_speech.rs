@@ -36,6 +36,29 @@ pub struct Plan {
 }
 
 impl Plan {
+    pub fn description(&self) -> String {
+        let mut description = shrimply_i18n::text_args(
+            if self.jobs.len() == 1 {
+                "%{count} caption chunk will be generated with each caption's exact duration."
+            } else {
+                "%{count} caption chunks will be generated with each caption's exact duration."
+            },
+            &[("count", self.jobs.len().to_string())],
+        );
+        if self.skipped > 0 {
+            description.push(' ');
+            description.push_str(&shrimply_i18n::text_args(
+                if self.skipped == 1 {
+                    "%{count} empty or invalid chunk will be skipped."
+                } else {
+                    "%{count} empty or invalid chunks will be skipped."
+                },
+                &[("count", self.skipped.to_string())],
+            ));
+        }
+        description
+    }
+
     pub fn chunks(&self) -> usize {
         self.jobs.len()
     }

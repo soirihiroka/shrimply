@@ -6,7 +6,6 @@ use skia_safe::{
 };
 use std::sync::Arc;
 
-const API_VERSION: u32 = vk::API_VERSION_1_2;
 const GPU_TIMEOUT_NS: u64 = 5_000_000_000;
 const SKIA_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -93,7 +92,7 @@ impl Renderer {
                 device.handle().as_raw() as _,
                 (queue.as_raw() as _, family as usize),
                 &get_proc,
-                Some(API_VERSION.into()),
+                Some(shared.api_version.min(vk::API_VERSION_1_2).into()),
             )
             .with_extensions(&["VK_KHR_surface"], &["VK_KHR_swapchain"])
             .build();
@@ -143,12 +142,9 @@ impl Renderer {
             self.device
                 .device_wait_idle()
                 .expect("wait before swapchain replacement");
-            #[cfg(feature = "renderer")]
-            drop(self.sampled.take());
-            self.context
-                .as_mut()
-                .expect("Skia context")
-                .free_gpu_resources();
+            // Swapchain images are borrowed by frame-local Skia surfaces. Keep
+            // the context's glyph/image caches and the independent compositor
+            // texture alive across resizing instead of rebuilding them each frame.
             let caps = self
                 .surface_api
                 .get_physical_device_surface_capabilities(self.physical, self.surface)

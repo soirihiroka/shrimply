@@ -9,9 +9,15 @@ use std::{
     time::Instant,
 };
 mod context;
+mod context_media;
 #[cfg(target_os = "android")]
 mod export;
+mod graph;
 mod inspector;
+pub(crate) mod palette;
+mod preview;
+#[cfg(target_os = "android")]
+mod preview_image;
 
 #[derive(Default)]
 pub(crate) struct Lifecycle {
@@ -31,13 +37,31 @@ impl Lifecycle {
 pub(crate) struct Runtime {
     context_menu: Option<context::Menu>,
     context_serial: u64,
+    timeline_service: Option<shrimply_inspector_document::timeline_service::Session>,
     inspect_serial: u64,
     pub backend: ProjectBackend,
+    #[cfg(target_os = "android")]
+    wake: Arc<dyn Fn() + Send + Sync>,
+    #[cfg(target_os = "android")]
+    pub preview_frame: Option<shrimply_preview_render_vulkan::worker::Frame>,
+    #[cfg(target_os = "android")]
+    preview_image: Option<preview_image::PreviewImage>,
+    pub native_palette: Option<palette::NativePalette>,
     pub player: SharedPlayerState,
     pub timeline: Option<shrimply_timeline_skia::scene::Scene>,
     inspector: Option<shrimply_inspector_core::InspectorController>,
     inspector_document: Option<shrimply_inspector_document::InspectorDocument>,
+    inspector_interaction: shrimply_inspector_document::remote::Interaction,
     inspector_status: String,
+    pub framegraph: Option<shrimply_inspector_document::remote::graph::GraphSession>,
+    pub graph_dirty: bool,
+    graph_stamp: Option<(u64, Time)>,
+    graph_pointer: shrimply_framegraph_skia::FrameGraphPointerPosition,
+    preferences_ui: shrimply_preferences_core::remote::PreferencesUi,
+    preview_toolbar: shrimply_preview_render_core::playback::toolbar::Toolbar,
+    pub preview_interaction: shrimply_preview_interaction_skia::surface::Surface,
+    preview_size: glam::Vec2,
+    preview_context: Option<preview::Menu>,
     inspector_stamp: Option<(u64, Time, shrimply_inspector_core::InspectorTarget)>,
     pub inspector_visible: bool,
     #[cfg(target_os = "android")]
@@ -70,21 +94,46 @@ impl Runtime {
         wake: impl Fn() + Send + Sync + 'static,
         lifecycle: SharedLifecycle,
     ) -> Result<Self, String> {
-        let backend = ProjectBackend::new(wake)?;
+        let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
+        let notify = wake.clone();
+        let backend = ProjectBackend::new(move || notify())?;
         let status =
             serde_json::to_string(&backend.snapshot()?).map_err(|error| error.to_string())?;
         Ok(Self {
             backend,
+            #[cfg(target_os = "android")]
+            wake,
+            #[cfg(target_os = "android")]
+            preview_frame: None,
+            #[cfg(target_os = "android")]
+            preview_image: None,
+            native_palette: None,
             player: player::new(Time::ZERO, Project::default().fps),
             status,
             timeline: None,
             inspector: None,
             inspector_document: None,
+            inspector_interaction: Default::default(),
             inspector_status: "null".into(),
+            framegraph: None,
+            graph_dirty: true,
+            graph_stamp: None,
+            graph_pointer: shrimply_framegraph_skia::FrameGraphPointerPosition {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            },
+            preferences_ui: Default::default(),
+            preview_toolbar: Default::default(),
+            preview_interaction: Default::default(),
+            preview_size: glam::Vec2::ZERO,
+            preview_context: None,
             inspector_stamp: None,
             inspector_visible: true,
             context_menu: None,
             context_serial: 0,
+            timeline_service: None,
             inspect_serial: 0,
             #[cfg(target_os = "android")]
             export: None,
@@ -101,6 +150,11 @@ impl Runtime {
             action: None,
             action_serial: 0,
         })
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn take_audio_peaks(&self) -> [f32; 2] {
+        self.audio_levels.take_peaks()
     }
 
     /// Keep the earliest pause even when pause/resume both arrive during a long import.
@@ -120,6 +174,9 @@ impl Runtime {
             }
             changed = true;
             if let Some(at) = pending.pause {
+                self.cancel_graph_edit()?;
+                self.cancel_numeric()?;
+                self.cancel_preview_edit()?;
                 let transport = player::snapshot(&self.player);
                 player::set_playing_at(&self.player, false, at);
                 if transport.playing
@@ -177,10 +234,49 @@ impl Runtime {
         let operation = request["op"]
             .as_str()
             .ok_or("request requires an operation")?;
-        if source.is_some() && operation != "import_file" {
+        if matches!(
+            operation,
+            "open" | "create" | "close" | "undo" | "redo" | "play" | "pause" | "step" | "seek"
+        ) {
+            self.cancel_graph_edit()?;
+            self.cancel_numeric()?;
+            self.cancel_preview_edit()?;
+        }
+        if matches!(operation, "framegraph_open" | "inspector_visible") {
+            self.finish_numeric()?;
+        }
+        if matches!(
+            operation,
+            "inspector"
+                | "inspector_numeric"
+                | "inspector_file"
+                | "context_action"
+                | "context_control"
+                | "context_delete"
+                | "record_audio"
+        ) {
+            if self.preview_interaction.active() {
+                self.cancel_preview_edit()?;
+            }
+            self.cancel_graph_edit()?;
+        }
+        if source.is_some()
+            && !matches!(
+                operation,
+                "import_file" | "inspector_file" | "timeline_service_file"
+            )
+        {
             return Err("a source descriptor is only valid for a file import".into());
         }
         let mut result = match operation {
+            "timeline_service_action" | "timeline_service_file" => self.timeline_service_request(request, source),
+            "preview_image_dismiss" => {
+                #[cfg(target_os = "android")]
+                { self.dismiss_preview_image(request) }
+                #[cfg(not(target_os = "android"))]
+                { Err("Preview image delivery requires the native host".into()) }
+            },
+            "framegraph_open" | "framegraph_close" | "framegraph_action" => self.graph_request(request),
             "context_action" | "context_control" | "context_delete" | "context_dismiss" => self.context_request(request),
             "performance" | "performance_clear" | "performance_copy" => Ok(shrimply_inspector_document::remote::performance_request(operation)),
             "export_schema" | "export_video" | "caption_export_schema" | "export_captions" | "export_cancel" | "export_dismiss" | "export_saved" => {
@@ -189,11 +285,33 @@ impl Runtime {
                 #[cfg(not(target_os = "android"))]
                 { Err("Hardware export requires the native Android host".into()) }
             },
+            "native_palette" => {
+                let palette = palette::NativePalette::from_request(request)?;
+                palette.apply();
+                self.native_palette = Some(palette);
+                self.backend.snapshot()
+            },
+            "preferences_schema" => Ok(self.preferences_ui.snapshot(&self.backend.preferences)),
+            "editor_layout" => {
+                let layout = shrimply_preferences_core::set_editor_layout(&self.backend.preferences, &request["changes"])?;
+                Ok(layout.json())
+            },
+            "preferences" => {
+                let schema = self.preferences_ui.apply(&self.backend.preferences, request)?;
+                let font = shrimply_preferences_core::snapshot(&self.backend.preferences).default_text_font_family;
+                self.inspector = self.inspector.take().map(|controller|controller.with_default_text_font(font));
+                self.inspector_stamp = None;
+                Ok(schema)
+            },
+            "preview_context_action" | "preview_context_dismiss" => self.preview_context_request(request),
+            "preview_guides" => self.preview_request(request),
             "inspector_visible" => {
                 self.inspector_visible = request["visible"].as_bool().ok_or("inspector visibility requires a boolean")?;
                 self.inspector_stamp = None;
                 self.backend.snapshot()
             },
+            "inspector_numeric" => self.apply_inspector_numeric(request),
+            "inspector_file" => self.apply_inspector_file(request, source),
             "inspector" => {
                 let message = self.apply_inspector(request)?;
                 let mut snapshot = self.backend.snapshot()?;
@@ -209,7 +327,7 @@ impl Runtime {
             "show_track_add" | "show_audio_record" => {
                 if self.backend.project().is_none() { return Err("open a project first".into()); }
                 self.action_serial = self.action_serial.checked_add(1).expect("Android UI action overflow");
-                self.action = Some(json!({"serial":self.action_serial,"service":if operation == "show_audio_record" { "audio_record" } else { "track_add" },"project_path":self.backend.path(),"kind":request["kind"],"track":request["track"],"track_id":request["track_id"]}));
+                self.action = Some(json!({"serial":self.action_serial,"service":if operation == "show_audio_record" { "audio_record" } else { "track_add" },"project_path":self.backend.path(),"kind":request["kind"],"track":request["track"],"track_id":request["track_id"],"position":request["position"],"bottom_sheet":request["bottom_sheet"],"x":request["x"],"y":request["y"],"import_targets":request["import_targets"]}));
                 self.backend.snapshot()
             },
             "record_audio" => {
@@ -217,7 +335,8 @@ impl Runtime {
                     let project = self.backend.project().ok_or("open a project first")?;
                     shrimply_timeline_edit::TrackKey { kind: shrimply_timeline_edit::TrackKind::Audio, track_index: crate::project::target_index(&project, shrimply_timeline_edit::TrackKind::Audio, request)? }
                 };
-                self.timeline.as_mut().ok_or("open a project first")?.toggle_audio_recording(key)?;
+                let position = self.backend.position(request)?;
+                self.timeline.as_mut().ok_or("open a project first")?.toggle_audio_recording_at(key, position)?;
                 self.backend.snapshot()
             },
             "record_video" => Err("Video recording requires an Android camera capture backend; this build cannot record video.".into()),
@@ -276,6 +395,8 @@ impl Runtime {
                 self.backend.snapshot()
             }
             _ => {
+                self.cancel_graph_edit()?;
+                self.cancel_numeric()?;
                 if operation == "close" {
                     player::set_playing(&self.player, false);
                     if let Some(scene) = self.timeline.as_mut() { scene.suspend(); }
@@ -336,6 +457,14 @@ impl Runtime {
     }
 
     fn refresh(&mut self, reset: bool) {
+        if reset {
+            self.framegraph = None;
+            self.graph_stamp = None;
+            self.graph_dirty = true;
+            self.preview_interaction = Default::default();
+            self.preview_toolbar = Default::default();
+            self.preview_context = None;
+        }
         let (duration, frame_rate, position) = {
             let project = self.backend.project();
             (
@@ -351,8 +480,14 @@ impl Runtime {
             )
         };
         if reset {
+            if let Some(mut service) = self.timeline_service.take()
+                && let Err(error) = service.cleanup(self.timeline.as_ref())
+            {
+                self.error = Some(error);
+            }
             self.inspector = None;
             self.inspector_document = None;
+            self.inspector_interaction = Default::default();
             self.inspector_stamp = None;
             self.inspector_status = "null".into();
             #[cfg(target_os = "android")]
@@ -410,14 +545,16 @@ impl Runtime {
                         },
                     ));
                 }
-                shrimply_timeline_skia::scene::Scene::new(
+                let mut scene = shrimply_timeline_skia::scene::Scene::new(
                     project,
                     self.player.clone(),
                     selection,
                     self.backend.preferences.clone(),
                     clipboard,
                     performance,
-                )
+                );
+                scene.set_recording_available(true, false);
+                scene
             });
         }
         player::refresh_project(
@@ -533,14 +670,45 @@ impl Runtime {
             let description = tool.description();
             json!({"id":description.id,"icon":description.icon,"label":description.label,"section":description.section,"active":tool.active(state)})
         }).collect();
+        #[cfg(target_os = "android")]
+        let preview_image = self.preview_image_snapshot();
+        #[cfg(not(target_os = "android"))]
+        let preview_image = Value::Null;
+        let framegraph = self
+            .framegraph
+            .as_ref()
+            .map(|graph| graph.snapshot())
+            .unwrap_or(Value::Null);
         // The project/recents payload changes only on project events, not every frame.
         format!(
-            "{{\"status\":{},\"playback\":{},\"error\":{},\"inspector\":{},\"export\":{},\"timeline\":{{\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
+            "{{\"status\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"framegraph\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"export\":{},\"timeline\":{{\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
             self.status,
+            shrimply_preferences_core::snapshot(&self.backend.preferences)
+                .editor_layout
+                .json(),
             playback,
+            self.preview_controls(),
+            self.preview_context_snapshot(),
+            preview_image,
+            framegraph,
+            self.timeline_service
+                .as_ref()
+                .map_or(Value::Null, |service| service.snapshot()),
             json!(self.error),
             self.inspector_status,
             json!(export),
+            self.timeline
+                .as_ref()
+                .map_or(1.0, |scene| scene.tools_progress()),
+            self.timeline
+                .as_ref()
+                .is_none_or(|scene| scene.show_tools()),
+            self.timeline
+                .as_ref()
+                .map_or(1.0, |scene| scene.audio_monitor_progress()),
+            self.timeline
+                .as_ref()
+                .is_none_or(|scene| scene.show_audio_monitor()),
             shrimply_timeline_paint_skia::RULER_HEIGHT,
             json!(self.action),
             json!(tools),
@@ -556,6 +724,148 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn playhead_cut_selected_uses_captured_touch_selection_and_saves_one_undo() {
+        use shrimply_components_skia::input::{TouchChange, TouchPhase};
+        use shrimply_timeline_skia::{items::TrackKind, scene::Event};
+        let Some(root) = crate::project::tests::isolated_root(
+            "runtime::tests::playhead_cut_selected_uses_captured_touch_selection_and_saves_one_undo",
+            false,
+        ) else {
+            return;
+        };
+        let path = root.join("playhead-cut.shrimp");
+        let mut runtime = Runtime::new(|| {}).unwrap();
+        runtime
+            .request(&json!({"op":"create","path":path,"name":"Playhead cut","fps":"30000/1001"}))
+            .unwrap();
+        runtime.request(&json!({"op":"track_add","kind":"comment","action":"Comment","text":"Unselected","duration_frames":90})).unwrap();
+        runtime
+            .request(
+                &json!({"op":"track_add","kind":"video","action":"Shape","duration_frames":90}),
+            )
+            .unwrap();
+        runtime.request(&json!({"op":"seek","frame":30})).unwrap();
+        let project = runtime.backend.shared_project().unwrap();
+        let mut recorder = skia_safe::PictureRecorder::new();
+        let scene = runtime.timeline.as_mut().unwrap();
+        scene.draw(
+            recorder.begin_recording(skia_safe::Rect::from_wh(800.0, 320.0), false),
+            glam::vec2(800.0, 320.0),
+        );
+        recorder.finish_recording_as_picture(None).unwrap();
+        let view = scene.view();
+        let x = view.timeline_x()
+            + (player::current_time(&runtime.player).as_secs_f64() - view.scroll_seconds)
+                / view.seconds_per_pixel;
+        let row =
+            shrimply_timeline_skia::items::row_for_track(&project.borrow(), TrackKind::Video, 0)
+                .unwrap();
+        let clip_point = glam::vec2(
+            x as f32,
+            (shrimply_timeline_paint_skia::RULER_HEIGHT
+                + row as f64 * shrimply_timeline_paint_skia::TRACK_HEIGHT
+                + shrimply_timeline_paint_skia::TRACK_HEIGHT / 2.0) as f32,
+        );
+        for phase in [TouchPhase::Begin, TouchPhase::End] {
+            scene.event(Event::Touch(vec![TouchChange {
+                id: 1,
+                point: clip_point,
+                phase,
+            }]));
+        }
+        let point = glam::vec2(
+            x as f32,
+            (shrimply_timeline_paint_skia::PLAYHEAD_HANDLE_TOP
+                + shrimply_timeline_paint_skia::PLAYHEAD_HANDLE_HEIGHT / 2.0) as f32,
+        );
+        scene.event(Event::ContextMenu { point, touch: true });
+        let (point, touch) = scene
+            .take_requests()
+            .context_menu
+            .expect("playhead context request");
+        runtime.show_context_menu(point, touch);
+        let menu = runtime.context_menu.as_ref().unwrap().snapshot();
+        let cut = menu["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section.as_array().unwrap())
+            .find(|entry| entry["action"] == "split-selected")
+            .unwrap();
+        assert_eq!(
+            cut["enabled"], true,
+            "selected clip spans the captured playhead"
+        );
+        assert_eq!(menu["bottom_sheet"], true);
+        // Opening a native sheet cancels its originating surface contact.
+        runtime.timeline.as_mut().unwrap().event(Event::Cancel);
+        runtime.request(&json!({"op":"seek","frame":60})).unwrap();
+        let response = runtime.request(&json!({"op":"context_action","project_path":path,"serial":menu["serial"],"action":"split-selected"})).unwrap();
+        assert!(
+            response.get("clipboard").is_none(),
+            "playhead cut never removes clips to the clipboard"
+        );
+        let cut_time = time_from_frame(30, project.borrow().fps).unwrap();
+        {
+            let project = project.borrow();
+            let clips = &project.video_tracks[0].items;
+            assert_eq!(clips.len(), 2);
+            assert_eq!(clips[0].end, cut_time);
+            assert_eq!(clips[1].start, cut_time);
+            assert_eq!(project.comment_tracks[0].items.len(), 1);
+        }
+        shrimply_project_document::project::flush_history().unwrap();
+        let saved = shrimply_project_document::load_project_snapshot(&path).unwrap();
+        assert_eq!(saved.video_tracks[0].items.len(), 2);
+        assert_eq!(saved.video_tracks[0].items[1].start, cut_time);
+        runtime.request(&json!({"op":"undo"})).unwrap();
+        assert_eq!(
+            project.borrow().video_tracks[0].items.len(),
+            1,
+            "one undo restores the unsplit clip"
+        );
+        assert_eq!(project.borrow().comment_tracks[0].items.len(), 1);
+        runtime.request(&json!({"op":"redo"})).unwrap();
+        assert_eq!(project.borrow().video_tracks[0].items.len(), 2);
+        runtime.request(&json!({"op":"undo"})).unwrap();
+        // A seek within the first quarter-frame snaps to the clip boundary,
+        // where the shared menu must disable splitting.
+        runtime
+            .timeline
+            .as_mut()
+            .unwrap()
+            .prepare_context_menu(clip_point);
+        let edge = Time {
+            seconds: project.borrow().frame_step().seconds / shrimply_math_core::Fraction::from(4),
+        };
+        player::seek_time(&runtime.player, edge);
+        assert_eq!(player::current_time(&runtime.player), Time::ZERO);
+        let view = runtime.timeline.as_ref().unwrap().view();
+        let point = glam::vec2(
+            (view.timeline_x()
+                + (player::current_time(&runtime.player).as_secs_f64() - view.scroll_seconds)
+                    / view.seconds_per_pixel) as f32,
+            point.y,
+        );
+        runtime.show_context_menu(point, true);
+        let menu = runtime.context_menu.as_ref().unwrap().snapshot();
+        let cut = menu["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section.as_array().unwrap())
+            .find(|entry| entry["action"] == "split-selected")
+            .unwrap();
+        assert_eq!(
+            cut["enabled"], false,
+            "frame-zero cuts must not be advertised as usable"
+        );
+        assert!(runtime.request(&json!({"op":"context_action","project_path":path,"serial":menu["serial"],"action":"split-selected"})).is_err());
+        assert_eq!(project.borrow().video_tracks[0].items.len(), 1);
+        runtime.request(&json!({"op":"close"})).unwrap();
+    }
+
     #[test]
     fn exact_transport_and_project_lifecycle_share_the_saved_project() {
         let Some(root) = crate::project::tests::isolated_root(

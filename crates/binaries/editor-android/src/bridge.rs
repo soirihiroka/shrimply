@@ -25,6 +25,7 @@ use std::{
 
 const ANDROID_LOG_INFO: i32 = 4;
 use crate::input::{INPUT_STRIDE, MAX_INPUT_VALUES};
+const SURFACE_COUNT: usize = 3;
 const BENCHMARK_FRAMES: usize = 1200;
 const FRAME_BUDGET_NS: u128 = 1_000_000_000 / 60;
 const INSPECTOR_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -66,6 +67,7 @@ enum ProjectCommand {
     Stop,
 }
 struct Frame {
+    palette: Option<crate::runtime::palette::NativePalette>,
     picture: Option<skia_safe::Picture>,
     preview: Option<crate::preview::Frame>,
     density: f32,
@@ -79,10 +81,10 @@ struct RenderSlot {
 }
 
 struct Session {
-    latest: [Arc<Mutex<RenderSlot>>; 2],
+    latest: [Arc<Mutex<RenderSlot>>; SURFACE_COUNT],
     input: Arc<Mutex<crate::input::Queue>>,
     lifecycle: SharedLifecycle,
-    render: [SyncSender<RenderCommand>; 2],
+    render: [SyncSender<RenderCommand>; SURFACE_COUNT],
     project: SyncSender<ProjectCommand>,
     render_threads: Vec<JoinHandle<()>>,
     project_thread: Option<JoinHandle<()>>,
@@ -91,8 +93,8 @@ struct Session {
 struct ProjectWorker {
     receive: mpsc::Receiver<ProjectCommand>,
     wake: SyncSender<ProjectCommand>,
-    render: [SyncSender<RenderCommand>; 2],
-    latest: [Arc<Mutex<RenderSlot>>; 2],
+    render: [SyncSender<RenderCommand>; SURFACE_COUNT],
+    latest: [Arc<Mutex<RenderSlot>>; SURFACE_COUNT],
     input: Arc<Mutex<crate::input::Queue>>,
     lifecycle: SharedLifecycle,
     benchmark_submitted: Arc<AtomicUsize>,
@@ -125,7 +127,6 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         lifecycle,
     )
     .expect("initialize Android project services");
-    shrimply_cross_ui_theme::set_dark(true);
     if benchmark {
         let path = shrimply_path_core::cache_directory()
             .expect("Android benchmark cache")
@@ -140,6 +141,8 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             .expect("keep benchmark out of project history");
     }
     let mut viewport = crate::input::Viewport::default();
+    let mut graph_viewport = crate::input::Viewport::default();
+    let mut preview_viewport = crate::input::Viewport::default();
     let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
         let _ = project_wake.try_send(ProjectCommand::Wake);
     });
@@ -149,6 +152,8 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
     let mut generation = runtime.generation;
     let mut changed = true;
     let mut picture_dirty = true;
+    let mut audio_meter = shrimply_components_skia::audio_meter::AudioMeter::default();
+    let mut meter_animating = false;
     let mut benchmark_frames = 0;
     let mut input_at = None;
     let mut preview_texture = None;
@@ -177,10 +182,25 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 }
             });
         let delay = [
-            (runtime.foreground && runtime.inspector_visible && runtime.timeline.is_some())
-                .then_some(INSPECTOR_POLL_INTERVAL),
+            (runtime.foreground && runtime.timeline.is_some()).then_some(INSPECTOR_POLL_INTERVAL),
             playback_delay,
+            (runtime.foreground
+                && viewport.visible
+                && meter_animating
+                && runtime
+                    .timeline
+                    .as_ref()
+                    .is_some_and(|scene| scene.audio_monitor_progress() > 0.0))
+            .then_some(frame_delay),
             scene_delay,
+            (runtime.foreground
+                && graph_viewport.visible
+                && runtime.framegraph.as_ref().is_some_and(|graph| {
+                    runtime.graph_dirty
+                        || graph.core.is_animating()
+                        || graph.core.waiting_long_press()
+                }))
+            .then_some(frame_delay),
             runtime.media.as_ref().and_then(|media| media.next_update()),
         ]
         .into_iter()
@@ -203,8 +223,22 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             match next {
                 ProjectCommand::Request(request, source, response) => {
                     let result = runtime.request_with_source(&request, source);
+                    if request["op"] == "native_palette" && result.is_ok() {
+                        last_preview = None;
+                    }
                     changed = true;
-                    picture_dirty = true;
+                    picture_dirty |= !matches!(
+                        request["op"].as_str(),
+                        Some(
+                            "status"
+                                | "settings_schema"
+                                | "preferences_schema"
+                                | "performance"
+                                | "performance_copy"
+                                | "export_schema"
+                                | "caption_export_schema"
+                        )
+                    );
                     let _ = response.send(result);
                 }
                 ProjectCommand::Wake => {}
@@ -249,13 +283,17 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         }
         // Export progress updates native controls, not the document or timeline
         // picture. A paused timeline stays idle while an export is running.
+        changed |= runtime.poll_timeline_service();
         changed |= runtime.poll_export();
-        let (events, next_viewport, at, overflow) = {
+        changed |= runtime.poll_preview_image();
+        let (events, next_viewport, next_graph_viewport, next_preview_viewport, at, overflow) = {
             let mut pending = input.lock().expect("Android input queue poisoned");
             let events = std::mem::take(&mut pending.events);
             (
                 events,
                 pending.viewport,
+                pending.graph_viewport,
+                pending.preview_viewport,
                 pending.at.take(),
                 std::mem::take(&mut pending.overflow),
             )
@@ -263,8 +301,10 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         let reset = generation != runtime.generation;
         generation = runtime.generation;
         if reset {
+            runtime.preview_frame = None;
             preview_texture = None;
             latest[0].lock().expect("Android frame slot poisoned").frame = Some(Frame {
+                palette: runtime.native_palette,
                 picture: None,
                 preview: None,
                 density: 1.0,
@@ -286,6 +326,17 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             }
             viewport = next_viewport;
         }
+        if next_graph_viewport != graph_viewport {
+            graph_viewport = next_graph_viewport;
+            runtime.graph_dirty = true;
+        }
+        if next_preview_viewport != preview_viewport {
+            if let Err(error) = runtime.cancel_preview_edit() {
+                runtime.error = Some(error);
+            }
+            preview_viewport = next_preview_viewport;
+            changed = true;
+        }
         if overflow {
             runtime.error = Some("Too many input events queued while the project was busy; the gesture was cancelled. Please retry.".into());
             changed = true;
@@ -297,8 +348,69 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 scene.event(shrimply_timeline_skia::scene::Event::Cancel);
             }
         } else if runtime.timeline.is_some() {
-            for event in events {
+            let mut events = std::collections::VecDeque::from(events);
+            while let Some(event) = events.pop_front() {
+                use crate::input::Input;
+                use shrimply_components_skia::input::TouchPhase;
+                use shrimply_timeline_skia::scene::Event;
+                let begins_edit = match &event {
+                    Input::Scene(Event::Press { .. } | Event::ContextMenu { .. })
+                    | Input::Key(_)
+                    | Input::History { .. }
+                    | Input::TogglePlaying
+                    | Input::Preview { phase: 0, .. }
+                    | Input::PreviewPen { phase: 0, .. }
+                    | Input::PreviewContext { .. } => true,
+                    Input::Scene(Event::Touch(changes)) | Input::PreviewTouch { changes, .. } => {
+                        changes
+                            .iter()
+                            .any(|change| change.phase == TouchPhase::Begin)
+                    }
+                    _ => false,
+                };
+                if begins_edit
+                    && let Err(error) = runtime
+                        .cancel_graph_edit()
+                        .and_then(|()| runtime.cancel_numeric())
+                {
+                    runtime.error = Some(error);
+                    changed = true;
+                    continue;
+                }
+                if begins_edit
+                    && !matches!(
+                        &event,
+                        Input::Preview { .. }
+                            | Input::PreviewPen { .. }
+                            | Input::PreviewTouch { .. }
+                            | Input::PreviewContext { .. }
+                    )
+                    && let Err(error) = runtime.cancel_preview_edit()
+                {
+                    runtime.error = Some(error);
+                    changed = true;
+                    continue;
+                }
+                let timeline_event = !matches!(
+                    &event,
+                    crate::input::Input::Graph(_)
+                        | crate::input::Input::Preview { .. }
+                        | crate::input::Input::PreviewPen { .. }
+                        | crate::input::Input::PreviewKey { .. }
+                        | crate::input::Input::PreviewTouch { .. }
+                        | crate::input::Input::PreviewScroll { .. }
+                        | crate::input::Input::PreviewContext { .. }
+                );
                 match event {
+                    crate::input::Input::Graph(event) => {
+                        let size = shrimply_components_skia::canvas::vec2(
+                            graph_viewport.width as f32 / graph_viewport.density,
+                            graph_viewport.height as f32 / graph_viewport.density,
+                        );
+                        if let Err(error) = runtime.graph_input(event, size) {
+                            runtime.error = Some(error);
+                        }
+                    }
                     crate::input::Input::Scene(event) => runtime
                         .timeline
                         .as_mut()
@@ -335,18 +447,86 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                             runtime.error = Some(error);
                         }
                     }
+                    crate::input::Input::PreviewTouch { changes, size } => {
+                        match runtime.preview_touch(&changes, size) {
+                            Ok(timeline_changed) => picture_dirty |= timeline_changed,
+                            Err(error) => runtime.error = Some(error),
+                        }
+                    }
+                    crate::input::Input::PreviewContext { point, touch } => {
+                        runtime.show_preview_context(point, touch)
+                    }
+                    crate::input::Input::PreviewKey { event, character } => {
+                        use shrimply_preview_interaction_skia::surface::{KeyState, Modifiers};
+                        match runtime.preview_keyboard(event) {
+                            Ok(false)
+                                if event.state == KeyState::Pressed
+                                    && !event.modifiers.contains(Modifiers::ALT)
+                                    && !event.modifiers.contains(Modifiers::META) =>
+                            {
+                                if let Some(fallback) = character.and_then(|character| {
+                                    crate::input::key_input(
+                                        character,
+                                        event.modifiers.contains(Modifiers::CONTROL),
+                                        event.modifiers.contains(Modifiers::SHIFT),
+                                    )
+                                }) {
+                                    events.push_front(fallback);
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(error) => runtime.error = Some(error),
+                        }
+                    }
+                    crate::input::Input::PreviewPen {
+                        phase,
+                        flags,
+                        size,
+                        samples,
+                    } => {
+                        if let Err(error) = runtime.preview_pen(phase, flags, size, &samples) {
+                            runtime.error = Some(error);
+                        }
+                    }
+                    crate::input::Input::PreviewScroll {
+                        position,
+                        delta,
+                        flags,
+                    } => {
+                        if let Err(error) = runtime.preview_scroll(position, delta, flags) {
+                            runtime.error = Some(error);
+                        }
+                    }
+                    crate::input::Input::Preview {
+                        phase,
+                        position,
+                        size,
+                        flags,
+                    } => match runtime.preview_native_pointer(phase, position, size, flags) {
+                        Ok(_) => {}
+                        Err(error) => runtime.error = Some(error),
+                    },
                 }
-                picture_dirty = true;
+                picture_dirty |= timeline_event;
                 changed = true;
             }
         }
+        changed |= runtime.poll_preview_input();
+        meter_animating = audio_meter.update(runtime.take_audio_peaks(), Instant::now());
         if let Some(scene) = runtime.timeline.as_mut() {
+            picture_dirty |= meter_animating && scene.audio_monitor_progress() > 0.0;
             if viewport.visible && viewport.width > 0 && viewport.height > 0 {
                 let size = shrimply_components_skia::canvas::vec2(
                     viewport.width as f32 / viewport.density,
                     viewport.height as f32 / viewport.density,
                 );
-                if picture_dirty || scene.needs_redraw(size) || benchmark_running {
+                let meter_width = shrimply_components_skia::audio_meter::DEFAULT_WIDTH as f32;
+                let shown_meter_width = meter_width * scene.audio_monitor_progress() as f32;
+                let timeline_size = shrimply_components_skia::canvas::vec2(
+                    (size.x - shown_meter_width).max(1.0),
+                    size.y,
+                );
+                if picture_dirty || scene.needs_redraw(timeline_size) || benchmark_running {
                     if benchmark_running {
                         let direction = if benchmark_frames / 120 % 2 == 0 {
                             -1.0
@@ -365,11 +545,33 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                     let mut recorder = skia_safe::PictureRecorder::new();
                     let canvas =
                         recorder.begin_recording(skia_safe::Rect::from_wh(size.x, size.y), false);
-                    scene.draw(canvas, size);
+                    canvas.save();
+                    canvas.clip_rect(
+                        skia_safe::Rect::from_wh(timeline_size.x, timeline_size.y),
+                        None,
+                        false,
+                    );
+                    let layout_before = (scene.tools_progress(), scene.audio_monitor_progress());
+                    scene.draw(canvas, timeline_size);
+                    changed |=
+                        layout_before != (scene.tools_progress(), scene.audio_monitor_progress());
+                    canvas.restore();
+                    if shown_meter_width > 0.0 {
+                        canvas.save();
+                        canvas.translate((timeline_size.x, 0.0));
+                        canvas.clip_rect(
+                            skia_safe::Rect::from_wh(shown_meter_width, size.y),
+                            None,
+                            false,
+                        );
+                        audio_meter.draw(canvas, meter_width, size.y);
+                        canvas.restore();
+                    }
                     let picture = recorder
                         .finish_recording_as_picture(None)
                         .expect("record timeline scene");
                     latest[0].lock().expect("Android frame slot poisoned").frame = Some(Frame {
+                        palette: runtime.native_palette,
                         picture: Some(picture),
                         preview: None,
                         density: viewport.density,
@@ -403,10 +605,15 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                         shrimply_timeline_edit::selection_state::track_address(&project, key)
                     })
                     .map(|address| address.track_id().to_string());
-                if let Err(error) = runtime.request(&json!({"op":"show_track_add","kind":key.kind.label().to_ascii_lowercase(),"track":key.track_index,"track_id":track_id})) { runtime.error = Some(error); }
+                let import_targets: Vec<_> = runtime.backend.project().map(|project| request.import_targets.iter().map(|key| {
+                    let id = shrimply_timeline_edit::selection_state::track_address(&project, *key).map(|address| address.track_id().to_string());
+                    json!({"kind":key.kind.label().to_ascii_lowercase(),"track":key.track_index,"track_id":id})
+                }).collect()).unwrap_or_default();
+                if let Err(error) = runtime.request(&json!({"op":"show_track_add","kind":key.kind.label().to_ascii_lowercase(),"track":key.track_index,"track_id":track_id,"position":request.position,"import_targets":import_targets,"bottom_sheet":shrimply_components_core::layout::menu_uses_bottom_sheet(if request.touch { "touch" } else { "pointer" }),"x":request.point.x,"y":request.point.y})) { runtime.error = Some(error); }
                 changed = true;
             }
-            if let Some(key) = requests.audio_record {
+            if let Some(request) = requests.audio_record {
+                let key = request.key;
                 let track_id = runtime
                     .backend
                     .project()
@@ -414,7 +621,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                         shrimply_timeline_edit::selection_state::track_address(&project, key)
                     })
                     .map(|address| address.track_id().to_string());
-                if let Err(error) = runtime.request(&json!({"op":"show_audio_record","kind":"audio","track":key.track_index,"track_id":track_id})) { runtime.error = Some(error); }
+                if let Err(error) = runtime.request(&json!({"op":"show_audio_record","kind":"audio","track":key.track_index,"track_id":track_id,"position":request.position})) { runtime.error = Some(error); }
                 changed = true;
             }
             if requests.video_record.is_some() {
@@ -423,7 +630,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             }
         }
         let after = player::snapshot(&runtime.player);
-        if after.revision != before.revision {
+        if after.revision != before.revision && !runtime.preview_interaction.active() {
             if !benchmark {
                 runtime
                     .timeline_changed()
@@ -437,14 +644,55 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         if runtime.foreground && player::snapshot(&runtime.player).playing {
             changed |= runtime.tick();
         }
+        if graph_viewport.visible && graph_viewport.width > 0 && graph_viewport.height > 0 {
+            let size = shrimply_components_skia::canvas::vec2(
+                graph_viewport.width as f32 / graph_viewport.density,
+                graph_viewport.height as f32 / graph_viewport.density,
+            );
+            changed |= runtime.poll_graph(size);
+            if runtime.graph_dirty
+                || runtime
+                    .framegraph
+                    .as_ref()
+                    .is_some_and(|graph| graph.core.is_animating())
+            {
+                let record_start = Instant::now();
+                let mut recorder = skia_safe::PictureRecorder::new();
+                let canvas =
+                    recorder.begin_recording(skia_safe::Rect::from_wh(size.x, size.y), false);
+                runtime.graph_draw(canvas, size);
+                latest[2].lock().expect("Android graph slot poisoned").frame = Some(Frame {
+                    palette: runtime.native_palette,
+                    picture: Some(
+                        recorder
+                            .finish_recording_as_picture(None)
+                            .expect("record frame graph"),
+                    ),
+                    preview: None,
+                    density: graph_viewport.density,
+                    input_at: at,
+                    record_ns: record_start.elapsed().as_nanos(),
+                });
+                let _ = render[2].try_send(RenderCommand::Wake);
+            }
+        }
         let mut preview_dirty = reset || changed;
         if let Some(media) = &runtime.media {
             let update = media.poll();
-            if let Some(event) = update.visual {
+            changed |= runtime.preview_render_update(update.render_loading, update.render_elapsed);
+            if let Some(event) = update.visual
+                && runtime.preview_presented(&event)
+            {
                 use shrimply_preview_render_core::worker::VideoEvent;
                 preview_texture = match event {
-                    VideoEvent::Frame { frame, .. } => Some(frame.display),
-                    VideoEvent::Clear { .. } => None,
+                    VideoEvent::Frame { frame, .. } => {
+                        runtime.preview_frame = Some(frame.clone());
+                        Some(frame.display)
+                    }
+                    VideoEvent::Clear { .. } => {
+                        runtime.preview_frame = None;
+                        None
+                    }
                     _ => unreachable!("preview visual event"),
                 };
                 preview_dirty = true;
@@ -454,7 +702,15 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 changed = true;
             }
         }
-        if preview_dirty {
+        if preview_dirty && preview_viewport.visible {
+            let size = glam::vec2(
+                preview_viewport.width as f32 / preview_viewport.density,
+                preview_viewport.height as f32 / preview_viewport.density,
+            );
+            if let Err(error) = runtime.prepare_preview_overlay(size) {
+                runtime.error = Some(error);
+                changed = true;
+            }
             let preview = crate::preview::Frame::new(&runtime, preview_texture.clone());
             if last_preview.as_ref() != Some(&preview) {
                 last_preview = Some(preview.clone());
@@ -462,6 +718,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                     .lock()
                     .expect("Android preview slot poisoned")
                     .frame = Some(Frame {
+                    palette: runtime.native_palette,
                     picture: None,
                     preview: Some(preview),
                     density: 1.0,
@@ -485,9 +742,10 @@ fn run_render(
     input: Arc<Mutex<crate::input::Queue>>,
     latest: Arc<Mutex<RenderSlot>>,
     benchmark_submitted: Arc<AtomicUsize>,
-    preview: bool,
+    role: usize,
 ) {
     let mut current: Option<Frame> = None;
+    let mut current_palette = None;
     let mut renderer: Option<Renderer> = None;
     let mut window = None;
     let (mut width, mut height, mut density) = (0, 0, 1.0);
@@ -555,7 +813,7 @@ fn run_render(
             }
             dirty = renderer.is_some();
         }
-        if !preview {
+        {
             let viewport = crate::input::Viewport {
                 width,
                 height,
@@ -563,16 +821,35 @@ fn run_render(
                 visible: active && window.is_some() && width > 0 && height > 0,
             };
             let mut pending = input.lock().expect("Android input queue poisoned");
-            if viewport != pending.viewport {
-                pending.viewport = viewport;
+            let previous = match role {
+                0 => &mut pending.viewport,
+                1 => &mut pending.preview_viewport,
+                _ => &mut pending.graph_viewport,
+            };
+            if viewport != *previous {
+                *previous = viewport;
                 if !viewport.visible {
-                    pending.push(crate::input::Input::Scene(
-                        shrimply_timeline_skia::scene::Event::Cancel,
-                    ));
+                    pending.push(match role {
+                        0 => {
+                            crate::input::Input::Scene(shrimply_timeline_skia::scene::Event::Cancel)
+                        }
+                        1 => crate::input::Input::Preview {
+                            flags: 0,
+                            phase: 3,
+                            position: glam::Vec2::ZERO,
+                            size: glam::Vec2::ZERO,
+                        },
+                        _ => crate::input::Input::Graph(crate::input::GraphInput::Pointer {
+                            kind: 29,
+                            point: glam::Vec2::ZERO,
+                            detail: 0.0,
+                            flags: 0,
+                            extra: 0.0,
+                        }),
+                    });
                 }
                 let _ = project_send.try_send(ProjectCommand::Wake);
             }
-            drop(pending);
         }
         if let Some(next) = frame {
             current = Some(next);
@@ -589,12 +866,20 @@ fn run_render(
             dirty = false;
             continue;
         };
+        if let Some(palette) = frame.palette
+            && current_palette != Some(palette)
+        {
+            palette.apply();
+            current_palette = Some(palette);
+        }
         let start = Instant::now();
         let valid = if let Some(preview) = &frame.preview {
             crate::preview::draw(renderer, preview, density)
         } else {
             renderer.draw(|canvas, _, _| {
-                canvas.clear(skia_safe::Color::BLACK);
+                canvas.clear(skia_safe::Color4f::from(
+                    shrimply_cross_ui_theme::current().view_bg,
+                ));
                 if let Some(picture) = &frame.picture {
                     canvas.save();
                     canvas.scale((frame.density, frame.density));
@@ -764,13 +1049,14 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
             let (project, project_receive) = mpsc::sync_channel(8);
             let (timeline_send, timeline_receive) = mpsc::sync_channel(8);
             let (preview_send, preview_receive) = mpsc::sync_channel(8);
-            let render = [timeline_send, preview_send];
+            let (graph_send, graph_receive) = mpsc::sync_channel(8);
+            let render = [timeline_send, preview_send, graph_send];
             let input = Arc::new(Mutex::new(crate::input::Queue::default()));
             let lifecycle = SharedLifecycle::default();
-            let latest: [Arc<Mutex<RenderSlot>>; 2] =
+            let latest: [Arc<Mutex<RenderSlot>>; SURFACE_COUNT] =
                 std::array::from_fn(|_| Arc::new(Mutex::new(RenderSlot::default())));
             let benchmark_submitted = Arc::new(AtomicUsize::new(0));
-            let render_threads = [timeline_receive, preview_receive]
+            let render_threads = [timeline_receive, preview_receive, graph_receive]
                 .into_iter()
                 .enumerate()
                 .map(|(index, render_receive)| {
@@ -780,10 +1066,10 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
                     let benchmark_submitted = benchmark_submitted.clone();
                     thread::Builder::new()
                         .name(
-                            if index == 0 {
-                                "shrimply-timeline"
-                            } else {
-                                "shrimply-preview"
+                            match index {
+                                0 => "shrimply-timeline",
+                                1 => "shrimply-preview",
+                                _ => "shrimply-framegraph",
                             }
                             .into(),
                         )
@@ -795,7 +1081,7 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
                                 input,
                                 latest,
                                 benchmark_submitted,
-                                index == 1,
+                                index,
                             )
                         })
                         .expect("start Vulkan thread")

@@ -60,9 +60,10 @@ pub use history::{
     can_redo, can_undo, change_history_saved, commit_coalesced_edit, commit_edit,
     commit_edit_checked, commit_edit_saved, connect_commit_status, create_new_project_file,
     create_project_file, finish_coalesced_edit, flush_history, history_destination,
-    load_project_snapshot, load_project_snapshot_with_fingerprint, poll_commit_status,
-    prepare_project, prepare_project_with_frame_grid_repair, redo, save, save_as, save_view_state,
-    saved_project_fingerprint, serialize_project_json, shutdown_history, undo,
+    history_revision, load_project_snapshot, load_project_snapshot_with_fingerprint,
+    poll_commit_status, prepare_project, prepare_project_with_frame_grid_repair, redo, save,
+    save_as, save_view_state, saved_project_fingerprint, serialize_project_json, shutdown_history,
+    undo, with_provisional_edit,
 };
 pub use item_address::{
     ItemAddress, ItemKind, ItemMut, ItemRef, ProjectItem, SequenceScopeId, TrackAddress, TrackMut,
@@ -76,7 +77,8 @@ pub use ownership::{
 };
 #[cfg(feature = "preview")]
 pub use preview::{
-    COMPOSITING_ALPHA_MASK_PREVIEW_FACET, ITEM_PREVIEW_FACET, MODIFIER_ALPHA_MASK_PREVIEW_FACET,
+    COMPOSITING_ALPHA_MASK_PREVIEW_FACET, DEFAULT_PAINT_ERASER_SCALE, ITEM_PREVIEW_FACET,
+    MODIFIER_ALPHA_MASK_PREVIEW_FACET, PAINT_PREVIEW_STATE, PaintPreviewState,
     SHAPE_APPEARANCE_PREVIEW_FACET, SHAPE_CONTENT_PREVIEW_FACET, TEXT_APPEARANCE_PREVIEW_FACET,
     TRACKED_CAMERA_PREVIEW, TrackedCameraPreview,
 };
@@ -98,7 +100,7 @@ pub use shrimply_project_types::{
     AudioClipTransitionCurve, COMMON_FRAME_RATES, CanvasSize, DEFAULT_CANVAS_SIZE,
     DEFAULT_PROJECT_FPS, FrameRate, ItemKey, MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION,
     PROJECT_PRESETS, ProjectPreset, TrackGap, TrackKey, TrackKind, TransitionSide,
-    clamp_item_end_to_next_start,
+    clamp_item_end_to_next_start, frame_rate_choices,
 };
 pub use tags::normalize_tags;
 pub use timing::*;
@@ -179,7 +181,7 @@ impl Default for Project {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PreviewGuides {
     #[serde(default)]
     pub vertical: Vec<f32>,

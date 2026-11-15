@@ -2,6 +2,7 @@ import QtCore
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
+import QtQuick.Effects
 import QtQuick.Layouts
 import QtQml.Models
 import Qt.labs.qmlmodels
@@ -15,15 +16,15 @@ ApplicationWindow {
 
     width: 1800
     height: 1100
-    minimumWidth: 960
+    minimumWidth: backend.previewMinimumWidth()
     minimumHeight: 640
     visible: true
     title: backend.projectTitle
     palette.inactive.windowText: palette.active.windowText
     palette.inactive.buttonText: palette.active.buttonText
     palette.inactive.text: palette.active.text
-    property bool inspectorVisible: true
-    property bool timelineVisible: true
+    readonly property bool inspectorVisible: backend.inspectorVisible
+    readonly property bool timelineVisible: backend.timelineVisible
     property bool fullscreenPreview: false
     property int visibilityBeforeFullscreen: Window.Windowed
     property string destinationTitle
@@ -197,44 +198,21 @@ ApplicationWindow {
             onAboutToShow: {
                 inspectorMenuItem.checked = window.inspectorVisible
                 timelineMenuItem.checked = window.timelineVisible
-                console.info("View menu synchronized:",
-                    "inspectorVisible=" + window.inspectorVisible,
-                    "inspectorChecked=" + inspectorMenuItem.checked,
-                    "timelineVisible=" + window.timelineVisible,
-                    "timelineChecked=" + timelineMenuItem.checked)
             }
 
             MenuItem {
                 id: inspectorMenuItem
                 text: backend.translate("Inspector")
                 checkable: true
-                checked: true
-                onClicked: {
-                    window.inspectorVisible = !window.inspectorVisible
-                    checked = window.inspectorVisible
-                    Qt.callLater(function() {
-                        console.info("Inspector view toggle settled:",
-                            "visible=" + window.inspectorVisible,
-                            "checked=" + inspectorMenuItem.checked,
-                            "paneVisible=" + inspectorPane.visible)
-                    })
-                }
+                checked: window.inspectorVisible
+                onClicked: backend.toggleInspector()
             }
             MenuItem {
                 id: timelineMenuItem
                 text: backend.translate("Timeline")
                 checkable: true
-                checked: true
-                onClicked: {
-                    window.timelineVisible = !window.timelineVisible
-                    checked = window.timelineVisible
-                    Qt.callLater(function() {
-                        console.info("Timeline view toggle settled:",
-                            "visible=" + window.timelineVisible,
-                            "checked=" + timelineMenuItem.checked,
-                            "paneVisible=" + timelinePane.visible)
-                    })
-                }
+                checked: window.timelineVisible
+                onClicked: backend.toggleTimeline()
             }
             Action {
                 text: backend.translate("Fullscreen Preview")
@@ -300,44 +278,82 @@ ApplicationWindow {
         }
     }
 
+    component ThinSplitView: SplitView {
+        id: split
+        property real dividerExtent: 0
+        handle: Rectangle {
+            id: divider
+            implicitWidth: 1
+            implicitHeight: 1
+            onWidthChanged: split.dividerExtent = split.orientation === Qt.Horizontal ? width : height
+            onHeightChanged: split.dividerExtent = split.orientation === Qt.Horizontal ? width : height
+            color: SplitHandle.pressed ? split.palette.highlight : split.palette.mid
+            containmentMask: Item {
+                readonly property bool vertical: split.orientation === Qt.Horizontal
+                x: vertical ? (divider.width - width) / 2 : 0
+                y: vertical ? 0 : (divider.height - height) / 2
+                width: vertical ? Math.max(divider.width, Qt.styleHints.startDragDistance * 2) : divider.width
+                height: vertical ? divider.height : Math.max(divider.height, Qt.styleHints.startDragDistance * 2)
+            }
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
         visible: backend.ready
         spacing: 0
 
-        SplitView {
+        ThinSplitView {
             id: verticalSplit
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Vertical
+            property bool trackingDivider: false
+            onResizingChanged: {
+                if (resizing) {
+                    trackingDivider = true
+                } else if (trackingDivider) {
+                    if (timelinePane.visible && height > 0)
+                        backend.saveTimelineFraction(editorTop.height, timelinePane.height)
+                    trackingDivider = false
+                }
+            }
 
-            SplitView {
+            Item {
+                id: editorTop
                 SplitView.fillWidth: true
                 SplitView.fillHeight: true
                 SplitView.preferredHeight: 660
-                orientation: Qt.Horizontal
+                readonly property real inspectorWidth: Math.max(backend.inspectorWidth, inspectorView.implicitWidth)
+                readonly property bool inspectorOverlay: backend.inspectorOverlay(width, inspectorWidth)
 
-                Pane {
-                    id: inspectorPane
-                    padding: 0
-                    visible: window.inspectorVisible && !window.fullscreenPreview
-                    SplitView.preferredWidth: inspectorView.implicitWidth
-                    SplitView.minimumWidth: inspectorView.implicitWidth
-
-                    InspectorView {
-                        id: inspectorView
-                        anchors.fill: parent
-                        onError: function(body) {
-                            errorDialog.title = backend.translate("Inspector edit failed")
-                            errorDialog.text = body
-                            errorDialog.open()
-                        }
-                        onConfirmation: function(body) {
-                            inspectorConfirmation.text = body
-                            inspectorConfirmation.open()
+                ThinSplitView {
+                    id: horizontalSplit
+                    anchors.fill: parent
+                    orientation: Qt.Horizontal
+                    property bool trackingDivider: false
+                    onResizingChanged: {
+                        if (resizing) {
+                            trackingDivider = true
+                        } else if (trackingDivider) {
+                            if (inspectorSlot.visible)
+                                backend.saveInspectorWidth(inspectorSlot.width)
+                            trackingDivider = false
                         }
                     }
-                }
+
+                    Item {
+                        id: inspectorSlot
+                        visible: window.inspectorVisible && !window.fullscreenPreview && !editorTop.inspectorOverlay
+                        Binding {
+                            target: inspectorSlot.SplitView
+                            property: "preferredWidth"
+                            restoreMode: Binding.RestoreNone
+                            value: editorTop.inspectorWidth
+                            when: !horizontalSplit.resizing && !horizontalSplit.trackingDivider
+                        }
+                        SplitView.minimumWidth: inspectorView.implicitWidth
+                    }
 
                 ColumnLayout {
                     SplitView.fillWidth: true
@@ -351,7 +367,7 @@ ApplicationWindow {
 
                         ToolBar {
                             id: previewToolbar
-                            visible: !window.fullscreenPreview
+                            visible: !window.fullscreenPreview && backend.previewControlsVisible
 
                             Layout.fillHeight: true
                             Layout.preferredWidth: 44
@@ -449,6 +465,30 @@ ApplicationWindow {
                                 PreviewSurface {
                                     anchors.fill: parent
                                     fullscreenPreview: window.fullscreenPreview
+                                    Keys.onPressed: function(event) {
+                                        if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) {
+                                            previewContextAnchor.x = 0
+                                            previewContextAnchor.y = 0
+                                            previewContextMenu.show(false)
+                                            event.accepted = true
+                                        }
+                                    }
+                                    TapHandler {
+                                        acceptedButtons: Qt.RightButton
+                                        onTapped: function(point) {
+                                            previewContextAnchor.x = point.position.x
+                                            previewContextAnchor.y = point.position.y
+                                            previewContextMenu.show(false)
+                                        }
+                                    }
+                                    TapHandler {
+                                        acceptedDevices: PointerDevice.TouchScreen | PointerDevice.Stylus
+                                        onLongPressed: {
+                                            previewContextAnchor.x = point.position.x
+                                            previewContextAnchor.y = point.position.y
+                                            previewContextMenu.show(true)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -456,19 +496,32 @@ ApplicationWindow {
 
                     ToolBar {
                         Layout.fillWidth: true
+                        implicitHeight: transportGrid.implicitHeight + topPadding + bottomPadding
 
-                        RowLayout {
+                        GridLayout {
+                            id: transportGrid
                             anchors.fill: parent
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
+                            columns: 4
+                            readonly property bool stacked: backend.transportStacked(width)
 
-                            ToolButton { icon.name: "media-seek-backward"; onClicked: backend.stepFrame(-1) }
-                            ToolButton {
-                                icon.name: backend.playing ? "media-playback-pause" : "media-playback-start"
-                                onClicked: backend.togglePlaying()
+                            RowLayout {
+                                Layout.row: transportGrid.stacked ? 1 : 0
+                                Layout.column: 0
+                                Layout.columnSpan: 1
+                                Layout.alignment: Qt.AlignLeft
+                                ToolButton { icon.name: "media-seek-backward"; onClicked: backend.stepFrame(-1) }
+                                ToolButton {
+                                    icon.name: backend.playing ? "media-playback-pause" : "media-playback-start"
+                                    onClicked: backend.togglePlaying()
+                                }
+                                ToolButton { icon.name: "media-seek-forward"; onClicked: backend.stepFrame(1) }
                             }
-                            ToolButton { icon.name: "media-seek-forward"; onClicked: backend.stepFrame(1) }
                             Slider {
+                                Layout.row: 0
+                                Layout.column: transportGrid.stacked ? 0 : 1
+                                Layout.columnSpan: transportGrid.stacked ? 3 : 1
                                 Layout.fillWidth: true
                                 from: 0
                                 to: Math.max(1, backend.durationFrame)
@@ -476,15 +529,58 @@ ApplicationWindow {
                                 onMoved: backend.seekFrame(Math.round(value))
                             }
                             Label {
+                                Layout.row: transportGrid.stacked ? 1 : 0
+                                Layout.column: transportGrid.stacked ? 1 : 2
+                                Layout.columnSpan: transportGrid.stacked ? 3 : 1
+                                Layout.fillWidth: transportGrid.stacked
+                                horizontalAlignment: transportGrid.stacked ? Text.AlignRight : Text.AlignLeft
+                                elide: Text.ElideRight
                                 text: backend.timeLabel
                                 font.family: backend.fixedFontFamily
                             }
                             ToolButton {
+                                Layout.row: 0
+                                Layout.column: 3
                                 icon.name: window.fullscreenPreview ? "view-restore" : "view-fullscreen"
                                 text: window.fullscreenPreview ? backend.translate("Exit Fullscreen Preview") : backend.translate("Fullscreen Preview")
                                 display: AbstractButton.IconOnly
                                 onClicked: window.setPreviewFullscreen(!window.fullscreenPreview)
                             }
+                        }
+                    }
+                }
+                }
+                Pane {
+                    id: inspectorPane
+                    parent: editorTop.inspectorOverlay ? editorTop : inspectorSlot
+                    padding: 0
+                    background: Rectangle {
+                        color: Qt.rgba(inspectorPane.palette.window.r, inspectorPane.palette.window.g, inspectorPane.palette.window.b, 1)
+                    }
+                    layer.enabled: editorTop.inspectorOverlay
+                    layer.effect: MultiEffect {
+                        shadowEnabled: true
+                        shadowColor: inspectorPane.palette.shadow
+                        shadowOpacity: 0.3
+                        blurMax: 12
+                    }
+                    visible: window.inspectorVisible && !window.fullscreenPreview
+                    width: editorTop.inspectorOverlay ? Math.min(editorTop.inspectorWidth, editorTop.width) : inspectorSlot.width
+                    height: parent.height
+                    z: 1
+
+                    InspectorView {
+                        id: inspectorView
+                        anchors.fill: parent
+                        clip: true
+                        onError: function(body) {
+                            errorDialog.title = backend.translate("Inspector edit failed")
+                            errorDialog.text = body
+                            errorDialog.open()
+                        }
+                        onConfirmation: function(body) {
+                            inspectorConfirmation.text = body
+                            inspectorConfirmation.open()
                         }
                     }
                 }
@@ -494,13 +590,21 @@ ApplicationWindow {
                 id: timelinePane
                 visible: window.timelineVisible && !window.fullscreenPreview
                 SplitView.fillWidth: true
-                SplitView.preferredHeight: 410
+                Binding {
+                    target: timelinePane.SplitView
+                    property: "preferredHeight"
+                    restoreMode: Binding.RestoreNone
+                    value: backend.splitPaneExtent(verticalSplit.height, verticalSplit.dividerExtent, backend.timelineFraction)
+                    when: !verticalSplit.resizing && !verticalSplit.trackingDivider
+                }
                 SplitView.minimumHeight: 180
                 spacing: 0
 
                 ToolBar {
                     Layout.fillHeight: true
-                    Layout.preferredWidth: 44
+                    Layout.preferredWidth: 44 * (timelineLoader.item ? timelineLoader.item.toolsProgress : 1)
+                    clip: true
+                    visible: Layout.preferredWidth > 0
 
                     ColumnLayout {
                         id: timelineToolColumn
@@ -600,7 +704,9 @@ ApplicationWindow {
                 }
 
                 Loader {
-                    Layout.preferredWidth: 54
+                    Layout.preferredWidth: 54 * (timelineLoader.item ? timelineLoader.item.audioMonitorProgress : 1)
+                    clip: true
+                    visible: Layout.preferredWidth > 0
                     Layout.fillHeight: true
                     active: backend.ready
                     sourceComponent: Component {
@@ -611,9 +717,94 @@ ApplicationWindow {
         }
     }
 
-    Menu {
+    component TimelineMenu: Menu {
+        property bool bottomSheet: false
+        parent: Overlay.overlay
+        popupType: bottomSheet || Qt.platform.os === "windows" ? Popup.Item : Popup.Window
+        modal: bottomSheet
+        dim: bottomSheet
+        width: bottomSheet && parent ? parent.width : implicitWidth
+        height: parent ? Math.min(implicitHeight, parent.height) : implicitHeight
+        transformOrigin: bottomSheet ? Item.Bottom : Item.TopLeft
+
+        function present(anchor, sheet) {
+            bottomSheet = sheet
+            if (sheet) {
+                x = 0
+                y = parent.height - height
+                open()
+            } else {
+                popup(anchor, 0, 0)
+            }
+        }
+    }
+
+    TimelineMenu {
+        id: previewContextMenu
+        property var labels: []
+
+        function show(touch) {
+            if (!previewLoader.item) return
+            previewLoader.item.cancelPointerInput()
+            previewLoader.item.forceActiveFocus()
+            labels = backend.previewContextLabels()
+            updateChecks()
+            present(previewContextAnchor, backend.previewContextBottomSheet(touch))
+        }
+
+        function updateChecks() {
+            for (let index = 0; index < count; ++index) {
+                const item = itemAt(index)
+                if (item) {
+                    const state = backend.previewContextChecked(index)
+                    item.checkable = state >= 0
+                    item.checked = state === 1
+                }
+            }
+        }
+
+        Instantiator {
+            model: previewContextMenu.labels
+            delegate: MenuItem {
+                required property int index
+                required property string modelData
+                text: modelData
+                checkable: backend.previewContextChecked(index) >= 0
+                checked: backend.previewContextChecked(index) === 1
+                onTriggered: {
+                    const request = backend.activatePreviewContext(index)
+                    if (request > 0 && previewLoader.item)
+                        previewLoader.item.captureContextImage(request === 2)
+                }
+            }
+            onObjectAdded: (index, object) => previewContextMenu.insertItem(index, object)
+            onObjectRemoved: (index, object) => previewContextMenu.takeItem(index)
+        }
+    }
+
+    Item {
+        id: previewContextAnchor
+        parent: previewLoader.item
+        width: 1
+        height: 1
+        visible: false
+    }
+
+    Connections {
+        target: backend
+        function onPreviewControlsVisibleChanged() { previewContextMenu.updateChecks() }
+    }
+
+    Connections {
+        target: previewLoader.item
+        function onPreviewImageSaveRequested() {
+            previewLoader.item.saveCapturedImage(backend.showPreviewImageSaveDialog())
+        }
+        function onPreviewImageCaptureFailed(error) { backend.reportPreviewImageError(error) }
+    }
+
+    TimelineMenu {
         id: timelineTrackAddMenu
-        popupType: Popup.Window
 
         Instantiator {
             model: timelineLoader.item ? timelineLoader.item.trackAddMenuItems : []
@@ -647,9 +838,8 @@ ApplicationWindow {
         visible: false
     }
 
-    Menu {
+    TimelineMenu {
         id: timelineContextMenu
-        popupType: Qt.platform.os === "windows" ? Popup.Item : Popup.Window
 
         Instantiator {
             model: timelineLoader.item ? timelineLoader.item.contextMenuItems : []
@@ -661,6 +851,8 @@ ApplicationWindow {
                         required property var modelData
                         text: modelData.label
                         enabled: modelData.enabled
+                        checkable: modelData.checkable
+                        checked: modelData.checked
                         icon.name: modelData.label === "Copy" ? "edit-copy"
                             : modelData.label === "Cut" ? "edit-cut"
                             : modelData.label === "Paste" ? "edit-paste" : ""
@@ -735,15 +927,15 @@ ApplicationWindow {
 
     Connections {
         target: timelineLoader.item
-        function onContextMenuRequested(x, y) {
+        function onContextMenuRequested(x, y, bottomSheet) {
             timelineContextAnchor.x = x
             timelineContextAnchor.y = y
-            timelineContextMenu.popup(timelineContextAnchor, 0, 0)
+            timelineContextMenu.present(timelineContextAnchor, bottomSheet)
         }
-        function onTrackAddMenuRequested(x, y) {
+        function onTrackAddMenuRequested(x, y, bottomSheet) {
             timelineTrackAddAnchor.x = x
             timelineTrackAddAnchor.y = y
-            timelineTrackAddMenu.popup(timelineTrackAddAnchor, 0, 0)
+            timelineTrackAddMenu.present(timelineTrackAddAnchor, bottomSheet)
         }
         function onTrackImportRequested() {
             const selected = backend.showOpenFileDialog(

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-components-core.workspace = true
 shrimply-timeline-skia.workspace = true
 shrimply-timeline-edit = { workspace = true }
 shrimply-components-skia.workspace = true

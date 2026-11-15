@@ -5,9 +5,7 @@ use sanim_runtime::{
     sanim_lang::{Prepared, SourceLocation},
     sanim_render::{Options, Renderer, Scene},
 };
-use shrimply_project_document::project::{
-    CanvasSize, ItemAddress, Time, VideoItem, generated_source_time_with_duration,
-};
+use shrimply_project_document::project::{CanvasSize, ItemAddress, Time, VideoItem};
 use std::{
     path::PathBuf,
     sync::{Arc, OnceLock, Weak, mpsc},
@@ -184,23 +182,16 @@ fn inspect(
 ) -> Result<Option<Inspection>, String> {
     let token = &request.source;
     let prepared = &token.prepared;
-    let animation = &prepared.animation;
     if token.viewport.width != request.canvas.width
         || token.viewport.height != request.canvas.height
         || token.viewport.rate != request.rate
     {
         return Err("Sanim preview viewport changed; inspect the refreshed preview".into());
     }
-    let Some(time) = generated_source_time_with_duration(
-        &request.item,
-        request.position,
-        Time {
-            seconds: animation.duration,
-        },
-    ) else {
+    let Some(time) = super::sample_time(&request.item, request.position, prepared) else {
         return Ok(None);
     };
-    if time.seconds.min(animation.duration) != token.time {
+    if time != token.time {
         return Err("Sanim preview time changed; inspect the refreshed preview".into());
     }
     if scene.as_ref().is_none_or(|(previous, viewport, _)| {

@@ -16,7 +16,6 @@ impl Inspectable for Project {
 
     fn inspect(&self, context: &InspectorContext) -> Vec<gtk::Widget> {
         let project = presentation(self);
-        let details = project.details();
         let config = InspectorSection::controls();
 
         let name_controller = context.inspector_core.clone();
@@ -67,27 +66,18 @@ impl Inspectable for Project {
             })
         };
 
-        let mut fps_options = shrimply_project_document::project::COMMON_FRAME_RATES
-            .iter()
-            .map(|rate| (rate.value, rate.label.to_string()))
-            .collect::<Vec<_>>();
-        if fps_options
-            .iter()
-            .all(|(fps, _)| *fps != project.frame_rate)
-        {
-            fps_options.push((
-                project.frame_rate,
-                shrimply_project_document::project::fraction_as_label(project.frame_rate),
-            ));
-        }
-        let fps = dropdown(project.frame_rate, fps_options, {
-            let staged_fps = staged_fps.clone();
-            let update_actions = update_actions.clone();
-            move |next| {
-                staged_fps.set(next);
-                update_actions();
-            }
-        });
+        let fps = dropdown(
+            project.frame_rate,
+            shrimply_project_document::project::frame_rate_choices(project.frame_rate),
+            {
+                let staged_fps = staged_fps.clone();
+                let update_actions = update_actions.clone();
+                move |next| {
+                    staged_fps.set(next);
+                    update_actions();
+                }
+            },
+        );
         config.add_control_row("FPS", &fps);
 
         let resolution = Number2Picker::builder(
@@ -163,44 +153,7 @@ impl Inspectable for Project {
             );
         });
 
-        let info = adw::PreferencesGroup::new();
-        for detail in details
-            .into_iter()
-            .filter(|detail| detail.label != "Project File")
-        {
-            info.add(
-                &adw::ActionRow::builder()
-                    .title(tr!(detail.label).as_ref())
-                    .subtitle(detail.value)
-                    .build(),
-            );
-        }
-
-        let project_path = project.file;
-        let file = adw::ActionRow::builder()
-            .title(tr!("Project File").as_ref())
-            .subtitle(project_path.to_string_lossy())
-            .build();
-        let show_file = gtk::Button::builder()
-            .icon_name("folder-open-symbolic")
-            .tooltip_text(tr!("Show project file in folder").as_ref())
-            .valign(gtk::Align::Center)
-            .css_classes(["flat"])
-            .build();
-        let reveal_path = project_path.clone();
-        show_file.connect_clicked(move |button| {
-            if let Err(error) =
-                crate::desktop_open::show_path_in_folder(button.upcast_ref(), reveal_path.clone())
-            {
-                let dialog =
-                    adw::AlertDialog::new(Some("Could not show project file"), Some(&error));
-                dialog.add_response("close", tr!("Close").as_ref());
-                dialog.present(Some(button));
-            }
-        });
-        file.add_suffix(&show_file);
-        file.set_activatable_widget(Some(&show_file));
-        info.add(&file);
+        let info = super::info::item(context);
 
         list::render_categories(
             vec![
@@ -214,7 +167,7 @@ impl Inspectable for Project {
                     key: "info",
                     label: "Info",
                     icon: "info-outline-symbolic",
-                    items: vec![flat(info)],
+                    items: vec![info],
                 },
                 list::InspectorCategory {
                     key: "performance",

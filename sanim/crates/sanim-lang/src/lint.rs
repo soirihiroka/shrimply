@@ -5,7 +5,7 @@ use crate::{
     prelude, progress,
     source::{self, Snapshot},
 };
-use sanim_core::{Diagnostic, NodeDuration, Number, Span, Unit};
+use sanim_core::{Diagnostic, Number, Span, Unit};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,7 +31,6 @@ pub struct LintReport {
     pub diagnostics: Vec<LintDiagnostic>,
     pub dependencies: BTreeMap<String, String>,
     pub statistics: Statistics,
-    pub durations: BTreeMap<String, Vec<NodeDuration>>,
     /// Shared compiler structures for editor tooling; no duplicated AST/type maps
     /// and no large internal structures in command-line JSON reports.
     #[serde(skip)]
@@ -115,10 +114,6 @@ impl Engine {
                             },
                         )
                     })
-                    .collect(),
-                durations: modules
-                    .into_iter()
-                    .map(|module| (module.id, module.checked.durations.clone()))
                     .collect(),
             })
         })
@@ -232,6 +227,19 @@ fn advice(module: &Loaded, root: bool, budget: u64, diagnostics: &mut Vec<LintDi
         });
     }
 
+    for declaration in &module.ast.statements {
+        if let StatementKind::Function { body, .. } = &declaration.kind {
+            for statement in body {
+                statement.visit(&mut |statement| {
+                    if let StatementKind::Expr(expression)=&statement.kind
+                        && crate::analysis::lookup(expression,module.checked.as_ref())==Some(&sanim_core::Type::Animation)
+                    {
+                        warn("L003","this function discards an Animation value; construction has no playback side effect. Return or bind the plan. Only unassigned Animation expressions at script entry are collected".into(),expression.span);
+                    }
+                });
+            }
+        }
+    }
     if root {
         for statement in &module.ast.statements {
             if let StatementKind::Bind {

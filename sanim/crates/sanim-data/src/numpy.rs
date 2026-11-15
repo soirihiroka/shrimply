@@ -39,14 +39,16 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
     } else {
         (ty, false)
     };
-    if matches!(element, Type::Vector(..) | Type::Matrix4 | Type::Fraction) {
+    if matches!(element, Type::List(_, _) | Type::Matrix4 | Type::Fraction) {
         let raw = decode_array(
             bytes,
-            &Type::Array(Box::new(if *element == Type::Fraction {
-                Type::Numeric(Unit::Number)
-            } else {
-                Type::Data
-            })),
+            &Type::Array(Box::new(
+                if matches!(element, Type::Fraction | Type::List(_, _)) {
+                    Type::Numeric(Unit::Number)
+                } else {
+                    Type::Data
+                },
+            )),
             limits,
         )?;
         let Value::Array {
@@ -56,16 +58,17 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
             return Err("invalid numeric array".into());
         };
         let width = match element {
-            Type::Vector(n, unit) => {
-                if unit.is_some_and(|u| u != Unit::Number) {
-                    return Err(
-                        "NPY does not encode units; vector elements must be dimensionless".into(),
-                    );
+            Type::List(inner, length) => {
+                if sanim_core::math::operations::scalar_unit(inner) != Some(Unit::Number) {
+                    return Err("NPY numeric Lists require dimensionless Number elements".into());
                 }
-                if shape.pop() != Some(*n) {
-                    return Err(format!("NPY final dimension must be {n} for {element}"));
+                let width = shape.pop().ok_or("NPY List requires an array dimension")?;
+                if !length.allows(width) {
+                    return Err(format!(
+                        "NPY final dimension {width} does not match {element}"
+                    ));
                 }
-                *n
+                width
             }
             Type::Matrix4 => {
                 if shape.len() < 2 || shape[shape.len() - 2..] != [4, 4] {
@@ -83,7 +86,17 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
         }
         let mut converted = vec![];
         let mut components = values.iter();
-        for _ in 0..values.len() / width {
+        let rows = match values.len().checked_div(width) {
+            Some(rows) => rows,
+            None => shape
+                .iter()
+                .try_fold(1usize, |size, axis| size.checked_mul(*axis))
+                .ok_or("NPY shape overflow")?,
+        };
+        if rows > limits.max_values {
+            return Err("NPY value limit exceeded".into());
+        }
+        for _ in 0..rows {
             let mut chunk = components.by_ref().take(width);
             let value = if *element == Type::Fraction {
                 Value::Fraction(
@@ -93,6 +106,18 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
                         .number()?
                         .value,
                 )
+            } else if let Type::List(inner, _) = element {
+                let values = chunk
+                    .map(|value| {
+                        let value = if inner.as_ref() == &Type::Fraction {
+                            Value::Fraction(value.number()?.value)
+                        } else {
+                            value.clone()
+                        };
+                        value.with_type(inner)
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                Value::List(sanim_core::List::typed(inner.as_ref().clone(), values))
             } else {
                 let numbers = chunk
                     .map(|v| match v {
@@ -104,7 +129,6 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
                     })
                     .collect::<Result<Vec<_>, String>>()?;
                 match element {
-                    Type::Vector(..) => Value::from_vector(numbers, Unit::Number)?,
                     Type::Matrix4 => {
                         let mut m = [[0.0; 4]; 4];
                         for (i, v) in numbers.into_iter().enumerate() {

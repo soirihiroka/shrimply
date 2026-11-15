@@ -15,7 +15,7 @@ pub fn insert(
     default_duration: Time,
 ) -> Option<ItemKey> {
     let (x, y) = (point.x, point.y);
-    if x < timeline_x() {
+    if x < timeline_x(view) {
         return None;
     }
     let project_state = &*project;

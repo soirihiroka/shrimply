@@ -11,7 +11,6 @@ enum Key {
 struct CallbackVisit {
     index: usize,
     ordinal: usize,
-    need_result: bool,
 }
 impl Key {
     fn new(value: &Value) -> Result<Self, String> {
@@ -47,7 +46,7 @@ impl Runtime<'_, '_> {
             .cloned()
             .map(|value| (None, value))
             .collect::<Vec<_>>();
-        let result = self.invoke(key, &evaluated, span, visit.need_result, None);
+        let result = self.invoke(key, &evaluated, span);
         self.identity.pop();
         self.reactive.remove_since(first);
         result.map_err(|mut error| {
@@ -70,27 +69,19 @@ impl Runtime<'_, '_> {
         let Some(Value::List(items)) = args.get("items") else {
             return Err(self.error("S305", "List method requires List<T>", span));
         };
-        let discard = self.duration_only
-            && self
-                .discarded_list_call
-                .as_ref()
-                .is_some_and(|(module, site)| module == &self.module && *site == span);
-        let result_type = if discard {
-            Type::Unit
-        } else {
-            self.loaded
-                .iter()
-                .find(|module| module.id == self.module)
-                .and_then(|module| module.checked.result_types.get(&(span.start, span.end)))
-                .map(|ty| ty.substitute(&self.type_bindings))
-                .ok_or_else(|| {
-                    self.error(
-                        "S301",
-                        "List call is missing its checked result schema",
-                        span,
-                    )
-                })?
-        };
+        let result_type = self
+            .loaded
+            .iter()
+            .find(|module| module.id == self.module)
+            .and_then(|module| module.checked.result_types.get(&(span.start, span.end)))
+            .map(|ty| ty.substitute(&self.type_bindings))
+            .ok_or_else(|| {
+                self.error(
+                    "S301",
+                    "List call is missing its checked result schema",
+                    span,
+                )
+            })?;
         let list_type = if let Type::List(inner, _) = &result_type {
             Some(Arc::new(inner.as_ref().clone()))
         } else {
@@ -107,34 +98,6 @@ impl Runtime<'_, '_> {
                 }
             })
             .transpose()?;
-        if discard {
-            if matches!(
-                definition.operation,
-                Operation::Map | Operation::FlatMap | Operation::Sort | Operation::Unique
-            ) {
-                if let Some(callback) = callback {
-                    let need_result =
-                        matches!(definition.operation, Operation::Sort | Operation::Unique);
-                    for (index, item) in items.iter().enumerate() {
-                        self.charge_work(1, span)?;
-                        self.list_callback(
-                            callback,
-                            std::slice::from_ref(item),
-                            span,
-                            CallbackVisit {
-                                index,
-                                ordinal: index,
-                                need_result,
-                            },
-                        )?;
-                    }
-                }
-                return Ok(Value::Unit);
-            }
-            if definition.callback.is_none() {
-                return Ok(Value::Unit);
-            }
-        }
         let index = |name, default| -> Result<usize, Diagnostic> {
             args.get(name)
                 .map(|value| value.number().and_then(Number::usize))
@@ -220,9 +183,6 @@ impl Runtime<'_, '_> {
         let max_depth = self.limits.data.max_depth;
         let module = self.module.clone();
         let mut append = |value: Value| -> Result<(), Diagnostic> {
-            if discard {
-                return Ok(());
-            }
             if output.len() >= max_values {
                 return Err(Diagnostic::new(
                     "S303",
@@ -310,7 +270,6 @@ impl Runtime<'_, '_> {
                     CallbackVisit {
                         index: position,
                         ordinal: position - skipped,
-                        need_result: true,
                     },
                 )?)
             } else {
@@ -412,11 +371,7 @@ impl Runtime<'_, '_> {
         }
         match definition.operation {
             Reduce | Fold => {
-                return Ok(if discard {
-                    Value::Unit
-                } else {
-                    accumulator.expect("nonempty reduction or explicit fold initial")
-                });
+                return Ok(accumulator.expect("nonempty reduction or explicit fold initial"));
             }
             Any => return Ok(Value::Bool(false)),
             All => return Ok(Value::Bool(true)),
@@ -428,9 +383,6 @@ impl Runtime<'_, '_> {
                 }
             }
             _ => {}
-        }
-        if discard {
-            return Ok(Value::Unit);
         }
         if matches!(definition.operation, Map | Filter | Unique)
             && all_unchanged

@@ -3,9 +3,29 @@ use crate::project::{ItemAddress, ItemKind, ItemRef, TrackAddress};
 use crate::timeline_operation::{SequenceTimeline, TimelineOperationContext};
 use std::path::PathBuf;
 
+/// A single shared hit contract routes mouse and touch menus on every host.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TimelineContextTarget {
+    Header,
+    Playhead {
+        position: Time,
+    },
+    Item {
+        address: ItemAddress,
+        folded: bool,
+    },
+    Track {
+        address: TrackAddress,
+        key: Option<TrackKey>,
+    },
+    Gap,
+}
+
 #[derive(Default)]
 pub(super) struct Context {
     pub menu: ContextMenu,
+    pub touch: bool,
+    pub point: Vec2,
     pub item: Option<ItemAddress>,
     pub track: Option<TrackAddress>,
     pub folded_track: Option<TrackAddress>,
@@ -15,152 +35,277 @@ pub(super) struct Context {
     pub tracks: Vec<TrackAddress>,
     pub focus: Option<ItemAddress>,
     pub scope: project::SequenceScopeId,
+    pub split_time: Option<Time>,
+    pub playhead_track: Option<TrackAddress>,
 }
 
 impl Scene {
-    pub fn prepare_context_menu(&mut self, point: Vec2) -> ContextMenu {
-        self.pointer_cancelled();
-        self.view.selection = None;
-        self.context = Context::default();
+    pub fn context_target(&self, point: Vec2) -> Option<TimelineContextTarget> {
         if !self.pointer_in_viewport(point) || self.scrollbar_at(point).is_some() {
-            return ContextMenu::default();
+            return None;
         }
         let x = f64::from(point.x);
         let y = f64::from(point.y);
+        if y < RULER_HEIGHT && x < self.view.timeline_x() {
+            return Some(TimelineContextTarget::Header);
+        }
+        let position = player_state::current_time(&self.player);
+        if crate::math::playhead_handle_contains(self.view, position, x, y) {
+            return Some(TimelineContextTarget::Playhead { position });
+        }
+        if y < RULER_HEIGHT {
+            return None;
+        }
         let project = self.project.borrow();
-        let folded = folded_sequence::hit_projected_item(&project, self.view, x, y);
-        let hit = items::hit_item_at(&project, self.view, x, y);
-        if let Some(address) = folded
-            .as_ref()
-            .map(|hit| hit.key.clone())
-            .or_else(|| hit.and_then(|hit| selection_state::item_address(&project, hit)))
-        {
-            let preserve_tracks = hit.is_some_and(|hit| {
-                hit.kind == TrackKind::Audio
-                    && selection_state::selected_tracks(&self.selection).contains(&TrackKey {
-                        kind: hit.kind,
-                        track_index: hit.track_index,
-                    })
+        if let Some(hit) = folded_sequence::hit_projected_item(&project, self.view, x, y) {
+            return Some(TimelineContextTarget::Item {
+                address: hit.key,
+                folded: true,
             });
-            if !preserve_tracks {
-                let scope = SequenceTimeline::for_item(&project, &address)
-                    .expect("hit item has a valid scope");
-                let mut selected =
-                    selection_state::selected_item_addresses(&self.selection, &project)
-                        .into_iter()
-                        .filter(|item| scope.contains_item(&project, item))
-                        .collect::<Vec<_>>();
-                if !selected.contains(&address) {
-                    selected = items::expand_grouped_item_addresses(
-                        &scope,
+        }
+        if let Some(hit) = items::hit_item_at(&project, self.view, x, y)
+            && let Some(address) = selection_state::item_address(&project, hit)
+        {
+            return Some(TimelineContextTarget::Item {
+                address,
+                folded: false,
+            });
+        }
+        if x < self.view.timeline_x() {
+            let rows = items::track_rows(&project);
+            if let Some(row) =
+                crate::math::track_row_at_y(y + self.view.scroll_y).and_then(|row| rows.get(row))
+            {
+                return Some(TimelineContextTarget::Track {
+                    address: row.address.clone(),
+                    key: row.root_key,
+                });
+            }
+        }
+        Some(TimelineContextTarget::Gap)
+    }
+
+    pub fn context_menu_checked(&self, action: ContextMenuAction) -> Option<bool> {
+        match action {
+            ContextMenuAction::ShowTools => Some(self.show_tools),
+            ContextMenuAction::ShowTrackControls => Some(self.show_track_controls),
+            ContextMenuAction::ShowAudioMonitor => Some(self.show_audio_monitor),
+            _ => None,
+        }
+    }
+
+    pub fn prepare_context_menu(&mut self, point: Vec2) -> ContextMenu {
+        self.prepare_context_menu_for_input(point, false)
+    }
+
+    pub fn prepare_context_menu_for_input(&mut self, point: Vec2, touch: bool) -> ContextMenu {
+        self.pointer_cancelled();
+        self.view.selection = None;
+        self.context = Context {
+            point,
+            touch,
+            ..Context::default()
+        };
+        let Some(target) = self.context_target(point) else {
+            return ContextMenu::default();
+        };
+        let project = self.project.borrow();
+        match target {
+            TimelineContextTarget::Header => {
+                self.context.at_top = true;
+                self.context.menu = crate::empty_track_context_menu();
+                let visibility = [
+                    ContextMenuAction::ShowTools,
+                    ContextMenuAction::ShowTrackControls,
+                    ContextMenuAction::ShowAudioMonitor,
+                ]
+                .into_iter()
+                .map(|action| {
+                    ContextMenuEntry::Action(ContextMenuItem {
+                        action,
+                        enabled: true,
+                        checked: self.context_menu_checked(action),
+                    })
+                })
+                .collect();
+                self.context.menu.sections.push(visibility);
+            }
+            TimelineContextTarget::Playhead { position } => {
+                let scope = SequenceTimeline::new(selection_state::active_scope(&self.selection));
+                let selected = selection_state::selected_item_addresses(&self.selection, &project);
+                let grouped = items::expand_grouped_item_addresses(&scope, &project, &selected);
+                let spanning = |address: &ItemAddress| {
+                    scope
+                        .timeline_item_times(&project, address)
+                        .is_some_and(|(start, end)| start < position && position < end)
+                };
+                self.context.split_time = Some(position);
+                self.context.menu.sections.push(vec![
+                    ContextMenuEntry::Action(ContextMenuItem::enabled(
+                        ContextMenuAction::SplitSelected,
+                        grouped.iter().any(spanning),
+                    )),
+                    ContextMenuEntry::Action(ContextMenuItem::enabled(
+                        ContextMenuAction::SplitAll,
+                        scope.items(&project).iter().any(spanning),
+                    )),
+                ]);
+                let mut tracks =
+                    selection_state::selected_track_addresses(&self.selection, &project);
+                if tracks.is_empty() {
+                    for address in &selected {
+                        let track = address.track();
+                        if !tracks.contains(&track) {
+                            tracks.push(track);
+                        }
+                    }
+                    if tracks.is_empty()
+                        && let Some(track) =
+                            selection_state::focused_track_address(&self.selection, &project)
+                    {
+                        tracks.push(track);
+                    }
+                }
+                if let [address] = tracks.as_slice()
+                    && let Some(key) = selection_state::track_key(&project, address)
+                {
+                    self.context.playhead_track = Some(address.clone());
+                    let mut actions = vec![ContextMenuEntry::Action(ContextMenuItem::new(
+                        ContextMenuAction::AddToTrack,
+                    ))];
+                    if key.kind == TrackKind::Audio && self.recording_available.0 {
+                        actions.push(ContextMenuEntry::Action(ContextMenuItem::new(
+                            ContextMenuAction::RecordAudio,
+                        )));
+                    }
+                    if key.kind == TrackKind::Video && self.recording_available.1 {
+                        actions.push(ContextMenuEntry::Action(ContextMenuItem::new(
+                            ContextMenuAction::RecordVideo,
+                        )));
+                    }
+                    self.context.menu.sections.push(actions);
+                }
+            }
+            TimelineContextTarget::Item { address, folded } => {
+                let preserve_tracks = !folded
+                    && address.kind() == ItemKind::Audio
+                    && selection_state::selected_track_addresses(&self.selection, &project)
+                        .contains(&address.track());
+                if !preserve_tracks {
+                    let scope = SequenceTimeline::for_item(&project, &address)
+                        .expect("hit item has a valid scope");
+                    let mut selected =
+                        selection_state::selected_item_addresses(&self.selection, &project)
+                            .into_iter()
+                            .filter(|item| scope.contains_item(&project, item))
+                            .collect::<Vec<_>>();
+                    if !selected.contains(&address) {
+                        selected = items::expand_grouped_item_addresses(
+                            &scope,
+                            &project,
+                            std::slice::from_ref(&address),
+                        );
+                    }
+                    selection_state::set_selected_item_addresses(
+                        &self.selection,
                         &project,
-                        std::slice::from_ref(&address),
+                        selected,
+                        Some(address.clone()),
                     );
                 }
-                selection_state::set_selected_item_addresses(
-                    &self.selection,
-                    &project,
-                    selected,
-                    Some(address.clone()),
-                );
-            }
-            let selected = selection_state::selected_item_addresses(&self.selection, &project);
-            let clipboard = self.property_clipboard.borrow();
-            let can_replace_properties = clipboard.can_replace_properties(&project, &selected);
-            let can_paste_modifiers = clipboard.can_append_modifiers(&project, &selected);
-            let folder = match project.item(&address) {
-                Some(ItemRef::Video(item)) => {
-                    matches!(item.content, project::VideoItemContent::FoldedSequence(_))
-                }
-                Some(ItemRef::Audio(item)) => {
-                    matches!(item.source, project::AudioSource::FoldedSequence(_))
-                }
-                _ => false,
-            };
-            self.context.file = match project.item(&address) {
-                Some(ItemRef::Video(item)) if item.uses_file_asset() => {
-                    Some(item.file.path().to_owned())
-                }
-                Some(ItemRef::Audio(item))
-                    if matches!(
-                        item.source,
-                        project::AudioSource::Media | project::AudioSource::Tts(_)
-                    ) && !item.file.as_os_str().is_empty() =>
-                {
-                    Some(item.file.path().to_owned())
-                }
-                _ => None,
-            };
-            self.context.item = Some(address.clone());
-            self.context.menu = if folded.is_some() {
-                crate::folded_item_context_menu(FoldedItemMenuContext {
-                    groupable: selected.len() >= 2,
-                    ungroupable: selected
-                        .iter()
-                        .any(|item| items::item_address_group_id(&project, item).is_some()),
-                    folder,
-                    can_replace_properties,
-                    can_paste_modifiers,
-                })
-            } else {
-                let speeds = selected
-                    .iter()
-                    .filter_map(|address| match project.item(address) {
-                        Some(ItemRef::Video(item)) => {
-                            Some(project::playback_speed_or_default(item.playback_speed))
-                        }
-                        Some(ItemRef::Audio(item)) => {
-                            Some(project::playback_speed_or_default(item.playback_speed))
-                        }
-                        _ => None,
+                let selected = selection_state::selected_item_addresses(&self.selection, &project);
+                let clipboard = self.property_clipboard.borrow();
+                let can_replace_properties = clipboard.can_replace_properties(&project, &selected);
+                let can_paste_modifiers = clipboard.can_append_modifiers(&project, &selected);
+                let folder = match project.item(&address) {
+                    Some(ItemRef::Video(item)) => {
+                        matches!(item.content, project::VideoItemContent::FoldedSequence(_))
+                    }
+                    Some(ItemRef::Audio(item)) => {
+                        matches!(item.source, project::AudioSource::FoldedSequence(_))
+                    }
+                    _ => false,
+                };
+                self.context.file = match project.item(&address) {
+                    Some(ItemRef::Video(item)) if item.uses_file_asset() => {
+                        Some(item.file.path().to_owned())
+                    }
+                    Some(ItemRef::Audio(item))
+                        if matches!(
+                            item.source,
+                            project::AudioSource::Media | project::AudioSource::Tts(_)
+                        ) && !item.file.as_os_str().is_empty() =>
+                    {
+                        Some(item.file.path().to_owned())
+                    }
+                    _ => None,
+                };
+                self.context.item = Some(address.clone());
+                self.context.menu = if folded {
+                    crate::folded_item_context_menu(FoldedItemMenuContext {
+                        groupable: selected.len() >= 2,
+                        ungroupable: selected
+                            .iter()
+                            .any(|item| items::item_address_group_id(&project, item).is_some()),
+                        folder,
+                        can_replace_properties,
+                        can_paste_modifiers,
                     })
-                    .collect::<Vec<_>>();
-                crate::item_context_menu(ItemMenuContext {
-                    kind: match address.kind() {
-                        ItemKind::Comment => ContextItemKind::Comment,
-                        ItemKind::Caption => ContextItemKind::Caption,
-                        ItemKind::Video => ContextItemKind::Video,
-                        ItemKind::Audio => ContextItemKind::Audio,
-                    },
-                    can_replace_properties,
-                    can_paste_modifiers,
-                    has_file: self.context.file.is_some(),
-                    foldable: selected.len() >= 2
-                        && selected.iter().all(|item| {
-                            !matches!(item.kind(), ItemKind::Comment | ItemKind::Caption)
+                } else {
+                    let speeds = selected
+                        .iter()
+                        .filter_map(|address| match project.item(address) {
+                            Some(ItemRef::Video(item)) => {
+                                Some(project::playback_speed_or_default(item.playback_speed))
+                            }
+                            Some(ItemRef::Audio(item)) => {
+                                Some(project::playback_speed_or_default(item.playback_speed))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    crate::item_context_menu(ItemMenuContext {
+                        kind: match address.kind() {
+                            ItemKind::Comment => ContextItemKind::Comment,
+                            ItemKind::Caption => ContextItemKind::Caption,
+                            ItemKind::Video => ContextItemKind::Video,
+                            ItemKind::Audio => ContextItemKind::Audio,
+                        },
+                        can_replace_properties,
+                        can_paste_modifiers,
+                        has_file: self.context.file.is_some(),
+                        foldable: selected.len() >= 2
+                            && selected.iter().all(|item| {
+                                !matches!(item.kind(), ItemKind::Comment | ItemKind::Caption)
+                            }),
+                        unlinkable_folder: folder
+                            && items::item_address_group_id(&project, &address).is_some(),
+                        folder,
+                        playback_speed: speeds.first().map(|first| {
+                            ContextMenuControl::PlaybackSpeed {
+                                position: math::playback_speed_scale_position(
+                                    project::fraction_as_f64(*first),
+                                ),
+                                mixed: speeds.iter().any(|speed| speed != first),
+                            }
                         }),
-                    unlinkable_folder: folder
-                        && items::item_address_group_id(&project, &address).is_some(),
-                    folder,
-                    playback_speed: speeds
-                        .first()
-                        .map(|first| ContextMenuControl::PlaybackSpeed {
-                            position: math::playback_speed_scale_position(
-                                project::fraction_as_f64(*first),
-                            ),
-                            mixed: speeds.iter().any(|speed| speed != first),
+                        enable_beat_detection: selected.iter().any(|address| {
+                            project
+                                .audio_item(address)
+                                .is_some_and(|item| !item.beat_detection)
                         }),
-                    enable_beat_detection: selected.iter().any(|address| {
-                        project
-                            .audio_item(address)
-                            .is_some_and(|item| !item.beat_detection)
-                    }),
-                    can_remove_silences: address.kind() == ItemKind::Audio,
-                })
-            };
-        } else if x < timeline_x() {
-            let rows = items::track_rows(&project);
-            let row = (y >= RULER_HEIGHT)
-                .then(|| crate::math::track_row_at_y(y + self.view.scroll_y))
-                .flatten();
-            if let Some(row) = row.and_then(|row| rows.get(row)) {
-                if let Some(key) = row.root_key {
+                        can_remove_silences: address.kind() == ItemKind::Audio,
+                    })
+                };
+            }
+            TimelineContextTarget::Track { address, key } => {
+                if let Some(key) = key {
                     if !selection_state::selected_track_addresses(&self.selection, &project)
-                        .contains(&row.address)
+                        .contains(&address)
                     {
                         selection_state::set_selected_tracks(&self.selection, vec![key], Some(key));
                     }
-                    self.context.track = Some(row.address.clone());
+                    self.context.track = Some(address);
                     self.context.menu = crate::track_context_menu(match key.kind {
                         TrackKind::Comment => TrackMenuContext::Comment,
                         TrackKind::Caption => TrackMenuContext::Caption,
@@ -179,16 +324,16 @@ impl Scene {
                         },
                     });
                 } else {
-                    self.context.folded_track = Some(row.address.clone());
+                    self.context.folded_track = Some(address);
                     self.context.menu = crate::folded_track_context_menu();
                 }
-            } else {
-                selection_state::set_selected_items(&self.selection, Vec::new(), None);
-                self.context.at_top = y < RULER_HEIGHT;
+            }
+            TimelineContextTarget::Gap => {
+                if f64::from(point.x) < self.view.timeline_x() {
+                    selection_state::set_selected_items(&self.selection, Vec::new(), None);
+                }
                 self.context.menu = crate::empty_track_context_menu();
             }
-        } else {
-            self.context.menu = crate::empty_track_context_menu();
         }
         self.context.selected = selection_state::selected_item_addresses(&self.selection, &project);
         self.context.tracks = selection_state::selected_track_addresses(&self.selection, &project);
@@ -215,6 +360,7 @@ impl Scene {
                 .iter()
                 .chain(self.context.track.iter())
                 .chain(self.context.folded_track.iter())
+                .chain(self.context.playhead_track.iter())
                 .any(|address| project.track(address).is_none())
         {
             return Err("The context-menu selection was removed while the menu was open".into());
@@ -234,7 +380,14 @@ impl Scene {
         {
             return Err("Context-menu action is unavailable".into());
         }
-        self.validate_context()?;
+        if !matches!(
+            action,
+            ContextMenuAction::ShowTools
+                | ContextMenuAction::ShowTrackControls
+                | ContextMenuAction::ShowAudioMonitor
+        ) {
+            self.validate_context()?;
+        }
         self.dispatch_context_action(action)
     }
 
@@ -242,6 +395,28 @@ impl Scene {
         &mut self,
         action: ContextMenuAction,
     ) -> Result<Option<ContextMenuRequest>, String> {
+        if matches!(
+            action,
+            ContextMenuAction::ShowTools
+                | ContextMenuAction::ShowTrackControls
+                | ContextMenuAction::ShowAudioMonitor
+        ) {
+            preferences::update_editor_layout(&self.preferences, |layout| match action {
+                ContextMenuAction::ShowTools => {
+                    layout.timeline_tools_visible = !layout.timeline_tools_visible
+                }
+                ContextMenuAction::ShowTrackControls => {
+                    layout.timeline_track_controls_visible = !layout.timeline_track_controls_visible
+                }
+                ContextMenuAction::ShowAudioMonitor => {
+                    layout.timeline_audio_monitor_visible = !layout.timeline_audio_monitor_visible
+                }
+                _ => unreachable!("timeline visibility action"),
+            })?;
+            self.apply_preferences(&preferences::snapshot(&self.preferences));
+            self.media_refresh.redraw.set(true);
+            return Ok(None);
+        }
         // Modal native menus keep processing timers. Restore the captured selection
         // before dispatch so a completed import cannot redirect a menu action.
         if !self.context.tracks.is_empty() {
@@ -262,6 +437,43 @@ impl Scene {
         use ContextMenuAction as A;
         use ContextMenuRequest as R;
         let request = match action {
+            A::AddToTrack | A::RecordAudio | A::RecordVideo => {
+                let position = self
+                    .context
+                    .split_time
+                    .ok_or("playhead insertion position is unavailable")?;
+                let address = self
+                    .context
+                    .playhead_track
+                    .as_ref()
+                    .ok_or("no single track is active")?;
+                let key = selection_state::track_key(&self.project.borrow(), address)
+                    .ok_or("playhead target track is unavailable")?;
+                match action {
+                    A::AddToTrack => {
+                        self.pending_track_add_menu = Some(TrackAddMenuRequest {
+                            key,
+                            touch: self.context.touch,
+                            point: self.context.point,
+                            import_targets: vec![key],
+                            position,
+                        })
+                    }
+                    A::RecordAudio if self.recording_available.0 => {
+                        self.pending_audio_record = Some(TrackRecordingRequest { key, position })
+                    }
+                    A::RecordVideo if self.recording_available.1 => {
+                        self.pending_video_record = Some(TrackRecordingRequest { key, position })
+                    }
+                    _ => return Err("recording service is unavailable".into()),
+                }
+                self.media_refresh.redraw.set(true);
+                None
+            }
+            A::SplitSelected | A::SplitAll => {
+                self.split_context_items(action == A::SplitAll)?;
+                None
+            }
             A::InspectProperties => {
                 player_state::refresh_project(
                     &self.player,

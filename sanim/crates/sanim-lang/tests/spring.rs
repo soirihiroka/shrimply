@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[test]
 fn default_spring_preserves_valid_signal_dimensions_at_all_sampled_times() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim","mut extent=100pt\nlet marker=Circle(radius=extent)\nadd(marker)\nextent=abs(1pt,duration=1s)");
+    files.insert("main.sanim","mut extent=100pt\nlet marker=Box(width=2*(extent), height=2*(extent), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])\nextent=abs(1pt,duration=1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
         .unwrap();
@@ -27,7 +27,7 @@ fn explicit_bouncy_spring_retains_spatial_overshoot_and_exact_endpoint() {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        "let marker=Circle()\nMoveTo(marker,Vec2(100pt,0pt),duration=1s,ease=\"spring_bouncy\")",
+        "let marker=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nmarker.move_to([100pt, 0pt], duration=1s, ease=\"spring_bouncy\")\nAnimation()",
     );
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -54,7 +54,7 @@ fn continuous_proofs_preserve_bouncy_motion_conservatism_for_a_box() {
         ("linear", Evidence::Proved),
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim",format!("let marker=Circle(radius=5pt)\nlet panel=Box(children=[marker],width=10pt,height=10pt)\nadd(panel)\nMoveTo(panel,Vec2(1pt,0pt),duration=1s,ease=\"{ease}\")\ncheck(always(inside_canvas(panel)))"));
+        files.insert("main.sanim",format!("let marker=Box(width=2*(5pt), height=2*(5pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nlet panel=Box(children=[marker],width=10pt,height=10pt)\nAnimation(children=[panel])\npanel.move_to([1pt, 0pt], duration=1s, ease=\"{ease}\")\ncheck(always(inside_canvas(panel)))"));
         let prepared = Engine::default()
             .prepare("main.sanim", &files, &BTreeMap::new())
             .unwrap();

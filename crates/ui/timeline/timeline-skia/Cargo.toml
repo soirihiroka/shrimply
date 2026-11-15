@@ -30,6 +30,7 @@ shrimply-math-media = { workspace = true }
 shrimply-math-color = { workspace = true }
 shrimply-playback-performance = { workspace = true }
 shrimply-components-skia = { workspace = true }
+shrimply-components-core.workspace = true
 shrimply-cross-ui-theme = { workspace = true }
 shrimply-i18n = { workspace = true }
 tracing.workspace = true

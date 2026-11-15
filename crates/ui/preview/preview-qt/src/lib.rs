@@ -38,11 +38,13 @@ use std::path::PathBuf;
 struct Surfaces {
     timeline: ToolkitTimeline,
     timeline_menu: shrimply_timeline_qt::MenuModel,
+    timeline_context: Option<(glam::Vec2, bool)>,
     track_add_menu: shrimply_timeline_qt::TrackAddMenuModel,
     track_add_kind: shrimply_timeline_edit::TrackKind,
     track_add_x: f32,
     track_add_y: f32,
     track_add_pending: bool,
+    track_add_bottom_sheet: bool,
     timeline_error_pending: bool,
     context_frame: Option<RenderedVideoFrame>,
     context_open_path: String,
@@ -84,11 +86,13 @@ pub fn install(session: &EditorSession) -> Result<(), String> {
         *surfaces = Some(Surfaces {
             timeline,
             timeline_menu: shrimply_timeline_qt::MenuModel::default(),
+            timeline_context: None,
             track_add_menu: shrimply_timeline_qt::TrackAddMenuModel::default(),
             track_add_kind: shrimply_timeline_edit::TrackKind::Video,
             track_add_x: 0.0,
             track_add_y: 0.0,
             track_add_pending: false,
+            track_add_bottom_sheet: false,
             timeline_error_pending: false,
             context_frame: None,
             context_open_path: String::new(),
@@ -188,6 +192,7 @@ pub extern "C" fn shrimply_qt_render_timeline(
     alpha: f32,
     dark: bool,
     native_window: usize,
+    force_redraw: bool,
 ) -> bool {
     shrimply_cross_ui_theme::set_dark(dark);
     SURFACES.with_borrow_mut(|surfaces| {
@@ -200,6 +205,7 @@ pub extern "C" fn shrimply_qt_render_timeline(
             scale,
             Color::new(red, green, blue, alpha),
             native_window,
+            force_redraw,
         );
         if result.is_ok()
             && let Some(presentation) = surfaces.timeline.take_track_add_menu()
@@ -209,13 +215,49 @@ pub extern "C" fn shrimply_qt_render_timeline(
             surfaces.track_add_kind = presentation.kind;
             surfaces.track_add_x = presentation.x;
             surfaces.track_add_y = presentation.y;
+            surfaces.track_add_bottom_sheet = presentation.bottom_sheet;
             surfaces.track_add_pending = true;
+        }
+        if let Some(point) = surfaces.timeline.take_context_menu() {
+            surfaces.timeline_menu =
+                shrimply_timeline_qt::MenuModel::new(surfaces.timeline.context_menu());
+            surfaces.timeline_context = Some(point);
         }
         if let Some(error) = surfaces.timeline.take_error() {
             surfaces.context_action_error = error;
             surfaces.timeline_error_pending = true;
         }
         render(result, "timeline")
+    })
+}
+
+/// # Safety
+/// `output` must point to three writable floats: coordinates and sheet presentation.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shrimply_qt_timeline_take_context_menu(output: *mut f32) -> bool {
+    SURFACES.with_borrow_mut(|surfaces| {
+        let Some((point, touch)) = surfaces
+            .as_mut()
+            .and_then(|surfaces| surfaces.timeline_context.take())
+        else {
+            return false;
+        };
+        unsafe {
+            output.write(point.x);
+            output.add(1).write(point.y);
+            output.add(2).write(
+                if shrimply_components_core::layout::menu_uses_bottom_sheet(if touch {
+                    "touch"
+                } else {
+                    "pointer"
+                }) {
+                    1.0
+                } else {
+                    0.0
+                },
+            );
+        }
+        true
     })
 }
 
@@ -236,6 +278,15 @@ pub extern "C" fn shrimply_qt_timeline_take_track_add_menu() -> bool {
             return false;
         };
         std::mem::take(&mut surfaces.track_add_pending)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_track_add_menu_bottom_sheet() -> bool {
+    SURFACES.with_borrow(|surfaces| {
+        surfaces
+            .as_ref()
+            .is_some_and(|surfaces| surfaces.track_add_bottom_sheet)
     })
 }
 
@@ -786,6 +837,38 @@ pub extern "C" fn shrimply_qt_timeline_context_menu_enabled(index: usize) -> boo
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_context_menu_checked(index: usize) -> i8 {
+    SURFACES.with_borrow(|surfaces| {
+        surfaces
+            .as_ref()
+            .and_then(|surfaces| surfaces.timeline_menu.entries().get(index))
+            .and_then(|entry| match entry {
+                shrimply_timeline_qt::MenuEntry::Action(item) => item.checked,
+                _ => None,
+            })
+            .map_or(-1, i8::from)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_tools_progress() -> f64 {
+    SURFACES.with_borrow(|surfaces| {
+        surfaces
+            .as_ref()
+            .map_or(1.0, |surfaces| surfaces.timeline.tools_progress())
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn shrimply_qt_timeline_audio_monitor_progress() -> f64 {
+    SURFACES.with_borrow(|surfaces| {
+        surfaces
+            .as_ref()
+            .map_or(1.0, |surfaces| surfaces.timeline.audio_monitor_progress())
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn shrimply_qt_timeline_context_menu_value(index: usize) -> f64 {
     SURFACES.with_borrow(|surfaces| {
         surfaces
@@ -1206,6 +1289,49 @@ pub extern "C" fn shrimply_qt_timeline_select_block_mode() {
 #[unsafe(no_mangle)]
 pub extern "C" fn shrimply_qt_timeline_select_new_track_mode() {
     select_drag_collision_mode(DragCollisionMode::NewTrack);
+}
+
+/// # Safety
+/// `text` must point to `length` readable UTF-8 bytes from the native key event.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn shrimply_qt_preview_keyboard(
+    width: f32,
+    height: f32,
+    key: u32,
+    text: *const u8,
+    length: usize,
+    pressed: bool,
+    repeat: bool,
+    control: bool,
+    shift: bool,
+    alt: bool,
+    meta: bool,
+) -> bool {
+    assert!(
+        !text.is_null(),
+        "native preview key text pointer is non-null"
+    );
+    let text = unsafe { std::slice::from_raw_parts(text, length) };
+    let text = std::str::from_utf8(text).expect("Qt preview key text is valid UTF-8");
+    let mut modifiers = preview::pointer_modifiers(control, shift, alt);
+    if meta {
+        modifiers |= shrimply_preview_provider_skia::Modifiers::META;
+    }
+    let event = shrimply_preview_provider_skia::KeyboardEvent {
+        key: preview::keyboard_key(key, text),
+        state: if pressed {
+            shrimply_preview_provider_skia::KeyState::Pressed
+        } else {
+            shrimply_preview_provider_skia::KeyState::Released
+        },
+        repeat,
+        modifiers,
+    };
+    SURFACES.with_borrow_mut(|surfaces| {
+        surfaces
+            .as_mut()
+            .is_some_and(|surfaces| surfaces.preview.keyboard(glam::vec2(width, height), event))
+    })
 }
 
 #[unsafe(no_mangle)]

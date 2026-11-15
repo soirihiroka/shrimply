@@ -41,7 +41,11 @@ pub(super) fn render(
         );
     }
     options.encode_png = false;
-    let frames = sanim_core::math::frame_count(scene.animation().duration, scene.animation().rate)?;
+    let duration = args
+        .duration
+        .or_else(|| (!scene.animation().indefinite).then_some(scene.animation().duration))
+        .ok_or("this timeline waits forever; provide --duration 10s to render a finite video")?;
+    let frames = sanim_core::math::frame_count(duration, scene.animation().rate)?;
     if frames == 0 || frames > MAX_VIDEO_FRAMES {
         return Err(format!(
             "video needs 1..={MAX_VIDEO_FRAMES} frames, got {frames}; give the animation a positive bounded duration"
@@ -133,7 +137,7 @@ pub(super) fn render(
         .map_err(|e| format!("cannot publish video: {e}"))?;
     println!(
         "{}",
-        serde_json::json!({"ok":true,"output":output,"frames":frames,"rate":scene.animation().rate.to_string(),"duration":scene.animation().duration.to_string(),"render_micros":started.elapsed().as_micros(),"width":options.width,"height":options.height,"statistics":prepared.statistics,"performance":crate::performance_diagnostics(&prepared.performance),"diagnostics":lint.diagnostics})
+        serde_json::json!({"ok":true,"output":output,"frames":frames,"rate":scene.animation().rate.to_string(),"duration":duration.to_string(),"render_micros":started.elapsed().as_micros(),"width":options.width,"height":options.height,"statistics":prepared.statistics,"performance":crate::performance_diagnostics(&prepared.performance),"diagnostics":lint.diagnostics})
     );
     Ok(())
 }

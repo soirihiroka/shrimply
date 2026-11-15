@@ -5,6 +5,7 @@ use crate::items::ItemEdge;
 pub struct TimelineViewState {
     pub scroll_seconds: f64,
     pub scroll_y: f64,
+    pub track_controls_progress: f64,
     pub seconds_per_pixel: f64,
     pub drag_start_x: f64,
     pub drag_start_y: f64,
@@ -97,6 +98,7 @@ impl Default for TimelineViewState {
         Self {
             scroll_seconds: 0.0,
             scroll_y: 0.0,
+            track_controls_progress: 1.0,
             seconds_per_pixel: 1.0 / 60.0,
             drag_start_x: 0.0,
             drag_start_y: 0.0,
@@ -112,6 +114,14 @@ impl Default for TimelineViewState {
 }
 
 impl TimelineViewState {
+    pub fn label_width(self) -> f64 {
+        shrimply_timeline_paint_skia::math::track_label_width(self.track_controls_progress)
+    }
+
+    pub fn timeline_x(self) -> f64 {
+        self.label_width() + TIMELINE_PADDING_LEFT
+    }
+
     pub fn restore_zoom(&mut self, zoom: Option<Time>) {
         if let Some(zoom) = zoom.filter(|zoom| *zoom > Time::ZERO) {
             let seconds_per_pixel = zoom.as_secs_f64();
@@ -254,6 +264,7 @@ impl From<TimelineViewState> for shrimply_timeline_paint_skia::Viewport {
         Self {
             scale: crate::geometry::ruler_scale(view),
             scroll_y: view.scroll_y,
+            track_controls_progress: view.track_controls_progress,
         }
     }
 }

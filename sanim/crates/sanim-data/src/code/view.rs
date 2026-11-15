@@ -268,19 +268,26 @@ pub(super) fn prepare_layout(
                 if let Some(background) = &style.background {
                     let width = math::from_f64(shaped.advance.max(space / 4.))?;
                     let height = options.line_height;
-                    let geometry = Arc::new(Geometry::Rectangle {
-                        width,
-                        height,
+                    let geometry = Arc::new(Geometry::Box {
                         radius: Fraction::from(0).into(),
                         children: imbl::Vector::new(),
                     });
-                    children.push_back(element(
+                    let mut background = element(
                         format!("{identity}/background"),
-                        geometry.clone(),
-                        local_position(&geometry, [shaped.advance / 2., -font_size / 2.])?,
+                        geometry,
+                        [0., -font_size / 2. - math::to_f64(height)? / 2.],
                         background.clone(),
                         1.into(),
-                    ));
+                    );
+                    background.layout.width = Some(sanim_core::Number {
+                        value: width,
+                        unit: Unit::Length,
+                    });
+                    background.layout.height = Some(sanim_core::Number {
+                        value: height,
+                        unit: Unit::Length,
+                    });
+                    children.push_back(background);
                 }
                 children.push_back(element(
                     format!("{identity}/glyph"),

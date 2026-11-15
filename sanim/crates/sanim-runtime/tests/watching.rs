@@ -57,6 +57,33 @@ fn csv_edits_trigger_reload_without_source_edits() {
         sanim_core::Fraction::from(3)
     );
 }
+
+#[test]
+fn temporal_viewports_reuse_the_pure_plan_and_preserve_indefinite_sources() {
+    let fixture = Fixture::new();
+    fixture.write("main.sanim", "wait(forever)");
+    let runtime = fixture.open();
+    let first = until(&runtime, |state| {
+        state.prepared.is_some() && !state.preparing
+    });
+    let plan = first.prepared.as_ref().unwrap().plan.clone();
+    for extent in [2u64, 18000, 3] {
+        runtime.set_time_extent(Some(extent.into())).unwrap();
+        let updated = until(&runtime, |state| {
+            !state.preparing
+                && state.requested_inputs == state.applied_inputs
+                && state
+                    .prepared
+                    .as_ref()
+                    .is_some_and(|prepared| prepared.animation.duration == extent.into())
+        });
+        let prepared = updated.prepared.unwrap();
+        assert!(updated.indefinite);
+        assert!(std::sync::Arc::ptr_eq(&plan, &prepared.plan));
+        assert_eq!(prepared.statistics.operations, 0);
+        assert_eq!(prepared.source_extent(), None);
+    }
+}
 #[test]
 fn invalid_reload_preserves_last_good_and_recovers() {
     let f = Fixture::new();
@@ -526,7 +553,7 @@ fn editor_font_activation_reloads_text_without_source_edits_or_polling() {
     let text = Fixture::new();
     text.write(
         "main.sanim",
-        "let label=Text(\"Shared native fonts\")\nadd(label)\nwait(1s)",
+        "let label=Text(\"Shared native fonts\")\nAnimation(children=[label])\nwait(1s)",
     );
     let text_runtime = text.open();
     let first = until(&text_runtime, |s| !s.preparing && s.prepared.is_some());
@@ -554,7 +581,7 @@ fn text_resources_reload_as_strings_without_interpreting_their_contents() {
     files.write("title.txt", "Original {literal}\n");
     files.write(
         "main.sanim",
-        "let words=read<String>(\"title.txt\")\nlet label=Text(words)\nadd(label)\nwait(1s)",
+        "let words=read<String>(\"title.txt\")\nlet label=Text(words)\nAnimation(children=[label])\nwait(1s)",
     );
     let runtime = files.open();
     let first = until(&runtime, |state| {
@@ -651,7 +678,7 @@ fn recovered_source_directory_keeps_its_canonical_escape_boundary() {
 
 fn literal_edit_source(size: usize, level: usize) -> String {
     format!(
-        "let stable=Text(\"Shared stable glyphs\")\nadd(stable)\nwait(200ms)\nlet edge=reflect({size}pt,key=\"edge\")\nmut level={level}\nlet changing=Rect(width=edge,height=40pt+level*0.01pt)\nadd(changing)\nwait(1s)\n"
+        "let stable=Text(\"Shared stable glyphs\")\nAnimation(children=[stable])\nwait(200ms)\nlet edge=reflect({size}pt,key=\"edge\")\nmut level={level}\nlet changing=Box(width=edge, height=40pt+level*0.01pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[changing])\nwait(1s)\n"
     )
 }
 fn resident_bytes() -> Option<usize> {
@@ -741,17 +768,13 @@ fn exercise_literal_edits(edits: usize) -> (Option<usize>, Option<usize>) {
             .iter()
             .find(|element| element.id == "changing")
             .unwrap();
-        let sanim_core::Geometry::Rectangle { width, height, .. } = changed.geometry.as_ref()
-        else {
-            panic!("rectangle")
-        };
         assert_eq!(
-            *width,
+            changed.layout.width.unwrap().value,
             sanim_core::Fraction::from(size as u64),
             "the edited reflected literal must be applied"
         );
         assert_eq!(
-            *height,
+            changed.layout.height.unwrap().value,
             sanim_core::Fraction::from(40u64) + sanim_core::Fraction::new(level as u64, 100u64),
             "the edited mutable literal must be applied"
         );
@@ -830,4 +853,84 @@ fn scalar_hot_reload_memory_plateau_benchmark() {
             "RSS must plateau after cache warmup rather than retaining every revision"
         );
     }
+}
+
+#[test]
+fn stalled_preparation_never_blocks_configuration_or_loses_the_latest_source() {
+    use std::sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    };
+    let fixture = Fixture::new();
+    fixture.write(
+        "main.sanim",
+        "let count=reflect(1,key=\"count\")\nwait(count*1s)",
+    );
+    let runtime = Arc::new(fixture.open());
+    until(&runtime, |state| {
+        !state.preparing && state.prepared.is_some()
+    });
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let stalled = Arc::new(AtomicBool::new(true));
+    let (entered, entered_rx) = mpsc::channel();
+    runtime.set_waker(Some(Arc::new({
+        let gate = gate.clone();
+        move || {
+            if std::thread::current().name() == Some("sanim-runtime")
+                && stalled.swap(false, Ordering::SeqCst)
+            {
+                entered.send(()).unwrap();
+                let locked = gate.0.lock().unwrap();
+                drop(gate.1.wait_while(locked, |ready| !*ready).unwrap());
+            }
+        }
+    })));
+    runtime.set_time_extent(Some(2.into())).unwrap();
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("worker reaches the controlled observer barrier");
+    fixture.write(
+        "main.sanim",
+        "let count=reflect(1,key=\"count\")\nwait(count*2s)",
+    );
+    let (finished, finished_rx) = mpsc::channel();
+    let updater = std::thread::spawn({
+        let runtime = runtime.clone();
+        move || {
+            for extent in 3..=256 {
+                runtime.set_time_extent(Some(extent.into())).unwrap();
+            }
+            runtime
+                .set_inputs(BTreeMap::from([("count".into(), serde_json::json!(3))]))
+                .unwrap();
+            runtime.set_time_extent(None).unwrap();
+            finished.send(()).unwrap();
+        }
+    });
+    let completed_without_worker = finished_rx.recv_timeout(Duration::from_secs(2));
+    *gate.0.lock().unwrap() = true;
+    gate.1.notify_one();
+    updater.join().unwrap();
+    assert!(
+        completed_without_worker.is_ok(),
+        "configuration updates must not wait for preparation or consume a bounded queue"
+    );
+    let updated = until(&runtime, |state| {
+        !state.preparing
+            && state.applied_inputs == state.requested_inputs
+            && state
+                .prepared
+                .as_ref()
+                .is_some_and(|prepared| prepared.animation.duration == 6.into())
+    });
+    assert!(updated.diagnostic.is_none(), "{:?}", updated.diagnostic);
+    assert_eq!(
+        updated.prepared.unwrap().bindings["count"]
+            .number()
+            .unwrap()
+            .value,
+        3.into()
+    );
+    runtime.set_waker(None);
 }

@@ -42,18 +42,33 @@ pub fn activate_track_add_checked(
     action: TrackAddAction,
     settings: TrackAddSettings<'_>,
 ) -> Result<TrackAddOutcome, String> {
+    activate_track_add_checked_at(
+        project,
+        player_state,
+        selection_state,
+        key,
+        action,
+        settings,
+        player_state::current_time(player_state),
+    )
+}
+
+pub fn activate_track_add_checked_at(
+    project: &Rc<RefCell<Project>>,
+    player_state: &SharedPlayerState,
+    selection_state: &SharedSelectionState,
+    key: TrackKey,
+    action: TrackAddAction,
+    settings: TrackAddSettings<'_>,
+    position: crate::project::Time,
+) -> Result<TrackAddOutcome, String> {
     if action == TrackAddAction::Import {
         return Ok(TrackAddOutcome::Import);
     }
 
     let mut project_state = project.borrow().clone();
-    let Some((track_address, item)) = shrimply_timeline_edit::prepare_track_add(
-        &project_state,
-        key,
-        action,
-        player_state::snapshot(player_state).position,
-        settings,
-    )?
+    let Some((track_address, item)) =
+        shrimply_timeline_edit::prepare_track_add(&project_state, key, action, position, settings)?
     else {
         return Ok(TrackAddOutcome::Unchanged);
     };

@@ -13,22 +13,24 @@ pub fn draw_track_label_pane(
     height: f64,
 ) {
     let view = view.into();
-    if height <= 0.0 || LABEL_WIDTH <= 0.0 {
+    let label_width = view.label_width();
+    let controls_visible = view.track_controls_progress >= 1.0;
+    if height <= 0.0 || label_width <= 0.0 {
         return;
     }
 
     painter.rect_filled(
-        rect(0.0, 0.0, LABEL_WIDTH, height),
+        rect(0.0, 0.0, label_width, height),
         0,
         crate::theme::current().view_bg,
     );
     painter.rect_filled(
-        rect(0.0, RULER_HEIGHT, LABEL_WIDTH, 1.0),
+        rect(0.0, RULER_HEIGHT, label_width, 1.0),
         0,
         crate::theme::current().sidebar_border,
     );
     painter.rect_filled(
-        rect(LABEL_WIDTH - 1.0, 0.0, 1.0, height),
+        rect(label_width - 1.0, 0.0, 1.0, height),
         0,
         crate::theme::current().sidebar_border,
     );
@@ -37,7 +39,7 @@ pub fn draw_track_label_pane(
     let row_clip = rect(
         0.0,
         RULER_HEIGHT,
-        LABEL_WIDTH,
+        label_width,
         (height - RULER_HEIGHT).max(0.0),
     );
     let row_painter = painter.with_clip_rect(row_clip);
@@ -54,7 +56,7 @@ pub fn draw_track_label_pane(
                 crate::project::TrackAddress::Video { .. } => TrackKind::Video,
                 crate::project::TrackAddress::Audio { .. } => TrackKind::Audio,
             };
-            draw_folded_track_label(&row_painter, y, kind, track_row.depth);
+            draw_folded_track_label(&row_painter, y, kind, track_row.depth, label_width);
             continue;
         };
 
@@ -68,7 +70,7 @@ pub fn draw_track_label_pane(
             &row_painter,
             crate::TrackLabel {
                 y,
-                width: LABEL_WIDTH,
+                width: label_width,
                 index_x: TRACK_INDEX_COLUMN_WIDTH / 2.0,
                 text: &format!("{prefix}{}", key.track_index),
                 accent: track_kind_label_color(key.kind),
@@ -77,6 +79,9 @@ pub fn draw_track_label_pane(
             },
         );
 
+        if !controls_visible {
+            continue;
+        }
         let button_y = track_label_button_y(y);
         let toggle_rect = rect(
             TRACK_LABEL_TOGGLE_X,
@@ -164,38 +169,44 @@ pub fn draw_track_label_pane(
 
     painter.rect_filled(
         rect(
-            LABEL_WIDTH,
+            label_width,
             0.0,
-            (TIMELINE_X - LABEL_WIDTH).max(0.0),
+            (view.timeline_x() - label_width).max(0.0),
             height,
         ),
         0,
         crate::theme::current().view_bg,
     );
     painter.rect_filled(
-        rect(TIMELINE_X - 1.0, 0.0, 1.0, height),
+        rect(view.timeline_x() - 1.0, 0.0, 1.0, height),
         0,
         crate::theme::current().sidebar_border,
     );
     painter.rect_filled(
-        rect(0.0, 0.0, LABEL_WIDTH, RULER_HEIGHT),
+        rect(0.0, 0.0, label_width, RULER_HEIGHT),
         0,
         crate::theme::current().view_bg,
     );
     painter.rect_filled(
-        rect(0.0, RULER_HEIGHT, LABEL_WIDTH, 1.0),
+        rect(0.0, RULER_HEIGHT, label_width, 1.0),
         0,
         crate::theme::current().sidebar_border,
     );
 }
 
-fn draw_folded_track_label(painter: &TimelinePainter, y: f64, kind: TrackKind, depth: usize) {
+fn draw_folded_track_label(
+    painter: &TimelinePainter,
+    y: f64,
+    kind: TrackKind,
+    depth: usize,
+    label_width: f64,
+) {
     const INDENT: f32 = 8.0;
     const BRANCH_LENGTH: f32 = 12.0;
     let branch_x = TRACK_INDEX_COLUMN_WIDTH as f32 * 0.5 + depth.saturating_sub(1) as f32 * INDENT;
     let center_y = (y + TRACK_HEIGHT * 0.5) as f32;
     painter.rect_filled(
-        rect(0.0, y, LABEL_WIDTH, TRACK_HEIGHT - 1.0),
+        rect(0.0, y, label_width, TRACK_HEIGHT - 1.0),
         0,
         crate::theme::current().sidebar_shade.alpha_multiply(0.22),
     );
@@ -211,7 +222,7 @@ fn draw_folded_track_label(painter: &TimelinePainter, y: f64, kind: TrackKind, d
         Stroke::new(1.0, track_kind_label_color(kind)),
     );
     painter.rect_filled(
-        rect(0.0, y + TRACK_HEIGHT - 1.0, LABEL_WIDTH, 1.0),
+        rect(0.0, y + TRACK_HEIGHT - 1.0, label_width, 1.0),
         0,
         crate::theme::current().sidebar_shade,
     );
@@ -271,7 +282,7 @@ pub fn track_label_action_at(
     x: f64,
     y: f64,
 ) -> Option<(TrackKey, TrackLabelAction)> {
-    if !(0.0..TIMELINE_X).contains(&x) || y < RULER_HEIGHT {
+    if !(0.0..view.timeline_x()).contains(&x) || y < RULER_HEIGHT {
         return None;
     }
     let content_y = y + view.scroll_y;
@@ -279,6 +290,9 @@ pub fn track_label_action_at(
     let row_y = row_screen_y(row, view);
     let button_y = track_label_button_y(row_y);
     let key = TrackKey { kind, track_index };
+    if view.track_controls_progress < 1.0 {
+        return Some((key, TrackLabelAction::Select));
+    }
     if hit_track_label_button(x, y, TRACK_LABEL_TOGGLE_X, button_y) {
         Some((key, TrackLabelAction::Toggle))
     } else if hit_track_label_button(x, y, TRACK_LABEL_ADD_X, button_y) {

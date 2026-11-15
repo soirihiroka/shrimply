@@ -4,8 +4,9 @@ use crate::provider::{
 };
 use glam::Vec2 as GlamVec2;
 use shrimply_preview_provider_skia::{
-    KeyboardEvent, PointerEvent, PreviewEditSink, PreviewExtensionKey, PreviewItemGeometry,
-    PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget, PreviewViewport, SnapScene,
+    KeyboardEvent, PointerEvent, PointerInput, PointerTool, PreviewEditSink, PreviewExtensionKey,
+    PreviewItemGeometry, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
+    PreviewViewport, SnapScene,
 };
 use shrimply_project_document::project::{ItemAddress, PreviewGuides, Project, Time};
 use shrimply_project_evaluation::{FrameAudioAnalysis, TransformExpressionCache, VisualEvaluation};
@@ -303,7 +304,6 @@ pub enum PointerSequence {
     Suppressed,
 }
 
-#[derive(Default)]
 pub struct Controller {
     pub provider: Option<PreparedProvider>,
     pub retiring_provider: Option<PreparedProvider>,
@@ -315,6 +315,36 @@ pub struct Controller {
     pub live_base_in_flight: Option<u64>,
     pub base_exclusion: Option<uuid::Uuid>,
     pub presented_base_exclusion: Option<uuid::Uuid>,
+    history_revision: Option<u64>,
+    pointer_input: Option<PointerInput>,
+    pointer_moved: bool,
+}
+
+impl Default for Controller {
+    fn default() -> Self {
+        use shrimply_project_document::project::{
+            DEFAULT_PAINT_ERASER_SCALE, PAINT_PREVIEW_STATE, PaintPreviewState,
+        };
+        let state = PaintPreviewState {
+            eraser_scale: DEFAULT_PAINT_ERASER_SCALE,
+            ..Default::default()
+        };
+        Self {
+            provider: None,
+            retiring_provider: None,
+            extensions: HashMap::from([(PAINT_PREVIEW_STATE, Box::new(state) as Box<dyn Any>)]),
+            sequence: PointerSequence::Idle,
+            context_invalidated: false,
+            frame_pending: false,
+            live_base_pending: false,
+            live_base_in_flight: None,
+            base_exclusion: None,
+            presented_base_exclusion: None,
+            history_revision: None,
+            pointer_input: None,
+            pointer_moved: false,
+        }
+    }
 }
 
 struct SnapConfiguration {
@@ -338,6 +368,39 @@ impl SnapConfiguration {
 }
 
 impl Controller {
+    /// Foreign durable edits invalidate drafts without restoring their obsolete snapshots.
+    /// Live preview refreshes and autosave receipts do not advance history.
+    pub fn synchronize_history(&mut self) -> bool {
+        let revision = shrimply_project_document::project::history_revision();
+        let changed = self
+            .history_revision
+            .replace(revision)
+            .is_some_and(|before| before != revision);
+        if changed {
+            self.provider = None;
+            self.retiring_provider = None;
+            // Preserve registered tools/settings; discard only selection tied to old paint data.
+            use shrimply_project_document::project::{PAINT_PREVIEW_STATE, PaintPreviewState};
+            if let Some(state) = self
+                .extensions
+                .get_mut(&PAINT_PREVIEW_STATE)
+                .and_then(|state| state.downcast_mut::<PaintPreviewState>())
+            {
+                state.focused = None;
+                state.selected.clear();
+                state.adjusting = false;
+            }
+            self.sequence = PointerSequence::Idle;
+            self.pointer_input = None;
+            self.pointer_moved = false;
+            self.context_invalidated = true;
+            self.frame_pending = true;
+            self.live_base_pending = false;
+            self.live_base_in_flight = None;
+        }
+        changed
+    }
+
     pub fn extension<T: 'static>(&self, key: PreviewExtensionKey) -> Option<&T> {
         self.extensions.get(&key)?.downcast_ref()
     }
@@ -367,6 +430,7 @@ impl Controller {
         position: Time,
         preparation: Preparation<'_>,
     ) -> Result<bool, String> {
+        self.synchronize_history();
         if self.sequence != PointerSequence::Idle {
             return Ok(self.provider.is_some());
         }
@@ -382,7 +446,13 @@ impl Controller {
                     || prepared.context.viewport != preparation.viewport
             });
         if stale {
-            self.provider = None;
+            if let Some(provider) = self.provider.take()
+                && provider.provider.base_frame_exclusion().is_some()
+                && provider.provider.base_frame_exclusion() == self.presented_base_exclusion
+            {
+                // The displayed base still excludes this item until its replacement arrives.
+                self.retiring_provider = Some(provider);
+            }
             self.context_invalidated = false;
         }
         if self.provider.is_none()
@@ -412,6 +482,9 @@ impl Controller {
     }
 
     pub fn accepts_pointer(&mut self, event: PointerEvent<'_>) -> bool {
+        if self.synchronize_history() {
+            return false;
+        }
         match event {
             PointerEvent::Begin(_) if self.sequence != PointerSequence::Idle => false,
             PointerEvent::Samples { .. } if self.sequence != PointerSequence::Active => false,
@@ -439,6 +512,35 @@ impl Controller {
         if !self.accepts_pointer(event) {
             return PreviewResponse::IGNORED;
         }
+        let input = match event {
+            PointerEvent::Begin(mut input)
+            | PointerEvent::Samples { mut input, .. }
+            | PointerEvent::End(mut input) => {
+                // Time passing alone must never turn a click into a paint drag.
+                input.sample.time_millis = 0;
+                Some(input)
+            }
+            _ => None,
+        };
+        let mut response = PreviewResponse::IGNORED;
+        if let PointerEvent::End(final_input) = event
+            && (self.pointer_moved
+                || final_input.tool != PointerTool::Touch
+                    && self
+                        .pointer_input
+                        .zip(input)
+                        .is_some_and(|(before, after)| before.sample != after.sample))
+            && self.pointer_input != input
+        {
+            response = self.pointer(
+                project,
+                expression_cache,
+                PointerEvent::Samples {
+                    input: final_input,
+                    samples: std::slice::from_ref(&final_input.sample),
+                },
+            );
+        }
         let Some(prepared) = self.provider.as_mut() else {
             if matches!(event, PointerEvent::Begin(_)) {
                 self.sequence = PointerSequence::Suppressed;
@@ -447,11 +549,26 @@ impl Controller {
         };
         if matches!(event, PointerEvent::Begin(_)) {
             self.sequence = PointerSequence::Active;
+            self.pointer_input = input;
+            self.pointer_moved = false;
             self.live_base_pending = false;
             self.live_base_in_flight = None;
+        } else if let PointerEvent::Samples { samples, .. } = event {
+            self.pointer_moved |= self
+                .pointer_input
+                .zip(input)
+                .is_some_and(|(before, after)| {
+                    before.sample != after.sample
+                        || samples.iter().any(|sample| {
+                            let mut sample = *sample;
+                            sample.time_millis = 0;
+                            before.sample != sample
+                        })
+                });
+            self.pointer_input = input;
         }
         let terminal = matches!(event, PointerEvent::End(_) | PointerEvent::Cancel);
-        let mut response = prepared.pointer(project, &mut self.extensions, expression_cache, event);
+        response.merge(prepared.pointer(project, &mut self.extensions, expression_cache, event));
         if response.edit.changed() && !response.edit.commits() && !terminal {
             self.live_base_pending |= response.edit.refresh.contains(PreviewRefresh::PREVIEW);
             response.edit.refresh = PreviewRefresh::NONE;
@@ -461,6 +578,8 @@ impl Controller {
         self.frame_pending |= response.redraw;
         if terminal {
             self.sequence = PointerSequence::Idle;
+            self.pointer_input = None;
+            self.pointer_moved = false;
         }
         response
     }
@@ -471,6 +590,9 @@ impl Controller {
         expression_cache: &RefCell<TransformExpressionCache>,
         event: KeyboardEvent,
     ) -> PreviewResponse {
+        if self.synchronize_history() {
+            return PreviewResponse::IGNORED.redraw();
+        }
         let Some(prepared) = self.provider.as_mut() else {
             return PreviewResponse::IGNORED;
         };
@@ -484,12 +606,17 @@ impl Controller {
         project: &mut Project,
         expression_cache: &RefCell<TransformExpressionCache>,
     ) -> PreviewResponse {
+        if self.synchronize_history() {
+            return PreviewResponse::IGNORED.redraw();
+        }
         self.sequence = if self.sequence == PointerSequence::Active {
             PointerSequence::Suppressed
         } else {
             PointerSequence::Idle
         };
         self.context_invalidated = false;
+        self.pointer_input = None;
+        self.pointer_moved = false;
         self.live_base_pending = false;
         let Some(mut prepared) = self.provider.take() else {
             return PreviewResponse::IGNORED;
@@ -515,6 +642,7 @@ impl Controller {
     }
 
     pub fn project_committed(&mut self, revision: u64) {
+        self.history_revision = Some(shrimply_project_document::project::history_revision());
         if let Some(provider) = self.provider.as_mut() {
             self.context_invalidated = provider.project_committed(revision);
         }
@@ -525,6 +653,7 @@ impl Controller {
         revision: u64,
         excluded_item_id: Option<uuid::Uuid>,
     ) -> bool {
+        self.synchronize_history();
         if excluded_item_id != self.base_exclusion {
             return false;
         }
@@ -565,6 +694,7 @@ impl Controller {
         canvas: &shrimply_preview_provider_skia::PreviewCanvas,
         expression_cache: &RefCell<TransformExpressionCache>,
     ) {
+        self.synchronize_history();
         // Prefer the current overlay; retain the previous one only until its
         // replacement's matching base frame arrives.
         let prepared = self
@@ -580,5 +710,25 @@ impl Controller {
                 .context(expression_cache, Some(&self.extensions));
             prepared.provider.on_draw(canvas, &context);
         }
+    }
+}
+
+/// Resolve the focused facet against the same selected item on every host.
+pub fn selection<'a>(
+    project: &Project,
+    selected: Option<&'a ItemAddress>,
+    focused: Option<(&ItemAddress, PreviewTarget)>,
+) -> Option<(&'a ItemAddress, PreviewTarget)> {
+    let address = selected?;
+    let item = project.video_item(address)?;
+    let target = focused
+        .filter(|(owner, target)| *owner == address && item.owns_preview_target(*target))
+        .map_or_else(|| item.default_preview_target(), |(_, target)| target);
+    Some((address, target))
+}
+
+pub fn commit_response(project: &Project, response: PreviewResponse, commit_name: &'static str) {
+    if response.edit.commits() {
+        shrimply_project_document::project::commit_edit(project, commit_name);
     }
 }

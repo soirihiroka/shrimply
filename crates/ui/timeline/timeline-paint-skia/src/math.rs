@@ -2,6 +2,11 @@ use shrimply_math_core::{Fraction, fraction_as_f64};
 
 const TARGET_TICK_PIXELS: f64 = 120.0;
 
+pub fn track_label_width(controls_progress: f64) -> f64 {
+    crate::COMPACT_LABEL_WIDTH
+        + (crate::LABEL_WIDTH - crate::COMPACT_LABEL_WIDTH) * controls_progress
+}
+
 pub fn visible_time_bounds(
     view: crate::Viewport,
     width: f64,

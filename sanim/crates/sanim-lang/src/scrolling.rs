@@ -22,8 +22,14 @@ pub(crate) fn methods() -> &'static [Builtin] {
                 Parameter {
                     name: "to",
                     ty: Type::union([
-                        Type::Vector(2, Some(Unit::Length)),
-                        Type::Vector(2, Some(Unit::Percent)),
+                        Type::List(
+                            Box::new(Type::Numeric(Unit::Length)),
+                            sanim_core::ListLength::Exact(2),
+                        ),
+                        Type::List(
+                            Box::new(Type::Numeric(Unit::Percent)),
+                            sanim_core::ListLength::Exact(2),
+                        ),
                     ])
                     .expect("scroll vector units"),
                     required: false,
@@ -54,8 +60,8 @@ pub(crate) fn methods() -> &'static [Builtin] {
                     required: false,
                 },
             ],
-            result: Type::Unit,
-            schedule: true,
+            result: Type::Animation,
+            state_effect: false,
             content: Default::default(),
             timing: crate::timing::Timing {
                 default: Fraction::new(3u64, 10u64),
@@ -64,6 +70,18 @@ pub(crate) fn methods() -> &'static [Builtin] {
             execute: Execution::Native(execute),
             check: crate::native_types::fixed,
         };
+        method.parameters.extend([
+            Parameter {
+                name: "duration",
+                ty: crate::animation_plan::duration_type(),
+                required: false,
+            },
+            Parameter {
+                name: "ease",
+                ty: Type::String,
+                required: false,
+            },
+        ]);
         crate::prelude::finalize(&mut method);
         vec![method]
     })
@@ -89,6 +107,22 @@ fn layout_work(elements: &[Element]) -> usize {
 }
 
 pub(crate) fn execute(
+    name: &str,
+    args: &imbl::OrdMap<String, Value>,
+    _context: Context<'_>,
+) -> Result<Value, String> {
+    let builtin = crate::prelude::builtin(name).expect("registered scrolling operation");
+    let easing = crate::timing::easing(args.get("ease"))?;
+    crate::animation_plan::sized_effect(
+        name,
+        args.clone(),
+        builtin.timing.default,
+        easing,
+        Default::default(),
+    )
+}
+
+pub(crate) fn execute_effect(
     _name: &str,
     args: &imbl::OrdMap<String, Value>,
     mut context: Context<'_>,
@@ -118,7 +152,7 @@ pub(crate) fn execute(
         + usize::from(args.contains_key("line"))
         + usize::from(args.contains_key("range"));
     if targets != 1 {
-        return Err("scroll_to requires one target: to=Vec2(...), x=/y=, line= or range=".into());
+        return Err("scroll_to requires one target: to=[x, y], x=/y=, line= or range=".into());
     }
     if args.contains_key("align") && !args.contains_key("line") && !args.contains_key("range") {
         return Err("scroll alignment applies to line= or range= targets".into());
@@ -254,12 +288,12 @@ pub(crate) fn execute(
     } else {
         from
     };
-    context.animation.schedule(
+    context.animation.schedule_in_window(
         &[Motion {
             element: view.as_ref().clone(),
             property: Property::Scroll,
-            from: Some(Value::Vec2(from)),
-            to: Value::Vec2(to),
+            from: Some(Value::from_vector(from.values.to_vec(), from.unit)?),
+            to: Value::from_vector(to.values.to_vec(), to.unit)?,
             reveal: None,
             horizontal: None,
             easing: None,
@@ -267,6 +301,10 @@ pub(crate) fn execute(
         start,
         context.duration,
         context.easing,
+        math::temporal::Window {
+            cycle: context.cycle,
+            clip: context.clip,
+        },
     )?;
     Ok(Value::Unit)
 }

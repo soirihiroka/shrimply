@@ -3,36 +3,27 @@ use std::{cell::RefCell, rc::Rc};
 use adw::prelude::*;
 use gtk::gio;
 use shrimply_components_gtk::{tr, ui::I18nAlertDialogExt};
-use shrimply_timeline_skia::{project::Time, silence::Config};
+use shrimply_timeline_skia::silence::Config;
 
 use crate::TimelineRuntime;
 
 pub(super) fn show_dialog(area: &gtk::GLArea, runtime: &Rc<RefCell<TimelineRuntime>>) {
     let defaults = Config::default();
-    let threshold = adw::SpinRow::with_range(-90.0, 0.0, 1.0);
-    threshold.set_title(tr!("Silence threshold").as_ref());
-    threshold.set_value(defaults.threshold_db);
-    threshold.set_digits(1);
-
-    let min_silence = adw::SpinRow::with_range(0.0, 10.0, 0.05);
-    min_silence.set_title(tr!("Minimum silence").as_ref());
-    min_silence.set_value(defaults.min_silence.as_secs_f64());
-    min_silence.set_digits(2);
-
-    let gap_tolerance = adw::SpinRow::with_range(0.0, 5.0, 0.01);
-    gap_tolerance.set_title(tr!("Gap tolerance").as_ref());
-    gap_tolerance.set_value(defaults.gap_tolerance.as_secs_f64());
-    gap_tolerance.set_digits(2);
-
-    let padding = adw::SpinRow::with_range(0.0, 2.0, 0.01);
-    padding.set_title(tr!("Padding").as_ref());
-    padding.set_value(defaults.padding.as_secs_f64());
-    padding.set_digits(2);
-
-    let delete_chunks = adw::SpinRow::with_range(0.0, 10.0, 0.05);
-    delete_chunks.set_title(tr!("Min chunk").as_ref());
-    delete_chunks.set_value(defaults.delete_chunks.as_secs_f64());
-    delete_chunks.set_digits(2);
+    let [
+        threshold,
+        min_silence,
+        gap_tolerance,
+        padding,
+        delete_chunks,
+    ] = shrimply_timeline_skia::silence::FIELDS.map(|field| {
+        shrimply_components_gtk::ui::number_field_row(
+            &field,
+            defaults
+                .field_value(field.key)
+                .parse()
+                .expect("silence default"),
+        )
+    });
 
     let group = adw::PreferencesGroup::new();
     group.add(&threshold);
@@ -69,13 +60,19 @@ pub(super) fn show_dialog(area: &gtk::GLArea, runtime: &Rc<RefCell<TimelineRunti
             if response.as_str() != "remove" {
                 return;
             }
-            let result = runtime.borrow_mut().scene.remove_silences(Config {
-                threshold_db: threshold.value(),
-                min_silence: Time::from_seconds_f64(min_silence.value()),
-                gap_tolerance: Time::from_seconds_f64(gap_tolerance.value()),
-                padding: Time::from_seconds_f64(padding.value()),
-                delete_chunks: Time::from_seconds_f64(delete_chunks.value()),
-            });
+            let result = (|| {
+                let mut config = Config::default();
+                for (field, row) in shrimply_timeline_skia::silence::FIELDS.iter().zip([
+                    &threshold,
+                    &min_silence,
+                    &gap_tolerance,
+                    &padding,
+                    &delete_chunks,
+                ]) {
+                    config.set_field(field.key, &row.value().to_string())?;
+                }
+                runtime.borrow_mut().scene.remove_silences(config)
+            })();
             match result {
                 Ok(0) => show_info_dialog(
                     &area,

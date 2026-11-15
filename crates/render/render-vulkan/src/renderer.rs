@@ -305,7 +305,9 @@ impl Renderer {
         Ok(*self.kernels.get(&key).expect("inserted Vulkan kernel"))
     }
     pub fn arguments(&self, name: &str) -> Result<Arguments, String> {
-        let modules = if self.device.portable_indices {
+        let modules = if self.device.word_storage {
+            WORD_STORAGE_MODULES
+        } else if self.device.portable_indices {
             PORTABLE_MODULES
         } else {
             MODULES
@@ -426,6 +428,11 @@ impl Renderer {
             #[cfg(all(target_os = "android", feature = "android-media"))]
             _native_images: Vec::new(),
         };
+        if !self.device.timeline_semaphores
+            && waits.iter().chain(signals).any(|(_, value)| *value != 0)
+        {
+            return Err("Timeline synchronization was requested on a binary-semaphore GPU".into());
+        }
         unsafe { self.device.raw.end_command_buffer(command) }
             .map_err(|e| format!("finish Vulkan command: {e:?}"))?;
         let fence = unsafe {
@@ -444,12 +451,14 @@ impl Renderer {
             .wait_semaphore_values(&wait_values)
             .signal_semaphore_values(&signal_values);
         let commands = [command];
-        let info = vk::SubmitInfo::default()
+        let mut info = vk::SubmitInfo::default()
             .command_buffers(&commands)
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&stages)
-            .signal_semaphores(&signal_semaphores)
-            .push_next(&mut timeline);
+            .signal_semaphores(&signal_semaphores);
+        if self.device.timeline_semaphores {
+            info = info.push_next(&mut timeline);
+        }
         {
             let _guard = self.device.queue_lock();
             unsafe {

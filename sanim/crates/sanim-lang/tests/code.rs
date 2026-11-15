@@ -3,7 +3,7 @@ use sanim_lang::{Engine, MemorySources, Prepared};
 use std::collections::{BTreeMap, BTreeSet};
 fn prepare(source: &str) -> Result<Prepared, sanim_core::Diagnostic> {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     Engine::default().prepare("main.sanim", &files, &Default::default())
 }
 fn sample(prepared: &Prepared, time: Fraction) -> Vec<Element> {
@@ -30,7 +30,7 @@ fn watched_source_patch_and_disjoint_changes_preserve_unchanged_source() {
     files.insert(
         "main.sanim",
         r#"let view=<CodeView src="sample.py" line_numbers={false}/>
-add(view)
+Animation(children=[view])
 wait(1s)
 view.patch(src="sample.py.patch", duration=1s)
 wait(1s)"#,
@@ -64,7 +64,7 @@ fn raw_markup_foreign_syntax_is_literal_dedented_and_ast_foldable() {
 
     print(main())
 </CodeView>
-add(view)
+Animation(children=[view])
 wait(1s)
 view.fold(range=view.range(line=3),duration=1s)
 wait(1s)
@@ -112,7 +112,7 @@ if true {
 '''
 let view=CodeView(code=code,lang="sanim")
 let other=CodeView(code=code,lang="sanim")
-add(view)
+Animation(children=[view])
 wait(1s)"####,
     )
     .unwrap();
@@ -171,14 +171,14 @@ wait(1s)"####,
 #[test]
 fn style_selection_and_readable_errors_are_native_methods() {
     let prepared=prepare(r#"let view=CodeView(code=r"value = 1",lang="python",spans=[CodeSpan(CodeRange(1,1,1,6),CodeStyle(fill=Color("orange3"),bold=true,underline=true))])
-add(view)
+Animation(children=[view])
 view.select(ranges=[view.range(regex="value")],duration=1s)
 view.style(theme=CodeTheme(rules=[CodeRule("number",CodeStyle(fill=Color("purple3")))]),duration=1s)
 wait(1s)"#).unwrap();
     assert_eq!(prepared.animation.duration, 3.into());
     let error = prepare(
         r#"let v=CodeView(code="x=1",lang="python",spans=[CodeSpan(CodeRange(9,1,9,3),CodeStyle())])
-add(v)
+Animation(children=[v])
 wait(1s)"#,
     )
     .unwrap_err();
@@ -221,7 +221,7 @@ fn invalid_source_is_renderable_data_with_diagnostics() {
         ("sanim", "let value =\n"),
     ] {
         let source = format!(
-            "let view=CodeView(code=r\"\"\"{text}\"\"\",lang=\"{language}\")\nadd(view)\nwait(1s)"
+            "let view=CodeView(code=r\"\"\"{text}\"\"\",lang=\"{language}\")\nAnimation(children=[view])\nwait(1s)"
         );
         let prepared = prepare(&source).unwrap();
         let Geometry::Code { document, .. } =
@@ -242,13 +242,13 @@ mut numbers=true
 mut family="monospace"
 sig contents="value = {count:02d}"
 let view=CodeView(code=contents,lang="python",font=Font(family,"monospace"),font_size=size,line_numbers=numbers,theme=CodeTheme(rules=[CodeRule("number",CodeStyle(fill=tint))]),spans=[CodeSpan(CodeLines(1),CodeStyle(underline=true))])
-add(view)
+Animation(children=[view])
 wait(1s)
-count=2
-tint=Color("orange3")
-size=24pt
-family="sans-serif"
-numbers=false
+animate(count,to=2,duration=0s)
+animate(tint,to=Color("orange3"),duration=0s)
+animate(size,to=24pt,duration=0s)
+animate(family,to="sans-serif",duration=0s)
+animate(numbers,to=false,duration=0s)
 wait(1s)"#).unwrap();
     let view = prepared.animation.find("view").unwrap();
     for (time, words, size, numbers) in [
@@ -304,7 +304,7 @@ view.style(theme=CodeTheme())"#).unwrap_err();
 #[test]
 fn gutters_default_hidden_and_timed_style_retains_both_visibility_endpoints() {
     let source = r#"let view=<CodeView lang="python">print("hello")</CodeView>
-add(view)
+Animation(children=[view])
 wait(1s)
 view.style(line_numbers=true,scope_indicators=true,duration=400ms,ease="linear")
 wait(600ms)
@@ -333,7 +333,7 @@ wait(800ms)"#;
     assert_eq!(hiding.raw_progress, Fraction::new(1u64, 2u64));
     assert_eq!(prepared.animation.duration, 3.into());
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     let duration = Engine::default()
         .duration("main.sanim", &files, &Default::default())
         .unwrap();
@@ -365,9 +365,9 @@ fn scope_indicator_signals_retain_types_and_timed_style_has_a_single_writer() {
     let prepared = prepare(
         r#"mut scopes=false
 let view=CodeView(code=r"x=1",lang="python",scope_indicators=scopes)
-add(view)
+Animation(children=[view])
 wait(1s)
-scopes=true
+animate(scopes,to=true,duration=0s)
 wait(1s)"#,
     )
     .unwrap();
@@ -401,7 +401,7 @@ fn displayed_sanim_has_a_fixed_budget_independent_of_executable_module_limits() 
     files.insert("display.sanim", &displayed);
     files.insert(
         "main.sanim",
-        "let view=<CodeView src=\"display.sanim\"/>\nadd(view)\nwait(1s)",
+        "let view=<CodeView src=\"display.sanim\"/>\nAnimation(children=[view])\nwait(1s)",
     );
     let mut engine = Engine::default();
     engine.limits.max_parse_steps = 256;
@@ -456,7 +456,7 @@ fn large_code_stays_unshaped_until_needed_and_can_be_folded_before_first_layout(
         *pending && children.is_empty(),
         "unused source must not build glyphs"
     );
-    files.insert("main.sanim","let view=<CodeView src=\"large.py\" line_numbers={false}/>\nadd(view)\nfor selected in view.ranges() { selected.fold(duration=0s) }\nwait(1s)");
+    files.insert("main.sanim","let view=<CodeView src=\"large.py\" line_numbers={false}/>\nAnimation(children=[view])\nfor selected in view.ranges() { selected.fold(duration=0s) }\nwait(1s)");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();
@@ -487,7 +487,7 @@ fn large_code_stays_unshaped_until_needed_and_can_be_folded_before_first_layout(
 fn no_op_presentations_keep_their_duration_without_events_or_duplicate_retained_payloads() {
     let prepared = prepare(
         r#"let view=<CodeView lang="python">x = 1</CodeView>
-add(view)
+Animation(children=[view])
 repeat 200 {
     view.select(duration=1ms)
     view.style(duration=1ms)
@@ -502,14 +502,14 @@ wait(1s)"#,
 fn changed_presentation_metadata_and_checkpoint_roots_obey_byte_limits() {
     let mut files = MemorySources::default();
     let changed = r#"let view=<CodeView lang="python">x = 1</CodeView>
-add(view)
+Animation(children=[view])
 let selection=[CodeRange(1,1,1,2)]
 repeat 100 {
     view.select(ranges=selection,duration=1ms)
     view.select(duration=1ms)
 }
 wait(1s)"#;
-    files.insert("main.sanim", changed);
+    files.insert("main.sanim", format!("{}\nAnimation()", changed));
     let mut engine = Engine::default();
     engine.limits.data.max_bytes = 64 * 1024;
     let error = engine
@@ -522,7 +522,10 @@ wait(1s)"#;
             || error.message.contains("generated value byte budget"),
         "{error}"
     );
-    files.insert("main.sanim", changed.replace("100", "4"));
+    files.insert(
+        "main.sanim",
+        format!("{}\nAnimation()", changed.replace("100", "4")),
+    );
     let mut engine = Engine::default();
     engine.limits.max_cache_bytes = 64 * 1024;
     let prepared = engine

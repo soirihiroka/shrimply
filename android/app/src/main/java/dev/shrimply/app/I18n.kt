@@ -25,4 +25,11 @@ internal object NativeLayout {
     init { System.loadLibrary("shrimply_android") }
     external fun panelAnimationDurationMillis(): Int
     external fun panelAnimationProgress(progress: Float): Float
+    external fun menuUsesBottomSheet(inputSource: String): Boolean
+    external fun compactControls(width: Float, height: Float): Boolean
+    external fun inspectorOverlay(width: Float, inspectorWidth: Float): Boolean
+    external fun splitPaneExtent(total: Float, divider: Float, fraction: Float): Float
+    external fun transportStacked(width: Float): Boolean
+    external fun choiceSearchable(count: Int): Boolean
+    external fun matchingChoices(labels: String, query: String): String
 }

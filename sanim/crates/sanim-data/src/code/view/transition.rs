@@ -300,10 +300,13 @@ fn prefix(element: &mut Element, value: &str, style: &Style) -> Result<f64, Stri
         .ok_or("typewriter token contains no native glyph")?;
     let advance = prefix(glyph, value, style)?;
     for child in children {
-        match Arc::make_mut(&mut child.geometry) {
-            Geometry::Rectangle { width, .. } => *width = math::from_f64(advance)?,
-            Geometry::Line { end, .. } => end.values[0] = advance,
-            _ => {}
+        if matches!(child.geometry.as_ref(), Geometry::Box { .. }) {
+            child.layout.width = Some(Number {
+                value: math::from_f64(advance)?,
+                unit: Unit::Length,
+            });
+        } else if let Geometry::Line { end, .. } = Arc::make_mut(&mut child.geometry) {
+            end.values[0] = advance;
         }
     }
     Ok(advance)

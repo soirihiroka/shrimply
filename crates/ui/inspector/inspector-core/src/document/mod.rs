@@ -311,7 +311,25 @@ impl crate::InspectorController {
                 self.reset_manim_parameters(target, reset)
             }
             BasicInspectorAction::SetBoolean { path, value } => {
-                self.set_value(target, path, Value::Bool(*value))
+                if matches!(target, InspectorTarget::Item(ItemAddress::Caption { .. })) {
+                    let control = InspectorControl::new(ControlKind::Boolean, path, "")
+                        .live_commit(crate::caption::EDIT_COMMIT);
+                    let result = self
+                        .set_caption_control_value(target, &control, &value.to_string())
+                        .expect("caption control must use canonical caption editing");
+                    if result.is_ok() {
+                        shrimply_editor_state::player_state::refresh_project(
+                            &self.player_state,
+                            shrimply_editor_state::player_state::ProjectChange {
+                                inspector: true,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    result
+                } else {
+                    self.set_value(target, path, Value::Bool(*value))
+                }
             }
         }
         .map(|()| None)
@@ -324,6 +342,9 @@ impl crate::InspectorController {
         value: &str,
     ) -> Result<(), String> {
         self.ensure_control_timeline(target, control)?;
+        if let Some(result) = self.set_caption_control_value(target, control, value) {
+            return result;
+        }
         if control.kind == ControlKind::LayeredNumber && control.background_integer() {
             let value = value
                 .parse::<f64>()
@@ -493,6 +514,9 @@ impl crate::InspectorController {
                 return result;
             }
         }
+        if let Some(result) = self.set_caption_control_components(target, control, values) {
+            return result;
+        }
         if let Some(crate::InspectorControlAction::SetSam2PointPosition {
             modifier_id,
             point_id,
@@ -581,6 +605,9 @@ impl crate::InspectorController {
         target: &InspectorTarget,
         control: &InspectorControl,
     ) -> Result<(), String> {
+        if let Some(result) = self.commit_caption_control(target, control) {
+            return result;
+        }
         if control.background_integer() {
             return self.commit_background_integer_value(
                 target,

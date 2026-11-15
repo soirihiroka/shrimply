@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 fn prepare(source: &str) -> (Renderer, sanim_render::Scene, Options) {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     let prepared = Engine::new(Viewport {
         width: 640,
         height: 360,
@@ -33,7 +33,7 @@ mut width=100pt
 mut policy: "normal" | "nowrap" = "normal"
 let paragraph=<Label font_size={14pt}>  A   paragraph with enough words to wrap over several lines. </Label>
 let panel=<Box width={width} white_space={policy}>{paragraph}</Box>
-add(panel)
+Animation(children=[panel])
 wait(1s)
 width=300pt
 wait(1s)
@@ -91,9 +91,9 @@ fn overflow_wrapping_keeps_long_words_whole_unless_explicitly_enabled() {
 let normal=<Label w-60 font_size={14pt}>antidisestablishmentarianism</Label>
 let break_word=<Label w-60 wrap-break-word font_size={14pt}>antidisestablishmentarianism</Label>
 let anywhere=<Label w-60 wrap-anywhere font_size={14pt}>antidisestablishmentarianism</Label>
-add(normal)
-add(break_word)
-add(anywhere)
+Animation(children=[normal])
+Animation(children=[break_word])
+Animation(children=[anywhere])
 wait(1s)
 "#,
     );
@@ -110,7 +110,7 @@ let code=<CodeView lang="python" whitespace-pre-wrap wrap-anywhere width={100%} 
         return "A long string that wraps onto multiple visual rows without changing source lines"
 </CodeView>
 let panel=<Box width={width}>{code}</Box>
-add(panel)
+Animation(children=[panel])
 wait(1s)
 width=350pt
 wait(1s)
@@ -175,7 +175,7 @@ fn collapsed_code_newlines_map_to_the_original_logical_lines() {
         r#"
 let code=<CodeView lang="plain" whitespace-normal w-500 font_size={12pt} line_numbers={true}>first
 second</CodeView>
-add(code)
+Animation(children=[code])
 wait(1s)
 "#,
     );
@@ -198,7 +198,7 @@ wait(1s)
 fn native_soft_wrap_never_splits_combining_character_clusters() {
     let source = format!(
         r#"let code=<CodeView lang="plain" whitespace-pre-wrap wrap-anywhere w-60 line_numbers={{false}} font_size={{12pt}}>{}</CodeView>
-add(code)
+Animation(children=[code])
 wait(1s)"#,
         "e\u{301}".repeat(30)
     );
@@ -257,7 +257,7 @@ fn flex_remeasurement_wraps_at_the_allocated_child_width() {
 let first=<Label w-full flex-1 font_size={14pt}>A paragraph with enough words to require another row after flex shrink.</Label>
 let second=<Label w-full flex-1 font_size={14pt}>Another paragraph shares the same parent width with its sibling.</Label>
 let panel=<Box w-240 flex flex-row>{first}{second}</Box>
-add(panel)
+Animation(children=[panel])
 wait(1s)
 "#,
     );
@@ -274,7 +274,7 @@ fn rtl_code_words_use_their_visual_left_edge_and_do_not_overlap() {
     let (mut renderer, scene, options) = prepare(
         r#"
 let code=<CodeView lang="plain" whitespace-pre-wrap w-200 line_numbers={false} font_size={20pt}>مرحبا بالعالم</CodeView>
-add(code)
+Animation(children=[code])
 wait(1s)
 "#,
     );
@@ -298,7 +298,7 @@ wait(1s)
 #[test]
 fn trailing_blank_source_lines_keep_their_gutter_numbers_after_wrapping() {
     let (mut renderer, scene, options) = prepare(
-        "let code = r\"\"\"one\ntwo\n\n\"\"\"\nlet plain=CodeView(code=code,lang=\"plain\",width=200pt,line_numbers=true)\nlet wrapped=CodeView(code=code,lang=\"plain\",width=200pt,white_space=\"pre-wrap\",line_numbers=true)\nadd(plain)\nadd(wrapped)\nwait(1s)",
+        "let code = r\"\"\"one\ntwo\n\n\"\"\"\nlet plain=CodeView(code=code,lang=\"plain\",width=200pt,line_numbers=true)\nlet wrapped=CodeView(code=code,lang=\"plain\",width=200pt,white_space=\"pre-wrap\",line_numbers=true)\nAnimation(children=[plain])\nAnimation(children=[wrapped])\nwait(1s)",
     );
     let state = renderer.frame_state(&scene, 0.into(), &options).unwrap();
     let labels = |element: &sanim_core::Element| {
@@ -327,7 +327,7 @@ let code=<CodeView lang="python" whitespace-pre-wrap wrap-anywhere w-150 font_si
     def example():
         return "A long message with several wrapped words"
 </CodeView>
-add(code)
+Animation(children=[code])
 wait(1s)
 "#,
     );
@@ -375,7 +375,7 @@ wait(1s)
 fn codeview_frame_pipeline_benchmark() {
     let code=(0..100).map(|index|format!("def function_{index}():\n    return \"A long line of source text with several word boundaries\"\n")).collect::<String>();
     let source = format!(
-        "mut width=180pt\nlet code=CodeView(code=r\"\"\"{code}\"\"\",lang=\"python\",white_space=\"pre-wrap\",overflow_wrap=\"anywhere\",width=width)\nadd(code)\nanimate(width,to=300pt,duration=3s,ease=\"linear\")\nwait(1s)"
+        "mut width=180pt\nlet code=CodeView(code=r\"\"\"{code}\"\"\",lang=\"python\",white_space=\"pre-wrap\",overflow_wrap=\"anywhere\",width=width)\nAnimation(children=[code])\nanimate(width,to=300pt,duration=3s,ease=\"linear\")\nwait(1s)"
     );
     let (mut renderer, scene, options) = prepare(&source);
     for time in [0, 1, 2, 3] {

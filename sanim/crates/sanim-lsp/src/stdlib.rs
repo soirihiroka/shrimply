@@ -19,9 +19,7 @@ fn reference() -> &'static Reference {
         let mut sections = BTreeMap::<String, Vec<String>>::new();
         for builtin in prelude::all_builtins() {
             sections.entry(builtin.name.into()).or_default().push(format!(
-                "```sanim\n{}\n```\n\nDefault timeline duration: {}s. Argument and result types may be specialized by the compiler at each call.",
-                features::native_signature(builtin, false).0,
-                builtin.timing.default,
+                "```sanim\n{}\n```", features::native_signature(builtin, false).0,
             ));
         }
         for (name, definition) in prelude::types() {
@@ -39,7 +37,6 @@ fn reference() -> &'static Reference {
                 TypeDefinition::Plain(_) => format!("Native type: `{name}`."),
                 TypeDefinition::List => format!("`{name}<T>` or `{name}<T, N>` — persistent list, with an optional exact length."),
                 TypeDefinition::Container(_) => format!("`{name}<T>` — one element or row type argument."),
-                TypeDefinition::Vector(_) => format!("`{name}` or `{name}<Unit>` — components default to Number."),
                 TypeDefinition::Bound(_) => format!("Generic constraint: `{name}`."),
             };
             sections.entry((*name).into()).or_default().push(description);

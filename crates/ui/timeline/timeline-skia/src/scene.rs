@@ -19,6 +19,7 @@ const ANIMATION_FRAME_INTERVAL: std::time::Duration =
 mod context_edits;
 pub use context_edits::ClipboardPaste;
 mod context_menu;
+pub use context_menu::TimelineContextTarget;
 mod keyboard;
 pub use keyboard::{KeyAction, TrackDeletion};
 mod drop_preview;
@@ -54,6 +55,7 @@ pub struct Scene {
     software_cursor: Option<TimelineSoftwareCursor>,
     pointer_press_origin: Option<Vec2>,
     pointer_release_pos: Option<Vec2>,
+    pointer_touch: bool,
     primary_pressed: bool,
     primary_down: bool,
     primary_released: bool,
@@ -61,11 +63,18 @@ pub struct Scene {
     middle_down: bool,
     middle_released: bool,
     view: TimelineViewState,
+    show_tools: bool,
+    show_track_controls: bool,
+    show_audio_monitor: bool,
+    tools_progress: f64,
+    audio_monitor_progress: f64,
+    controls_animation: Option<(Instant, f64, f64, f64)>,
     pending_track_toggle: Option<TrackKey>,
     pending_sequence_toggle: Option<Vec<uuid::Uuid>>,
     pending_track_add_menu: Option<TrackAddMenuRequest>,
-    pending_audio_record: Option<TrackKey>,
-    pending_video_record: Option<TrackKey>,
+    pending_audio_record: Option<TrackRecordingRequest>,
+    pending_video_record: Option<TrackRecordingRequest>,
+    pub(crate) recording_available: (bool, bool),
     active_audio_recording: Option<crate::recording::AudioRecording>,
     pub(crate) active_video_recording: Option<crate::recording::ActiveVideoRecording>,
     pub(crate) video_recording_commands:
@@ -98,6 +107,7 @@ pub struct Scene {
     beats: BeatMap,
     pub snap_repository: crate::snapping::SnapRepo,
     snapping_cache: crate::snapping::Cache,
+    source_events: Arc<shrimply_project_document::source_events::Change>,
     pub default_visual_duration: Time,
     pub default_text_font_family: FontFamily,
     pub(crate) project: Rc<RefCell<Project>>,
@@ -158,10 +168,51 @@ pub struct TimelineModifiers {
 
 pub struct TrackAddMenuRequest {
     pub key: TrackKey,
+    pub touch: bool,
+    pub point: Vec2,
     pub import_targets: Vec<TrackKey>,
+    pub position: Time,
+}
+
+#[derive(Clone, Copy)]
+pub struct TrackRecordingRequest {
+    pub key: TrackKey,
+    pub position: Time,
 }
 
 impl Scene {
+    pub fn focused_video_address(&self) -> Option<project::ItemAddress> {
+        selection_state::focused_video_address(&self.selection, &self.project.borrow())
+    }
+
+    pub fn set_recording_available(&mut self, audio: bool, video: bool) {
+        self.recording_available = (audio, video);
+    }
+    pub fn show_tools(&self) -> bool {
+        self.show_tools
+    }
+    pub fn show_track_controls(&self) -> bool {
+        self.show_track_controls
+    }
+    pub fn show_audio_monitor(&self) -> bool {
+        self.show_audio_monitor
+    }
+    pub fn audio_monitor_progress(&self) -> f64 {
+        self.audio_monitor_progress
+    }
+    pub fn tools_progress(&self) -> f64 {
+        self.tools_progress
+    }
+    pub fn track_controls_progress(&self) -> f64 {
+        self.view.track_controls_progress
+    }
+    pub fn track_label_width(&self) -> f64 {
+        self.view.label_width()
+    }
+    pub fn timeline_x(&self) -> f64 {
+        self.view.timeline_x()
+    }
+
     pub fn new(
         project: Rc<RefCell<Project>>,
         player: SharedPlayerState,
@@ -233,6 +284,11 @@ impl Scene {
             .flatten();
         let snapshot = preferences::snapshot(&preferences);
         let tools = ToolState::from_preferences(&snapshot);
+        view.track_controls_progress = if snapshot.editor_layout.timeline_track_controls_visible {
+            1.0
+        } else {
+            0.0
+        };
 
         let timeline_end = folded_sequence::expanded_timeline_end(&project.borrow());
         let expanded_paths = project.borrow().expanded_sequence_paths.clone();
@@ -240,6 +296,20 @@ impl Scene {
         let performance =
             crate::performance::State::new(project.clone(), player.clone(), playback_performance);
         Self {
+            show_tools: snapshot.editor_layout.timeline_tools_visible,
+            show_track_controls: snapshot.editor_layout.timeline_track_controls_visible,
+            show_audio_monitor: snapshot.editor_layout.timeline_audio_monitor_visible,
+            tools_progress: if snapshot.editor_layout.timeline_tools_visible {
+                1.0
+            } else {
+                0.0
+            },
+            audio_monitor_progress: if snapshot.editor_layout.timeline_audio_monitor_visible {
+                1.0
+            } else {
+                0.0
+            },
+            controls_animation: None,
             snap_enabled: tools.magnet,
             beat_grid_enabled: tools.beat_grid,
             snap_radius_px: f64::from(snapshot.timeline_snap_radius_px),
@@ -262,6 +332,7 @@ impl Scene {
             software_cursor: None,
             pointer_press_origin: None,
             pointer_release_pos: None,
+            pointer_touch: false,
             primary_pressed: false,
             primary_down: false,
             primary_released: false,
@@ -274,6 +345,7 @@ impl Scene {
             pending_track_add_menu: None,
             pending_audio_record: None,
             pending_video_record: None,
+            recording_available: (true, true),
             active_audio_recording: None,
             active_video_recording: None,
             video_recording_commands: std::collections::VecDeque::new(),
@@ -305,6 +377,7 @@ impl Scene {
             beats: BeatMap::new(),
             snap_repository: crate::snapping::SnapRepo::default(),
             snapping_cache: crate::snapping::Cache::default(),
+            source_events: shrimply_project_document::source_events::Change::subscribe(),
             default_visual_duration: snapshot.default_visual_duration,
             default_text_font_family: snapshot.default_text_font_family,
             project,
@@ -350,12 +423,16 @@ impl Scene {
     /// GTK/Qt hosts may retain their existing frame-clock polling.
     pub fn set_wake(&mut self, wake: Arc<dyn Fn() + Send + Sync>) {
         self.performance.set_wake(Arc::downgrade(&wake));
+        self.source_events.set_wake(Arc::downgrade(&wake));
         self.wake = Some(wake);
     }
 
     /// Earliest UI work which needs a timer; media completion uses `set_wake`.
     pub fn next_update(&self) -> Option<std::time::Duration> {
-        if self.media_refresh.redraw.get() || self.media_refresh.beats.get() {
+        if self.media_refresh.redraw.get()
+            || self.media_refresh.beats.get()
+            || self.source_events.pending()
+        {
             return Some(std::time::Duration::ZERO);
         }
         let delayed = self
@@ -378,6 +455,21 @@ impl Scene {
     }
 
     fn apply_preferences(&mut self, preferences: &preferences::PreferencesSnapshot) {
+        let layout = preferences.editor_layout;
+        if self.show_tools != layout.timeline_tools_visible
+            || self.show_track_controls != layout.timeline_track_controls_visible
+            || self.show_audio_monitor != layout.timeline_audio_monitor_visible
+        {
+            self.controls_animation = Some((
+                Instant::now(),
+                self.tools_progress,
+                self.view.track_controls_progress,
+                self.audio_monitor_progress,
+            ));
+            self.show_tools = layout.timeline_tools_visible;
+            self.show_track_controls = layout.timeline_track_controls_visible;
+            self.show_audio_monitor = layout.timeline_audio_monitor_visible;
+        }
         let tools = ToolState::from_preferences(preferences);
         self.snap_enabled = tools.magnet;
         self.beat_grid_enabled = tools.beat_grid;

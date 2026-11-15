@@ -32,11 +32,8 @@ pub enum Node {
     Template {
         parts: std::sync::Arc<[crate::TemplatePart<NodeId>]>,
     },
-    Vector {
-        values: Vec<NodeId>,
-    },
-    Component {
-        vector: NodeId,
+    Index {
+        list: NodeId,
         index: usize,
     },
     List {
@@ -116,20 +113,10 @@ impl ReactiveGraph {
     pub fn cell_dependencies(&self, root: NodeId) -> Result<imbl::OrdSet<CellId>, String> {
         self.dependency_cells(vec![root])
     }
-    pub(crate) fn bound_cells(
+    pub(crate) fn dependency_cells(
         &self,
-        mut visible: impl FnMut(&str) -> bool,
-    ) -> imbl::OrdSet<CellId> {
-        let roots = self
-            .bindings
-            .iter()
-            .filter(|(id, _)| visible(id))
-            .flat_map(|(_, properties)| properties.values().copied())
-            .collect();
-        self.dependency_cells(roots)
-            .expect("retained bindings reference a validated graph")
-    }
-    fn dependency_cells(&self, mut pending: Vec<NodeId>) -> Result<imbl::OrdSet<CellId>, String> {
+        mut pending: Vec<NodeId>,
+    ) -> Result<imbl::OrdSet<CellId>, String> {
         let mut visited = std::collections::BTreeSet::new();
         let mut cells = imbl::OrdSet::new();
         while let Some(id) = pending.pop() {
@@ -159,11 +146,10 @@ impl ReactiveGraph {
                         }
                     }
                 }
-                Node::Vector { values } => pending.extend(values),
                 Node::List { values } => pending.extend(values),
                 Node::Record { fields } => pending.extend(fields.values()),
                 Node::NativeConfig { arguments, .. } => pending.extend(arguments.values()),
-                Node::Component { vector, .. } => pending.push(*vector),
+                Node::Index { list, .. } => pending.push(*list),
             }
         }
         Ok(cells)
@@ -228,12 +214,12 @@ impl ReactiveGraph {
             .cells
             .get(&id)
             .ok_or_else(|| format!("unknown reactive cell {id}"))?;
-        Track::at(&cell.tracks, time).map_or_else(
+        Track::at(&cell.tracks, time)?.map_or_else(
             || Ok(cell.initial.clone()),
             |track| {
                 if interpolated_type(&cell.ty) {
                     track.sample(time)
-                } else if time >= track.end {
+                } else if track.progress(time)? >= Fraction::from(1) {
                     Ok(track.to.clone())
                 } else {
                     Ok(track.from.clone())
@@ -242,7 +228,14 @@ impl ReactiveGraph {
         )
     }
     pub fn write_cell(&mut self, id: CellId, time: Fraction, value: Value) -> Result<(), String> {
-        self.insert_cell_track(id, time, time, value, Easing::Linear)
+        self.write_cell_in_window(
+            id,
+            time,
+            0.into(),
+            value,
+            Easing::Linear,
+            Default::default(),
+        )
     }
     pub fn animate_cell(
         &mut self,
@@ -255,19 +248,34 @@ impl ReactiveGraph {
         if end <= start {
             return Err("cell animation requires a positive duration".into());
         }
-        self.insert_cell_track(id, start, end, to, easing)
+        self.write_cell_in_window(
+            id,
+            start,
+            math::arithmetic("-", end, start)?,
+            to,
+            easing,
+            Default::default(),
+        )
     }
-    fn insert_cell_track(
+    pub fn write_cell_in_window(
         &mut self,
         id: CellId,
         start: Fraction,
-        end: Fraction,
+        duration: Fraction,
         to: Value,
         easing: Easing,
+        window: crate::math::temporal::Window,
     ) -> Result<(), String> {
+        math::temporal::writer_end(start, duration)?;
+        let Some(interval) = window.interval(start, duration)? else {
+            return Ok(());
+        };
+        let start = interval.start;
+        let end = interval.end;
+        let cycle = interval.cycle;
         check_time(start)?;
         check_time(end)?;
-        math::timeline_end(start, math::arithmetic("-", end, start)?)?;
+        math::temporal::writer_end(start, math::arithmetic("-", end, start)?)?;
         let cell = self
             .cells
             .get(&id)
@@ -293,7 +301,11 @@ impl ReactiveGraph {
             .checked_sub(1)
             .and_then(|index| cell.tracks.get(index));
         let next = cell.tracks.get(index);
-        if previous.is_some_and(|track| track.end > start)
+        if cell.tracks.back().is_some_and(|track| {
+            track.cycle.is_some_and(|previous| {
+                Some(previous) != cycle && previous.until().is_none_or(|until| until > start)
+            })
+        }) || previous.is_some_and(|track| track.end > start)
             || next.is_some_and(|track| track.start < end)
         {
             return Err(format!(
@@ -305,6 +317,8 @@ impl ReactiveGraph {
         }
         let from = self.sample_cell(id, start)?;
         let track = Track {
+            interpolation: interval.interpolation,
+            cycle,
             start,
             end,
             from,
@@ -486,7 +500,6 @@ impl ReactiveGraph {
                         | Type::Record(_)
                         | Type::Option(_)
                         | Type::Enum { .. }
-                        | Type::Vector(2..=4, Some(_))
                 ) {
                     return Err(format!(
                         "state of type {} cannot be used by a native animated argument; use scalar, font, code, enum or structured configuration values",
@@ -510,37 +523,13 @@ impl ReactiveGraph {
                     left.depth.max(right.depth) + 1,
                 ))
             }
-            Node::Vector { values } => {
-                if !(2..=4).contains(&values.len()) {
-                    return Err(
-                        "retained vectors require two, three or four numeric components".into(),
-                    );
-                }
-                let mut unit = None;
-                let mut depth = 0;
-                for &id in values {
-                    let value = child(id)?;
-                    let component = math::operations::scalar_unit(&value.ty)
-                        .ok_or("retained vector components must be numbers")?;
-                    if unit.is_some_and(|unit| unit != component) {
-                        return Err("retained vector components must use matching units".into());
-                    }
-                    unit = Some(component);
-                    depth = depth.max(value.depth);
-                }
-                Ok((Type::Vector(values.len(), unit), depth + 1))
-            }
-            Node::Component { vector, index } => {
-                let vector = child(*vector)?;
-                let Type::Vector(dimension, Some(unit)) = &vector.ty else {
-                    return Err(
-                        "retained component access requires a vector with known units".into(),
-                    );
-                };
-                if *index >= *dimension {
-                    return Err("retained vector component index is out of range".into());
-                }
-                Ok((Type::Numeric(*unit), vector.depth + 1))
+            Node::Index { list, index } => {
+                let list = child(*list)?;
+                let inner = list
+                    .ty
+                    .fixed_index(*index)?
+                    .ok_or("retained indexing requires a List with a known fixed length")?;
+                Ok((inner, list.depth + 1))
             }
             Node::Template { parts } => {
                 let mut depth = 0;
@@ -567,6 +556,18 @@ impl ReactiveGraph {
                 Ok((Type::String, depth + 1))
             }
             Node::Math { name, args } => {
+                if let Some(function) = math::linear::list_function(name) {
+                    let mut depth = 0;
+                    let actuals = args
+                        .iter()
+                        .map(|id| {
+                            let node = child(*id)?;
+                            depth = depth.max(node.depth);
+                            Ok(node.ty.clone())
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    return Ok((function.result_type(&actuals)?, depth + 1));
+                }
                 let function = math::functions::function(name)
                     .ok_or_else(|| format!("'{name}' is not a retained math function"))?;
                 let required = function
@@ -648,7 +649,10 @@ impl ReactiveGraph {
             for track in &cell.tracks {
                 check_time(track.start)?;
                 check_time(track.end)?;
-                math::timeline_end(track.start, math::arithmetic("-", track.end, track.start)?)?;
+                math::temporal::writer_end(
+                    track.start,
+                    math::arithmetic("-", track.end, track.start)?,
+                )?;
                 if previous.is_some_and(|end| end > track.start)
                     || track.reveal.is_some()
                     || track.horizontal.is_some()
@@ -871,16 +875,11 @@ impl ReactiveGraph {
                         right: v,
                     },
                 ) if a == b => earlier(children(*x, *u), children(*y, *v)),
-                (
-                    Node::Component {
-                        vector: a,
-                        index: x,
-                    },
-                    Node::Component {
-                        vector: b,
-                        index: y,
-                    },
-                ) if x == y => children(*a, *b),
+                (Node::Index { list: a, index: x }, Node::Index { list: b, index: y })
+                    if x == y =>
+                {
+                    children(*a, *b)
+                }
                 (Node::Math { name: a, args: x }, Node::Math { name: b, args: y })
                     if a == b && x.len() == y.len() =>
                 {
@@ -888,14 +887,10 @@ impl ReactiveGraph {
                         .zip(y)
                         .fold(None, |time, (&a, &b)| earlier(time, children(a, b)))
                 }
-                (Node::Vector { values: a }, Node::Vector { values: b })
-                | (Node::List { values: a }, Node::List { values: b })
-                    if a.len() == b.len() =>
-                {
-                    a.iter()
-                        .zip(b)
-                        .fold(None, |time, (&a, &b)| earlier(time, children(a, b)))
-                }
+                (Node::List { values: a }, Node::List { values: b }) if a.len() == b.len() => a
+                    .iter()
+                    .zip(b)
+                    .fold(None, |time, (&a, &b)| earlier(time, children(a, b))),
                 (Node::Record { fields: a }, Node::Record { fields: b })
                     if a.keys().eq(b.keys()) =>
                 {
@@ -968,7 +963,6 @@ fn node_bytes(node: &Node) -> Result<usize, String> {
             Node::Constant(value) => state_value_bytes(&value.ty(), value)?,
             Node::Unary { op, .. } | Node::Binary { op, .. } => op.len(),
             Node::Math { name, args } => name.len() + args.len() * std::mem::size_of::<NodeId>(),
-            Node::Vector { values } => values.len() * std::mem::size_of::<NodeId>(),
             Node::List { values } => values.len() * std::mem::size_of::<NodeId>(),
             Node::Record { fields } => fields
                 .keys()
@@ -1064,32 +1058,27 @@ impl Sampler<'_> {
                 .into(),
             ),
             Node::Math { name, args } => {
-                let numbers = args
-                    .iter()
-                    .map(|id| self.value(*id)?.number())
-                    .collect::<Result<Vec<Number>, String>>()?;
-                Value::Number(math::functions::evaluate(name, &numbers)?)
+                if let Some(function) = math::linear::list_function(name) {
+                    function.evaluate(
+                        &args
+                            .iter()
+                            .map(|id| self.value(*id))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    )?
+                } else {
+                    let numbers = args
+                        .iter()
+                        .map(|id| self.value(*id)?.number())
+                        .collect::<Result<Vec<Number>, String>>()?;
+                    Value::Number(math::functions::evaluate(name, &numbers)?)
+                }
             }
-            Node::Vector { values } => {
-                let numbers = values
-                    .iter()
-                    .map(|id| self.value(*id)?.number())
-                    .collect::<Result<Vec<_>, String>>()?;
-                let unit = numbers[0].unit;
-                let components = numbers
-                    .iter()
-                    .map(|value| math::to_f64(value.value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Value::from_vector(components, unit)?
-            }
-            Node::Component { vector, index } => {
-                let vector = self.value(*vector)?;
-                let (values, unit) = vector.vector()?;
-                Value::Number(Number {
-                    value: math::from_f64(values[*index])?,
-                    unit,
-                })
-            }
+            Node::Index { list, index } => self
+                .value(*list)?
+                .list()?
+                .get(*index)
+                .cloned()
+                .ok_or("retained List index is out of range")?,
         };
         leaf_type(&value)?;
         self.values[id] = Some(value.clone());
@@ -1122,12 +1111,8 @@ fn state_value_bytes(ty: &Type, value: &Value) -> Result<usize, String> {
 fn interpolated_type(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::Numeric(_)
-            | Type::RefinedNumeric(_)
-            | Type::Fraction
-            | Type::Color
-            | Type::Vector(2..=4, Some(_))
-    )
+        Type::Numeric(_) | Type::RefinedNumeric(_) | Type::Fraction | Type::Color
+    ) || matches!(ty, Type::List(inner, _) if math::operations::scalar_unit(inner).is_some())
 }
 fn leaf_type(value: &Value) -> Result<Type, String> {
     match value {
@@ -1155,8 +1140,6 @@ fn leaf_type(value: &Value) -> Result<Type, String> {
                 .iter()
                 .all(|v| math::finite(v) && *v >= Fraction::from(0) && *v <= Fraction::from(1)) => {
         }
-        Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)
-            if value.vector()?.0.iter().all(|v| v.is_finite()) => {}
         _ => {
             return Err(format!(
                 "a value of type {} cannot be retained as a native animated argument; use finite scalar, font, code, enum or structured configuration values",
@@ -1177,9 +1160,7 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
         };
     }
     let valid = match property {
-        Property::Position | Property::Scroll => {
-            matches!(ty, Type::Vector(2, Some(Unit::Length | Unit::Percent)))
-        }
+        Property::Position | Property::Scroll => Type::coordinates().accepts(ty),
         Property::Rotation => math::operations::scalar_unit(ty) == Some(Unit::Angle),
         Property::Scale | Property::StretchX | Property::Opacity | Property::Reveal => {
             math::operations::scalar_unit(ty) == Some(Unit::Number)

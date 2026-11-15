@@ -419,6 +419,19 @@ sanim-check:
 sanim-integration-check: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import sanim --lib
 
+.PHONY: sanim-events-check sanim-events-test sanim-events-bench
+check: sanim-events-test
+sanim-events-test: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core events::tests --lib
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-project-document -p shrimply-timeline-snap sanim_event --lib
+sanim-events-check: sanim-events-test
+	$(DEV_BUILD_ENV) $(CARGO) check -p shrimply-timeline-skia -p shrimply-visual-core -p shrimply-media-import
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core native_sanim_event_clocks --lib
+	$(MAKE) -C sanim event-boundaries-check
+sanim-events-bench: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-math-core sanim_event_clock_benchmark --lib -- --ignored --nocapture
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-project-document sanim_event_lookup_benchmark --lib -- --ignored --nocapture
+
 .PHONY: sanim-reflection-bench
 sanim-reflection-bench: native-deps
 	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-visual-core -p shrimply-media-import native_sanim_reflection_benchmark --lib -- --ignored --nocapture

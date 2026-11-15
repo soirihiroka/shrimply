@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const SOURCE: &str = "let accent=reflect(Color(\"red3\"),key=\"theme.accent\",label=\"Display Color\")\nlet title=reflect(\"Before\",key=\"chart.title\",label=\"Chart Title\")\nadd(Circle(id=\"marker\",radius=12pt,fill=accent))\nwait(1s)\n";
+const SOURCE: &str = "let accent=reflect(Color(\"red3\"),key=\"theme.accent\",label=\"Display Color\")\nlet title=reflect(\"Before\",key=\"chart.title\",label=\"Chart Title\")\nadd(Box(id=\"marker\", fill=accent, width=2*(12pt), height=2*(12pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center))\nwait(1s)\n";
 const CANVAS: CanvasSize = CanvasSize {
     width: 100,
     height: 100,

@@ -31,6 +31,8 @@ pub(super) fn fraction(
     let commit_target = target.clone();
     let commit_control = control.clone();
     let mut picker = NumberPicker::fraction_builder(value)
+        .minimum(control.number.minimum)
+        .maximum(control.number.maximum)
         .drag_step(control.number.drag_step)
         .digits(
             control
@@ -44,6 +46,8 @@ pub(super) fn fraction(
         picker = picker.unit_name(control.number.unit);
     }
     let label = control.label.clone();
+    let editable = control.editable && control.sensitive;
+    let tooltip = control.tooltip.clone();
     let picker = picker
         .on_change_fraction(move |value| {
             report(controller.set_basic_control_fraction(&target, &control, value));
@@ -52,6 +56,10 @@ pub(super) fn fraction(
             report(commit_controller.commit_basic_control(&commit_target, &commit_control));
         })
         .build();
+    picker.set_sensitive(editable);
+    if !tooltip.is_empty() {
+        picker.set_tooltip_text(Some(tr!(&tooltip).as_ref()));
+    }
     section.add_control_row(&label, &picker);
 }
 
@@ -222,6 +230,7 @@ fn graph(
     let action_control = control.clone();
     let area = Rc::new(RefCell::new(None::<gtk::glib::WeakRef<gtk::GLArea>>));
     let action_area = area.clone();
+    let edit = RefCell::new(shrimply_inspector_core::InspectorGraphEdit::default());
     let graph = FrameGraph::with_shared_components(state.clone(), move |action| {
         let action = action.action;
         let Some(area) = action_area
@@ -231,86 +240,100 @@ fn graph(
         else {
             return;
         };
-        if let FrameGraphAction::TextInterpolationRequested { owner_id, x, y } = action {
-            let Ok(menu) = controller.control_text_interpolation_menu(
-                &action_target,
-                &action_control,
-                owner_id,
-            ) else {
-                return;
-            };
-            let controller = controller.clone();
-            let target = action_target.clone();
-            let control = action_control.clone();
-            let popover = shrimply_components_gtk::ui::searchable_popover(
-                tr!("Search interpolations").as_ref(),
-                280,
-                180,
-                240,
-                move |query| {
-                    menu.values
-                        .iter()
-                        .zip(&menu.labels)
-                        .filter(|(_, label)| {
-                            shrimply_components_gtk::ui::matches_query(label, query)
-                        })
-                        .map(|(value, label)| {
-                            let selected = value == &menu.value;
-                            let index =
-                                value.parse().expect("text interpolation option is numeric");
-                            let controller = controller.clone();
-                            let target = target.clone();
-                            let control = control.clone();
-                            shrimply_components_gtk::ui::SearchMenuItem::new(
-                                tr!(label).as_ref(),
-                                move || {
-                                    report(controller.set_control_text_interpolation(
-                                        &target, &control, owner_id, index,
-                                    ));
-                                },
-                            )
-                            .selected(selected)
-                        })
-                        .collect()
-                },
-            );
-            popover.set_parent(&area);
-            popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-            popover.connect_closed(|popover| popover.unparent());
-            popover.popup();
-        } else if matches!(action, FrameGraphAction::PasteRequested(_)) {
-            let controller = controller.clone();
-            let target = action_target.clone();
-            let control = action_control.clone();
-            let FrameGraphAction::PasteRequested(time) = action else {
-                unreachable!();
-            };
-            let toast_area = area.clone();
-            area.display()
-                .clipboard()
-                .read_text_async(None::<&gio::Cancellable>, move |result| {
-                    if result.ok().flatten().as_deref()
-                        == Some(crate::keyframe_model::KEYFRAME_CLIPBOARD_MARKER)
-                        && let Ok(count) =
-                            controller.paste_control_keyframes(&target, &control, time)
+        let result = edit
+            .borrow_mut()
+            .apply(&controller, &action_target, action, |action| {
+                if let FrameGraphAction::TextInterpolationRequested {
+                    owner_id,
+                    x,
+                    y,
+                    touch,
+                } = action
+                {
+                    let Ok(menu) = controller.control_text_interpolation_menu(
+                        &action_target,
+                        &action_control,
+                        owner_id,
+                    ) else {
+                        return Ok(());
+                    };
+                    let controller = controller.clone();
+                    let target = action_target.clone();
+                    let control = action_control.clone();
+                    shrimply_components_gtk::ui::searchable_menu_at(
+                        &area,
+                        (x, y),
+                        touch,
+                        tr!("Search interpolations").as_ref(),
+                        move |query| {
+                            menu.values
+                                .iter()
+                                .zip(&menu.labels)
+                                .filter(|(_, label)| {
+                                    shrimply_components_gtk::ui::matches_query(label, query)
+                                })
+                                .map(|(value, label)| {
+                                    let selected = value == &menu.value;
+                                    let index = value
+                                        .parse()
+                                        .expect("text interpolation option is numeric");
+                                    let controller = controller.clone();
+                                    let target = target.clone();
+                                    let control = control.clone();
+                                    shrimply_components_gtk::ui::SearchMenuItem::new(
+                                        tr!(label).as_ref(),
+                                        move || {
+                                            report(controller.set_control_text_interpolation(
+                                                &target, &control, owner_id, index,
+                                            ));
+                                        },
+                                    )
+                                    .selected(selected)
+                                })
+                                .collect()
+                        },
+                    );
+                } else if matches!(action, FrameGraphAction::PasteRequested(_)) {
+                    let controller = controller.clone();
+                    let target = action_target.clone();
+                    let control = action_control.clone();
+                    let FrameGraphAction::PasteRequested(time) = action else {
+                        unreachable!();
+                    };
+                    let toast_area = area.clone();
+                    area.display().clipboard().read_text_async(
+                        None::<&gio::Cancellable>,
+                        move |result| {
+                            if result.ok().flatten().as_deref()
+                                == Some(crate::keyframe_model::KEYFRAME_CLIPBOARD_MARKER)
+                                && let Ok(count) =
+                                    controller.paste_control_keyframes(&target, &control, time)
+                            {
+                                confirmation(&toast_area, count, true);
+                            }
+                        },
+                    );
+                } else if let FrameGraphAction::CopyRequested(times) = action {
+                    if let Ok(count) =
+                        controller.copy_control_keyframes(&action_target, &action_control, &times)
                     {
-                        confirmation(&toast_area, count, true);
+                        if count > 0 {
+                            area.display()
+                                .clipboard()
+                                .set_text(crate::keyframe_model::KEYFRAME_CLIPBOARD_MARKER);
+                        }
+                        confirmation(&area, count, false);
                     }
-                });
-        } else if let FrameGraphAction::CopyRequested(times) = action {
-            if let Ok(count) =
-                controller.copy_control_keyframes(&action_target, &action_control, &times)
-            {
-                if count > 0 {
-                    area.display()
-                        .clipboard()
-                        .set_text(crate::keyframe_model::KEYFRAME_CLIPBOARD_MARKER);
+                } else {
+                    controller.apply_control_graph_action(
+                        &action_target,
+                        &action_control,
+                        action,
+                    )?;
                 }
-                confirmation(&area, count, false);
-            }
-        } else {
-            report(controller.apply_control_graph_action(&action_target, &action_control, action));
-        }
+                Ok(())
+            });
+        report(result);
     });
     area.replace(Some(graph.graph_area().downgrade()));
     let controller = context.inspector_core.clone();

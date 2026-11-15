@@ -49,6 +49,10 @@ struct Snapshot {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Transition {
+    #[serde(default)]
+    cycle: Option<crate::math::cycle::Cycle>,
+    #[serde(default)]
+    interpolation: Option<(Fraction, Fraction)>,
     start: Fraction,
     end: Fraction,
     from: Snapshot,
@@ -84,6 +88,11 @@ pub(crate) fn elements(items: &List) -> Result<impl Iterator<Item = &Element>, S
     }))
 }
 impl Channel {
+    fn time(&self, time: Fraction) -> Result<Fraction, String> {
+        self.transition(time)
+            .and_then(|event| event.cycle)
+            .map_or(Ok(time), |cycle| cycle.time(time))
+    }
     fn transition(&self, time: Fraction) -> Option<&Transition> {
         let count = self
             .transitions
@@ -99,15 +108,22 @@ impl Channel {
     }
     fn endpoints(&self, time: Fraction) -> (&List, &List, Option<&Transition>) {
         match self.transition(time) {
-            Some(event) if time < event.end => (&event.from.items, &event.to.items, Some(event)),
+            Some(event)
+                if time < event.end
+                    || event.interpolation.is_some_and(|(_, end)| end > event.end) =>
+            {
+                (&event.from.items, &event.to.items, Some(event))
+            }
             Some(event) => (&event.to.items, &event.to.items, None),
             None => (&self.initial.items, &self.initial.items, None),
         }
     }
     fn at(&self, time: Fraction) -> Result<Selection<'_>, String> {
+        let time = self.time(time)?;
         let (from, to, event) = self.endpoints(time);
         if let Some(event) = event {
-            let time = math::progress(time, event.start, event.end)?;
+            let (start, end) = event.interpolation.unwrap_or((event.start, event.end));
+            let time = math::progress(time.min(event.end), start, end)?;
             let (progress, appearance) = math::eased_progress(event.easing, time)?;
             Ok(Selection {
                 from,
@@ -269,14 +285,23 @@ impl ListViews {
         if !math::finite(&time) || time < 0.into() {
             return Err("list sample time must be finite and nonnegative".into());
         }
-        Ok(self.channels.get(&cell).map(|channel| {
-            // Logical sampling is a step lookup: no easing or visual interpolation work.
-            match channel.transition(time) {
-                Some(event) if time < event.end => event.from.items.clone(),
-                Some(event) => event.to.items.clone(),
-                None => channel.initial.items.clone(),
-            }
-        }))
+        self.channels
+            .get(&cell)
+            .map(|channel| {
+                let time = channel.time(time)?;
+                // Logical sampling is a step lookup: no easing or visual interpolation work.
+                Ok(match channel.transition(time) {
+                    Some(event)
+                        if time < event.end
+                            || event.interpolation.is_some_and(|(_, end)| end > event.end) =>
+                    {
+                        event.from.items.clone()
+                    }
+                    Some(event) => event.to.items.clone(),
+                    None => channel.initial.items.clone(),
+                })
+            })
+            .transpose()
     }
     pub(crate) fn visual_children(
         &self,
@@ -286,11 +311,11 @@ impl ListViews {
         let Some(cell) = self.views.get(view) else {
             return Ok(None);
         };
-        let (from, to, event) = self
+        let channel = self
             .channels
             .get(cell)
-            .ok_or("list view references a missing channel")?
-            .endpoints(time);
+            .ok_or("list view references a missing channel")?;
+        let (from, to, event) = channel.endpoints(channel.time(time)?);
         let mut children: Vector<_> = elements(to)?.cloned().collect();
         if event.is_none() {
             return Ok(Some(children));
@@ -306,7 +331,15 @@ impl ListViews {
     pub(crate) fn events<'a>(
         &'a self,
         visible: impl Fn(&str) -> bool + 'a,
-    ) -> impl Iterator<Item = (Fraction, Fraction, bool)> + 'a {
+    ) -> impl Iterator<
+        Item = (
+            u64,
+            Fraction,
+            Fraction,
+            bool,
+            Option<crate::math::cycle::Cycle>,
+        ),
+    > + 'a {
         let cells: BTreeSet<_> = self
             .views
             .iter()
@@ -316,11 +349,16 @@ impl ListViews {
         self.channels
             .iter()
             .filter(move |(cell, _)| cells.contains(cell))
-            .flat_map(|(_, channel)| {
-                channel
-                    .transitions
-                    .iter()
-                    .map(|event| (event.start, event.end, event.from != event.to))
+            .flat_map(|(cell, channel)| {
+                channel.transitions.iter().map(move |event| {
+                    (
+                        *cell,
+                        event.start,
+                        event.end,
+                        event.from != event.to,
+                        event.cycle,
+                    )
+                })
             })
     }
     pub(crate) fn changed_from(&self, next: &Self) -> Option<Fraction> {
@@ -522,7 +560,7 @@ impl Animation {
         items: List,
         easing: Easing,
     ) -> Result<(), String> {
-        self.write_list_transition(cell, start, end, items, easing, None)
+        self.write_list_transition(cell, start, end, items, easing, (None, Default::default()))
     }
 
     pub fn write_list_edit(
@@ -533,7 +571,33 @@ impl Animation {
         edit: &crate::ListEditResult,
         easing: Easing,
     ) -> Result<(), String> {
-        self.write_list_transition(cell, start, end, edit.output().clone(), easing, Some(edit))
+        self.write_list_transition(
+            cell,
+            start,
+            end,
+            edit.output().clone(),
+            easing,
+            (Some(edit), Default::default()),
+        )
+    }
+
+    pub fn write_list_in_window(
+        &mut self,
+        cell: u64,
+        start: Fraction,
+        duration: Fraction,
+        items: List,
+        easing: Easing,
+        window: crate::math::temporal::Window,
+    ) -> Result<(), String> {
+        self.write_list_transition(
+            cell,
+            start,
+            math::temporal::writer_end(start, duration)?,
+            items,
+            easing,
+            (None, window),
+        )
     }
 
     fn write_list_transition(
@@ -543,12 +607,23 @@ impl Animation {
         end: Fraction,
         items: List,
         easing: Easing,
-        edit: Option<&crate::ListEditResult>,
+        controls: (
+            Option<&crate::ListEditResult>,
+            crate::math::temporal::Window,
+        ),
     ) -> Result<(), String> {
+        let (edit, window) = controls;
+        math::temporal::writer_end(start, math::arithmetic("-", end, start)?)?;
+        let Some(interval) = window.interval(start, math::arithmetic("-", end, start)?)? else {
+            return Ok(());
+        };
+        let start = interval.start;
+        let end = interval.end;
+        let cycle = interval.cycle;
         if !math::finite(&start) || !math::finite(&end) || start < 0.into() || end < start {
             return Err("list edit requires finite nonnegative start and duration".into());
         }
-        math::timeline_end(start, math::arithmetic("-", end, start)?)?;
+        math::temporal::writer_end(start, math::arithmetic("-", end, start)?)?;
         if self.list_views.events >= MAX_LIST_EVENTS {
             return Err("retained list event limit exceeded".into());
         }
@@ -559,6 +634,13 @@ impl Animation {
             .ok_or("list is not registered as a timed list")?;
         if items.element_type != channel.initial.items.element_type {
             return Err("list edit cannot change its static element type".into());
+        }
+        if channel.transitions.back().is_some_and(|event| {
+            event.cycle.is_some_and(|previous| {
+                Some(previous) != cycle && previous.until().is_none_or(|until| until > start)
+            })
+        }) {
+            return Err("list already has a repeat forever writer; use a separate mutable list or join a finite task".into());
         }
         let mut transitions = channel.transitions.clone();
         let index = transitions
@@ -645,6 +727,8 @@ impl Animation {
         transitions.insert(
             index,
             Transition {
+                cycle,
+                interpolation: interval.interpolation,
                 start,
                 end,
                 from,

@@ -2,6 +2,7 @@ use fraction::{Fraction, Sign};
 use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, ToPrimitive, Zero};
 use serde::{Deserialize, Serialize};
 pub mod chart;
+pub mod cycle;
 pub mod domain;
 pub mod format;
 pub mod functions;
@@ -10,6 +11,7 @@ pub mod media;
 pub mod operations;
 pub mod paint;
 pub mod scroll;
+pub mod temporal;
 
 const MAX_VISUAL_DENOMINATOR: u64 = 1_000_000;
 
@@ -560,7 +562,7 @@ pub fn frame_count(duration: Fraction, rate: Fraction) -> Result<u64, String> {
         .ok_or("video frame count overflow".into())
 }
 
-/// Every prepared animation has a finite, shared hard maximum of two hours.
+/// Finite scheduling calculations share a hard maximum of two hours.
 pub const MAX_TIMELINE_SECONDS: u64 = 2 * 60 * 60;
 pub fn timeline_end(start: Fraction, duration: Fraction) -> Result<Fraction, String> {
     if !finite(&start)

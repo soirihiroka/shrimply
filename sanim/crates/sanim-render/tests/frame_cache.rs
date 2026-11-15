@@ -7,7 +7,7 @@ fn animation(source: &str) -> Animation {
     let mut files = MemorySources::default();
     files.insert(
         "main.sanim",
-        format!("bg(Color(\"transparent\"))\n{source}"),
+        format!("bg(Color(\"transparent\"))\n{source}\nAnimation()"),
     );
     Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -23,7 +23,7 @@ fn holds_reuse_layout_and_recording_at_distinct_exact_times() {
     let mut renderer = Renderer::default();
     let scene = renderer
         .prepare(animation(
-            "let c=Circle()\nFadeIn(c, duration=1s, ease=\"linear\")\nwait(3s)",
+            "let c=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nc.fade_in(duration=1s, ease=\"linear\")\nwait(3s)",
         ))
         .unwrap();
     let options = Options::for_animation(scene.animation());
@@ -52,7 +52,7 @@ fn lru_keeps_recently_used_frames_and_evicts_only_oldest() {
     });
     let scene = renderer
         .prepare(animation(
-            "let c=Circle()\nFadeIn(c, duration=1s, ease=\"linear\")",
+            "let c=Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nc.fade_in(duration=1s, ease=\"linear\")",
         ))
         .unwrap();
     let options = Options::for_animation(scene.animation());
@@ -79,7 +79,7 @@ fn lru_keeps_recently_used_frames_and_evicts_only_oldest() {
 fn independently_recording_at_new_pixel_sizes_reuses_calculated_layout() {
     let mut renderer = Renderer::default();
     let scene = renderer
-        .prepare(animation("FadeIn(Circle(), duration=1s, ease=\"linear\")"))
+        .prepare(animation("Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center).fade_in(duration=1s, ease=\"linear\")"))
         .unwrap();
     let mut options = Options::for_animation(scene.animation());
     renderer.record(&scene, time(5), &options).unwrap();
@@ -99,7 +99,7 @@ fn byte_limits_and_clear_release_cache_ownership_without_invalidating_callers() 
         state_bytes: 1,
         ..CacheLimits::default()
     });
-    let scene = renderer.prepare(animation("add(Circle())")).unwrap();
+    let scene = renderer.prepare(animation("Animation(children=[Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])")).unwrap();
     let options = Options::for_animation(scene.animation());
     let a = renderer.frame_state(&scene, time(0), &options).unwrap();
     let b = renderer.frame_state(&scene, time(0), &options).unwrap();
@@ -117,7 +117,7 @@ fn byte_limits_and_clear_release_cache_ownership_without_invalidating_callers() 
 fn hot_edit_reuses_earlier_and_reconverged_states_but_invalidates_changed_motion() {
     let mut renderer = Renderer::default();
     let old = animation(
-        "let c=Circle(id=\"c\")\nadd(c)\nwait(1s)\nFadeOut(c, duration=1s, ease=\"linear\")\nFadeIn(c, duration=1s, ease=\"linear\")\nwait(1s)",
+        "let c=Box(id=\"c\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[c])\nwait(1s)\nc.fade_out(duration=1s, ease=\"linear\")\nc.fade_in(duration=1s, ease=\"linear\")\nwait(1s)",
     );
     let first = renderer.prepare(old.clone()).unwrap();
     let options = Options::for_animation(first.animation());
@@ -161,14 +161,16 @@ fn hot_edit_reuses_earlier_and_reconverged_states_but_invalidates_changed_motion
 #[test]
 fn inserting_motion_into_an_old_hold_never_reuses_that_hold_at_changed_times() {
     let mut renderer = Renderer::default();
-    let old = animation("let c=Circle(id=\"c\")\nadd(c)\nwait(4s)");
+    let old = animation(
+        "let c=Box(id=\"c\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[c])\nwait(4s)",
+    );
     let first = renderer.prepare(old).unwrap();
     let options = Options::for_animation(first.animation());
     let held = renderer
         .record(&first, Fraction::from(3), &options)
         .unwrap();
     let edited = animation(
-        "let c=Circle(id=\"c\")\nadd(c)\nwait(1s)\nFadeOut(c, duration=1s, ease=\"linear\")\nwait(2s)",
+        "let c=Box(id=\"c\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[c])\nwait(1s)\nc.fade_out(duration=1s, ease=\"linear\")\nwait(2s)",
     );
     let second = renderer.prepare(edited).unwrap();
     let changed = renderer
@@ -187,7 +189,9 @@ fn inserting_motion_into_an_old_hold_never_reuses_that_hold_at_changed_times() {
 
 #[test]
 fn birth_paint_order_background_and_geometry_changes_invalidate_cached_frames() {
-    let base = animation("add(Circle(id=\"a\"))\nwait(1s)\nadd(Rect(id=\"b\"))\nwait(1s)");
+    let base = animation(
+        "Animation(children=[Box(id=\"a\", width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)\nAnimation(children=[Box(id=\"b\", width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(1s)",
+    );
     let mut edits = Vec::new();
     let mut birth = base.clone();
     birth.layers[1].birth = Fraction::from(0);
@@ -224,7 +228,7 @@ fn birth_paint_order_background_and_geometry_changes_invalidate_cached_frames() 
 #[test]
 fn horizontal_ranges_expand_about_their_anchor_without_changing_vertical_extent() {
     let mut renderer = Renderer::default();
-    let scene = renderer.prepare(animation("let interval_box=Box(id=\"range\",flex_direction=\"row\",width=84pt,height=20pt,x_align=Align.Center,y_align=Align.Center,justify=Justify.SpaceBetween,children=[Rect(width=4pt,height=20pt,flex_shrink=0),Rect(width=4pt,height=20pt,flex_shrink=0)])\nExpandX(interval_box, origin=50%, offset=10pt, duration=1s, ease=\"linear\")")).unwrap();
+    let scene = renderer.prepare(animation("let interval_box=Box(id=\"range\",flex_direction=\"row\",width=84pt,height=20pt,x_align=Align.Center,y_align=Align.Center,justify=Justify.SpaceBetween,children=[Box(width=4pt, height=20pt, flex_shrink=0, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center),Box(width=4pt, height=20pt, flex_shrink=0, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\ninterval_box.expand_x(origin=50%, offset=10pt, duration=1s, ease=\"linear\")")).unwrap();
     let mut options = Options::for_animation(scene.animation());
     options.width = 128;
     options.height = 128;
@@ -277,7 +281,7 @@ fn horizontal_ranges_expand_about_their_anchor_without_changing_vertical_extent(
 fn transparent_and_opaque_exports_cache_distinct_pixels_and_reuse_holds() {
     let mut renderer = Renderer::default();
     let scene = renderer
-        .prepare(animation("add(Circle(opacity=0))\nwait(2s)\n"))
+        .prepare(animation("Animation(children=[Box(opacity=0, width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nwait(2s)\n"))
         .unwrap();
     let mut options = Options::for_animation(scene.animation());
     options.width = 16;
@@ -314,11 +318,11 @@ fn transparent_and_opaque_exports_cache_distinct_pixels_and_reuse_holds() {
 fn unused_animated_cells_and_unadded_bindings_do_not_destroy_static_frame_holds() {
     for declarations in [
         "",
-        "sig fixed_scale=1\nlet decorated=Circle(id=\"decorated\",scale=fixed_scale)\nadd(decorated)\n",
-        "sig ghost_scale=unused+1\nlet ghost=Circle(id=\"ghost\",scale=ghost_scale)\n",
+        "sig fixed_scale=1\nlet decorated=Box(id=\"decorated\", scale=fixed_scale, width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[decorated])\n",
+        "sig ghost_scale=unused+1\nlet ghost=Box(id=\"ghost\", scale=ghost_scale, width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n",
     ] {
         let mut renderer = Renderer::default();
-        let scene=renderer.prepare(animation(&format!("mut unused=0\n{declarations}add(Rect(id=\"still\"))\nbackground {{animate(unused,to=1,duration=10s)}}\nwait(10s)"))).unwrap();
+        let scene=renderer.prepare(animation(&format!("mut unused=0\n{declarations}Animation(children=[Box(id=\"still\", width=64pt, height=64pt, fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])\nspawn {{animate(unused,to=1,duration=10s)}}\nwait(10s)"))).unwrap();
         let options = Options::for_animation(scene.animation());
         let first = renderer
             .frame_state(&scene, Fraction::from(0), &options)

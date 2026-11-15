@@ -35,7 +35,7 @@ pub fn draw(
         view.scroll_seconds + timeline_width.max(0.0) * view.seconds_per_pixel,
     );
     let markers = markers(project, beats, view, Some((visible_start, visible_end)));
-    let left = timeline_x();
+    let left = timeline_x(view);
     let right = left + timeline_width;
     for marker in markers {
         let x = time_to_x(marker.time.as_secs_f64(), left, view);

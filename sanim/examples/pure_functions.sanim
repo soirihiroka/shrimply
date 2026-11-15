@@ -1,0 +1,13 @@
+# Immutable captures are semantic inputs to a pure function.
+let offset = reflect(2, label="Offset")
+fn twice(value: Number): Number {
+    assert(value >= 0, message="value must be nonnegative")
+    return value * 2 + offset
+}
+fn apply(transform: fn(value: Number): Number, value: Number): Number {
+    return transform(value)
+}
+let answer = apply(fn (value: Number): Number { return twice(value) }, 20)
+let title = <Label font_size={28pt}>Pure result: {answer}</Label>
+title.fade_in(duration=300ms)
+wait(1s)

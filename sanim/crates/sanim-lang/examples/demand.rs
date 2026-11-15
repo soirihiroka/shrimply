@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .join(",");
     sources.insert("samples.json", format!("[{values}]"));
     for visible in [false, true] {
-        sources.insert("main.sanim", format!("let samples=read<List<Number>>(\"samples.json\")\nlet show_details=reflect({visible})\nif show_details {{let label=Text(str(len(samples)));add(label)}}\nwait(1s)"));
+        sources.insert("main.sanim", format!("let samples=read<List<Number>>(\"samples.json\")\nlet show_details=reflect({visible})\nif show_details {{let label=Text(str(len(samples)));Animation(children=[label])}}\nwait(1s)"));
         for preparation in [Preparation::Full, Preparation::Demand] {
             let mut engine = Engine::new(Default::default());
             engine.preparation = preparation;

@@ -13,7 +13,9 @@ use shrimply_framegraph_skia::{
 use shrimply_math_interpolation::Interpolation;
 use shrimply_surface_gl_skia::TimelineRenderer;
 
-use super::modifier_menu::{SearchMenuItem, searchable_popover};
+use super::modifier_menu::{SearchMenuItem, searchable_menu_at};
+#[path = "frame_graph_touch.rs"]
+mod touch;
 
 type ActionHandler = Rc<dyn Fn(FrameGraphComponentAction)>;
 type StatusHandler = Rc<dyn Fn(FrameGraphStatus)>;
@@ -151,6 +153,8 @@ impl FrameGraph {
         let animation_active = Rc::new(Cell::new(false));
         let renderer = Rc::new(RefCell::new(TimelineRenderer::new()));
         area.connect_render({
+            let on_action = on_action.clone();
+            let sync = sync.clone();
             let renderer = renderer.clone();
             let state = state.clone();
             let animation_active = animation_active.clone();
@@ -177,7 +181,7 @@ impl FrameGraph {
                 renderer
                     .end_frame()
                     .unwrap_or_else(|error| panic!("could not finish the frame graph: {error}"));
-                start_animation_if_needed(area, &state, &animation_active);
+                start_animation_if_needed(area, &state, &animation_active, &on_action, &sync);
                 glib::Propagation::Stop
             }
         });
@@ -232,6 +236,7 @@ impl FrameGraph {
         let secondary = gtk::GestureClick::new();
         secondary.set_button(gdk::BUTTON_SECONDARY);
         secondary.connect_released({
+            let sync = sync.clone();
             let area = area.clone();
             let state = state.clone();
             let on_action = on_action.clone();
@@ -246,43 +251,16 @@ impl FrameGraph {
                     },
                     modifiers(gesture.current_event_state()),
                 );
-                if result.focus {
-                    area.grab_focus();
-                }
-                for component_action in result.actions {
-                    let FrameGraphComponentAction { component, action } = component_action;
-                    if let FrameGraphAction::InterpolationRequested {
-                        owner_id,
-                        interpolation,
-                        x,
-                        y,
-                    } = action
-                    {
-                        show_interpolation_popover(
-                            &area,
-                            &state,
-                            &on_action,
-                            InterpolationPopoverRequest {
-                                component,
-                                owner_id,
-                                selected: interpolation,
-                                x,
-                                y,
-                            },
-                        );
-                    } else {
-                        on_action(FrameGraphComponentAction { component, action });
-                    }
-                }
-                if result.redraw {
-                    area.queue_render();
-                }
+                finish_input(&area, &state, &on_action, &sync, result);
             }
         });
         area.add_controller(secondary);
+        touch::connect(&area, &state, &on_action, &sync, &animation_active);
 
         let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
         scroll.connect_scroll({
+            let on_action = on_action.clone();
+            let sync = sync.clone();
             let area = area.clone();
             let state = state.clone();
             let pointer = pointer.clone();
@@ -321,7 +299,7 @@ impl FrameGraph {
                 if result.redraw {
                     area.queue_render();
                 }
-                start_animation_if_needed(&area, &state, &animation_active);
+                start_animation_if_needed(&area, &state, &animation_active, &on_action, &sync);
                 if handled {
                     glib::Propagation::Stop
                 } else {
@@ -382,7 +360,7 @@ impl FrameGraph {
                     gdk::Key::minus => FrameGraphKey::ZoomOut,
                     _ => return glib::Propagation::Proceed,
                 };
-                finish_input(&area, &on_action, &sync, state.key(graph_key));
+                finish_input(&area, &state, &on_action, &sync, state.key(graph_key));
                 glib::Propagation::Stop
             }
         });
@@ -494,6 +472,7 @@ fn dispatch(handler: &ActionHandler, actions: Vec<FrameGraphComponentAction>) {
 
 fn finish_input(
     area: &gtk::GLArea,
+    state: &SharedFrameGraphState,
     handler: &ActionHandler,
     sync: &Rc<dyn Fn()>,
     result: FrameGraphInputResult,
@@ -501,9 +480,36 @@ fn finish_input(
     if result.focus {
         area.grab_focus();
     }
-    dispatch(handler, result.actions);
+    let redraw = result.redraw;
+    for component_action in result.into_actions(state.active_component()) {
+        let FrameGraphComponentAction { component, action } = component_action;
+        if let FrameGraphAction::InterpolationRequested {
+            owner_id,
+            interpolation,
+            x,
+            y,
+            touch,
+        } = action
+        {
+            show_interpolation_menu(
+                area,
+                state,
+                handler,
+                InterpolationMenuRequest {
+                    component,
+                    owner_id,
+                    selected: interpolation,
+                    x,
+                    y,
+                    touch,
+                },
+            );
+        } else {
+            handler(FrameGraphComponentAction { component, action });
+        }
+    }
     sync();
-    if result.redraw {
+    if redraw {
         area.queue_render();
     }
 }
@@ -521,7 +527,7 @@ fn connect_button(
     let handler = handler.clone();
     let sync = sync.clone();
     button.connect_clicked(move |_| {
-        finish_input(&area, &handler, &sync, state.command(command));
+        finish_input(&area, &state, &handler, &sync, state.command(command));
     });
 }
 
@@ -554,7 +560,7 @@ fn add_drag(
                 },
                 modifiers(gesture.current_event_state()),
             );
-            finish_input(&area, &handler, &sync, result);
+            finish_input(&area, &state, &handler, &sync, result);
         }
     });
     drag.connect_drag_update({
@@ -570,7 +576,7 @@ fn add_drag(
                 width: f64::from(area.width().max(1)),
                 height: f64::from(area.height().max(1)),
             });
-            finish_input(&area, &handler, &sync, result);
+            finish_input(&area, &state, &handler, &sync, result);
         }
     });
     drag.connect_drag_end({
@@ -579,7 +585,7 @@ fn add_drag(
         let handler = handler.clone();
         let sync = sync.clone();
         move |_, _, _| {
-            finish_input(&area, &handler, &sync, state.end_pointer());
+            finish_input(&area, &state, &handler, &sync, state.end_pointer());
         }
     });
     area.add_controller(drag);
@@ -596,16 +602,29 @@ fn start_animation_if_needed(
     area: &gtk::GLArea,
     state: &SharedFrameGraphState,
     active: &Rc<Cell<bool>>,
+    handler: &ActionHandler,
+    sync: &Rc<dyn Fn()>,
 ) {
-    if active.get() || !state.is_animating() {
+    if active.get() || !(state.is_animating() || state.waiting_long_press()) {
         return;
     }
     active.set(true);
     let state = state.clone();
     let active = active.clone();
+    let handler = handler.clone();
+    let sync = sync.clone();
     area.add_tick_callback(move |area, _| {
+        let result = state.poll_long_press(FrameGraphPointerPosition {
+            x: 0.0,
+            y: 0.0,
+            width: f64::from(area.width().max(1)),
+            height: f64::from(area.height().max(1)),
+        });
+        if result.handled {
+            finish_input(area, &state, &handler, &sync, result);
+        }
         area.queue_render();
-        if state.is_animating() {
+        if state.is_animating() || state.waiting_long_press() {
             glib::ControlFlow::Continue
         } else {
             active.set(false);
@@ -614,33 +633,35 @@ fn start_animation_if_needed(
     });
 }
 
-struct InterpolationPopoverRequest {
+struct InterpolationMenuRequest {
     component: usize,
     owner_id: uuid::Uuid,
     selected: Interpolation,
     x: f64,
     y: f64,
+    touch: bool,
 }
 
-fn show_interpolation_popover(
+fn show_interpolation_menu(
     area: &gtk::GLArea,
     state: &SharedFrameGraphState,
     handler: &ActionHandler,
-    request: InterpolationPopoverRequest,
+    request: InterpolationMenuRequest,
 ) {
-    let InterpolationPopoverRequest {
+    let InterpolationMenuRequest {
         component,
         owner_id,
         selected,
         x,
         y,
+        touch,
     } = request;
     let interpolations = Interpolation::KEYFRAME;
-    let popover = searchable_popover(
+    searchable_menu_at(
+        area,
+        (x, y),
+        touch,
         crate::i18n::text("Search interpolations").as_ref(),
-        280,
-        180,
-        240,
         {
             let area = area.clone();
             let state = state.clone();
@@ -669,6 +690,7 @@ fn show_interpolation_popover(
                                         interpolation,
                                         x,
                                         y,
+                                        touch,
                                     },
                                 });
                                 area.queue_render();
@@ -680,8 +702,4 @@ fn show_interpolation_popover(
             }
         },
     );
-    popover.set_parent(area);
-    popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-    popover.connect_closed(|popover| popover.unparent());
-    popover.popup();
 }

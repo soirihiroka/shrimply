@@ -22,6 +22,24 @@ const DISPLAY_PAGE: &str = "display";
 const ENTRY_PAGE: &str = "entry";
 const SLOW_NUMBER_PICKER_LOG_THRESHOLD: Duration = Duration::from_millis(2);
 
+pub fn number_field_row(
+    field: &shrimply_components_core::presentation::NumberField,
+    value: Fraction,
+) -> adw::SpinRow {
+    use adw::prelude::*;
+    let numeric =
+        |text: &str| fraction_as_f64(text.parse().expect("shared number field constraint"));
+    let row = adw::SpinRow::with_range(
+        numeric(field.minimum),
+        numeric(field.maximum),
+        numeric(field.step),
+    );
+    row.set_title(crate::i18n::text(field.label).as_ref());
+    row.set_value(fraction_as_f64(value));
+    row.set_digits(field.digits as u32);
+    row
+}
+
 thread_local! {
     static ROTATING_ICON_CSS_INSTALLED: Cell<bool> = const { Cell::new(false) };
 }
@@ -1142,8 +1160,10 @@ fn update_rotating_icon(icon: Option<&RotatingIcon>, value: Fraction) {
     let Some(icon) = icon else {
         return;
     };
-    let degrees =
-        ((fraction_as_f64(value) + icon.offset_degrees).round() as i64).rem_euclid(360) as u16;
+    let degrees = shrimply_components_core::math::number_rotation(
+        fraction_as_f64(value),
+        icon.offset_degrees,
+    );
     let previous = icon.degrees.replace(degrees);
     icon.icon
         .remove_css_class(&format!("number-picker-rotation-{previous}"));

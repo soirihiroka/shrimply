@@ -104,6 +104,7 @@ pub fn draw(
                         view,
                         selected,
                     );
+                    super::super::source_events::draw(draw, project, item, &address, y);
                     if !matches!(
                         item.content,
                         VideoItemContent::Obj(_) | VideoItemContent::Gaussian(_)

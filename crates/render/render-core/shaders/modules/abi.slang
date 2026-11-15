@@ -16,13 +16,81 @@ typedef size_t BufferPitch;
 BufferIndex buffer_pitch(BufferPitch value) { return BufferIndex(value); }
 #endif
 
+#if defined(SHRIMPLY_WORD_STORAGE)
+// The physical-storage-buffer extension permits vector pointer bitcasts before
+// SPIR-V 1.5. Emit that instruction directly: older Slang profiles otherwise
+// introduce unnecessary 64-bit arithmetic for the same conversion.
+uint2 pointer_words<T>(T *value) {
+  return spirv_asm { result:$$uint2 = OpBitcast $value };
+}
+typedef uint *WordPointer;
+WordPointer word_pointer(uint2 value) {
+  return spirv_asm { result:$$WordPointer = OpBitcast $value };
+}
+#endif
+
 bool buffer_is_null<T>(T *value) {
-#if defined(SHRIMPLY_PORTABLE_INDICES)
+#if defined(SHRIMPLY_WORD_STORAGE)
+  return all(pointer_words(value) == uint2(0u));
+#elif defined(SHRIMPLY_PORTABLE_INDICES)
   return all(bit_cast<uint2>(value) == uint2(0u));
 #else
   return value == nullptr;
 #endif
 }
+
+// Shader storage can be word-backed without changing byte-oriented media layouts.
+#if defined(SHRIMPLY_WORD_STORAGE)
+typedef uint ByteStorage;
+typedef uint SignedByteStorage;
+typedef uint HalfStorage;
+typedef uint EnumStorage;
+
+uint *packed_words(uint *data, inout BufferIndex byte_index) {
+  uint2 address = pointer_words(data);
+  byte_index += address.x & 3u;
+  address.x &= ~3u;
+  return word_pointer(address);
+}
+uint load_byte(ByteStorage *data, BufferIndex index) {
+  uint *words = packed_words(data, index);
+  return (words[index / 4u] >> ((index % 4u) * 8u)) & 255u;
+}
+int load_signed_byte(SignedByteStorage *data, BufferIndex index) {
+  return int(load_byte(data, index) << 24u) >> 24;
+}
+uint load_half(HalfStorage *data, BufferIndex index) {
+  BufferIndex byte_index = index * 2u;
+  uint *words = packed_words(data, byte_index);
+  uint shift = (byte_index % 4u) * 8u;
+  uint value = words[byte_index / 4u] >> shift;
+  if (shift == 24u)
+    value |= words[byte_index / 4u + 1u] << 8u;
+  return value & 65535u;
+}
+void store_byte(ByteStorage *data, BufferIndex index, uint value) {
+  uint *words = packed_words(data, index);
+  uint shift = (index % 4u) * 8u;
+  // Different invocations own distinct bytes of the same word. Atomic masks
+  // preserve their neighboring bytes without requiring byte storage features.
+  InterlockedAnd(words[index / 4u], ~(255u << shift));
+  InterlockedOr(words[index / 4u], (value & 255u) << shift);
+}
+void store_half(HalfStorage *data, BufferIndex index, uint value) {
+  store_byte(data, index * 2u, value);
+  store_byte(data, index * 2u + 1u, value >> 8u);
+}
+#else
+typedef uint8_t ByteStorage;
+typedef int8_t SignedByteStorage;
+typedef uint16_t HalfStorage;
+typedef uint8_t EnumStorage;
+uint load_byte(ByteStorage *data, BufferIndex index) { return data[index]; }
+int load_signed_byte(SignedByteStorage *data, BufferIndex index) { return data[index]; }
+uint load_half(HalfStorage *data, BufferIndex index) { return data[index]; }
+void store_byte(ByteStorage *data, BufferIndex index, uint value) { data[index] = uint8_t(value); }
+void store_half(HalfStorage *data, BufferIndex index, uint value) { data[index] = uint16_t(value); }
+#endif
 
 [__AttributeUsage(_AttributeTargets.Struct)]
 [__AttributeUsage(_AttributeTargets.Param)]
@@ -59,7 +127,7 @@ struct RustTypeAttribute { string name; };
       float value;
     };
 
-enum LayerBlendMode : uint8_t {
+enum LayerBlendMode : EnumStorage {
   Normal = 1,
   PassThrough = 0,
   Dissolve = 2,
@@ -270,7 +338,7 @@ struct WaveRippleParams {
   float phase;
 };
 
-enum VideoSampleMethod : uint8_t {
+enum VideoSampleMethod : EnumStorage {
   Bicubic = 2,
   Nearest = 0,
   Bilinear = 1,
@@ -284,7 +352,7 @@ enum VideoSampleMethod : uint8_t {
   Lanczos3 = 10,
 };
 
-enum TextureAddressMode : uint8_t {
+enum TextureAddressMode : EnumStorage {
   Transparent,
   ClampToEdge,
   Repeat,
@@ -293,7 +361,7 @@ enum TextureAddressMode : uint8_t {
   Stochastic,
 };
 
-enum LayerKind : uint8_t {
+enum LayerKind : EnumStorage {
   Nv12,
   Rgba,
 };
@@ -301,8 +369,8 @@ enum LayerKind : uint8_t {
 struct Nv12LayerParams {
   float crop[4];
   float padding[4];
-  uint8_t *y_plane;
-  uint8_t *uv_plane;
+  ByteStorage *y_plane;
+  ByteStorage *uv_plane;
   uint *rgba;
   BufferPitch y_pitch;
   BufferPitch uv_pitch;
@@ -315,11 +383,51 @@ struct Nv12LayerParams {
   uint motion_transform_count;
   uint motion_sample_count;
   float opacity;
+#if defined(SHRIMPLY_WORD_STORAGE)
+  uint blend_mode;
+#else
   LayerBlendMode blend_mode;
   VideoSampleMethod sample_method;
   TextureAddressMode address_mode;
   LayerKind kind;
+#endif
 };
+
+LayerBlendMode layer_blend_mode(Nv12LayerParams value) {
+#if defined(SHRIMPLY_WORD_STORAGE)
+  return LayerBlendMode(value.blend_mode & 255u);
+#else
+  return value.blend_mode;
+#endif
+}
+VideoSampleMethod layer_sample_method(Nv12LayerParams value) {
+#if defined(SHRIMPLY_WORD_STORAGE)
+  return VideoSampleMethod((value.blend_mode >> 8u) & 255u);
+#else
+  return value.sample_method;
+#endif
+}
+TextureAddressMode layer_address_mode(Nv12LayerParams value) {
+#if defined(SHRIMPLY_WORD_STORAGE)
+  return TextureAddressMode((value.blend_mode >> 16u) & 255u);
+#else
+  return value.address_mode;
+#endif
+}
+LayerKind layer_kind(Nv12LayerParams value) {
+#if defined(SHRIMPLY_WORD_STORAGE)
+  return LayerKind(value.blend_mode >> 24u);
+#else
+  return value.kind;
+#endif
+}
+LayerBlendMode composite_blend_mode(LayerCompositeParams value) {
+#if defined(SHRIMPLY_WORD_STORAGE)
+  return LayerBlendMode(uint(value.mode) & 255u);
+#else
+  return value.mode;
+#endif
+}
 
 struct ChromaKeyParams {
   Color key;
@@ -395,7 +503,7 @@ struct ConvolutionParams {
 
 struct AlphaParams {
   float4 *source;
-  uint8_t *alpha_source;
+  ByteStorage *alpha_source;
   BufferPitch alpha_pitch;
   uint alpha_width;
   uint alpha_height;

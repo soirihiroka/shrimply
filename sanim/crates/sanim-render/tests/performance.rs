@@ -16,7 +16,7 @@ fn folding_and_line_number_replay_reuses_states_recordings_and_syntax() {
             r#"mut numbers=true
 let code=CodeView(code=r"""{text}""",lang="python",line_numbers=numbers,width=220pt,font_size=12pt)
 let pane=<Box w-240 h-100 overflow-y-scroll>{{code}}</Box>
-add(pane)
+Animation(children=[pane])
 wait(1s)
 code.range(name="task_0").fold(duration=1s,ease="linear")
 wait(1s)
@@ -115,12 +115,12 @@ wait(1s)
 fn suffix_edits_keep_prefix_recordings_and_only_build_changed_geometry() {
     const ELEMENTS: usize = 256;
     let circles = (0..ELEMENTS)
-        .map(|_| "Circle(radius=3pt)")
+        .map(|_| "Box(width=2*(3pt), height=2*(3pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)")
         .collect::<Vec<_>>()
         .join(",");
     let source = |width, color| {
         format!(
-            "let prefix=<Box w-600 h-240 flex flex-row flex-wrap children={{[{circles}]}} />\nadd(prefix)\nwait(1s)\nlet late=Rect(width={width}pt,height=8pt,fill=Color(\"{color}\"))\nadd(late)\nwait(2s)\n"
+            "let prefix=<Box w-600 h-240 flex flex-row flex-wrap children={{[{circles}]}} />\nAnimation(children=[prefix])\nwait(1s)\nlet late=Box(width={width}pt,height=8pt,fill=Color(\"{color}\"),x_align=Align.Center,y_align=Align.Center)\nAnimation(children=[late])\nwait(2s)\n"
         )
     };
     let mut files = MemorySources::default();
@@ -130,7 +130,10 @@ fn suffix_edits_keep_prefix_recordings_and_only_build_changed_geometry() {
         dpi: 72,
         ..Default::default()
     });
-    files.insert("main.sanim", source(20, "blue3"));
+    files.insert(
+        "main.sanim",
+        format!("{}\nAnimation()", source(20, "blue3")),
+    );
     let first = engine
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();
@@ -143,7 +146,10 @@ fn suffix_edits_keep_prefix_recordings_and_only_build_changed_geometry() {
     let paths = renderer.geometries_prepared;
     assert_eq!(paths, 2, "one shared circle path and one late rectangle");
     for (width, color, expected_paths) in [(21, "blue3", paths + 1), (21, "orange3", paths + 1)] {
-        files.insert("main.sanim", source(width, color));
+        files.insert(
+            "main.sanim",
+            format!("{}\nAnimation()", source(width, color)),
+        );
         let next = engine
             .prepare("main.sanim", &files, &Default::default())
             .unwrap();

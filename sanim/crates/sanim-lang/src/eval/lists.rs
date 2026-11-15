@@ -3,20 +3,6 @@ use super::*;
 use reactive::{Id, Node as Stored};
 
 impl Runtime<'_, '_> {
-    /// Call arguments complete before the returned value begins its transition.
-    /// The shared call evaluator supplies this boundary in full and duration-only modes.
-    pub(super) fn assignment_timing(&self, expression: &Expr) -> (Fraction, Easing) {
-        if !matches!(expression.kind, ExprKind::Call { .. }) {
-            return (self.cursor, Easing::default());
-        }
-        let call = &self.last_call;
-        if call.module == self.module && call.span == expression.span && call.end == self.cursor {
-            (call.start, call.easing)
-        } else {
-            (self.cursor, Easing::default())
-        }
-    }
-
     pub(super) fn proven_list_edit_result(
         &self,
         expression: &Expr,

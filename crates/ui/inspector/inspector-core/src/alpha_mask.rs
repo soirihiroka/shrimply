@@ -6,7 +6,7 @@ use shrimply_property_model::timeline_value::{TimelineBase, TimelineValue};
 
 use crate::{
     ControlKind, InspectorControl, InspectorController, InspectorRuntime, InspectorSection,
-    InspectorTarget, LayeredState, NumberSpec,
+    InspectorTarget, LayeredState, NumberConstraint, NumberSpec,
     item::{ControlPreviewFocus, PreviewFocusTarget},
 };
 
@@ -356,9 +356,18 @@ fn scalar_control(
         });
         graph
     });
+    let defaults = NumberSpec::default();
+    let constraint = NumberConstraint {
+        minimum: (number.minimum != defaults.minimum)
+            .then_some(number.minimum / display_multiplier),
+        maximum: (number.maximum != defaults.maximum)
+            .then_some(number.maximum / display_multiplier),
+        ..NumberConstraint::default()
+    };
     let control = InspectorControl::new(ControlKind::LayeredNumber, path.clone(), label)
         .value((value * display_multiplier).to_string())
         .number(number)
+        .number_constraint(constraint)
         .store_multiplier(display_multiplier.recip())
         .width_characters(8)
         .layered(path, LayeredState::from(timeline))

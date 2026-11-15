@@ -6,7 +6,7 @@ use shrimply_math_core::Time;
 use shrimply_project_document::{self as document, Project};
 use std::{
     cell::{Ref, RefCell},
-    fs::{self, OpenOptions},
+    fs,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -23,7 +23,7 @@ pub(crate) struct ProjectBackend {
     active: bool,
     pub revision: u64,
     view_dirty: bool,
-    recents: Vec<shrimply_recent_projects::RecentProject>,
+    recents: Vec<Value>,
     pub preferences: shrimply_preferences_core::SharedPreferences,
 }
 impl ProjectBackend {
@@ -42,7 +42,7 @@ impl ProjectBackend {
             active: true,
             revision: 0,
             view_dirty: false,
-            recents: shrimply_recent_projects::load()?,
+            recents: recent_presentations()?,
             preferences: shrimply_preferences_core::open_with_defaults(),
         })
     }
@@ -83,7 +83,8 @@ impl ProjectBackend {
     pub fn dispatch(&mut self, request: &Value) -> Result<Value, String> {
         self.validate_target(request)?;
         match string(request, "op")? {
-            "status" | "recents" => {}
+            "status" => {}
+            "recents" => self.recents = recent_presentations()?,
             "import_probe" => {
                 shrimply_media_import::file_kind(Path::new(string(request, "name")?))
                     .ok_or("unsupported file type")?;
@@ -221,7 +222,7 @@ impl ProjectBackend {
             }
             "remove_recent" => {
                 shrimply_recent_projects::remove(Path::new(string(request, "path")?))?;
-                self.recents = shrimply_recent_projects::load()?;
+                self.recents = recent_presentations()?;
             }
             "clear_recents" => {
                 shrimply_recent_projects::clear()?;
@@ -270,8 +271,16 @@ impl ProjectBackend {
         })
     }
 
-    fn interval(&self, request: &Value) -> Result<(Time, Time), String> {
+    pub fn position(&self, request: &Value) -> Result<Time, String> {
         let project = self.required()?;
+        if let Some(position) = request.get("position").filter(|value| !value.is_null()) {
+            let position: Time = serde_json::from_value(position.clone())
+                .map_err(|error| format!("invalid insertion position: {error}"))?;
+            if !shrimply_math_core::fraction_is_finite(position.seconds) || position < Time::ZERO {
+                return Err("insertion position must be finite and nonnegative".into());
+            }
+            return Ok(position);
+        }
         let start = request
             .get("start_frame")
             .map(|value| {
@@ -286,6 +295,12 @@ impl ProjectBackend {
             })
             .transpose()?
             .unwrap_or(project.cursor_position.unwrap_or(Time::ZERO));
+        Ok(start)
+    }
+
+    fn interval(&self, request: &Value) -> Result<(Time, Time), String> {
+        let project = self.required()?;
+        let start = self.position(request)?;
         let duration = request
             .get("duration_frames")
             .map(|value| {
@@ -386,6 +401,7 @@ impl ProjectBackend {
         self.error = None;
         self.view_dirty = false;
         self.revision += 1;
+        self.recents = recent_presentations()?;
         Ok(())
     }
 
@@ -408,7 +424,7 @@ impl ProjectBackend {
             &project.tags,
         )?;
         drop(project);
-        self.recents = shrimply_recent_projects::load()?;
+        self.recents = recent_presentations()?;
         Ok(())
     }
 
@@ -513,6 +529,28 @@ impl ProjectBackend {
         )
     }
 
+    pub fn stage_picked_file(
+        &self,
+        request: &Value,
+        source: Option<fs::File>,
+    ) -> Result<shrimply_media_import::StagedSource, String> {
+        let source_path = Path::new(
+            request["path"]
+                .as_str()
+                .ok_or("file selection requires a path")?,
+        );
+        let name = request["name"]
+            .as_str()
+            .or_else(|| source_path.file_name().and_then(|name| name.to_str()))
+            .ok_or("file selection requires a name")?;
+        let directory = self
+            .path()
+            .ok_or("open a project first")?
+            .parent()
+            .expect("project directory");
+        shrimply_media_import::stage_source(source_path, source, name, directory)
+    }
+
     pub fn import_descriptor(
         &mut self,
         request: &Value,
@@ -539,9 +577,22 @@ impl ProjectBackend {
             return Err("imported file name must not contain a directory".into());
         }
         shrimply_media_import::file_kind(Path::new(name)).ok_or("unsupported file type")?;
-        if let Some(kind) = request.get("kind").and_then(Value::as_str) {
-            let kind = track_kind(kind)?;
-            let index = target_index(&*self.required()?, kind, request)?;
+        let destinations: Vec<&Value> = if let Some(targets) = request
+            .get("import_targets")
+            .filter(|value| !value.is_null())
+        {
+            targets
+                .as_array()
+                .filter(|targets| !targets.is_empty())
+                .ok_or("import targets must be a nonempty list")?
+                .iter()
+                .collect()
+        } else {
+            request.get("kind").map(|_| request).into_iter().collect()
+        };
+        for target in &destinations {
+            let kind = track_kind(string(target, "kind")?)?;
+            let index = target_index(&*self.required()?, kind, target)?;
             if index > 0
                 && shrimply_timeline_edit::selection_state::track_address(
                     &*self.required()?,
@@ -556,58 +607,17 @@ impl ProjectBackend {
             }
         }
         let (start, end) = self.interval(request)?;
-        let project_directory = self
-            .path
-            .as_ref()
-            .ok_or("open a project first")?
-            .parent()
-            .expect("project directory");
-        // Reusing a project-local source preserves its sibling imports/data.
-        // Provider descriptors outside that tree become owned media files.
-        let canonical_source = if source_file.is_none() {
-            source.canonicalize().ok()
-        } else {
-            None
-        };
-        let directory = canonical_source
-            .as_ref()
-            .filter(|source| source.starts_with(project_directory))
-            .and_then(|source| source.parent())
-            .map(Path::to_owned)
-            .unwrap_or_else(|| project_directory.join("media"));
-        fs::create_dir_all(&directory)
-            .map_err(|error| format!("could not create project media directory: {error}"))?;
-        let destination = directory.join(name);
-        let already_staged = canonical_source
-            .as_ref()
-            .is_some_and(|source| destination.canonicalize().ok().as_ref() == Some(source));
-        if !already_staged {
-            let mut file = OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&destination)
-                .map_err(|error| {
-                    format!(
-                        "could not create imported asset {}: {error}",
-                        destination.display()
-                    )
-                })?;
-            let copied = source_file
-                .map(Ok)
-                .unwrap_or_else(|| fs::File::open(source))
-                .and_then(|mut source| std::io::copy(&mut source, &mut file))
-                .and_then(|_| file.sync_all());
-            if let Err(error) = copied {
-                drop(file);
-                fs::remove_file(&destination).map_err(|cleanup| {
-                    format!(
-                        "could not save imported asset: {error}; could not remove {}: {cleanup}",
-                        destination.display()
-                    )
-                })?;
-                return Err(format!("could not save imported asset: {error}"));
-            }
-        }
+        let staged = shrimply_media_import::stage_source(
+            source,
+            source_file,
+            name,
+            self.path
+                .as_ref()
+                .ok_or("open a project first")?
+                .parent()
+                .expect("project directory"),
+        )?;
+        let destination = staged.path.clone();
         let mut inspected_snapshot = None;
         let project_path = self.path.as_ref().expect("open project path").clone();
         let result = (|| {
@@ -615,14 +625,14 @@ impl ProjectBackend {
             self.edit("Import file", |project| {
                 use shrimply_editing_api::{imports, preview};
                 let mut targets = Vec::new();
-                if let Some(kind) = request.get("kind").and_then(Value::as_str) {
-                    let kind = track_kind(kind)?;
+                for target in &destinations {
+                    let kind = track_kind(string(target, "kind")?)?;
                     if kind == TrackKind::Comment {
                         return Err("media destination must be caption, video, or audio".into());
                     }
                     let key = shrimply_timeline_edit::TrackKey {
                         kind,
-                        track_index: target_index(project, kind, request)?,
+                        track_index: target_index(project, kind, target)?,
                     };
                     if key.track_index == 0
                         && shrimply_timeline_edit::selection_state::track_address(project, key)
@@ -660,34 +670,73 @@ impl ProjectBackend {
                 Ok(())
             })
         })();
-        if let Err(error) = &result
-            && !already_staged
-        {
-            // Reload can discover a newer external project during the import.
-            // Never roll back an asset that it now references, or a replacement
-            // written by somebody else after we inspected our owned source.
-            if self
-                .required()?
-                .assets()
-                .iter()
-                .any(|asset| asset.path() == destination)
-                || inspected_snapshot
-                    .as_ref()
-                    .is_some_and(|snapshot| snapshot.verify_current().is_err())
-            {
-                return Err(format!(
-                    "{error}; imported path was retained because it is now referenced or changed externally"
-                ));
-            }
-            fs::remove_file(&destination).map_err(|cleanup| {
-                format!(
-                    "{error}; could not remove failed import {}: {cleanup}",
-                    destination.display()
-                )
-            })?;
+        if let Err(error) = &result {
+            self.discard_staged(&staged, inspected_snapshot.as_ref())
+                .map_err(|cleanup| format!("{error}; {cleanup}"))?;
         }
         result
     }
+
+    pub fn discard_staged(
+        &self,
+        staged: &shrimply_media_import::StagedSource,
+        snapshot: Option<&shrimply_asset::AssetSnapshot>,
+    ) -> Result<(), String> {
+        if !staged.created {
+            return Ok(());
+        }
+        // A save can fail after commit, or another writer can replace the file.
+        // Only the unreferenced, unchanged file owned by this operation is ours.
+        if self
+            .required()?
+            .assets()
+            .iter()
+            .any(|asset| asset.path() == staged.path)
+            || snapshot.is_some_and(|snapshot| snapshot.verify_current().is_err())
+        {
+            return Err(
+                "imported path was retained because it is now referenced or changed externally"
+                    .into(),
+            );
+        }
+        fs::remove_file(&staged.path).map_err(|error| {
+            format!(
+                "could not remove failed import {}: {error}",
+                staged.path.display()
+            )
+        })
+    }
+}
+
+/// Native date formatting and filesystem metadata are refreshed with history,
+/// never from the editor's per-frame status/preview publication path.
+fn recent_presentations() -> Result<Vec<Value>, String> {
+    use shrimply_components_core::presentation::{
+        RecentProjectAction, recent_project_info, recent_project_subtitle,
+    };
+    #[cfg(target_os = "android")]
+    let format_date = crate::localization::format_date;
+    #[cfg(not(target_os = "android"))]
+    let format_date: fn(i64) -> Option<String> = |_| None;
+    shrimply_recent_projects::load()?.into_iter().map(|recent| {
+        let date = recent.modified_at.and_then(format_date);
+        let info = recent_project_info(&recent.name,&recent.path.to_string_lossy(),date.as_deref());
+        let info = json!({"title":info.title,"close_label":info.close_label,"fields":info.fields.into_iter().map(|field|json!({"label":field.label,"value":field.value,"action":field.action.map(|action|json!({"label":action.label(),"icon":action.icon(),"service":action.service(),"path":recent.path}))})).collect::<Vec<_>>()});
+        let menu = RecentProjectAction::ALL.into_iter().map(|action| {
+            let mut item = json!({"label":action.label(),"icon":action.icon(),"service":action.service()});
+            match action {
+                RecentProjectAction::Info => item["info"] = info.clone(),
+                RecentProjectAction::ShowInFiles => item["path"] = json!(recent.path),
+                RecentProjectAction::Delete => item["command"] = json!({"op":"remove_recent","path":recent.path}),
+            }
+            item
+        }).collect::<Vec<_>>();
+        let mut item = serde_json::to_value(&recent).map_err(|error|error.to_string())?;
+        item["last_edited"] = json!(recent_project_subtitle(date.as_deref()));
+        item["menu_label"] = json!(shrimply_i18n::text(shrimply_components_core::presentation::RECENT_PROJECT_MENU_LABEL));
+        item["menu"] = json!(menu);
+        Ok(item)
+    }).collect()
 }
 
 impl Drop for ProjectBackend {
@@ -796,7 +845,7 @@ fn settings_schema() -> Value {
             }).collect::<Vec<_>>();
             (kind_name,entries)
         }).collect::<std::collections::BTreeMap<_,_>>()),
-        "frame_rates":document::COMMON_FRAME_RATES.iter().map(|rate|json!({"label":rate.label,"value":rate.value.to_string()})).collect::<Vec<_>>()
+        "frame_rates":document::project::frame_rate_choices(defaults.fps).into_iter().map(|(value,label)|json!({"label":label,"value":value.to_string()})).collect::<Vec<_>>()
     })
 }
 

@@ -194,8 +194,7 @@ pub(crate) fn add_input_controllers(
             &secondary_selection_state,
             &secondary_runtime,
             &secondary_preferences,
-            x,
-            y,
+            (vec2(x as f32, y as f32), false),
         );
     });
     area.add_controller(secondary_click);

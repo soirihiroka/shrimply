@@ -1,7 +1,7 @@
 //! Native Vulkan texture borrowing and presentation; planning and playback are shared.
 use crate::runtime::Runtime;
 use shrimply_preferences_core::{PreviewDownsampleMethod, PreviewUpsampleMethod};
-use shrimply_preview_interaction_skia::captions;
+use shrimply_preview_interaction_skia::{captions, guides};
 use shrimply_preview_provider_skia::{Color, canvas, math};
 use shrimply_project_document::{CaptionItem, Time};
 use shrimply_render_vulkan::{Texture, surface::Renderer};
@@ -19,6 +19,7 @@ pub(crate) struct Frame {
     caption_position: Time,
     caption_size: f32,
     caption_background: Color<u8>,
+    overlay: Option<shrimply_preview_interaction_skia::surface::Overlay>,
 }
 
 impl Frame {
@@ -29,7 +30,7 @@ impl Frame {
             |project| project.canvas_size,
         );
         let preferences = shrimply_preferences_core::snapshot(&runtime.backend.preferences);
-        let position = shrimply_player_core::current_time(&runtime.player);
+        let position = runtime.preview_position();
         let captions = project.as_ref().map_or_else(Vec::new, |project| {
             captions::active_captions(project, position, preferences.caption_background_color)
         });
@@ -42,7 +43,11 @@ impl Frame {
             texture,
             canvas_size: glam::uvec2(size.width, size.height),
             background: shrimply_cross_ui_theme::current().window_bg,
-            padding: preferences.preview_padding_px,
+            padding: guides::padding_px(
+                preferences.preview_padding_px,
+                preferences.preview_guides_visible,
+                false,
+            ),
             shadow: preferences.preview_shadow_size_px,
             upsample: preferences.preview_upsample_method,
             downsample: preferences.preview_downsample_method,
@@ -50,6 +55,7 @@ impl Frame {
             caption_position,
             caption_size: preferences.caption_font_size,
             caption_background: preferences.caption_background_color,
+            overlay: runtime.preview_interaction.overlay().cloned(),
         }
     }
 }
@@ -59,10 +65,20 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
         frame.texture.as_ref(),
         None,
         |target, image, width, height| {
-            let rect = math::video_content_rect(
-                glam::ivec2(width as i32, height as i32),
-                frame.canvas_size,
-                (frame.padding as f32 * density).round() as u32,
+            let rect = frame.overlay.as_ref().map_or_else(
+                || {
+                    math::video_content_rect(
+                        glam::ivec2(width as i32, height as i32),
+                        frame.canvas_size,
+                        (frame.padding as f32 * density).round() as u32,
+                    )
+                },
+                |overlay| {
+                    shrimply_preview_provider_skia::Rect::from_min_max(
+                        overlay.viewport.content_rect.min * density,
+                        overlay.viewport.content_rect.max * density,
+                    )
+                },
             );
             canvas::draw_background(
                 target,
@@ -73,6 +89,20 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
                     pixel_scale: density,
                 },
             );
+            target.save();
+            if let Some(overlay) = &frame.overlay {
+                let clip = overlay.clip;
+                target.clip_rect(
+                    skia_safe::Rect::from_xywh(
+                        clip.min.x * density,
+                        clip.min.y * density,
+                        clip.width() * density,
+                        clip.height() * density,
+                    ),
+                    None,
+                    true,
+                );
+            }
             if let Some(image) = image {
                 let sampling = shrimply_preview_render_core::math::preview_sampling(
                     rect.width() < image.width() as f32 || rect.height() < image.height() as f32,
@@ -87,6 +117,7 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
                     &skia_safe::Paint::default(),
                 );
             }
+            target.restore();
             target.save();
             target.scale((density, density));
             captions::draw_active_captions(
@@ -104,6 +135,9 @@ pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool
                 },
                 None,
             );
+            if let Some(overlay) = &frame.overlay {
+                target.draw_picture(&overlay.picture, None, None);
+            }
             target.restore();
         },
     )

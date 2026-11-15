@@ -342,7 +342,9 @@ fn integer_control(
     assert_eq!(control.expression_commit_name, INTEGER_EXPRESSION_COMMIT);
     assert!(!control.commit_immediately);
     assert!(control.integer);
-    crate::background::integer_control(value, control, context)
+    let section = InspectorSection::controls();
+    crate::control::add_control(&section, context, &context.list_target, control.clone());
+    section.into_widget()
 }
 
 fn size_control(

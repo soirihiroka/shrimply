@@ -6,7 +6,7 @@ fn prepare(animation: &str, before: &str, patch: &str) -> (Renderer, sanim_rende
     let mut files = MemorySources::default();
     files.insert("before.txt", before);
     files.insert("change.patch", patch);
-    files.insert("main.sanim", format!("let code=CodeView(src=\"before.txt\",lang=\"plain\",font_size=20pt,line_numbers=false)\nadd(code)\nwait(1s)\ncode.patch(\"change.patch\",animation=\"{animation}\",duration=1s,ease=\"linear\")\nwait(1s)\n"));
+    files.insert("main.sanim", format!("let code=CodeView(src=\"before.txt\",lang=\"plain\",font_size=20pt,line_numbers=false)\nAnimation(children=[code])\nwait(1s)\ncode.patch(\"change.patch\",animation=\"{animation}\",duration=1s,ease=\"linear\")\nwait(1s)\n"));
     let prepared = Engine::new(Viewport {
         width: 360,
         height: 220,

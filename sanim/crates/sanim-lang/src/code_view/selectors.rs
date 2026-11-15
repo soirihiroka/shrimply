@@ -381,8 +381,8 @@ pub(super) fn action(
         .get("range")
         .ok_or("range action requires a source range")?;
     let selected = range(value)?;
-    let origin = selected.origin.as_ref().ok_or("range actions need an owner; select with view.range(...) and add(view) before using the range")?;
-    let view = context.animation.find(&origin.owner).ok_or_else(|| format!("CodeView '{}' is not on the animation timeline; call add(view) before using its range actions", origin.owner))?.clone();
+    let origin = selected.origin.as_ref().ok_or("range animations need an owner; select with view.range(...) and include the view in Animation(children=[view, ...])")?;
+    let view = context.animation.find(&origin.owner).ok_or_else(|| format!("CodeView '{}' is not mounted; include the view in Animation(children=[view, ...]) before its range animations", origin.owner))?.clone();
     let owner = Value::Element(Arc::new(view));
     let mut normalized = args.clone();
     normalized.insert("view".into(), owner);
@@ -436,7 +436,7 @@ pub(super) fn action(
     };
     context.charge_work(1)?;
     if operation == "Element.scroll_to" {
-        crate::scrolling::execute(operation, &normalized, context)
+        crate::scrolling::execute_effect(operation, &normalized, context)
     } else {
         edits::execute(operation, &normalized, context)
     }

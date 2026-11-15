@@ -2,9 +2,11 @@ use std::cell::{Cell, RefCell};
 use std::fmt::Display;
 use std::rc::Rc;
 
-use gtk::prelude::*;
+use adw::prelude::*;
 pub use shrimply_components_core::selector::StringChoice;
-use shrimply_components_core::selector::{identity_choices, searchable, selected_index};
+use shrimply_components_core::selector::{
+    identity_choices, ranked_matching_indices, searchable, selected_index,
+};
 use strum::IntoEnumIterator;
 
 use super::control_row;
@@ -27,7 +29,6 @@ impl StringSelector {
     }
 
     pub fn set_choices(&self, value: &str, choices: Vec<StringChoice>) {
-        let enable_search = searchable(choices.len());
         let selected = selected_index(value, &choices);
         let labels = choices
             .iter()
@@ -38,7 +39,6 @@ impl StringSelector {
         *self.choices.borrow_mut() = choices;
         self.dropdown.set_model(Some(&model));
         self.dropdown.set_selected(selected as u32);
-        self.dropdown.set_enable_search(enable_search);
         self.updating.set(false);
     }
 
@@ -67,16 +67,7 @@ pub fn labeled_string_selector(
         .map(|choice| choice.label.as_str())
         .collect::<Vec<_>>();
     let selected = selected_index(value, &choices);
-    let expression = gtk::StringObject::this_expression("string");
-    let dropdown = gtk::DropDown::builder()
-        .model(&gtk::StringList::new(&labels))
-        .selected(selected as u32)
-        .enable_search(searchable(choices.len()))
-        .expression(&expression)
-        .halign(gtk::Align::Fill)
-        .hexpand(true)
-        .css_classes(["inspector-selector"])
-        .build();
+    let dropdown = choice_dropdown(&labels, selected);
     let choices = Rc::new(RefCell::new(choices));
     let updating = Rc::new(Cell::new(false));
     let callback_choices = choices.clone();
@@ -128,16 +119,7 @@ where
         .iter()
         .position(|(option, _)| *option == value)
         .expect("dropdown value must be one of its options");
-    let expression = gtk::StringObject::this_expression("string");
-    let dropdown = gtk::DropDown::builder()
-        .model(&gtk::StringList::new(&labels))
-        .selected(selected as u32)
-        .enable_search(searchable(options.len()))
-        .expression(&expression)
-        .halign(gtk::Align::Fill)
-        .hexpand(true)
-        .css_classes(["inspector-selector"])
-        .build();
+    let dropdown = choice_dropdown(&labels, selected);
     dropdown.connect_selected_notify(move |dropdown| {
         let Some((value, _)) = options.get(dropdown.selected() as usize) else {
             return;
@@ -178,4 +160,140 @@ where
 {
     let dropdown = enum_dropdown(value, changed);
     control_row(label, &dropdown)
+}
+
+fn choice_dropdown(labels: &[&str], selected: usize) -> gtk::DropDown {
+    let dropdown = gtk::DropDown::builder()
+        .model(&gtk::StringList::new(labels))
+        .selected(selected as u32)
+        .expression(gtk::StringObject::this_expression("string"))
+        .halign(gtk::Align::Fill)
+        .hexpand(true)
+        .css_classes(["inspector-selector"])
+        .build();
+    adaptive_choice(&dropdown);
+    dropdown
+}
+
+/// Keep native choice models and selection callbacks when touch opens a sheet.
+pub fn adaptive_choice(widget: &impl IsA<gtk::Widget>) {
+    let widget = widget.as_ref();
+    assert!(
+        widget.is::<gtk::DropDown>() || widget.is::<adw::ComboRow>(),
+        "adaptive choice requires a native selector"
+    );
+    let update_search = |widget: &gtk::Widget| {
+        let model = widget.property::<Option<gtk::gio::ListModel>>("model");
+        widget.set_property(
+            "enable-search",
+            searchable(model.map_or(0, |model| model.n_items() as usize)),
+        );
+    };
+    update_search(widget);
+    widget.connect_notify_local(Some("model"), move |widget, _| update_search(widget));
+    on_touch_menu(widget, choice_sheet);
+}
+
+pub(super) fn on_touch_menu(
+    widget: &impl IsA<gtk::Widget>,
+    activate: impl Fn(&gtk::Widget) + 'static,
+) {
+    let widget = widget.as_ref();
+    let touch = gtk::GestureClick::builder()
+        .propagation_phase(gtk::PropagationPhase::Capture)
+        .build();
+    let target = widget.downgrade();
+    touch.connect_released(move |gesture, _, _, _| {
+        let Some(device) = gesture.current_event_device() else {
+            return;
+        };
+        let source = match device.source() {
+            gtk::gdk::InputSource::Touchscreen => "touch",
+            gtk::gdk::InputSource::Pen => "pen",
+            _ => "pointer",
+        };
+        if crate::layout::menu_uses_bottom_sheet(source) {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            if let Some(widget) = target.upgrade() {
+                activate(&widget);
+            }
+        }
+    });
+    widget.add_controller(touch);
+}
+
+fn choice_sheet(widget: &gtk::Widget) {
+    let model = widget
+        .property::<Option<gtk::gio::ListModel>>("model")
+        .expect("selector has a choices model");
+    let labels = (0..model.n_items())
+        .map(|index| {
+            model
+                .item(index)
+                .and_downcast::<gtk::StringObject>()
+                .expect("selector choices are strings")
+                .string()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    let list = gtk::ListBox::builder()
+        .selection_mode(gtk::SelectionMode::Single)
+        .activate_on_single_click(true)
+        .css_classes(["boxed-list"])
+        .build();
+    let search = searchable(model.n_items() as usize)
+        .then(|| gtk::SearchEntry::builder().hexpand(true).build());
+    let dialog = super::menu::menu_sheet(&list, search.as_ref().map(|entry| entry.upcast_ref()));
+    let visible = Rc::new(RefCell::new(Vec::<usize>::new()));
+    let target = widget.downgrade();
+    let weak_dialog = dialog.downgrade();
+    list.connect_row_activated({
+        let visible = visible.clone();
+        let model = model.clone();
+        move |_, row| {
+            let Some(dialog) = weak_dialog.upgrade() else {
+                return;
+            };
+            dialog.close();
+            let Some(widget) = target.upgrade() else {
+                return;
+            };
+            if widget
+                .property::<Option<gtk::gio::ListModel>>("model")
+                .as_ref()
+                == Some(&model)
+                && let Some(index) = visible.borrow().get(row.index() as usize)
+            {
+                widget.set_property("selected", *index as u32);
+            }
+        }
+    });
+    let populate = {
+        let list = list.clone();
+        let selected = widget.property::<u32>("selected") as usize;
+        move |query: &str| {
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            let indices = ranked_matching_indices(&labels, &[], query);
+            for &index in &indices {
+                let row = adw::ActionRow::builder()
+                    .title(&labels[index])
+                    .title_lines(0)
+                    .use_markup(false)
+                    .activatable(true)
+                    .build();
+                if index == selected {
+                    row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
+                }
+                list.append(&row);
+            }
+            *visible.borrow_mut() = indices;
+        }
+    };
+    populate("");
+    if let Some(search) = search {
+        search.connect_search_changed(move |search| populate(search.text().as_str()));
+    }
+    dialog.present(Some(widget));
 }

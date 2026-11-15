@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 fn scene(source: &str) -> (Renderer, Scene, Options) {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", source);
+    files.insert("main.sanim", format!("{}\nAnimation()", source));
     let animation = Engine::new(Viewport {
         width: 480,
         height: 300,
@@ -39,7 +39,7 @@ class Queue:
     def push(self, item):
         self.items.append(item)
 </CodeView>
-add(code)
+Animation(children=[code])
 wait(1s)
 code.style(line_numbers=true,scope_indicators=true,duration=1s,ease="linear")
 wait(1s)
@@ -59,7 +59,7 @@ fn gutter_reflow_keeps_unchanged_source_opaque_while_wrap_boundaries_change() {
         r#"let code=<CodeView lang="plain" width={110pt} font_size={12pt} whitespace-pre-wrap wrap-anywhere>
 abcdefghijklmno abcdefghijklmno
 </CodeView>
-add(code)
+Animation(children=[code])
 wait(1s)
 code.style(line_numbers=true,duration=1s,ease="linear")
 wait(1s)
@@ -204,7 +204,7 @@ def long_function_name(argument):
 def other():
     return 2
 </CodeView>
-add(code)
+Animation(children=[code])
 wait(1s)"#;
     let (mut renderer, scene, options) = scene(source);
     let state = renderer.frame_state(&scene, 0.into(), &options).unwrap();
@@ -221,7 +221,7 @@ function one() {
     return 2;
 }
 </CodeView>
-add(code)
+Animation(children=[code])
 wait(1s)"#;
     let (mut renderer, scene, options) = self::scene(source);
     let state = renderer.frame_state(&scene, 0.into(), &options).unwrap();
@@ -243,7 +243,7 @@ fn gutter_benchmark() {
         .collect::<String>();
     for enabled in [false, true] {
         let script = format!(
-            "let code=CodeView(code=r\"\"\"{code}\"\"\",lang=\"python\",width=300pt,font_size=12pt,line_numbers={enabled},scope_indicators={enabled})\nadd(code)\ncode.range(name=\"task_0\").fold(duration=1s,ease=\"linear\")\nwait(1s)"
+            "let code=CodeView(code=r\"\"\"{code}\"\"\",lang=\"python\",width=300pt,font_size=12pt,line_numbers={enabled},scope_indicators={enabled})\nAnimation(children=[code])\ncode.range(name=\"task_0\").fold(duration=1s,ease=\"linear\")\nwait(1s)"
         );
         let (mut renderer, scene, options) = scene(&script);
         let started = Instant::now();
@@ -285,7 +285,7 @@ class Worker:
     def pop(self):
         return two_unique
 </CodeView>
-add(code)
+Animation(children=[code])
 let push=code.range(name="Worker.push")
 let pop_range=code.range(name="Worker.pop")
 let parent=code.range(name="Worker")
@@ -326,7 +326,7 @@ function one() {{
     return second_unique;
 }}
 </CodeView>
-add(code)
+Animation(children=[code])
 let first=code.range(name="one")
 let second=code.range(name="two")
 first.fold(duration=0s)

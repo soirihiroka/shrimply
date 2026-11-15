@@ -512,7 +512,8 @@ fn reconcile_fields(state: &FieldState, model: &TtsModel) {
         .inputs
         .iter()
         .filter(|definition| {
-            matches!(state.kind, ConfigurationKind::Regular) || is_caption_input(definition)
+            matches!(state.kind, ConfigurationKind::Regular)
+                || shrimply_tts::is_caption_input(definition)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -534,30 +535,6 @@ fn supports_duration(model: &TtsModel) -> bool {
         .inputs
         .iter()
         .any(|input| input.purpose() == Some(shrimply_tts::InputPurpose::Duration))
-}
-
-fn is_caption_input(input: &InputDefinition) -> bool {
-    match input {
-        InputDefinition::Text { purpose, .. } | InputDefinition::Number { purpose, .. } => {
-            !matches!(
-                purpose,
-                Some(
-                    shrimply_tts::InputPurpose::Text
-                        | shrimply_tts::InputPurpose::Duration
-                        | shrimply_tts::InputPurpose::SpeedFactor
-                )
-            )
-        }
-        InputDefinition::Select { options, .. } => !options.iter().any(|option| {
-            matches!(
-                option.purpose,
-                Some(
-                    shrimply_tts::InputPurpose::Duration | shrimply_tts::InputPurpose::SpeedFactor
-                )
-            )
-        }),
-        _ => true,
-    }
 }
 
 fn input_widget(definition: &InputDefinition, input: &InputContext) -> gtk::Widget {

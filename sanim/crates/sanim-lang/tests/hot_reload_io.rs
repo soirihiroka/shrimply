@@ -56,7 +56,7 @@ fn changed_reflected_input_does_not_probe_a_later_obsolete_resource() {
 #[test]
 fn changed_function_source_does_not_probe_its_old_resource() {
     let files = CountingSources::default();
-    files.insert("main.sanim","fn hold():Duration {\nlet text=read<String>(\"later.txt\")\nif text!=\"\" {return 2s}\nreturn 1s\n}\nwait(hold())\n");
+    files.insert("main.sanim","fn<ref> hold():Duration {\nlet text=read<String>(\"later.txt\")\nif text!=\"\" {return 2s}\nreturn 1s\n}\nwait(hold())\n");
     files.insert("later.txt", "expensive data");
     let mut session = Session::new("main.sanim");
     assert!(matches!(session.poll(&files), Reload::Updated { .. }));
@@ -102,7 +102,7 @@ fn progress_preserves_snapshot_providers_and_hot_duration_does_not_reexecute() {
         }
     }
     let source = |wait: &str| {
-        Arc::new(format!("let payload=read<String>(\"payload.txt\")\nif payload!=\"\" {{add(Circle())}}\nwait({wait})").into_bytes())
+        Arc::new(format!("let payload=read<String>(\"payload.txt\")\nif payload!=\"\" {{Animation(children=[Box(width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)])}}\nwait({wait})").into_bytes())
     };
     let payload = Arc::new(vec![b'x'; 32 * 1024]);
     let files = Snapshots {

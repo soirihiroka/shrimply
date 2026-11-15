@@ -10,7 +10,7 @@ pub fn dragged_group_for_hit(
     collision_mode: DragCollisionMode,
 ) -> Option<DraggedGroup> {
     let (hit_start, _) = item_times(project, hit)?;
-    let pointer_seconds = x_to_time(x, view.scroll_seconds, view.seconds_per_pixel);
+    let pointer_seconds = x_to_time(x, view);
     let mut group_items: Vec<_> = selected_items
         .iter()
         .copied()
@@ -59,8 +59,7 @@ pub fn update_dragged_group(
 ) {
     let previous_position = drag_position(group);
     let y = y + view.scroll_y;
-    let pointer_seconds = x_to_time(x, view.scroll_seconds, view.seconds_per_pixel)
-        - group.pointer_offset.as_secs_f64();
+    let pointer_seconds = x_to_time(x, view) - group.pointer_offset.as_secs_f64();
     let target = Time::from_seconds_f64(pointer_seconds);
     let target = snap_repository.snap(target).unwrap_or(target);
     let earliest_start = group

@@ -1,5 +1,6 @@
 use super::{InspectorContext, section::InspectorSection};
 use adw::prelude::*;
+use shrimply_components_gtk::tr;
 use shrimply_inspector_core::{ControlKind, InspectorControl, InspectorTarget};
 pub(crate) mod layered;
 mod value;
@@ -9,8 +10,29 @@ pub(super) fn section(
     context: &InspectorContext,
 ) -> Vec<gtk::Widget> {
     let section = InspectorSection::controls();
+    let mut information: Option<adw::PreferencesGroup> = None;
     for control in model.controls.iter().filter(|control| control.visible) {
-        add_control(&section, context, &context.list_target, control.clone());
+        match control.kind {
+            ControlKind::InfoHeading => {
+                let group = adw::PreferencesGroup::builder()
+                    .title(tr!(&control.label).as_ref())
+                    .build();
+                section.add_wide_control(&group);
+                information = Some(group);
+            }
+            ControlKind::ReadOnly if control.preview_focus.is_none() => {
+                let group = information.get_or_insert_with(|| {
+                    let group = adw::PreferencesGroup::new();
+                    section.add_wide_control(&group);
+                    group
+                });
+                group.add(&super::info::property_row(&control.label, &control.value));
+            }
+            _ => {
+                information = None;
+                add_control(&section, context, &context.list_target, control.clone());
+            }
+        }
     }
     vec![section.into_widget()]
 }
@@ -49,30 +71,25 @@ pub(super) fn add_control(
         | ControlKind::LayeredVector2
         | ControlKind::LayeredVector3 => value::vector(section, context, target, control),
         ControlKind::ReadOnly => {
-            let row = gtk::Label::new(Some(&control.value));
-            row.set_wrap(true);
-            row.set_selectable(true);
-            section.add_control_row(&control.label, &row);
+            let group = adw::PreferencesGroup::new();
+            group.add(&super::info::property_row(&control.label, &control.value));
+            section.add_wide_control(&group);
+        }
+        ControlKind::TtsEditor | ControlKind::BeatDetection | ControlKind::AudioModifierMenu => {
+            section.add_wide_control(&super::audio::control(&control, context));
         }
         ControlKind::FileLocation => {
             section.add_wide_control(&super::info::file_row(control.value.into(), &control.label))
         }
-        ControlKind::InfoHeading => {
-            section.add_wide_control(
-                &gtk::Label::builder()
-                    .label(&control.label)
-                    .halign(gtk::Align::Start)
-                    .css_classes(["heading"])
-                    .build(),
-            );
-        }
         ControlKind::InfoLoading => {
+            let group = adw::PreferencesGroup::new();
             let row = adw::ActionRow::builder()
-                .title(&control.label)
-                .subtitle(&control.value)
+                .title(tr!(&control.label).as_ref())
+                .subtitle(tr!(&control.value).as_ref())
                 .build();
             row.add_suffix(&adw::Spinner::new());
-            section.add_wide_control(&row);
+            group.add(&row);
+            section.add_wide_control(&group);
         }
         ControlKind::InfoArtwork => {
             if let Some(bytes) = control.image_bytes

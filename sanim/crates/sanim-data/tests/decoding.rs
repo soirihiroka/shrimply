@@ -332,7 +332,16 @@ fn json_decodes_fraction_vectors_and_matrices() {
         decode("a.json", br#""1/3""#, &Type::Fraction, limits).unwrap(),
         Value::Fraction(Fraction::new(1u64, 3u64))
     );
-    let v = decode("a.json", b"[1,2,3]", &Type::Vector(3, None), limits).unwrap();
+    let v = decode(
+        "a.json",
+        b"[1,2,3]",
+        &Type::List(
+            Box::new(Type::Numeric(Unit::Number)),
+            sanim_core::ListLength::Exact(3),
+        ),
+        limits,
+    )
+    .unwrap();
     assert_eq!(v.vector().unwrap().0.len(), 3);
     let m = decode(
         "a.json",
@@ -350,7 +359,10 @@ fn npy_decodes_vectors_from_trailing_component_axis() {
         .flat_map(i32::to_le_bytes)
         .collect::<Vec<_>>();
     let bytes = npy("<i4", "2,3", &payload);
-    let ty = Type::Array(Box::new(Type::Vector(3, None)));
+    let ty = Type::Array(Box::new(Type::List(
+        Box::new(Type::Numeric(Unit::Number)),
+        sanim_core::ListLength::Exact(3),
+    )));
     let value = decode("a.npy", &bytes, &ty, Limits::default()).unwrap();
     let Value::Array { shape, values, .. } = value else {
         panic!()
@@ -390,27 +402,33 @@ fn yaml_duplicate_keys_and_multiple_documents_fail() {
     }
 }
 #[test]
-fn json_and_npy_vectors_retain_f64_range() {
-    let vector = decode(
-        "data.json",
-        b"[1e100,1e-100]",
-        &Type::Vector(2, None),
-        Limits::default(),
-    )
-    .unwrap();
-    assert_eq!(vector.vector().unwrap().0, &[1e100, 1e-100]);
+fn json_and_npy_numeric_lists_share_number_range() {
+    let ty = Type::List(Box::new(number()), sanim_core::ListLength::Exact(2));
+    let payload = [1.25_f64, -2.5]
+        .into_iter()
+        .flat_map(f64::to_le_bytes)
+        .collect::<Vec<_>>();
+    for (path, bytes) in [
+        ("data.json", b"[1.25,-2.5]".to_vec()),
+        ("data.npy", npy("<f8", "2", &payload)),
+    ] {
+        let values = decode(path, &bytes, &ty, Limits::default()).unwrap();
+        assert_eq!(values.vector().unwrap().0, &[1.25, -2.5]);
+    }
+    assert!(decode("data.json", b"[1e100,1e-100]", &ty, Limits::default()).is_err());
     let payload = [1e100_f64, 1e-100]
         .into_iter()
         .flat_map(f64::to_le_bytes)
         .collect::<Vec<_>>();
-    let vector = decode(
-        "data.npy",
-        &npy("<f8", "2", &payload),
-        &Type::Vector(2, None),
-        Limits::default(),
-    )
-    .unwrap();
-    assert_eq!(vector.vector().unwrap().0, &[1e100, 1e-100]);
+    assert!(
+        decode(
+            "data.npy",
+            &npy("<f8", "2", &payload),
+            &ty,
+            Limits::default()
+        )
+        .is_err()
+    );
 }
 #[test]
 fn sql_instruction_budget_interrupts_recursive_queries() {

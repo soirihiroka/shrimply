@@ -45,9 +45,11 @@ pub(super) fn apply_response(
         CursorUpdate::Set(value) => area.set_cursor_from_name(Some(cursor_name(value))),
         CursorUpdate::Clear => area.set_cursor_from_name(None),
     }
-    if response.edit.commits() {
-        crate::project::commit_edit(&project.borrow(), commit_name);
-    }
+    shrimply_preview_runtime_cuda::controller::commit_response(
+        &project.borrow(),
+        response,
+        commit_name,
+    );
     if response.edit.refresh != PreviewRefresh::NONE {
         player_state::refresh_project(
             player_state,

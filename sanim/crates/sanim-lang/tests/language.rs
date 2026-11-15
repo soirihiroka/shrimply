@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 fn prepare(text: &str) -> Prepared {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", text);
+    sources.insert("main.sanim", format!("{}\nAnimation()", text));
     Engine::default()
         .prepare("main.sanim", &sources, &BTreeMap::new())
         .unwrap_or_else(|e| panic!("{e}\n{text}"))
@@ -84,7 +84,7 @@ fn if_else_returns() {
 #[test]
 fn options_make_indexing_total() {
     let p = prepare(
-        "let values = [10, 20]\nlet missing = values[9]\nlet result = unwrap(missing, 42)\nlet present = unwrap(get(values, 1), 0)\n",
+        "let values = [10, 20]\nlet missing = get(values,9)\nlet result = unwrap(missing, 42)\nlet present = unwrap(get(values, 1), 0)\n",
     );
     assert_eq!(number(&p, "result"), Fraction::from(42));
     assert_eq!(number(&p, "present"), Fraction::from(20));
@@ -100,14 +100,14 @@ fn plain_repeat_runs_sequentially() {
     assert_eq!(p.animation.duration, Fraction::new(2u64, 5u64));
 }
 #[test]
-fn timer_pads_each_iteration() {
-    let p = prepare("timer 4 every 500ms { wait(100ms) }\n");
+fn fixed_period_animation_values_pad_each_cycle() {
+    let p = prepare("Animation(children=[wait(100ms),wait(400ms)],flow=\"sequence\").repeat(4)\n");
     assert_eq!(p.animation.duration, Fraction::from(2));
 }
 #[test]
 fn scheduling_helpers_work() {
     let p = prepare(
-        "fn pause(duration: Duration = 200ms): Unit { wait(duration) }\nrepeat 3 { pause() }\n",
+        "fn pause(duration: Duration = 200ms): Animation { return wait(duration) }\nrepeat 3 { pause() }\n",
     );
     assert_eq!(p.animation.duration, Fraction::new(3u64, 5u64));
 }
@@ -141,13 +141,13 @@ fn reflection_overrides_validate_before_use() {
 }
 #[test]
 fn coordinate_units_and_percentages() {
-    let p = prepare("let length = 96px\nlet center = Vec2(50%, 25%)\n");
+    let p = prepare("let length = 96px\nlet center = [50%, 25%]\n");
     assert_eq!(number(&p, "length"), Fraction::from(72));
-    let Value::Vec2(point) = p.bindings["center"] else {
+    let Value::List(point) = &p.bindings["center"] else {
         panic!()
     };
-    assert!(point.unit == Unit::Percent);
-    assert_eq!(point.values[0], 0.5);
+    assert!(point[0].number().unwrap().unit == Unit::Percent);
+    assert_eq!(point[0].number().unwrap().value, Fraction::new(1u64, 2u64));
 }
 #[test]
 fn short_circuit_avoids_division_by_zero() {
@@ -175,7 +175,7 @@ macro_rules! reject {
         #[test]
         fn $name() {
             let mut sources = MemorySources::default();
-            sources.insert("main.sanim", $text);
+            sources.insert("main.sanim", format!("{}\nAnimation()", $text));
             let error = Engine::default()
                 .prepare("main.sanim", &sources, &BTreeMap::new())
                 .unwrap_err();
@@ -184,13 +184,25 @@ macro_rules! reject {
         }
     };
 }
+#[test]
+fn removed_shape_constructors_are_not_registered() {
+    for name in ["Rect", "Rectangle", "Circle"] {
+        assert!(sanim_lang::prelude::builtin(name).is_none());
+        let mut sources = MemorySources::default();
+        sources.insert("main.sanim", format!("let shape={name}()\nAnimation()"));
+        let error = Engine::default()
+            .prepare("main.sanim", &sources, &BTreeMap::new())
+            .unwrap_err();
+        assert!(error.message.contains(name), "{error}");
+    }
+}
 reject!(protected_constructor, "let Color = 1\n", "S101");
 reject!(
     protected_parameter,
     "fn f(Color: String): String { return Color }\n",
     "S101"
 );
-reject!(protected_type, "type Circle = { radius: Number }\n", "S101");
+reject!(protected_type, "type Box = { radius: Number }\n", "S101");
 reject!(protected_alias, "import \"lib\" as Color\n", "S101");
 reject!(
     no_shadowing,
@@ -211,12 +223,12 @@ reject!(
 );
 reject!(
     unknown_argument,
-    "let marker = Circle(raduis= 4pt)\n",
+    "let marker = Box(raduis=4pt, width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n",
     "S124"
 );
 reject!(
     duplicate_argument,
-    "let marker = Circle(radius= 1pt, radius= 2pt)\n",
+    "let marker = Box(width=1pt, width=2pt, height=2pt, radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n",
     "S124"
 );
 reject!(unknown_name, "let marker = Circel()\n", "S120");
@@ -254,7 +266,7 @@ reject!(
 reject!(read_needs_type, "let data = read(\"data.csv\")\n", "S125");
 #[test]
 fn unused_read_helper_does_not_read_its_asset() {
-    let p = prepare("fn load(): String { return read<String>(\"absent.json\") }");
+    let p = prepare("fn<ref> load(): String { return read<String>(\"absent.json\") }");
     assert!(!p.dependencies.contains_key("absent.json"));
 }
 reject!(negative_repeat, "repeat -1 { wait(1s) }\n", "S303");
@@ -262,16 +274,20 @@ reject!(fractional_repeat, "repeat 1.5 { wait(1s) }\n", "S303");
 reject!(
     timer_overrun,
     "timer 2 every 100ms { wait(200ms) }\n",
-    "S304"
+    "S002"
 );
-reject!(zero_timer_period, "timer 2 every 0s { wait(1s) }\n", "S304");
+reject!(zero_timer_period, "timer 2 every 0s { wait(1s) }\n", "S002");
 reject!(negative_wait, "wait(-1s)\n", "S304");
 reject!(
     invalid_color,
     "let color = Color(\"not-a-color\")\n",
     "S305"
 );
-reject!(invalid_opacity, "let marker = Circle(opacity= 2)\n", "S305");
+reject!(
+    invalid_opacity,
+    "let marker = Box(opacity=2, width=2*(32pt), height=2*(32pt), radius=\"full\", fill=Color(\"light1\"), x_align=Align.Center, y_align=Align.Center)\n",
+    "S305"
+);
 reject!(
     unsupported_unbounded_loop,
     "while true { wait(1s) }\n",
@@ -314,7 +330,7 @@ fn operation_budget_stops_nested_bounded_work() {
 #[test]
 fn reflection_rejects_unknown_override() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "let count=reflect(1)\n");
+    sources.insert("main.sanim", "let count=reflect(1)\n\nAnimation()");
     let input = BTreeMap::from([("missing".into(), Value::Number(Number::scalar(2)))]);
     assert_eq!(
         Engine::default()
@@ -327,7 +343,10 @@ fn reflection_rejects_unknown_override() {
 #[test]
 fn reflection_checks_every_list_item() {
     let mut sources = MemorySources::default();
-    sources.insert("main.sanim", "let values: List<Number>=reflect([1])\n");
+    sources.insert(
+        "main.sanim",
+        "let values: List<Number>=reflect([1])\n\nAnimation()",
+    );
     let input = BTreeMap::from([(
         "main.sanim::values".into(),
         Value::List(
@@ -386,7 +405,7 @@ fn math_errors_do_not_publish_nan_or_implicitly_drop_units() {
         "let PI=3",
     ] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         assert!(
             Engine::default()
                 .prepare("main.sanim", &files, &BTreeMap::new())
@@ -399,7 +418,7 @@ fn math_errors_do_not_publish_nan_or_implicitly_drop_units() {
 fn incomplete_types_cannot_escape_into_bindings() {
     for source in ["let x=[]", "let x=None", "let x:Any=1", "let x:Unknown=1"] {
         let mut files = MemorySources::default();
-        files.insert("main.sanim", source);
+        files.insert("main.sanim", format!("{}\nAnimation()", source));
         assert!(
             Engine::default()
                 .prepare("main.sanim", &files, &BTreeMap::new())
@@ -433,7 +452,7 @@ fn math_helpers_preserve_angle_units_and_fraction_values() {
 #[test]
 fn adwaita_colors_work_in_reflection_and_typed_data_loading() {
     let mut files = MemorySources::default();
-    files.insert("main.sanim", "let tint:Color=reflect(Color(\"BLUE3\"))\nlet loaded=read<Color>(\"color.json\")\nlet default_color=Color()\nadd(Circle(fill=tint))");
+    files.insert("main.sanim", "let tint:Color=reflect(Color(\"BLUE3\"))\nlet loaded=read<Color>(\"color.json\")\nlet default_color=Color()\nAnimation(children=[Box(fill=tint, width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)])");
     files.insert("color.json", "\"orange3\"");
     let prepared = Engine::default()
         .prepare("main.sanim", &files, &BTreeMap::new())
@@ -455,7 +474,7 @@ fn adwaita_colors_work_in_reflection_and_typed_data_loading() {
 #[test]
 fn equals_names_arguments_and_record_values_while_colons_declare_types() {
     let p = prepare(
-        "type Style={radius:Length,color:Color}\nfn marker(style:Style,offset:Vec2<Length>=Vec2(0pt,0pt)):Element{return Circle(radius=style.radius,fill=style.color,position=offset)}\nlet style:Style={radius=12pt,color=Color(\"blue3\")}\nlet created=marker(style=style,offset=Vec2(10pt,20pt))\nadd(created)",
+        "type Style={radius:Length,color:Color}\nfn marker(style:Style,offset:List<Length,2>=[0pt, 0pt]):Element{return Box(fill=style.color, position=offset, width=2*(style.radius), height=2*(style.radius), radius=\"full\", x_align=Align.Center, y_align=Align.Center)}\nlet style:Style={radius=12pt,color=Color(\"blue3\")}\nlet created=marker(style=style,offset=[10pt, 20pt])\nAnimation(children=[created])",
     );
     let element = &p.animation.layers[0].element;
     assert_eq!(element.position.values, [10.0, 20.0]);
@@ -477,7 +496,7 @@ fn equals_named_arguments_do_not_consume_comparison_operators() {
 #[test]
 fn dictionary_entries_keep_python_colons_with_equals_call_arguments() {
     let p = prepare(
-        "let d:Dict={\"paint\":\"blue3\",\"nested\":{\"count\":2}}\nlet count=decode<Number>(d[\"nested\"][\"count\"])\nlet marker=Circle(fill=decode<Color>(d[\"paint\"]))\nadd(marker)",
+        "let d:Dict={\"paint\":\"blue3\",\"nested\":{\"count\":2}}\nlet count=decode<Number>(d[\"nested\"][\"count\"])\nlet marker=Box(fill=decode<Color>(d[\"paint\"]), width=2*(32pt), height=2*(32pt), radius=\"full\", x_align=Align.Center, y_align=Align.Center)\nAnimation(children=[marker])",
     );
     assert_eq!(number(&p, "count"), Fraction::from(2));
     assert!(

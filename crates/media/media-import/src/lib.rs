@@ -1,5 +1,7 @@
 use hashbrown::HashMap;
 mod av;
+mod staging;
+pub use staging::{StagedSource, stage_source};
 #[cfg(test)]
 mod portable_tests;
 #[cfg(test)]
@@ -275,18 +277,36 @@ pub fn inspect(
         engine.viewport.height = canvas_size.height.max(1);
         let report = engine
             .duration(entry, &sources, &std::collections::BTreeMap::new())
+            .or_else(|error| {
+                if error.code != "S138" {
+                    return Err(error);
+                }
+                engine.available_duration = Some(default_visual_duration.seconds);
+                engine.duration(entry, &sources, &std::collections::BTreeMap::new())
+            })
             .map_err(|e| e.to_string())?;
         snapshot.verify_current()?;
+        let duration = Time {
+            seconds: if report.indefinite {
+                report.duration.max(default_visual_duration.seconds)
+            } else if report.duration > Fraction::from(0) {
+                report.duration
+            } else {
+                default_visual_duration.seconds
+            },
+        };
+        shrimply_project_document::source_events::publish_import(
+            path,
+            canvas_size,
+            shrimply_project_document::source_events::Events {
+                duration,
+                index: report.event_index.clone(),
+            },
+        );
         return Ok(MediaInfo {
             source,
             snapshot,
-            duration: Time {
-                seconds: if report.duration > Fraction::from(0) {
-                    report.duration
-                } else {
-                    default_visual_duration.seconds
-                },
-            },
+            duration,
             visual_kind: Some(VisualMediaKind::Sanim),
             video_streams: 1,
             video_sizes: vec![UVec2::new(

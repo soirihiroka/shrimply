@@ -27,6 +27,7 @@ pub struct SnapRepo {
     frame_step: Time,
     distance: Option<Time>,
     dynamic_time: Option<Time>,
+    nearest_sources: Vec<Box<dyn Fn(Time) -> Option<Time>>>,
 }
 
 impl SnapRepo {
@@ -55,6 +56,7 @@ impl SnapRepo {
             frame_step: sources.frame_step,
             distance: sources.distance,
             dynamic_time: None,
+            nearest_sources: Vec::new(),
         }
     }
 
@@ -70,6 +72,11 @@ impl SnapRepo {
         self.dynamic_time = query.dynamic_time;
     }
 
+    /// Indexed or periodic sources can answer lazily without materializing their repeats.
+    pub fn set_nearest_sources(&mut self, sources: Vec<Box<dyn Fn(Time) -> Option<Time>>>) {
+        self.nearest_sources = sources;
+    }
+
     pub fn snap(&self, time: Time) -> Option<Time> {
         let distance = self.distance?;
         let time = time.snapped(self.frame_step);
@@ -80,6 +87,7 @@ impl SnapRepo {
                 let target = [nearest(&self.times, at), self.dynamic_time]
                     .into_iter()
                     .flatten()
+                    .chain(self.nearest_sources.iter().filter_map(|source| source(at)))
                     .min_by_key(|target| (at.abs_diff(*target), *target))?;
                 let candidate = target.signed_sub(*offset);
                 Some((time.abs_diff(candidate), candidate))
@@ -104,4 +112,50 @@ fn nearest(times: &[Time], time: Time) -> Option<Time> {
     .into_iter()
     .flatten()
     .min_by_key(|target| (time.abs_diff(*target), *target))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shrimply_math_core::Fraction;
+
+    #[test]
+    fn sanim_event_sources_snap_moving_anchors_without_expanding_source_events() {
+        struct Empty;
+        impl TLSnappable for Empty {
+            fn snap_times(self) -> Vec<Time> {
+                Vec::new()
+            }
+        }
+        let mut repository = SnapRepo::new(SnapSources {
+            snappables: Vec::<Empty>::new(),
+            candidates: Vec::new(),
+            offsets: vec![Time::from_seconds(1)],
+            frame_step: Time {
+                seconds: Fraction::new(1u64, 30u64),
+            },
+            distance: Some(Time {
+                seconds: Fraction::new(1u64, 5u64),
+            }),
+        });
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        repository.set_nearest_sources(vec![Box::new({
+            let calls = calls.clone();
+            move |_| {
+                calls.set(calls.get() + 1);
+                Some(Time::from_seconds(2))
+            }
+        })]);
+        let at = Time {
+            seconds: Fraction::new(11u64, 10u64),
+        };
+        assert_eq!(repository.snap(at), Some(Time::from_seconds(1)));
+        assert_eq!(
+            calls.get(),
+            1,
+            "source is queried only for the moving anchor"
+        );
+        repository.set_nearest_sources(Vec::new());
+        assert_eq!(repository.snap(at), Some(at));
+    }
 }

@@ -1,5 +1,13 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContextMenuAction {
+    ShowTools,
+    ShowTrackControls,
+    ShowAudioMonitor,
+    SplitSelected,
+    SplitAll,
+    AddToTrack,
+    RecordAudio,
+    RecordVideo,
     InspectProperties,
     DeleteTrack,
     Copy,
@@ -56,6 +64,14 @@ pub const TIMELINE_CLIPBOARD_MARKER: &str = "shrimply timeline items";
 impl ContextMenuAction {
     pub const fn id(self) -> &'static str {
         match self {
+            Self::ShowTools => "show-tools",
+            Self::ShowTrackControls => "show-track-controls",
+            Self::ShowAudioMonitor => "show-audio-monitor",
+            Self::SplitSelected => "split-selected",
+            Self::SplitAll => "split-all",
+            Self::AddToTrack => "add-to-track",
+            Self::RecordAudio => "record-audio",
+            Self::RecordVideo => "record-video",
             Self::InspectProperties => "inspect-properties",
             Self::DeleteTrack => "delete-track",
             Self::Copy => "copy",
@@ -88,6 +104,14 @@ impl ContextMenuAction {
 
     pub const fn label(self) -> &'static str {
         match self {
+            Self::ShowTools => "Show tools",
+            Self::ShowTrackControls => "Show track controls",
+            Self::ShowAudioMonitor => "Show audio monitor",
+            Self::SplitSelected => "Cut selected",
+            Self::SplitAll => "Cut all",
+            Self::AddToTrack => "Add clip…",
+            Self::RecordAudio => "Record audio",
+            Self::RecordVideo => "Record screen",
             Self::InspectProperties => "Properties",
             Self::DeleteTrack => "Delete Track",
             Self::Copy => "Copy",
@@ -124,6 +148,7 @@ impl ContextMenuAction {
 pub struct ContextMenuItem {
     pub action: ContextMenuAction,
     pub enabled: bool,
+    pub checked: Option<bool>,
 }
 
 impl ContextMenuItem {
@@ -131,11 +156,16 @@ impl ContextMenuItem {
         Self {
             action,
             enabled: true,
+            checked: None,
         }
     }
 
     pub const fn enabled(action: ContextMenuAction, enabled: bool) -> Self {
-        Self { action, enabled }
+        Self {
+            action,
+            enabled,
+            checked: None,
+        }
     }
 
     pub const fn label(self) -> &'static str {
