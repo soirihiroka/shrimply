@@ -3,7 +3,6 @@ use crate::{
     control_row_with_suffix, inset, row_stack,
 };
 use block2::RcBlock;
-use objc2::MainThreadOnly;
 use objc2::rc::{Retained, Weak};
 use objc2_app_kit::{
     NSAnimationContext, NSButton, NSButtonType, NSColor, NSControlStateValueOn, NSImage,

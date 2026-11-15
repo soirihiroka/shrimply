@@ -6,10 +6,10 @@ use objc2_core_video::{
     CVMetalTexture, CVMetalTextureCache, CVMetalTextureGetTexture, CVMetalTextureIsFlipped,
     CVPixelBuffer, CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType,
     CVPixelBufferGetPlaneCount, CVPixelBufferGetWidthOfPlane,
-    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-    kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
-    kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange, kCVReturnSuccess,
+    kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as NV12_FULL_RANGE,
+    kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as NV12_VIDEO_RANGE,
+    kCVPixelFormatType_420YpCbCr10BiPlanarFullRange as P010_FULL_RANGE,
+    kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange as P010_VIDEO_RANGE, kCVReturnSuccess,
 };
 use objc2_metal::{
     MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder, MTLPixelFormat,
@@ -55,16 +55,14 @@ impl GpuFrame for ImportedFrame {
         }
         let format = CVPixelBufferGetPixelFormatType(pixel);
         let (p010, full_range, formats) = match format {
-            kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-            | kCVPixelFormatType_420YpCbCr8BiPlanarFullRange => (
+            NV12_VIDEO_RANGE | NV12_FULL_RANGE => (
                 false,
-                format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                format == NV12_FULL_RANGE,
                 [MTLPixelFormat::R8Unorm, MTLPixelFormat::RG8Unorm],
             ),
-            kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-            | kCVPixelFormatType_420YpCbCr10BiPlanarFullRange => (
+            P010_VIDEO_RANGE | P010_FULL_RANGE => (
                 true,
-                format == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+                format == P010_FULL_RANGE,
                 [MTLPixelFormat::R16Unorm, MTLPixelFormat::RG16Unorm],
             ),
             format => {

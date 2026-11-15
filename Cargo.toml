@@ -434,6 +434,10 @@ lto = "off"
 [profile.dev.package."*"]
 debug = 0
 
+# Keep source-derived numerical kernels as optimized as the former native library.
+[profile.dev.package.shrimply-vision]
+opt-level = 2
+
 [profile.dev.package.shrimply-editor-gtk]
 opt-level = 0
 

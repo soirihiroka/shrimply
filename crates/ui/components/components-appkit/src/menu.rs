@@ -177,7 +177,7 @@ pub(crate) fn button(title: &str, mtm: MainThreadMarker) -> Retained<NSButton> {
     let button: Retained<MenuButton> =
         unsafe { msg_send![super(button), initWithFrame: NSRect::ZERO] };
     button.setTitle(&NSString::from_str(title));
-    button.setBezelStyle(NSBezelStyle::Rounded);
+    button.setBezelStyle(NSBezelStyle::Push);
     button.setAllowedTouchTypes(NSTouchTypeMask::Direct);
     button.into_super()
 }
