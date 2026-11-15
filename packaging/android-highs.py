@@ -28,7 +28,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX)
         prefix = root / "install"
         stamp = root / "highs.sha256"
-        identity = hashlib.sha256(Path(__file__).read_bytes() + dependency["checksum"].encode() + (args.ndk / "source.properties").read_bytes()).hexdigest()
+        identity = hashlib.sha256(Path(__file__).read_bytes() + (repository / "packaging/android-native.py").read_bytes() + dependency["checksum"].encode() + (args.ndk / "source.properties").read_bytes()).hexdigest()
         if stamp.exists() and stamp.read_text() == identity and (prefix / "lib/libhighs.a").is_file():
             print(f"Android L1 solver is current: {prefix}", flush=True)
             return

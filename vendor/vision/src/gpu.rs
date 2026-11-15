@@ -1,17 +1,35 @@
 //! Shared packing and validation for the source-derived sparse LK shader.
 //! Native backends only upload these buffers, dispatch, and return the output.
-use crate::tracking::{pyramid, scharr, validate_flow};
+use crate::tracking::{pyramid_sizes, validate_flow};
 use crate::{FlowOptions, GrayImage, Track};
 
 const LEVEL_WORDS: usize = 4;
 const POINT_COMPONENTS: usize = 2;
 const RESULT_COMPONENTS: usize = 4;
 const GRADIENT_COMPONENTS: usize = 2;
+/// One cooperative workgroup tracks each feature. Keep in sync with tracking.slang.
+pub const WORKGROUP_SIZE: u32 = 64;
+pub const MAX_WINDOW: usize = 20;
+pub const PREPARATION_GROUP_SIZE: u32 = 256;
+
+#[derive(Clone, Copy, Debug)]
+pub enum PreparationStep {
+    Pyramid {
+        previous: bool,
+        level: u32,
+        threads: usize,
+    },
+    Derivatives {
+        level: u32,
+        threads: usize,
+    },
+}
 
 pub struct TrackingJob {
     pub previous: Vec<u8>,
     pub current: Vec<u8>,
-    pub derivatives: Vec<u8>,
+    pub derivative_bytes: usize,
+    pub preparation: Vec<PreparationStep>,
     pub levels: Vec<u8>,
     pub points: Vec<u8>,
     pub count: u32,
@@ -21,7 +39,6 @@ pub struct TrackingJob {
     pub epsilon_squared: f32,
     pub minimum_eigenvalue: f32,
     original_points: Vec<[f32; POINT_COMPONENTS]>,
-    patch_length: usize,
 }
 
 impl TrackingJob {
@@ -32,27 +49,23 @@ impl TrackingJob {
         options: FlowOptions,
     ) -> Result<Self, String> {
         validate_flow(previous, current, points, options)?;
+        if options.window > MAX_WINDOW {
+            return Err("GPU optical flow window exceeds shared memory capacity".into());
+        }
         let count = u32::try_from(points.len()).map_err(|_| "too many optical flow features")?;
+        count
+            .checked_mul(WORKGROUP_SIZE)
+            .ok_or("optical flow dispatch exceeds GPU indexing")?;
         if count == 0 {
             return Err("GPU optical flow needs at least one feature".into());
         }
-        let early = pyramid(previous, options);
-        let late = pyramid(current, options);
-        let level_count = early.len().min(late.len());
-        let pixels = early
-            .iter()
-            .take(level_count)
-            .try_fold(0_usize, |sum, image| {
-                sum.checked_add(image.data.len())
-                    .ok_or("optical flow pyramid size overflow")
-            })?;
+        let sizes = pyramid_sizes(previous.width, previous.height, options);
+        let level_count = sizes.len();
+        let pixels = sizes.iter().try_fold(0_usize, |sum, &(width, height)| {
+            sum.checked_add(width * height)
+                .ok_or("optical flow pyramid size overflow")
+        })?;
         u32::try_from(pixels).map_err(|_| "optical flow pyramid exceeds GPU indexing")?;
-        let patch_length = points
-            .len()
-            .checked_mul(options.window)
-            .and_then(|value| value.checked_mul(options.window))
-            .ok_or("optical flow scratch size overflow")?;
-        u32::try_from(patch_length).map_err(|_| "optical flow scratch exceeds GPU indexing")?;
         let image_bytes = pixels
             .checked_mul(size_of::<u32>())
             .ok_or("optical flow pyramid byte size overflow")?;
@@ -62,7 +75,8 @@ impl TrackingJob {
         let mut job = Self {
             previous: Vec::with_capacity(image_bytes),
             current: Vec::with_capacity(image_bytes),
-            derivatives: Vec::with_capacity(derivative_bytes),
+            derivative_bytes,
+            preparation: Vec::with_capacity(level_count * 3),
             levels: Vec::with_capacity(level_count * LEVEL_WORDS * size_of::<u32>()),
             points: Vec::with_capacity(points.len() * POINT_COMPONENTS * size_of::<f32>()),
             count,
@@ -72,28 +86,36 @@ impl TrackingJob {
             epsilon_squared: options.epsilon.clamp(0.0, 10.0).powi(2) as f32,
             minimum_eigenvalue: options.minimum_eigenvalue as f32,
             original_points: points.to_vec(),
-            patch_length,
         };
+        for &value in &previous.data {
+            job.previous
+                .extend_from_slice(&u32::from(value).to_ne_bytes());
+        }
+        for &value in &current.data {
+            job.current
+                .extend_from_slice(&u32::from(value).to_ne_bytes());
+        }
+        job.previous.resize(image_bytes, 0);
+        job.current.resize(image_bytes, 0);
         let mut offset = 0_u32;
-        for (source, target) in early.iter().zip(&late).take(level_count) {
-            for value in [source.width as u32, source.height as u32, offset, 0] {
+        for (index, (width, height)) in sizes.into_iter().enumerate() {
+            for value in [width as u32, height as u32, offset, 0] {
                 job.levels.extend_from_slice(&value.to_ne_bytes());
             }
-            for &value in &source.data {
-                job.previous
-                    .extend_from_slice(&u32::from(value).to_ne_bytes());
-            }
-            for &value in &target.data {
-                job.current
-                    .extend_from_slice(&u32::from(value).to_ne_bytes());
-            }
-            for derivative in scharr(source) {
-                for value in derivative {
-                    job.derivatives
-                        .extend_from_slice(&i32::from(value).to_ne_bytes());
+            let level = index as u32;
+            let threads = width * height;
+            if index != 0 {
+                for previous in [true, false] {
+                    job.preparation.push(PreparationStep::Pyramid {
+                        previous,
+                        level,
+                        threads,
+                    });
                 }
             }
-            offset += source.data.len() as u32;
+            job.preparation
+                .push(PreparationStep::Derivatives { level, threads });
+            offset += threads as u32;
         }
         for point in points {
             for value in point {
@@ -103,12 +125,8 @@ impl TrackingJob {
         Ok(job)
     }
 
-    pub fn patch_bytes(&self) -> usize {
-        self.patch_length * size_of::<i32>()
-    }
-
-    pub fn gradient_bytes(&self) -> usize {
-        self.patch_length * GRADIENT_COMPONENTS * size_of::<i32>()
+    pub fn dispatch_extent(&self) -> [usize; 3] {
+        [self.count as usize * WORKGROUP_SIZE as usize, 1, 1]
     }
 
     pub fn output_bytes(&self) -> usize {

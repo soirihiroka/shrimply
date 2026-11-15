@@ -39,6 +39,13 @@ pub struct Tracker {
         target_os = "macos"
     ))]
     device: Option<Device>,
+    #[cfg(any(
+        feature = "nvidia",
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos"
+    ))]
+    calibrated: bool,
 }
 
 #[cfg(any(
@@ -50,12 +57,6 @@ pub struct Tracker {
 impl Default for Tracker {
     fn default() -> Self {
         Self {
-            #[cfg(any(
-                feature = "nvidia",
-                target_os = "linux",
-                target_os = "android",
-                target_os = "macos"
-            ))]
             device: match Device::new() {
                 Ok(device) => Some(device),
                 Err(error) => {
@@ -63,6 +64,7 @@ impl Default for Tracker {
                     None
                 }
             },
+            calibrated: false,
         }
     }
 }
@@ -75,7 +77,7 @@ impl Tracker {
         points: &[[f32; 2]],
         options: FlowOptions,
     ) -> Result<Vec<Track>, String> {
-        if points.is_empty() {
+        if points.is_empty() || options.window > shrimply_vision::gpu::MAX_WINDOW {
             return shrimply_vision::track(previous, current, points, options);
         }
         #[cfg(any(
@@ -85,9 +87,47 @@ impl Tracker {
             target_os = "macos"
         ))]
         if let Some(device) = self.device.as_mut() {
+            let packing_started = std::time::Instant::now();
             let job = TrackingJob::new(previous, current, points, options)?;
-            match dispatch(device, &job).and_then(|output| job.finish(&output)) {
-                Ok(tracks) => return Ok(tracks),
+            let packing_time = packing_started.elapsed();
+            let calibrate = !self.calibrated;
+            self.calibrated = true;
+            let mut execute = || dispatch(device, &job).and_then(|output| job.finish(&output));
+            let result: Result<_, String> = (|| {
+                let cpu = if calibrate {
+                    // Warm both allocation paths and GPU pipelines before measuring steady work.
+                    execute()?;
+                    shrimply_vision::track(previous, current, points, options)?;
+                    let started = std::time::Instant::now();
+                    let tracks = shrimply_vision::track(previous, current, points, options)?;
+                    Some((tracks, started.elapsed()))
+                } else {
+                    None
+                };
+                let started = std::time::Instant::now();
+                let tracks = execute()?;
+                let gpu_time = started.elapsed() + packing_time;
+                if let Some((cpu_tracks, cpu_time)) = cpu {
+                    let keep_gpu = gpu_time < cpu_time;
+                    tracing::debug!(
+                        ?cpu_time,
+                        ?gpu_time,
+                        keep_gpu,
+                        "Selected sparse tracking backend for analysis chunk"
+                    );
+                    if !keep_gpu {
+                        return Ok((cpu_tracks, false));
+                    }
+                }
+                Ok((tracks, true))
+            })();
+            match result {
+                Ok((tracks, keep_gpu)) => {
+                    if !keep_gpu {
+                        self.device = None;
+                    }
+                    return Ok(tracks);
+                }
                 Err(error) => {
                     tracing::warn!(%error, "GPU sparse tracking failed; using scalar reference");
                     self.device = None;
@@ -110,12 +150,45 @@ fn dispatch(device: &mut Device, job: &TrackingJob) -> Result<Vec<u8>, String> {
 fn dispatch(device: &mut Device, job: &TrackingJob) -> Result<Vec<u8>, String> {
     let previous = device.upload(&job.previous)?;
     let current = device.upload(&job.current)?;
-    let derivatives = device.upload(&job.derivatives)?;
+    let derivatives = device.allocate(job.derivative_bytes)?;
     let levels = device.upload(&job.levels)?;
     let points = device.upload(&job.points)?;
     let output = device.allocate(job.output_bytes())?;
-    let patch = device.allocate(job.patch_bytes())?;
-    let gradients = device.allocate(job.gradient_bytes())?;
+    let mut preparation = Vec::with_capacity(job.preparation.len());
+    for step in &job.preparation {
+        use shrimply_vision::gpu::PreparationStep;
+        let (name, image, level, threads) = match *step {
+            PreparationStep::Pyramid {
+                previous: early,
+                level,
+                threads,
+            } => (
+                "vision_pyr_down",
+                if early { &previous } else { &current },
+                level,
+                threads,
+            ),
+            PreparationStep::Derivatives { level, threads } => {
+                ("vision_scharr", &previous, level, threads)
+            }
+        };
+        let mut arguments = device.arguments(name)?;
+        arguments
+            .set("image", &image.address().to_ne_bytes())?
+            .set("levels", &levels.address().to_ne_bytes())?
+            .set("level", &level.to_ne_bytes())?;
+        if matches!(step, PreparationStep::Derivatives { .. }) {
+            arguments.set("derivatives", &derivatives.address().to_ne_bytes())?;
+        }
+        // The shared plan orders dependencies; queue submissions retain their buffers.
+        preparation.push(unsafe {
+            device.dispatch(
+                arguments,
+                vec![image.clone(), levels.clone(), derivatives.clone()],
+                [threads, 1, 1],
+            )
+        }?);
+    }
     let mut arguments = device.arguments("vision_sparse_lk")?;
     for (name, buffer) in [
         ("previous", &previous),
@@ -124,8 +197,6 @@ fn dispatch(device: &mut Device, job: &TrackingJob) -> Result<Vec<u8>, String> {
         ("levels", &levels),
         ("points", &points),
         ("output", &output),
-        ("patch", &patch),
-        ("gradients", &gradients),
     ] {
         arguments.set(name, &buffer.address().to_ne_bytes())?;
     }
@@ -151,10 +222,8 @@ fn dispatch(device: &mut Device, job: &TrackingJob) -> Result<Vec<u8>, String> {
                 levels,
                 points,
                 output.clone(),
-                patch,
-                gradients,
             ],
-            [job.count as usize, 1, 1],
+            job.dispatch_extent(),
         )
     }?
     .wait()?;

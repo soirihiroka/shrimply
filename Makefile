@@ -420,7 +420,7 @@ font-system-bench: native-deps
 
 .PHONY: sanim-check
 sanim-check:
-	$(MAKE) -C sanim check
+	$(MAKE) -C sanim check CARGO="$(CARGO)"
 
 .PHONY: sanim-integration-check
 sanim-integration-check: native-deps

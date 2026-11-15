@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use glam::{Mat3, Vec2};
-#[cfg(not(target_os = "android"))]
 mod flow_klt;
 use shrimply_affine_l1_stabilization::video::VideoChunk;
 
@@ -52,15 +51,10 @@ pub fn analyze_chunk(
         VideoChunk::open(input, track_id, chunk_index, chunk_seconds, overlap_seconds)?;
     let width = capture.width;
     let height = capture.height;
-    let previous = capture
+    let mut previous = capture
         .read()?
         .ok_or("MeshFlow could not read the first frame")?;
-    #[cfg(not(target_os = "android"))]
-    let mut previous = previous;
-    #[cfg(target_os = "android")]
-    let mut estimator = shrimply_affine_l1_stabilization::flow::Estimator::new(&previous)?;
-    #[cfg(not(target_os = "android"))]
-    let mut tracker = shrimply_affine_l1_stabilization::sparse::Tracker::default();
+    let mut tracker = None;
     let grid_width = options.mesh_columns.clamp(2, 32) + 1;
     let grid_height = options.mesh_rows.clamp(2, 32) + 1;
     let vertices = grid_width as usize * grid_height as usize;
@@ -73,10 +67,7 @@ pub fn analyze_chunk(
         let Some(current) = capture.read()? else {
             break;
         };
-        #[cfg(not(target_os = "android"))]
         let tracks = flow_klt::tracked_features(&mut tracker, &previous, &current)?;
-        #[cfg(target_os = "android")]
-        let tracks = estimator.tracks(&current)?;
         let (transform, residual, scene_cut) = shrimply_math_geometry::stabilization_mesh_motion(
             &tracks,
             grid_width as usize,
@@ -106,10 +97,7 @@ pub fn analyze_chunk(
                 .collect(),
         );
         transforms.push(transform);
-        #[cfg(not(target_os = "android"))]
-        {
-            previous = current;
-        }
+        previous = current;
     }
     if paths.is_empty() {
         return Err("MeshFlow chunk contains no frames".to_string());

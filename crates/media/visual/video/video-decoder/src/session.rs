@@ -91,6 +91,7 @@ pub struct VideoDecoderSession {
     android_pool: Option<Arc<shrimply_visual_frame::android::AndroidFramePool>>,
     decoder_name: String,
     frame_index: usize,
+    frame_number_clock: Option<crate::math::FrameNumberClock>,
     pub(crate) last_decoded_position: Option<Time>,
     previous_decoded_position: Option<Time>,
     lookahead: Option<DecodedVisual>,
@@ -236,6 +237,7 @@ impl VideoDecoderSession {
             android_pool,
             decoder_name,
             frame_index: 0,
+            frame_number_clock: None,
             last_decoded_position: None,
             previous_decoded_position: None,
             lookahead: None,
@@ -290,50 +292,118 @@ impl VideoDecoderSession {
             }
         }
         let frame_rate = self.frame_rate();
-        let position = crate::math::frame_center_time(index, frame_rate)
+        let stream = self
+            .input
+            .stream(self.stream_index)
+            .expect("selected video stream");
+        let total_frames = if stream.frames() != 0 {
+            stream.frames()
+        } else {
+            crate::math::estimated_frame_count(
+                self.input.duration(),
+                stream.duration(),
+                self.stream_time_base,
+                frame_rate,
+            )
+            .ok_or("video decoder source frame count is out of range")?
+        };
+        let index = index.min(total_frames.max(0) as u64);
+        if total_frames <= 1 {
+            // VideoCapture deliberately skips native seeking for single-frame
+            // and unknown-length inputs; consume forward through the decoder.
+            let mut skip = index;
+            loop {
+                match self.next_frame(controls)? {
+                    NextFrame::Frame(frame) if skip == 0 => {
+                        return Ok(DecodeOutcome::Frame(Some(frame)));
+                    }
+                    NextFrame::Frame(_) => skip -= 1,
+                    NextFrame::EndOfStream => return Ok(DecodeOutcome::Frame(None)),
+                    NextFrame::Superseded => return Ok(DecodeOutcome::Superseded(None)),
+                }
+            }
+        }
+        let position = shrimply_math_core::time_from_frame(index, frame_rate)
             .ok_or("video decoder frame index is out of range")?;
-        let frame_duration = shrimply_math_core::time_from_frame(1, frame_rate)
-            .expect("frame rate validated by frame center calculation");
-        // VideoCapture starts 16 frames early and grows the preroll by 3/2
-        // when a demuxer lands after the needed random-access unit.
+        if self.frame_number_clock.is_none() {
+            if self.frame_index != 0 || self.seek_target.is_some() {
+                self.seek(Time::ZERO)?;
+            }
+            let first = match self.next_frame(controls)? {
+                NextFrame::Frame(frame) => frame,
+                NextFrame::EndOfStream => return Ok(DecodeOutcome::Frame(None)),
+                NextFrame::Superseded => return Ok(DecodeOutcome::Superseded(None)),
+            };
+            self.frame_number_clock = Some(
+                crate::math::FrameNumberClock::new(
+                    first.1.native(),
+                    frame_rate,
+                    self.stream_time_base,
+                    self.stream_start_time,
+                    unsafe { (*self.input.as_ptr()).start_time },
+                )
+                .ok_or("video decoder frame-number origin is out of range")?,
+            );
+            if index == 0 {
+                self.finish_exact(position);
+                return Ok(DecodeOutcome::Frame(Some(first)));
+            }
+        }
+        let clock = self
+            .frame_number_clock
+            .expect("frame-number origin initialized");
+        let target =
+            i64::try_from(index).expect("frame index validated by rational time conversion");
+        // OpenCV seeks 16 frames early, seeds the ordinal from the first decoded
+        // PTS, then counts decoded frames. This preserves variable frame rates.
         const INITIAL_PREROLL_FRAMES: u64 = 16;
         let mut preroll = INITIAL_PREROLL_FRAMES;
-        loop {
-            let seek_position = crate::math::frame_seek_time(index, preroll, frame_rate)
-                .expect("frame index validated by frame center calculation");
-            self.seek(seek_position)?;
-            self.active_request
-                .as_mut()
-                .expect("seek initialized request")
-                .target = position;
-            self.seek_target = Some(position);
-            let outcome = self.frame(position, None, controls, DecodeMode::Accurate);
-            let needs_preroll = match &outcome {
-                Err(_) => self.decoder_eof && self.last_decoded_position.is_none(),
-                Ok(DecodeOutcome::Frame(Some(frame))) => frame.0 > position,
-                _ => false,
+        'seek: loop {
+            let timestamp = clock
+                .seek_timestamp(index, preroll)
+                .ok_or("video decoder frame seek timestamp is out of range")?;
+            self.seek_timestamp(position, timestamp, true)?;
+            let outcome = 'read: {
+                let mut frame = match self.next_frame(controls)? {
+                    NextFrame::Frame(frame) => frame,
+                    NextFrame::EndOfStream if index > preroll => {
+                        preroll = preroll.saturating_add(preroll / 2);
+                        continue 'seek;
+                    }
+                    NextFrame::EndOfStream => break 'read DecodeOutcome::Frame(None),
+                    NextFrame::Superseded => break 'read DecodeOutcome::Superseded(None),
+                };
+                if index == 0 {
+                    break 'read DecodeOutcome::Frame(Some(frame));
+                }
+                let mut ordinal = if index == 1 {
+                    0
+                } else {
+                    clock
+                        .ordinal(frame.1.native())
+                        .ok_or("video decoder frame ordinal is out of range")?
+                };
+                if ordinal < 0 || ordinal > target - 1 {
+                    if index > preroll {
+                        preroll = preroll.saturating_add(preroll / 2);
+                        continue 'seek;
+                    }
+                    // VideoCapture stops retrying at stream start; its following
+                    // read consumes the frame after the already grabbed one.
+                    ordinal = target - 1;
+                }
+                while ordinal < target {
+                    frame = match self.next_frame(controls)? {
+                        NextFrame::Frame(frame) => frame,
+                        NextFrame::EndOfStream => break 'read DecodeOutcome::Frame(None),
+                        NextFrame::Superseded => break 'read DecodeOutcome::Superseded(None),
+                    };
+                    ordinal += 1;
+                }
+                DecodeOutcome::Frame(Some(frame))
             };
-            if needs_preroll && seek_position > Time::ZERO {
-                preroll = preroll.saturating_add(preroll / 2);
-                continue;
-            }
-            let outcome = outcome?;
-            if let DecodeOutcome::Frame(Some(frame)) = &outcome
-                && self
-                    .lookahead
-                    .as_ref()
-                    .is_some_and(|next| Arc::ptr_eq(&next.1, &frame.1))
-            {
-                self.lookahead = None;
-            }
-            return match outcome {
-                // Exact-time preview retains the final frame. Frame-number reads
-                // instead report end-of-stream once that frame's interval ends.
-                DecodeOutcome::Frame(frame) if self.decoder_eof => Ok(DecodeOutcome::Frame(
-                    cached_frame(frame.as_ref(), position, frame_duration),
-                )),
-                outcome => Ok(outcome),
-            };
+            self.finish_exact(position);
+            return Ok(outcome);
         }
     }
 
@@ -525,22 +595,40 @@ impl VideoDecoderSession {
     }
 
     pub(crate) fn seek(&mut self, position: Time) -> Result<(), String> {
-        shrimply_profiling::increment("Video decode / Seek");
-        let _measurement = shrimply_profiling::measure("Video decode / Seek time");
         let target_timestamp = source_time_to_stream_timestamp(
             position,
             self.stream_time_base,
             self.stream_start_time,
         );
+        self.seek_timestamp(position, target_timestamp, false)
+    }
+
+    fn seek_timestamp(
+        &mut self,
+        position: Time,
+        target_timestamp: i64,
+        frame_number: bool,
+    ) -> Result<(), String> {
+        shrimply_profiling::increment("Video decode / Seek");
+        let _measurement = shrimply_profiling::measure("Video decode / Seek time");
         let result = unsafe {
-            sys::avformat_seek_file(
-                self.input.as_mut_ptr(),
-                self.stream_index as i32,
-                i64::MIN,
-                target_timestamp,
-                target_timestamp,
-                sys::AVSEEK_FLAG_BACKWARD,
-            )
+            if frame_number {
+                sys::av_seek_frame(
+                    self.input.as_mut_ptr(),
+                    self.stream_index as i32,
+                    target_timestamp,
+                    sys::AVSEEK_FLAG_BACKWARD,
+                )
+            } else {
+                sys::avformat_seek_file(
+                    self.input.as_mut_ptr(),
+                    self.stream_index as i32,
+                    i64::MIN,
+                    target_timestamp,
+                    target_timestamp,
+                    sys::AVSEEK_FLAG_BACKWARD,
+                )
+            }
         };
         if result < 0 {
             return Err(format!(

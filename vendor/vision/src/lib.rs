@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+
 //! The stabilization subset of OpenCV, translated from its scalar reference routines.
 //! See README.md for source versions and the scope of the translation.
 

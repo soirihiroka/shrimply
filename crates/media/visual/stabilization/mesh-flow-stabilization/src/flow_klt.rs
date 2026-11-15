@@ -9,7 +9,7 @@ const OPTICAL_FLOW_PYRAMID_LEVELS: usize = 3;
 const OPTICAL_FLOW_ITERATIONS: usize = 20;
 const OPTICAL_FLOW_EPSILON: f64 = 0.01;
 pub(super) fn tracked_features(
-    tracker: &mut shrimply_affine_l1_stabilization::sparse::Tracker,
+    tracker: &mut Option<shrimply_affine_l1_stabilization::sparse::Tracker>,
     previous: &RgbaImage,
     current: &RgbaImage,
 ) -> Result<Vec<[f32; 6]>, String> {
@@ -28,6 +28,7 @@ pub(super) fn tracked_features(
         return Ok(Vec::new());
     }
     Ok(tracker
+        .get_or_insert_with(shrimply_affine_l1_stabilization::sparse::Tracker::default)
         .track(
             &previous_gray,
             &current_gray,

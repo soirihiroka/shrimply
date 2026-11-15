@@ -1,8 +1,8 @@
 // Source-derived OpenCV 4.13.0 modules/video/src/lkpyramid.cpp:189-760.
 // Copyright Intel Corporation 2000-2008, Willow Garage 2009,
 // OpenCV Foundation 2013. See ../LICENSE for the complete BSD notice.
-// One invocation owns a feature through every pyramid level. Image pyramids
-// and Scharr derivatives come from the same Rust preparation as the CPU path.
+// One cooperative workgroup owns a feature through every pyramid level. Image pyramids
+// and Scharr derivatives use the same integer filters as the CPU reference.
 import abi;
 
 // Vulkan preserves precise as NoContraction. Slang ignores it on CUDA/Metal;
@@ -66,111 +66,193 @@ bool vision_in_bounds(uint4 level, int2 point, uint window) {
   return all(point >= -int(window)) && point.x < int(level.x) && point.y < int(level.y);
 }
 
+// OpenCV pyrDown: Gaussian [1,4,6,4,1], BORDER_REFLECT_101 and
+// FixPtCast<int,uchar,8>. Store only the final rounded eight-bit value.
+static const int VISION_GAUSSIAN[5] = { 1, 4, 6, 4, 1 };
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
-void vision_sparse_lk(uint3 id : SV_DispatchThreadID,
+void vision_pyr_down(uint3 id : SV_DispatchThreadID, uniform uint *image,
+                     uniform uint4 *levels, uniform uint level) {
+  uint4 source = levels[level - 1];
+  uint4 target = levels[level];
+  if (id.x >= target.x * target.y) return;
+  int2 position = int2(id.x % target.x, id.x / target.x) * 2;
+  int sum = 0;
+  for (int y = 0; y < 5; ++y)
+    for (int x = 0; x < 5; ++x)
+      sum += VISION_GAUSSIAN[x] * VISION_GAUSSIAN[y] *
+             vision_pixel(image, source, position + int2(x - 2, y - 2));
+  image[target.z + id.x] = uint((sum + 128) >> 8);
+}
+
+// calcScharrDeriv, including reflected image borders; the sampler above
+// separately supplies the original zero-padded derivative border to LK.
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
+void vision_scharr(uint3 id : SV_DispatchThreadID, uniform uint *image,
+                    uniform int2 *derivatives, uniform uint4 *levels,
+                    uniform uint level) {
+  uint4 size = levels[level];
+  if (id.x >= size.x * size.y) return;
+  int2 p = int2(id.x % size.x, id.x / size.x);
+  int dx = 3 * (vision_pixel(image, size, p + int2(1, -1)) +
+                vision_pixel(image, size, p + int2(1, 1)) -
+                vision_pixel(image, size, p + int2(-1, -1)) -
+                vision_pixel(image, size, p + int2(-1, 1))) +
+           10 * (vision_pixel(image, size, p + int2(1, 0)) -
+                 vision_pixel(image, size, p + int2(-1, 0)));
+  int dy = 3 * (vision_pixel(image, size, p + int2(-1, 1)) +
+                vision_pixel(image, size, p + int2(1, 1)) -
+                vision_pixel(image, size, p + int2(-1, -1)) -
+                vision_pixel(image, size, p + int2(1, -1))) +
+           10 * (vision_pixel(image, size, p + int2(0, 1)) -
+                 vision_pixel(image, size, p + int2(0, -1)));
+  derivatives[size.z + id.x] = int2(dx, dy);
+}
+
+// OpenCV contrib 4.13 cudaoptflow/src/cuda/pyrlk.cu:sparseKernel maps one
+// workgroup to each feature and cooperatively loads its window. Preserve the
+// scalar reference's row-major reductions while parallelizing memory access.
+static const uint VISION_GROUP_SIZE = 64;
+static const uint VISION_MAX_WINDOW = 20;
+static const uint VISION_MAX_AREA = VISION_MAX_WINDOW * VISION_MAX_WINDOW;
+groupshared int vision_patch[VISION_MAX_AREA];
+groupshared int2 vision_gradients[VISION_MAX_AREA];
+groupshared int vision_differences[VISION_MAX_AREA];
+groupshared float2 vision_tracked;
+groupshared float2 vision_next;
+groupshared float2 vision_previous_delta;
+groupshared float4 vision_covariance;
+groupshared float vision_error;
+groupshared uint vision_valid;
+groupshared uint vision_usable;
+groupshared uint vision_stop;
+
+[shader("compute")][numthreads(VISION_GROUP_SIZE, 1, 1)]
+void vision_sparse_lk(uint3 group : SV_GroupID, uint lane : SV_GroupIndex,
                       uniform uint *previous, uniform uint *current,
                       uniform int2 *derivatives, uniform uint4 *levels,
                       uniform float2 *points, uniform float4 *output,
-                      uniform int *patch, uniform int2 *gradients,
                       uniform uint count, uniform uint level_count,
                       uniform uint window, uniform uint iterations,
                       uniform float epsilon_squared, uniform float minimum_eigenvalue) {
-  uint index = id.x;
-  if (index >= count) return;
+  uint index = group.x;
+  if (index >= count || window > VISION_MAX_WINDOW) return;
   uint area = window * window;
-  uint scratch = index * area;
   float half_window = float(window - 1) * 0.5f;
   float2 original = points[index];
-  VISION_PRECISE float2 tracked = original;
-  bool valid = true;
-  float error = 0;
+  if (lane == 0) {
+    vision_tracked = original;
+    vision_valid = 1;
+    vision_error = 0;
+  }
+  GroupMemoryBarrierWithGroupSync();
   for (int level_index = int(level_count) - 1; level_index >= 0; --level_index) {
     uint4 level = levels[level_index];
     float scale = 1.0f / float(1u << uint(level_index));
     VISION_PRECISE float2 old_point = original * scale;
-    tracked = uint(level_index) == level_count - 1 ? old_point : tracked * 2.0f;
+    if (lane == 0)
+      vision_tracked = uint(level_index) == level_count - 1 ? old_point : vision_tracked * 2.0f;
     old_point -= half_window;
     int2 old_position;
     int4 old_weights = vision_weights(old_point, old_position);
+    GroupMemoryBarrierWithGroupSync();
     if (!vision_in_bounds(level, old_position, window)) {
-      if (level_index == 0) { valid = false; error = 0; }
+      if (lane == 0 && level_index == 0) { vision_valid = 0; vision_error = 0; }
       continue;
     }
-    VISION_PRECISE float a11 = 0, a12 = 0, a22 = 0;
-    for (uint y = 0; y < window; ++y) {
-      for (uint x = 0; x < window; ++x) {
-        uint pixel_index = scratch + y * window + x;
-        int2 p = old_position + int2(x, y);
-        patch[pixel_index] = vision_interpolate(previous, level, p, old_weights);
-        int2 gradient = (vision_derivative(derivatives, level, p) * old_weights.x +
-                         vision_derivative(derivatives, level, p + int2(1, 0)) * old_weights.y +
-                         vision_derivative(derivatives, level, p + int2(0, 1)) * old_weights.z +
-                         vision_derivative(derivatives, level, p + int2(1, 1)) * old_weights.w +
-                         (1 << (VISION_WEIGHT_BITS - 1))) >> VISION_WEIGHT_BITS;
-        gradients[pixel_index] = gradient;
+    for (uint pixel_index = lane; pixel_index < area; pixel_index += VISION_GROUP_SIZE) {
+      int2 p = old_position + int2(pixel_index % window, pixel_index / window);
+      vision_patch[pixel_index] = vision_interpolate(previous, level, p, old_weights);
+      vision_gradients[pixel_index] =
+          (vision_derivative(derivatives, level, p) * old_weights.x +
+           vision_derivative(derivatives, level, p + int2(1, 0)) * old_weights.y +
+           vision_derivative(derivatives, level, p + int2(0, 1)) * old_weights.z +
+           vision_derivative(derivatives, level, p + int2(1, 1)) * old_weights.w +
+           (1 << (VISION_WEIGHT_BITS - 1))) >> VISION_WEIGHT_BITS;
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (lane == 0) {
+      VISION_PRECISE float a11 = 0, a12 = 0, a22 = 0;
+      for (uint pixel_index = 0; pixel_index < area; ++pixel_index) {
+        int2 gradient = vision_gradients[pixel_index];
         a11 += float(gradient.x * gradient.x);
         a12 += float(gradient.x * gradient.y);
         a22 += float(gradient.y * gradient.y);
       }
+      a11 *= VISION_COVARIANCE_SCALE;
+      a12 *= VISION_COVARIANCE_SCALE;
+      a22 *= VISION_COVARIANCE_SCALE;
+      VISION_PRECISE float determinant = a11 * a22 - a12 * a12;
+      VISION_PRECISE float minimum = (a22 + a11 - sqrt((a11 - a22) * (a11 - a22) + 4.0f * a12 * a12)) /
+                                      float(2 * area);
+      vision_usable = uint(minimum >= minimum_eigenvalue && determinant >= VISION_FLOAT_EPSILON);
+      if (vision_usable == 0 && level_index == 0) vision_valid = 0;
+      vision_covariance = float4(a11, a12, a22, 1.0f / determinant);
+      vision_next = vision_tracked - half_window;
+      vision_previous_delta = 0;
     }
-    a11 *= VISION_COVARIANCE_SCALE;
-    a12 *= VISION_COVARIANCE_SCALE;
-    a22 *= VISION_COVARIANCE_SCALE;
-    VISION_PRECISE float determinant = a11 * a22 - a12 * a12;
-    VISION_PRECISE float minimum = (a22 + a11 - sqrt((a11 - a22) * (a11 - a22) + 4.0f * a12 * a12)) /
-                            float(2 * area);
-    if (minimum < minimum_eigenvalue || determinant < VISION_FLOAT_EPSILON) {
-      if (level_index == 0) valid = false;
-      continue;
-    }
-    float inverse = 1.0f / determinant;
-    VISION_PRECISE float2 next_point = tracked - half_window;
-    float2 previous_delta = 0;
+    GroupMemoryBarrierWithGroupSync();
+    if (vision_usable == 0) continue;
     for (uint iteration = 0; iteration < iterations; ++iteration) {
       int2 next_position;
-      int4 next_weights = vision_weights(next_point, next_position);
+      int4 next_weights = vision_weights(vision_next, next_position);
       if (!vision_in_bounds(level, next_position, window)) {
-        if (level_index == 0) valid = false;
+        if (lane == 0 && level_index == 0) vision_valid = 0;
         break;
       }
-      VISION_PRECISE float b1 = 0, b2 = 0;
-      for (uint y = 0; y < window; ++y) {
-        for (uint x = 0; x < window; ++x) {
-          uint pixel_index = scratch + y * window + x;
-          int difference = vision_interpolate(current, level, next_position + int2(x, y), next_weights) - patch[pixel_index];
-          int2 gradient = gradients[pixel_index];
+      for (uint pixel_index = lane; pixel_index < area; pixel_index += VISION_GROUP_SIZE) {
+        int2 p = next_position + int2(pixel_index % window, pixel_index / window);
+        vision_differences[pixel_index] = vision_interpolate(current, level, p, next_weights) - vision_patch[pixel_index];
+      }
+      GroupMemoryBarrierWithGroupSync();
+      if (lane == 0) {
+        VISION_PRECISE float b1 = 0, b2 = 0;
+        for (uint pixel_index = 0; pixel_index < area; ++pixel_index) {
+          int difference = vision_differences[pixel_index];
+          int2 gradient = vision_gradients[pixel_index];
           b1 += float(difference * gradient.x);
           b2 += float(difference * gradient.y);
         }
-      }
-      b1 *= VISION_COVARIANCE_SCALE;
-      b2 *= VISION_COVARIANCE_SCALE;
-      VISION_PRECISE float2 delta = float2((a12 * b2 - a22 * b1) * inverse,
-                                    (a12 * b1 - a11 * b2) * inverse);
-      next_point += delta;
-      tracked = next_point + half_window;
-      if (dot(delta, delta) <= epsilon_squared) break;
-      if (iteration > 0 && all(abs(delta + previous_delta) < 0.01f)) {
-        tracked -= delta * 0.5f;
-        break;
-      }
-      previous_delta = delta;
-    }
-    if (valid && level_index == 0) {
-      int2 next_position;
-      int4 next_weights = vision_weights(tracked - half_window, next_position);
-      if (!vision_in_bounds(level, next_position, window)) { valid = false; continue; }
-      error = 0;
-      for (uint y = 0; y < window; ++y) {
-        for (uint x = 0; x < window; ++x) {
-          uint pixel_index = scratch + y * window + x;
-          error += float(abs(vision_interpolate(current, level, next_position + int2(x, y), next_weights) - patch[pixel_index]));
+        b1 *= VISION_COVARIANCE_SCALE;
+        b2 *= VISION_COVARIANCE_SCALE;
+        float4 a = vision_covariance;
+        VISION_PRECISE float2 delta = float2((a.y * b2 - a.z * b1) * a.w,
+                                           (a.y * b1 - a.x * b2) * a.w);
+        vision_next += delta;
+        vision_tracked = vision_next + half_window;
+        vision_stop = uint(dot(delta, delta) <= epsilon_squared);
+        if (vision_stop == 0 && iteration > 0 && all(abs(delta + vision_previous_delta) < 0.01f)) {
+          vision_tracked -= delta * 0.5f;
+          vision_stop = 1;
         }
+        vision_previous_delta = delta;
       }
-      error /= float((1 << VISION_INTENSITY_BITS) * area);
+      GroupMemoryBarrierWithGroupSync();
+      if (vision_stop != 0) break;
     }
+    // All lanes observe the same point/status before deciding whether to compute error.
+    GroupMemoryBarrierWithGroupSync();
+    if (vision_valid != 0 && level_index == 0) {
+      int2 next_position;
+      int4 next_weights = vision_weights(vision_tracked - half_window, next_position);
+      if (!vision_in_bounds(level, next_position, window)) {
+        if (lane == 0) vision_valid = 0;
+        continue;
+      }
+      for (uint pixel_index = lane; pixel_index < area; pixel_index += VISION_GROUP_SIZE) {
+        int2 p = next_position + int2(pixel_index % window, pixel_index / window);
+        vision_differences[pixel_index] = abs(vision_interpolate(current, level, p, next_weights) - vision_patch[pixel_index]);
+      }
+      GroupMemoryBarrierWithGroupSync();
+      if (lane == 0) {
+        float error = 0;
+        for (uint pixel_index = 0; pixel_index < area; ++pixel_index)
+          error += float(vision_differences[pixel_index]);
+        vision_error = error / float((1 << VISION_INTENSITY_BITS) * area);
+      }
+    }
+    GroupMemoryBarrierWithGroupSync();
   }
-  output[index] = float4(tracked, error, valid ? 1.0f : 0.0f);
+  if (lane == 0) output[index] = float4(vision_tracked, vision_error, float(vision_valid));
 }
 
 #undef VISION_PRECISE

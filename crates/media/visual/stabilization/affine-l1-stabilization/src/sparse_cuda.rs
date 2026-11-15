@@ -46,21 +46,50 @@ impl Device {
         };
         let previous = upload(&job.previous)?;
         let current = upload(&job.current)?;
-        let derivatives = upload(&job.derivatives)?;
+        let derivatives = allocate(job.derivative_bytes)?;
         let levels = upload(&job.levels)?;
         let points = upload(&job.points)?;
         let output = allocate(job.output_bytes())?;
-        let patch = allocate(job.patch_bytes())?;
-        let gradients = allocate(job.gradient_bytes())?;
+        for step in &job.preparation {
+            use shrimply_vision::gpu::{PREPARATION_GROUP_SIZE, PreparationStep};
+            let threads = match *step {
+                PreparationStep::Pyramid { threads, .. }
+                | PreparationStep::Derivatives { threads, .. } => threads as u32,
+            };
+            let config = LaunchConfig {
+                grid_dim: (threads.div_ceil(PREPARATION_GROUP_SIZE), 1, 1),
+                block_dim: (PREPARATION_GROUP_SIZE, 1, 1),
+                shared_mem_bytes: 0,
+            };
+            // Each step uses this same stream, so image writes precede dependent reads.
+            unsafe {
+                match *step {
+                    PreparationStep::Pyramid { previous: early, level, .. } => {
+                        let image = if early { &previous } else { &current };
+                        cuda_launch! { kernel: vision_pyr_down, stream: &self.stream, module: &self.module,
+                            config: config, args: [image.cu_deviceptr(), levels.cu_deviceptr(), level] }
+                    }
+                    PreparationStep::Derivatives { level, .. } => {
+                        cuda_launch! { kernel: vision_scharr, stream: &self.stream, module: &self.module,
+                            config: config, args: [previous.cu_deviceptr(), derivatives.cu_deviceptr(),
+                                levels.cu_deviceptr(), level] }
+                    }
+                }
+            }.map_err(|error| error.to_string())?;
+        }
         // The Slang kernel uses raw pointers (not Rust slice pointer/length pairs).
         // All allocations remain alive until the synchronized result download.
         unsafe {
             cuda_launch! {
                 kernel: vision_sparse_lk, stream: &self.stream, module: &self.module,
-                config: LaunchConfig::for_num_elems(job.count),
+                config: LaunchConfig {
+                    grid_dim: (job.count, 1, 1),
+                    block_dim: (shrimply_vision::gpu::WORKGROUP_SIZE, 1, 1),
+                    shared_mem_bytes: 0,
+                },
                 args: [previous.cu_deviceptr(), current.cu_deviceptr(), derivatives.cu_deviceptr(),
                     levels.cu_deviceptr(), points.cu_deviceptr(), output.cu_deviceptr(),
-                    patch.cu_deviceptr(), gradients.cu_deviceptr(), job.count, job.level_count,
+                    job.count, job.level_count,
                     job.window, job.iterations, job.epsilon_squared, job.minimum_eigenvalue]
             }
         }

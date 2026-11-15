@@ -67,7 +67,7 @@ def source(cache, name, url, digest):
 
 
 def build_rubberband(sources, root, prefix, compiler, toolchain, profile, ndk):
-    identity = hashlib.sha256((RUBBERBAND_SHA256 + profile).encode() + (ndk / "source.properties").read_bytes()).hexdigest()
+    identity = hashlib.sha256(Path(__file__).read_bytes() + (RUBBERBAND_SHA256 + profile).encode() + (ndk / "source.properties").read_bytes()).hexdigest()
     stamp = root / "rubberband.sha256"
     library = prefix / "lib/librubberband.a"
     if stamp.exists() and stamp.read_text() == identity and library.is_file():

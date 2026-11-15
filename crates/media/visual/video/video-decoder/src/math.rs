@@ -79,20 +79,137 @@ pub(crate) fn display_rotation(data: &[u8]) -> Option<i32> {
         .then(|| (-(angle.round_ties_even() as i32)).rem_euclid(360))
 }
 
-/// OpenCV's frame-number seek rounds PTS to the nearest nominal frame. Request
-/// its interval midpoint so a container's rounded time base does not select
-/// the preceding frame when the nominal boundary falls just before its PTS.
-pub(crate) fn frame_center_time(frame: u64, frame_rate: Fraction) -> Option<Time> {
-    let start = shrimply_math_core::time_from_frame(frame, frame_rate)?;
-    let duration = shrimply_math_core::time_from_frame(1, frame_rate)?;
-    Some(Time {
-        seconds: start.seconds + duration.seconds / Fraction::from(2_u64),
-    })
+/// Frame-number timestamp conventions from OpenCV's cap_ffmpeg_impl.hpp.
+/// Display timestamps are normalized once, then mapped with trunc(fps * sec + 0.5).
+#[derive(Clone, Copy)]
+pub(crate) struct FrameNumberClock {
+    rate: Fraction,
+    time_base: ffmpeg::Rational,
+    stream_start_time: i64,
+    timestamp_offset: i64,
+    first_frame_number: i64,
 }
 
-/// VideoCapture fills forward from a preroll frame to recover random-access units.
-pub(crate) fn frame_seek_time(frame: u64, preroll: u64, frame_rate: Fraction) -> Option<Time> {
-    shrimply_math_core::time_from_frame(frame.saturating_sub(preroll), frame_rate)
+const MICROSECOND_TIME_BASE: sys::AVRational = sys::AVRational {
+    num: 1,
+    den: sys::AV_TIME_BASE,
+};
+
+impl FrameNumberClock {
+    pub(crate) fn new(
+        first: &ffmpeg::frame::Video,
+        rate: Fraction,
+        time_base: ffmpeg::Rational,
+        stream_start_time: i64,
+        container_start_time: i64,
+    ) -> Option<Self> {
+        let timestamp = first.pts().unwrap_or_else(|| first.packet().dts);
+        if timestamp == sys::AV_NOPTS_VALUE {
+            return None;
+        }
+        let mut minimum_start = container_start_time;
+        if minimum_start == sys::AV_NOPTS_VALUE {
+            minimum_start = i64::MAX;
+        }
+        if stream_start_time != sys::AV_NOPTS_VALUE {
+            minimum_start = minimum_start.min(unsafe {
+                sys::av_rescale_q(stream_start_time, time_base.into(), MICROSECOND_TIME_BASE)
+            });
+        }
+        minimum_start = minimum_start
+            .min(unsafe { sys::av_rescale_q(timestamp, time_base.into(), MICROSECOND_TIME_BASE) });
+        let mut clock = Self {
+            rate,
+            time_base,
+            stream_start_time,
+            timestamp_offset: minimum_start.min(0).checked_neg()?,
+            first_frame_number: 0,
+        };
+        clock.first_frame_number = clock.frame_number(first)?;
+        Some(clock)
+    }
+
+    fn frame_number(&self, frame: &ffmpeg::frame::Video) -> Option<i64> {
+        let timestamp = frame.pts().unwrap_or_else(|| frame.packet().dts);
+        if timestamp == sys::AV_NOPTS_VALUE {
+            return None;
+        }
+        let timestamp =
+            unsafe { sys::av_rescale_q(timestamp, self.time_base.into(), MICROSECOND_TIME_BASE) }
+                .checked_add(self.timestamp_offset)?;
+        let mut timestamp =
+            unsafe { sys::av_rescale_q(timestamp, MICROSECOND_TIME_BASE, self.time_base.into()) };
+        if self.timestamp_offset == 0 && self.stream_start_time != sys::AV_NOPTS_VALUE {
+            timestamp = timestamp.checked_sub(self.stream_start_time)?;
+        }
+        let time = Time::from_fraction(
+            timestamp.checked_mul(i64::from(self.time_base.numerator()))?,
+            i64::from(self.time_base.denominator()),
+        );
+        rounded_tick(time, self.rate)
+    }
+
+    pub(crate) fn ordinal(&self, frame: &ffmpeg::frame::Video) -> Option<i64> {
+        self.frame_number(frame)?
+            .checked_sub(self.first_frame_number)
+    }
+
+    pub(crate) fn seek_timestamp(&self, index: u64, preroll: u64) -> Option<i64> {
+        let position =
+            shrimply_math_core::time_from_frame(index.saturating_sub(preroll), self.rate)?;
+        let ticks = rounded_tick(
+            position,
+            shrimply_math_core::fraction_new(
+                i64::from(self.time_base.denominator()),
+                i64::from(self.time_base.numerator()),
+            ),
+        )?;
+        let offset = unsafe {
+            sys::av_rescale_q(
+                self.timestamp_offset,
+                MICROSECOND_TIME_BASE,
+                self.time_base.into(),
+            )
+        };
+        let start = if self.stream_start_time == sys::AV_NOPTS_VALUE {
+            0
+        } else {
+            self.stream_start_time
+        };
+        start.checked_add(ticks)?.checked_sub(offset)
+    }
+}
+
+/// OpenCV get_total_frames uses stream nb_frames or rounded duration * FPS.
+pub(crate) fn estimated_frame_count(
+    container_duration: i64,
+    stream_duration: i64,
+    time_base: ffmpeg::Rational,
+    rate: Fraction,
+) -> Option<i64> {
+    const MINIMUM_DURATION_MICROSECONDS: i64 = 25;
+    let duration = if container_duration >= MINIMUM_DURATION_MICROSECONDS {
+        Time::from_fraction(container_duration, i64::from(sys::AV_TIME_BASE))
+    } else if stream_duration > 0 {
+        Time::from_fraction(
+            stream_duration.checked_mul(i64::from(time_base.numerator()))?,
+            i64::from(time_base.denominator()),
+        )
+    } else {
+        Time::ZERO
+    };
+    rounded_tick(duration, rate)
+}
+
+fn rounded_tick(time: Time, rate: Fraction) -> Option<i64> {
+    let (time_numerator, time_denominator) = fraction_ratio_i128(time.seconds)?;
+    let (rate_numerator, rate_denominator) = fraction_ratio_i128(rate)?;
+    let denominator = time_denominator.checked_mul(rate_denominator)?;
+    let numerator = time_numerator
+        .checked_mul(rate_numerator)?
+        .checked_mul(2)?
+        .checked_add(denominator)?;
+    i64::try_from(numerator / denominator.checked_mul(2)?).ok()
 }
 
 /// OpenCV get_fps accepts a metadata rate at or above eps_zero = 0.000025.

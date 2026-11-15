@@ -3,6 +3,7 @@ use objc2::sel;
 use objc2_app_kit::{NSImage, NSMenu, NSMenuItem};
 use objc2_foundation::{NSData, NSString, ns_string};
 use shrimply_components_skia::{Color, Rect, icon};
+use shrimply_editor_state::player_state;
 use shrimply_timeline_skia::{
     TrackAddAction, TrackAddMenuEntry, TrackAddSettings, scene::TrackAddMenuRequest,
     selection_state,

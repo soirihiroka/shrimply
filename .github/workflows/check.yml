@@ -98,9 +98,26 @@ jobs:
             ~/.cargo/git
             ~/.gradle/caches
             ~/.gradle/wrapper
+          key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'packaging/android-*.py', 'packaging/*.patch', 'android/**/*.kts', 'android/gradle/wrapper/gradle-wrapper.properties', '.github/workflows/check.yml') }}
+          restore-keys: |
+            android-release-v1-${{ runner.os }}-
+      - uses: actions/cache/restore@v6
+        id: android-native-cache
+        with:
+          path: |
             target/android-native/arm64-v8a/release/install
             target/android-native/arm64-v8a/release/*.sha256
-          key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'packaging/android-*.py', 'packaging/*.patch', 'android/**/*.kts', 'android/gradle/wrapper/gradle-wrapper.properties', '.github/workflows/check.yml') }}
+          key: android-native-v1-${{ runner.os }}-arm64-v8a-release-${{ hashFiles('Cargo.lock', 'Makefile', 'packaging/android-*.py', 'packaging/*.patch') }}
+          restore-keys: android-native-v1-${{ runner.os }}-arm64-v8a-release-
+      - name: Build Android native dependencies
+        run: make android-pdf-deps ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+      - uses: actions/cache/save@v6
+        if: steps.android-native-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            target/android-native/arm64-v8a/release/install
+            target/android-native/arm64-v8a/release/*.sha256
+          key: ${{ steps.android-native-cache.outputs.cache-primary-key }}
       - name: Build and check the release APK
         run: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
       - name: Sign and verify the release APK

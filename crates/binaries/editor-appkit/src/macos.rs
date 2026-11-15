@@ -393,7 +393,8 @@ define_class!(
 
         #[unsafe(method(importMedia:))]
         fn import_media(&self, _sender: &NSObject) {
-            if let Err(error) = media::choose_files(&self.ivars().imports, self.ivars().session.get().expect("project loaded"), &[], self.mtm()) { self.show_error(&error); }
+            let session = self.ivars().session.get().expect("project loaded");
+            if let Err(error) = media::choose_files(&self.ivars().imports, session, &[], player_state::current_time(&session.player_state), self.mtm()) { self.show_error(&error); }
         }
 
         #[unsafe(method(undo:))]
