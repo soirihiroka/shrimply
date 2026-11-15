@@ -30,6 +30,11 @@ on:
         description: Run debug checks without packaging or publishing a release
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      check_only:
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -139,6 +144,10 @@ jobs:
 
       - name: Check AppKit debug build
         if: inputs.check_only
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
         run: make appkit-check fmt source-size-check
 
       - name: Save macOS application cache

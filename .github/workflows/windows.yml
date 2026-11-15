@@ -29,6 +29,11 @@ on:
         description: Run debug checks without packaging or publishing a release
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      check_only:
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -268,6 +273,10 @@ jobs:
       - name: Check Windows debug build
         if: inputs.check_only
         shell: powershell
+        env:
+          CARGO_BUILD_JOBS: "2"
+          CARGO_INCREMENTAL: "0"
+          CARGO_PROFILE_DEV_DEBUG: "0"
         run: make windows-check
 
       - name: Upload portable ZIP

@@ -1,0 +1,113 @@
+name: Debug checks
+
+on:
+  push:
+    branches: [android]
+  pull_request:
+    branches: [main, android]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: debug-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TZ: UTC
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Free space for native build dependencies
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+            extra-substituters = https://cache.nixos-cuda.org https://shrimply.cachix.org
+            extra-trusted-public-keys = cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M= shrimply.cachix.org-1:cAgdyBbGPgJZMWUP4PAQPVENeCYtGT7OPPkocvo+uuA=
+      - name: Check shared Rust, GTK, and Qt
+        run: nix develop --accept-flake-config --command make check
+
+  macos:
+    permissions:
+      actions: write
+      contents: write
+    uses: ./.github/workflows/macos.yml
+    with:
+      check_only: true
+
+  windows:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/windows.yml
+    with:
+      check_only: true
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Free space for the Android build
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            autoconf automake build-essential clang cmake curl gettext \
+            libclang-dev libtool ninja-build patch pkg-config ripgrep spirv-tools
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: 0.12.12
+          enable-cache: true
+      - name: Install Meson
+        run: |
+          uv tool install meson==1.11.2
+          echo "$(uv tool dir --bin)" >> "${GITHUB_PATH}"
+      - name: Install Rust and Android SDK components
+        run: |
+          rustup show
+          echo "JAVA_HOME=${JAVA_HOME_21_X64}" >> "${GITHUB_ENV}"
+          echo "${JAVA_HOME_21_X64}/bin" >> "${GITHUB_PATH}"
+          sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358"
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            target/android-native/arm64-v8a/debug/install
+            target/android-native/arm64-v8a/debug/*.sha256
+          key: android-debug-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'packaging/android-*.py', 'packaging/*.patch', 'android/**/*.kts', 'android/gradle/wrapper/gradle-wrapper.properties', '.github/workflows/check.yml') }}
+      - name: Build and check the debug APK
+        run: make android-check ANDROID_PROFILE=debug ANDROID_SDK_ROOT="${ANDROID_HOME}"
+      - name: Upload debug APK and lint report
+        uses: actions/upload-artifact@v6
+        with:
+          name: shrimply-android-debug
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/reports/lint-results-debug.html
+          if-no-files-found: error

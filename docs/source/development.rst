@@ -1,6 +1,16 @@
 Development
 ===========
 
+Debug CI
+--------
+
+The ``Debug checks`` workflow runs on pushes to ``android``, pull requests into
+``main`` or ``android``, and manual dispatch. It checks Linux GTK/Qt, macOS
+AppKit, Windows Qt, and the Android debug APK through the existing Makefile
+targets. The Android APK and lint report are available as workflow artifacts.
+These checks do not build or publish releases. Rust debug symbols and
+incremental compilation are disabled in CI to fit hosted runners.
+
 Requirements
 ------------
 
