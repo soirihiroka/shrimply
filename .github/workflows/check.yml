@@ -88,9 +88,10 @@ jobs:
       - name: Install Rust and Android SDK components
         run: |
           rustup show
-          echo "JAVA_HOME=${JAVA_HOME_21_X64}" >> "${GITHUB_ENV}"
-          echo "${JAVA_HOME_21_X64}/bin" >> "${GITHUB_PATH}"
-          sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358"
+          export JAVA_HOME="${JAVA_HOME_21_X64}"
+          echo "JAVA_HOME=${JAVA_HOME}" >> "${GITHUB_ENV}"
+          echo "${JAVA_HOME}/bin" >> "${GITHUB_PATH}"
+          "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37" "build-tools;37.0.0" "ndk;28.2.13676358"
       - uses: actions/cache@v6
         with:
           path: |
