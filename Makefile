@@ -354,6 +354,7 @@ windows-build windows-dev:
 	@exit 1
 endif
 
+windows-check: SHELL := bash.exe
 windows-check: override CUDA_IMAGE_FORMAT = ptx
 windows-check: override CUDA_PTX_TARGET = compute_50
 windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
