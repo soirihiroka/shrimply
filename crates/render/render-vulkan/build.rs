@@ -528,6 +528,7 @@ fn prepare_object_shader(output: &std::path::Path, source: &str) -> String {
     let tool = std::env::var_os("SPIRV_OPT").unwrap_or_else(|| "spirv-opt".into());
     let status = Command::new(tool)
         .args([
+            "--scalar-block-layout",
             "--fold-spec-const-op-composite",
             "--eliminate-dead-branches",
             "--eliminate-dead-code-aggressive",
