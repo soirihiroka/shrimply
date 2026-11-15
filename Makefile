@@ -354,7 +354,6 @@ windows-build windows-dev:
 	@exit 1
 endif
 
-windows-check: SHELL := bash.exe
 windows-check: override CUDA_IMAGE_FORMAT = ptx
 windows-check: override CUDA_PTX_TARGET = compute_50
 windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
@@ -362,10 +361,13 @@ windows-check: windows-native-deps fmt-check source-size-check cuda-artifacts
 	$(BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins -- -D warnings
 
 ifeq ($(HOST_OS),Windows_NT)
-windows-release: SHELL := cmd.exe
-windows-release: .SHELLFLAGS := /d /c
-windows-package: SHELL := cmd.exe
-windows-package: .SHELLFLAGS := /d /c
+# GNU Make tracks Windows shell mode globally, so choose it once per invocation.
+ifneq ($(filter windows-release windows-package,$(MAKECMDGOALS)),)
+SHELL := cmd.exe
+.SHELLFLAGS := /d /c
+else
+SHELL := bash.exe
+endif
 endif
 
 windows-release: override CUDA_IMAGE_FORMAT = ptx
@@ -749,7 +751,7 @@ android-host-check:
 	$(BUILD_ENV) $(CARGO) clippy -p shrimply-timeline-paint-skia -p shrimply-editor-android -- -D warnings
 
 android-check: android-build
-	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-editor-android -p shrimply-timeline-paint-skia --target $(ANDROID_TARGET) --no-deps -- -D warnings
+	$(ANDROID_ENV) $(ANDROID_MEDIA_ENV) PKG_CONFIG_ALL_STATIC=1 $(CARGO) clippy -p shrimply-editor-android -p shrimply-timeline-paint-skia --target $(ANDROID_TARGET) $(if $(filter release,$(ANDROID_PROFILE)),--release) --no-deps -- -D warnings
 	ANDROID_HOME="$(ANDROID_SDK_ROOT)" "$(ANDROID_GRADLE)" -p android -PnativeAbi=$(ANDROID_ABI) lint$(if $(filter release,$(ANDROID_PROFILE)),Release,Debug)
 	python3 packaging/android-check.py android/app/build/outputs/apk/$(ANDROID_PROFILE)/app-$(ANDROID_PROFILE)$(if $(and $(filter release,$(ANDROID_PROFILE)),$(filter-out true,$(ANDROID_DEV_SIGN))),-unsigned).apk "$(ANDROID_TOOLCHAIN)/bin/llvm-readelf" "$(ANDROID_SDK_ROOT)"
 

@@ -1,4 +1,4 @@
-name: Debug checks
+name: CI checks
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: debug-checks-${{ github.ref }}
+  group: ci-checks-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -62,7 +62,6 @@ jobs:
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_INCREMENTAL: "0"
-      CARGO_PROFILE_DEV_DEBUG: "0"
       GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx2g
     steps:
       - uses: actions/checkout@v7
@@ -99,16 +98,44 @@ jobs:
             ~/.cargo/git
             ~/.gradle/caches
             ~/.gradle/wrapper
-            target/android-native/arm64-v8a/debug/install
-            target/android-native/arm64-v8a/debug/*.sha256
-          key: android-debug-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'packaging/android-*.py', 'packaging/*.patch', 'android/**/*.kts', 'android/gradle/wrapper/gradle-wrapper.properties', '.github/workflows/check.yml') }}
-      - name: Build and check the debug APK
-        run: make android-check ANDROID_PROFILE=debug ANDROID_SDK_ROOT="${ANDROID_HOME}"
-      - name: Upload debug APK and lint report
+            target/android-native/arm64-v8a/release/install
+            target/android-native/arm64-v8a/release/*.sha256
+          key: android-release-v1-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Makefile', 'rust-toolchain.toml', 'packaging/android-*.py', 'packaging/*.patch', 'android/**/*.kts', 'android/gradle/wrapper/gradle-wrapper.properties', '.github/workflows/check.yml') }}
+      - name: Build and check the release APK
+        run: make android-check ANDROID_PROFILE=release ANDROID_SDK_ROOT="${ANDROID_HOME}"
+      - name: Sign and verify the release APK
+        if: github.event_name != 'pull_request'
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+        run: |
+          : "${ANDROID_RELEASE_KEYSTORE_BASE64:?Missing Android release keystore}"
+          : "${ANDROID_RELEASE_KEYSTORE_PASSWORD:?Missing Android release keystore password}"
+          umask 077
+          keystore="${RUNNER_TEMP}/shrimply-android-release.p12"
+          trap 'rm -f "${keystore}"' EXIT
+          printf '%s' "${ANDROID_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${keystore}"
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          "${ANDROID_HOME}/build-tools/37.0.0/apksigner" sign \
+            --ks "${keystore}" --ks-key-alias shrimply-release \
+            --ks-pass env:ANDROID_RELEASE_KEYSTORE_PASSWORD \
+            --key-pass env:ANDROID_RELEASE_KEYSTORE_PASSWORD \
+            --v4-signing-enabled false --out "${apk}" \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+          "${ANDROID_HOME}/build-tools/37.0.0/apksigner" verify --verbose --print-certs "${apk}"
+          python3 packaging/android-check.py "${apk}" \
+            "${ANDROID_HOME}/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" \
+            "${ANDROID_HOME}"
+      - name: Upload signed release APK
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v6
         with:
-          name: shrimply-android-debug
-          path: |
-            android/app/build/outputs/apk/debug/app-debug.apk
-            android/app/build/reports/lint-results-debug.html
+          name: shrimply-android-release
+          path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+      - name: Upload lint report
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-lint
+          path: android/app/build/reports/lint-results-release.html
           if-no-files-found: error

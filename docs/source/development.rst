@@ -1,15 +1,19 @@
 Development
 ===========
 
-Debug CI
---------
+CI checks
+---------
 
-The ``Debug checks`` workflow runs on pushes to ``android``, pull requests into
+The ``CI checks`` workflow runs on pushes to ``android``, pull requests into
 ``main`` or ``android``, and manual dispatch. It checks Linux GTK/Qt, macOS
-AppKit, Windows Qt, and the Android debug APK through the existing Makefile
+AppKit, Windows Qt, and the Android release APK through the existing Makefile
 targets. The Android APK and lint report are available as workflow artifacts.
-These checks do not build or publish releases. Rust debug symbols and
-incremental compilation are disabled in CI to fit hosted runners.
+Desktop builds use debug checks. Branch pushes and manual runs sign the Android
+release APK with the persistent release key in GitHub Actions secrets, verify
+its signature and 16 KiB alignment, and upload it as ``shrimply-android-release``.
+Pull requests validate the release build without access to signing credentials.
+CI does not publish to an app store. Rust debug symbols and incremental
+compilation are disabled for desktop checks to fit hosted runners.
 
 Requirements
 ------------
