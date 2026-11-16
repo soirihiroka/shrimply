@@ -7,7 +7,7 @@ use shrimply_components_gtk::{
     ui::{FrameGraph, InspectorLayeredProperty, NumberPicker},
 };
 use shrimply_inspector_core::{
-    ControlKind, InspectorControl, InspectorController, InspectorTarget,
+    ControlKind, InspectorControl, InspectorTarget,
     keyframe_graph::FrameGraphAction,
 };
 
