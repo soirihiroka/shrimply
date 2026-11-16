@@ -1,11 +1,8 @@
 use crate::device::Device;
 use ash::{vk, vk::Handle};
-use std::sync::Arc;
 #[cfg(target_os = "linux")]
-use std::{
-    os::fd::{FromRawFd, OwnedFd},
-    sync::Mutex,
-};
+use std::os::fd::{FromRawFd, OwnedFd};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
 pub struct Texture(Arc<Storage>);
@@ -18,12 +15,12 @@ impl PartialEq for Texture {
 impl Eq for Texture {}
 
 struct Storage {
+    sampling: Mutex<()>,
     device: Arc<Device>,
     image: vk::Image,
     memory: vk::DeviceMemory,
     #[cfg(target_os = "linux")]
     exports: Mutex<Vec<(vk::Semaphore, vk::Fence)>>,
-    #[cfg(target_os = "linux")]
     allocation_size: u64,
     width: u32,
     height: u32,
@@ -104,17 +101,29 @@ impl Texture {
             return Err(format!("Bind Vulkan presentation texture: {e:?}"));
         }
         Ok(Self(Arc::new(Storage {
+            sampling: Mutex::new(()),
             device,
             image,
             memory,
             #[cfg(target_os = "linux")]
             exports: Mutex::new(Vec::new()),
-            #[cfg(target_os = "linux")]
             allocation_size: requirements.size,
             width,
             height,
             levels,
         })))
+    }
+    pub(crate) fn bytes(&self) -> u64 {
+        self.0.allocation_size
+    }
+    pub(crate) fn cacheable(&self) -> bool {
+        // Linux releases every presentation image to EXTERNAL ownership, even
+        // frames dropped before GL import. Only fence-bearing Vulkan borrowers
+        // currently return ownership through their Rust allocation leases.
+        cfg!(target_os = "android")
+    }
+    pub(crate) fn unused(&self) -> bool {
+        Arc::strong_count(&self.0) == 1 && self.cacheable()
     }
     pub fn id(&self) -> u64 {
         self.0.image.as_raw()
@@ -141,6 +150,14 @@ impl Texture {
     }
     pub(crate) fn image(&self) -> vk::Image {
         self.0.image
+    }
+    /// A Skia draw can split into several submissions. Serialize the entire
+    /// layout/read/restore transaction only against other readers of this image.
+    pub(crate) fn sampling_lock(&self) -> MutexGuard<'_, ()> {
+        self.0
+            .sampling
+            .lock()
+            .expect("Vulkan texture sampling poisoned")
     }
     #[cfg(target_os = "linux")]
     pub fn export(&self) -> Result<(OwnedFd, u64, OwnedFd), String> {

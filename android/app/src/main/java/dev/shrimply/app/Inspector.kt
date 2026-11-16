@@ -11,6 +11,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -63,8 +65,16 @@ internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled
                 }
             }
         }
-        Column(Modifier.fillMaxSize().clipToBounds().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            category?.getJSONArray("items")?.objects()?.forEach { item -> key(item.getString("id")) { InspectorItem(timeline, item, enabled, send, selectFile) } }
+        LazyColumn(Modifier.fillMaxSize().clipToBounds(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            category?.getJSONArray("items")?.objects()?.forEachIndexed { index, section ->
+                val id = section.getString("id")
+                if (section.getString("title").isNotEmpty()) item(key = "$id/header", contentType = "header") {
+                    Box(Modifier.padding(top = if (index == 0) 0.dp else 8.dp)) { InspectorItemHeader(section, enabled, send) }
+                }
+                items(section.getJSONArray("controls").objects(), key = { "$id/${it.getString("id")}" }, contentType = { it.getString("widget") }) { control ->
+                    InspectorControl(timeline, control, enabled, send, selectFile)
+                }
+            }
         }
     }
     document?.optJSONObject("font_picker")?.let { picker ->
@@ -130,28 +140,25 @@ internal fun inspectorIcon(icon: String): Int = when (icon) {
 }
 
 @Composable
-private fun InspectorItem(timeline: TimelineSession, item: JSONObject, enabled: Boolean, send: (JSONObject) -> Unit, selectFile: (JSONObject) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        val title = item.getString("title")
-        if (title.isNotEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-            item.optJSONObject("toggle")?.let { toggle -> Switch(checked = toggle.getBoolean("selected"), enabled = enabled,
-                onCheckedChange = { send(toggle.getJSONObject("command")) }, modifier = Modifier.semantics { contentDescription = title }) }
-            item.optJSONObject("button_toggle")?.let { toggle ->
-                IconToggleButton(checked = toggle.getBoolean("selected"), enabled = enabled, onCheckedChange = { send(toggle.getJSONObject("command")) }) {
-                    Icon(painterResource(inspectorIcon(toggle.getString("icon"))), toggle.getString("label"), Modifier.size(16.dp))
-                }
-            }
-            if (item.getJSONArray("actions").length() > 0) AdaptiveMenuButton(enabled,
-                icon = { Icon(painterResource(R.drawable.view_more), item.getString("actions_label"), Modifier.size(16.dp)) }) { dismiss ->
-                item.getJSONArray("actions").objects().forEach { action ->
-                    DropdownMenuItem(text = { Text(action.getString("label")) }, enabled = enabled && action.getBoolean("enabled"),
-                        leadingIcon = { Icon(painterResource(inspectorIcon(action.getString("icon"))), null, Modifier.size(16.dp)) },
-                        onClick = { dismiss(); send(action.getJSONObject("command")) })
-                }
+private fun InspectorItemHeader(item: JSONObject, enabled: Boolean, send: (JSONObject) -> Unit) {
+    val title = item.getString("title")
+    if (title.isNotEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+        item.optJSONObject("toggle")?.let { toggle -> Switch(checked = toggle.getBoolean("selected"), enabled = enabled,
+            onCheckedChange = { send(toggle.getJSONObject("command")) }, modifier = Modifier.semantics { contentDescription = title }) }
+        item.optJSONObject("button_toggle")?.let { toggle ->
+            IconToggleButton(checked = toggle.getBoolean("selected"), enabled = enabled, onCheckedChange = { send(toggle.getJSONObject("command")) }) {
+                Icon(painterResource(inspectorIcon(toggle.getString("icon"))), toggle.getString("label"), Modifier.size(16.dp))
             }
         }
-        item.getJSONArray("controls").objects().forEach { control -> key(control.getString("id")) { InspectorControl(timeline, control, enabled, send, selectFile) } }
+        if (item.getJSONArray("actions").length() > 0) AdaptiveMenuButton(enabled,
+            icon = { Icon(painterResource(R.drawable.view_more), item.getString("actions_label"), Modifier.size(16.dp)) }) { dismiss ->
+            item.getJSONArray("actions").objects().forEach { action ->
+                DropdownMenuItem(text = { Text(action.getString("label")) }, enabled = enabled && action.getBoolean("enabled"),
+                    leadingIcon = { Icon(painterResource(inspectorIcon(action.getString("icon"))), null, Modifier.size(16.dp)) },
+                    onClick = { dismiss(); send(action.getJSONObject("command")) })
+            }
+        }
     }
 }
 

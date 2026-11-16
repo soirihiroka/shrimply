@@ -3,6 +3,9 @@ use shrimply_resource_pipeline::cache::Cache;
 use skia_safe::{Canvas, ConditionallySend, Data, FontMgr, Image, Paint, Rect, Sendable, svg::Dom};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+#[cfg(target_os = "android")]
+mod android;
+
 const MAX_CACHE_BYTES: usize = 128 * 1024 * 1024;
 const MAX_ENTRIES: usize = 128;
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
@@ -212,51 +215,100 @@ pub fn prepare_hashed_with_limit(
         }
     }
     let mut font_epoch = None;
-    let (content, size) =
-        if let Some(mut codec) = skia_safe::Codec::from_data(Data::new_copy(bytes)) {
-            let mut info = codec.info();
-            if info.alpha_type() != skia_safe::AlphaType::Opaque {
-                info = info.with_alpha_type(skia_safe::AlphaType::Unpremul);
+    let (content, size) = if let Some(mut codec) =
+        skia_safe::Codec::from_data(Data::new_copy(bytes))
+    {
+        let mut info = codec.info();
+        if info.alpha_type() != skia_safe::AlphaType::Opaque {
+            info = info.with_alpha_type(skia_safe::AlphaType::Unpremul);
+        }
+        let origin = codec.origin();
+        let output_info = if origin.swaps_width_height() {
+            skia_safe::codec::pixmap_utils::swap_width_height(&info)
+        } else {
+            info.clone()
+        };
+        let width = u32::try_from(output_info.width()).map_err(|_| "invalid image width")?;
+        let height = u32::try_from(output_info.height()).map_err(|_| "invalid image height")?;
+        validate_size([width, height], max_pixels)?;
+        let mut bitmap = skia_safe::Bitmap::new();
+        if !bitmap.try_alloc_pixels_flags(&info) {
+            return Err("could not allocate decoded image".into());
+        }
+        let result = {
+            let mut pixels = bitmap.peek_pixels().ok_or("decoded image has no pixels")?;
+            let stride = pixels.row_bytes();
+            codec.get_pixels_with_options(
+                &info,
+                pixels
+                    .bytes_mut()
+                    .ok_or("decoded image has no writable pixels")?,
+                stride,
+                None,
+            )
+        };
+        // get_image() accepts incomplete/corrupt input and fills missing pixels.
+        // Import and preview must only publish a complete decoded bitmap.
+        if result != skia_safe::codec::Result::Success {
+            return Err(format!("image cannot be decoded completely: {result:?}"));
+        }
+        if origin != skia_safe::EncodedOrigin::TopLeft {
+            let mut oriented = skia_safe::Bitmap::new();
+            if !oriented.try_alloc_pixels_flags(&output_info) {
+                return Err("could not allocate oriented image".into());
             }
-            if codec.origin().swaps_width_height() {
-                info = skia_safe::codec::pixmap_utils::swap_width_height(&info);
+            {
+                let source = bitmap.peek_pixels().ok_or("decoded image has no pixels")?;
+                let mut target = oriented
+                    .peek_pixels()
+                    .ok_or("oriented image has no pixels")?;
+                // Both pixmaps borrow uniquely owned, initialized local bitmap storage.
+                if !unsafe { skia_safe::codec::pixmap_utils::orient(&mut target, &source, origin) }
+                {
+                    return Err("could not apply image orientation".into());
+                }
             }
-            let width = u32::try_from(info.width()).map_err(|_| "invalid image width")?;
-            let height = u32::try_from(info.height()).map_err(|_| "invalid image height")?;
-            validate_size([width, height], max_pixels)?;
-            let image = codec
-                .get_image(info, None)
-                .map_err(|error| format!("image cannot be decoded: {error:?}"))?;
-            (Content::Bitmap(image), [width, height])
+            bitmap = oriented;
+        }
+        bitmap.set_immutable();
+        (Content::Bitmap(bitmap.as_image()), [width, height])
+    } else {
+        #[cfg(target_os = "android")]
+        let native = android::decode(bytes, max_pixels);
+        #[cfg(not(target_os = "android"))]
+        let native: Result<Option<(Image, [u32; 2])>, String> = Ok(None);
+        let (image, error) = match native {
+            Ok(image) => (image, None),
+            Err(error) => (None, Some(error)),
+        };
+        if let Some((image, size)) = image {
+            (Content::Bitmap(image), size)
         } else {
             font_epoch = shrimply_fonts::native::system_font_epoch();
-            let dom = Dom::from_bytes(bytes, FontMgr::new())
-                .map_err(|_| "source is neither a supported bitmap nor a valid SVG")?;
+            let dom = Dom::from_bytes(bytes, FontMgr::new()).map_err(|_| {
+                error.unwrap_or_else(|| {
+                    "source is neither a supported bitmap nor a valid SVG".into()
+                })
+            })?;
             let root = dom.root();
-            let intrinsic = root.intrinsic_size();
-            let intrinsic = if intrinsic.width > 0. && intrinsic.height > 0. {
-                intrinsic
-            } else {
+            let intrinsic = shrimply_math_geometry::intrinsic_size(
+                [
+                    shrimply_math_geometry::svg_length_px(*root.width()),
+                    shrimply_math_geometry::svg_length_px(*root.height()),
+                ],
                 root.view_box()
-                    .map(|rect| rect.size())
-                    .unwrap_or(skia_safe::Size::new(
-                        DEFAULT_SVG_SIZE[0] as f32,
-                        DEFAULT_SVG_SIZE[1] as f32,
-                    ))
-            };
-            if !intrinsic.width.is_finite()
-                || !intrinsic.height.is_finite()
-                || intrinsic.width <= 0.
-                || intrinsic.height <= 0.
-                || intrinsic.width > u32::MAX as f32
-                || intrinsic.height > u32::MAX as f32
+                    .map(|rect| glam::vec2(rect.width(), rect.height())),
+                glam::vec2(DEFAULT_SVG_SIZE[0] as f32, DEFAULT_SVG_SIZE[1] as f32),
+            );
+            if !intrinsic.is_finite()
+                || intrinsic.x <= 0.
+                || intrinsic.y <= 0.
+                || intrinsic.x > u32::MAX as f32
+                || intrinsic.y > u32::MAX as f32
             {
                 return Err("SVG has invalid intrinsic dimensions".into());
             }
-            let size = [
-                intrinsic.width.ceil() as u32,
-                intrinsic.height.ceil() as u32,
-            ];
+            let size = [intrinsic.x.ceil() as u32, intrinsic.y.ceil() as u32];
             validate_size(size, max_pixels)?;
             drop(root);
             (
@@ -265,7 +317,8 @@ pub fn prepare_hashed_with_limit(
                 ))),
                 size,
             )
-        };
+        }
+    };
     let retained = bytes
         .len()
         .saturating_add(match &content {

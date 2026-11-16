@@ -6,7 +6,7 @@ use hashbrown::HashMap;
 use serde::Serialize;
 
 mod render;
-pub use render::{RenderEvent, RenderObserver};
+pub use render::{RenderEvent, RenderObserver, SourceFrameTracker};
 
 const SAMPLE_LIMIT: usize = 120;
 

@@ -51,4 +51,5 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.foundation:foundation:1.12.1")
     implementation("androidx.compose.material3:material3:1.4.0")
+    implementation("androidx.compose.material3.adaptive:adaptive-layout:1.3.0")
 }

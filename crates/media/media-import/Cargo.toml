@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 sanim-lang = { workspace = true, features = ["native-text", "media"] }
 shrimply-trust-core.workspace = true
+shrimply-drawing-skia.workspace = true
+shrimply-video-decoder.workspace = true
+skia-safe.workspace = true
 ffmpeg-next.workspace = true
 glam.workspace = true
 hashbrown.workspace = true

@@ -828,7 +828,7 @@ pub fn presentation(
     }
     if !matches!(
         item.content,
-        VideoItemContent::Media | VideoItemContent::Gif | VideoItemContent::Background(_)
+        VideoItemContent::Media | VideoItemContent::Gif
     ) {
         playback_items.push(playback::frame_rate(item));
     }
@@ -837,13 +837,11 @@ pub fn presentation(
     }
     if !matches!(
         item.content,
-        VideoItemContent::Obj(_) | VideoItemContent::Gaussian(_) | VideoItemContent::Background(_)
+        VideoItemContent::Obj(_) | VideoItemContent::Gaussian(_)
     ) {
         playback_items.push(playback::motion_blur(item));
     }
-    if !matches!(item.content, VideoItemContent::Background(_)) {
-        playback_items.push(playback::repeat(item));
-    }
+    playback_items.push(playback::repeat(item));
 
     if let VideoItemContent::Background(background) = &item.content {
         visual_items.push(crate::background::card(background, runtime));

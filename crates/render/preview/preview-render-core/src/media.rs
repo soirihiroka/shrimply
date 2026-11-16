@@ -134,6 +134,7 @@ struct Slots {
     completed: Option<Completed>,
     stop: bool,
     working: bool,
+    source_waker: Option<shrimply_visual_core::generated::SourceWake>,
 }
 #[derive(Default)]
 struct Shared {
@@ -176,6 +177,14 @@ impl Default for Media {
 }
 
 impl Media {
+    pub fn set_source_waker(&mut self, wake: Option<shrimply_visual_core::generated::SourceWake>) {
+        self.shared
+            .slots
+            .lock()
+            .expect("preview media slots poisoned")
+            .source_waker = wake;
+    }
+
     pub fn set_decoder_limit(&mut self, maximum: usize) {
         assert!(maximum > 0, "video decoder limit must be positive");
         if self.decoder_limit == Some(maximum) {
@@ -279,6 +288,18 @@ impl Media {
             })
         });
         if changed {
+            if !requests.is_empty()
+                && requests
+                    .iter()
+                    .all(|request| request.accuracy.continuous_playback())
+            {
+                shrimply_profiling::increment("Video media / Playback batches requested");
+                if slots.pending.is_some() {
+                    shrimply_profiling::increment(
+                        "Video media / Pending playback batches replaced",
+                    );
+                }
+            }
             slots.pending = Some(Batch {
                 epoch,
                 generation,
@@ -378,14 +399,29 @@ fn worker(shared: Arc<Shared>) {
         });
         let mut slots = shared.slots.lock().expect("preview media slots poisoned");
         slots.working = false;
-        if shared.epoch.load(Ordering::Relaxed) == epoch
+        let wake = if shared.epoch.load(Ordering::Relaxed) == epoch
             && shared.generation.load(Ordering::Relaxed) == batch.generation
         {
+            if slots.completed.is_some()
+                && batch
+                    .requests
+                    .iter()
+                    .any(|request| request.accuracy.continuous_playback())
+            {
+                shrimply_profiling::increment("Video media / Completed playback batches replaced");
+            }
             slots.completed = Some(Completed {
                 epoch,
                 generation: batch.generation,
                 frames: result.map(|()| frames),
             });
+            slots.source_waker.clone()
+        } else {
+            None
+        };
+        drop(slots);
+        if let Some(wake) = wake {
+            wake();
         }
     }
 }

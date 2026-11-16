@@ -29,6 +29,7 @@ import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -125,12 +126,17 @@ class MainActivity : ComponentActivity() {
 @Composable
 internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: Int = 0, enabled: Boolean = true) {
     val graph = role >= 2
+    val visible = remember(timeline.identity, role) { mutableStateOf(!graph) }
     val density = LocalDensity.current.density
     val viewConfiguration = android.view.ViewConfiguration.get(LocalContext.current)
     val focus = remember { FocusRequester() }
     val mouseButton = remember { intArrayOf(-1) }
     val surfaceModifier = modifier
         .onGloballyPositioned { coordinates ->
+            if (graph) {
+                val next = !coordinates.boundsInWindow(clipBounds = true).isEmpty
+                if (visible.value != next) { visible.value = next; timeline.visible(role, next) }
+            }
             val origin = coordinates.positionInRoot()
             if (!graph) timeline.menuOrigin = DpOffset((origin.x / density).dp, (origin.y / density).dp)
         }
@@ -200,6 +206,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
     val onInit: AndroidExternalSurfaceScope.() -> Unit = {
         onSurface { surface, width, height ->
             timeline.surface(role, surface, width, height, density)
+            if (graph) timeline.visible(role, visible.value)
             surface.onChanged { w, h -> timeline.resize(role, w, h) }
             surface.onDestroyed { timeline.surface(role, null, 0, 0, density) }
         }

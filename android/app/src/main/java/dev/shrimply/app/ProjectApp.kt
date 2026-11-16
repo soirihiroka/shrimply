@@ -5,9 +5,6 @@ import androidx.activity.compose.LocalActivity
 import android.view.WindowInsets
 import androidx.compose.foundation.layout.WindowInsets as ComposeInsets
 import android.view.WindowInsetsController
-import androidx.compose.animation.core.Easing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -237,7 +234,8 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                 command = { command -> action { timeline.request(command) } },
                 showInFiles = { path -> action { files.showInFiles(path) } })
         } else {
-            Editor(timeline, project, playback, status, !renderOnly && !busy,
+            Editor(timeline, files, project, playback, status, !renderOnly && !busy,
+                onError = { error = it },
                 selectFile = { control ->
                     inspectorFileTarget = JSONObject().put("project_path", project.getString("path"))
                         .put("command", control.getJSONObject("command")).toString()
@@ -452,8 +450,8 @@ private fun ActionIcon(resource: Int, description: String, enabled: Boolean = tr
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSONObject, status: JSONObject, enabled: Boolean,
-    selectFile: (JSONObject) -> Unit, preferences: () -> Unit, close: () -> Unit, command: (String, Array<out Pair<String, Any>>) -> Unit, save: () -> Unit,
+private fun Editor(timeline: TimelineSession, files: ProjectFiles, project: JSONObject, playback: JSONObject, status: JSONObject, enabled: Boolean,
+    onError: (String) -> Unit, selectFile: (JSONObject) -> Unit, preferences: () -> Unit, close: () -> Unit, command: (String, Array<out Pair<String, Any>>) -> Unit, save: () -> Unit,
     importFile: () -> Unit, export: () -> Unit, exportVideo: () -> Unit, exportCaptions: () -> Unit, viewChange: (JSONObject, () -> Unit) -> Unit,
     pendingOperation: String? = null, renderOnly: Boolean = false, windowCaption: WindowCaption = WindowCaption()) {
     var fullscreen by rememberSaveable(project.getString("path")) { mutableStateOf(false) }
@@ -508,7 +506,8 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
     val caption = if (!fullscreen) windowCaption else WindowCaption()
     val safeInsets = if (caption.height > 0) ComposeInsets.safeDrawing.exclude(ComposeInsets.captionBar)
         .union(ComposeInsets.statusBars).union(ComposeInsets.displayCutout) else ComposeInsets.safeDrawing
-    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safeInsets).background(MaterialTheme.colorScheme.background)) {
+    BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safeInsets).background(MaterialTheme.colorScheme.background)
+        .fileDropTarget(timeline, files, project.getString("path").takeUnless { renderOnly }, false, onError)) {
         val availableWidth = maxWidth.value
         val expandedInspectorWidth = inspectorWidth.coerceIn(InspectorMinimumWidth.value.coerceAtMost(availableWidth), availableWidth).dp
         val sideBySide = !NativeLayout.inspectorOverlay(availableWidth, expandedInspectorWidth.value)
@@ -544,89 +543,94 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val availableHeight = NativeLayout.splitPaneExtent(maxHeight.value, paneDividerSize.value, 1f)
                 val minimumTimelineFraction = if (availableHeight > 0f) (TimelineMinimumHeight.value / availableHeight).coerceAtMost(MaximumTimelineFraction) else MaximumTimelineFraction
-                val animation = tween<Float>(durationMillis = NativeLayout.panelAnimationDurationMillis(), easing = Easing { NativeLayout.panelAnimationProgress(it) })
-                val inspectorProgress by animateFloatAsState(if (inspectorOpen && !fullscreen) 1f else 0f, animation, label = "inspector")
-                val timelineProgress by animateFloatAsState(if (timelineOpen && !fullscreen) 1f else 0f, animation, label = "timeline")
-                val inspectorSize = expandedInspectorWidth * inspectorProgress
-                val timelineSize = (NativeLayout.splitPaneExtent(maxHeight.value, paneDividerSize.value,
-                    timelineFraction.coerceIn(minimumTimelineFraction, MaximumTimelineFraction)) * timelineProgress).dp
-                val dividerSize = paneDividerSize * timelineProgress
-                Column(Modifier.fillMaxSize()) {
-                    Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
-                        Row(Modifier.fillMaxSize()) {
-                            if (sideBySide) Spacer(Modifier.width(inspectorSize + if (!fullscreen && (inspectorOpen || inspectorSize > 0.dp)) paneDividerSize else 0.dp))
-                            // Preview identity and its surface survive panel changes on every width.
-                            Surface(Modifier.weight(1f).fillMaxHeight(), color = MaterialTheme.colorScheme.background) {
-                                BoxWithConstraints(Modifier.fillMaxSize()) {
-                                    val previewCompact = NativeLayout.compactControls(maxWidth.value, maxHeight.value)
-                                    Column(Modifier.fillMaxSize()) {
-                                        Row(Modifier.weight(1f).fillMaxWidth()) {
-                                            if (!fullscreen) PreviewControls(timeline, compact = previewCompact, pendingOperation = pendingOperation)
-                                            Box(Modifier.weight(1f).fillMaxHeight()) {
-                                                NativePreview(timeline, Modifier.fillMaxSize())
-                                                PreviewContextMenu(timeline)
+                val inspectorSize = expandedInspectorWidth
+                val timelineSize = NativeLayout.splitPaneExtent(maxHeight.value, paneDividerSize.value,
+                    timelineFraction.coerceIn(minimumTimelineFraction, MaximumTimelineFraction)).dp
+                val dividerSize = paneDividerSize
+                EditorPanes(
+                    inspectorWidth = expandedInspectorWidth.value,
+                    timelineFraction = timelineFraction.coerceIn(minimumTimelineFraction, MaximumTimelineFraction),
+                    inspectorVisible = inspectorOpen && !fullscreen,
+                    timelineVisible = timelineOpen && !fullscreen,
+                    overlay = !sideBySide,
+                    preview = {
+                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                            BoxWithConstraints(Modifier.fillMaxSize()) {
+                                val previewCompact = NativeLayout.compactControls(maxWidth.value, maxHeight.value)
+                                Column(Modifier.fillMaxSize()) {
+                                    Row(Modifier.weight(1f).fillMaxWidth()) {
+                                        if (!fullscreen) PreviewControls(timeline, compact = previewCompact, pendingOperation = pendingOperation)
+                                        Box(Modifier.weight(1f).fillMaxHeight()) {
+                                            NativePreview(timeline, Modifier.fillMaxSize())
+                                            PreviewContextMenu(timeline)
+                                        }
+                                    }
+                                    Transport(playback, enabled, command, previewCompact, fullscreen) { fullscreen = !fullscreen }
+                                }
+                            }
+                        }
+                    },
+                    inspector = {
+                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                            inspectorState.SaveableStateProvider("inspector") {
+                                Inspector(timeline, timeline.snapshot.value.optJSONObject("inspector"), enabled,
+                                    { arguments -> command("inspector", arrayOf("project_path" to project.getString("path"), *arguments)) },
+                                    Modifier.requiredWidth(expandedInspectorWidth).fillMaxHeight(), selectFile)
+                            }
+                        }
+                    },
+                    timeline = {
+                        Surface(Modifier.fillMaxSize().clipToBounds(), color = MaterialTheme.colorScheme.background) {
+                            Column(Modifier.fillMaxSize()) {
+                                HorizontalDivider(thickness = paneDividerSize, color = divider)
+                                Row(Modifier.weight(1f).fillMaxWidth()) {
+                                    val toolsProgress = timeline.snapshot.value.optJSONObject("timeline")?.getDouble("tools_progress")?.toFloat() ?: 0f
+                                    Box(Modifier.width(toolSize * toolsProgress).fillMaxHeight().clipToBounds()) {
+                                        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides toolSize) {
+                                            Column(Modifier.requiredWidth(toolSize).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                                                val tools = timeline.snapshot.value.optJSONObject("timeline")?.optJSONArray("tools")
+                                                for (index in 0 until (tools?.length() ?: 0)) {
+                                                    val tool = checkNotNull(tools).getJSONObject(index)
+                                                    if (index > 0 && tool.getInt("section") != tools.getJSONObject(index - 1).getInt("section")) HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                                                    IconToggleButton(checked = tool.getBoolean("active"), onCheckedChange = { command("timeline_tool", arrayOf("id" to tool.getString("id"))) }, enabled = enabled, modifier = Modifier.size(toolSize)) {
+                                                        Icon(painterResource(timelineToolIcon(tool.getString("icon"))), tr(tool.getString("label")), Modifier.size(toolIconSize))
+                                                    }
+                                                }
                                             }
                                         }
-                                        Transport(playback, enabled, command, previewCompact, fullscreen) { fullscreen = !fullscreen }
+                                    }
+                                    Box(Modifier.weight(1f).fillMaxHeight()) {
+                                        NativeSurface(timeline, Modifier.fillMaxSize()
+                                            .fileDropTarget(timeline, files, project.getString("path").takeUnless { renderOnly }, true, onError))
+                                        CanvasButtonIndication(timeline)
                                     }
                                 }
                             }
                         }
-                        Surface(Modifier.width(inspectorSize).fillMaxHeight().align(Alignment.TopStart).zIndex(1f),
-                            color = MaterialTheme.colorScheme.surfaceContainerLow, shadowElevation = if (sideBySide) 0.dp else 6.dp) {
-                            Box(Modifier.fillMaxSize().clipToBounds()) {
-                                if (inspectorSize > 0.dp) inspectorState.SaveableStateProvider("inspector") {
-                                    Inspector(timeline, timeline.snapshot.value.optJSONObject("inspector"), enabled,
-                                        { arguments -> command("inspector", arrayOf("project_path" to project.getString("path"), *arguments)) },
-                                        Modifier.requiredWidth(expandedInspectorWidth).fillMaxHeight(), selectFile)
-                                }
-                            }
-                        }
-                        if (sideBySide && inspectorOpen && !fullscreen) {
-                            Box(Modifier.offset { IntOffset(inspectorSize.roundToPx(), 0) }.width(paneDividerSize).fillMaxHeight().background(divider))
-                            VerticalDragHandle(
-                                modifier = Modifier.align(Alignment.CenterStart)
-                                    .offset(x = inspectorSize + paneDividerSize / 2 - PaneHandleTargetSize / 2)
-                                    .size(PaneHandleTargetSize).zIndex(2f)
-                                    .draggable(
-                                        state = rememberDraggableState { delta ->
-                                            inspectorDraft = ((inspectorDraft ?: currentInspectorWidth) + delta / density)
-                                                .coerceIn(InspectorMinimumWidth.value, (availableWidth * InspectorMaximumWidthFraction).coerceAtLeast(InspectorMinimumWidth.value))
-                                        },
-                                        orientation = Orientation.Horizontal,
-                                        enabled = enabled,
-                                        interactionSource = inspectorDragInteraction,
-                                        onDragStopped = {
-                                            inspectorDraft?.let { preferred -> viewChange(JSONObject().put("inspector_width", preferred)) { inspectorDraft = null } }
-                                        },
-                                    ),
+                    },
+                )
+                if (sideBySide && inspectorOpen && !fullscreen) {
+                    Box(Modifier.offset { IntOffset(inspectorSize.roundToPx(), 0) }.width(paneDividerSize)
+                        .height(maxHeight - if (timelineOpen) timelineSize + dividerSize else 0.dp).background(divider))
+                    VerticalDragHandle(
+                        modifier = Modifier.align(Alignment.TopStart)
+                            .offset(x = inspectorSize + paneDividerSize / 2 - PaneHandleTargetSize / 2,
+                                y = (maxHeight - if (timelineOpen) timelineSize + dividerSize else 0.dp) / 2 - PaneHandleTargetSize / 2)
+                            .size(PaneHandleTargetSize).zIndex(2f)
+                            .draggable(
+                                state = rememberDraggableState { delta ->
+                                    inspectorDraft = ((inspectorDraft ?: currentInspectorWidth) + delta / density)
+                                        .coerceIn(InspectorMinimumWidth.value, (availableWidth * InspectorMaximumWidthFraction).coerceAtLeast(InspectorMinimumWidth.value))
+                                },
+                                orientation = Orientation.Horizontal,
+                                enabled = enabled,
                                 interactionSource = inspectorDragInteraction,
-                            )
-                        }
-                    }
-                    Box(Modifier.fillMaxWidth().height(dividerSize).background(divider))
-                    Surface(Modifier.fillMaxWidth().height(timelineSize).clipToBounds(), color = MaterialTheme.colorScheme.background) {
-                        Row(Modifier.fillMaxSize()) {
-                            val toolsProgress = timeline.snapshot.value.optJSONObject("timeline")?.getDouble("tools_progress")?.toFloat() ?: 0f
-                            Box(Modifier.width(toolSize * toolsProgress).fillMaxHeight().clipToBounds()) {
-                                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides toolSize) {
-                                    Column(Modifier.requiredWidth(toolSize).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                                        val tools = timeline.snapshot.value.optJSONObject("timeline")?.optJSONArray("tools")
-                                        for (index in 0 until (tools?.length() ?: 0)) {
-                                            val tool = checkNotNull(tools).getJSONObject(index)
-                                            if (index > 0 && tool.getInt("section") != tools.getJSONObject(index - 1).getInt("section")) HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                                            IconToggleButton(checked = tool.getBoolean("active"), onCheckedChange = { command("timeline_tool", arrayOf("id" to tool.getString("id"))) }, enabled = enabled, modifier = Modifier.size(toolSize)) {
-                                                Icon(painterResource(timelineToolIcon(tool.getString("icon"))), tr(tool.getString("label")), Modifier.size(toolIconSize))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Box(Modifier.weight(1f).fillMaxHeight()) {
-                                NativeSurface(timeline, Modifier.fillMaxSize())
-                            }
-                        }
-                    }
+                                onDragStopped = {
+                                    inspectorDraft?.let { preferred -> viewChange(JSONObject().put("inspector_width", preferred)) { inspectorDraft = null } }
+                                },
+                            ),
+                        interactionSource = inspectorDragInteraction,
+                    )
                 }
                 if (timelineOpen && !fullscreen) {
                     Box(Modifier.align(Alignment.BottomCenter)

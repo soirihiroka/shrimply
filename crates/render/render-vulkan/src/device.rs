@@ -3,6 +3,7 @@ use ash::vk;
 use ffmpeg_next::sys;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 mod cache;
+mod skia;
 
 #[cfg(target_os = "android")]
 mod android;
@@ -62,6 +63,42 @@ unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
 impl Device {
+    /// Device-wide waits synchronize every queue FFmpeg created, not just the
+    /// graphics/compute queue used by our renderers.
+    pub(crate) fn wait_idle(&self) -> Result<(), vk::Result> {
+        let _guard = self
+            .submission
+            .lock()
+            .expect("Vulkan submission mutex poisoned");
+        #[cfg(target_os = "linux")]
+        let (context, native, queues) = unsafe {
+            let context = (*self.vulkan).data.cast::<sys::AVHWDeviceContext>();
+            let native = &*(*context).hwctx.cast::<sys::AVVulkanDeviceContext>();
+            let mut queues = native.qf[..native.nb_qf as usize]
+                .iter()
+                .flat_map(|family| {
+                    (0..family.num).map(move |index| (family.idx as u32, index as u32))
+                })
+                .collect::<Vec<_>>();
+            queues.sort_unstable();
+            queues.dedup();
+            if let Some(lock) = native.lock_queue {
+                for &(family, index) in &queues {
+                    lock(context, family, index);
+                }
+            }
+            (context, native, queues)
+        };
+        let result = unsafe { self.raw.device_wait_idle() };
+        #[cfg(target_os = "linux")]
+        if let Some(unlock) = native.unlock_queue {
+            for &(family, index) in queues.iter().rev() {
+                unsafe { unlock(context, family, index) };
+            }
+        }
+        result
+    }
+
     pub fn buffer_address(&self, buffer: vk::Buffer) -> u64 {
         let info = vk::BufferDeviceAddressInfo::default().buffer(buffer);
         unsafe {
@@ -90,6 +127,7 @@ impl Device {
     }
 
     pub fn queue_lock(&self) -> QueueLock<'_> {
+        let waiting = shrimply_profiling::measure("Vulkan queue / Wait for ownership");
         let guard = self
             .submission
             .lock()
@@ -102,6 +140,7 @@ impl Device {
                 lock(context, self.family, 0);
             }
         }
+        drop(waiting);
         QueueLock {
             _device: self,
             _guard: guard,
@@ -115,6 +154,7 @@ impl Device {
         signals: &[vk::Semaphore],
     ) -> Result<(), String> {
         let _guard = self.queue_lock();
+        let _measurement = shrimply_profiling::measure("Vulkan queue / Submit commands");
         unsafe {
             self.raw.queue_submit(
                 self.queue,

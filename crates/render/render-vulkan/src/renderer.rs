@@ -46,9 +46,13 @@ pub use vaapi::decoder_backend;
 use ash::vk::{self, Handle};
 use device::Device;
 use shrimply_render_core::Nv12LayerParams;
-#[cfg(target_os = "linux")]
-use std::collections::VecDeque;
-use std::{cell::RefCell, collections::HashMap, ffi::CString, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
+    ffi::CString,
+    rc::Rc,
+    sync::Arc,
+};
 
 // Vulkan guarantees at least 128 bytes. Larger argument blocks use a buffer.
 const PUSH_CONSTANT_BYTES: u32 = 128;
@@ -60,6 +64,8 @@ const GENERAL_ADDRESS: u32 = 1 << 28;
 // Bound retained allocations across changing canvas sizes and effect graphs.
 const MAX_CACHED_BUFFER_BYTES: usize = 256 * 1024 * 1024;
 const MAX_CACHED_BUFFERS: usize = 64;
+// Current, pending and two presentation readers. Further readers stay uncached.
+const MAX_CACHED_PRESENTATION_TEXTURES: usize = 4;
 
 struct Field {
     name: &'static str,
@@ -159,6 +165,8 @@ pub struct Renderer {
     skia: Option<skia_safe::gpu::DirectContext>,
     #[cfg(all(target_os = "android", feature = "android-media"))]
     native_samplers: HashMap<android_image::SamplerKey, Rc<android_image::Sampler>>,
+    #[cfg(all(target_os = "android", feature = "android-media"))]
+    native_images: VecDeque<(u64, Rc<android_image::HardwareImage>)>,
     gaussian: Option<shrimply_3dgs_vulkan::Renderer>,
     object: Option<obj::Uploaded>,
     object_environment: Option<obj::Environment>,
@@ -174,6 +182,7 @@ pub struct Renderer {
     #[cfg(target_os = "linux")]
     video_context_limit: usize,
     buffers: RefCell<Vec<(bool, Buffer)>>,
+    textures: RefCell<VecDeque<Texture>>,
 }
 impl Renderer {
     pub fn new() -> Result<Self, String> {
@@ -206,6 +215,8 @@ impl Renderer {
             skia: None,
             #[cfg(all(target_os = "android", feature = "android-media"))]
             native_samplers: HashMap::new(),
+            #[cfg(all(target_os = "android", feature = "android-media"))]
+            native_images: VecDeque::new(),
             gaussian: None,
             object: None,
             object_environment: None,
@@ -222,6 +233,7 @@ impl Renderer {
             #[cfg(target_os = "linux")]
             video_context_limit: 2,
             buffers: RefCell::new(Vec::new()),
+            textures: RefCell::new(VecDeque::new()),
         })
     }
     #[cfg(target_os = "linux")]
@@ -232,9 +244,11 @@ impl Renderer {
             self.video_contexts.pop_front();
         }
     }
-    #[cfg(target_os = "linux")]
     pub fn clear_video_contexts(&mut self) {
+        #[cfg(target_os = "linux")]
         self.video_contexts.clear();
+        #[cfg(all(target_os = "android", feature = "android-media"))]
+        self.native_images.clear();
     }
     pub fn warmup(&mut self) -> Result<(), String> {
         let mut arguments = self.arguments("composite_nv12_layers")?;
@@ -455,6 +469,7 @@ impl Renderer {
         }
         {
             let _guard = self.device.queue_lock();
+            let _measurement = shrimply_profiling::measure("Vulkan queue / Submit commands");
             unsafe {
                 self.device
                     .raw
@@ -805,6 +820,37 @@ impl Renderer {
         Ok(Frame { submission, output })
     }
 
+    fn presentation_allocation(&self, width: u32, height: u32) -> Result<Texture, String> {
+        let mut textures = self.textures.borrow_mut();
+        textures.retain(Texture::cacheable);
+        if let Some(texture) = textures.iter().find(|texture| {
+            texture.width() == width && texture.height() == height && texture.unused()
+        }) {
+            shrimply_profiling::increment("Vulkan rendering / Presentation textures reused");
+            return Ok(texture.clone());
+        }
+        let _measurement =
+            shrimply_profiling::measure("Vulkan rendering / Allocate presentation texture");
+        let texture = Texture::new(self.device.clone(), width, height)?;
+        shrimply_profiling::increment("Vulkan rendering / Presentation textures allocated");
+        let mut retained = textures.iter().map(Texture::bytes).sum::<u64>();
+        while !textures.is_empty()
+            && (textures.len() >= MAX_CACHED_PRESENTATION_TEXTURES
+                || retained.saturating_add(texture.bytes()) > MAX_CACHED_BUFFER_BYTES as u64)
+        {
+            // Eviction drops only the cache reference. In-flight reader leases
+            // continue to own their allocation until their fence has completed.
+            retained -= textures
+                .pop_front()
+                .expect("nonempty texture cache")
+                .bytes();
+        }
+        if texture.cacheable() && texture.bytes() <= MAX_CACHED_BUFFER_BYTES as u64 {
+            textures.push_back(texture.clone());
+        }
+        Ok(texture)
+    }
+
     pub fn presentation_texture(
         &self,
         source: &Buffer,
@@ -818,7 +864,7 @@ impl Renderer {
         {
             return Err("Presentation dimensions do not match the composited buffer".into());
         }
-        let texture = Texture::new(self.device.clone(), width, height)?;
+        let texture = self.presentation_allocation(width, height)?;
         let command = self.command()?;
         let range = vk::ImageSubresourceRange::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -1014,15 +1060,17 @@ impl Renderer {
 }
 impl Drop for Renderer {
     fn drop(&mut self) {
-        let _guard = self.device.queue_lock();
-        if unsafe { self.device.raw.queue_wait_idle(self.device.queue) }.is_err() {
-            std::process::abort();
+        {
+            let _guard = self.device.queue_lock();
+            if unsafe { self.device.raw.queue_wait_idle(self.device.queue) }.is_err() {
+                std::process::abort();
+            }
+            // This borrowed renderer calls the raw queue APIs itself.
+            self.gaussian.take();
         }
         if let Some(skia) = &mut self.skia {
             skia.release_resources_and_abandon();
         }
-        // The borrowed Gaussian renderer uses this queue during destruction too.
-        self.gaussian.take();
         unsafe {
             for pipeline in self.kernels.values() {
                 self.device.raw.destroy_pipeline(*pipeline, None);

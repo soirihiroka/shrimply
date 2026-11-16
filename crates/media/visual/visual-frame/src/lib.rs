@@ -1,5 +1,8 @@
 //! Owned decoded media frames and backend-specific GPU imports.
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use ffmpeg_next::{frame::Video, sys};
 
@@ -13,6 +16,7 @@ pub mod cuda;
 /// An immutable FFmpeg frame reference. Cloning its Arc never copies pixels.
 /// Native frame metadata and hardware-pool ownership survive until the last reader.
 pub struct VideoFrame {
+    id: u64,
     native: Video,
     bytes: u64,
     #[cfg(target_os = "android")]
@@ -39,6 +43,7 @@ impl VideoFrame {
             ));
         }
         Ok(Self {
+            id: next_frame_id(),
             native,
             bytes: bytes as u64,
             #[cfg(target_os = "android")]
@@ -59,6 +64,7 @@ impl VideoFrame {
             return Err("Android hardware image requires a valid MediaCodec frame".into());
         }
         Ok(Self {
+            id: next_frame_id(),
             native,
             bytes: 0,
             android: Some(android::DecoderOutput::new(pool)),
@@ -74,6 +80,11 @@ impl VideoFrame {
         &self.native
     }
 
+    /// Decoded content identity, independent of recycled codec/GPU allocations.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     pub fn bytes(&self) -> u64 {
         #[cfg(target_os = "android")]
         if self.android.is_some() {
@@ -84,6 +95,12 @@ impl VideoFrame {
         }
         self.bytes
     }
+}
+
+fn next_frame_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .expect("decoded frame identity overflow")
 }
 
 /// Import into a backend's own GPU representation without a CPU pixel transfer.

@@ -35,6 +35,25 @@ pub fn transform_point2(transform: glam::Mat3, point: glam::Vec2) -> glam::Vec2 
     )
 }
 
+/// Resolve missing natural dimensions using a source aspect ratio.
+pub fn intrinsic_size(
+    dimensions: [Option<f32>; 2],
+    view_box: Option<Vec2>,
+    fallback: Vec2,
+) -> Vec2 {
+    match (dimensions, view_box) {
+        ([Some(width), Some(height)], _) => Vec2::new(width, height),
+        ([Some(width), None], Some(size)) if size.x > 0.0 => {
+            Vec2::new(width, width * size.y / size.x)
+        }
+        ([None, Some(height)], Some(size)) if size.y > 0.0 => {
+            Vec2::new(height * size.x / size.y, height)
+        }
+        ([None, None], Some(size)) => size,
+        _ => fallback,
+    }
+}
+
 /// A size accepted by the standard transform constructors.
 ///
 /// Applications can implement this for their own canvas type without coupling

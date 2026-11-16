@@ -9,6 +9,7 @@ renderer = []
 android-media = ["renderer", "dep:shrimply-video-decoder", "dep:shrimply-visual-frame"]
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+shrimply-profiling.workspace = true
 shrimply-3dgs-vulkan.workspace = true
 shrimply-3dgs-core.workspace = true
 shrimply-render-3d-core.workspace = true
@@ -36,7 +37,7 @@ shrimply-slang-build.workspace = true
 [target.'cfg(target_os = "android")'.dependencies]
 ash.workspace = true
 tracing.workspace = true
-ndk = { version = "0.9.0", default-features = false, features = ["api-level-26"] }
+ndk = { version = "0.9.0", default-features = false, features = ["api-level-31"] }
 shrimply-video-decoder = { workspace = true, optional = true }
 shrimply-visual-frame = { workspace = true, optional = true }
 shrimply-render-core.workspace = true

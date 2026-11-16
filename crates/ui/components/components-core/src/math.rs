@@ -16,6 +16,42 @@ pub fn split_pane_fraction(leading: f32, trailing: f32) -> Option<f32> {
     (leading > 0.0 && trailing > 0.0 && content.is_finite()).then(|| trailing / content)
 }
 
+/// Preview, inspector and full-width timeline bounds, in the same logical units as `size`.
+/// Hidden panes retain their content bounds for native exit animations.
+pub fn editor_pane_bounds(
+    size: [f32; 2],
+    inspector_width: f32,
+    timeline_fraction: f32,
+    inspector_visible: bool,
+    timeline_visible: bool,
+) -> [[f32; 4]; 3] {
+    let [width, height] = size.map(|value| value.max(0.0));
+    let divider = crate::layout::PANEL_DIVIDER_WIDTH;
+    let inspector_width = inspector_width.clamp(0.0, width);
+    let timeline_height = split_pane_extent(height, divider, timeline_fraction.clamp(0.0, 1.0));
+    let top_height = if timeline_visible {
+        (height - timeline_height - divider).max(0.0)
+    } else {
+        height
+    };
+    let preview_left =
+        if inspector_visible && !crate::layout::inspector_overlay(width, inspector_width) {
+            (inspector_width + divider).min(width)
+        } else {
+            0.0
+        };
+    [
+        [preview_left, 0.0, width - preview_left, top_height],
+        [0.0, 0.0, inspector_width, top_height],
+        [
+            0.0,
+            height - timeline_height - divider,
+            width,
+            timeline_height + divider,
+        ],
+    ]
+}
+
 pub fn image_sample_point(size: [u32; 2], position: [f64; 2], delta: [i32; 2]) -> [u32; 2] {
     std::array::from_fn(|axis| {
         assert!(size[axis] > 0, "image dimensions must be positive");

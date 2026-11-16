@@ -27,27 +27,19 @@ pub struct Renderer {
     fence: vk::Fence,
     context: Option<gpu::DirectContext>,
     extent: vk::Extent2D,
+    recreate: bool,
     format: vk::Format,
     #[cfg(feature = "renderer")]
     sampled: Option<(skia_safe::Image, crate::Texture)>,
 }
 
 impl Renderer {
-    /// The caller retains the Android window until after this renderer is dropped.
+    /// Retain the Android window until this renderer is dropped or rebound.
     #[cfg(target_os = "android")]
     pub fn new(window: &ndk::native_window::NativeWindow, width: u32, height: u32) -> Self {
         unsafe {
             let shared = Device::get().expect("initialize the shared GPU renderer");
-            let entry = &shared.entry;
-            let instance = &shared.instance;
-            let android = ash::khr::android_surface::Instance::new(entry, instance);
-            let surface = android
-                .create_android_surface(
-                    &vk::AndroidSurfaceCreateInfoKHR::default()
-                        .window(window.ptr().as_ptr().cast()),
-                    None,
-                )
-                .expect("create Android Vulkan surface");
+            let surface = android_surface(&shared, window);
             Self::from_surface(shared, surface, width, height)
         }
     }
@@ -63,6 +55,7 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Self {
+        let _measure = shrimply_profiling::measure("GPU / Surface context creation");
         unsafe {
             let entry = &shared.entry;
             let instance = shared.instance.clone();
@@ -75,30 +68,10 @@ impl Renderer {
                     .expect("query presentation support"),
                 "the shared Vulkan queue cannot present to this window"
             );
-            let get_proc = |request| {
-                let proc = match request {
-                    skvk::GetProcOf::Instance(handle, name) => {
-                        entry.get_instance_proc_addr(vk::Instance::from_raw(handle as u64), name)
-                    }
-                    skvk::GetProcOf::Device(handle, name) => {
-                        instance.get_device_proc_addr(vk::Device::from_raw(handle as u64), name)
-                    }
-                };
-                proc.map_or(std::ptr::null(), |proc| proc as *const std::ffi::c_void)
-            };
-            let backend = skvk::BackendContext::new_builder(
-                instance.handle().as_raw() as _,
-                physical.as_raw() as _,
-                device.handle().as_raw() as _,
-                (queue.as_raw() as _, family as usize),
-                &get_proc,
-                Some(shared.api_version.min(vk::API_VERSION_1_2).into()),
-            )
-            .with_extensions(&["VK_KHR_surface"], &["VK_KHR_swapchain"])
-            .build();
-            let mut context = gpu::direct_contexts::make_vulkan(&backend, None)
+            let mut context = shared
+                .skia_context(true)
                 .expect("create Skia Vulkan context");
-            drop(backend);
+            shrimply_profiling::increment("GPU / Surface contexts created");
             context.set_resource_cache_limit(SKIA_CACHE_BYTES);
             let swapchain_api = ash::khr::swapchain::Device::new(&instance, &device);
             let acquired = device
@@ -127,6 +100,7 @@ impl Renderer {
                 fence,
                 context: Some(context),
                 extent: vk::Extent2D::default(),
+                recreate: true,
                 format: vk::Format::UNDEFINED,
                 #[cfg(feature = "renderer")]
                 sampled: None,
@@ -137,11 +111,15 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        let _queue = self.shared.queue_lock();
+        if !self.recreate && self.extent.width == width && self.extent.height == height {
+            return;
+        }
+        let _measure = shrimply_profiling::measure("GPU / Surface swapchain rebuild");
+        shrimply_profiling::increment("GPU / Surface swapchains rebuilt");
+        self.shared
+            .wait_idle()
+            .expect("wait before swapchain replacement");
         unsafe {
-            self.device
-                .device_wait_idle()
-                .expect("wait before swapchain replacement");
             // Swapchain images are borrowed by frame-local Skia surfaces. Keep
             // the context's glyph/image caches and the independent compositor
             // texture alive across resizing instead of rebuilding them each frame.
@@ -242,6 +220,73 @@ impl Renderer {
                 .collect();
             self.extent = extent;
             self.format = format.format;
+            self.recreate = false;
+        }
+    }
+
+    /// Rebind presentation while retaining this rendering thread's Skia resource cache.
+    ///
+    /// # Safety
+    /// A non-null surface must belong to this renderer's instance. Ownership is transferred;
+    /// keep its native window alive until replacement has completed.
+    pub unsafe fn replace_surface(&mut self, surface: vk::SurfaceKHR, width: u32, height: u32) {
+        if self.surface == surface {
+            if surface != vk::SurfaceKHR::null() {
+                self.resize(width, height);
+            }
+            return;
+        }
+        if surface != vk::SurfaceKHR::null() {
+            assert!(
+                unsafe {
+                    self.surface_api
+                        .get_physical_device_surface_support(self.physical, self.family, surface)
+                        .expect("query replacement presentation support")
+                },
+                "the shared Vulkan queue cannot present to this window"
+            );
+        }
+        self.release_surface();
+        self.surface = surface;
+        if surface != vk::SurfaceKHR::null() {
+            shrimply_profiling::increment("GPU / Surface context rebinds");
+            self.resize(width, height);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn set_window(
+        &mut self,
+        window: Option<&ndk::native_window::NativeWindow>,
+        width: u32,
+        height: u32,
+    ) {
+        let surface = window.map_or(vk::SurfaceKHR::null(), |window| {
+            android_surface(&self.shared, window)
+        });
+        unsafe { self.replace_surface(surface, width, height) };
+    }
+
+    fn release_surface(&mut self) {
+        if self.surface == vk::SurfaceKHR::null() {
+            return;
+        }
+        self.shared
+            .wait_idle()
+            .expect("finish native surface access");
+        unsafe {
+            #[cfg(feature = "renderer")]
+            drop(self.sampled.take());
+            for semaphore in self.rendered.drain(..) {
+                self.device.destroy_semaphore(semaphore, None);
+            }
+            self.images.clear();
+            self.presented.clear();
+            self.swapchain_api.destroy_swapchain(self.swapchain, None);
+            self.surface_api.destroy_surface(self.surface, None);
+            self.swapchain = vk::SwapchainKHR::null();
+            self.surface = vk::SurfaceKHR::null();
+            self.recreate = true;
         }
     }
 
@@ -278,6 +323,7 @@ impl Renderer {
             timestamp_ns.is_none_or(|time| time > 0 && time <= i64::MAX as u64),
             "surface timestamps must be positive signed nanoseconds"
         );
+        let _sampling = texture.map(crate::Texture::sampling_lock);
         let family = self.family;
         let mut sampled = self.sampled.take();
         let valid = self.draw_at(timestamp_ns, |target, width, height| {
@@ -352,10 +398,14 @@ impl Renderer {
         timestamp_ns: Option<u64>,
         paint: impl FnOnce(&skia_safe::Canvas, u32, u32) -> Option<gpu::BackendTexture>,
     ) -> bool {
+        let _measure = shrimply_profiling::measure("GPU / Surface acquire through present");
         unsafe {
+            let stage = shrimply_profiling::measure("GPU / Surface fence wait");
             self.device
                 .wait_for_fences(&[self.fence], true, GPU_TIMEOUT_NS)
                 .expect("timeline GPU fence timed out");
+            drop(stage);
+            let stage = shrimply_profiling::measure("GPU / Surface acquire image");
             let (index, suboptimal) = match self.swapchain_api.acquire_next_image(
                 self.swapchain,
                 GPU_TIMEOUT_NS,
@@ -363,12 +413,17 @@ impl Renderer {
                 vk::Fence::null(),
             ) {
                 Ok(result) => result,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return false,
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    self.recreate = true;
+                    return false;
+                }
                 Err(error) => panic!("acquire timeline image: {error}"),
             };
-            // Window acquisition and our preceding fence can wait for display
-            // pacing. Keep the shared compositor free to submit during that wait.
-            let _queue = self.shared.queue_lock();
+            drop(stage);
+            // Skia's proc provider serializes its actual queue operations,
+            // including implicit submits during drawing. Context-local CPU
+            // recording must not block other surfaces or the compositor.
+            let stage = shrimply_profiling::measure("GPU / Surface draw and submit");
             let index = index as usize;
             let mut info = skvk::ImageInfo::new(
                 self.images[index].as_raw() as _,
@@ -442,12 +497,16 @@ impl Renderer {
             }
             assert!(context.submit(None), "submit timeline drawing");
             drop(surface);
+            let waiting = shrimply_profiling::measure("GPU / Surface wait for queue");
+            let _queue = self.shared.queue_lock();
+            drop(waiting);
             self.device
                 .reset_fences(&[self.fence])
                 .expect("reset timeline fence");
             self.device
                 .queue_submit(self.queue, &[vk::SubmitInfo::default()], self.fence)
                 .expect("fence timeline work");
+            drop(stage);
             self.presented[index] = true;
             let swaps = [self.swapchain];
             let indices = [index as u32];
@@ -464,32 +523,40 @@ impl Renderer {
             if timestamp_ns.is_some() {
                 present = present.push_next(&mut timing);
             }
-            match self.swapchain_api.queue_present(self.queue, &present) {
+            let stage = shrimply_profiling::measure("GPU / Surface queue present");
+            let valid = match self.swapchain_api.queue_present(self.queue, &present) {
                 Ok(changed) => !changed && !suboptimal,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => false,
                 Err(error) => panic!("present timeline: {error}"),
-            }
+            };
+            drop(stage);
+            self.recreate |= !valid;
+            valid
         }
     }
 }
 
 impl Drop for Renderer {
     fn drop(&mut self) {
-        let _queue = self.shared.queue_lock();
+        shrimply_profiling::increment("GPU / Surface contexts destroyed");
+        self.release_surface();
         unsafe {
-            self.device
-                .device_wait_idle()
-                .expect("finish native surface access");
-            #[cfg(feature = "renderer")]
-            drop(self.sampled.take());
+            // release_surface already finished this context's submissions.
             drop(self.context.take());
-            for semaphore in self.rendered.drain(..) {
-                self.device.destroy_semaphore(semaphore, None);
-            }
             self.device.destroy_semaphore(self.acquired, None);
             self.device.destroy_fence(self.fence, None);
-            self.swapchain_api.destroy_swapchain(self.swapchain, None);
-            self.surface_api.destroy_surface(self.surface, None);
         }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_surface(shared: &Device, window: &ndk::native_window::NativeWindow) -> vk::SurfaceKHR {
+    unsafe {
+        ash::khr::android_surface::Instance::new(&shared.entry, &shared.instance)
+            .create_android_surface(
+                &vk::AndroidSurfaceCreateInfoKHR::default().window(window.ptr().as_ptr().cast()),
+                None,
+            )
+            .expect("create Android Vulkan surface")
     }
 }

@@ -22,6 +22,7 @@ internal object NativeTimeline {
     external fun create(stress: Boolean, benchmark: Boolean, listener: TimelineListener): Long
     external fun request(handle: Long, request: String, descriptor: Int): String
     external fun surface(handle: Long, role: Int, surface: Surface?, width: Int, height: Int, density: Float)
+    external fun visible(handle: Long, role: Int, visible: Boolean)
     external fun resize(handle: Long, role: Int, width: Int, height: Int)
     external fun active(handle: Long, active: Boolean)
     external fun input(handle: Long, role: Int, batch: FloatArray): Boolean
@@ -85,6 +86,10 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
             if (surface == null) surfaceRoles.remove(role) else surfaceRoles.add(role)
             NativeTimeline.surface(current, role, surface, width, height, density)
         }
+    }
+    fun visible(role: Int, visible: Boolean) {
+        val current = handle.get()
+        if (current != 0L) NativeTimeline.visible(current, role, visible)
     }
     fun resize(role: Int, width: Int, height: Int) {
         val current = handle.get()

@@ -6,8 +6,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -18,7 +16,6 @@ import org.json.JSONObject
 internal fun FrameGraphEditor(timeline: TimelineSession, graph: JSONObject) {
     val scope = rememberCoroutineScope()
     var error by remember(graph.getLong("serial")) { mutableStateOf<String?>(null) }
-    var visible by remember(graph.getLong("serial")) { mutableStateOf(false) }
     val send: (JSONObject) -> Unit = { command -> scope.launch {
         try { timeline.request(command); error = null }
         catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -32,9 +29,8 @@ internal fun FrameGraphEditor(timeline: TimelineSession, graph: JSONObject) {
                 }
             }
         }
-        Box(Modifier.fillMaxWidth().height(graph.getInt("height").dp)
-            .onGloballyPositioned { visible = !it.boundsInWindow(clipBounds = true).isEmpty }) {
-            if (visible) key(graph.getInt("surface")) { NativeSurface(timeline, Modifier.fillMaxSize(), role = graph.getInt("surface"), enabled = graph.getBoolean("enabled")) }
+        Box(Modifier.fillMaxWidth().height(graph.getInt("height").dp)) {
+            key(graph.getInt("surface")) { NativeSurface(timeline, Modifier.fillMaxSize(), role = graph.getInt("surface"), enabled = graph.getBoolean("enabled")) }
             graph.optJSONObject("menu")?.let { menu ->
                 AdaptiveMenu(expanded = true, bottomSheet = menu.getBoolean("bottom_sheet"),
                     dismiss = { send(menu.getJSONObject("dismiss")) },

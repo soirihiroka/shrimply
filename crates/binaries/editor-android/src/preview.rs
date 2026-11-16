@@ -8,6 +8,7 @@ use shrimply_render_vulkan::{Texture, surface::Renderer};
 
 #[derive(Clone, PartialEq)]
 pub(crate) struct Frame {
+    pub source_frame: Option<u64>,
     pub texture: Option<Texture>,
     canvas_size: glam::UVec2,
     background: Color,
@@ -40,6 +41,10 @@ impl Frame {
             position
         };
         Self {
+            source_frame: runtime
+                .preview_frame
+                .as_ref()
+                .and_then(|frame| frame.source_frame),
             texture,
             canvas_size: glam::uvec2(size.width, size.height),
             background: shrimply_cross_ui_theme::current().window_bg,

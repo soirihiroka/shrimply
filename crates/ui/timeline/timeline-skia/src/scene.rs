@@ -25,6 +25,7 @@ pub use keyboard::{KeyAction, TrackDeletion};
 mod drop_preview;
 mod frame;
 mod input;
+use input::{TouchButtonFeedback, TouchButtonPhase};
 mod track_import;
 pub use input::{Event, PointerButton, PointerState, Requests};
 pub mod pointer;
@@ -48,6 +49,10 @@ pub struct Scene {
     modifiers: TimelineModifiers,
     pointer_pos: Option<Vec2>,
     touch_input: shrimply_components_skia::input::TouchInput,
+    touch_button_feedback: Option<TouchButtonFeedback>,
+    button_feedback_owner: uuid::Uuid,
+    button_feedback_serial: u64,
+    native_button_indication: bool,
     pending_context_menu: Option<(Vec2, bool)>,
     touch_selection: Option<selection_state::SelectionSnapshot>,
     touch_playhead: Option<Time>,
@@ -325,6 +330,10 @@ impl Scene {
             modifiers: TimelineModifiers::default(),
             pointer_pos: None,
             touch_input: Default::default(),
+            touch_button_feedback: None,
+            button_feedback_owner: uuid::Uuid::new_v4(),
+            button_feedback_serial: 0,
+            native_button_indication: false,
             touch_selection: None,
             touch_playhead: None,
             touch_playing: None,

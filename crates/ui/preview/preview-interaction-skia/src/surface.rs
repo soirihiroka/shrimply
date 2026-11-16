@@ -79,10 +79,12 @@ pub struct TouchResponse {
 
 #[derive(PartialEq)]
 struct Stamp {
-    clock: Clock,
+    revision: u64,
+    animation: Option<(Clock, u64)>,
     selected: Option<(ItemAddress, PreviewTarget)>,
     configuration: Configuration,
-    audio_revision: u64,
+    viewport: PreviewViewport,
+    clip: Rect,
     guides: PreviewGuides,
     guide_colors: [Color; 2],
 }
@@ -170,8 +172,9 @@ impl Surface {
         audio: &FrameAudioAnalysis,
     ) -> bool {
         self.synchronize_history();
+        let overlay_changed = self.core.provider.is_some() || self.core.retiring_provider.is_some();
         if self.core.accept_base_frame(revision, exclusion) {
-            self.core.frame_pending = true;
+            self.core.frame_pending |= overlay_changed;
             self.presented = Some((revision, position));
             if !self.audio.same_frame(audio) {
                 self.audio = audio.clone();
@@ -501,6 +504,9 @@ impl Surface {
         let viewport = self
             .navigation
             .viewport(configuration.fit(project), configuration.bounds());
+        let clip = self
+            .navigation
+            .clip_rect(configuration.bounds(), configuration.size);
         let selection = controller::selection(
             project,
             selected,
@@ -510,13 +516,20 @@ impl Surface {
         )
         .map(|(address, target)| (address.clone(), target));
         let stamp = Stamp {
-            clock: Clock {
-                position: self.displayed_position(clock),
-                ..clock
-            },
+            revision: clock.revision,
+            animation: selection.as_ref().map(|_| {
+                (
+                    Clock {
+                        position: self.displayed_position(clock),
+                        ..clock
+                    },
+                    self.audio_revision,
+                )
+            }),
             selected: selection,
             configuration,
-            audio_revision: self.audio_revision,
+            viewport,
+            clip,
             guides: project.preview_guides.as_ref().clone(),
             guide_colors: {
                 let theme = shrimply_cross_ui_theme::current();
@@ -541,9 +554,6 @@ impl Surface {
                 Color::BLUE5,
             );
         }
-        let clip = self
-            .navigation
-            .clip_rect(configuration.bounds(), configuration.size);
         canvas.save();
         canvas.clip_rect(
             skia_safe::Rect::from_xywh(clip.min.x, clip.min.y, clip.width(), clip.height()),

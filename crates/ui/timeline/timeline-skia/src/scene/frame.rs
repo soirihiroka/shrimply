@@ -224,6 +224,13 @@ pub(super) fn draw(scene: &mut Scene, painter: &TimelinePainter, size: Vec2, fra
     let mut track_control_draw = TrackControlDraw {
         animation_active: &mut runtime.track_controls_animating,
         buttons: &mut runtime.track_buttons,
+        external_indication: runtime.native_button_indication && runtime.pointer_touch,
+        touch: runtime.pointer_touch,
+        touch_pressed: runtime
+            .touch_button_feedback
+            .as_ref()
+            .filter(|feedback| feedback.phase == TouchButtonPhase::Pressed)
+            .map(|feedback| feedback.button),
         active_audio_recording_key,
         active_video_recording_key,
     };

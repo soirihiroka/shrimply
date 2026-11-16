@@ -12,6 +12,32 @@ pub fn track_label_add_x(controls_progress: f64) -> f64 {
         + (crate::TRACK_LABEL_ADD_X - crate::TRACK_INDEX_COLUMN_WIDTH) * controls_progress
 }
 
+pub fn track_button_bounds(
+    view: crate::Viewport,
+    row: usize,
+    action: crate::TrackLabelAction,
+) -> Option<crate::canvas::Rect> {
+    use crate::TrackLabelAction;
+    let x = match action {
+        TrackLabelAction::Add => track_label_add_x(view.track_controls_progress),
+        TrackLabelAction::Toggle if view.track_controls_progress >= 1.0 => {
+            crate::TRACK_LABEL_TOGGLE_X
+        }
+        TrackLabelAction::AudioRecord | TrackLabelAction::VideoRecord
+            if view.track_controls_progress >= 1.0 =>
+        {
+            crate::TRACK_LABEL_RECORD_X
+        }
+        _ => return None,
+    };
+    Some(crate::rect(
+        x,
+        track_label_button_y(row_screen_y(row, view)),
+        crate::TRACK_LABEL_BUTTON_SIZE,
+        crate::TRACK_LABEL_BUTTON_SIZE,
+    ))
+}
+
 pub fn visible_time_bounds(
     view: crate::Viewport,
     width: f64,

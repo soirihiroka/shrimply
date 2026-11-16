@@ -12,6 +12,7 @@ mod context;
 mod context_media;
 #[cfg(target_os = "android")]
 mod export;
+mod file_drop;
 mod graph;
 mod inspector;
 pub(crate) mod palette;
@@ -38,6 +39,7 @@ impl Lifecycle {
 pub(crate) struct Runtime {
     context_menu: Option<context::Menu>,
     context_serial: u64,
+    file_drop: Option<file_drop::Session>,
     timeline_service: Option<shrimply_inspector_document::timeline_service::Session>,
     video_recording: Option<video_recording::Recording>,
     inspect_serial: u64,
@@ -130,6 +132,7 @@ impl Runtime {
             inspector_visible: true,
             context_menu: None,
             context_serial: 0,
+            file_drop: None,
             timeline_service: None,
             video_recording: None,
             inspect_serial: 0,
@@ -273,7 +276,16 @@ impl Runtime {
         };
         if matches!(
             operation,
-            "open" | "create" | "close" | "undo" | "redo" | "play" | "pause" | "step" | "seek"
+            "open"
+                | "create"
+                | "close"
+                | "undo"
+                | "redo"
+                | "play"
+                | "pause"
+                | "step"
+                | "seek"
+                | "file_drop_begin"
         ) {
             self.cancel_graph_edit()?;
             self.cancel_numeric()?;
@@ -305,12 +317,14 @@ impl Runtime {
         if source.is_some()
             && !matches!(
                 operation,
-                "import_file" | "inspector_file" | "timeline_service_file"
+                "import_file" | "inspector_file" | "timeline_service_file" | "file_drop_file"
             )
         {
             return Err("a source descriptor is only valid for a file import".into());
         }
         let mut result = match operation {
+            "file_drop_begin" | "file_drop_file" | "file_drop_commit" | "file_drop_cancel"
+            | "file_drop_remux" => self.file_drop_request(request, source),
             "timeline_service_action" | "timeline_service_file" => {
                 self.timeline_service_request(request, source)
             }
@@ -608,6 +622,7 @@ impl Runtime {
 
     fn refresh(&mut self, reset: bool) {
         if reset {
+            self.file_drop = None;
             self.discard_video_recording();
             self.framegraphs.clear();
             self.graph_dirty = true;
@@ -721,6 +736,7 @@ impl Runtime {
                     clipboard,
                     performance,
                 );
+                scene.set_native_button_indication(true);
                 scene.set_recording_available(true, true);
                 scene
             });
@@ -844,7 +860,7 @@ impl Runtime {
         let preview_image = Value::Null;
         // The project/recents payload changes only on project events, not every frame.
         format!(
-            "{{\"status\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
+            "{{\"status\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"button_feedback\":{},\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
             self.status,
             shrimply_preferences_core::snapshot(&self.backend.preferences)
                 .editor_layout
@@ -860,6 +876,9 @@ impl Runtime {
             self.inspector_status,
             self.video_recording_snapshot(),
             json!(export),
+            self.timeline
+                .as_ref()
+                .map_or(Value::Null, |scene| scene.button_feedback()),
             self.timeline
                 .as_ref()
                 .map_or(1.0, |scene| scene.tools_progress()),

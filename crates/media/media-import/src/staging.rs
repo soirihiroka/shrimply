@@ -18,9 +18,6 @@ pub fn stage_source(
     name: &str,
     project_directory: &Path,
 ) -> Result<StagedSource, String> {
-    if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
-        return Err("imported file name must not contain a directory".into());
-    }
     let canonical_source = if source_file.is_none() {
         source.canonicalize().ok()
     } else {
@@ -32,7 +29,25 @@ pub fn stage_source(
         .and_then(|source| source.parent())
         .map(Path::to_owned)
         .unwrap_or_else(|| project_directory.join("media"));
-    fs::create_dir_all(&directory)
+    stage_source_in(source, source_file, name, &directory)
+}
+
+/// Copy a document-provider source into a caller-owned media directory.
+pub fn stage_source_in(
+    source: &Path,
+    source_file: Option<fs::File>,
+    name: &str,
+    directory: &Path,
+) -> Result<StagedSource, String> {
+    if Path::new(name).file_name().and_then(|name| name.to_str()) != Some(name) {
+        return Err("imported file name must not contain a directory".into());
+    }
+    let canonical_source = if source_file.is_none() {
+        source.canonicalize().ok()
+    } else {
+        None
+    };
+    fs::create_dir_all(directory)
         .map_err(|error| format!("could not create project media directory: {error}"))?;
     let destination = directory.join(name);
     let already_staged = canonical_source

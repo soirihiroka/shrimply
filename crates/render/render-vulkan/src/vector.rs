@@ -101,41 +101,7 @@ impl Renderer {
             .and_then(|count| count.checked_mul(4))
             .ok_or("Vector surface size overflow")?;
         if self.skia.is_none() {
-            let device = &self.device;
-            let get_proc = |get: gpu::vk::GetProcOf| {
-                let function = match get {
-                    gpu::vk::GetProcOf::Instance(handle, name) => unsafe {
-                        device
-                            .entry
-                            .get_instance_proc_addr(vk::Instance::from_raw(handle as u64), name)
-                    },
-                    gpu::vk::GetProcOf::Device(handle, name) => unsafe {
-                        device
-                            .instance
-                            .get_device_proc_addr(vk::Device::from_raw(handle as u64), name)
-                    },
-                };
-                function.map_or(std::ptr::null(), |function| function as _)
-            };
-            let backend = unsafe {
-                gpu::vk::BackendContext::new_builder(
-                    device.instance.handle().as_raw() as _,
-                    device.physical.as_raw() as _,
-                    device.raw.handle().as_raw() as _,
-                    (device.queue.as_raw() as _, device.family as usize),
-                    &get_proc,
-                    Some(gpu::vk::Version::new(
-                        vk::api_version_major(device.api_version) as usize,
-                        vk::api_version_minor(device.api_version) as usize,
-                        vk::api_version_patch(device.api_version) as usize,
-                    )),
-                )
-                .build()
-            };
-            self.skia = Some(
-                gpu::direct_contexts::make_vulkan(&backend, None)
-                    .ok_or("Create Vulkan Skia Vulkan context")?,
-            );
+            self.skia = Some(self.device.skia_context(false)?);
         }
         let info = ImageInfo::new(dimensions, ColorType::RGBA8888, AlphaType::Premul, None);
         let skia = self.skia.as_mut().expect("initialized Vulkan Skia context");
@@ -153,10 +119,7 @@ impl Renderer {
         surface.canvas().clear(skia_safe::Color::TRANSPARENT);
         draw(surface.canvas())?;
         let image = surface.image_snapshot();
-        {
-            let _guard = self.device.queue_lock();
-            skia.flush_and_submit();
-        }
+        skia.flush_and_submit();
         let (texture, origin) = gpu::images::get_backend_texture_from_image(&image, false)
             .ok_or("Get Vulkan vector texture")?;
         if origin != gpu::SurfaceOrigin::TopLeft {

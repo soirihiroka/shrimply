@@ -133,7 +133,11 @@ pub(crate) fn handle_timeline_input(
         hover_pos: runtime.pointer_pos,
     };
 
-    let hover_pos = pointer.interact_pos.or(pointer.hover_pos);
+    let hover_pos = if runtime.pointer_touch && !pointer.down && !pointer.released {
+        None
+    } else {
+        pointer.interact_pos.or(pointer.hover_pos)
+    };
     let hovered_button = hover_pos.and_then(|pos| {
         let project = project.borrow();
         track_button_at(&project, runtime.view, pos.x as f64, pos.y as f64)

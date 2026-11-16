@@ -24,6 +24,7 @@ use shrimply_render_core::{Nv12LayerParams, effects::SpatialState};
 use shrimply_visual_frame::{GpuFrame, VideoFrame};
 use std::{
     collections::{HashMap, HashSet},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -33,6 +34,7 @@ type ExternalMasks = Vec<(
 )>;
 
 pub struct Rendered {
+    pub source_frame: Option<u64>,
     pub sanim_sources: Arc<shrimply_visual_core::sanim::inspection::FrameSources>,
     pub buffer: Buffer,
     pub width: u32,
@@ -55,7 +57,7 @@ impl Rendered {
 pub struct Presented {
     pub display: gpu::Texture,
     pub rendered: Rendered,
-    presentation: Submission,
+    presentation: Rc<Submission>,
 }
 
 impl Presented {
@@ -72,6 +74,7 @@ impl Presented {
 }
 
 pub struct Compositor {
+    presentation: Option<(u64, gpu::Texture, Rc<Submission>)>,
     scene: Scene,
     morphs: HashMap<shrimply_preview_render_core::MorphCacheKey, morph::Cached>,
     used_morphs: HashSet<shrimply_preview_render_core::MorphCacheKey>,
@@ -99,6 +102,7 @@ impl Compositor {
     pub fn new() -> Result<Self, String> {
         let renderer = Renderer::new()?;
         Ok(Self {
+            presentation: None,
             scene: Scene::default(),
             morphs: HashMap::new(),
             used_morphs: HashSet::new(),
@@ -141,9 +145,9 @@ impl Compositor {
         self.scene.set_capture_target(target);
     }
     pub fn invalidate(&mut self) {
+        self.presentation = None;
         self.scene.invalidate();
         self.morphs.clear();
-        #[cfg(target_os = "linux")]
         self.renderer.clear_video_contexts();
         self.images.clear();
         self.layered_sources.clear();
@@ -182,16 +186,32 @@ impl Compositor {
         self.scene.prepare(project, time)
     }
     pub fn render(&mut self, plan: FramePlan) -> Result<Presented, String> {
+        let continuous = plan.accuracy.continuous_playback();
         let rendered = {
             let _measurement = shrimply_profiling::measure("Vulkan rendering / Compose layers");
             self.render_gpu(plan, 0)?
         };
         let _measurement = shrimply_profiling::measure("Vulkan rendering / Prepare presentation");
-        let (display, presentation) = self.renderer.presentation_texture(
-            &rendered.buffer,
-            rendered.width,
-            rendered.height,
-        )?;
+        let (display, presentation) = if let Some((source, display, submitted)) = &self.presentation
+            && continuous
+            && rendered.source_frame == Some(*source)
+        {
+            shrimply_profiling::increment(
+                "Vulkan rendering / Unchanged video presentations reused",
+            );
+            (display.clone(), submitted.clone())
+        } else {
+            let (display, submitted) = self.renderer.presentation_texture(
+                &rendered.buffer,
+                rendered.width,
+                rendered.height,
+            )?;
+            let submitted = Rc::new(submitted);
+            self.presentation = rendered
+                .source_frame
+                .map(|source| (source, display.clone(), submitted.clone()));
+            (display, submitted)
+        };
         Ok(Presented {
             display,
             rendered,
@@ -288,7 +308,16 @@ impl Compositor {
     }
 
     pub fn render_gpu(&mut self, plan: FramePlan, background: u32) -> Result<Rendered, String> {
-        let direct_video = shrimply_preview_render_core::math::unmodified_video(&plan).is_some();
+        let source_frame =
+            shrimply_preview_render_core::math::unmodified_video(&plan).map(|video| video.id());
+        if self
+            .presentation
+            .as_ref()
+            .is_some_and(|(source, ..)| Some(*source) != source_frame)
+        {
+            self.presentation = None;
+        }
+        let direct_video = source_frame.is_some();
         let mut submissions = Vec::new();
         self.used_images.clear();
         self.used_morphs.clear();
@@ -336,6 +365,7 @@ impl Compositor {
             false
         });
         Ok(Rendered {
+            source_frame,
             sanim_sources: plan.sanim_sources,
             buffer,
             width: size.0,

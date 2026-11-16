@@ -31,6 +31,24 @@ pub enum ExternalDropAction {
     ConfirmRemux { batch: crate::import_queue::BatchId },
 }
 
+pub struct RemuxPrompt {
+    pub title: std::borrow::Cow<'static, str>,
+    pub body: std::borrow::Cow<'static, str>,
+    pub confirm: std::borrow::Cow<'static, str>,
+    pub cancel: std::borrow::Cow<'static, str>,
+}
+
+pub fn remux_prompt() -> RemuxPrompt {
+    RemuxPrompt {
+        title: shrimply_i18n::text("Remux MKV/WebM to MP4?"),
+        body: shrimply_i18n::text(
+            "MP4 is the supported timeline import format. The file can be remuxed losslessly first.",
+        ),
+        confirm: shrimply_i18n::text("Remux"),
+        cancel: shrimply_i18n::text("Cancel"),
+    }
+}
+
 pub struct ExternalImportEvent {
     pub batch: crate::import_queue::BatchId,
     pub retained_paths: Option<Vec<PathBuf>>,
@@ -285,16 +303,40 @@ impl crate::scene::Scene {
         paths: Vec<PathBuf>,
         point: Option<Vec2>,
     ) -> Result<crate::import_queue::ImportStart, String> {
+        let destination = self.external_files_destination(point)?;
+        self.external_imports.enqueue_destination(
+            paths,
+            &self.project.borrow(),
+            destination,
+            self.default_visual_duration,
+        )
+    }
+
+    pub fn external_files_destination(
+        &self,
+        point: Option<Vec2>,
+    ) -> Result<crate::import_queue::Destination, String> {
         if point.is_some_and(|point| !self.external_drop_target(point)) {
             return Err("files cannot be inserted at this timeline position".into());
         }
-        let placement = self.external_placement(point);
-        self.external_imports.enqueue(
+        crate::import_queue::destination(&self.project.borrow(), self.external_placement(point))
+    }
+
+    /// Retain provider copies and their captured destination until the import commits or fails.
+    pub fn enqueue_external_owned_files(
+        &mut self,
+        files: Vec<OwnedFile>,
+        destination: crate::import_queue::Destination,
+    ) -> Result<crate::import_queue::ImportStart, String> {
+        let paths = files.iter().map(|file| file.path().to_path_buf()).collect();
+        let started = self.external_imports.enqueue_destination(
             paths,
             &self.project.borrow(),
-            placement,
+            destination,
             self.default_visual_duration,
-        )
+        )?;
+        self.external_owned_files.insert(started.batch, files);
+        Ok(started)
     }
 
     pub fn perform_external_drop(
@@ -425,6 +467,7 @@ impl crate::scene::Scene {
                 break;
             };
             if completion.cancelled {
+                self.external_owned_files.remove(&completion.batch);
                 self.external_import_events.push_back(ExternalImportEvent {
                     batch: completion.batch,
                     retained_paths: None,
@@ -437,13 +480,12 @@ impl crate::scene::Scene {
                 completion.result,
             ) {
                 Ok(()) => {
-                    for file in self
-                        .external_owned_files
-                        .remove(&completion.batch)
-                        .unwrap_or_default()
-                    {
-                        file.keep();
-                    }
+                    self.external_imports.finish_owned_sources(
+                        self.external_owned_files
+                            .remove(&completion.batch)
+                            .unwrap_or_default(),
+                        &completion.paths,
+                    );
                     self.external_import_events.push_back(ExternalImportEvent {
                         batch: completion.batch,
                         retained_paths: Some(completion.paths),

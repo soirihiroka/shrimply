@@ -120,6 +120,11 @@ impl VideoCommandSender {
                 WorkerCommand::SetPreviewExclusion(item_id)
             }
             VideoCommand::Render { position, accuracy } => {
+                if accuracy.continuous_playback() {
+                    shrimply_profiling::increment(
+                        "Preview requests / Continuous renders requested",
+                    );
+                }
                 let request_id = self.next_request_id.fetch_add(1, Ordering::AcqRel) + 1;
                 let mut previous = self
                     .last_render

@@ -3,6 +3,34 @@ use jni::sys::{JNIEnv, jclass, jstring};
 static VM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
 
 #[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_shrimply_app_NativeLayout_editorPaneBounds(
+    env: *mut JNIEnv,
+    _class: jclass,
+    width: jni::sys::jfloat,
+    height: jni::sys::jfloat,
+    inspector_width: jni::sys::jfloat,
+    timeline_fraction: jni::sys::jfloat,
+    inspector_visible: jni::sys::jboolean,
+    timeline_visible: jni::sys::jboolean,
+) -> jni::sys::jfloatArray {
+    let bounds = shrimply_components_core::math::editor_pane_bounds(
+        [width, height],
+        inspector_width,
+        timeline_fraction,
+        inspector_visible,
+        timeline_visible,
+    );
+    let values = bounds.as_flattened();
+    unsafe {
+        let result = ((**env).v1_1.NewFloatArray)(env, values.len() as i32);
+        assert!(!result.is_null(), "allocate pane bounds");
+        ((**env).v1_1.SetFloatArrayRegion)(env, result, 0, values.len() as i32, values.as_ptr());
+        assert!(!((**env).v1_2.ExceptionCheck)(env), "write pane bounds");
+        result
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_shrimply_app_NativeLayout_panelDividerWidth(
     _env: *mut JNIEnv,
     _class: jclass,
@@ -186,23 +214,6 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeI18n_text(
                 .expect("localization string fits JNI"),
         )
     }
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_shrimply_app_NativeLayout_panelAnimationDurationMillis(
-    _env: *mut JNIEnv,
-    _class: jclass,
-) -> jni::sys::jint {
-    shrimply_components_core::layout::PANEL_ANIMATION_DURATION_MS as jni::sys::jint
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_dev_shrimply_app_NativeLayout_panelAnimationProgress(
-    _env: *mut JNIEnv,
-    _class: jclass,
-    progress: jni::sys::jfloat,
-) -> jni::sys::jfloat {
-    shrimply_components_core::math::ease_out_cubic(f64::from(progress)) as jni::sys::jfloat
 }
 
 #[unsafe(no_mangle)]

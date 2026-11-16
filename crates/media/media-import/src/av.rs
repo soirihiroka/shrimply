@@ -77,6 +77,25 @@ pub(super) fn inspect(
         return Err(format!("{} has no audio or video streams", path.display()));
     }
 
+    if file_kind == FileKind::Image {
+        if video_sizes.iter().any(|size| {
+            (size.x as usize)
+                .checked_mul(size.y as usize)
+                .is_none_or(|pixels| pixels > shrimply_drawing_skia::media::MAX_PIXELS)
+        }) {
+            return Err("image dimensions exceed the pixel budget".into());
+        }
+        use shrimply_video_decoder::{DecoderBackend, NextFrame, VideoDecoderSession};
+        let mut decoder =
+            VideoDecoderSession::open(&snapshot, 0, |_| Ok(DecoderBackend::Software), None)?;
+        match decoder.next_frame([None, None])? {
+            NextFrame::Frame((_, frame))
+                if !frame.native().is_corrupt()
+                    && frame.native().decode_error_flags().is_empty() => {}
+            _ => return Err(format!("{} has no complete decoded image", path.display())),
+        }
+    }
+
     let source_duration = Time::from_fraction(
         input.duration().max(0),
         i64::from(ffmpeg::sys::AV_TIME_BASE),

@@ -1,6 +1,6 @@
 use super::icons::*;
 use crate::canvas::Stroke;
-use crate::math::{row_screen_y, track_label_button_y};
+use crate::math::{row_screen_y, track_button_bounds};
 use crate::*;
 
 pub fn draw_track_label_pane(
@@ -48,7 +48,6 @@ pub fn draw_track_label_pane(
         if y + TRACK_HEIGHT <= RULER_HEIGHT || y >= height {
             continue;
         }
-        let y = row_screen_y(row, view);
         let Some(key) = track_row.root_key else {
             let kind = match &track_row.address {
                 crate::project::TrackAddress::Comment { .. } => TrackKind::Comment,
@@ -79,13 +78,8 @@ pub fn draw_track_label_pane(
             },
         );
 
-        let button_y = track_label_button_y(y);
-        let add_rect = rect(
-            crate::math::track_label_add_x(view.track_controls_progress),
-            button_y,
-            TRACK_LABEL_BUTTON_SIZE,
-            TRACK_LABEL_BUTTON_SIZE,
-        );
+        let add_rect = track_button_bounds(view, row, TrackLabelAction::Add)
+            .expect("visible track has an add button");
         let add_icon_rect = draw_track_icon_button(
             &row_painter,
             add_rect,
@@ -104,12 +98,8 @@ pub fn draw_track_label_pane(
         if !controls_visible {
             continue;
         }
-        let toggle_rect = rect(
-            TRACK_LABEL_TOGGLE_X,
-            button_y,
-            TRACK_LABEL_BUTTON_SIZE,
-            TRACK_LABEL_BUTTON_SIZE,
-        );
+        let toggle_rect = track_button_bounds(view, row, TrackLabelAction::Toggle)
+            .expect("visible controls have a toggle button");
         let toggle_icon_rect = draw_track_icon_button(
             &row_painter,
             toggle_rect,
@@ -145,12 +135,8 @@ pub fn draw_track_label_pane(
         } else {
             icon_color
         };
-        let record_rect = rect(
-            TRACK_LABEL_RECORD_X,
-            button_y,
-            TRACK_LABEL_BUTTON_SIZE,
-            TRACK_LABEL_BUTTON_SIZE,
-        );
+        let record_rect = track_button_bounds(view, row, record_action)
+            .expect("recording track has a record button");
         let record_icon_rect = draw_track_icon_button(
             &row_painter,
             record_rect,
@@ -244,13 +230,23 @@ fn draw_track_icon_button(
     checked: bool,
     controls: &mut TrackControlDraw<'_>,
 ) -> Rect {
-    let frame = controls.buttons.entry(id).or_default().draw(
-        painter.canvas(),
-        shrimply_components_skia::button::Config::new(rect, color)
-            .style(shrimply_components_skia::button::Style::Flat)
-            .padding(shrimply_components_skia::button::Padding::ImageButton)
-            .checked(checked),
-    );
+    let config = shrimply_components_skia::button::Config::new(rect, color)
+        .style(shrimply_components_skia::button::Style::Flat)
+        .padding(shrimply_components_skia::button::Padding::ImageButton)
+        .checked(checked);
+    let config = if controls.touch {
+        config.interaction(
+            false,
+            !controls.external_indication && controls.touch_pressed == Some(id),
+        )
+    } else {
+        config
+    };
+    let frame = controls
+        .buttons
+        .entry(id)
+        .or_default()
+        .draw(painter.canvas(), config);
     *controls.animation_active |= frame.animating;
     frame.content_bounds
 }
@@ -287,23 +283,20 @@ pub fn track_label_action_at(
     }
     let content_y = y + view.scroll_y;
     let (kind, track_index, row) = rows::track_at_y(project, content_y)?;
-    let row_y = row_screen_y(row, view);
-    let button_y = track_label_button_y(row_y);
     let key = TrackKey { kind, track_index };
-    if hit_track_label_button(
-        x,
-        y,
-        crate::math::track_label_add_x(view.track_controls_progress),
-        button_y,
-    ) {
+    let hit = |action| {
+        track_button_bounds(view, row, action)
+            .is_some_and(|bounds| bounds.contains(crate::canvas::vec2(x as f32, y as f32)))
+    };
+    if hit(TrackLabelAction::Add) {
         return Some((key, TrackLabelAction::Add));
     }
     if view.track_controls_progress < 1.0 {
         return Some((key, TrackLabelAction::Select));
     }
-    if hit_track_label_button(x, y, TRACK_LABEL_TOGGLE_X, button_y) {
+    if hit(TrackLabelAction::Toggle) {
         Some((key, TrackLabelAction::Toggle))
-    } else if hit_track_label_button(x, y, TRACK_LABEL_RECORD_X, button_y) {
+    } else if hit(TrackLabelAction::AudioRecord) {
         match kind {
             TrackKind::Audio => Some((key, TrackLabelAction::AudioRecord)),
             TrackKind::Video => Some((key, TrackLabelAction::VideoRecord)),
@@ -313,16 +306,4 @@ pub fn track_label_action_at(
     } else {
         Some((key, TrackLabelAction::Select))
     }
-}
-
-fn hit_track_label_button(x: f64, y: f64, button_x: f64, button_y: f64) -> bool {
-    shrimply_components_skia::button::Button::hit_test(
-        crate::canvas::Rect::from_xywh(
-            button_x as f32,
-            button_y as f32,
-            TRACK_LABEL_BUTTON_SIZE as f32,
-            TRACK_LABEL_BUTTON_SIZE as f32,
-        ),
-        crate::canvas::vec2(x as f32, y as f32),
-    )
 }

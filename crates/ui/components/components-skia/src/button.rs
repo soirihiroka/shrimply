@@ -5,7 +5,7 @@ use skia_safe::Canvas;
 use super::{Color, Rect, Vec2, draw_rounded_rect, math};
 
 const TRANSITION_DURATION: Duration = Duration::from_millis(200);
-const ADWAITA_RADIUS: f32 = 9.0;
+pub const DEFAULT_CORNER_RADIUS: f32 = 9.0;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Style {
@@ -47,6 +47,7 @@ pub struct Config {
     radius: Radius,
     padding: Padding,
     checked: bool,
+    interaction: Option<(bool, bool)>,
 }
 
 impl Config {
@@ -58,6 +59,7 @@ impl Config {
             radius: Radius::default(),
             padding: Padding::default(),
             checked: false,
+            interaction: None,
         }
     }
 
@@ -78,6 +80,11 @@ impl Config {
 
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = checked;
+        self
+    }
+
+    pub fn interaction(mut self, hovered: bool, pressed: bool) -> Self {
+        self.interaction = Some((hovered, pressed));
         self
     }
 }
@@ -154,7 +161,8 @@ impl Button {
 
     pub fn draw(&mut self, canvas: &Canvas, config: Config) -> Draw {
         let now = Instant::now();
-        let target = background_alpha(config.style, config.checked, self.hovered, self.pressed);
+        let (hovered, pressed) = config.interaction.unwrap_or((self.hovered, self.pressed));
+        let target = background_alpha(config.style, config.checked, hovered, pressed);
         let current = self.background.unwrap_or(target);
 
         if self.background.is_none() {
@@ -225,7 +233,7 @@ fn radius(style: Style, radius: Radius, bounds: Rect) -> f32 {
         {
             bounds.width().min(bounds.height()) / 2.0
         }
-        Radius::Style => ADWAITA_RADIUS,
+        Radius::Style => DEFAULT_CORNER_RADIUS,
     }
 }
 

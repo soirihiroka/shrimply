@@ -128,6 +128,7 @@ impl Decoder {
         };
         #[cfg(target_os = "android")]
         if frame.1.native().format() == Pixel::MEDIACODEC {
+            let _measurement = shrimply_profiling::measure("Video decode / Prepare hardware image");
             frame
                 .1
                 .prepare_android(|| self.cancellation.superseded() || control.superseded())?;

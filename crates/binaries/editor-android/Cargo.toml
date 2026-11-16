@@ -8,6 +8,7 @@ name = "shrimply_android"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+shrimply-profiling.workspace = true
 shrimply-preview-render-core.workspace = true
 shrimply-preview-interaction-skia.workspace = true
 glam.workspace = true

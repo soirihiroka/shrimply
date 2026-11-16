@@ -475,6 +475,7 @@ impl Controller {
                 return Err(failures.join("\n"));
             }
             if !audio_analysis.pending() {
+                self.frame_pending |= provider.is_some();
                 self.provider = provider;
             }
         }

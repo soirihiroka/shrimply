@@ -592,6 +592,19 @@ impl Time {
         }
     }
 
+    /// Round deadlines up so a timer never wakes before the rational time.
+    pub fn as_nonnegative_duration_ceil(self) -> Duration {
+        let nanos = match self.seconds {
+            GenericFraction::Rational(Sign::Plus, ratio) => {
+                (u128::from(*ratio.numer()) * TIME_NANOSECONDS_PER_SECOND as u128)
+                    .div_ceil(u128::from(*ratio.denom()))
+                    .min(u128::from(u64::MAX)) as u64
+            }
+            _ => 0,
+        };
+        Duration::from_nanos(nanos)
+    }
+
     pub fn as_nanos_i128(self) -> i128 {
         match self.seconds {
             GenericFraction::Rational(sign, ratio) => {

@@ -187,6 +187,7 @@ impl Scene {
         std::mem::take(&mut self.sanim_errors)
     }
     pub fn set_source_waker(&mut self, wake: Option<shrimply_visual_core::generated::SourceWake>) {
+        self.media.set_source_waker(wake.clone());
         for source in self.sanim.values_mut() {
             source.set_waker(wake.clone());
         }

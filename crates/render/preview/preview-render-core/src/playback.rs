@@ -362,6 +362,21 @@ impl<F: 'static> PreviewMedia<F> {
                         || project_change.is_some_and(|change| change.video || change.audio))
                 {
                     let previous_position = last_position.get();
+                    if snapshot.playing && natural_playback && position_changed {
+                        shrimply_profiling::increment("Preview requests / Playback clock steps");
+                        if snapshot.playback_speed
+                            == shrimply_project_document::project::default_playback_speed()
+                        {
+                            let advanced = snapshot
+                                .position
+                                .as_frame(snapshot.frame_rate)
+                                .saturating_sub(previous_position.as_frame(snapshot.frame_rate));
+                            shrimply_profiling::add_to_counter(
+                                "Preview requests / Project frames skipped by clock",
+                                advanced.saturating_sub(1),
+                            );
+                        }
+                    }
                     let local_scrub = position_changed
                         && !snapshot.playing
                         && !project_change.is_some_and(|change| change.video)

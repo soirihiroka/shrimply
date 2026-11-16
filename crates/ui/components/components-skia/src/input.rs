@@ -81,6 +81,15 @@ enum TouchMode {
 }
 
 impl TouchInput {
+    /// The provisional single contact, before it becomes a drag or long press.
+    /// Visual feedback can follow it without performing the deferred action.
+    pub fn single_contact(&self) -> Option<(Vec2, Vec2)> {
+        match self.mode {
+            TouchMode::Single { origin, point, .. } => Some((origin, point)),
+            _ => None,
+        }
+    }
+
     pub fn waiting_long_press(&self) -> bool {
         matches!(self.mode, TouchMode::Single { pressed: false, .. })
     }

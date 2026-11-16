@@ -52,7 +52,45 @@ pub struct PointerState {
     pub software_position: Option<Vec2>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum TouchButtonPhase {
+    Pressed,
+    Released,
+    Cancelled,
+}
+
+pub(super) struct TouchButtonFeedback {
+    serial: u64,
+    pub(super) button: TrackButtonId,
+    bounds: Rect,
+    origin: Vec2,
+    pub(super) phase: TouchButtonPhase,
+}
+
 impl Scene {
+    /// Hosts may replace only touch indication; Rust retains hit testing and actions.
+    pub fn set_native_button_indication(&mut self, native: bool) {
+        self.native_button_indication = native;
+    }
+
+    pub fn button_feedback(&self) -> serde_json::Value {
+        self.touch_button_feedback.as_ref().map_or(serde_json::Value::Null, |feedback| {
+            serde_json::json!({
+                "owner": self.button_feedback_owner,
+                "serial": feedback.serial,
+                "bounds": [feedback.bounds.left(), feedback.bounds.top(), feedback.bounds.width(), feedback.bounds.height()],
+                "origin": [feedback.origin.x - feedback.bounds.left(), feedback.origin.y - feedback.bounds.top()],
+                "radius": shrimply_components_skia::button::DEFAULT_CORNER_RADIUS,
+                "clip": [0.0, RULER_HEIGHT as f32, self.viewport.width(), (self.viewport.height() - RULER_HEIGHT as f32).max(0.0)],
+                "phase": match feedback.phase {
+                    TouchButtonPhase::Pressed => "pressed",
+                    TouchButtonPhase::Released => "released",
+                    TouchButtonPhase::Cancelled => "cancelled",
+                },
+            })
+        })
+    }
+
     pub fn view(&self) -> TimelineViewState {
         self.view
     }
@@ -117,10 +155,14 @@ impl Scene {
                 self.pointer_cancelled();
                 self.pending_context_menu = self.context_target(point).map(|_| (point, touch));
             }
-            Event::Touch(changes) => self.touch(&changes),
+            Event::Touch(changes) => {
+                self.pointer_touch = true;
+                self.touch(&changes);
+            }
             Event::Modifiers(modifiers) => self.modifiers = modifiers,
             Event::Motion { point, modifiers } => {
                 self.pointer_pos = Some(point);
+                self.pointer_touch = touch;
                 self.modifiers = modifiers;
             }
             Event::RelativeMotion { delta } => self.relative_motion(delta),
@@ -178,7 +220,44 @@ impl Scene {
 
     fn touch(&mut self, changes: &[shrimply_components_skia::input::TouchChange]) {
         use shrimply_components_skia::input::{TouchAction, TouchCancelReason};
-        for action in self.touch_input.update(changes) {
+        let previous = self.touch_input.single_contact();
+        let actions = self.touch_input.update(changes);
+        if let Some((origin, point)) = self.touch_input.single_contact() {
+            if previous.is_none() {
+                let project = self.project.borrow();
+                self.touch_button_feedback =
+                    track_button_at(&project, self.view, origin.x.into(), origin.y.into())
+                        .and_then(|(key, action)| {
+                            let row = shrimply_timeline_paint_skia::rows::row_for_track(
+                                &project,
+                                key.kind,
+                                key.track_index,
+                            )?;
+                            let bounds = shrimply_timeline_paint_skia::math::track_button_bounds(
+                                self.view.into(),
+                                row,
+                                action,
+                            )?;
+                            self.button_feedback_serial = self
+                                .button_feedback_serial
+                                .checked_add(1)
+                                .expect("button feedback serial overflow");
+                            Some(TouchButtonFeedback {
+                                serial: self.button_feedback_serial,
+                                button: (key, action),
+                                bounds,
+                                origin,
+                                phase: TouchButtonPhase::Pressed,
+                            })
+                        });
+            }
+            if self.touch_button_feedback.as_ref().is_some_and(|feedback| {
+                feedback.phase == TouchButtonPhase::Pressed && !feedback.bounds.contains(point)
+            }) {
+                self.pointer_cancelled();
+            }
+        }
+        for action in actions {
             match action {
                 TouchAction::History { redo } => {
                     self.cancel_touch_drag();
@@ -189,6 +268,13 @@ impl Scene {
                     );
                 }
                 TouchAction::Press(point) => {
+                    if self
+                        .touch_button_feedback
+                        .as_ref()
+                        .is_some_and(|feedback| feedback.phase == TouchButtonPhase::Cancelled)
+                    {
+                        continue;
+                    }
                     self.touch_selection = Some(selection_state::snapshot(&self.selection));
                     let player = player_state::snapshot(&self.player);
                     self.touch_playhead = Some(player.position);
@@ -205,22 +291,44 @@ impl Scene {
                     self.update_input();
                 }
                 TouchAction::Move(point) => {
-                    self.event(Event::Motion {
-                        point,
-                        modifiers: self.modifiers,
-                    });
-                    self.update_input();
-                }
-                TouchAction::Release(point) => {
                     self.process_event(
-                        Event::Release {
+                        Event::Motion {
                             point,
-                            button: PointerButton::Primary,
                             modifiers: self.modifiers,
                         },
                         true,
                     );
                     self.update_input();
+                }
+                TouchAction::Release(point) => {
+                    if self
+                        .touch_button_feedback
+                        .as_ref()
+                        .is_some_and(|feedback| !feedback.bounds.contains(point))
+                    {
+                        self.pointer_cancelled();
+                    }
+                    if !self
+                        .touch_button_feedback
+                        .as_ref()
+                        .is_some_and(|feedback| feedback.phase == TouchButtonPhase::Cancelled)
+                    {
+                        self.process_event(
+                            Event::Release {
+                                point,
+                                button: PointerButton::Primary,
+                                modifiers: self.modifiers,
+                            },
+                            true,
+                        );
+                        self.update_input();
+                    }
+                    if let Some(feedback) = &mut self.touch_button_feedback
+                        && feedback.phase == TouchButtonPhase::Pressed
+                    {
+                        feedback.phase = TouchButtonPhase::Released;
+                    }
+                    self.pointer_exited();
                     self.touch_selection = None;
                     self.touch_playhead = None;
                     self.touch_playing = None;
@@ -589,6 +697,12 @@ impl Scene {
 
     pub fn pointer_cancelled(&mut self) {
         self.media_refresh.redraw.set(true);
+        self.pointer_pos = None;
+        if let Some(feedback) = &mut self.touch_button_feedback
+            && feedback.phase == TouchButtonPhase::Pressed
+        {
+            feedback.phase = TouchButtonPhase::Cancelled;
+        }
         self.pending_seek = None;
         if self.view.drag_mode == DragMode::Seek {
             player_state::set_scrubbing(&self.player, false);

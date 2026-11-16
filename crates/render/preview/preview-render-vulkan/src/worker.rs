@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Frame {
+    pub source_frame: Option<u64>,
     pub display: Texture,
     pub rendered: Buffer,
     pub width: u32,
@@ -193,11 +194,13 @@ pub fn worker<F: From<Frame> + Send + 'static>(
                 let audio_analysis = pending_frame.frame.rendered.audio_analysis.clone();
                 let settled = pending_frame.frame.rendered.accuracy.content_accurate() && !loading;
                 let sanim_sources = pending_frame.frame.rendered.sanim_sources.clone();
+                let source_frame = pending_frame.frame.rendered.source_frame;
                 let (display, rendered) = pending_frame.frame.into_buffers();
                 serial = serial
                     .checked_add(1)
                     .expect("Vulkan presentation serial overflow");
                 let frame = F::from(Frame {
+                    source_frame,
                     display,
                     rendered,
                     width,

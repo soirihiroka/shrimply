@@ -191,6 +191,9 @@ pub type TrackButtonId = (TrackKey, TrackLabelAction);
 pub struct TrackControlDraw<'a> {
     pub animation_active: &'a mut bool,
     pub buttons: &'a mut HashMap<TrackButtonId, shrimply_components_skia::button::Button>,
+    pub external_indication: bool,
+    pub touch: bool,
+    pub touch_pressed: Option<TrackButtonId>,
     pub active_audio_recording_key: Option<TrackKey>,
     pub active_video_recording_key: Option<TrackKey>,
 }

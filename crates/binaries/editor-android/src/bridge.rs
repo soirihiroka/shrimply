@@ -26,6 +26,8 @@ use std::{
 const ANDROID_LOG_INFO: i32 = 4;
 use crate::input::{INPUT_STRIDE, MAX_INPUT_VALUES};
 const BENCHMARK_FRAMES: usize = 1200;
+// Keep only neighboring graph areas warm when lazy inspector rows leave composition.
+const MAX_IDLE_GRAPH_SURFACES: usize = 2;
 const FRAME_BUDGET_NS: u128 = 1_000_000_000 / 60;
 static FONT_RESOURCES: std::sync::OnceLock<(Vec<std::path::PathBuf>, std::path::PathBuf)> =
     std::sync::OnceLock::new();
@@ -76,6 +78,7 @@ struct Frame {
 struct RenderSlot {
     frame: Option<Frame>,
     resize: Option<(u32, u32)>,
+    visible: Option<bool>,
 }
 
 type RenderTargets = Arc<Mutex<std::collections::BTreeMap<usize, RenderTarget>>>;
@@ -84,6 +87,7 @@ struct RenderTarget {
     latest: Arc<Mutex<RenderSlot>>,
     send: SyncSender<RenderCommand>,
     thread: JoinHandle<()>,
+    detached: Option<Instant>,
 }
 
 struct Session {
@@ -111,6 +115,7 @@ fn publish_frame(targets: &RenderTargets, surface: usize, frame: Frame) {
         .lock()
         .expect("Android surfaces poisoned")
         .get(&surface)
+        .filter(|target| target.detached.is_none())
     {
         target
             .latest
@@ -188,9 +193,9 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         }
         let frame_interval = Duration::from_nanos(FRAME_BUDGET_NS as u64);
         let frame_delay = frame_interval.saturating_sub(last_update.elapsed());
-        let playback_delay = ((runtime.foreground || runtime.screen_recording_clock_active())
-            && player::snapshot(&runtime.player).playing)
-            .then_some(frame_delay);
+        let playback_delay = (runtime.foreground || runtime.screen_recording_clock_active())
+            .then(|| player::next_update(&runtime.player, frame_interval))
+            .flatten();
         let scene_delay = runtime
             .timeline
             .as_ref()
@@ -814,10 +819,12 @@ fn run_render(
 ) {
     let mut current: Option<Frame> = None;
     let mut current_palette = None;
+    let mut source_frames = shrimply_profiling::SourceFrameTracker::default();
     let mut renderer: Option<Renderer> = None;
     let mut window = None;
     let (mut width, mut height, mut density) = (0, 0, 1.0);
     let mut active = true;
+    let mut visible = role < 2;
     let mut dirty = false;
     let mut frames = Vec::new();
     let mut latency = Vec::new();
@@ -835,23 +842,38 @@ fn run_render(
         while let Some(next) = command {
             match next {
                 RenderCommand::Surface(next, w, h, d, ack) => {
-                    latest.lock().expect("Android frame slot poisoned").resize = None;
-                    drop(renderer.take());
+                    {
+                        let mut slot = latest.lock().expect("Android frame slot poisoned");
+                        slot.resize = None;
+                        if next.is_none() {
+                            slot.frame = None;
+                            slot.visible = None;
+                        }
+                    }
+                    // Release the old VkSurface before its retained native window.
+                    if next.is_some() && (w == 0 || h == 0) {
+                        drop(renderer.take());
+                    } else if let Some(renderer) = renderer.as_mut() {
+                        renderer.set_window(next.as_ref(), w, h);
+                    }
                     window = next;
                     (width, height, density) = (w, h, d);
-                    if active && width > 0 && height > 0 {
+                    if window.is_none() {
+                        current = None;
+                        visible = role < 2;
+                    } else if renderer.is_none() && active && visible && width > 0 && height > 0 {
                         renderer = window
                             .as_ref()
                             .map(|window| Renderer::new(window, width, height));
                     }
-                    dirty = renderer.is_some();
+                    dirty = window.is_some() && renderer.is_some();
                     ack.send(()).expect("surface acknowledgment");
                 }
                 RenderCommand::Active(next, ack) => {
                     active = next;
                     if !active {
                         drop(renderer.take());
-                    } else if renderer.is_none() && width > 0 && height > 0 {
+                    } else if visible && renderer.is_none() && width > 0 && height > 0 {
                         renderer = window
                             .as_ref()
                             .map(|window| Renderer::new(window, width, height));
@@ -864,29 +886,40 @@ fn run_render(
             }
             command = receive.try_recv().ok();
         }
-        let (resize, frame) = {
+        let (resize, frame, visibility) = {
             let mut slot = latest.lock().expect("Android frame slot poisoned");
-            (slot.resize.take(), slot.frame.take())
+            (slot.resize.take(), slot.frame.take(), slot.visible.take())
         };
+        if let Some(next) = visibility {
+            visible = next;
+            if visible && active && renderer.is_none() && width > 0 && height > 0 {
+                renderer = window
+                    .as_ref()
+                    .map(|window| Renderer::new(window, width, height));
+            }
+            dirty |= visible;
+        }
         if let Some((w, h)) = resize {
             (width, height) = (w, h);
             if width == 0 || height == 0 {
                 drop(renderer.take());
             } else if let Some(renderer) = renderer.as_mut() {
-                renderer.resize(width, height);
-            } else if active {
+                if window.is_some() {
+                    renderer.resize(width, height);
+                }
+            } else if active && visible {
                 renderer = window
                     .as_ref()
                     .map(|window| Renderer::new(window, width, height));
             }
             dirty = renderer.is_some();
         }
-        {
+        if role < 2 || window.is_some() {
             let viewport = crate::input::Viewport {
                 width,
                 height,
                 density,
-                visible: active && window.is_some() && width > 0 && height > 0,
+                visible: active && visible && window.is_some() && width > 0 && height > 0,
             };
             let mut pending = input.lock().expect("Android input queue poisoned");
             let previous = match role {
@@ -927,6 +960,9 @@ fn run_render(
             current = Some(next);
             dirty = true;
         }
+        if !active || !visible || window.is_none() {
+            dirty = false;
+        }
         if !dirty {
             continue;
         }
@@ -961,6 +997,14 @@ fn run_render(
                 None
             })
         };
+        if valid {
+            source_frames.submitted(
+                frame
+                    .preview
+                    .as_ref()
+                    .and_then(|preview| preview.source_frame),
+            );
+        }
         if !valid {
             renderer.resize(width, height);
         }
@@ -1269,10 +1313,15 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_surface(
                 latest,
                 send,
                 thread,
+                detached: None,
             });
         }
-        if let Some(target) = targets.get(&role) {
+        if let Some(target) = targets.get_mut(&role) {
             let detached = window.is_none();
+            if !detached && target.detached.is_some() {
+                shrimply_profiling::increment("Android / Graph workers reused");
+            }
+            target.detached = detached.then(Instant::now);
             let (send, receive) = mpsc::sync_channel(0);
             target
                 .send
@@ -1292,12 +1341,14 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_surface(
                 .surfaces_changed = true;
             let _ = session.project.try_send(ProjectCommand::Wake);
             if detached {
-                let target = targets.remove(&role).expect("attached surface");
-                target
-                    .send
-                    .send(RenderCommand::Stop)
-                    .expect("stop detached surface");
-                target.thread.join().expect("Vulkan surface thread failed");
+                if role < 2 {
+                    let target = targets.remove(&role).expect("attached surface");
+                    target
+                        .send
+                        .send(RenderCommand::Stop)
+                        .expect("stop detached surface");
+                    target.thread.join().expect("Vulkan surface thread failed");
+                }
                 let mut pending = session.input.lock().expect("Android input queue poisoned");
                 let cancelled = match role {
                     0 => {
@@ -1331,6 +1382,50 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_surface(
                 let _ = session.project.try_send(ProjectCommand::Wake);
             }
         }
+        while targets
+            .values()
+            .filter(|target| target.detached.is_some())
+            .count()
+            > MAX_IDLE_GRAPH_SURFACES
+        {
+            let oldest = targets
+                .iter()
+                .filter_map(|(role, target)| target.detached.map(|at| (*role, at)))
+                .min_by_key(|(_, at)| *at)
+                .expect("idle graph surface")
+                .0;
+            let target = targets.remove(&oldest).expect("cached graph surface");
+            shrimply_profiling::increment("Android / Graph workers evicted");
+            target
+                .send
+                .send(RenderCommand::Stop)
+                .expect("evict idle graph surface");
+            target.thread.join().expect("Vulkan surface thread failed");
+        }
+    }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_visible(
+    _env: *mut JNIEnv,
+    _this: jobject,
+    handle: jlong,
+    role: jint,
+    visible: jboolean,
+) {
+    let session = unsafe { session(handle) };
+    let role = usize::try_from(role).expect("nonnegative surface role");
+    if let Some(target) = session
+        .targets
+        .lock()
+        .expect("Android surfaces poisoned")
+        .get(&role)
+    {
+        target
+            .latest
+            .lock()
+            .expect("Android frame slot poisoned")
+            .visible = Some(visible);
+        let _ = target.send.try_send(RenderCommand::Wake);
     }
 }
 #[unsafe(no_mangle)]

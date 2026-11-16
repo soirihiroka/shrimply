@@ -1,7 +1,7 @@
 use hashbrown::HashMap;
 mod av;
 mod staging;
-pub use staging::{StagedSource, stage_source};
+pub use staging::{StagedSource, stage_source, stage_source_in};
 #[cfg(test)]
 mod portable_tests;
 #[cfg(test)]
@@ -9,9 +9,9 @@ mod sanim_tests;
 pub use av::{remux_mkv_to_mp4, remux_to_mp4};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use glam::{UVec2, Vec2};
+use glam::UVec2;
 use shrimply_math_core::Fraction;
 use shrimply_resource_pipeline::{JobContext, Pipeline, Processor, Subscription};
 
@@ -370,19 +370,43 @@ pub fn inspect(
             caption_cues: Vec::new(),
         });
     }
-    if file_kind == FileKind::Svg {
-        let size = snapshot
-            .read_to_string()
-            .ok()
-            .and_then(|svg| svg_native_size(&svg))
-            .unwrap_or_else(|| UVec2::new(canvas_size.width.max(1), canvas_size.height.max(1)));
+    if matches!(file_kind, FileKind::Image | FileKind::Svg) {
+        if snapshot.len() > shrimply_drawing_skia::media::MAX_SOURCE_BYTES as u64 {
+            return Err("image source exceeds its byte budget".into());
+        }
+        let bytes = Arc::new(snapshot.read()?);
+        // Shared preparation also uses native platform codecs where Skia has none.
+        // Preserve desktop FFmpeg support without accepting metadata-only bitmaps.
+        let prepared = match shrimply_drawing_skia::media::prepare(bytes.clone()) {
+            Ok(prepared) => prepared,
+            Err(error)
+                if file_kind == FileKind::Image
+                    && skia_safe::Codec::from_data(skia_safe::Data::new_copy(&bytes)).is_none() =>
+            {
+                return av::inspect(source, snapshot, file_kind, default_visual_duration)
+                    .map_err(|fallback| format!("{error}; {fallback}"));
+            }
+            Err(error) => return Err(error),
+        };
+        let visual_kind = match (file_kind, prepared.kind()) {
+            (FileKind::Image, shrimply_drawing_skia::media::Kind::Bitmap) => VisualMediaKind::Image,
+            (FileKind::Svg, shrimply_drawing_skia::media::Kind::Svg) => VisualMediaKind::Svg,
+            _ => {
+                return Err(format!(
+                    "{} contents do not match its image type",
+                    path.display()
+                ));
+            }
+        };
+        let [width, height] = prepared.dimensions();
+        snapshot.verify_current()?;
         return Ok(MediaInfo {
             source,
             snapshot,
             duration: default_visual_duration,
-            visual_kind: Some(VisualMediaKind::Svg),
+            visual_kind: Some(visual_kind),
             video_streams: 1,
-            video_sizes: vec![size],
+            video_sizes: vec![UVec2::new(width, height)],
             video_fps: None,
             audio_streams: 0,
             layered_image_layers: Vec::new(),
@@ -394,6 +418,7 @@ pub fn inspect(
         let first = pages
             .first()
             .expect("PDF inspection requires at least one page");
+        snapshot.verify_current()?;
         return Ok(MediaInfo {
             source,
             snapshot,
@@ -470,109 +495,6 @@ pub fn inspect(
     }
 
     av::inspect(source, snapshot, file_kind, default_visual_duration)
-}
-
-fn svg_native_size(svg: &str) -> Option<UVec2> {
-    let tag = svg_root_tag(svg)?;
-    let width = svg_attr(tag, "width").and_then(svg_length_px);
-    let height = svg_attr(tag, "height").and_then(svg_length_px);
-    let view_box = svg_attr(tag, "viewBox").and_then(svg_view_box_size);
-
-    match (width, height, view_box) {
-        (Some(width), Some(height), _) => Some(UVec2::new(size_px(width)?, size_px(height)?)),
-        (Some(width), None, Some(view_box)) if view_box.x > 0.0 => Some(UVec2::new(
-            size_px(width)?,
-            size_px(width * view_box.y / view_box.x)?,
-        )),
-        (None, Some(height), Some(view_box)) if view_box.y > 0.0 => Some(UVec2::new(
-            size_px(height * view_box.x / view_box.y)?,
-            size_px(height)?,
-        )),
-        (None, None, Some(view_box)) => {
-            Some(UVec2::new(size_px(view_box.x)?, size_px(view_box.y)?))
-        }
-        _ => None,
-    }
-}
-
-fn svg_root_tag(svg: &str) -> Option<&str> {
-    let start = svg.find("<svg")?;
-    let rest = &svg[start..];
-    let end = rest.find('>')?;
-    Some(&rest[..end])
-}
-
-fn svg_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let mut rest = tag;
-    loop {
-        let index = rest.find(name)?;
-        let before = rest[..index].chars().next_back();
-        let after = rest[index + name.len()..].chars().next();
-        if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-            || after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            rest = &rest[index + name.len()..];
-            continue;
-        }
-
-        let mut value = rest[index + name.len()..].trim_start();
-        if !value.starts_with('=') {
-            rest = &rest[index + name.len()..];
-            continue;
-        }
-        value = value[1..].trim_start();
-        let quote = value.chars().next()?;
-        if quote != '"' && quote != '\'' {
-            return None;
-        }
-        value = &value[quote.len_utf8()..];
-        let end = value.find(quote)?;
-        return Some(&value[..end]);
-    }
-}
-
-fn svg_length_px(value: &str) -> Option<f32> {
-    let value = value.trim();
-    if value.ends_with('%') {
-        return None;
-    }
-    let number_end = value
-        .char_indices()
-        .take_while(|(_, c)| c.is_ascii_digit() || matches!(c, '.' | '+' | '-' | 'e' | 'E'))
-        .map(|(index, c)| index + c.len_utf8())
-        .last()?;
-    let number: f32 = value[..number_end].parse().ok()?;
-    if !number.is_finite() || number <= 0.0 {
-        return None;
-    }
-    let unit = value[number_end..].trim();
-    let scale = match unit {
-        "" | "px" => 1.0,
-        "in" => 96.0,
-        "cm" => 96.0 / 2.54,
-        "mm" => 96.0 / 25.4,
-        "pt" => 96.0 / 72.0,
-        "pc" => 16.0,
-        _ => return None,
-    };
-    Some(number * scale)
-}
-
-fn svg_view_box_size(value: &str) -> Option<Vec2> {
-    let values: Vec<f32> = value
-        .split(|c: char| c.is_ascii_whitespace() || c == ',')
-        .filter(|part| !part.is_empty())
-        .map(str::parse)
-        .collect::<Result<_, _>>()
-        .ok()?;
-    if values.len() != 4 || values.iter().any(|value| !value.is_finite()) {
-        return None;
-    }
-    (values[2] > 0.0 && values[3] > 0.0).then(|| Vec2::new(values[2], values[3]))
-}
-
-fn size_px(value: f32) -> Option<u32> {
-    (value.is_finite() && value > 0.0).then(|| value.ceil() as u32)
 }
 
 pub fn apply_media_to_tracks(

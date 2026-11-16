@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-profiling.workspace = true
 shrimply-preferences-core.workspace = true
 shrimply-editor-state.workspace = true
 shrimply-playback-performance.workspace = true

@@ -5,9 +5,9 @@ pub use audio::connect_audio_playback;
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use shrimply_math_core::{Fraction, time_from_frame};
+use shrimply_math_core::{Fraction, frame_index, time_from_frame, time_from_signed_frame};
 use shrimply_project_document::project::{
     Project, Time, default_playback_speed, scaled_time_delta,
 };
@@ -252,6 +252,39 @@ pub fn tick(state: &SharedPlayerState) {
             ..StateChange::default()
         }))
     });
+}
+
+/// Wake at the next nearest-frame boundary of the anchored playback clock.
+/// Other UI wakeups must not restart this deadline and lose project frames.
+pub fn next_update(state: &SharedPlayerState, minimum_interval: Duration) -> Option<Duration> {
+    assert!(
+        !minimum_interval.is_zero(),
+        "playback wake interval must be positive"
+    );
+    let state = state.borrow();
+    let anchor = state.clock.filter(|_| state.playing)?;
+    let elapsed = anchor.started_at.elapsed();
+    let step = frame_step(state.frame_rate).seconds / state.playback_speed;
+    let interval = Time::from_duration(minimum_interval);
+    let deadline = if step < interval.seconds {
+        // Fast playback samples at host cadence, without restarting its anchor on UI events.
+        let refresh_rate = Fraction::from(1_u64) / interval.seconds;
+        let next = frame_index(Time::from_duration(elapsed), refresh_rate)
+            .expect("validated refresh cadence")
+            .checked_add(1)
+            .expect("playback refresh index overflow");
+        time_from_signed_frame(next, refresh_rate).expect("validated refresh cadence")
+    } else {
+        Time {
+            seconds: state.position.signed_sub(anchor.position).seconds / state.playback_speed
+                + step / Fraction::from(2_u64),
+        }
+    };
+    Some(
+        deadline
+            .as_nonnegative_duration_ceil()
+            .saturating_sub(anchor.started_at.elapsed()),
+    )
 }
 
 pub fn step_playback_speed_forward(state: &SharedPlayerState) {

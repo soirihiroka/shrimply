@@ -2,6 +2,7 @@
 //! dispatch, synchronization and downstream effects use the shared GPU renderer.
 use super::{Buffer, DispatchBindings, Renderer, Submission, device::Device};
 use ash::vk;
+use ndk::hardware_buffer::HardwareBuffer;
 use shrimply_visual_frame::{VideoFrame, android::AndroidFramePool};
 use std::{cell::Cell, rc::Rc, sync::Arc};
 
@@ -134,17 +135,25 @@ impl Drop for Sampler {
 }
 
 pub(super) struct ImportedImage {
+    // The lease returns the AImage only after Submission has waited for GPU readers.
+    _allocation: Rc<HardwareImage>,
+    _source: Arc<VideoFrame>,
+}
+
+pub(super) struct HardwareImage {
     device: Arc<Device>,
     image: vk::Image,
     memory: vk::DeviceMemory,
     view: vk::ImageView,
     descriptors: vk::DescriptorPool,
     sampler: Rc<Sampler>,
-    // The acquired AImage, not just its allocation, must survive the GPU fence.
-    _source: Arc<VideoFrame>,
+    set: vk::DescriptorSet,
+    bytes: u64,
+    // Imported VkDeviceMemory retains the native AHardwareBuffer allocation;
+    // only each submission's source lease keeps an ImageReader slot acquired.
 }
 
-impl Drop for ImportedImage {
+impl Drop for HardwareImage {
     fn drop(&mut self) {
         // Submission waits before dropping its retained images. Its release
         // barrier has already returned ownership to the foreign producer.
@@ -168,6 +177,94 @@ impl Renderer {
             .android()
             .ok_or("Video frame is not an acquired Android hardware image")?;
         let buffer = native.buffer();
+        let description = buffer.describe();
+        let imported = self.hardware_image(buffer)?;
+        let range = vk::ImageSubresourceRange::default()
+            .aspect_mask(vk::ImageAspectFlags::COLOR)
+            .level_count(1)
+            .layer_count(1);
+        let acquire = [vk::ImageMemoryBarrier::default()
+            .image(imported.image)
+            .subresource_range(range)
+            .old_layout(vk::ImageLayout::GENERAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+            .dst_queue_family_index(self.device.family)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)];
+        let release = [vk::ImageMemoryBarrier::default()
+            .image(imported.image)
+            .subresource_range(range)
+            .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .new_layout(vk::ImageLayout::GENERAL)
+            .src_queue_family_index(self.device.family)
+            .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+            .src_access_mask(vk::AccessFlags::SHADER_READ)];
+        let size = (source.native().width(), source.native().height());
+        let crop = native.crop_rect()?;
+        if crop[0] < 0
+            || crop[1] < 0
+            || crop[2] <= crop[0]
+            || crop[3] <= crop[1]
+            || crop[2] as u32 > description.width
+            || crop[3] as u32 > description.height
+        {
+            return Err("Decoder image crop lies outside its hardware buffer".into());
+        }
+        let length = (size.0 as usize)
+            .checked_mul(size.1 as usize)
+            .and_then(|count| count.checked_mul(4))
+            .ok_or("Decoded image size overflow")?;
+        let output = self.allocate(length)?;
+        let crop = [
+            crop[0] as f32,
+            crop[1] as f32,
+            (crop[2] - crop[0]) as f32,
+            (crop[3] - crop[1]) as f32,
+        ];
+        let dimensions = [description.width as f32, description.height as f32];
+        let mut arguments = self.arguments("sample_image_to_rgba")?;
+        arguments
+            .set("output", &output.address().to_ne_bytes())?
+            .set("width", &size.0.to_ne_bytes())?
+            .set("height", &size.1.to_ne_bytes())?
+            .set("crop", &crop.map(f32::to_ne_bytes).concat())?
+            .set("source_size", &dimensions.map(f32::to_ne_bytes).concat())?;
+        let mut submission = unsafe {
+            self.dispatch_bound(
+                arguments,
+                vec![output.clone()],
+                [size.0 as usize, size.1 as usize, 1],
+                DispatchBindings {
+                    layout: imported.sampler.pipeline_layout,
+                    sets: &[imported.set],
+                    acquire: &acquire,
+                    release: &release,
+                },
+            )
+        }?;
+        submission._native_images.push(ImportedImage {
+            _allocation: imported,
+            _source: source.clone(),
+        });
+        Ok((output, submission))
+    }
+
+    fn hardware_image(&mut self, buffer: &HardwareBuffer) -> Result<Rc<HardwareImage>, String> {
+        let id = buffer
+            .id()
+            .map_err(|error| format!("Identify decoder allocation: {error}"))?;
+        if let Some(index) = self.native_images.iter().position(|(key, _)| *key == id) {
+            let entry = self
+                .native_images
+                .remove(index)
+                .expect("cached hardware allocation");
+            let image = entry.1.clone();
+            self.native_images.push_back(entry);
+            shrimply_profiling::increment("Vulkan rendering / Hardware allocations reused");
+            return Ok(image);
+        }
+        let _measurement =
+            shrimply_profiling::measure("Vulkan rendering / Import hardware allocation");
         let description = buffer.describe();
         let properties = self.device.hardware_buffer_properties(buffer)?;
         let format = properties.format;
@@ -211,14 +308,15 @@ impl Renderer {
             .get(&key)
             .expect("initialized hardware sampler")
             .clone();
-        let mut imported = ImportedImage {
+        let mut imported = HardwareImage {
             device: self.device.clone(),
             image: vk::Image::null(),
             memory: vk::DeviceMemory::null(),
             view: vk::ImageView::null(),
             descriptors: vk::DescriptorPool::null(),
             sampler,
-            _source: source.clone(),
+            set: vk::DescriptorSet::null(),
+            bytes: properties.allocation_size,
         };
         let raw = &self.device.raw;
         let mut external = vk::ExternalMemoryImageCreateInfo::default()
@@ -325,6 +423,7 @@ impl Renderer {
                 }
             }
         };
+        imported.set = sets[0];
         let images = [vk::DescriptorImageInfo::default()
             .image_view(imported.view)
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
@@ -338,66 +437,27 @@ impl Renderer {
                 &[],
             )
         };
-        let acquire = [vk::ImageMemoryBarrier::default()
-            .image(imported.image)
-            .subresource_range(range)
-            .old_layout(vk::ImageLayout::GENERAL)
-            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .src_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-            .dst_queue_family_index(self.device.family)
-            .dst_access_mask(vk::AccessFlags::SHADER_READ)];
-        let release = [vk::ImageMemoryBarrier::default()
-            .image(imported.image)
-            .subresource_range(range)
-            .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .new_layout(vk::ImageLayout::GENERAL)
-            .src_queue_family_index(self.device.family)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-            .src_access_mask(vk::AccessFlags::SHADER_READ)];
-        let size = (source.native().width(), source.native().height());
-        let crop = native.crop_rect()?;
-        if crop[0] < 0
-            || crop[1] < 0
-            || crop[2] <= crop[0]
-            || crop[3] <= crop[1]
-            || crop[2] as u32 > description.width
-            || crop[3] as u32 > description.height
+        shrimply_profiling::increment("Vulkan rendering / Hardware allocations imported");
+        let imported = Rc::new(imported);
+        let mut retained = self
+            .native_images
+            .iter()
+            .map(|(_, image)| image.bytes)
+            .sum::<u64>();
+        while !self.native_images.is_empty()
+            && (self.native_images.len() >= super::MAX_CACHED_BUFFERS
+                || retained.saturating_add(imported.bytes) > super::MAX_CACHED_BUFFER_BYTES as u64)
         {
-            return Err("Decoder image crop lies outside its hardware buffer".into());
+            retained -= self
+                .native_images
+                .pop_front()
+                .expect("nonempty hardware cache")
+                .1
+                .bytes;
         }
-        let length = (size.0 as usize)
-            .checked_mul(size.1 as usize)
-            .and_then(|count| count.checked_mul(4))
-            .ok_or("Decoded image size overflow")?;
-        let output = self.allocate(length)?;
-        let crop = [
-            crop[0] as f32,
-            crop[1] as f32,
-            (crop[2] - crop[0]) as f32,
-            (crop[3] - crop[1]) as f32,
-        ];
-        let dimensions = [description.width as f32, description.height as f32];
-        let mut arguments = self.arguments("sample_image_to_rgba")?;
-        arguments
-            .set("output", &output.address().to_ne_bytes())?
-            .set("width", &size.0.to_ne_bytes())?
-            .set("height", &size.1.to_ne_bytes())?
-            .set("crop", &crop.map(f32::to_ne_bytes).concat())?
-            .set("source_size", &dimensions.map(f32::to_ne_bytes).concat())?;
-        let mut submission = unsafe {
-            self.dispatch_bound(
-                arguments,
-                vec![output.clone()],
-                [size.0 as usize, size.1 as usize, 1],
-                DispatchBindings {
-                    layout: imported.sampler.pipeline_layout,
-                    sets: &sets,
-                    acquire: &acquire,
-                    release: &release,
-                },
-            )
-        }?;
-        submission._native_images.push(imported);
-        Ok((output, submission))
+        if imported.bytes <= super::MAX_CACHED_BUFFER_BYTES as u64 {
+            self.native_images.push_back((id, imported.clone()));
+        }
+        Ok(imported)
     }
 }
