@@ -29,7 +29,11 @@ fn editor(control: &InspectorControl, command: Value, expression: bool) -> Value
         .into_iter()
         .enumerate()
         .map(|(index, value)| {
-            let label = control.prefixes.get(index).map(String::as_str);
+            let label = if expression {
+                None
+            } else {
+                control.prefixes.get(index).map(String::as_str)
+            };
             json!({"label":label.map(text),"value":value,"multiline":multiline,"keyboard":keyboard})
         })
         .collect::<Vec<_>>();
@@ -217,26 +221,43 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
     if control.timeline_path.is_some() {
         result["toggles"] = json!(
             [
-                ("Keyframes", "keyframes", control.layered.keyframes),
-                ("Expression", "expression", control.layered.expression)
+                (
+                    "Keyframes",
+                    "keyframes",
+                    shrimply_components_core::layered::KEYFRAMES_ICON,
+                    control.layered.keyframes
+                ),
+                (
+                    "Expression",
+                    "expression",
+                    shrimply_components_core::layered::EXPRESSION_ICON,
+                    control.layered.expression
+                )
             ]
             .into_iter()
-            .map(|(label, action, active)| {
+            .map(|(label, action, icon, active)| {
                 let mut next = command(action);
                 next["enabled"] = json!(!active);
-                json!({"label":text(label),"selected":active,"command":next})
+                json!({"label":text(label),"icon":icon,"selected":active,"command":next})
             })
             .collect::<Vec<_>>()
         );
+        result["wide"] = json!(matches!(control.kind, K::LayeredText | K::LayeredDrawing));
+        result["reveal_duration_ms"] = json!(shrimply_components_core::layered::REVEAL_DURATION_MS);
         if control.layered.expression {
             let mut next = command("edit");
             next["editor"] = json!("expression");
-            result["extra_editor"] =
-                json!({"label":text("Edit expression"),"editor":editor(control,next,true)});
+            next["op"] = json!("inspector");
+            let mut inline = editor(control, next, true);
+            inline["height"] = json!(shrimply_inspector_core::rhai_editor::EDITOR_HEIGHT);
+            let mut finish = command("expression_finish");
+            finish["op"] = json!("inspector");
+            inline["finish"] = finish;
+            result["expression_editor"] = inline;
         }
     }
     if control.scalar_graph.is_some() {
-        result["graph"] = json!({"label":text("Keyframes"),"command":{"op":"framegraph_open","item":item,"control":id}});
+        result["graph"] = json!({"item":item,"control":id});
     }
     result
 }

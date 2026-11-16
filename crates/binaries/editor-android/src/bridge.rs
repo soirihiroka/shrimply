@@ -16,7 +16,7 @@ use shrimply_render_vulkan::surface::Renderer;
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{self, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -25,7 +25,6 @@ use std::{
 
 const ANDROID_LOG_INFO: i32 = 4;
 use crate::input::{INPUT_STRIDE, MAX_INPUT_VALUES};
-const SURFACE_COUNT: usize = 3;
 const BENCHMARK_FRAMES: usize = 1200;
 const FRAME_BUDGET_NS: u128 = 1_000_000_000 / 60;
 static FONT_RESOURCES: std::sync::OnceLock<(Vec<std::path::PathBuf>, std::path::PathBuf)> =
@@ -79,24 +78,47 @@ struct RenderSlot {
     resize: Option<(u32, u32)>,
 }
 
+type RenderTargets = Arc<Mutex<std::collections::BTreeMap<usize, RenderTarget>>>;
+
+struct RenderTarget {
+    latest: Arc<Mutex<RenderSlot>>,
+    send: SyncSender<RenderCommand>,
+    thread: JoinHandle<()>,
+}
+
 struct Session {
-    latest: [Arc<Mutex<RenderSlot>>; SURFACE_COUNT],
+    targets: RenderTargets,
     input: Arc<Mutex<crate::input::Queue>>,
     lifecycle: SharedLifecycle,
-    render: [SyncSender<RenderCommand>; SURFACE_COUNT],
+    active: AtomicBool,
+    benchmark: bool,
+    benchmark_submitted: Arc<AtomicUsize>,
     project: SyncSender<ProjectCommand>,
-    render_threads: Vec<JoinHandle<()>>,
     project_thread: Option<JoinHandle<()>>,
 }
 
 struct ProjectWorker {
     receive: mpsc::Receiver<ProjectCommand>,
     wake: SyncSender<ProjectCommand>,
-    render: [SyncSender<RenderCommand>; SURFACE_COUNT],
-    latest: [Arc<Mutex<RenderSlot>>; SURFACE_COUNT],
+    targets: RenderTargets,
     input: Arc<Mutex<crate::input::Queue>>,
     lifecycle: SharedLifecycle,
     benchmark_submitted: Arc<AtomicUsize>,
+}
+
+fn publish_frame(targets: &RenderTargets, surface: usize, frame: Frame) {
+    if let Some(target) = targets
+        .lock()
+        .expect("Android surfaces poisoned")
+        .get(&surface)
+    {
+        target
+            .latest
+            .lock()
+            .expect("Android frame slot poisoned")
+            .frame = Some(frame);
+        let _ = target.send.try_send(RenderCommand::Wake);
+    }
 }
 
 /// The canonical document, its history and Scene stay on one worker. Only Skia's
@@ -110,8 +132,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
     let ProjectWorker {
         receive,
         wake,
-        render,
-        latest,
+        targets,
         input,
         lifecycle,
         benchmark_submitted,
@@ -140,7 +161,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             .expect("keep benchmark out of project history");
     }
     let mut viewport = crate::input::Viewport::default();
-    let mut graph_viewport = crate::input::Viewport::default();
+    let mut graph_viewports = std::collections::BTreeMap::<usize, crate::input::Viewport>::new();
     let mut preview_viewport = crate::input::Viewport::default();
     let notify: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
         let _ = project_wake.try_send(ProjectCommand::Wake);
@@ -195,11 +216,17 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             .then_some(frame_delay),
             scene_delay,
             (runtime.foreground
-                && graph_viewport.visible
-                && runtime.framegraph.as_ref().is_some_and(|graph| {
-                    runtime.graph_dirty
-                        || graph.core.is_animating()
-                        || graph.core.waiting_long_press()
+                && graph_viewports.iter().any(|(surface, viewport)| {
+                    viewport.visible
+                        && runtime
+                            .framegraphs
+                            .sessions
+                            .get(surface)
+                            .is_some_and(|graph| {
+                                runtime.graph_dirty
+                                    || graph.core.is_animating()
+                                    || graph.core.waiting_long_press()
+                            })
                 }))
             .then_some(frame_delay),
             runtime.media.as_ref().and_then(|media| media.next_update()),
@@ -287,32 +314,50 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
         changed |= runtime.poll_timeline_service();
         changed |= runtime.poll_export();
         changed |= runtime.poll_preview_image();
-        let (events, next_viewport, next_graph_viewport, next_preview_viewport, at, overflow) = {
+        let (
+            events,
+            next_viewport,
+            next_graph_viewports,
+            next_preview_viewport,
+            at,
+            overflow,
+            surfaces_changed,
+        ) = {
             let mut pending = input.lock().expect("Android input queue poisoned");
             let events = std::mem::take(&mut pending.events);
             (
                 events,
                 pending.viewport,
-                pending.graph_viewport,
+                pending.graph_viewports.clone(),
                 pending.preview_viewport,
                 pending.at.take(),
                 std::mem::take(&mut pending.overflow),
+                std::mem::take(&mut pending.surfaces_changed),
             )
         };
+        if surfaces_changed {
+            picture_dirty = true;
+            runtime.graph_dirty = true;
+            last_preview = None;
+            changed = true;
+        }
         let reset = generation != runtime.generation;
         generation = runtime.generation;
         if reset {
             runtime.preview_frame = None;
             preview_texture = None;
-            latest[0].lock().expect("Android frame slot poisoned").frame = Some(Frame {
-                palette: runtime.native_palette,
-                picture: None,
-                preview: None,
-                density: 1.0,
-                input_at: None,
-                record_ns: 0,
-            });
-            let _ = render[0].try_send(RenderCommand::Wake);
+            publish_frame(
+                &targets,
+                0,
+                Frame {
+                    palette: runtime.native_palette,
+                    picture: None,
+                    preview: None,
+                    density: 1.0,
+                    input_at: None,
+                    record_ns: 0,
+                },
+            );
             picture_dirty = true;
         }
         if reset && let Some(scene) = runtime.timeline.as_mut() {
@@ -332,8 +377,8 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             }
             viewport = next_viewport;
         }
-        if next_graph_viewport != graph_viewport {
-            graph_viewport = next_graph_viewport;
+        if next_graph_viewports != graph_viewports {
+            graph_viewports = next_graph_viewports;
             runtime.graph_dirty = true;
         }
         if next_preview_viewport != preview_viewport {
@@ -344,7 +389,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             changed = true;
         }
         if overflow {
-            runtime.error = Some("Too many input events queued while the project was busy; the gesture was cancelled. Please retry.".into());
+            runtime.error = Some(runtime.cancel_graph_edit().err().unwrap_or_else(|| "Too many input events queued while the project was busy; the gesture was cancelled. Please retry.".into()));
             changed = true;
         }
         let before = player::snapshot(&runtime.player);
@@ -399,7 +444,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 }
                 let timeline_event = !matches!(
                     &event,
-                    crate::input::Input::Graph(_)
+                    crate::input::Input::Graph(..)
                         | crate::input::Input::Preview { .. }
                         | crate::input::Input::PreviewPen { .. }
                         | crate::input::Input::PreviewKey { .. }
@@ -408,12 +453,17 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                         | crate::input::Input::PreviewContext { .. }
                 );
                 match event {
-                    crate::input::Input::Graph(event) => {
-                        let size = shrimply_components_skia::canvas::vec2(
-                            graph_viewport.width as f32 / graph_viewport.density,
-                            graph_viewport.height as f32 / graph_viewport.density,
-                        );
-                        if let Err(error) = runtime.graph_input(event, size) {
+                    crate::input::Input::Graph(surface, event) => {
+                        let size =
+                            graph_viewports
+                                .get(&surface)
+                                .map_or(glam::Vec2::ZERO, |viewport| {
+                                    glam::vec2(
+                                        viewport.width as f32 / viewport.density,
+                                        viewport.height as f32 / viewport.density,
+                                    )
+                                });
+                        if let Err(error) = runtime.graph_input(surface, event, size) {
                             runtime.error = Some(error);
                         }
                     }
@@ -566,15 +616,18 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                     let picture = recorder
                         .finish_recording_as_picture(None)
                         .expect("record timeline scene");
-                    latest[0].lock().expect("Android frame slot poisoned").frame = Some(Frame {
-                        palette: runtime.native_palette,
-                        picture: Some(picture),
-                        preview: None,
-                        density: viewport.density,
-                        input_at: at.or(input_at.take()),
-                        record_ns: record_start.elapsed().as_nanos(),
-                    });
-                    let _ = render[0].try_send(RenderCommand::Wake);
+                    publish_frame(
+                        &targets,
+                        0,
+                        Frame {
+                            palette: runtime.native_palette,
+                            picture: Some(picture),
+                            preview: None,
+                            density: viewport.density,
+                            input_at: at.or(input_at.take()),
+                            record_ns: record_start.elapsed().as_nanos(),
+                        },
+                    );
                     picture_dirty = false;
                 }
             }
@@ -647,41 +700,49 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 changed = true;
             }
         }
-        if runtime.foreground
-            && graph_viewport.visible
-            && graph_viewport.width > 0
-            && graph_viewport.height > 0
-        {
-            let size = shrimply_components_skia::canvas::vec2(
-                graph_viewport.width as f32 / graph_viewport.density,
-                graph_viewport.height as f32 / graph_viewport.density,
-            );
-            changed |= runtime.poll_graph(size);
-            if runtime.graph_dirty
-                || runtime
-                    .framegraph
-                    .as_ref()
-                    .is_some_and(|graph| graph.core.is_animating())
-            {
-                let record_start = Instant::now();
-                let mut recorder = skia_safe::PictureRecorder::new();
-                let canvas =
-                    recorder.begin_recording(skia_safe::Rect::from_wh(size.x, size.y), false);
-                runtime.graph_draw(canvas, size);
-                latest[2].lock().expect("Android graph slot poisoned").frame = Some(Frame {
-                    palette: runtime.native_palette,
-                    picture: Some(
-                        recorder
-                            .finish_recording_as_picture(None)
-                            .expect("record frame graph"),
-                    ),
-                    preview: None,
-                    density: graph_viewport.density,
-                    input_at: at,
-                    record_ns: record_start.elapsed().as_nanos(),
-                });
-                let _ = render[2].try_send(RenderCommand::Wake);
+        if runtime.foreground {
+            for (surface, graph_viewport) in &graph_viewports {
+                if !graph_viewport.visible
+                    || graph_viewport.width == 0
+                    || graph_viewport.height == 0
+                {
+                    continue;
+                }
+                let size = shrimply_components_skia::canvas::vec2(
+                    graph_viewport.width as f32 / graph_viewport.density,
+                    graph_viewport.height as f32 / graph_viewport.density,
+                );
+                changed |= runtime.poll_graph(*surface, size);
+                if runtime
+                    .framegraphs
+                    .sessions
+                    .get(surface)
+                    .is_some_and(|graph| runtime.graph_dirty || graph.core.is_animating())
+                {
+                    let record_start = Instant::now();
+                    let mut recorder = skia_safe::PictureRecorder::new();
+                    let canvas =
+                        recorder.begin_recording(skia_safe::Rect::from_wh(size.x, size.y), false);
+                    runtime.graph_draw(*surface, canvas, size);
+                    publish_frame(
+                        &targets,
+                        *surface,
+                        Frame {
+                            palette: runtime.native_palette,
+                            picture: Some(
+                                recorder
+                                    .finish_recording_as_picture(None)
+                                    .expect("record frame graph"),
+                            ),
+                            preview: None,
+                            density: graph_viewport.density,
+                            input_at: at,
+                            record_ns: record_start.elapsed().as_nanos(),
+                        },
+                    );
+                }
             }
+            runtime.graph_dirty = false;
         }
         let mut preview_dirty = reset || changed;
         if let Some(media) = &runtime.media {
@@ -721,18 +782,18 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             let preview = crate::preview::Frame::new(&runtime, preview_texture.clone());
             if last_preview.as_ref() != Some(&preview) {
                 last_preview = Some(preview.clone());
-                latest[1]
-                    .lock()
-                    .expect("Android preview slot poisoned")
-                    .frame = Some(Frame {
-                    palette: runtime.native_palette,
-                    picture: None,
-                    preview: Some(preview),
-                    density: 1.0,
-                    input_at: None,
-                    record_ns: 0,
-                });
-                let _ = render[1].try_send(RenderCommand::Wake);
+                publish_frame(
+                    &targets,
+                    1,
+                    Frame {
+                        palette: runtime.native_palette,
+                        picture: None,
+                        preview: Some(preview),
+                        density: 1.0,
+                        input_at: None,
+                        record_ns: 0,
+                    },
+                );
             }
         }
         if at.is_some() && picture_dirty {
@@ -831,10 +892,11 @@ fn run_render(
             let previous = match role {
                 0 => &mut pending.viewport,
                 1 => &mut pending.preview_viewport,
-                _ => &mut pending.graph_viewport,
+                _ => pending.graph_viewports.entry(role).or_default(),
             };
             if viewport != *previous {
                 *previous = viewport;
+                pending.surfaces_changed = true;
                 if !viewport.visible {
                     pending.push(match role {
                         0 => {
@@ -846,13 +908,16 @@ fn run_render(
                             position: glam::Vec2::ZERO,
                             size: glam::Vec2::ZERO,
                         },
-                        _ => crate::input::Input::Graph(crate::input::GraphInput::Pointer {
-                            kind: 29,
-                            point: glam::Vec2::ZERO,
-                            detail: 0.0,
-                            flags: 0,
-                            extra: 0.0,
-                        }),
+                        _ => crate::input::Input::Graph(
+                            role,
+                            crate::input::GraphInput::Pointer {
+                                kind: 29,
+                                point: glam::Vec2::ZERO,
+                                detail: 0.0,
+                                flags: 0,
+                                extra: 0.0,
+                            },
+                        ),
                     });
                 }
                 let _ = project_send.try_send(ProjectCommand::Wake);
@@ -1056,52 +1121,16 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
             let vm = env.get_java_vm()?;
             let listener = env.new_global_ref(listener)?;
             let (project, project_receive) = mpsc::sync_channel(8);
-            let (timeline_send, timeline_receive) = mpsc::sync_channel(8);
-            let (preview_send, preview_receive) = mpsc::sync_channel(8);
-            let (graph_send, graph_receive) = mpsc::sync_channel(8);
-            let render = [timeline_send, preview_send, graph_send];
+            let targets = RenderTargets::default();
             let input = Arc::new(Mutex::new(crate::input::Queue::default()));
             let lifecycle = SharedLifecycle::default();
-            let latest: [Arc<Mutex<RenderSlot>>; SURFACE_COUNT] =
-                std::array::from_fn(|_| Arc::new(Mutex::new(RenderSlot::default())));
             let benchmark_submitted = Arc::new(AtomicUsize::new(0));
-            let render_threads = [timeline_receive, preview_receive, graph_receive]
-                .into_iter()
-                .enumerate()
-                .map(|(index, render_receive)| {
-                    let input = input.clone();
-                    let latest = latest[index].clone();
-                    let project = project.clone();
-                    let benchmark_submitted = benchmark_submitted.clone();
-                    thread::Builder::new()
-                        .name(
-                            match index {
-                                0 => "shrimply-timeline",
-                                1 => "shrimply-preview",
-                                _ => "shrimply-framegraph",
-                            }
-                            .into(),
-                        )
-                        .spawn(move || {
-                            run_render(
-                                render_receive,
-                                project,
-                                benchmark && index == 0,
-                                input,
-                                latest,
-                                benchmark_submitted,
-                                index,
-                            )
-                        })
-                        .expect("start Vulkan thread")
-                })
-                .collect();
             let project_thread = {
-                let latest = latest.clone();
+                let targets = targets.clone();
                 let lifecycle = lifecycle.clone();
                 let wake = project.clone();
-                let render = render.clone();
                 let input = input.clone();
+                let benchmark_submitted = benchmark_submitted.clone();
                 thread::Builder::new()
                     .name("shrimply-project".into())
                     .spawn(move || {
@@ -1109,8 +1138,7 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
                             ProjectWorker {
                                 receive: project_receive,
                                 wake,
-                                render,
-                                latest,
+                                targets,
                                 input,
                                 lifecycle,
                                 benchmark_submitted,
@@ -1137,9 +1165,10 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
                 input,
                 lifecycle,
                 project,
-                render,
-                latest,
-                render_threads,
+                targets,
+                active: AtomicBool::new(true),
+                benchmark,
+                benchmark_submitted,
                 project_thread: Some(project_thread),
             })) as jlong)
         })
@@ -1202,20 +1231,106 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_surface(
                     .expect("retain Android native window"),
             )
         };
-        let (send, receive) = mpsc::sync_channel(0);
-        session(handle)
-            .render
-            .get(usize::try_from(role).expect("nonnegative surface role"))
-            .expect("known surface role")
-            .send(RenderCommand::Surface(
-                window,
-                width as u32,
-                height as u32,
-                density,
+        let session = session(handle);
+        let role = usize::try_from(role).expect("nonnegative surface role");
+        let mut targets = session.targets.lock().expect("Android surfaces poisoned");
+        if window.is_some()
+            && let std::collections::btree_map::Entry::Vacant(entry) = targets.entry(role)
+        {
+            let (send, receive) = mpsc::sync_channel(8);
+            let latest = Arc::new(Mutex::new(RenderSlot::default()));
+            let project = session.project.clone();
+            let input = session.input.clone();
+            let slot = latest.clone();
+            let benchmark = session.benchmark && role == 0;
+            let benchmark_submitted = session.benchmark_submitted.clone();
+            let active = session.active.load(Ordering::Acquire);
+            let thread = thread::Builder::new()
+                .name(format!("shrimply-surface-{role}"))
+                .spawn(move || {
+                    run_render(
+                        receive,
+                        project,
+                        benchmark,
+                        input,
+                        slot,
+                        benchmark_submitted,
+                        role,
+                    )
+                })
+                .expect("start Vulkan surface thread");
+            if !active {
+                let (ack, done) = mpsc::sync_channel(0);
+                send.send(RenderCommand::Active(false, ack))
+                    .expect("initialize surface lifecycle");
+                done.recv().expect("wait for initial lifecycle");
+            }
+            entry.insert(RenderTarget {
+                latest,
                 send,
-            ))
-            .expect("send native surface");
-        receive.recv().expect("wait for native surface release");
+                thread,
+            });
+        }
+        if let Some(target) = targets.get(&role) {
+            let detached = window.is_none();
+            let (send, receive) = mpsc::sync_channel(0);
+            target
+                .send
+                .send(RenderCommand::Surface(
+                    window,
+                    width as u32,
+                    height as u32,
+                    density,
+                    send,
+                ))
+                .expect("send native surface");
+            receive.recv().expect("wait for native surface release");
+            session
+                .input
+                .lock()
+                .expect("Android input queue poisoned")
+                .surfaces_changed = true;
+            let _ = session.project.try_send(ProjectCommand::Wake);
+            if detached {
+                let target = targets.remove(&role).expect("attached surface");
+                target
+                    .send
+                    .send(RenderCommand::Stop)
+                    .expect("stop detached surface");
+                target.thread.join().expect("Vulkan surface thread failed");
+                let mut pending = session.input.lock().expect("Android input queue poisoned");
+                let cancelled = match role {
+                    0 => {
+                        pending.viewport.visible = false;
+                        crate::input::Input::Scene(shrimply_timeline_skia::scene::Event::Cancel)
+                    }
+                    1 => {
+                        pending.preview_viewport.visible = false;
+                        crate::input::Input::Preview {
+                            flags: 0,
+                            phase: 3,
+                            position: glam::Vec2::ZERO,
+                            size: glam::Vec2::ZERO,
+                        }
+                    }
+                    _ => {
+                        pending.graph_viewports.remove(&role);
+                        crate::input::Input::Graph(
+                            role,
+                            crate::input::GraphInput::Pointer {
+                                kind: 29,
+                                point: glam::Vec2::ZERO,
+                                detail: 0.0,
+                                flags: 0,
+                                extra: 0.0,
+                            },
+                        )
+                    }
+                };
+                pending.push(cancelled);
+                let _ = session.project.try_send(ProjectCommand::Wake);
+            }
+        }
     }
 }
 #[unsafe(no_mangle)]
@@ -1230,9 +1345,19 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_resize(
     assert!(width >= 0 && height >= 0);
     let current = unsafe { session(handle) };
     let role = usize::try_from(role).expect("nonnegative surface role");
-    let slot = current.latest.get(role).expect("known surface role");
-    slot.lock().expect("Android frame slot poisoned").resize = Some((width as u32, height as u32));
-    let _ = current.render[role].try_send(RenderCommand::Wake);
+    if let Some(target) = current
+        .targets
+        .lock()
+        .expect("Android surfaces poisoned")
+        .get(&role)
+    {
+        target
+            .latest
+            .lock()
+            .expect("Android frame slot poisoned")
+            .resize = Some((width as u32, height as u32));
+        let _ = target.send.try_send(RenderCommand::Wake);
+    }
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_active(
@@ -1248,9 +1373,16 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_active(
         .lock()
         .expect("Android lifecycle latch poisoned")
         .observe(active, observed);
-    for render in &session.render {
+    session.active.store(active, Ordering::Release);
+    for target in session
+        .targets
+        .lock()
+        .expect("Android surfaces poisoned")
+        .values()
+    {
         let (send, receive) = mpsc::sync_channel(0);
-        render
+        target
+            .send
             .send(RenderCommand::Active(active, send))
             .expect("send lifecycle");
         receive.recv().expect("wait for lifecycle");
@@ -1262,6 +1394,7 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_input(
     env: *mut JNIEnv,
     _this: jobject,
     handle: jlong,
+    role: jint,
     array: jfloatArray,
 ) -> jboolean {
     unsafe {
@@ -1277,7 +1410,10 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_input(
             values.iter().all(|value| value.is_finite()),
             "nonfinite timeline input"
         );
-        let Some(input) = crate::input::decode(&values) else {
+        let Some(input) = crate::input::decode(
+            &values,
+            usize::try_from(role).expect("nonnegative input surface"),
+        ) else {
             return false;
         };
         let session = session(handle);
@@ -1299,11 +1435,16 @@ pub unsafe extern "system" fn Java_dev_shrimply_app_NativeTimeline_destroy(
 ) {
     unsafe {
         let mut session = Box::from_raw(handle as *mut Session);
-        for render in &session.render {
-            render.send(RenderCommand::Stop).expect("stop rendering");
+        let targets =
+            std::mem::take(&mut *session.targets.lock().expect("Android surfaces poisoned"));
+        for target in targets.values() {
+            target
+                .send
+                .send(RenderCommand::Stop)
+                .expect("stop rendering");
         }
-        for thread in session.render_threads.drain(..) {
-            thread.join().expect("Vulkan thread failed");
+        for target in targets.into_values() {
+            target.thread.join().expect("Vulkan thread failed");
         }
         session
             .project

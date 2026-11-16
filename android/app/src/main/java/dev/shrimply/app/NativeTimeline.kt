@@ -24,7 +24,7 @@ internal object NativeTimeline {
     external fun surface(handle: Long, role: Int, surface: Surface?, width: Int, height: Int, density: Float)
     external fun resize(handle: Long, role: Int, width: Int, height: Int)
     external fun active(handle: Long, active: Boolean)
-    external fun input(handle: Long, batch: FloatArray): Boolean
+    external fun input(handle: Long, role: Int, batch: FloatArray): Boolean
     external fun destroy(handle: Long)
 }
 
@@ -38,6 +38,7 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
     private val main = Handler(Looper.getMainLooper())
     private val executor = Executors.newSingleThreadExecutor()
     private val closed = AtomicBoolean(false)
+    private val surfaceRoles = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
     private val latest = AtomicReference<String?>(null)
     private val posted = AtomicBoolean(false)
     private val update = object : Runnable {
@@ -80,7 +81,10 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
     }
     fun surface(role: Int, surface: Surface?, width: Int, height: Int, density: Float) {
         val current = handle.get()
-        if (current != 0L) NativeTimeline.surface(current, role, surface, width, height, density)
+        if (current != 0L) {
+            if (surface == null) surfaceRoles.remove(role) else surfaceRoles.add(role)
+            NativeTimeline.surface(current, role, surface, width, height, density)
+        }
     }
     fun resize(role: Int, width: Int, height: Int) {
         val current = handle.get()
@@ -90,9 +94,9 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
         val current = handle.get()
         if (current != 0L) NativeTimeline.active(current, active)
     }
-    fun input(batch: FloatArray): Boolean {
+    fun input(batch: FloatArray, role: Int = 0): Boolean {
         val current = handle.get()
-        return current != 0L && NativeTimeline.input(current, batch)
+        return current != 0L && NativeTimeline.input(current, role, batch)
     }
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -102,7 +106,8 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
         val closing = handle.getAndSet(0)
         if (closing == 0L) return
         // Surface release acknowledges on the Vulkan worker, independently of queued imports.
-        for (role in 0..2) NativeTimeline.surface(closing, role, null, 0, 0, 1f)
+        for (role in surfaceRoles) NativeTimeline.surface(closing, role, null, 0, 0, 1f)
+        surfaceRoles.clear()
         executor.execute { NativeTimeline.destroy(closing) }
         executor.shutdown()
     }

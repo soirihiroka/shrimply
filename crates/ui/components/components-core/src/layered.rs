@@ -1,5 +1,9 @@
 use std::{cell::Cell, rc::Rc};
 
+pub const KEYFRAMES_ICON: &str = "stopwatch-symbolic";
+pub const EXPRESSION_ICON: &str = "code-symbolic";
+pub const REVEAL_DURATION_MS: u32 = 180;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LayeredEdit<T> {
     Base(T),

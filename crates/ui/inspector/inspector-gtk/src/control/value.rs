@@ -681,79 +681,9 @@ fn expression(
             )
         },
         move || {
-            let path = path(&output);
-            let (value, error) = match output.kind {
-                ControlKind::LayeredDrawing => {
-                    let value = output_controller
-                        .paint_drawing_expression_output(&output_target, output.timeline_id?)
-                        .ok()?;
-                    (value.value, value.error)
-                }
-                ControlKind::LayeredBoolean => {
-                    let value = output_controller
-                        .bool_expression_output(&output_target, path)
-                        .ok()?;
-                    (value.value.to_string(), value.error)
-                }
-                ControlKind::LayeredSelector => {
-                    let value = output_controller
-                        .step_expression_output(&output_target, path, output.timeline_id)
-                        .ok()?;
-                    (value.value, value.error)
-                }
-                ControlKind::LayeredText => {
-                    let value = output_controller
-                        .text_expression_output(&output_target, path, output.timeline_id?)
-                        .ok()?;
-                    (value.value, value.error)
-                }
-                ControlKind::LayeredColor => {
-                    let value = output_controller
-                        .color_expression_output(&output_target, path, output.timeline_id?)
-                        .ok()?;
-                    (
-                        shrimply_components_core::color::color_hex(value.value, true),
-                        value.error,
-                    )
-                }
-                ControlKind::LayeredVector2 => {
-                    let value = output_controller
-                        .vector2_expression_output(&output_target, path, output.timeline_id)
-                        .ok()?;
-                    let [x, y] = output.prefixes.as_slice() else {
-                        panic!("vector expression needs two prefixes")
-                    };
-                    (
-                        shrimply_inspector_core::timeline_value::vector::vec2::format_value(
-                            value.value,
-                            x,
-                            y,
-                            output.number.digits.try_into().expect("nonnegative digits"),
-                            output.number.unit,
-                        ),
-                        value.error,
-                    )
-                }
-                ControlKind::LayeredVector3 => {
-                    let value = output_controller
-                        .vector3_expression_output(&output_target, path, output.timeline_id?)
-                        .ok()?;
-                    let [x, y, z] = output.prefixes.as_slice() else {
-                        panic!("vector expression needs three prefixes")
-                    };
-                    (
-                        shrimply_inspector_core::timeline_value::vector::vec3::format_value(
-                            value.value,
-                            [x, y, z],
-                            output.number.digits.try_into().expect("nonnegative digits"),
-                            output.number.unit,
-                        ),
-                        value.error,
-                    )
-                }
-                _ => unreachable!("layered value expression"),
-            };
-            Some(shrimply_inspector_core::InspectorExpressionOutput { value, error })
+            output_controller
+                .control_expression_output(&output_target, &output)
+                .ok()
         },
     )
 }

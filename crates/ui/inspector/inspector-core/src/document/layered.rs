@@ -4,6 +4,124 @@ use crate::{
 };
 
 impl InspectorController {
+    pub fn control_expression_output(
+        &self,
+        target: &InspectorTarget,
+        control: &InspectorControl,
+    ) -> Result<crate::InspectorExpressionOutput<String>, String> {
+        let path = control.timeline_path.as_deref().unwrap_or(&control.path);
+        let (value, error) = match control.kind {
+            ControlKind::LayeredDrawing => {
+                let value = self.paint_drawing_expression_output(target, timeline(control)?)?;
+                (value.value, value.error)
+            }
+            ControlKind::LayeredBoolean => {
+                let value = self.bool_expression_output(target, path)?;
+                (value.value.to_string(), value.error)
+            }
+            ControlKind::LayeredSelector => {
+                let value = self.step_expression_output(target, path, control.timeline_id)?;
+                (value.value, value.error)
+            }
+            ControlKind::LayeredText => {
+                let value = self.text_expression_output(target, path, timeline(control)?)?;
+                (value.value, value.error)
+            }
+            ControlKind::LayeredColor => {
+                let value = self.color_expression_output(target, path, timeline(control)?)?;
+                (
+                    shrimply_components_core::color::color_hex(value.value, true),
+                    value.error,
+                )
+            }
+            ControlKind::LayeredVector2 => {
+                let value = self.vector2_expression_output(target, path, control.timeline_id)?;
+                let [x, y] = control.prefixes.as_slice() else {
+                    panic!("vector expression needs two prefixes")
+                };
+                (
+                    crate::timeline_value::vector::vec2::format_value(
+                        value.value,
+                        x,
+                        y,
+                        control
+                            .number
+                            .digits
+                            .try_into()
+                            .expect("nonnegative digits"),
+                        control.number.unit,
+                    ),
+                    value.error,
+                )
+            }
+            ControlKind::LayeredVector3 => {
+                let value = self.vector3_expression_output(target, path, timeline(control)?)?;
+                let [x, y, z] = control.prefixes.as_slice() else {
+                    panic!("vector expression needs three prefixes")
+                };
+                (
+                    crate::timeline_value::vector::vec3::format_value(
+                        value.value,
+                        [x, y, z],
+                        control
+                            .number
+                            .digits
+                            .try_into()
+                            .expect("nonnegative digits"),
+                        control.number.unit,
+                    ),
+                    value.error,
+                )
+            }
+            ControlKind::LayeredNumber => {
+                let output = self.control_scalar_expression_output(target, control)?;
+                (
+                    format!(
+                        "{:.*}{}",
+                        usize::try_from(control.number.digits).expect("nonnegative digits"),
+                        control.display_number(output.value),
+                        control.number.unit,
+                    ),
+                    output.error,
+                )
+            }
+            _ => return Err("control does not support expressions".into()),
+        };
+        Ok(crate::InspectorExpressionOutput { value, error })
+    }
+
+    pub fn control_scalar_expression_output(
+        &self,
+        target: &InspectorTarget,
+        control: &InspectorControl,
+    ) -> Result<crate::InspectorExpressionOutput<f64>, String> {
+        let path = control.timeline_path.as_deref().unwrap_or(&control.path);
+        if control.scalar_storage == crate::ScalarStorage::UnsignedInteger {
+            let output = self.background_integer_expression_output(
+                target,
+                path,
+                control.timeline_id.expect("integer timeline"),
+            )?;
+            return Ok(crate::InspectorExpressionOutput {
+                value: f64::from(output.value),
+                error: output.error,
+            });
+        }
+        let output = if control.audio_modifier {
+            self.audio_modifier_expression_output(
+                target,
+                control.target_id.expect("audio modifier owner"),
+                control.timeline_id.expect("audio modifier timeline"),
+            )?
+        } else {
+            self.scalar_expression_output(target, path, control.timeline_id)?
+        };
+        Ok(crate::InspectorExpressionOutput {
+            value: f64::from(output.value),
+            error: output.error,
+        })
+    }
+
     pub fn set_control_keyframes(
         &self,
         target: &InspectorTarget,

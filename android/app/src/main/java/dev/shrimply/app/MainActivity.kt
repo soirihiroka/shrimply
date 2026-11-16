@@ -120,8 +120,8 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
-internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: Int = 0) {
-    val graph = role == 2
+internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: Int = 0, enabled: Boolean = true) {
+    val graph = role >= 2
     val density = LocalDensity.current.density
     val viewConfiguration = android.view.ViewConfiguration.get(LocalContext.current)
     val focus = remember { FocusRequester() }
@@ -134,6 +134,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
         .focusRequester(focus)
         .onPreviewKeyEvent { key ->
             val event = key.nativeKeyEvent
+            if (!enabled) return@onPreviewKeyEvent false
             if (event.action != KeyEvent.ACTION_DOWN || event.isAltPressed || event.isMetaPressed) return@onPreviewKeyEvent false
             val character = when (event.keyCode) {
                 KeyEvent.KEYCODE_ESCAPE -> 27
@@ -143,10 +144,11 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
             }
             if (!graph && character == 0) return@onPreviewKeyEvent false
             val flags = (if (event.metaState and KeyEvent.META_CTRL_MASK != 0) 1 else 0) or (if (event.metaState and KeyEvent.META_SHIFT_MASK != 0) 2 else 0)
-            timeline.input(floatArrayOf(if (graph) 28f else 8f, if (graph) event.keyCode.toFloat() else 0f, 0f, character.toFloat(), flags.toFloat(), 0f))
+            timeline.input(floatArrayOf(if (graph) 28f else 8f, if (graph) event.keyCode.toFloat() else 0f, 0f, character.toFloat(), flags.toFloat(), 0f), role)
         }
-        .focusable()
+        .focusable(enabled)
         .pointerInteropFilter { event ->
+            if (!enabled) return@pointerInteropFilter false
             val action = event.actionMasked
             if (action == MotionEvent.ACTION_DOWN) focus.requestFocus()
             val mouse = event.isFromSource(InputDevice.SOURCE_MOUSE) || event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS
@@ -171,7 +173,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
                 val touchpad = event.isFromSource(InputDevice.SOURCE_TOUCHPAD)
                 val horizontal = event.getAxisValue(MotionEvent.AXIS_HSCROLL) * (if (touchpad) viewConfiguration.scaledHorizontalScrollFactor / density else 1f)
                 val vertical = -event.getAxisValue(MotionEvent.AXIS_VSCROLL) * (if (touchpad) viewConfiguration.scaledVerticalScrollFactor / density else 1f)
-                timeline.input(floatArrayOf(kind, event.x / density, event.y / density, if (kind == 7f || kind == 27f) horizontal else mouseButton[0].toFloat(), (flags or (if (touchpad) 4 else 0)).toFloat(), vertical))
+                timeline.input(floatArrayOf(kind, event.x / density, event.y / density, if (kind == 7f || kind == 27f) horizontal else mouseButton[0].toFloat(), (flags or (if (touchpad) 4 else 0)).toFloat(), vertical), role)
                 if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) mouseButton[0] = -1
             } else {
                 val batch = FloatArray(event.pointerCount * 6)
@@ -188,7 +190,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
                     batch[offset + 2] = event.getY(index) / density
                     batch[offset + 3] = event.getPointerId(index).toFloat()
                 }
-                timeline.input(batch)
+                timeline.input(batch, role)
             }
             true
         }) {

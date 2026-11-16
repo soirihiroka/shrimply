@@ -1,4 +1,5 @@
 use gtk::prelude::*;
+use shrimply_components_core::layered::{EXPRESSION_ICON, KEYFRAMES_ICON, REVEAL_DURATION_MS};
 
 pub struct InspectorPropertyRow {
     root: gtk::Box,
@@ -20,13 +21,13 @@ impl InspectorPropertyRow {
     fn build(label: &str, editor: &impl IsA<gtk::Widget>, wide: bool) -> Self {
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let keyframes = gtk::ToggleButton::builder()
-            .icon_name("stopwatch-symbolic")
-            .tooltip_text("Keyframes")
+            .icon_name(KEYFRAMES_ICON)
+            .tooltip_text(crate::tr!("Keyframes").as_ref())
             .css_classes(["flat"])
             .build();
         let expression = gtk::ToggleButton::builder()
-            .icon_name("code-symbolic")
-            .tooltip_text("Expression")
+            .icon_name(EXPRESSION_ICON)
+            .tooltip_text(crate::tr!("Expression").as_ref())
             .css_classes(["flat"])
             .build();
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -51,14 +52,14 @@ impl InspectorPropertyRow {
             .visible(false)
             .margin_top(6)
             .transition_type(gtk::RevealerTransitionType::SlideDown)
-            .transition_duration(180)
+            .transition_duration(REVEAL_DURATION_MS)
             .build();
         let expression_revealer = gtk::Revealer::builder()
             .reveal_child(false)
             .visible(false)
             .margin_top(6)
             .transition_type(gtk::RevealerTransitionType::SlideDown)
-            .transition_duration(180)
+            .transition_duration(REVEAL_DURATION_MS)
             .build();
         hide_after_collapse(&keyframe_revealer);
         hide_after_collapse(&expression_revealer);

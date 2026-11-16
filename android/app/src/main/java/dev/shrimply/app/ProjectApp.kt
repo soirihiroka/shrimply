@@ -222,7 +222,6 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     PreviewImageAction(timeline, files)
     TimelineService(timeline, files)
     ScreenRecordingAction(timeline) { error = it }
-    FrameGraphEditor(timeline)
     if (project != null) event.optJSONObject("timeline")?.optJSONObject("context")?.let { menu ->
         TimelineContextMenu(menu, !busy, timeline.menuOrigin) { operation, arguments ->
             command(operation, arrayOf("project_path" to project.getString("path"), "serial" to menu.getLong("serial"), *arguments))

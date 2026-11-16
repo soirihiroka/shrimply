@@ -15,6 +15,7 @@ pub struct GraphSession {
     target: InspectorTarget,
     control: InspectorControl,
     pub serial: u64,
+    pub pointer: shrimply_framegraph_skia::FrameGraphPointerPosition,
     edit: InspectorGraphEdit,
     menu: Option<Value>,
     snapping: (bool, f64),
@@ -30,13 +31,19 @@ impl GraphSession {
         if controller.target() != document.target {
             return Err("Inspector selection changed".into());
         }
-        let control = super::resolve_control(document, request)?.clone();
+        let control = super::read_control(document, request)?.clone();
         let state = shrimply_inspector_core::document::graph::frame_graph(&control)?;
         Ok(Self {
             core: FrameGraphCore::single(state),
             target: document.target.clone(),
             control,
             serial,
+            pointer: shrimply_framegraph_skia::FrameGraphPointerPosition {
+                x: 0.0,
+                y: 0.0,
+                width: 0.0,
+                height: 0.0,
+            },
             edit: Default::default(),
             menu: None,
             snapping: Default::default(),
@@ -48,6 +55,10 @@ impl GraphSession {
             return Err("Inspector selection changed".into());
         }
         self.control.scalar_graph = controller.control_graph(&self.target, &self.control)?;
+        self.update_view()
+    }
+
+    fn update_view(&mut self) -> Result<(), String> {
         let state = shrimply_inspector_core::document::graph::frame_graph(&self.control)?;
         self.core.replace_active_graph(state.graph().clone());
         let graph = self
@@ -88,8 +99,8 @@ impl GraphSession {
 
     pub fn snapshot(&self) -> Value {
         let state = self.core.status();
-        let action = |id: &str, label: &str, icon: &str, enabled: bool| json!({"label":label,"icon":icon,"enabled":enabled,"command":{"op":"framegraph_action","serial":self.serial,"action":id}});
-        json!({"serial":self.serial,"title":text(&self.control.label),"close_label":text("Close"),"height":self.core.preferred_height(),
+        let action = |id: &str, label: &str, icon: &str, enabled: bool| json!({"label":label,"icon":icon,"enabled":enabled && self.is_editable(),"command":{"op":"framegraph_action","serial":self.serial,"action":id}});
+        json!({"serial":self.serial,"surface":self.serial,"enabled":self.is_editable(),"height":self.core.preferred_height(),
             "actions":[
                 action("previous",state.command_label(FrameGraphCommand::PreviousKey).as_ref(),"media-seek-backward-symbolic",state.can_previous),
                 action("toggle",state.command_label(FrameGraphCommand::ToggleKey).as_ref(),if state.key_at_playhead {"user-trash-symbolic"} else {"list-add-symbolic"},true),
@@ -99,7 +110,7 @@ impl GraphSession {
                 action("delete",text("Delete keyframes").as_ref(),"user-trash-symbolic",true),
                 action("zoom-in",text("Zoom In").as_ref(),"zoom-in-symbolic",true),
                 action("zoom-out",text("Zoom Out").as_ref(),"zoom-out-symbolic",true)
-            ],"menu":self.menu,"dismiss":{"op":"framegraph_close","serial":self.serial}})
+            ],"menu":self.menu})
     }
 
     pub fn request(
@@ -107,6 +118,9 @@ impl GraphSession {
         controller: &InspectorController,
         request: &Value,
     ) -> Result<(), String> {
+        if !self.is_editable() {
+            return Err("Inspector control is unavailable".into());
+        }
         if request["serial"].as_u64() != Some(self.serial) {
             return Err("Frame graph changed".into());
         }
@@ -231,6 +245,10 @@ impl GraphSession {
         self.apply(controller, result, true)
     }
 
+    pub fn is_editable(&self) -> bool {
+        self.control.editable && self.control.sensitive
+    }
+
     pub fn is_editing(&self) -> bool {
         self.edit.is_editing()
     }
@@ -249,10 +267,151 @@ impl GraphSession {
         // provisional edit before dispatching any returned lifecycle actions.
         self.edit.cancel(controller)?;
         result.cancelled = false;
-        if result.actions.is_empty() {
+        if result.actions.is_empty() || controller.target() != self.target {
             Ok(())
         } else {
             self.apply(controller, result, true).map(|_| ())
+        }
+    }
+}
+
+/// Per-property retained views. Native hosts only route surfaces by the advertised ID.
+#[derive(Default)]
+pub struct Graphs {
+    pub sessions: std::collections::BTreeMap<usize, GraphSession>,
+    handles: std::collections::HashMap<String, usize>,
+    next_surface: usize,
+}
+
+impl Graphs {
+    pub fn clear(&mut self) {
+        self.sessions.clear();
+        self.handles.clear();
+    }
+
+    pub fn cancel(&mut self, controller: &InspectorController) -> Result<(), String> {
+        for graph in self.sessions.values_mut() {
+            graph.cancel(controller)?;
+        }
+        Ok(())
+    }
+
+    pub fn synchronize(
+        &mut self,
+        controller: &InspectorController,
+        document: &InspectorDocument,
+        snapshot: &mut Value,
+    ) -> Result<(), String> {
+        let mut retained = std::collections::HashSet::new();
+        let mut errors = Vec::new();
+        for category in snapshot["categories"]
+            .as_array_mut()
+            .expect("inspector categories")
+        {
+            for item in category["items"].as_array_mut().expect("inspector items") {
+                let item_id = item["id"].clone();
+                for control in item["controls"].as_array_mut().expect("inspector controls") {
+                    self.decorate_control(
+                        controller,
+                        document,
+                        &item_id,
+                        control,
+                        &mut retained,
+                        &mut errors,
+                    );
+                }
+            }
+        }
+        for (surface, graph) in &mut self.sessions {
+            if !retained.contains(surface)
+                && let Err(error) = graph.cancel(controller)
+            {
+                errors.push(error);
+                retained.insert(*surface);
+            }
+        }
+        self.sessions
+            .retain(|surface, _| retained.contains(surface));
+        self.handles.retain(|_, surface| retained.contains(surface));
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
+    fn decorate_control(
+        &mut self,
+        controller: &InspectorController,
+        document: &InspectorDocument,
+        item: &Value,
+        control: &mut Value,
+        retained: &mut std::collections::HashSet<usize>,
+        errors: &mut Vec<String>,
+    ) {
+        if let Some(children) = control.get_mut("controls").and_then(Value::as_array_mut) {
+            for child in children {
+                self.decorate_control(controller, document, item, child, retained, errors);
+            }
+        }
+        if control["expression_editor"].is_null() && control["graph"].is_null() {
+            return;
+        }
+        let request = json!({"item":item,"control":control["id"]});
+        let result = (|| {
+            let model = super::read_control(document, &request)?;
+            if !control["expression_editor"].is_null() {
+                let output = match controller.control_expression_output(&document.target, model) {
+                    Ok(output) => output,
+                    Err(error) => shrimply_inspector_core::InspectorExpressionOutput {
+                        value: String::new(),
+                        error: Some(error),
+                    },
+                };
+                control["expression_editor"]["output"] =
+                    json!({"label":text("Output"),"value":output.value,"error":output.error});
+            }
+            if control["graph"].is_null() {
+                return Ok::<_, String>(());
+            }
+            let handle = request.to_string();
+            let surface = if let Some(surface) = self.handles.get(&handle) {
+                *surface
+            } else {
+                let surface = self.next_surface.max(2);
+                self.next_surface = surface
+                    .checked_add(1)
+                    .filter(|id| *id <= i32::MAX as usize)
+                    .expect("inspector surface ID overflow");
+                let graph = GraphSession::open(controller, document, &request, surface as u64)?;
+                self.sessions.insert(surface, graph);
+                self.handles.insert(handle, surface);
+                surface
+            };
+            let graph = self.sessions.get_mut(&surface).expect("retained graph");
+            if graph.is_editing() && (!model.editable || !model.sensitive) {
+                graph.cancel(controller)?;
+            }
+            if !graph.is_editing() {
+                graph.control = model.clone();
+                graph.update_view()?;
+            }
+            retained.insert(surface);
+            control["graph"] = graph.snapshot();
+            Ok(())
+        })();
+        if let Err(error) = result {
+            if !control["graph"].is_null() {
+                control["graph"] = Value::Null;
+                control["graph_error"] = json!(error);
+            }
+            if !control["expression_editor"].is_null()
+                && control["expression_editor"]["output"].is_null()
+            {
+                control["expression_editor"]["output"] =
+                    json!({"label":text("Output"),"value":"","error":error});
+            }
+            errors.push(error);
         }
     }
 }

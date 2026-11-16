@@ -9,9 +9,10 @@ impl Runtime {
             || self.preview_interaction.active()
             || self.inspector_interaction.active()
             || self
-                .framegraph
-                .as_ref()
-                .is_some_and(|graph| graph.is_editing())
+                .framegraphs
+                .sessions
+                .values()
+                .any(|graph| graph.is_editing())
         {
             return false;
         }
@@ -59,7 +60,17 @@ impl Runtime {
         if self.inspector_interaction.active()
             && let Some(document) = &self.inspector_document
         {
-            self.inspector_status = self.inspector_interaction.snapshot(document).to_string();
+            let mut snapshot = self.inspector_interaction.snapshot(document);
+            if let Err(error) = self
+                .framegraphs
+                .synchronize(controller, document, &mut snapshot)
+            {
+                self.error = Some(error);
+            }
+            if let Some(path) = self.backend.path() {
+                document::remote::scope_commands(&mut snapshot, path);
+            }
+            self.inspector_status = snapshot.to_string();
             return;
         }
         let player = player::snapshot(&self.player);
@@ -80,6 +91,16 @@ impl Runtime {
         );
         let mut snapshot = self.inspector_interaction.snapshot(&next);
         self.inspector_fonts.decorate(&next, &mut snapshot);
+        if let Err(error) = self
+            .framegraphs
+            .synchronize(controller, &next, &mut snapshot)
+        {
+            self.error = Some(error);
+        }
+        self.graph_dirty = true;
+        if let Some(path) = self.backend.path() {
+            document::remote::scope_commands(&mut snapshot, path);
+        }
         self.inspector_status = snapshot.to_string();
         self.inspector_document = Some(next);
         self.inspector_stamp = Some(stamp);

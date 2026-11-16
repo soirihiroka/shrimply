@@ -136,8 +136,8 @@ pub(super) fn number(
         move || alive.upgrade().is_some(),
         move |_| {
             if let Some(display) = display.upgrade()
-                && let Ok(value) =
-                    expression_output(&display_controller, &display_target, &display_control)
+                && let Ok(value) = display_controller
+                    .control_scalar_expression_output(&display_target, &display_control)
             {
                 display.set_f64(display_control.display_number(value.value));
             }
@@ -375,38 +375,6 @@ fn graph(
     graph.widget().clone().upcast()
 }
 
-fn expression_output(
-    controller: &InspectorController,
-    target: &InspectorTarget,
-    control: &InspectorControl,
-) -> Result<shrimply_inspector_core::InspectorExpressionOutput<f64>, String> {
-    let path = control.timeline_path.as_deref().unwrap_or(&control.path);
-    if control.scalar_storage == shrimply_inspector_core::ScalarStorage::UnsignedInteger {
-        let output = controller.background_integer_expression_output(
-            target,
-            path,
-            control.timeline_id.expect("integer timeline"),
-        )?;
-        return Ok(shrimply_inspector_core::InspectorExpressionOutput {
-            value: f64::from(output.value),
-            error: output.error,
-        });
-    }
-    let output = if control.audio_modifier {
-        controller.audio_modifier_expression_output(
-            target,
-            control.target_id.expect("audio modifier owner"),
-            control.timeline_id.expect("audio modifier timeline"),
-        )?
-    } else {
-        controller.scalar_expression_output(target, path, control.timeline_id)?
-    };
-    Ok(shrimply_inspector_core::InspectorExpressionOutput {
-        value: f64::from(output.value),
-        error: output.error,
-    })
-}
-
 fn scalar_expression(
     context: &InspectorContext,
     target: &InspectorTarget,
@@ -436,17 +404,9 @@ fn scalar_expression(
             )
         },
         move || {
-            let output =
-                expression_output(&output_controller, &output_target, &output_control).ok()?;
-            Some(shrimply_inspector_core::InspectorExpressionOutput {
-                value: format!(
-                    "{:.*}{}",
-                    usize::try_from(output_control.number.digits).expect("nonnegative digits"),
-                    output_control.display_number(output.value),
-                    output_control.number.unit
-                ),
-                error: output.error,
-            })
+            output_controller
+                .control_expression_output(&output_target, &output_control)
+                .ok()
         },
     )
 }

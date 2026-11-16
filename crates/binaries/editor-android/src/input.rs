@@ -26,7 +26,7 @@ pub enum GraphInput {
 }
 
 pub enum Input {
-    Graph(GraphInput),
+    Graph(usize, GraphInput),
     Scene(Event),
     Key(KeyAction),
     TogglePlaying,
@@ -78,8 +78,9 @@ pub struct Queue {
     pub events: Vec<Input>,
     pub at: Option<Instant>,
     pub overflow: bool,
+    pub surfaces_changed: bool,
     pub viewport: Viewport,
-    pub graph_viewport: Viewport,
+    pub graph_viewports: std::collections::BTreeMap<usize, Viewport>,
     pub preview_viewport: Viewport,
 }
 impl Queue {
@@ -109,9 +110,9 @@ impl Queue {
         // boundaries and separate contacts must retain their original ordering.
         let touches = match (&input, self.events.last_mut()) {
             (
-                Input::Graph(GraphInput::Touch(next)),
-                Some(Input::Graph(GraphInput::Touch(previous))),
-            ) => Some((next, previous)),
+                Input::Graph(surface, GraphInput::Touch(next)),
+                Some(Input::Graph(previous_surface, GraphInput::Touch(previous))),
+            ) if surface == previous_surface => Some((next, previous)),
             (Input::Scene(Event::Touch(next)), Some(Input::Scene(Event::Touch(previous)))) => {
                 Some((next, previous))
             }
@@ -141,13 +142,6 @@ impl Queue {
         if self.events.len() == MAX_PENDING_EVENTS {
             self.events.clear();
             self.events.push(Input::Scene(Event::Cancel));
-            self.events.push(Input::Graph(GraphInput::Pointer {
-                kind: 29,
-                point: glam::Vec2::ZERO,
-                detail: 0.0,
-                flags: 0,
-                extra: 0.0,
-            }));
             self.events.push(Input::Preview {
                 flags: 0,
                 phase: 3,
@@ -161,7 +155,7 @@ impl Queue {
     }
 }
 
-pub fn decode(values: &[f32]) -> Option<Input> {
+pub fn decode(values: &[f32], surface: usize) -> Option<Input> {
     assert!(!values.is_empty() && values.len().is_multiple_of(INPUT_STRIDE));
     assert!(
         values.iter().all(|value| value.is_finite()),
@@ -219,20 +213,26 @@ pub fn decode(values: &[f32]) -> Option<Input> {
         });
     }
     if (20.0..=23.0).contains(&values[0]) {
-        return Some(Input::Graph(GraphInput::Touch(touch_changes(values, 20.0))));
+        return Some(Input::Graph(
+            surface,
+            GraphInput::Touch(touch_changes(values, 20.0)),
+        ));
     }
     if (24.0..=30.0).contains(&values[0]) {
         let [kind, x, y, detail, flags, extra] = *values else {
             panic!("invalid graph pointer event")
         };
         assert_eq!(kind.fract(), 0.0, "invalid graph pointer phase");
-        return Some(Input::Graph(GraphInput::Pointer {
-            kind: kind as u8,
-            point: vec2(x, y),
-            detail,
-            flags: flags as u32,
-            extra,
-        }));
+        return Some(Input::Graph(
+            surface,
+            GraphInput::Pointer {
+                kind: kind as u8,
+                point: vec2(x, y),
+                detail,
+                flags: flags as u32,
+                extra,
+            },
+        ));
     }
     if values[0] == 3.0 {
         return Some(Input::Scene(Event::Cancel));

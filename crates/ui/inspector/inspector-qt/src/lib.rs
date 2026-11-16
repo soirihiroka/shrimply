@@ -663,13 +663,6 @@ fn select_paint_texture(target: &InspectorTarget, color_id: uuid::Uuid) -> Resul
     with_controller(|controller| controller.set_paint_texture(target, color_id, &path))
 }
 
-fn paint_drawing_expression_output(
-    target: &InspectorTarget,
-    timeline_id: uuid::Uuid,
-) -> Result<shrimply_inspector_core::InspectorExpressionOutput<String>, String> {
-    with_controller(|controller| controller.paint_drawing_expression_output(target, timeline_id))
-}
-
 fn video_stabilization_generating(target: &InspectorTarget) -> Option<bool> {
     CONTROLLER.with_borrow(|controller| {
         controller

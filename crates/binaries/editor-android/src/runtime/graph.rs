@@ -7,77 +7,64 @@ use shrimply_framegraph_skia::{
     FrameGraphInputResult, FrameGraphKey, FrameGraphModifiers, FrameGraphPointerButton,
     FrameGraphPointerPosition, FrameGraphScrollInput,
 };
-use shrimply_inspector_document::remote::graph::GraphSession;
 
-use super::{Runtime, player};
+use super::Runtime;
 
 impl Runtime {
     pub(super) fn graph_request(&mut self, request: &Value) -> Result<Value, String> {
-        match request["op"].as_str() {
-            Some("framegraph_open") => {
-                self.cancel_graph_edit()?;
-                self.update_inspector();
-                let controller = self.inspector.as_ref().ok_or("Open a project first")?;
-                let document = self
-                    .inspector_document
-                    .as_ref()
-                    .ok_or("Open the inspector first")?;
-                self.context_serial = self
-                    .context_serial
-                    .checked_add(1)
-                    .expect("editor menu serial overflow");
-                self.framegraph = Some(GraphSession::open(
-                    controller,
-                    document,
-                    request,
-                    self.context_serial,
-                )?);
-                self.graph_stamp = None;
-            }
-            Some("framegraph_close") => {
-                if self.framegraph.as_ref().map(|graph| graph.serial) != request["serial"].as_u64()
-                {
-                    return Err("Frame graph changed".into());
-                }
-                self.cancel_graph_edit()?;
-                self.framegraph = None;
-            }
-            Some("framegraph_action") => {
-                let controller = self.inspector.as_ref().ok_or("Open a project first")?;
-                self.framegraph
-                    .as_mut()
-                    .ok_or("Frame graph is closed")?
-                    .request(controller, request)?;
-                self.inspector_stamp = None;
-                self.timeline_changed()?;
-            }
-            _ => return Err("Unknown frame graph request".into()),
-        }
+        self.update_inspector();
+        let surface = request["serial"]
+            .as_u64()
+            .and_then(|id| usize::try_from(id).ok())
+            .ok_or("Frame graph is required")?;
+        let controller = self.inspector.as_ref().ok_or("Open a project first")?;
+        self.framegraphs
+            .sessions
+            .get_mut(&surface)
+            .ok_or("Frame graph changed")?
+            .request(controller, request)?;
+        self.inspector_stamp = None;
         self.graph_dirty = true;
-        Ok(self
-            .framegraph
-            .as_ref()
-            .map(|graph| graph.snapshot())
-            .unwrap_or(Value::Null))
+        self.timeline_changed()?;
+        Ok(Value::Null)
     }
 
     pub fn cancel_graph_edit(&mut self) -> Result<(), String> {
-        if let Some(graph) = &mut self.framegraph
-            && let Some(controller) = &self.inspector
-        {
-            graph.cancel(controller)?;
+        if let Some(controller) = &self.inspector {
+            self.framegraphs.cancel(controller)?;
             self.graph_dirty = true;
-            self.graph_stamp = None;
         }
         Ok(())
     }
 
     pub fn graph_input(
         &mut self,
+        surface: usize,
         event: crate::input::GraphInput,
         size: Vec2,
     ) -> Result<(), String> {
-        if !size.is_finite() || size.min_element() <= 0.0 || self.framegraph.is_none() {
+        if let crate::input::GraphInput::Pointer { kind: 29, .. } = &event {
+            if let (Some(graph), Some(controller)) =
+                (self.framegraphs.sessions.get_mut(&surface), &self.inspector)
+            {
+                graph.cancel(controller)?;
+                self.graph_dirty = true;
+                self.inspector_stamp = None;
+            }
+            return Ok(());
+        }
+        if !size.is_finite()
+            || size.min_element() <= 0.0
+            || !self.framegraphs.sessions.contains_key(&surface)
+        {
+            return Ok(());
+        }
+        if self
+            .framegraphs
+            .sessions
+            .get(&surface)
+            .is_some_and(|graph| !graph.is_editable())
+        {
             return Ok(());
         }
         self.cancel_numeric()?;
@@ -88,7 +75,6 @@ impl Runtime {
             && point.x as i32 == ESCAPE
         {
             self.cancel_graph_edit()?;
-            self.framegraph = None;
             return Ok(());
         }
         if let crate::input::GraphInput::Pointer {
@@ -106,7 +92,11 @@ impl Runtime {
             return Ok(());
         }
         let controller = self.inspector.as_ref().ok_or("Open a project first")?;
-        let graph = self.framegraph.as_mut().expect("open graph");
+        let graph = self
+            .framegraphs
+            .sessions
+            .get_mut(&surface)
+            .expect("open graph");
         let position = |point: Vec2| FrameGraphPointerPosition {
             x: f64::from(point.x),
             y: f64::from(point.y),
@@ -124,7 +114,7 @@ impl Runtime {
                 flags,
                 extra,
             } => {
-                self.graph_pointer = position(point);
+                graph.pointer = position(point);
                 let modifiers = FrameGraphModifiers {
                     control: flags & 1 != 0,
                     shift: flags & 2 != 0,
@@ -183,42 +173,37 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn poll_graph(&mut self, size: Vec2) -> bool {
-        if self.framegraph.is_none() || !size.is_finite() || size.min_element() <= 0.0 {
+    pub fn poll_graph(&mut self, surface: usize, size: Vec2) -> bool {
+        let Some(graph) = self.framegraphs.sessions.get_mut(&surface) else {
+            return false;
+        };
+        if !size.is_finite() || size.min_element() <= 0.0 {
             return false;
         }
-        self.graph_pointer.width = f64::from(size.x);
-        self.graph_pointer.height = f64::from(size.y);
-        let snapshot = player::snapshot(&self.player);
-        let stamp = (snapshot.revision, snapshot.position);
+        graph.pointer.width = f64::from(size.x);
+        graph.pointer.height = f64::from(size.y);
         let controller = self.inspector.as_ref().expect("graph inspector exists");
-        let graph = self.framegraph.as_mut().expect("graph exists");
-        let result = (|| {
-            if self.graph_stamp != Some(stamp) {
-                graph.refresh(controller)?;
-                self.graph_dirty = true;
-                self.graph_stamp = Some(stamp);
-            }
-            let settings = shrimply_preferences_core::snapshot(&self.backend.preferences);
-            graph.configure_snapping(
-                settings.timeline_magnet == "true",
-                f64::from(settings.timeline_snap_radius_px),
-            );
-            let event = graph.core.poll_long_press(self.graph_pointer);
-            let changed = event.redraw;
-            graph.apply(controller, event, true)?;
-            self.graph_dirty |= changed;
-            Ok::<_, String>(changed)
-        })();
-        match result {
-            Ok(changed) => changed,
-            Err(error) => {
-                if let Err(cancel) = graph.cancel(controller) {
-                    self.error = Some(format!("{error}; {cancel}"));
-                } else {
-                    self.error = Some(error);
+        let settings = shrimply_preferences_core::snapshot(&self.backend.preferences);
+        graph.configure_snapping(
+            settings.timeline_magnet == "true",
+            f64::from(settings.timeline_snap_radius_px),
+        );
+        let event = graph.core.poll_long_press(graph.pointer);
+        let changed = event.redraw;
+        match graph.apply(controller, event, true) {
+            Ok(_) => {
+                if changed {
+                    self.inspector_stamp = None;
                 }
-                self.framegraph = None;
+                self.graph_dirty |= changed;
+                changed
+            }
+            Err(error) => {
+                self.error = Some(match graph.cancel(controller) {
+                    Ok(()) => error,
+                    Err(cancel) => format!("{error}; {cancel}"),
+                });
+                self.inspector_stamp = None;
                 self.graph_dirty = true;
                 true
             }
@@ -226,18 +211,17 @@ impl Runtime {
     }
 
     #[cfg(target_os = "android")]
-    pub fn graph_draw(&mut self, canvas: &skia_safe::Canvas, size: Vec2) {
+    pub fn graph_draw(&self, surface: usize, canvas: &skia_safe::Canvas, size: Vec2) {
         canvas.clear(skia_safe::Color4f::from(
             shrimply_cross_ui_theme::current().view_bg,
         ));
-        if let Some(graph) = &self.framegraph {
+        if let Some(graph) = self.framegraphs.sessions.get(&surface) {
             graph.core.draw(
                 &TimelinePainter::new(canvas),
                 f64::from(size.x),
                 f64::from(size.y),
             );
         }
-        self.graph_dirty = false;
     }
 }
 

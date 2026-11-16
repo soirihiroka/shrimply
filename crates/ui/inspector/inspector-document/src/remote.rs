@@ -58,6 +58,29 @@ pub fn snapshot(document: &InspectorDocument) -> Value {
     json!({"target":format!("{:?}",document.target),"title":text(&document.title),"categories":categories})
 }
 
+/// Bind advertised requests to the project that produced this inspector.
+/// Native widgets forward these objects without replacing their target.
+pub fn scope_commands(snapshot: &mut Value, project_path: &std::path::Path) {
+    match snapshot {
+        Value::Object(fields) => {
+            if fields.contains_key("op")
+                || (fields.contains_key("item") && fields.contains_key("action"))
+            {
+                fields.insert("project_path".into(), json!(project_path));
+            }
+            for value in fields.values_mut() {
+                scope_commands(value, project_path);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                scope_commands(value, project_path);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// A native picker may only complete a file command currently advertised by
 /// this selection. Writable paths and toolkit-defined inspector actions fail.
 pub fn validate_file_command(
@@ -88,7 +111,11 @@ pub fn validate_file_command(
             _ => false,
         }
     }
-    if controller.target() != document.target || !advertised(&snapshot(document), command, true) {
+    let mut command = command.clone();
+    if let Some(fields) = command.as_object_mut() {
+        fields.remove("project_path");
+    }
+    if controller.target() != document.target || !advertised(&snapshot(document), &command, true) {
         return Err("File selection changed; open the inspector again".into());
     }
     Ok(())
@@ -156,6 +183,17 @@ pub(super) fn resolve_control<'a>(
     document: &'a InspectorDocument,
     request: &Value,
 ) -> Result<&'a InspectorControl, String> {
+    let control = read_control(document, request)?;
+    if !control.sensitive {
+        return Err("inspector control is unavailable".into());
+    }
+    Ok(control)
+}
+
+fn read_control<'a>(
+    document: &'a InspectorDocument,
+    request: &Value,
+) -> Result<&'a InspectorControl, String> {
     let (section, _) = resolve_item(document, request)?;
     let id = request["control"]
         .as_str()
@@ -167,7 +205,7 @@ pub(super) fn resolve_control<'a>(
         .find(|(index, control)| control_key(control, *index) == id)
         .map(|(_, control)| control)
         .ok_or("inspector control is no longer available")?;
-    if !control.visible || !control.sensitive {
+    if !control.visible {
         return Err("inspector control is unavailable".into());
     }
     Ok(control)
@@ -266,6 +304,10 @@ fn apply_control(
     }
     if control.kind == ControlKind::TtsEditor {
         return tts::apply(controller, target, control, action, request);
+    }
+    if action == "expression_finish" {
+        shrimply_project_document::project::finish_coalesced_edit();
+        return Ok(());
     }
     if action == "edit" {
         let values = request["values"]

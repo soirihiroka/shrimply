@@ -57,10 +57,8 @@ pub(crate) struct Runtime {
     inspector_fonts: shrimply_inspector_document::remote::Fonts,
     inspector_status: String,
     inspector_polled_at: std::time::Instant,
-    pub framegraph: Option<shrimply_inspector_document::remote::graph::GraphSession>,
+    pub framegraphs: shrimply_inspector_document::remote::graph::Graphs,
     pub graph_dirty: bool,
-    graph_stamp: Option<(u64, Time)>,
-    graph_pointer: shrimply_framegraph_skia::FrameGraphPointerPosition,
     preferences_ui: shrimply_inspector_document::preferences::Preferences,
     preview_toolbar: shrimply_preview_render_core::playback::toolbar::Toolbar,
     pub preview_interaction: shrimply_preview_interaction_skia::surface::Surface,
@@ -121,15 +119,8 @@ impl Runtime {
             inspector_fonts: Default::default(),
             inspector_status: "null".into(),
             inspector_polled_at: std::time::Instant::now(),
-            framegraph: None,
+            framegraphs: Default::default(),
             graph_dirty: true,
-            graph_stamp: None,
-            graph_pointer: shrimply_framegraph_skia::FrameGraphPointerPosition {
-                x: 0.0,
-                y: 0.0,
-                width: 0.0,
-                height: 0.0,
-            },
             preferences_ui: Default::default(),
             preview_toolbar: Default::default(),
             preview_interaction: Default::default(),
@@ -264,7 +255,7 @@ impl Runtime {
             self.cancel_numeric()?;
             self.cancel_preview_edit()?;
         }
-        if matches!(operation, "framegraph_open" | "inspector_visible") {
+        if operation == "inspector_visible" {
             self.finish_numeric()?;
         }
         if matches!(
@@ -307,9 +298,7 @@ impl Runtime {
                     Err("Preview image delivery requires the native host".into())
                 }
             }
-            "framegraph_open" | "framegraph_close" | "framegraph_action" => {
-                self.graph_request(request)
-            }
+            "framegraph_action" => self.graph_request(request),
             "context_action" | "context_control" | "context_delete" | "context_dismiss"
             | "context_clipboard" => self.context_request(request),
             "performance" | "performance_clear" | "performance_copy" => Ok(
@@ -587,8 +576,7 @@ impl Runtime {
     fn refresh(&mut self, reset: bool) {
         if reset {
             self.discard_video_recording();
-            self.framegraph = None;
-            self.graph_stamp = None;
+            self.framegraphs.clear();
             self.graph_dirty = true;
             self.preview_interaction = Default::default();
             self.preview_toolbar = Default::default();
@@ -821,14 +809,9 @@ impl Runtime {
         let preview_image = self.preview_image_snapshot();
         #[cfg(not(target_os = "android"))]
         let preview_image = Value::Null;
-        let framegraph = self
-            .framegraph
-            .as_ref()
-            .map(|graph| graph.snapshot())
-            .unwrap_or(Value::Null);
         // The project/recents payload changes only on project events, not every frame.
         format!(
-            "{{\"status\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"framegraph\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
+            "{{\"status\":{},\"editor_layout\":{},\"playback\":{},\"preview_controls\":{},\"preview_context\":{},\"preview_image\":{},\"timeline_service\":{},\"error\":{},\"inspector\":{},\"video_recording\":{},\"export\":{},\"timeline\":{{\"tools_progress\":{},\"show_tools\":{},\"audio_monitor_progress\":{},\"show_audio_monitor\":{},\"ruler_height\":{},\"action\":{},\"tools\":{},\"context\":{},\"inspect_serial\":{}}}}}",
             self.status,
             shrimply_preferences_core::snapshot(&self.backend.preferences)
                 .editor_layout
@@ -837,7 +820,6 @@ impl Runtime {
             self.preview_controls(),
             self.preview_context_snapshot(),
             preview_image,
-            framegraph,
             self.timeline_service
                 .as_ref()
                 .map_or(Value::Null, |service| service.snapshot()),

@@ -6,16 +6,6 @@ pub(super) fn current_keyframe_time(
     with_controller(|controller| controller.current_keyframe_time(target))
 }
 
-pub(super) fn audio_modifier_expression_output(
-    target: &InspectorTarget,
-    modifier_id: uuid::Uuid,
-    timeline_id: uuid::Uuid,
-) -> Result<shrimply_inspector_core::InspectorExpressionOutput, String> {
-    with_controller(|controller| {
-        controller.audio_modifier_expression_output(target, modifier_id, timeline_id)
-    })
-}
-
 pub(super) fn toggle_keyframe_playback() {
     with_controller(|controller| {
         controller.toggle_keyframe_playback();
