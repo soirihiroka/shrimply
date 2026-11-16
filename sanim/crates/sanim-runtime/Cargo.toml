@@ -11,3 +11,6 @@ sanim-data.workspace = true
 sanim-render.workspace = true
 serde_json.workspace = true
 notify.workspace = true
+
+[dev-dependencies]
+png.workspace = true

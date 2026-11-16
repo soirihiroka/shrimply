@@ -2084,6 +2084,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 2.0.21",
+ "windows",
 ]
 
 [[package]]
@@ -4663,6 +4664,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "range-alloc"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
+
+[[package]]
 name = "rangemap"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5174,12 +5181,16 @@ dependencies = [
 name = "sanim-cli"
 version = "0.1.0"
 dependencies = [
+ "png",
  "sanim-core",
  "sanim-data",
  "sanim-lang",
  "sanim-render",
  "sanim-runtime",
+ "sanim-voxel",
+ "sanim-voxel-render",
  "serde_json",
+ "shrimply-math-color",
  "tempfile",
 ]
 
@@ -5188,8 +5199,10 @@ name = "sanim-core"
 version = "0.1.0"
 dependencies = [
  "fraction",
+ "glam 0.34.1",
  "imbl",
  "num-traits",
+ "sanim-voxel",
  "serde",
  "serde_json",
  "shrimply-fonts",
@@ -5208,8 +5221,10 @@ dependencies = [
  "num-traits",
  "pango",
  "pangocairo",
+ "png",
  "rusqlite",
  "sanim-core",
+ "sanim-voxel",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -5239,6 +5254,7 @@ dependencies = [
  "regex",
  "sanim-core",
  "sanim-data",
+ "sanim-voxel",
  "serde",
  "serde_json",
  "shrimply-asset",
@@ -5274,6 +5290,33 @@ dependencies = [
  "sanim-lang",
  "sanim-render",
  "serde_json",
+]
+
+[[package]]
+name = "sanim-voxel"
+version = "0.1.0"
+dependencies = [
+ "fraction",
+ "glam 0.34.1",
+ "imbl",
+ "num-traits",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "sanim-voxel-render"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "fraction",
+ "num-traits",
+ "pollster",
+ "sanim-voxel",
+ "serde",
+ "shrimply-math-color",
+ "wgpu",
 ]
 
 [[package]]
@@ -9752,6 +9795,7 @@ dependencies = [
  "android_system_properties",
  "arrayvec",
  "ash",
+ "bit-set 0.10.0",
  "bitflags 2.13.2",
  "block2",
  "bytemuck",
@@ -9770,11 +9814,13 @@ dependencies = [
  "objc2-foundation",
  "objc2-metal",
  "objc2-quartz-core",
+ "once_cell",
  "ordered-float 5.5.0",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
  "profiling",
+ "range-alloc",
  "raw-window-handle",
  "raw-window-metal",
  "renderdoc-sys",
@@ -9784,6 +9830,7 @@ dependencies = [
  "wgpu-naga-bridge",
  "wgpu-types",
  "windows",
+ "windows-core",
 ]
 
 [[package]]

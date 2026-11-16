@@ -59,6 +59,44 @@ fn csv_edits_trigger_reload_without_source_edits() {
 }
 
 #[test]
+fn voxel_texture_changes_reload_without_source_edits_or_render_requests() {
+    let fixture = Fixture::new();
+    let write_tile = |rgba: [u8; 4]| {
+        let file = std::fs::File::create(fixture.0.join("block.png")).unwrap();
+        let mut encoder = png::Encoder::new(file, 1, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&rgba).unwrap();
+        writer.finish().unwrap();
+    };
+    write_tile([255, 0, 0, 255]);
+    fixture.write("main.sanim", "let texture=read<VoxelTexture>(\"block.png\")\nlet material=VoxelMaterial(texture=texture)\nlet grid=VoxelGrid(size=[8,8,8]).fill([0,0,0],[8,8,8],material)\nlet scene=VoxelScene(volume=grid)\nscene.fade_in()\nwait(1s)");
+    let runtime = fixture.open();
+    let first = until(&runtime, |state| {
+        state.prepared.is_some() && !state.preparing
+    });
+    let first_prepared = first.prepared.as_ref().unwrap();
+    let sanim_core::Value::VoxelTexture(original) = &first_prepared.bindings["texture"] else {
+        panic!("voxel texture")
+    };
+    assert_eq!(original.pixels().as_ref(), [255, 0, 0, 255]);
+    assert!(first_prepared.dependencies.contains_key("block.png"));
+    write_tile([0, 128, 255, 255]);
+    let updated = until(&runtime, |state| {
+        state.revision > first.revision && !state.preparing && state.diagnostic.is_none()
+    });
+    let sanim_core::Value::VoxelTexture(texture) =
+        &updated.prepared.as_ref().unwrap().bindings["texture"]
+    else {
+        panic!("updated voxel texture")
+    };
+    assert_eq!(texture.pixels().as_ref(), [0, 128, 255, 255]);
+    assert!(!std::sync::Arc::ptr_eq(original, texture));
+    assert_eq!(original.pixels().as_ref(), [255, 0, 0, 255]);
+}
+
+#[test]
 fn temporal_viewports_reuse_the_pure_plan_and_preserve_indefinite_sources() {
     let fixture = Fixture::new();
     fixture.write("main.sanim", "wait(forever)");

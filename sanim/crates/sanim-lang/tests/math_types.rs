@@ -107,12 +107,12 @@ fn fraction_requires_integer_parts() {
 }
 #[test]
 fn matrix_identity_and_vector_transform() {
-    let p=run("let identity = Matrix4()\nlet transformed = identity * [1, 2, 3, 1]\nassert(transformed == [1, 2, 3, 1])\n").unwrap();
-    assert!(matches!(p.bindings["identity"], Value::Matrix4(_)));
+    let p=run("let identity = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]\nlet transformed = identity * [1, 2, 3, 1]\nassert(transformed == [1, 2, 3, 1])\n").unwrap();
+    assert!(matches!(p.bindings["identity"], Value::List(_)));
 }
 #[test]
 fn matrix_multiply_inverse_and_transpose() {
-    let p=run("let m = Matrix4([[2,0,0,4],[0,3,0,6],[0,0,4,8],[0,0,0,1]])\nlet i = inverse(m)\nassert(m * i == Matrix4())\nassert(transpose(transpose(m)) == m)\nlet result = m * [1, 2, 3, 1]\n").unwrap();
+    let p=run("let m = [[2,0,0,4],[0,3,0,6],[0,0,4,8],[0,0,0,1]]\nlet i = inverse(m)\nassert(m * i == [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]])\nassert(transpose(transpose(m)) == m)\nlet result = m * [1, 2, 3, 1]\n").unwrap();
     assert_eq!(
         p.bindings["result"].vector().unwrap().0,
         &[6.0, 12.0, 20.0, 1.0]
@@ -120,17 +120,72 @@ fn matrix_multiply_inverse_and_transpose() {
 }
 #[test]
 fn matrix_shape_is_checked() {
+    for source in [
+        "let m=inverse([[1,2,3],[4,5,6]])",
+        "let m=[[1,2],[3,4]] * [[1,2,3]]",
+    ] {
+        let error = run(source).unwrap_err();
+        assert!(error.message.contains("dimensions"), "{error:?}");
+    }
+}
+#[test]
+fn rectangular_matrices_are_ordinary_typed_lists() {
+    let prepared = run(r#"
+let m: List<List<Number,3>,2> = [[1,2,3],[4,5,6]]
+assert(m * [[1,0],[0,1],[1,1]] == [[4,5],[10,11]])
+assert(m * [1,2,3] == [14,32])
+assert(transpose(m) == [[1,4],[2,5],[3,6]])
+assert(m * 2 == [[2,4,6],[8,10,12]])
+assert(2 * m == [[2,4,6],[8,10,12]])
+assert(-m == [[-1,-2,-3],[-4,-5,-6]])
+assert(m + m == [[2,4,6],[8,10,12]])
+assert(m[0] == [1,2,3])
+assert(inverse([[1,2],[3,4]]) == [[-2,1],[1.5,-0.5]])
+let fractions=[[Fraction(1,2),Fraction(1,3)]]
+assert(transpose(fractions) == [[Fraction(1,2)],[Fraction(1,3)]])
+"#)
+    .unwrap();
+    assert_eq!(
+        prepared.bindings["m"].ty(),
+        sanim_core::math::linear::matrix::type_of(
+            sanim_core::ListLength::Exact(2),
+            sanim_core::ListLength::Exact(3)
+        )
+    );
+}
+#[test]
+fn matrix_functions_follow_signals_without_new_matrix_storage() {
+    let prepared = run(r#"
+mut scale=1
+sig matrix=[[scale,0],[0,1]]
+sig changed=transpose(matrix)
+sig inverted=inverse(matrix)
+scale=2
+let output=changed * [3,4]
+let inverse_output=inverted * [6,4]
+assert(output == [6,4])
+assert(inverse_output == [3,4])
+"#)
+    .unwrap();
+    assert!(matches!(prepared.bindings["output"], Value::List(_)));
+}
+#[test]
+fn matrix_work_and_ragged_shapes_are_bounded() {
+    for code in ["let ragged=transpose([[1,2],[3]])", "let empty=inverse([])"] {
+        assert!(run(code).is_err(), "{code}");
+    }
+    let oversized = format!("let m=transpose([{}])", vec!["[1]"; 65].join(","));
     assert!(
-        run("let m = Matrix4([[1,2],[3,4]])\n")
+        run(&oversized)
             .unwrap_err()
             .message
-            .contains("four")
+            .contains("between 1 and 64")
     );
 }
 #[test]
 fn matrix_singular_inverse_fails() {
     assert!(
-        run("let m = inverse(Matrix4([[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]))\n")
+        run("let m = inverse([[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]])\n")
             .unwrap_err()
             .message
             .contains("singular")
@@ -139,13 +194,15 @@ fn matrix_singular_inverse_fails() {
 #[test]
 fn matrix_requires_explicit_homogeneous_component() {
     assert_eq!(
-        run("let v = Matrix4() * [1, 2, 3]\n").unwrap_err().code,
+        run("let v = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]] * [1, 2, 3]\n")
+            .unwrap_err()
+            .code,
         "S106"
     );
 }
 #[test]
 fn native_math_types_are_reflectable() {
-    let p=run("type Parameters = { direction: List<Number,3>, transform: Matrix4, ratio: Fraction }\nlet parameters: Parameters=reflect({ direction=[1, 0, 0], transform=Matrix4(), ratio=Fraction(1,3) })\n").unwrap();
+    let p=run("type Parameters = { direction: List<Number,3>, transform: List<List<Number,4>,4>, ratio: Fraction }\nlet parameters: Parameters=reflect({ direction=[1, 0, 0], transform=[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]], ratio=Fraction(1,3) })\n").unwrap();
     assert!(p.reflected[0].ty.reflectable());
 }
 #[test]
@@ -159,14 +216,16 @@ fn alignment_is_independent_of_vector_math() {
 }
 #[test]
 fn point_type_is_removed() {
-    for constructor in ["Point2", "Point", "point2", "point", "Vec2", "Vec3", "Vec4"] {
+    for constructor in [
+        "Point2", "Point", "point2", "point", "Vec2", "Vec3", "Vec4", "Matrix4",
+    ] {
         let diagnostic = run(&format!("let value = {constructor}(1pt, 2pt)\n")).unwrap_err();
         assert!(
             diagnostic.message.contains("unknown name"),
             "{diagnostic:?}"
         );
     }
-    for ty in ["Point2", "Point", "Vec2", "Vec3", "Vec4"] {
+    for ty in ["Point2", "Point", "Vec2", "Vec3", "Vec4", "Matrix4"] {
         assert!(run(&format!("let value: {ty} = [1pt, 2pt]\n")).is_err());
     }
 }

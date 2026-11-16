@@ -169,6 +169,7 @@ fn build_builtins() -> Vec<Builtin> {
     let mut out = vec![];
     crate::dataframe::register(&mut out);
     crate::templates::register(&mut out);
+    crate::voxel::register(&mut out);
     let mut add = |name, parameters, result, state_effect, execute, check| {
         out.push(Builtin {
             name,
@@ -209,21 +210,6 @@ fn build_builtins() -> Vec<Builtin> {
         Execution::Native(native::fraction),
         native_types::fixed,
     );
-    add(
-        "Matrix4",
-        vec![p(
-            "rows",
-            List(
-                Box::new(List(Box::new(num.clone()), sanim_core::ListLength::Unknown)),
-                sanim_core::ListLength::Unknown,
-            ),
-            false,
-        )],
-        Matrix4,
-        false,
-        Execution::Native(native::matrix),
-        native_types::fixed,
-    );
     for &(name, function) in sanim_core::math::linear::LIST_FUNCTIONS {
         let argument = function.argument_type();
         let parameters = ["a", "b"]
@@ -241,16 +227,6 @@ fn build_builtins() -> Vec<Builtin> {
             false,
             Execution::Native(native::list_math),
             native_types::list_math,
-        );
-    }
-    for name in ["inverse", "transpose"] {
-        add(
-            name,
-            vec![p("matrix", Matrix4, true)],
-            Matrix4,
-            false,
-            Execution::Native(native::matrix_operation),
-            native_types::fixed,
         );
     }
     let common = element_parameters;
@@ -543,6 +519,7 @@ pub fn all_builtins() -> impl Iterator<Item = &'static Builtin> {
         .chain(crate::animation_plan::methods())
         .chain(crate::code_view::methods().iter())
         .chain(crate::scrolling::methods().iter())
+        .chain(crate::voxel::methods().iter())
         .chain(
             crate::list_functions::definitions()
                 .iter()
@@ -570,6 +547,7 @@ pub fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
         .chain(crate::code_view::methods_for(receiver))
         .chain(crate::scrolling::methods_for(receiver))
         .chain(crate::list_functions::methods_for(receiver))
+        .chain(crate::voxel::methods_for(receiver))
 }
 
 #[derive(Clone)]
@@ -621,7 +599,12 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
             ("Align", sanim_core::Align::ty()),
             ("Justify", sanim_core::Justify::ty()),
             ("Fraction", Type::Fraction),
-            ("Matrix4", Type::Matrix4),
+            ("VoxelGrid", Type::VoxelGrid),
+            ("VoxelMaterial", Type::VoxelMaterial),
+            ("VoxelTexture", Type::VoxelTexture),
+            ("VoxelLayout", Type::VoxelLayout),
+            ("Density", Type::Density),
+            ("Random", Type::Random),
             ("Element", Type::Element),
             ("Font", Type::Font),
             ("Data", Type::Data),
@@ -653,6 +636,7 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
             }),
         );
         out.insert("Series", Container(Type::Series));
+        out.insert("Curve", Container(Type::Curve));
         out.insert("Array", Container(Type::Array));
         out.insert("Option", Container(Type::Option));
         for (name, bound) in [

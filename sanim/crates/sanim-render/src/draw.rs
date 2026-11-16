@@ -60,6 +60,9 @@ pub(crate) fn prepared_path(
     element: &Element,
     renderer: &mut crate::Renderer,
 ) -> Result<Rc<PreparedPath>, String> {
+    if matches!(element.geometry.as_ref(), Geometry::Voxel(_)) {
+        return Err("VoxelScene uses the independent voxel renderer; use sanim voxel render, inspect, or video".into());
+    }
     if matches!(
         element.geometry.as_ref(),
         Geometry::Text { pending: true, .. }
@@ -175,7 +178,7 @@ pub(crate) fn prepared_path(
                 }
                 path.detach()
             }
-            Geometry::Code { .. } | Geometry::Media { .. } => {
+            Geometry::Code { .. } | Geometry::Media { .. } | Geometry::Voxel(_) => {
                 unreachable!("groups handled before geometry preparation")
             }
         };

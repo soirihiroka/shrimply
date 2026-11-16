@@ -975,7 +975,10 @@ impl Checker<'_> {
                             Type::StringLiteral(value.clone().into())
                         } else if *kind == BindingKind::Mut {
                             ty.editable_schema()
-                        } else if *kind == BindingKind::Sig {
+                        } else if *kind == BindingKind::Sig
+                            && !matches!(value.kind, ExprKind::Call { .. })
+                        {
+                            // Checked call results already guarantee their tags and dimensions.
                             ty.widen_literals()
                         } else {
                             ty
@@ -1394,8 +1397,13 @@ impl Checker<'_> {
                 } else {
                     None
                 };
-                let right =
-                    self.expression(b, env, Some(context.as_ref().unwrap_or(&left)), variables)?;
+                let expected_right =
+                    if op == "*" && sanim_core::math::linear::matrix::shape(&left).is_some() {
+                        None
+                    } else {
+                        Some(context.as_ref().unwrap_or(&left))
+                    };
+                let right = self.expression(b, env, expected_right, variables)?;
                 sanim_core::math::operations::binary_type(op, &left, &right)
                     .map_err(|e| self.error("S106", e, expr.span))
             }

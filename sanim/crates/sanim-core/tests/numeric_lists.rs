@@ -140,3 +140,81 @@ fn numeric_list_identity_benchmark() {
         started.elapsed()
     );
 }
+
+#[test]
+fn nested_list_matrix_products_charge_cubic_work_and_neutral_scaling_shares_storage() {
+    let rows = vec![
+        list(&[1, 2, 3], Unit::Number),
+        list(&[4, 5, 6], Unit::Number),
+    ];
+    let matrix = Value::List(List::typed(
+        Type::List(Box::new(Type::Numeric(Unit::Number)), ListLength::Exact(3)),
+        rows,
+    ));
+    let right = Value::List(List::typed(
+        Type::List(Box::new(Type::Numeric(Unit::Number)), ListLength::Exact(2)),
+        vec![
+            list(&[1, 0], Unit::Number),
+            list(&[0, 1], Unit::Number),
+            list(&[1, 1], Unit::Number),
+        ],
+    ));
+    assert_eq!(operations::binary_work("*", &matrix, &right), 24);
+    let product = operations::binary("*", matrix.clone(), right).unwrap();
+    assert_eq!(product.list().unwrap()[1], list(&[10, 11], Unit::Number));
+    let original = matrix;
+    let result =
+        operations::binary("*", original.clone(), Value::Number(Number::scalar(1))).unwrap();
+    let (Value::List(a), Value::List(b)) = (&original, &result) else {
+        panic!("List")
+    };
+    assert!(a.values.ptr_eq(&b.values));
+    assert_eq!(
+        operations::binary_work("*", &original, &Value::Number(Number::scalar(1))),
+        0
+    );
+}
+
+#[test]
+#[ignore = "manual canonical nested-List matrix operation and immutable snapshot benchmark"]
+fn nested_list_matrix_benchmark() {
+    use sanim_core::math::linear::list_function;
+    use std::{hint::black_box, time::Instant};
+    let matrix = Value::List(List::typed(
+        Type::List(Box::new(Type::Numeric(Unit::Number)), ListLength::Exact(4)),
+        vec![
+            list(&[2, 0, 0, 4], Unit::Number),
+            list(&[0, 3, 0, 6], Unit::Number),
+            list(&[0, 0, 4, 8], Unit::Number),
+            list(&[0, 0, 0, 1], Unit::Number),
+        ],
+    ));
+    let inverse = list_function("inverse").unwrap();
+    for (name, iterations) in [
+        ("shared snapshot", 100_000),
+        ("multiply", 10_000),
+        ("inverse", 10_000),
+    ] {
+        let mut timings = vec![];
+        for _ in 0..7 {
+            let start = Instant::now();
+            for _ in 0..iterations {
+                black_box(match name {
+                    "shared snapshot" => matrix.clone(),
+                    "multiply" => {
+                        operations::binary("*", black_box(matrix.clone()), matrix.clone()).unwrap()
+                    }
+                    _ => inverse
+                        .evaluate(std::slice::from_ref(black_box(&matrix)))
+                        .unwrap(),
+                });
+            }
+            timings.push(start.elapsed() / iterations);
+        }
+        timings.sort();
+        println!(
+            "canonical 4x4 nested List {name}: {:?} median/op",
+            timings[3]
+        );
+    }
+}

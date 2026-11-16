@@ -14,12 +14,18 @@ pub enum Type {
     Code(crate::code::Language),
     Template,
     Signal(Box<Type>),
+    Curve(Box<Type>),
     Sql,
     SqlIdent,
     Numeric(Unit),
     RefinedNumeric(crate::math::domain::NumericDomain),
     Fraction,
-    Matrix4,
+    VoxelGrid,
+    VoxelMaterial,
+    VoxelTexture,
+    VoxelLayout,
+    Density,
+    Random,
     Color,
     Element,
     Animation,
@@ -354,6 +360,7 @@ impl Type {
             (Self::Array(a), Self::Array(b)) => {
                 Some(Self::Array(Box::new(a.join_list_lengths(b)?)))
             }
+            (Self::Curve(a), Self::Curve(b)) if a == b => Some(Self::Curve(a.clone())),
             _ => None,
         }
     }
@@ -385,9 +392,9 @@ impl Type {
                     && (la.allows(0) && lb.allows(0) || a.overlaps(b))
             }
             (Self::Array(_), Self::Array(_)) | (Self::Option(_), Self::Option(_)) => true,
-            (Self::Series(a), Self::Series(b)) | (Self::Signal(a), Self::Signal(b)) => {
-                a.overlaps(b)
-            }
+            (Self::Series(a), Self::Series(b))
+            | (Self::Signal(a), Self::Signal(b))
+            | (Self::Curve(a), Self::Curve(b)) => a.overlaps(b),
             (Self::DataFrame { row: a, groups: ga }, Self::DataFrame { row: b, groups: gb }) => {
                 ga == gb && a.overlaps(b)
             }
@@ -546,6 +553,7 @@ impl Type {
             Self::Option(inner) => Self::Option(Box::new(inner.widen(mode))),
             Self::Array(inner) => Self::Array(Box::new(inner.widen(mode))),
             Self::Signal(inner) => Self::Signal(Box::new(inner.widen(mode))),
+            Self::Curve(inner) => Self::Curve(Box::new(inner.widen(Widening::Literals))),
             Self::Record(fields) => Self::Record(
                 fields
                     .into_iter()
@@ -570,7 +578,8 @@ impl Type {
             | Self::Option(t)
             | Self::Array(t)
             | Self::Series(t)
-            | Self::Signal(t) => t.incomplete(symbolic_parameters),
+            | Self::Signal(t)
+            | Self::Curve(t) => t.incomplete(symbolic_parameters),
             Self::DataFrame { row, .. } => row.incomplete(symbolic_parameters),
             Self::Record(fields) => fields.values().any(|ty| ty.incomplete(symbolic_parameters)),
             Self::Union(alternatives) => alternatives
@@ -595,7 +604,9 @@ impl Type {
     pub fn contains_animation(&self) -> bool {
         self.contains(&|ty| matches!(ty, Self::Animation))
     }
-    fn contains(&self, predicate: &impl Fn(&Type) -> bool) -> bool {
+    /// Search currently contained value schemas; callable arguments/results are future values.
+    /// Callers handling untrusted schemas should validate their type budget first.
+    pub fn contains(&self, predicate: &impl Fn(&Type) -> bool) -> bool {
         if predicate(self) {
             return true;
         }
@@ -604,7 +615,8 @@ impl Type {
             | Self::Option(t)
             | Self::Array(t)
             | Self::Series(t)
-            | Self::Signal(t) => t.contains(predicate),
+            | Self::Signal(t)
+            | Self::Curve(t) => t.contains(predicate),
             Self::DataFrame { row, .. } => row.contains(predicate),
             Self::Record(fields) => fields.values().any(|ty| ty.contains(predicate)),
             Self::Union(alternatives) => alternatives.iter().any(|ty| ty.contains(predicate)),
@@ -650,6 +662,7 @@ impl Type {
                 }
                 (Self::Code(crate::code::Language::Auto), Self::Code(_)) => true,
                 (Self::Signal(a), Self::Signal(b)) => a.accepts(b),
+                (Self::Curve(a), Self::Curve(b)) => a.accepts(b),
                 (Self::List(a, la), Self::List(b, lb)) => {
                     la.accepts(*lb) && (**b == Self::Unknown || a.accepts(b))
                 }
@@ -677,9 +690,9 @@ impl Type {
             | Self::Numeric(_)
             | Self::RefinedNumeric(_)
             | Self::Fraction
-            | Self::Matrix4
             | Self::Color
             | Self::Font => true,
+            Self::VoxelTexture => true,
             Self::BoundedVariable(_, bound) => match bound.as_ref() {
                 TypeBound::Readable | TypeBound::Reflectable | TypeBound::Numeric => true,
                 TypeBound::Type(ty) => ty.readable(),
@@ -697,7 +710,7 @@ impl Type {
     }
     pub fn data_convertible(&self) -> bool {
         match self {
-            Self::Font | Self::Code(_) => false,
+            Self::Font | Self::Code(_) | Self::VoxelTexture => false,
             Self::BoundedVariable(_, bound) => match bound.as_ref() {
                 TypeBound::Numeric | TypeBound::Reflectable => true,
                 TypeBound::Type(ty) => ty.data_convertible(),
@@ -714,7 +727,7 @@ impl Type {
     }
     pub fn reflectable(&self) -> bool {
         match self {
-            Self::Font | Self::Code(_) => false,
+            Self::Font | Self::Code(_) | Self::VoxelTexture => false,
             Self::BoundedVariable(_, bound) => match bound.as_ref() {
                 TypeBound::Reflectable | TypeBound::Numeric => true,
                 TypeBound::Type(ty) => ty.reflectable(),
@@ -748,6 +761,7 @@ impl Type {
             Self::Option(t) => Self::Option(Box::new(t.substitute(bindings))),
             Self::Array(t) => Self::Array(Box::new(t.substitute(bindings))),
             Self::Signal(t) => Self::Signal(Box::new(t.substitute(bindings))),
+            Self::Curve(t) => Self::Curve(Box::new(t.substitute(bindings))),
             Self::Series(t) => Self::Series(Box::new(t.substitute(bindings))),
             Self::DataFrame { row, groups } => Self::DataFrame {
                 row: Box::new(row.substitute(bindings)),
@@ -780,6 +794,7 @@ impl std::fmt::Display for Type {
             Self::Code(language) => write!(f, "Code<{}>", language.name()),
             Self::Template => write!(f, "Template"),
             Self::Signal(t) => write!(f, "sig {t}"),
+            Self::Curve(t) => write!(f, "Curve<{t}>"),
             Self::Sql => write!(f, "Sql"),
             Self::SqlIdent => write!(f, "SqlIdent"),
             Self::Numeric(unit) => write!(
@@ -809,7 +824,12 @@ impl std::fmt::Display for Type {
                 }
                 Ok(())
             }
-            Self::Matrix4 => write!(f, "Matrix4"),
+            Self::VoxelGrid => write!(f, "VoxelGrid"),
+            Self::VoxelMaterial => write!(f, "VoxelMaterial"),
+            Self::VoxelTexture => write!(f, "VoxelTexture"),
+            Self::VoxelLayout => write!(f, "VoxelLayout"),
+            Self::Density => write!(f, "Density"),
+            Self::Random => write!(f, "Random"),
             Self::Color => write!(f, "Color"),
             Self::Element => write!(f, "Element"),
             Self::Animation => write!(f, "Animation"),
@@ -895,6 +915,21 @@ impl std::fmt::Display for Type {
 pub struct Color(pub [Fraction; 4]);
 
 impl Color {
+    pub fn srgba(&self) -> Result<[f32; 4], String> {
+        let mut channels = [0.; 4];
+        for (out, channel) in channels.iter_mut().zip(self.0) {
+            if !crate::math::finite(&channel)
+                || !(Fraction::from(0)..=Fraction::from(1)).contains(&channel)
+            {
+                return Err("color channels must be finite and in [0,1]".into());
+            }
+            *out = crate::math::to_f64(channel)? as f32;
+        }
+        Ok(channels)
+    }
+    pub fn rgba8(&self) -> Result<[u8; 4], String> {
+        Ok(shrimply_math_color::Color::<u8>::from_srgba(self.srgba()?).to_array())
+    }
     /// Shared Adwaita names, used by editors without copying the palette.
     pub fn names() -> impl Iterator<Item = &'static str> {
         shrimply_math_color::Color::ADWAITA
@@ -968,7 +1003,13 @@ pub enum Value {
     Code(Arc<crate::code::Document>),
     Number(Number),
     Fraction(Fraction),
-    Matrix4(Box<crate::math::linear::Matrix4>),
+    VoxelGrid(Arc<sanim_voxel::Volume>),
+    VoxelMaterial(Arc<sanim_voxel::Material>),
+    VoxelTexture(Arc<sanim_voxel::Texture>),
+    VoxelLayout(Arc<sanim_voxel::layout::Node>),
+    Density(Arc<sanim_voxel::procedural::Field>),
+    Curve(Arc<crate::curve::Curve>),
+    Random(u64),
     Color(Color),
     List(List),
     Array {
@@ -1013,7 +1054,13 @@ impl Value {
             Self::SqlIdent(_) => Type::SqlIdent,
             Self::Number(n) => Type::Numeric(n.unit),
             Self::Fraction(_) => Type::Fraction,
-            Self::Matrix4(_) => Type::Matrix4,
+            Self::VoxelGrid(_) => Type::VoxelGrid,
+            Self::VoxelMaterial(_) => Type::VoxelMaterial,
+            Self::VoxelTexture(_) => Type::VoxelTexture,
+            Self::VoxelLayout(_) => Type::VoxelLayout,
+            Self::Density(_) => Type::Density,
+            Self::Curve(curve) => Type::Curve(Box::new(curve.value_type())),
+            Self::Random(_) => Type::Random,
             Self::Color(_) => Type::Color,
             Self::List(v) => Type::List(
                 Box::new(v.element_type.as_ref().clone()),

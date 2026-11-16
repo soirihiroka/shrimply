@@ -147,6 +147,8 @@ pub enum Node {
     },
     Cell {
         cell: u64,
+        #[serde(default)]
+        curve: Option<Arc<crate::curve::Curve>>,
         to: Value,
         duration: Fraction,
         easing: Easing,

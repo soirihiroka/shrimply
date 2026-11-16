@@ -1,4 +1,5 @@
 //! Source/type checking and inexpensive advice without evaluating data or scenes.
+mod voxels;
 use crate::{
     Engine, Loaded, Sources, Statistics,
     ast::*,
@@ -161,6 +162,7 @@ fn advice(module: &Loaded, root: bool, budget: u64, diagnostics: &mut Vec<LintDi
             span,
         })
     };
+    voxels::advice(&module.ast.statements, &mut warn);
     let mut loops = Vec::new();
     for statement in &module.ast.statements {
         statement.visit(&mut |statement| {

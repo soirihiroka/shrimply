@@ -7,6 +7,7 @@ use std::{
 };
 
 mod video;
+mod voxel;
 
 mod catalog;
 mod profile;
@@ -33,6 +34,7 @@ struct Args {
     deny_warnings: bool,
     samples: Option<u32>,
     warn_operations: Option<u64>,
+    max_native_work: Option<u64>,
     warn_prepare_ms: Option<u64>,
     format_check: bool,
     write: bool,
@@ -40,12 +42,31 @@ struct Args {
     indent_width: Option<usize>,
     line_width: Option<usize>,
     tabs: bool,
+    views: Vec<sanim_voxel::View>,
+    pixel: Option<[u32; 2]>,
+    voxel_mode: Option<String>,
+    reconstruction: Option<sanim_voxel_render::ReconstructionMode>,
+    spatial_passes: Option<u32>,
+    history_frames: Option<u32>,
+    antialias: Option<u32>,
+    bounces: Option<u32>,
+    sun_diameter: Option<f32>,
+    sun_strength: Option<f32>,
+    environment_strength: Option<f32>,
+    shadows: Option<sanim_voxel::ShadowMode>,
+    shadow_strength: Option<f32>,
+    shadow_samples: Option<u32>,
+    ao: Option<sanim_voxel::AoMode>,
+    ao_strength: Option<f32>,
+    ao_distance: Option<f32>,
+    ao_samples: Option<u32>,
+    exposure: Option<f32>,
 }
 
 /// Run the same headless tooling from `sanim` or `shrimply sanim`.
 /// Arguments exclude the executable name and the optional `sanim` prefix.
 pub fn run(arguments: Vec<std::ffi::OsString>) -> u8 {
-    let argv = match arguments
+    let mut argv = match arguments
         .into_iter()
         .map(|value| {
             value
@@ -60,6 +81,12 @@ pub fn run(arguments: Vec<std::ffi::OsString>) -> u8 {
             return 2;
         }
     };
+    if argv.first().is_some_and(|value| value == "voxel")
+        && argv.get(1).is_some_and(|value| !value.starts_with('-'))
+    {
+        argv.remove(0);
+        argv[0] = format!("voxel-{}", argv[0]);
+    }
     if argv.is_empty()
         || argv
             .iter()
@@ -161,6 +188,73 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
                 }
             }
             "--output" => args.output = Some(PathBuf::from(value)),
+            "--views" | "--view" => {
+                args.views = value.split(',').map(str::parse).collect::<Result<_, _>>()?;
+                let unique = args
+                    .views
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<std::collections::BTreeSet<_>>();
+                if unique.len() != args.views.len() {
+                    return Err("--views must not repeat a camera view".into());
+                }
+            }
+            "--pixel" => {
+                let (x, y) = value
+                    .split_once(',')
+                    .ok_or("--pixel requires X,Y, for example 320,180")?;
+                args.pixel = Some([
+                    x.parse()
+                        .map_err(|_| "--pixel X must be a nonnegative integer")?,
+                    y.parse()
+                        .map_err(|_| "--pixel Y must be a nonnegative integer")?,
+                ]);
+            }
+            "--mode" => {
+                if !matches!(value.as_str(), "flat" | "path-traced") {
+                    return Err("--mode requires flat or path-traced".into());
+                }
+                args.voxel_mode = Some(value.clone());
+            }
+            "--reconstruction" => args.reconstruction = Some(value.parse()?),
+            "--spatial-passes" => args.spatial_passes = Some(dimension()?),
+            "--history-frames" => args.history_frames = Some(dimension()?),
+            "--antialias" => args.antialias = Some(dimension()?),
+            "--bounces" => args.bounces = Some(dimension()?),
+            "--shadows" => args.shadows = Some(value.parse()?),
+            "--ao" => args.ao = Some(value.parse()?),
+            "--shadow-samples" => args.shadow_samples = Some(dimension()?),
+            "--ao-samples" => args.ao_samples = Some(dimension()?),
+            "--sun-diameter"
+            | "--sun-strength"
+            | "--environment-strength"
+            | "--shadow-strength"
+            | "--ao-strength"
+            | "--ao-distance"
+            | "--exposure" => {
+                let scalar = if name == "--sun-diameter" {
+                    let number = Number::parse(value)?;
+                    if number.unit != sanim_core::Unit::Angle {
+                        return Err(format!(
+                            "{name} requires an angular diameter, for example 8deg"
+                        ));
+                    }
+                    sanim_core::math::to_f64(number.value)? as f32
+                } else {
+                    value.parse::<f32>().map_err(|_| {
+                        format!("{name} requires a dimensionless number, for example 0.5")
+                    })?
+                };
+                match name.as_str() {
+                    "--sun-diameter" => args.sun_diameter = Some(scalar),
+                    "--sun-strength" => args.sun_strength = Some(scalar),
+                    "--environment-strength" => args.environment_strength = Some(scalar),
+                    "--shadow-strength" => args.shadow_strength = Some(scalar),
+                    "--ao-strength" => args.ao_strength = Some(scalar),
+                    "--ao-distance" => args.ao_distance = Some(scalar),
+                    _ => args.exposure = Some(scalar),
+                }
+            }
             "--ffmpeg" => args.ffmpeg = Some(PathBuf::from(value)),
             "--frame" => args.frame = integer()?,
             "--time" => {
@@ -195,6 +289,7 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
             "--cycles" => args.cycles = Some(integer()?),
             "--samples" => args.samples = Some(dimension()?),
             "--warn-operations" => args.warn_operations = Some(integer()?),
+            "--max-native-work" => args.max_native_work = Some(integer()?),
             "--warn-prepare-ms" => args.warn_prepare_ms = Some(integer()?),
             "--indent-width" => args.indent_width = Some(dimension()? as usize),
             "--line-width" => args.line_width = Some(dimension()? as usize),
@@ -202,8 +297,25 @@ fn parse(argv: Vec<String>) -> Result<Args, String> {
         }
         i += 2;
     }
-    if matches!(args.command.as_str(), "render" | "video" | "watch") && args.output.is_none() {
+    if matches!(
+        args.command.as_str(),
+        "render" | "video" | "watch" | "voxel-render" | "voxel-video" | "voxel-watch"
+    ) && args.output.is_none()
+    {
         return Err("render/video/watch requires --output PATH".into());
+    }
+    if args.command == "voxel-pick" && args.pixel.is_none() {
+        return Err(
+            "voxel pick requires --pixel X,Y; use voxel inspect to obtain named views first".into(),
+        );
+    }
+    if args.command != "voxel-inspect" && args.views.len() > 1 {
+        return Err(
+            "only voxel inspect accepts multiple --views; render/pick/video take one --view".into(),
+        );
+    }
+    if seen.contains("view") && seen.contains("views") {
+        return Err("--view and --views select the same cameras; specify one".into());
     }
     if args.cycles == Some(0) {
         return Err("--cycles must be positive".into());
@@ -255,7 +367,7 @@ fn execute(args: Args) -> Result<u8, String> {
         .file_name()
         .and_then(|v| v.to_str())
         .ok_or("script filename must be UTF-8")?;
-    if args.command == "watch" {
+    if matches!(args.command.as_str(), "watch" | "voxel-watch") {
         let runtime =
             sanim_runtime::Runtime::with_viewport(&args.path, args.viewport(), args.limits())?;
         runtime.set_time_extent(args.duration)?;
@@ -269,6 +381,7 @@ fn execute(args: Args) -> Result<u8, String> {
             let _ = wake.try_send(());
         })));
         let mut renderer = Renderer::default();
+        let mut voxel_renderer = None;
         let mut cycles = 0;
         let mut revision = 0;
         let mut failed_generation = None;
@@ -285,16 +398,20 @@ fn execute(args: Args) -> Result<u8, String> {
             if state.preparing {
                 continue;
             }
+            let last_good_revision = (revision != 0).then_some(revision);
             if let Some(error) = &state.diagnostic {
                 if failed_generation == Some(state.generation) {
                     continue;
                 }
                 eprintln!(
                     "{}",
-                    serde_json::json!({"event":"failed","diagnostic":error,"last_good_revision":state.prepared.as_ref().map(|_|state.revision)})
+                    serde_json::json!({"event":"failed","diagnostic":error,"last_good_revision":last_good_revision})
                 );
                 failed_generation = Some(state.generation);
             } else if let Some(prepared) = &state.prepared {
+                if failed_generation == Some(state.generation) {
+                    continue;
+                }
                 let recovered = failed_generation.take().is_some();
                 if state.revision == revision && !recovered {
                     continue;
@@ -304,7 +421,7 @@ fn execute(args: Args) -> Result<u8, String> {
                     Err(error) => {
                         eprintln!(
                             "{}",
-                            serde_json::json!({"event":"failed","diagnostic":error,"last_good_revision":revision})
+                            serde_json::json!({"event":"failed","diagnostic":error,"last_good_revision":last_good_revision})
                         );
                         continue;
                     }
@@ -317,12 +434,29 @@ fn execute(args: Args) -> Result<u8, String> {
                     );
                     return Ok(1);
                 }
-                let render_micros = render(prepared, &args, &mut renderer)?;
-                println!(
-                    "{}",
-                    serde_json::json!({"event":"updated","revision":state.revision,"changed_elements":state.changed_elements,"render_micros":render_micros,"statistics":prepared.statistics,"performance":performance_diagnostics(&prepared.performance),"diagnostics":lint.diagnostics})
-                );
-                revision = state.revision;
+                let rendered = if args.command == "voxel-watch" {
+                    voxel::watch_render(prepared, &args, &mut voxel_renderer)
+                } else {
+                    render(prepared, &args, &mut renderer)
+                };
+                match rendered {
+                    Ok(render_micros) => {
+                        println!(
+                            "{}",
+                            serde_json::json!({"event":"updated","revision":state.revision,"changed_elements":state.changed_elements,"render_micros":render_micros,"statistics":prepared.statistics,"performance":performance_diagnostics(&prepared.performance),"diagnostics":lint.diagnostics})
+                        );
+                        revision = state.revision;
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({"event":"failed","diagnostic":error,"last_good_revision":last_good_revision})
+                        );
+                        renderer = Renderer::default();
+                        voxel_renderer = None;
+                        failed_generation = Some(state.generation);
+                    }
+                }
             } else {
                 continue;
             }
@@ -391,7 +525,16 @@ fn execute(args: Args) -> Result<u8, String> {
     let prepared = engine
         .prepare_json(entry, &sources, &args.sets)
         .map_err(|e| diagnostic(&e, args.json))?;
-    if args.command == "check" {
+    if args.command == "check"
+        && prepared.animation.layers.iter().any(|layer| {
+            matches!(
+                layer.element.geometry.as_ref(),
+                sanim_core::Geometry::Voxel(_)
+            )
+        })
+    {
+        voxel::validate(&prepared, &args)?;
+    } else if args.command == "check" {
         let mut renderer = Renderer::default();
         let scene = renderer
             .prepare(prepared.animation.clone())
@@ -431,6 +574,9 @@ fn execute(args: Args) -> Result<u8, String> {
         return Ok(1);
     }
     match args.command.as_str() {
+        "voxel-render" | "voxel-inspect" | "voxel-pick" | "voxel-video" => {
+            voxel::run(&prepared, &args)?
+        }
         "inspect" => {
             let value = serde_json::json!({
                 "source":prepared.source,
@@ -586,12 +732,24 @@ impl Args {
     fn configure(&self, engine: &mut Engine) {
         engine.limits = self.limits();
         engine.available_duration = self.duration;
-        if matches!(self.command.as_str(), "render" | "video" | "profile") {
+        if matches!(
+            self.command.as_str(),
+            "render"
+                | "video"
+                | "profile"
+                | "voxel-render"
+                | "voxel-video"
+                | "voxel-inspect"
+                | "voxel-pick"
+        ) {
             engine.preparation = sanim_lang::Preparation::Demand;
         }
     }
     fn limits(&self) -> sanim_lang::Limits {
         let mut limits = sanim_lang::Limits::default();
+        if let Some(work) = self.max_native_work {
+            limits.max_native_work = work;
+        }
         if let Some(operations) = self.warn_operations {
             limits.warn_operations = operations;
         }

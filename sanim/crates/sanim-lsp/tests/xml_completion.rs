@@ -90,6 +90,24 @@ fn opening_tags_use_native_registry_and_only_advertised_snippets() {
     let (_, existing) = complete("let element=<Bo§x></Box>", true);
     assert_eq!(item(&existing, "Box")["textEdit"]["newText"], "Box");
 }
+
+#[test]
+fn voxel_layout_tags_and_attributes_come_from_the_native_registry() {
+    let (_, tags) = complete("let world=<Voxel§", true);
+    item(&tags, "VoxelBox");
+    item(&tags, "VoxelPart");
+    item(&tags, "VoxelScene");
+    let (_, attributes) = complete("let world=<VoxelBox §/>", true);
+    for name in [
+        "flow", "size", "gap", "align", "justify", "padding", "children",
+    ] {
+        item(&attributes, name);
+    }
+    let (_, values) = complete("let world=<VoxelBox flow=\"§\"/>", true);
+    for axis in ["\"x\"", "\"y\"", "\"z\""] {
+        item(&values, axis);
+    }
+}
 #[test]
 fn closing_tags_select_the_innermost_scope_and_preserve_existing_brackets() {
     for (source, label, text) in [

@@ -285,6 +285,7 @@ fn regex_empty_matches_advance_and_repeated_suffix_searches_are_work_bounded() {
     files.insert("main.sanim",format!("let code=CodeView(code=r\"{}\",lang=\"plain\")\nlet found=code.ranges(regex=r\"a{{1000}}z|a\")\nwait(1s)","a".repeat(200)));
     let mut engine = Engine::default();
     engine.limits.max_operations = 5_000;
+    engine.limits.max_native_work = 5_000;
     let error = engine
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_err();

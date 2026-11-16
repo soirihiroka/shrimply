@@ -2,7 +2,12 @@
 use crate::native::Context;
 use sanim_core::{Value, math};
 
-pub(crate) fn write_cell(cell: u64, to: Value, context: Context<'_>) -> Result<(), String> {
+pub(crate) fn write_cell_track(
+    cell: u64,
+    to: Value,
+    curve: Option<std::sync::Arc<sanim_core::curve::Curve>>,
+    context: Context<'_>,
+) -> Result<(), String> {
     let start = *context.cursor;
     let window = math::temporal::Window {
         cycle: context.cycle,
@@ -21,14 +26,19 @@ pub(crate) fn write_cell(cell: u64, to: Value, context: Context<'_>) -> Result<(
             window,
         )?;
     }
-    next.reactive.write_cell_in_window(
-        cell,
-        start,
-        context.duration,
-        to,
-        context.easing,
-        window,
-    )?;
+    if let Some(curve) = curve {
+        next.reactive
+            .write_curve_cell_in_window(cell, start, context.duration, curve, window)?;
+    } else {
+        next.reactive.write_cell_in_window(
+            cell,
+            start,
+            context.duration,
+            to,
+            context.easing,
+            window,
+        )?;
+    }
     if let Some(interval) = window.interval(start, context.duration)? {
         next.duration = next.duration.max(interval.end);
     }

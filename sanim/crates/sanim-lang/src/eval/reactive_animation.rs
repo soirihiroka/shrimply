@@ -113,18 +113,35 @@ impl Runtime<'_, '_> {
             }
         }
         let id = target.expect("checked mutable animation target");
-        let duration = builtin
-            .timing
-            .value(values.get("duration"))
+        let curve = match values.remove("curve") {
+            Some(Value::Curve(curve)) => Some(curve),
+            Some(_) => {
+                return Err(self.error(
+                    "S140",
+                    "animate curve must be a typed Curve(keys=...)",
+                    span,
+                ));
+            }
+            None => None,
+        };
+        let duration = if let Some(curve)=&curve {
+            let natural=curve.duration().ok_or_else(||self.error("S140","animate(curve=...) requires Keyframe timestamps, not geometric points",span))?;
+            if values.contains_key("ease"){return Err(self.error("S140","keyframed curves define their own time handles; remove ease= or adjust Keyframe handles",span));}
+            if values.contains_key("duration"){builtin.timing.value(values.get("duration"))}else{Ok(natural)}
+        }else{builtin.timing.value(values.get("duration"))}
             .map_err(|message| self.error("S304", message, span))?;
         let easing = crate::timing::easing(values.get("ease"))
             .map_err(|message| self.error("S304", message, span))?;
-        let mut value = crate::animation_plan::cell(
-            id,
-            values.remove("to").expect("checked animation value"),
-            duration,
-            easing,
-        );
+        let to = if let Some(curve) = &curve {
+            curve
+                .at(1.into())
+                .map_err(|e| self.error("S140", e, span))?
+        } else {
+            values
+                .remove("to")
+                .ok_or_else(|| self.error("S140", "animate requires to=... or curve=...", span))?
+        };
+        let mut value = crate::animation_plan::cell(id, to, duration, easing, curve);
         if let Value::Animation(plan) = &mut value {
             std::sync::Arc::make_mut(plan).origin = Some(sanim_core::plan::Origin {
                 checkpoint: self.root_statement,
@@ -297,10 +314,21 @@ impl Runtime<'_, '_> {
         Ok(())
     }
     fn graph_node(&mut self, node: Node, span: Span) -> Result<NodeId, Diagnostic> {
-        self.animation
+        let mut work = 0;
+        let node = self
+            .animation
             .reactive
-            .insert_node(node, self.limits.data.max_values)
-            .map_err(|e| self.error("S140", e, span))
+            .insert_node_budgeted(
+                node,
+                self.limits.data.max_values,
+                &mut work,
+                self.limits
+                    .max_native_work
+                    .saturating_sub(self.logical_native_work),
+            )
+            .map_err(|e| self.error("S140", e, span))?;
+        self.charge_native_work(work, span)?;
+        Ok(node)
     }
     fn lower_binding(
         &mut self,
@@ -426,13 +454,20 @@ impl Runtime<'_, '_> {
                 }
             }
             ExprKind::Call{callee,args,..}=>{
+                let native_call = self.loaded.iter().find(|module|module.id==self.module)
+                    .and_then(|module|crate::timing::builtin_call(callee,args,&module.checked.native_methods))
+                    .and_then(|call|sanim_core::code::values::Native::from_name(call.builtin.name).map(|operation| {
+                        let expressions=call.builtin.parameters.iter().enumerate()
+                            .filter_map(|(index,parameter)|call.argument(index).map(|value|(parameter.name.to_owned(),value.clone())))
+                            .collect::<Vec<_>>();
+                        (operation,expressions)
+                    }));
+                if let Some((operation,expressions))=native_call {
+                    let arguments=expressions.into_iter().map(|(name,value)|self.lower_expression(&value,env,locals,depth+1).map(|node|(name,node))).collect::<Result<BTreeMap<_,_>,_>>()?;
+                    return self.graph_node(Node::NativeConfig{operation,arguments},expr.span);
+                }
                 let args = args.iter();
                 if let ExprKind::Name(name)=&callee.kind && prelude::builtin(name).is_some(){
-                    if let Some(operation)=sanim_core::code::values::Native::from_name(name) {
-                        let (parameters,_)=operation.signature();let mut arguments=BTreeMap::new();let mut positional=0;
-                        for (label,value) in args {let name=if let Some(label)=label{label.as_str()}else{let name=parameters.get(positional).ok_or_else(||self.error("S140","too many retained constructor arguments",value.span))?.0;positional+=1;name};arguments.insert(name.to_owned(),self.lower_expression(value,env,locals,depth+1)?);}
-                        return self.graph_node(Node::NativeConfig{operation,arguments},expr.span);
-                    }
                     if math::functions::function(name).is_none() && math::linear::list_function(name).is_none(){
                         let mut names=BTreeSet::new();dependencies(expr,&mut names);
                         if !self.has_live_observation(expr) && names.iter().all(|name|!locals.contains_key(name)&&!env.get(name).is_some_and(Binding::is_dynamic)) {let value=self.expression(expr,env)?;return self.graph_node(Node::Constant(value),expr.span);}
@@ -475,6 +510,7 @@ impl Runtime<'_, '_> {
 pub(super) fn property_name(name: &str) -> Option<Property> {
     if let Some((_, property)) = sanim_core::code::view::INPUTS
         .iter()
+        .chain(sanim_core::voxel::INPUTS)
         .find(|(input, _)| *input == name)
     {
         return Some(*property);

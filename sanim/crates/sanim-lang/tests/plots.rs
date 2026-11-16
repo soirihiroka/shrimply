@@ -173,11 +173,12 @@ fn native_statistics_reserve_cumulative_work_and_feed_performance_advice() {
     files.insert("main.sanim",format!("{SCALES}\nrepeat 3 {{let curve=DensityPlot(values=[-2,-1.5,-1,-0.5,0,0.5,1,1.5,2,2.5],bandwidth=0.6,points=32,x_scale=xs,y_scale=ys)}}\nAnimation()"));
     let mut engine = Engine::new(Default::default());
     engine.limits.max_operations = 1000;
+    engine.limits.max_native_work = 1000;
     let error = engine
         .prepare("main.sanim", &files, &Default::default())
         .unwrap_err();
     assert_eq!(error.code, "S303");
-    assert!(error.message.contains("operations"));
+    assert!(error.message.contains("native work"));
     let report = engine.lint("main.sanim", &files).unwrap();
     assert!(
         report
@@ -187,7 +188,9 @@ fn native_statistics_reserve_cumulative_work_and_feed_performance_advice() {
     );
     files.insert("main.sanim",format!("{SCALES}\nlet curve=DensityPlot(values=[-2,-1,0,1,2],bandwidth=0.6,points=32,x_scale=xs,y_scale=ys)\nAnimation(children=[curve])"));
     engine.limits.max_operations = 10_000;
+    engine.limits.max_native_work = 10_000;
     engine.limits.warn_operations = 100;
+    engine.limits.warn_prepare_micros = 0;
     let prepared = engine
         .prepare("main.sanim", &files, &Default::default())
         .unwrap();
@@ -196,6 +199,6 @@ fn native_statistics_reserve_cumulative_work_and_feed_performance_advice() {
         prepared
             .performance
             .iter()
-            .any(|warning| warning.code == "P001")
+            .any(|warning| warning.code == "P004")
     );
 }

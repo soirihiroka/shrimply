@@ -27,6 +27,7 @@ pub mod source;
 mod timing;
 mod type_algebra;
 pub mod utilities;
+mod voxel;
 pub mod watch;
 
 pub use checker::{Checked as CheckedModule, NativeMethod};
@@ -71,6 +72,8 @@ pub struct Limits {
     pub max_type_bytes: usize,
     pub max_time_map_bytes: usize,
     pub max_operations: u64,
+    /// Cumulative native algorithm work, independent of interpreted DSL operations.
+    pub max_native_work: u64,
     pub max_iterations: usize,
     pub max_elements: usize,
     pub max_call_depth: usize,
@@ -89,6 +92,7 @@ impl Default for Limits {
             max_type_bytes: 8 * 1024 * 1024,
             max_time_map_bytes: 16 * 1024 * 1024,
             max_operations: 1_000_000,
+            max_native_work: sanim_voxel::procedural::MAX_PROCEDURAL_WORK as u64,
             max_iterations: 100_000,
             max_elements: 10_000,
             max_call_depth: 64,
@@ -122,6 +126,10 @@ pub struct Statistics {
     pub decoded_assets: u64,
     pub reused_assets: u64,
     pub operations: u64,
+    /// Executed interpreter/validation work, excluding native algorithm loops.
+    pub interpreted_operations: u64,
+    /// Executed native work units, also included in operations for profiling.
+    pub native_work: u64,
     pub restored_statements: u64,
     pub restored_until: sanim_core::Fraction,
     pub checkpoint_count: usize,

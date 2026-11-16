@@ -50,7 +50,8 @@ pub fn charge_substitution(
             | Type::Option(t)
             | Type::Array(t)
             | Type::Series(t)
-            | Type::Signal(t) => walk(t, remaining, bindings, depth - 1)?,
+            | Type::Signal(t)
+            | Type::Curve(t) => walk(t, remaining, bindings, depth - 1)?,
             Type::DataFrame { row, groups } => {
                 walk(row, remaining, bindings, depth - 1)?;
                 for name in groups {

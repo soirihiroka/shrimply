@@ -4,7 +4,7 @@ use super::*;
 pub(super) const MIN_MEMO_OPERATIONS: u64 = 64;
 const MAX_MEMO_LITERAL_BYTES: usize = 4096;
 const MAX_MEMO_KEY_BYTES: usize = 8 * 1024;
-const MAX_MEMO_INPUT_NODES: usize = 128;
+pub(super) const MAX_MEMO_INPUT_NODES: usize = 128;
 pub(super) fn contains_animation(value: &Value) -> bool {
     match value {
         Value::Animation(_) => true,
@@ -16,35 +16,64 @@ pub(super) fn contains_animation(value: &Value) -> bool {
         _ => false,
     }
 }
-fn supported(value: &Value, remaining: &mut usize) -> bool {
+pub(super) fn supported(value: &Value, remaining: &mut usize, max_literal_bytes: usize) -> bool {
     let Some(next) = remaining.checked_sub(1) else {
         return false;
     };
     *remaining = next;
     match value {
-        Value::Function(_)
-        | Value::Data(_)
-        | Value::Dict(_)
-        | Value::Element(_)
-        | Value::Animation(_)
-        | Value::Signal(_)
-        | Value::DataFrame(_)
-        | Value::Series(_) => false,
-        Value::String(text) => text.len() <= MAX_MEMO_LITERAL_BYTES,
-        Value::Record(fields) => fields.values().all(|value| supported(value, remaining)),
-        Value::Some(value) => supported(value, remaining),
-        Value::Variant { fields, .. } => fields.iter().all(|value| supported(value, remaining)),
-        Value::List(list) => {
-            if list.element_type.contains_animation() {
+        Value::None => true,
+        Value::String(text) => text.len() <= max_literal_bytes,
+        Value::Template(template) => {
+            let Some(next) = remaining.checked_sub(template.parts.len()) else {
                 return false;
-            }
-            let mut budget = MAX_MEMO_KEY_BYTES;
-            sanim_core::type_budget::charge(&list.element_type, &mut budget).is_ok()
+            };
+            *remaining = next;
+            template.parts.iter().all(|part| match part {
+                TemplatePart::Text(text) => text.len() <= max_literal_bytes,
+                TemplatePart::Hole { value, format, .. } => {
+                    supported(value, remaining, max_literal_bytes)
+                        && format
+                            .as_ref()
+                            .is_none_or(|value| supported(value, remaining, max_literal_bytes))
+                }
+            })
         }
+        Value::Record(fields) => fields
+            .values()
+            .all(|value| supported(value, remaining, max_literal_bytes)),
+        Value::Some(value) => supported(value, remaining, max_literal_bytes),
+        Value::Variant { fields, .. } => fields
+            .iter()
+            .all(|value| supported(value, remaining, max_literal_bytes)),
+        Value::List(list) => supported_schema(&list.element_type),
+        Value::Array { element_type, .. } => supported_schema(element_type),
         // Persistent collections carry an immutable content proof, computed at most once.
-        _ => true,
+        _ => supported_schema(&value.ty()),
     }
 }
+fn supported_schema(ty: &Type) -> bool {
+    let mut budget = MAX_MEMO_KEY_BYTES;
+    sanim_core::type_budget::charge(ty, &mut budget).is_ok()
+        && !ty.contains(&|ty| {
+            matches!(
+                ty,
+                Type::Unknown
+                    | Type::Variable(_)
+                    | Type::BoundedVariable(_, _)
+                    | Type::Function(_)
+                    | Type::Overloaded(_)
+                    | Type::Data
+                    | Type::Dict
+                    | Type::Element
+                    | Type::Animation
+                    | Type::Signal(_)
+                    | Type::DataFrame { .. }
+                    | Type::Series(_)
+            )
+        })
+}
+
 impl Runtime<'_, '_> {
     pub(super) fn pure_result_type(&self, function: &Function) -> bool {
         function.capabilities.is_pure()
@@ -53,8 +82,8 @@ impl Runtime<'_, '_> {
                 let result = signature.result.as_ref();
                 let mut budget = MAX_MEMO_KEY_BYTES;
                 sanim_core::type_budget::charge(result, &mut budget).is_ok()
-                    && result.readable()
                     && !result.contains_element()
+                    && !result.contains_animation()
                     && !result.contains_signal()
                     && !result.contains_function()
             })
@@ -153,7 +182,7 @@ impl Runtime<'_, '_> {
                         pending.push((function.clone(), captures, key.clone(), false));
                     }
                 } else {
-                    if !supported(&value, &mut work) {
+                    if !supported(&value, &mut work, MAX_MEMO_LITERAL_BYTES) {
                         return Ok(None);
                     }
                     inputs.insert(format!("{namespace}::{name}"), value);
@@ -206,5 +235,51 @@ impl Runtime<'_, '_> {
             Err(error) if error.is_io() => Ok(None),
             Err(error) => Err(self.error("S301", error.to_string(), function.span)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn collection_schemas_cannot_hide_dynamic_values_from_pure_cache_policy() {
+        for leaf in [
+            Type::Dict,
+            Type::Data,
+            Type::DataFrame {
+                row: Box::new(Type::Record(Default::default())),
+                groups: vec![],
+            },
+            Type::Series(Box::new(Type::Numeric(Unit::Number))),
+            Type::Signal(Box::new(Type::Numeric(Unit::Number))),
+        ] {
+            let nested = Type::Record(
+                std::iter::once(("nested".into(), Type::Option(Box::new(leaf)))).collect(),
+            );
+            let list = Value::List(List::typed(nested.clone(), vec![]));
+            let array = Value::Array {
+                element_type: Arc::new(nested),
+                shape: vec![0],
+                values: Default::default(),
+            };
+            for value in [list, array] {
+                let mut remaining = MAX_MEMO_INPUT_NODES;
+                assert!(!supported(&value, &mut remaining, MAX_MEMO_LITERAL_BYTES));
+            }
+        }
+        let values = Value::List(List::typed(Type::VoxelGrid, vec![]));
+        let mut remaining = MAX_MEMO_INPUT_NODES;
+        assert!(
+            supported(&values, &mut remaining, MAX_MEMO_LITERAL_BYTES),
+            "immutable native geometry remains cacheable without a payload walk"
+        );
+        let text = Value::String("x".repeat(MAX_MEMO_LITERAL_BYTES + 1).into());
+        let mut remaining = MAX_MEMO_INPUT_NODES;
+        assert!(!supported(&text, &mut remaining, MAX_MEMO_LITERAL_BYTES));
+        let mut remaining = MAX_MEMO_INPUT_NODES;
+        assert!(
+            supported(&text, &mut remaining, 2 * MAX_MEMO_LITERAL_BYTES),
+            "result retention uses cache byte budget, not the smaller serialized-key budget"
+        );
     }
 }

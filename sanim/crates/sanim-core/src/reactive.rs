@@ -217,7 +217,7 @@ impl ReactiveGraph {
         Track::at(&cell.tracks, time)?.map_or_else(
             || Ok(cell.initial.clone()),
             |track| {
-                if interpolated_type(&cell.ty) {
+                if track.curve.is_some() || interpolated_type(&cell.ty) {
                     track.sample(time)
                 } else if track.progress(time)? >= Fraction::from(1) {
                     Ok(track.to.clone())
@@ -266,6 +266,39 @@ impl ReactiveGraph {
         easing: Easing,
         window: crate::math::temporal::Window,
     ) -> Result<(), String> {
+        self.write_cell_track(id, start, duration, (to, None), easing, window)
+    }
+    pub fn write_curve_cell_in_window(
+        &mut self,
+        id: CellId,
+        start: Fraction,
+        duration: Fraction,
+        curve: std::sync::Arc<crate::curve::Curve>,
+        window: crate::math::temporal::Window,
+    ) -> Result<(), String> {
+        curve
+            .duration()
+            .ok_or("animate(curve=...) requires keyframed Curve timestamps")?;
+        let to = curve.at(1.into())?;
+        self.write_cell_track(
+            id,
+            start,
+            duration,
+            (to, Some(curve)),
+            Easing::Linear,
+            window,
+        )
+    }
+    fn write_cell_track(
+        &mut self,
+        id: CellId,
+        start: Fraction,
+        duration: Fraction,
+        target: (Value, Option<std::sync::Arc<crate::curve::Curve>>),
+        easing: Easing,
+        window: crate::math::temporal::Window,
+    ) -> Result<(), String> {
+        let (mut to, curve) = target;
         math::temporal::writer_end(start, duration)?;
         let Some(interval) = window.interval(start, duration)? else {
             return Ok(());
@@ -276,6 +309,11 @@ impl ReactiveGraph {
         check_time(start)?;
         check_time(end)?;
         math::temporal::writer_end(start, math::arithmetic("-", end, start)?)?;
+        if let Some(curve) = &curve
+            && let Some((natural_start, natural_end)) = interval.interpolation
+        {
+            to = curve.at(math::progress(end, natural_start, natural_end)?)?;
+        }
         let cell = self
             .cells
             .get(&id)
@@ -286,6 +324,18 @@ impl ReactiveGraph {
                 cell.ty
             )
         })?;
+        let curve_bytes = if let Some(curve) = &curve {
+            if !cell.ty.accepts(&curve.value_type()) {
+                return Err(format!(
+                    "animated curve value {} does not preserve target type {}",
+                    curve.value_type(),
+                    cell.ty
+                ));
+            }
+            curve.resident_bytes()
+        } else {
+            0
+        };
         // Insert after equal-time events: the last source write wins at an instant.
         let index = cell
             .tracks
@@ -317,6 +367,7 @@ impl ReactiveGraph {
         }
         let from = self.sample_cell(id, start)?;
         let track = Track {
+            curve,
             interpolation: interval.interpolation,
             cycle,
             start,
@@ -344,7 +395,7 @@ impl ReactiveGraph {
                 )?)?;
             }
         }
-        let bytes = self.reserve(2 * std::mem::size_of::<Track>() + value_bytes)?;
+        let bytes = self.reserve(2 * std::mem::size_of::<Track>() + value_bytes + curve_bytes)?;
         let mut tracks = cell.tracks.clone();
         tracks.insert(index, track);
         if let Some(successor) = successor {
@@ -359,14 +410,81 @@ impl ReactiveGraph {
         Ok(())
     }
     pub fn insert_node(&mut self, operation: Node, limit: usize) -> Result<NodeId, String> {
+        self.insert_node_budgeted(operation, limit, &mut 0, u64::MAX)
+    }
+    /// Static immediate inputs become immutable constants; sampling never rebuilds them.
+    pub fn insert_node_budgeted(
+        &mut self,
+        operation: Node,
+        limit: usize,
+        native_work: &mut u64,
+        native_limit: u64,
+    ) -> Result<NodeId, String> {
         if self.nodes.len() >= limit.min(MAX_REACTIVE_NODES) {
-            return Err("retained expression node limit exceeded; simplify the signal or increase the host's node budget".into());
+            return Err("retained expression node limit exceeded; move constant constructors or lists into a let binding before sig (for example let curve=Curve(...)), or simplify the signal".into());
         }
         let id = self.nodes.len();
-        let (ty, depth) = self.describe(&operation, id)?;
+        let (mut ty, mut depth) = self.describe(&operation, id)?;
         if depth > MAX_REACTIVE_DEPTH {
             return Err("retained expression dependency depth exceeded".into());
         }
+        let constant = |id: &NodeId| match &self.nodes[*id].operation {
+            Node::Constant(value) => Some(value.clone()),
+            _ => None,
+        };
+        let folded = match &operation {
+            Node::List { values } => {
+                values
+                    .iter()
+                    .map(constant)
+                    .collect::<Option<Vec<_>>>()
+                    .map(|values| {
+                        let Type::List(inner, _) = &ty else {
+                            unreachable!("checked List")
+                        };
+                        Value::List(crate::List::typed(inner.as_ref().clone(), values))
+                    })
+            }
+            Node::Record { fields } => fields
+                .iter()
+                .map(|(name, id)| constant(id).map(|value| (name.clone(), value)))
+                .collect::<Option<OrdMap<_, _>>>()
+                .map(Value::Record),
+            Node::NativeConfig {
+                operation,
+                arguments,
+            } => {
+                if let Some(arguments) = arguments
+                    .iter()
+                    .map(|(name, id)| constant(id).map(|value| (name.clone(), value)))
+                    .collect::<Option<OrdMap<_, _>>>()
+                {
+                    let required = u64::try_from(operation.work(&arguments)?)
+                        .map_err(|_| "native folding work count overflow")?;
+                    let total = native_work
+                        .checked_add(required)
+                        .ok_or("native folding work count overflow")?;
+                    if total > native_limit {
+                        return Err("constant native folding exceeds the remaining native preparation work budget".into());
+                    }
+                    *native_work = total;
+                    // Folding is optional: a failing pure call must stay lazy when its
+                    // parent short-circuits, rather than becoming a preparation error.
+                    operation.execute(&arguments).ok()
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        let operation = if let Some(value) = folded {
+            crate::validate_value(&ty, &value)?;
+            ty = leaf_type(&value)?;
+            depth = 1;
+            Node::Constant(value)
+        } else {
+            operation
+        };
         let bytes = self.reserve(node_bytes(&operation)?)?;
         self.nodes.push_back(Expression {
             operation,
@@ -661,7 +779,18 @@ impl ReactiveGraph {
                     return Err("invalid or overlapping retained cell tracks".into());
                 }
                 crate::validate_value(&cell.ty, &track.from)?;
-                let target = state_value_bytes(&cell.ty, &track.to)?;
+                let target = state_value_bytes(&cell.ty, &track.to)?
+                    + if let Some(curve) = &track.curve {
+                        if curve.duration().is_none()
+                            || track.easing != Easing::Linear
+                            || !cell.ty.accepts(&curve.value_type())
+                        {
+                            return Err("invalid retained keyframed curve track".into());
+                        }
+                        curve.resident_bytes()
+                    } else {
+                        0
+                    };
                 state_bytes = state_bytes
                     .checked_add(target)
                     .ok_or("retained state size overflow")?;
@@ -853,10 +982,23 @@ impl ReactiveGraph {
                             .take_while(|(a, b)| a == b)
                             .count();
                         a.tracks
-                            .get(common)
+                            .iter()
+                            .skip(common)
+                            .zip(b.tracks.iter().skip(common))
+                            .find_map(|(a, b)| a.changed_from(b))
                             .into_iter()
-                            .chain(b.tracks.get(common))
-                            .map(|track| track.start)
+                            .chain(
+                                a.tracks
+                                    .iter()
+                                    .skip(b.tracks.len())
+                                    .map(|track| track.start),
+                            )
+                            .chain(
+                                b.tracks
+                                    .iter()
+                                    .skip(a.tracks.len())
+                                    .map(|track| track.start),
+                            )
                             .min()
                     }
                 }
@@ -1119,11 +1261,20 @@ fn leaf_type(value: &Value) -> Result<Type, String> {
         Value::Number(number) if math::finite(&number.value) => {}
         Value::Fraction(value) if math::finite(value) => {}
         Value::Bool(_) => {}
-        Value::String(text) if text.len() <= math::format::MAX_OUTPUT_BYTES => {}
+        Value::String(text) if text.len() <= math::format::MAX_OUTPUT_BYTES => {
+            return Ok(Type::StringLiteral(text.clone()));
+        }
         Value::Font(font) => {
             font.validate()?;
         }
         Value::Code(_)
+        | Value::VoxelGrid(_)
+        | Value::VoxelLayout(_)
+        | Value::Density(_)
+        | Value::Curve(_)
+        | Value::Random(_)
+        | Value::VoxelMaterial(_)
+        | Value::VoxelTexture(_)
         | Value::List(_)
         | Value::Record(_)
         | Value::Some(_)
@@ -1147,10 +1298,27 @@ fn leaf_type(value: &Value) -> Result<Type, String> {
             ));
         }
     }
-    Ok(value.ty())
+    Ok(constant_schema(value))
 }
+// Constants cannot change their discriminants. Keep record string literals without
+// walking persistent list payloads; lists already carry their checked element schema.
+fn constant_schema(value: &Value) -> Type {
+    match value {
+        Value::String(text) => Type::StringLiteral(text.clone()),
+        Value::Record(fields) => Type::Record(
+            fields
+                .iter()
+                .map(|(name, value)| (name.clone(), constant_schema(value)))
+                .collect(),
+        ),
+        _ => value.ty(),
+    }
+}
+
 fn property_type(property: Property, ty: &Type) -> Result<(), String> {
-    if let Some(expected) = crate::code::view::input_type(property) {
+    if let Some(expected) =
+        crate::code::view::input_type(property).or_else(|| crate::voxel::input_type(property))
+    {
         return if expected.accepts(ty) {
             Ok(())
         } else {
@@ -1172,6 +1340,18 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
         ),
         Property::Fill => crate::Paint::ty().accepts(ty),
         Property::Code
+        | Property::VoxelVolume
+        | Property::VoxelLayout
+        | Property::VoxelView
+        | Property::VoxelYaw
+        | Property::VoxelPitch
+        | Property::VoxelZoom
+        | Property::VoxelFov
+        | Property::VoxelCheckFraming
+        | Property::VoxelFrameMargin
+        | Property::VoxelLights
+        | Property::VoxelEnvironment
+        | Property::VoxelCamera
         | Property::CodeLanguage
         | Property::CodeTheme
         | Property::CodeSpans

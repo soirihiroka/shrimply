@@ -2,6 +2,7 @@
 pub mod cache;
 pub mod code;
 mod collection;
+pub mod curve;
 pub use collection::{List, ListEdit, ListEditResult, Values};
 pub mod dataframe;
 pub mod font;
@@ -29,6 +30,7 @@ pub mod value_budget;
 pub mod value_key;
 pub use validation::validate_value;
 pub mod verify;
+pub mod voxel;
 
 pub use fraction::Fraction;
 pub use math::{Number, Unit};

@@ -185,7 +185,7 @@ Values include ``Number``, ``Bool``, ``String``, ``Color``, numeric units, ``Fra
 
 Arithmetic and decimal literals use checked rational values. Time never uses floating point. Units must agree; ``96px`` is explicitly converted to ``72pt``. Numeric overflow and division by zero are preparation errors. Explicit approximate math functions bound their rational result denominator to one billion, retaining headroom for follow-up arithmetic and suppressing tiny trigonometric roundoff. Source literals, explicit fractions and time remain exact.
 
-``Fraction(numerator, denominator)`` is an explicit exact rational value with ``.numerator`` and ``.denominator`` inspection. Numeric Lists support pointwise arithmetic, scalar multiplication/division, and dimensionless ``dot``, ``norm`` and ``cross``. Length and unit mismatches fail explicitly. Use ``concat(a,b)`` to concatenate Lists. Matrices use row-major nested fixed-length Lists. Matrix arithmetic, ``transpose`` and ``inverse`` retain dimensions and use finite native arithmetic. There is no implicit homogeneous coordinate extension. Lists retain their element schemas and fixed lengths in reflection and typed JSON/TOML/NPY loading.
+``Fraction(numerator, denominator)`` is an explicit exact rational value with ``.numerator`` and ``.denominator`` inspection. Numeric Lists support pointwise arithmetic, scalar multiplication/division, and dimensionless ``dot``, ``norm`` and ``cross``. Length and unit mismatches fail explicitly. Use ``concat(a,b)`` to concatenate Lists. Matrices use row-major nested Lists, such as ``List<List<Number,3>,2>`` for two rows and three columns. ``*`` multiplies matrices or transforms a numeric List; ``+`` and ``-`` operate componentwise. ``transpose`` retains the scalar schema and swaps dimensions; ``inverse`` requires a square matrix. Dimensions are checked statically when known and again at runtime. Products, transposes, and inverses accept at most 64 rows and columns. Numeric arithmetic stays checked, and there is no implicit homogeneous coordinate extension. Lists retain their element schemas and fixed lengths in reflection and typed JSON/TOML/NPY loading.
 
 ``Box``, ``Line``, ``Polygon``, ``Text``/``Label`` and ``CodeView`` construct immutable elements. Animation methods such as ``.move_to()``, ``.fade_in()``, ``.create()`` and ``.write()`` return immutable ``Animation`` values; constructing them does not play or mutate the scene. Unassigned top-level Animation expressions collect into a sequence. Functions return their plans explicitly, and imported modules never play anything. ``<Animation>`` places sibling children in parallel; ``flow="sequence"`` places them in order. Include elements as children to mount them. ``wait(1s)`` returns a hold plan. The default motion duration is 300ms. Transforms and sizes use a spring, while opacity, fill and reveal use ``smootherstep``. A list receiver, such as ``[heading,subtitle].fade_in(duration=400ms)``, targets all items together. There is no per-frame source execution.
 
@@ -475,11 +475,13 @@ Reference guides
 
    functions
    signal-functions
+   curves
    dataframes
    text-wrapping
    scrolling
    code-view
    media
+   voxels
    cli
    language-server
    vscode

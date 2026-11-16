@@ -35,7 +35,7 @@ impl Context<'_> {
             .ok_or("native operation work count overflow")?;
         if *self.native_work > self.remaining_work {
             return Err(format!(
-                "native computation requires {} work units, but only {} remain in the preparation budget; reduce samples/resolution or increase the host operation limit",
+                "native computation requires {} work units, but only {} remain in the native preparation budget; reduce samples/resolution or increase the host max_native_work limit",
                 self.native_work, self.remaining_work
             ));
         }
@@ -46,11 +46,12 @@ impl Context<'_> {
 pub(crate) fn configuration(
     name: &str,
     args: &imbl::OrdMap<String, Value>,
-    _context: Context<'_>,
+    mut context: Context<'_>,
 ) -> Result<Value, String> {
-    sanim_core::code::values::Native::from_name(name)
-        .expect("registered native value constructor")
-        .execute(args)
+    let native = sanim_core::code::values::Native::from_name(name)
+        .expect("registered native value constructor");
+    context.charge_work(native.work(args)?)?;
+    native.execute(args)
 }
 
 pub(crate) fn fraction(
@@ -68,31 +69,6 @@ pub(crate) fn fraction(
         numerator,
         denominator,
     )?))
-}
-
-pub(crate) fn matrix(
-    _name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    _context: Context<'_>,
-) -> Result<Value, String> {
-    let Some(rows) = args.get("rows") else {
-        return Ok(Value::Matrix4(Box::new(math::linear::identity())));
-    };
-    let rows = rows.list()?;
-    if rows.len() != 4 {
-        return Err("Matrix4 requires exactly four rows of four Number values".into());
-    }
-    let mut matrix = [[0.0; 4]; 4];
-    for (i, row) in rows.iter().enumerate() {
-        let row = row.list()?;
-        if row.len() != 4 {
-            return Err(format!("Matrix4 row {i} requires four Number values"));
-        }
-        for (j, v) in row.iter().enumerate() {
-            matrix[i][j] = math::to_f64(v.number()?.value)?;
-        }
-    }
-    Ok(Value::Matrix4(Box::new(matrix)))
 }
 
 pub(crate) fn list_math(
@@ -120,6 +96,17 @@ pub(crate) fn list_math(
             return Err("concat exceeds the List value limit".into());
         }
         count
+    } else if matches!(
+        function,
+        math::linear::ListFunction::Transpose | math::linear::ListFunction::Inverse
+    ) {
+        math::linear::matrix::work(
+            function,
+            match &values[0] {
+                Value::List(list) => list,
+                _ => return Err("matrix requires nested Lists".into()),
+            },
+        )?
     } else {
         values[0]
             .list()?
@@ -130,25 +117,6 @@ pub(crate) fn list_math(
     context.charge_work(work)?;
     function.evaluate(&values)
 }
-pub(crate) fn matrix_operation(
-    name: &str,
-    args: &imbl::OrdMap<String, Value>,
-    _context: Context<'_>,
-) -> Result<Value, String> {
-    let required = |name: &str| {
-        args.get(name)
-            .ok_or_else(|| format!("missing argument '{name}'"))
-    };
-    let Value::Matrix4(matrix) = required("matrix")? else {
-        return Err("expected Matrix4".into());
-    };
-    Ok(Value::Matrix4(Box::new(if name == "inverse" {
-        math::linear::inverse(matrix)?
-    } else {
-        math::linear::transpose(matrix)
-    })))
-}
-
 pub(crate) fn len(
     _name: &str,
     args: &imbl::OrdMap<String, Value>,

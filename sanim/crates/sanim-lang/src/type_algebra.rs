@@ -161,24 +161,21 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
         Type::Fraction if matches!(name, "numerator" | "denominator") => {
             Ok(Type::Numeric(Unit::Number))
         }
-        Type::Matrix4 if name == "rows" => Ok(Type::List(
-            Box::new(Type::List(
-                Box::new(Type::Numeric(Unit::Number)),
-                sanim_core::ListLength::Unknown,
-            )),
-            sanim_core::ListLength::Unknown,
-        )),
         Type::Element
             if sanim_core::code::view::INPUTS
                 .iter()
+                .chain(sanim_core::voxel::INPUTS)
                 .any(|(input, _)| *input == name) =>
         {
             let property = sanim_core::code::view::INPUTS
                 .iter()
+                .chain(sanim_core::voxel::INPUTS)
                 .find(|(input, _)| *input == name)
                 .expect("checked native code input")
                 .1;
-            Ok(sanim_core::code::view::input_type(property).expect("typed native code input"))
+            Ok(sanim_core::code::view::input_type(property)
+                .or_else(|| sanim_core::voxel::input_type(property))
+                .expect("typed native input"))
         }
         Type::Element => match name {
             "position" | "scroll" => Type::union([

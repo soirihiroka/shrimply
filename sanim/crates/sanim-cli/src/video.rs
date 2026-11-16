@@ -22,37 +22,63 @@ pub(super) fn render(
                 .into(),
         );
     }
-    let output = args
-        .output
-        .as_ref()
-        .ok_or("video requires --output PATH.mp4")?;
-    if output.extension().and_then(|s| s.to_str()) != Some("mp4") {
-        return Err("video currently supports H.264 MP4; use an .mp4 output path".into());
-    }
     let mut renderer = Renderer::default();
     let (scene, mut options) = render_scene(prepared, args, &mut renderer)?;
-    if options.width < 2
-        || options.height < 2
-        || !options.width.is_multiple_of(2)
-        || !options.height.is_multiple_of(2)
-    {
-        return Err(
-            "H.264 yuv420p output requires even width and height, each at least 2 pixels".into(),
-        );
-    }
     options.encode_png = false;
     let duration = args
         .duration
         .or_else(|| (!scene.animation().indefinite).then_some(scene.animation().duration))
         .ok_or("this timeline waits forever; provide --duration 10s to render a finite video")?;
-    let frames = sanim_core::math::frame_count(duration, scene.animation().rate)?;
-    if frames == 0 || frames > MAX_VIDEO_FRAMES {
-        return Err(format!(
-            "video needs 1..={MAX_VIDEO_FRAMES} frames, got {frames}; give the animation a positive bounded duration"
-        ));
-    }
     // Validate output size/work limits before starting the encoder.
     renderer.record(&scene, scene.animation().frame_time(0)?, &options)?;
+    let mut result = encode(
+        args,
+        scene.animation().rate,
+        duration,
+        options.width,
+        options.height,
+        |index, output| {
+            let frame =
+                renderer.render_opaque(&scene, scene.animation().frame_time(index)?, &options)?;
+            output
+                .write_all(&frame.rgba)
+                .map_err(|error| error.to_string())?;
+            Ok(frame.rgba.len())
+        },
+    )?;
+    result["statistics"] = serde_json::to_value(&prepared.statistics).map_err(|e| e.to_string())?;
+    result["performance"] =
+        serde_json::to_value(crate::performance_diagnostics(&prepared.performance))
+            .map_err(|e| e.to_string())?;
+    result["diagnostics"] = serde_json::to_value(&lint.diagnostics).map_err(|e| e.to_string())?;
+    println!("{result}");
+    Ok(())
+}
+
+pub(super) fn encode(
+    args: &Args,
+    rate: sanim_core::Fraction,
+    duration: sanim_core::Fraction,
+    width: u32,
+    height: u32,
+    mut frame: impl FnMut(u64, &mut dyn Write) -> Result<usize, String>,
+) -> Result<serde_json::Value, String> {
+    let output = args
+        .output
+        .as_ref()
+        .ok_or("video requires --output PATH.mp4")?;
+    if output.extension().and_then(|s| s.to_str()) != Some("mp4") {
+        return Err("video supports H.264 MP4; use an .mp4 output path".into());
+    }
+    if width < 2 || height < 2 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err("H.264 yuv420p requires even width and height, each at least 2 pixels".into());
+    }
+    let frames = sanim_core::math::frame_count(duration, rate)?;
+    if frames == 0 || frames > MAX_VIDEO_FRAMES {
+        return Err(format!(
+            "video needs 1..={MAX_VIDEO_FRAMES} frames, got {frames}"
+        ));
+    }
     let directory = output
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -76,9 +102,9 @@ pub(super) fn render(
             "rgba",
             "-video_size",
         ])
-        .arg(format!("{}x{}", options.width, options.height))
+        .arg(format!("{}x{}", width, height))
         .arg("-framerate")
-        .arg(scene.animation().rate.to_string())
+        .arg(rate.to_string())
         .args([
             "-i",
             "pipe:0",
@@ -104,11 +130,14 @@ pub(super) fn render(
     let result = (|| {
         let mut input = encoder.stdin.take().ok_or("FFmpeg stdin unavailable")?;
         for index in 0..frames {
-            let frame =
-                renderer.render_opaque(&scene, scene.animation().frame_time(index)?, &options)?;
-            input
-                .write_all(&frame.rgba)
-                .map_err(|e| format!("FFmpeg frame {index}: {e}"))?;
+            let bytes = frame(index, &mut input)
+                .map_err(|error| format!("FFmpeg frame {index}: {error}"))?;
+            let expected = width as usize * height as usize * 4;
+            if bytes != expected {
+                return Err(format!(
+                    "video frame {index} has {bytes} bytes; expected {expected}"
+                ));
+            }
         }
         Ok::<_, String>(())
     })();
@@ -135,9 +164,7 @@ pub(super) fn render(
     temporary
         .persist(output)
         .map_err(|e| format!("cannot publish video: {e}"))?;
-    println!(
-        "{}",
-        serde_json::json!({"ok":true,"output":output,"frames":frames,"rate":scene.animation().rate.to_string(),"duration":duration.to_string(),"render_micros":started.elapsed().as_micros(),"width":options.width,"height":options.height,"statistics":prepared.statistics,"performance":crate::performance_diagnostics(&prepared.performance),"diagnostics":lint.diagnostics})
-    );
-    Ok(())
+    Ok(
+        serde_json::json!({"ok":true,"output":output,"frames":frames,"rate":rate.to_string(),"duration":duration.to_string(),"render_micros":started.elapsed().as_micros(),"width":width,"height":height}),
+    )
 }

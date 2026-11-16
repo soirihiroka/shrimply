@@ -162,6 +162,21 @@ impl From<Color<u8>> for Color<f32> {
 }
 
 impl Color<f32> {
+    /// Decode straight sRGB channels to linear light, preserving alpha and floating-point precision.
+    pub fn to_linear(mut self) -> Self {
+        let channel = |value: f32| {
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        self.r = channel(self.r);
+        self.g = channel(self.g);
+        self.b = channel(self.b);
+        self
+    }
+
     pub const fn from_rgb8(red: u8, green: u8, blue: u8) -> Self {
         Self::from_rgb8_alpha(red, green, blue, 1.0)
     }
@@ -421,20 +436,7 @@ impl Color<u8> {
     }
 
     pub fn to_linear(self) -> Color<f32> {
-        let channel = |value: u8| {
-            let value = f32::from(value) / 255.0;
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        Color::new(
-            channel(self.r),
-            channel(self.g),
-            channel(self.b),
-            f32::from(self.a) / 255.0,
-        )
+        Color::<f32>::from(self).to_linear()
     }
 
     pub fn rec709_luma(self) -> u8 {

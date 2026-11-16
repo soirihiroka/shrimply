@@ -39,108 +39,61 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
     } else {
         (ty, false)
     };
-    if matches!(element, Type::List(_, _) | Type::Matrix4 | Type::Fraction) {
-        let raw = decode_array(
-            bytes,
-            &Type::Array(Box::new(
-                if matches!(element, Type::Fraction | Type::List(_, _)) {
-                    Type::Numeric(Unit::Number)
-                } else {
-                    Type::Data
-                },
-            )),
-            limits,
-        )?;
-        let Value::Array {
-            mut shape, values, ..
-        } = raw
-        else {
-            return Err("invalid numeric array".into());
-        };
-        let width = match element {
-            Type::List(inner, length) => {
-                if sanim_core::math::operations::scalar_unit(inner) != Some(Unit::Number) {
-                    return Err("NPY numeric Lists require dimensionless Number elements".into());
-                }
-                let width = shape.pop().ok_or("NPY List requires an array dimension")?;
-                if !length.allows(width) {
-                    return Err(format!(
-                        "NPY final dimension {width} does not match {element}"
-                    ));
-                }
-                width
+    let parsed = parse(bytes, limits)?;
+    if matches!(element, Type::List(_, _) | Type::Fraction) {
+        let mut shape = parsed.shape.clone();
+        let mut scalar = element;
+        let mut lengths = vec![];
+        while let Type::List(inner, length) = scalar {
+            lengths.push(*length);
+            scalar = inner;
+        }
+        if sanim_core::math::operations::scalar_unit(scalar) != Some(Unit::Number) {
+            return Err(
+                "NPY numeric Lists require dimensionless Number or Fraction elements".into(),
+            );
+        }
+        let split = shape
+            .len()
+            .checked_sub(lengths.len())
+            .ok_or("NPY shape has fewer dimensions than the nested List schema")?;
+        let dimensions = shape.split_off(split);
+        for (length, actual) in lengths.iter().zip(&dimensions) {
+            if !length.allows(*actual) {
+                return Err(format!(
+                    "NPY dimension {actual} does not match nested List schema {element}"
+                ));
             }
-            Type::Matrix4 => {
-                if shape.len() < 2 || shape[shape.len() - 2..] != [4, 4] {
-                    return Err("NPY Matrix4 values require trailing shape (4, 4)".into());
-                }
-                shape.truncate(shape.len() - 2);
-                16
-            }
-            _ => 1,
-        };
+        }
         if !array && !shape.is_empty() {
             return Err(format!(
                 "NPY shape has extra array dimensions; use Array<{element}>"
             ));
         }
-        let mut converted = vec![];
-        let mut components = values.iter();
-        let rows = match values.len().checked_div(width) {
-            Some(rows) => rows,
-            None => shape
-                .iter()
-                .try_fold(1usize, |size, axis| size.checked_mul(*axis))
-                .ok_or("NPY shape overflow")?,
-        };
-        if rows > limits.max_values {
-            return Err("NPY value limit exceeded".into());
+        let count = shape
+            .iter()
+            .try_fold(1usize, |count, axis| count.checked_mul(*axis))
+            .ok_or("NPY shape overflow")?;
+        let mut level = count;
+        let mut nested_values = count;
+        for dimension in &dimensions {
+            level = level
+                .checked_mul(*dimension)
+                .ok_or("NPY nested value count overflow")?;
+            nested_values = nested_values
+                .checked_add(level)
+                .ok_or("NPY nested value count overflow")?;
         }
-        for _ in 0..rows {
-            let mut chunk = components.by_ref().take(width);
-            let value = if *element == Type::Fraction {
-                Value::Fraction(
-                    chunk
-                        .next()
-                        .expect("validated NPY component count")
-                        .number()?
-                        .value,
-                )
-            } else if let Type::List(inner, _) = element {
-                let values = chunk
-                    .map(|value| {
-                        let value = if inner.as_ref() == &Type::Fraction {
-                            Value::Fraction(value.number()?.value)
-                        } else {
-                            value.clone()
-                        };
-                        value.with_type(inner)
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-                Value::List(sanim_core::List::typed(inner.as_ref().clone(), values))
-            } else {
-                let numbers = chunk
-                    .map(|v| match v {
-                        Value::Data(v) => v
-                            .as_f64()
-                            .filter(|v| v.is_finite())
-                            .ok_or_else(|| "NPY component must be finite f64".to_string()),
-                        _ => Err("invalid NPY numeric component".into()),
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-                match element {
-                    Type::Matrix4 => {
-                        let mut m = [[0.0; 4]; 4];
-                        for (i, v) in numbers.into_iter().enumerate() {
-                            m[i / 4][i % 4] = v;
-                        }
-                        Value::Matrix4(Box::new(m))
-                    }
-                    _ => return Err("unsupported NPY math type".into()),
-                }
-            };
-            converted.push(value);
+        if nested_values > limits.max_values {
+            return Err("NPY nested List value limit exceeded".into());
         }
+        if dimensions.len() > limits.max_depth {
+            return Err("NPY nested List depth limit exceeded".into());
+        }
+        let mut values = parsed.values(scalar)?;
+        let converted = (0..count)
+            .map(|_| numeric_list(element, &dimensions, &mut values))
+            .collect::<Result<Vec<_>, _>>()?;
         return if array {
             Ok(Value::Array {
                 element_type: element.clone().into(),
@@ -148,16 +101,47 @@ pub fn decode(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> 
                 values: converted.into(),
             })
         } else {
-            converted.pop().ok_or("NPY scalar value is missing".into())
+            converted
+                .into_iter()
+                .next()
+                .ok_or("NPY scalar value is missing".into())
         };
     }
-    decode_array(bytes, ty, limits)
+    let Type::Array(inner) = ty else {
+        return Err("NPY requires Array<Number>, Array<Bool>, or nested numeric Lists".into());
+    };
+    let values = parsed.values(inner)?.collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::Array {
+        element_type: inner.clone().into(),
+        shape: parsed.shape,
+        values: values.into(),
+    })
 }
 
-fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String> {
-    let Type::Array(inner) = ty else {
-        return Err("NPY requires Array<Number> or Array<Bool>".into());
-    };
+fn numeric_list(
+    ty: &Type,
+    dimensions: &[usize],
+    values: &mut impl Iterator<Item = Result<Value, String>>,
+) -> Result<Value, String> {
+    if let Type::List(inner, _) = ty {
+        return Ok(Value::List(sanim_core::List::typed(
+            inner.as_ref().clone(),
+            (0..dimensions[0])
+                .map(|_| numeric_list(inner, &dimensions[1..], values))
+                .collect::<Result<_, _>>()?,
+        )));
+    }
+    values.next().ok_or("NPY numeric component is missing")?
+}
+
+struct Parsed<'a> {
+    shape: Vec<usize>,
+    payload: &'a [u8],
+    kind: u8,
+    width: usize,
+    little: bool,
+}
+fn parse(bytes: &[u8], limits: Limits) -> Result<Parsed<'_>, String> {
     if bytes.get(..6) != Some(b"\x93NUMPY") {
         return Err("invalid NPY magic".into());
     }
@@ -257,20 +241,48 @@ fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String
     if payload.len() != expected {
         return Err("NPY payload length does not match shape".into());
     }
-    let mut values = Vec::with_capacity(count);
-    for chunk in payload.chunks_exact(width) {
+    Ok(Parsed {
+        shape,
+        payload,
+        kind,
+        width,
+        little,
+    })
+}
+impl Parsed<'_> {
+    fn values<'a>(
+        &'a self,
+        inner: &'a Type,
+    ) -> Result<impl Iterator<Item = Result<Value, String>> + 'a, String> {
+        if self.kind == b'b' && *inner != Type::Bool {
+            return Err("NPY boolean dtype requires Bool elements".into());
+        }
+        if self.kind != b'b'
+            && sanim_core::math::operations::scalar_unit(inner) != Some(Unit::Number)
+            && *inner != Type::Data
+        {
+            return Err(
+                "numeric NPY dtype requires dimensionless Number or Fraction elements".into(),
+            );
+        }
+        Ok(self
+            .payload
+            .chunks_exact(self.width)
+            .map(move |chunk| self.scalar(chunk, inner)))
+    }
+    fn scalar(&self, chunk: &[u8], inner: &Type) -> Result<Value, String> {
+        let Self {
+            kind,
+            width,
+            little,
+            ..
+        } = self;
+        let (kind, width, little) = (*kind, *width, *little);
         if kind == b'b' {
-            if **inner != Type::Bool {
-                return Err("NPY boolean dtype requires Array<Bool>".into());
-            }
             if chunk[0] > 1 {
                 return Err("invalid NPY boolean".into());
             }
-            values.push(Value::Bool(chunk[0] != 0));
-            continue;
-        }
-        if inner.numeric_unit() != Some(Unit::Number) && **inner != Type::Data {
-            return Err("numeric NPY dtype requires Array<Number>".into());
+            return Ok(Value::Bool(chunk[0] != 0));
         }
         let mut padded = [0u8; 8];
         if little {
@@ -281,7 +293,7 @@ fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String
             }
         }
         let bits = u64::from_le_bytes(padded);
-        if **inner == Type::Data {
+        if *inner == Type::Data {
             let number = match kind {
                 b'u' => serde_json::Value::from(bits),
                 b'i' => {
@@ -300,8 +312,7 @@ fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String
                 }
                 _ => return Err("unsupported NPY math component".into()),
             };
-            values.push(Value::Data(number.into()));
-            continue;
+            return Ok(Value::Data(number.into()));
         }
         let value = match kind {
             b'u' => Fraction::from(bits),
@@ -322,16 +333,15 @@ fn decode_array(bytes: &[u8], ty: &Type, limits: Limits) -> Result<Value, String
             }
             _ => return Err("unsupported NPY kind".into()),
         };
-        let decoded = Value::Number(Number {
-            value,
-            unit: Unit::Number,
-        });
+        let decoded = if *inner == Type::Fraction {
+            Value::Fraction(value)
+        } else {
+            Value::Number(Number {
+                value,
+                unit: Unit::Number,
+            })
+        };
         sanim_core::validate_value(inner, &decoded)?;
-        values.push(decoded);
+        Ok(decoded)
     }
-    Ok(Value::Array {
-        element_type: inner.clone().into(),
-        shape,
-        values: values.into(),
-    })
 }

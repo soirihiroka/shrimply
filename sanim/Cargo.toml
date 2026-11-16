@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/sanim-core", "crates/sanim-data", "crates/sanim-lang", "crates/sanim-render", "crates/sanim-runtime", "crates/sanim-cli", "crates/sanim-lsp"]
+members = ["crates/sanim-core", "crates/sanim-data", "crates/sanim-lang", "crates/sanim-render", "crates/sanim-runtime", "crates/sanim-cli", "crates/sanim-lsp", "crates/sanim-voxel", "crates/sanim-voxel-render"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,6 +20,11 @@ sanim-data = { path = "crates/sanim-data", default-features = false }
 sanim-lang = { path = "crates/sanim-lang", default-features = false }
 sanim-render = { path = "crates/sanim-render" }
 sanim-runtime = { path = "crates/sanim-runtime" }
+sanim-voxel = { path = "crates/sanim-voxel" }
+sanim-voxel-render = { path = "crates/sanim-voxel-render" }
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl"] }
+pollster = "1"
+png = "0.18"
 fraction = { version = "0.17", features = ["with-serde-support"] }
 num-traits = "0.2"
 serde = { version = "1", features = ["derive", "rc"] }

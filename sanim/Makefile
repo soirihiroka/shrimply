@@ -3,6 +3,35 @@ RUST_TOOLCHAIN ?= nightly-2026-04-03
 CARGO = $(RUSTUP) run $(RUST_TOOLCHAIN) cargo
 ARGS ?=
 
+.PHONY: voxel-check voxel-gpu-check voxel-bench
+voxel-check:
+	$(CARGO) clippy -p sanim-voxel -p sanim-voxel-render -p sanim-cli --all-targets -- -D warnings
+	$(CARGO) test -p sanim-voxel
+	$(CARGO) test -p sanim-voxel-render
+	$(CARGO) test -p sanim-lang --no-default-features --test voxels --test voxel_assertions --test voxel_lint --test voxel_materials --test voxel_lights --test voxel_instances
+	$(CARGO) test -p sanim-cli --test voxels --lib
+	$(CARGO) test -p sanim-runtime --test watching voxel_texture_changes_reload_without_source_edits_or_render_requests
+	$(CARGO) test -p sanim-lsp --test xml_completion voxel_layout_tags_and_attributes_come_from_the_native_registry
+voxel-gpu-check:
+	$(CARGO) test -p sanim-voxel-render --tests -- --ignored --nocapture --skip benchmark
+	$(CARGO) test -p sanim-cli --test voxels survival_water_hard_shadows_match_cpu_visibility -- --ignored --nocapture
+voxel-bench:
+	$(CARGO) test --release -p sanim-voxel-render --test render voxel_gpu_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test voxels -- --ignored --nocapture
+.PHONY: voxel-storage-bench
+voxel-storage-bench:
+	$(CARGO) run --release -p sanim-voxel --example storage_bench
+
+.PHONY: voxel-procedural-check voxel-procedural-bench
+voxel-procedural-check:
+	$(CARGO) clippy -p sanim-voxel --lib --test procedural -- -D warnings
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib --test voxel_procedural -- -D warnings
+	$(CARGO) test -p sanim-voxel --test procedural
+	$(CARGO) test -p sanim-lang --no-default-features --test voxel_procedural
+voxel-procedural-bench:
+	$(CARGO) test --release -p sanim-voxel --test procedural procedural_raster_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test voxel_procedural native_landscape_preparation_benchmark -- --ignored --nocapture
+
 .PHONY: headless-check
 .PHONY: event-boundaries-check
 event-boundaries-check:
@@ -505,3 +534,56 @@ visual-fixture-check:
 .PHONY: reactivity-fixture-check
 reactivity-fixture-check:
 	$(CARGO) test -p sanim-lang --test reactivity --no-fail-fast
+
+.PHONY: voxel-camera-check voxel-camera-bench
+voxel-camera-check:
+	$(CARGO) test -p sanim-voxel --test camera_curves --test foliage
+	$(CARGO) test -p sanim-lang --no-default-features --test camera_curves
+voxel-camera-bench:
+	$(CARGO) test --release -p sanim-voxel --test camera_curves camera_curve_lookup_benchmark -- --ignored --nocapture
+
+.PHONY: curve-check curve-test curve-bench
+curve-check:
+	$(CARGO) clippy -p sanim-core -p sanim-lang --no-default-features --lib -- -D warnings
+	$(MAKE) curve-test
+curve-test:
+	$(CARGO) test -p sanim-core --test keyframe_curves
+	$(CARGO) test -p sanim-lang --no-default-features --test keyframe_curves --test camera_curves --test reactive_vectors
+curve-bench:
+	$(CARGO) test --release -p sanim-core --test keyframe_curves keyframe_curve_benchmark -- --ignored --nocapture
+
+.PHONY: list-math-check list-math-bench
+list-math-check:
+	$(CARGO) test -p sanim-core --test numeric_lists --test timed_values
+	$(CARGO) test -p sanim-data --no-default-features --test decoding
+	$(CARGO) test -p sanim-lang --no-default-features --test math_types
+	$(CARGO) clippy -p sanim-core -p sanim-data -p sanim-lang --no-default-features --lib --test numeric_lists --test timed_values --test decoding --test math_types -- -D warnings
+list-math-bench:
+	$(CARGO) test --release -p sanim-core --test numeric_lists nested_list_matrix_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-data --no-default-features --test decoding npy_nested_list_streaming_benchmark -- --ignored --nocapture
+
+.PHONY: curve-prefix-check curve-prefix-bench
+curve-prefix-check:
+	$(CARGO) test -p sanim-core --test keyframe_curves
+	$(CARGO) test -p sanim-render --test frame_cache
+curve-prefix-bench:
+	$(CARGO) test --release -p sanim-core --test keyframe_curves keyframe_prefix_diff_benchmark -- --ignored --nocapture
+
+.PHONY: voxel-valley-bench
+voxel-valley-bench:
+	$(CARGO) test --release -p sanim-cli --test voxel_performance actual_valley_same_process_gpu_benchmark -- --ignored --nocapture
+
+.PHONY: voxel-atlas-check voxel-atlas-bench
+voxel-atlas-check:
+	$(CARGO) test -p sanim-voxel-render --lib resident::atlas
+	$(CARGO) clippy -p sanim-voxel-render --lib -- -D warnings
+voxel-atlas-bench:
+	$(CARGO) test --release -p sanim-voxel-render --lib resident::atlas::tests::atlas_mip_generation_benchmark -- --ignored --nocapture
+
+.PHONY: curve-inline-bench
+curve-inline-bench:
+	$(CARGO) test --release -p sanim-lang --no-default-features --test keyframe_curves inline_curve_compile_once_benchmark -- --ignored --nocapture
+
+.PHONY: voxel-quality-bench
+voxel-quality-bench:
+	$(CARGO) test --release -p sanim-cli --test voxel_quality actual_valley_reconstruction_quality_benchmark -- --ignored --nocapture

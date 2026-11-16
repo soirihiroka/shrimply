@@ -37,13 +37,38 @@ impl Checker<'_> {
                 return Err(self.error("S140",format!("animate target '{binding}' must be declared with mut; animate the input of a sig instead"),target.span));
             }
             let ty = self.expression(target, env, None, variables)?;
-            let value = ordered[1].expect("animation target value");
-            let actual = self.expression(value, env, Some(&ty), variables)?;
-            self.expect(&ty, &actual, value.span)?;
+            let to = ordered[1];
+            let curve = ordered[4];
+            if to.is_some() == curve.is_some() {
+                return Err(self.error(
+                    "S140",
+                    "animate requires exactly one of to=... or curve=...",
+                    expr.span,
+                ));
+            }
+            if to.is_some() && ordered[2].is_none() {
+                return Err(self.error("S140","animate(to=...) requires duration=...; keyframed curves can infer their duration",expr.span));
+            }
+            if curve.is_some() && ordered[3].is_some() {
+                return Err(self.error(
+                    "S140",
+                    "animate(curve=...) uses the keyframe handles; remove ease=",
+                    expr.span,
+                ));
+            }
+            if let Some(value) = to {
+                let actual = self.expression(value, env, Some(&ty), variables)?;
+                self.expect(&ty, &actual, value.span)?;
+            }
             for (parameter, argument) in builtin.parameters.iter().zip(ordered).skip(2) {
                 if let Some(argument) = argument {
-                    let actual = self.expression(argument, env, Some(&parameter.ty), variables)?;
-                    self.expect(&parameter.ty, &actual, argument.span)?;
+                    let expected = if parameter.name == "curve" {
+                        Type::Curve(Box::new(ty.clone()))
+                    } else {
+                        parameter.ty.clone()
+                    };
+                    let actual = self.expression(argument, env, Some(&expected), variables)?;
+                    self.expect(&expected, &actual, argument.span)?;
                 }
             }
             return Ok(Type::Animation);

@@ -5,7 +5,6 @@ use crate::{
     native::{self, Context},
     prelude::{Builtin, Execution, Parameter},
 };
-pub(crate) use cells::write_cell;
 use sanim_core::{
     plan::{self, Flow, Node, Style, TimeDimension},
     *,
@@ -138,9 +137,10 @@ pub(crate) fn register(out: &mut Vec<Builtin>) {
         "animate",
         vec![
             p("target", Type::Unknown, true),
-            p("to", Type::Unknown, true),
-            p("duration", duration, true),
+            p("to", Type::Unknown, false),
+            p("duration", duration, false),
             p("ease", Type::String, false),
+            p("curve", sanim_core::voxel::camera::curve_type(), false),
         ],
     ));
     out.last_mut().expect("animate registration").execute = Execution::CellAnimation;
@@ -175,9 +175,16 @@ fn repeat_builtin() -> &'static Builtin {
 pub(crate) fn methods() -> impl Iterator<Item = &'static Builtin> {
     std::iter::once(repeat_builtin())
 }
-pub(crate) fn cell(cell: u64, to: Value, duration: Fraction, easing: Easing) -> Value {
+pub(crate) fn cell(
+    cell: u64,
+    to: Value,
+    duration: Fraction,
+    easing: Easing,
+    curve: Option<Arc<sanim_core::curve::Curve>>,
+) -> Value {
     Value::Animation(Arc::new(plan::Animation::new(Node::Cell {
         cell,
+        curve,
         to,
         duration,
         easing,
@@ -360,6 +367,7 @@ fn construct(
 pub(crate) struct Lowered {
     pub animation: sanim_core::Animation,
     pub layout: Arc<[plan::Receipt]>,
+    pub native_work: u64,
 }
 pub(crate) fn measure(
     plan: &plan::Animation,
@@ -462,6 +470,7 @@ pub(crate) fn lower(
     Ok(Lowered {
         animation,
         layout: layout.receipts,
+        native_work: work,
     })
 }
 fn mount(
@@ -732,7 +741,7 @@ fn lower_action(
         list_edit: &mut list_edit,
         created: &mut created,
         native_work: work,
-        remaining_work: limits.max_operations,
+        remaining_work: limits.max_native_work,
     };
     match plan.node.as_ref() {
         Node::Effect { effect, .. } => {
@@ -755,7 +764,9 @@ fn lower_action(
                 crate::code_view::execute_effect(&effect.operation, &arguments, context)?;
             }
         }
-        Node::Cell { cell, to, .. } => write_cell(*cell, to.clone(), context)?,
+        Node::Cell {
+            cell, to, curve, ..
+        } => cells::write_cell_track(*cell, to.clone(), curve.clone(), context)?,
         _ => unreachable!("validated action"),
     }
     Ok(())

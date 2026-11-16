@@ -18,6 +18,8 @@ pub(crate) fn flow_position_error(id: &str, reactive: &crate::reactive::Reactive
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Geometry {
+    /// An independent voxel view. The dedicated voxel renderer owns its GPU work.
+    Voxel(Arc<crate::voxel::Scene>),
     Media {
         asset: Arc<crate::media::Asset>,
         width: Fraction,
@@ -346,6 +348,18 @@ pub enum Direction {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Property {
+    VoxelVolume,
+    VoxelLayout,
+    VoxelView,
+    VoxelYaw,
+    VoxelPitch,
+    VoxelZoom,
+    VoxelFov,
+    VoxelCheckFraming,
+    VoxelFrameMargin,
+    VoxelLights,
+    VoxelEnvironment,
+    VoxelCamera,
     Position,
     PositionMode,
     Overflow,
@@ -435,6 +449,8 @@ impl Easing {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Track {
+    #[serde(default)]
+    pub curve: Option<std::sync::Arc<crate::curve::Curve>>,
     /// Original interpolation extent when a temporal viewport clips the writer.
     #[serde(default)]
     pub interpolation: Option<(Fraction, Fraction)>,
@@ -564,6 +580,12 @@ impl Animation {
 
 impl Element {
     pub fn property(&self, property: Property) -> Result<Value, String> {
+        if crate::voxel::input_type(property).is_some() {
+            return crate::voxel::property(self.geometry.as_ref(), property);
+        }
+        if matches!(self.geometry.as_ref(), Geometry::Voxel(_)) && property != Property::Opacity {
+            return Err("VoxelScene has a dedicated 3D camera; use yaw, pitch, zoom, view, or fov instead of 2D element properties".into());
+        }
         if matches!(self.geometry.as_ref(), Geometry::Code { .. })
             && crate::code::view::input_type(property).is_some()
         {
@@ -710,6 +732,18 @@ impl Element {
                 })
             }
             Property::Code
+            | Property::VoxelVolume
+            | Property::VoxelLayout
+            | Property::VoxelView
+            | Property::VoxelYaw
+            | Property::VoxelPitch
+            | Property::VoxelZoom
+            | Property::VoxelFov
+            | Property::VoxelCheckFraming
+            | Property::VoxelFrameMargin
+            | Property::VoxelLights
+            | Property::VoxelEnvironment
+            | Property::VoxelCamera
             | Property::CodeLanguage
             | Property::CodeTheme
             | Property::CodeSpans
@@ -722,6 +756,12 @@ impl Element {
         })
     }
     pub fn set(&mut self, property: Property, value: Value) -> Result<(), String> {
+        if crate::voxel::input_type(property).is_some() {
+            return crate::voxel::set(Arc::make_mut(&mut self.geometry), property, value);
+        }
+        if matches!(self.geometry.as_ref(), Geometry::Voxel(_)) && property != Property::Opacity {
+            return Err("VoxelScene cannot use 2D element transforms or reveal effects; animate its yaw, pitch, zoom, or opacity instead".into());
+        }
         if matches!(self.geometry.as_ref(), Geometry::Code { .. })
             && crate::code::view::input_type(property).is_some()
         {
@@ -744,6 +784,18 @@ impl Element {
                 }
             }
             Property::Code
+            | Property::VoxelVolume
+            | Property::VoxelLayout
+            | Property::VoxelView
+            | Property::VoxelYaw
+            | Property::VoxelPitch
+            | Property::VoxelZoom
+            | Property::VoxelFov
+            | Property::VoxelCheckFraming
+            | Property::VoxelFrameMargin
+            | Property::VoxelLights
+            | Property::VoxelEnvironment
+            | Property::VoxelCamera
             | Property::CodeLanguage
             | Property::CodeTheme
             | Property::CodeSpans
@@ -1555,6 +1607,7 @@ impl Animation {
                 motion.element.id.clone(),
                 motion.property,
                 Track {
+                    curve: None,
                     interpolation: interval.interpolation,
                     cycle,
                     start,
@@ -1652,6 +1705,38 @@ fn writer_overlap<'a>(
 }
 
 impl Track {
+    /// One conservative comparison serves reactive cell writers and element tracks.
+    pub fn changed_from(&self, next: &Self) -> Option<Fraction> {
+        if self == next {
+            return None;
+        }
+        let fallback = self.start.min(next.start);
+        if self.start == next.start
+            && self.end == next.end
+            && self.interpolation == next.interpolation
+            && self.cycle == next.cycle
+            && self.easing == next.easing
+            && self.bounded == next.bounded
+            && self.reveal == next.reveal
+            && self.horizontal == next.horizontal
+            && let Some((a, b)) = self.curve.as_ref().zip(next.curve.as_ref())
+        {
+            let progress = a.changed_progress(b)?;
+            let (start, end) = self.interpolation.unwrap_or((self.start, self.end));
+            let time = math::lerp(start, end, progress)
+                .unwrap_or(fallback)
+                .max(self.start);
+            return (time <= self.end).then_some(self.cycle.map_or(time, |cycle| cycle.start()));
+        }
+        Some(fallback)
+    }
+    pub fn is_changing(&self) -> bool {
+        self.from != self.to
+            || self
+                .curve
+                .as_ref()
+                .is_some_and(|curve| !curve.is_constant())
+    }
     pub fn at(tracks: &Vector<Self>, time: Fraction) -> Result<Option<&Self>, String> {
         let search = |time| {
             tracks
@@ -1691,6 +1776,9 @@ impl Track {
     }
     pub fn sample(&self, time: Fraction) -> Result<Value, String> {
         let p = self.progress(time)?;
+        if let Some(curve) = &self.curve {
+            return curve.at(p);
+        }
         if p >= Fraction::from(1) {
             return Ok(self.to.clone());
         }

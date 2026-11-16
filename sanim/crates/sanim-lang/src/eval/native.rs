@@ -287,12 +287,12 @@ impl Runtime<'_, '_> {
                 native_work: &mut native_work,
                 remaining_work: self
                     .limits
-                    .max_operations
-                    .saturating_sub(self.logical_operations),
+                    .max_native_work
+                    .saturating_sub(self.logical_native_work),
             },
         )
         .map_err(|e| self.error("S305", e, span));
-        self.charge_work(native_work, span)?;
+        self.charge_native_work(native_work, span)?;
         if result.is_ok() {
             for value in created {
                 self.retain_binding_value(&value, span)?;
@@ -307,13 +307,19 @@ impl Runtime<'_, '_> {
                 delta,
             });
         }
-        self.statistics.native_micros = self.statistics.native_micros.saturating_add(
-            native_started
-                .elapsed()
-                .as_micros()
-                .try_into()
-                .unwrap_or(u64::MAX),
-        );
+        let native_micros = native_started
+            .elapsed()
+            .as_micros()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        self.statistics.native_micros = self.statistics.native_micros.saturating_add(native_micros);
+        if native_work > 0 && native_micros > self.limits.warn_prepare_micros {
+            self.performance.push(PerformanceWarning {
+                code: "P004".into(),
+                message: format!("native '{name}' took {native_micros}us (warning budget {}us), executing {native_work} native work units. Reduce samples/resolution or reuse this immutable result outside repeated calls.",self.limits.warn_prepare_micros),
+                source:self.module.clone(),span,operations:native_work,
+            });
+        }
         if name == "Text" && result.is_ok() {
             self.report_evaluation(Some(span));
         }

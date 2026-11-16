@@ -29,6 +29,7 @@ pub struct ExecutionState {
     retained_frames: imbl::OrdSet<String>,
     retained_resources: sanim_core::value_budget::Budget,
     logical_operations: u64,
+    logical_native_work: u64,
     overhead: usize,
     payload: usize,
     age: u64,
@@ -288,6 +289,7 @@ impl Store {
             runtime.retained_frames = saved.retained_frames.clone();
             runtime.retained_resources = saved.retained_resources.clone();
             runtime.logical_operations = saved.logical_operations;
+            runtime.logical_native_work = saved.logical_native_work;
             runtime.completed_statements += index as u64;
             runtime.statistics.restored_statements = index as u64;
             runtime.statistics.restored_until = saved.cursor;
@@ -393,6 +395,7 @@ impl Store {
             retained_frames: runtime.retained_frames.clone(),
             retained_resources: runtime.retained_resources.clone(),
             logical_operations: runtime.logical_operations,
+            logical_native_work: runtime.logical_native_work,
             overhead,
             payload,
             age: self.age,

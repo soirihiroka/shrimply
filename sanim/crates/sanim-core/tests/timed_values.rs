@@ -33,7 +33,7 @@ fn assert_discrete(ty: Type, from: Value, to: Value) {
     assert_eq!(restored, graph);
 }
 #[test]
-fn string_record_matrix_and_array_state_commit_at_the_end() {
+fn string_record_and_array_state_commit_at_the_end() {
     assert_discrete(
         Type::String,
         Value::String("before".into()),
@@ -57,13 +57,6 @@ fn string_record_matrix_and_array_state_commit_at_the_end() {
         )
     };
     assert_discrete(ty, record("one", 1), record("two", 2));
-    let mut matrix = sanim_core::math::linear::identity();
-    matrix[0][0] = 2.;
-    assert_discrete(
-        Type::Matrix4,
-        Value::Matrix4(Box::new(sanim_core::math::linear::identity())),
-        Value::Matrix4(Box::new(matrix)),
-    );
     let array = |values: Vec<Value>| Value::Array {
         element_type: Arc::new(Type::Numeric(Unit::Number)),
         shape: vec![values.len()],
@@ -74,6 +67,32 @@ fn string_record_matrix_and_array_state_commit_at_the_end() {
         array(vec![number(1)]),
         array(vec![number(2), number(3)]),
     );
+}
+#[test]
+fn nested_number_lists_retain_discrete_matrix_state_semantics() {
+    let ty = sanim_core::math::linear::matrix::type_of(
+        sanim_core::ListLength::Exact(2),
+        sanim_core::ListLength::Exact(2),
+    );
+    let make = |diagonal: i64| {
+        Value::List(sanim_core::List::typed(
+            Type::List(
+                Box::new(Type::Numeric(Unit::Number)),
+                sanim_core::ListLength::Exact(2),
+            ),
+            vec![
+                Value::List(sanim_core::List::typed(
+                    Type::Numeric(Unit::Number),
+                    vec![number(diagonal), number(0)],
+                )),
+                Value::List(sanim_core::List::typed(
+                    Type::Numeric(Unit::Number),
+                    vec![number(0), number(diagonal)],
+                )),
+            ],
+        ))
+    };
+    assert_discrete(ty, make(1), make(3));
 }
 #[test]
 fn union_and_option_cells_preserve_the_declared_schema() {

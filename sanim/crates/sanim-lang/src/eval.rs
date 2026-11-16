@@ -155,6 +155,7 @@ pub(crate) fn evaluate(
         retained_frames: imbl::OrdSet::new(),
         retained_resources: sanim_core::value_budget::Budget::default(),
         logical_operations: 0,
+        logical_native_work: 0,
         used_functions: imbl::OrdMap::new(),
         used_resources: imbl::OrdMap::new(),
         input_versions: imbl::OrdMap::new(),
@@ -353,8 +354,18 @@ pub(crate) fn evaluate(
         runtime.animation.indefinite = indefinite;
         layout
     } else {
-        let lowered = crate::animation_plan::lower(&plan, &plan_base, available, limits)
+        let mut lower_limits = limits.clone();
+        lower_limits.max_native_work = limits
+            .max_native_work
+            .saturating_sub(runtime.logical_native_work);
+        let lowered = crate::animation_plan::lower(&plan, &plan_base, available, &lower_limits)
             .map_err(|error| crate::layout_diagnostic(error, &plan, &runtime.module))?;
+        runtime.charge_native_work(
+            lowered.native_work,
+            plan.origin
+                .as_ref()
+                .map_or(Span::default(), |origin| origin.location.span),
+        )?;
         runtime.animation = lowered.animation;
         lowered.layout
     };
@@ -405,7 +416,7 @@ pub(crate) fn evaluate(
         .map_err(|e| runtime.error("S301", e.to_string(), Span::default()))?,
     );
     let mut performance:Vec<_>=runtime.hotspots.into_iter().filter(|(_,count)|*count>=limits.warn_operations).map(|((module,start,line,column),operations)|PerformanceWarning{
-        code:"P001".into(),message:format!("this statement performed {operations} preparation operations (warning budget {}). Hoist invariant work out of loops, reduce collection sizes, or split independent elements.",limits.warn_operations),source:module,span:Span{start,end:start,line,column},operations,
+        code:"P001".into(),message:format!("this statement performed {operations} interpreted preparation operations (warning budget {}). Hoist invariant work out of loops, reduce collection sizes, or split independent elements.",limits.warn_operations),source:module,span:Span{start,end:start,line,column},operations,
     }).collect();
     performance.extend(runtime.performance);
     Ok(Prepared {
@@ -491,6 +502,7 @@ pub(crate) struct Runtime<'a, 's> {
     retained_frames: imbl::OrdSet<String>,
     retained_resources: sanim_core::value_budget::Budget,
     logical_operations: u64,
+    logical_native_work: u64,
     used_functions: imbl::OrdMap<String, (String, usize)>,
     used_resources: imbl::OrdMap<String, (String, usize)>,
     input_versions: imbl::OrdMap<String, (Option<Value>, usize)>,
@@ -529,6 +541,10 @@ impl Runtime<'_, '_> {
             return Ok(());
         }
         self.statistics.operations = self.statistics.operations.saturating_add(amount);
+        self.statistics.interpreted_operations = self
+            .statistics
+            .interpreted_operations
+            .saturating_add(amount);
         self.logical_operations = self.logical_operations.saturating_add(amount);
         const PROGRESS_WORK_INTERVAL: u64 = 256;
         if self.progress.enabled()
@@ -541,6 +557,18 @@ impl Runtime<'_, '_> {
         }
         if self.logical_operations > self.limits.max_operations {
             return Err(self.error("S303",format!("preparation exceeded {} operations. All loops are bounded, but their combined work is too large; reduce counts or move invariant work out of loops.",self.limits.max_operations),span));
+        }
+        Ok(())
+    }
+    fn charge_native_work(&mut self, amount: u64, span: Span) -> Result<(), Diagnostic> {
+        self.logical_native_work = self
+            .logical_native_work
+            .checked_add(amount)
+            .ok_or_else(|| self.error("S303", "native work counter overflow", span))?;
+        self.statistics.native_work = self.statistics.native_work.saturating_add(amount);
+        self.statistics.operations = self.statistics.operations.saturating_add(amount);
+        if self.logical_native_work > self.limits.max_native_work {
+            return Err(self.error("S303", format!("preparation exceeded its native work budget: {} work units, limit {}. Reduce native samples, resolution, or repeated computation; the host can configure max_native_work independently of the DSL operation limit.", self.logical_native_work, self.limits.max_native_work),span));
         }
         Ok(())
     }
@@ -566,7 +594,7 @@ impl Runtime<'_, '_> {
     fn block(&mut self, body: &[Statement], env: &mut Env) -> Result<Option<Value>, Diagnostic> {
         for statement in body {
             self.work(statement.span)?;
-            let before = self.statistics.operations;
+            let before = self.statistics.interpreted_operations;
             match &statement.kind {
                 StatementKind::Bind {
                     kind, name, value, ..
@@ -730,7 +758,7 @@ impl Runtime<'_, '_> {
                     ));
                 }
             }
-            let count = self.statistics.operations - before;
+            let count = self.statistics.interpreted_operations - before;
             *self
                 .hotspots
                 .entry((
@@ -1093,25 +1121,6 @@ impl Runtime<'_, '_> {
                             unit: Unit::Number,
                         }))
                     }
-                    Value::Matrix4(matrix) => Ok(Value::List(
-                        matrix
-                            .into_iter()
-                            .map(|row| {
-                                Ok(Value::List(
-                                    row.into_iter()
-                                        .map(|v| {
-                                            Ok(Value::Number(Number {
-                                                value: math::from_f64(v).map_err(|e| {
-                                                    self.error("S305", e, expr.span)
-                                                })?,
-                                                unit: Unit::Number,
-                                            }))
-                                        })
-                                        .collect::<Result<_, Diagnostic>>()?,
-                                ))
-                            })
-                            .collect::<Result<_, Diagnostic>>()?,
-                    )),
                     Value::Element(element) => {
                         if name == "id" {
                             return Ok(Value::String(element.id.clone().into()));
@@ -1556,9 +1565,11 @@ impl Runtime<'_, '_> {
                 })
                 .transpose()
         });
+        let mut memo_result_nodes = pure::MAX_MEMO_INPUT_NODES;
         if let (Some(entry_scope), Ok(Some(value))) = (memo_scope.as_ref(), result.as_ref())
             && self.statistics.operations.saturating_sub(body_operations)
                 >= pure::MIN_MEMO_OPERATIONS
+            && pure::supported(value, &mut memo_result_nodes, self.limits.max_cache_bytes)
         {
             let key = if let Some(key) = memo_key {
                 Some(key)

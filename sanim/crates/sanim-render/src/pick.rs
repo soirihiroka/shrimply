@@ -49,6 +49,7 @@ struct Collector {
 impl draw::Output for Collector {
     fn enter(&mut self, element: &Element) {
         let kind = match element.geometry.as_ref() {
+            Geometry::Voxel(_) => "VoxelScene",
             Geometry::Circle { .. } => "Circle",
             Geometry::Line { .. } => "Line",
             Geometry::Polyline { .. } => "Polyline",

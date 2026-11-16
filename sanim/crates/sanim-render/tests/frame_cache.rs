@@ -341,3 +341,97 @@ fn unused_animated_cells_and_unadded_bindings_do_not_destroy_static_frame_holds(
         assert_eq!(renderer.states_computed, 1);
     }
 }
+
+#[test]
+fn late_keyframe_edits_keep_prefix_state_and_recording_allocations() {
+    let source = |last| {
+        format!(
+            "mut width=20pt\nlet shape=Box(width=width,height=20pt,fill=Color(\"blue3\"))\nshape.fade_in(duration=0s)\nanimate(width,curve=Curve(keys=[Keyframe(time=0s,value=20pt),Keyframe(time=1s,value=40pt),Keyframe(time=2s,value=60pt),Keyframe(time=3s,value=80pt),Keyframe(time=4s,value={last}pt)]))"
+        )
+    };
+    let old = animation(&source(100));
+    let new = animation(&source(120));
+    let diff = TimelineDiff::between(&old, &new);
+    assert!(!diff.affects(Fraction::new(3u64, 2u64)));
+    assert!(diff.affects(Fraction::new(5u64, 2u64)));
+    let mut renderer = Renderer::default();
+    let before = renderer.prepare(old).unwrap();
+    let options = Options::for_animation(before.animation());
+    let early = Fraction::new(3u64, 2u64);
+    let late = Fraction::new(7u64, 2u64);
+    let state = renderer.frame_state(&before, early, &options).unwrap();
+    let recording = renderer.record(&before, early, &options).unwrap();
+    let changed = renderer.record(&before, late, &options).unwrap();
+    let after = renderer.prepare(new).unwrap();
+    assert!(Arc::ptr_eq(
+        &state,
+        &renderer.frame_state(&after, early, &options).unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        &recording,
+        &renderer.record(&after, early, &options).unwrap()
+    ));
+    assert!(!Arc::ptr_eq(
+        &changed,
+        &renderer.record(&after, late, &options).unwrap()
+    ));
+}
+
+#[test]
+fn repeated_direct_curve_tracks_ignore_edits_outside_their_cropped_window() {
+    use sanim_core::{
+        Number, Value,
+        curve::{Curve, KeyInterpolation, Keyframe, Tangents},
+    };
+    let curve = |last: u64| {
+        Arc::new(
+            Curve::keyed(
+                (0u64..=4)
+                    .map(|i| Keyframe {
+                        time: i.into(),
+                        value: Value::Number(Number {
+                            value: Fraction::new(if i == 4 { last } else { i }, 4u64),
+                            unit: sanim_core::Unit::Number,
+                        }),
+                        handle_in: None,
+                        handle_out: None,
+                        interpolation: KeyInterpolation::Bezier,
+                        tangents: Tangents::AutoClamped,
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
+            .unwrap(),
+        )
+    };
+    let mut old = animation(
+        "let shape=Box(width=20pt,height=20pt,fill=Color(\"blue3\"))\nshape.fade_in(duration=0s)",
+    );
+    let track = &mut old
+        .tracks
+        .get_mut("shape")
+        .unwrap()
+        .get_mut(&Property::Opacity)
+        .unwrap()[0];
+    track.curve = Some(curve(4));
+    track.start = 0.into();
+    track.end = 1.into();
+    track.interpolation = Some((0.into(), 4.into()));
+    track.cycle = Some(sanim_core::math::cycle::Cycle::new(0.into(), 4.into()).unwrap());
+    track.from = Value::Number(Number::scalar(0));
+    track.to = track.sample(1.into()).unwrap();
+    let mut edited = old.clone();
+    let next = &mut edited
+        .tracks
+        .get_mut("shape")
+        .unwrap()
+        .get_mut(&Property::Opacity)
+        .unwrap()[0];
+    next.curve = Some(curve(3));
+    let diff = TimelineDiff::between(&old, &edited);
+    assert!(diff.invalidated.is_empty(), "{diff:?}");
+    for tick in 0..80u64 {
+        let time = Fraction::new(tick, 10u64);
+        assert_eq!(old.sample(time).unwrap(), edited.sample(time).unwrap());
+    }
+}

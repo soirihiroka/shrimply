@@ -131,6 +131,18 @@ impl TimelineDiff {
                 let Some(birth) = birth else {
                     continue;
                 };
+                let paired_changes = a
+                    .zip(b)
+                    .map(|(a, b)| {
+                        a.iter()
+                            .zip(b.iter())
+                            .filter_map(|(a, b)| a.changed_from(b))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if a.zip(b).is_some_and(|(a, b)| a.len() == b.len()) && paired_changes.is_empty() {
+                    continue;
+                }
                 for cycle in a
                     .into_iter()
                     .chain(b)
@@ -143,6 +155,7 @@ impl TimelineDiff {
                 }
                 changed.push((id, *property, birth));
                 boundaries.insert(birth);
+                boundaries.extend(paired_changes);
                 boundaries.extend(
                     a.into_iter()
                         .chain(b)
@@ -276,8 +289,8 @@ fn clocks(animation: &Animation, layered: bool) -> Vec<SampleTimes> {
     for (id, properties) in &animation.tracks {
         if let Some(&(root, birth)) = elements.get(id.as_str()) {
             for track in properties.values().flatten() {
-                events[root].event(track.start, track.end, track.from != track.to, birth);
-                if track.from != track.to {
+                events[root].event(track.start, track.end, track.is_changing(), birth);
+                if track.is_changing() {
                     events[root].cycle(track.cycle);
                 }
             }
@@ -301,8 +314,8 @@ fn clocks(animation: &Animation, layered: bool) -> Vec<SampleTimes> {
         for id in cells {
             if let Some(cell) = animation.reactive.cells.get(&id) {
                 for track in &cell.tracks {
-                    events[root].event(track.start, track.end, track.from != track.to, birth);
-                    if track.from != track.to {
+                    events[root].event(track.start, track.end, track.is_changing(), birth);
+                    if track.is_changing() {
                         events[root].cycle(track.cycle);
                     }
                 }
@@ -384,11 +397,13 @@ fn equivalent_track(
     b: Option<&Track>,
     time: Fraction,
 ) -> bool {
-    let moving = |track: Option<&Track>| {
-        track.is_some_and(|track| time < track.end && track.from != track.to)
-    };
+    let moving =
+        |track: Option<&Track>| track.is_some_and(|track| time < track.end && track.is_changing());
     if moving(a) || moving(b) {
-        return a == b;
+        return match (a, b) {
+            (Some(a), Some(b)) => a.changed_from(b).is_none_or(|change| time < change),
+            _ => false,
+        };
     }
     let constant = |animation: &Animation,
                     track: Option<&Track>|

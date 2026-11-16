@@ -112,6 +112,24 @@ fn profile_measures_requested_frames_and_warm_cache_reuse() {
 }
 
 #[test]
+fn native_work_limit_is_exposed_independently_through_cli() {
+    let source = "let terrain=VoxelGrid(size=[16,16,16]).heightmap(Density(value=8),Color(\"green3\"))\nAnimation()";
+    let (limited, _) = run(source, &["check", "--json", "--max-native-work", "10"]);
+    assert_eq!(limited.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&limited.stderr).contains("native work"),
+        "{}",
+        String::from_utf8_lossy(&limited.stderr)
+    );
+    let (allowed, _) = run(source, &["check", "--json", "--max-native-work", "1000"]);
+    assert!(
+        allowed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&allowed.stderr)
+    );
+}
+
+#[test]
 fn performance_warnings_are_actionable_and_can_fail_check() {
     let (output, _) = run(
         "repeat 3 {let n=sin(1)}\nwait(1s)",

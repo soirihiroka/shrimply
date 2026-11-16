@@ -112,11 +112,6 @@ fn validate(
         (Type::Fraction, Value::Fraction(value)) if !math::finite(value) => {
             return Err("fraction must be finite".into());
         }
-        (Type::Matrix4, Value::Matrix4(matrix))
-            if matrix.iter().flatten().any(|v| !v.is_finite()) =>
-        {
-            return Err("matrix entries must be finite".into());
-        }
         (Type::Numeric(_), Value::Number(n)) if !math::finite(&n.value) => {
             return Err("non-finite numeric input".into());
         }

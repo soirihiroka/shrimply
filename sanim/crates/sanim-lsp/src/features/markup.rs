@@ -82,8 +82,10 @@ fn tags() -> &'static BTreeMap<&'static str, &'static prelude::Builtin> {
     TAGS.get_or_init(|| {
         prelude::all_builtins()
             .filter(|builtin| {
-                matches!(builtin.result, Type::Element | Type::Animation)
-                    && builtin.name.chars().next().is_some_and(char::is_uppercase)
+                matches!(
+                    builtin.result,
+                    Type::Element | Type::Animation | Type::VoxelLayout
+                ) && builtin.name.chars().next().is_some_and(char::is_uppercase)
                     && !builtin.name.contains('.')
             })
             .map(|builtin| (builtin.name, builtin))

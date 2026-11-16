@@ -14,6 +14,19 @@ pub struct Budget {
     range_origins: imbl::OrdMap<usize, Weak<crate::code::view::RangeOrigin>>,
     type_environments: imbl::OrdMap<usize, Weak<BTreeMap<String, crate::Type>>>,
     plans: imbl::OrdMap<usize, Weak<crate::plan::Animation>>,
+    voxel_volumes: imbl::OrdMap<usize, Weak<sanim_voxel::Volume>>,
+    voxel_storages: imbl::OrdMap<usize, Weak<sanim_voxel::Volume>>,
+    voxel_chunks: imbl::OrdMap<usize, Weak<sanim_voxel::Chunk>>,
+    voxel_materials: imbl::OrdMap<usize, Weak<sanim_voxel::Material>>,
+    voxel_textures: imbl::OrdMap<usize, Weak<sanim_voxel::Texture>>,
+    voxel_layouts: imbl::OrdMap<usize, Weak<sanim_voxel::layout::Node>>,
+    voxel_instances: imbl::OrdMap<usize, Weak<sanim_voxel::InstanceScene>>,
+    camera_specs: imbl::OrdMap<usize, Weak<crate::voxel::camera::Spec>>,
+    voxel_lights: imbl::OrdMap<usize, Weak<[sanim_voxel::Light]>>,
+    voxel_placements: imbl::OrdMap<usize, Weak<[sanim_voxel::layout::Placed]>>,
+    density_fields: imbl::OrdMap<usize, Weak<sanim_voxel::procedural::Field>>,
+    curves: imbl::OrdMap<usize, Weak<crate::curve::Curve>>,
+    last_voxel: Option<Weak<sanim_voxel::Volume>>,
     shared_visits: u64,
     minimum_depth: Option<usize>,
 }
@@ -41,6 +54,18 @@ impl Budget {
             + self.range_origins.len() * RANGE_ORIGIN_ENTRY_BYTES
             + self.type_environments.len() * TYPE_ENVIRONMENT_ENTRY_BYTES
             + self.plans.len() * PLAN_ENTRY_BYTES
+            + self.voxel_volumes.len() * VOXEL_ENTRY_BYTES
+            + self.voxel_storages.len() * VOXEL_ENTRY_BYTES
+            + self.voxel_chunks.len() * VOXEL_ENTRY_BYTES
+            + self.voxel_materials.len() * VOXEL_ENTRY_BYTES
+            + self.voxel_textures.len() * VOXEL_ENTRY_BYTES
+            + self.voxel_layouts.len() * VOXEL_ENTRY_BYTES
+            + self.voxel_instances.len() * VOXEL_ENTRY_BYTES
+            + self.camera_specs.len() * VOXEL_ENTRY_BYTES
+            + self.voxel_lights.len() * VOXEL_ENTRY_BYTES
+            + self.voxel_placements.len() * VOXEL_ENTRY_BYTES
+            + self.density_fields.len() * VOXEL_ENTRY_BYTES
+            + self.curves.len() * VOXEL_ENTRY_BYTES
     }
     /// Charge a captured immutable type environment once per COW execution budget.
     pub fn charge_types(
@@ -86,6 +111,8 @@ impl Budget {
 }
 const PLAN_ENTRY_BYTES: usize = std::mem::size_of::<(usize, Weak<crate::plan::Animation>)>()
     + std::mem::size_of::<imbl::OrdMap<usize, Weak<crate::plan::Animation>>>();
+const VOXEL_ENTRY_BYTES: usize = std::mem::size_of::<(usize, Weak<sanim_voxel::Volume>)>()
+    + std::mem::size_of::<imbl::OrdMap<usize, Weak<sanim_voxel::Volume>>>();
 const TYPE_ENVIRONMENT_ENTRY_BYTES: usize =
     std::mem::size_of::<imbl::OrdMap<usize, Weak<BTreeMap<String, crate::Type>>>>()
         + std::mem::size_of::<(usize, Weak<BTreeMap<String, crate::Type>>)>();
@@ -151,6 +178,191 @@ pub fn charge_with_budget(
                 TEXT_ENTRY_BYTES + std::mem::size_of::<(usize, usize)>() + text.len(),
             )?;
             budget.text.insert(id, Arc::downgrade(text));
+        }
+        Ok(())
+    }
+    fn voxel_texture(
+        texture: &Arc<sanim_voxel::Texture>,
+        bytes: &mut usize,
+        items: &mut usize,
+        budget: &mut Budget,
+    ) -> Result<(), String> {
+        let key = Arc::as_ptr(texture) as usize;
+        budget.shared();
+        if budget
+            .voxel_textures
+            .get(&key)
+            .and_then(Weak::upgrade)
+            .is_some_and(|old| Arc::ptr_eq(&old, texture))
+        {
+            return Ok(());
+        }
+        take(
+            bytes,
+            items,
+            VOXEL_ENTRY_BYTES + std::mem::size_of_val(texture.as_ref()) + texture.pixels().len(),
+        )?;
+        budget.voxel_textures.insert(key, Arc::downgrade(texture));
+        Ok(())
+    }
+    fn voxel_material(
+        material: &Arc<sanim_voxel::Material>,
+        bytes: &mut usize,
+        items: &mut usize,
+        budget: &mut Budget,
+    ) -> Result<(), String> {
+        let key = Arc::as_ptr(material) as usize;
+        budget.shared();
+        if budget
+            .voxel_materials
+            .get(&key)
+            .and_then(Weak::upgrade)
+            .is_some_and(|old| Arc::ptr_eq(&old, material))
+        {
+            return Ok(());
+        }
+        take(
+            bytes,
+            items,
+            VOXEL_ENTRY_BYTES + std::mem::size_of_val(material.as_ref()),
+        )?;
+        for texture in material.faces().iter().flatten() {
+            voxel_texture(texture, bytes, items, budget)?;
+        }
+        budget.voxel_materials.insert(key, Arc::downgrade(material));
+        Ok(())
+    }
+    fn voxel_volume(
+        volume: &Arc<sanim_voxel::Volume>,
+        bytes: &mut usize,
+        items: &mut usize,
+        budget: &mut Budget,
+    ) -> Result<(), String> {
+        let key = Arc::as_ptr(volume) as usize;
+        budget.shared();
+        if budget
+            .voxel_volumes
+            .get(&key)
+            .and_then(Weak::upgrade)
+            .is_some_and(|old| Arc::ptr_eq(&old, volume))
+        {
+            return Ok(());
+        }
+        take(
+            bytes,
+            items,
+            VOXEL_ENTRY_BYTES + std::mem::size_of_val(volume.as_ref()),
+        )?;
+        let mut chunks = Vec::new();
+        let previous = budget.last_voxel.as_ref().and_then(Weak::upgrade);
+        let storage = volume.storage_identity();
+        if previous.is_none() {
+            // Independent value/cache validation needs a bounded size proof, not
+            // an enumeration of an unchanged voxel payload on every camera edit.
+            // The model's resident total conservatively counts every map entry
+            // and brick; later COW revisions are charged from physical deltas.
+            // Unseeded allocation receipts can overcharge unrelated aliases later;
+            // they cannot turn independent allocations into shared-memory hits.
+            take(
+                bytes,
+                items,
+                VOXEL_ENTRY_BYTES
+                    + volume.resident_bytes()
+                    + volume.storage_metadata_bytes_since(None),
+            )?;
+            budget
+                .voxel_storages
+                .insert(storage, Arc::downgrade(volume));
+            budget.voxel_volumes.insert(key, Arc::downgrade(volume));
+            budget.last_voxel = Some(Arc::downgrade(volume));
+            return Ok(());
+        }
+        if budget
+            .voxel_storages
+            .get(&storage)
+            .and_then(Weak::upgrade)
+            .is_none_or(|old| old.storage_identity() != storage)
+        {
+            take(
+                bytes,
+                items,
+                VOXEL_ENTRY_BYTES + volume.storage_metadata_bytes_since(previous.as_deref()),
+            )?;
+            budget
+                .voxel_storages
+                .insert(storage, Arc::downgrade(volume));
+        }
+        if let Some(previous) = previous
+            .as_ref()
+            .filter(|old| old.dimensions() == volume.dimensions())
+        {
+            volume.visit_changes(previous, |_, chunk| {
+                if let Some(chunk) = chunk {
+                    chunks.push(chunk.clone())
+                }
+            })?;
+        } else {
+            chunks.extend(volume.chunks().map(|(_, chunk)| chunk.clone()));
+        }
+        for chunk in chunks {
+            let id = Arc::as_ptr(&chunk) as usize;
+            if !budget
+                .voxel_chunks
+                .get(&id)
+                .and_then(Weak::upgrade)
+                .is_some_and(|old| Arc::ptr_eq(&old, &chunk))
+            {
+                take(bytes, items, VOXEL_ENTRY_BYTES + chunk.resident_bytes())?;
+                budget.voxel_chunks.insert(id, Arc::downgrade(&chunk));
+            }
+        }
+        if previous
+            .as_ref()
+            .is_none_or(|old| old.palette_revision() != volume.palette_revision())
+        {
+            for (_, material) in volume.materials() {
+                voxel_material(material, bytes, items, budget)?;
+            }
+        }
+        budget.last_voxel = Some(Arc::downgrade(volume));
+        budget.voxel_volumes.insert(key, Arc::downgrade(volume));
+        Ok(())
+    }
+    fn voxel_layout(
+        layout: &Arc<sanim_voxel::layout::Node>,
+        bytes: &mut usize,
+        items: &mut usize,
+        budget: &mut Budget,
+    ) -> Result<(), String> {
+        let mut pending = vec![layout.clone()];
+        while let Some(layout) = pending.pop() {
+            let key = Arc::as_ptr(&layout) as usize;
+            budget.shared();
+            if budget
+                .voxel_layouts
+                .get(&key)
+                .and_then(Weak::upgrade)
+                .is_some_and(|old| Arc::ptr_eq(&old, &layout))
+            {
+                continue;
+            }
+            let children = layout.children();
+            take(
+                bytes,
+                items,
+                VOXEL_ENTRY_BYTES
+                    + std::mem::size_of_val(layout.as_ref())
+                    + children.map_or(0, |children| {
+                        children.len() * std::mem::size_of::<Arc<sanim_voxel::layout::Node>>()
+                    }),
+            )?;
+            if let Some(volume) = layout.volume() {
+                voxel_volume(volume, bytes, items, budget)?;
+            }
+            if let Some(children) = children {
+                pending.extend(children.iter().cloned());
+            }
+            budget.voxel_layouts.insert(key, Arc::downgrade(&layout));
         }
         Ok(())
     }
@@ -257,7 +469,18 @@ pub fn charge_with_budget(
                     plan(child, bytes, items, depth - 1, budget)?;
                 }
             }
-            Node::Cell { to, .. } => visit(to, bytes, items, depth - 1, budget)?,
+            Node::Cell { to, curve, .. } => {
+                visit(to, bytes, items, depth - 1, budget)?;
+                if let Some(curve) = curve {
+                    visit(
+                        &Value::Curve(curve.clone()),
+                        bytes,
+                        items,
+                        depth - 1,
+                        budget,
+                    )?;
+                }
+            }
             Node::Repeat { animation, .. } => plan(animation, bytes, items, depth - 1, budget)?,
             Node::Hold(_) => {}
         }
@@ -404,6 +627,93 @@ pub fn charge_with_budget(
             }
         }
         match value.geometry.as_ref() {
+            Geometry::Voxel(scene) => {
+                match &scene.source {
+                    sanim_voxel::SceneSource::Volume(volume) => {
+                        voxel_volume(volume, bytes, items, fonts)?
+                    }
+                    sanim_voxel::SceneSource::Instances(instances) => {
+                        let key = Arc::as_ptr(instances) as usize;
+                        fonts.shared();
+                        if !fonts
+                            .voxel_instances
+                            .get(&key)
+                            .and_then(Weak::upgrade)
+                            .is_some_and(|old| Arc::ptr_eq(&old, instances))
+                        {
+                            take(bytes, items, VOXEL_ENTRY_BYTES + instances.metadata_bytes())?;
+                            for instance in instances.instances() {
+                                voxel_volume(&instance.volume, bytes, items, fonts)?;
+                            }
+                            fonts.voxel_instances.insert(key, Arc::downgrade(instances));
+                        }
+                    }
+                }
+                if let Some(camera) = &scene.camera_spec {
+                    let key = Arc::as_ptr(camera) as usize;
+                    fonts.shared();
+                    if !fonts
+                        .camera_specs
+                        .get(&key)
+                        .and_then(Weak::upgrade)
+                        .is_some_and(|old| Arc::ptr_eq(&old, camera))
+                    {
+                        take(
+                            bytes,
+                            items,
+                            VOXEL_ENTRY_BYTES + std::mem::size_of_val(camera.as_ref()),
+                        )?;
+                        visit(&camera.value(), bytes, items, depth - 1, fonts)?;
+                        fonts.camera_specs.insert(key, Arc::downgrade(camera));
+                    }
+                }
+                if let Some(layout) = &scene.layout {
+                    voxel_layout(layout, bytes, items, fonts)?;
+                }
+                if let Some(lights) = &scene.lights {
+                    let key = Arc::as_ptr(lights) as *const () as usize;
+                    if !fonts
+                        .voxel_lights
+                        .get(&key)
+                        .and_then(Weak::upgrade)
+                        .is_some_and(|old| Arc::ptr_eq(&old, lights))
+                    {
+                        take(
+                            bytes,
+                            items,
+                            VOXEL_ENTRY_BYTES
+                                + std::mem::size_of_val(lights.as_ref())
+                                + 2 * std::mem::size_of::<usize>(),
+                        )?;
+                        fonts.voxel_lights.insert(key, Arc::downgrade(lights));
+                    }
+                }
+                let key = Arc::as_ptr(&scene.placements) as *const () as usize;
+                if !fonts
+                    .voxel_placements
+                    .get(&key)
+                    .and_then(Weak::upgrade)
+                    .is_some_and(|old| Arc::ptr_eq(&old, &scene.placements))
+                {
+                    let size = scene
+                        .placements
+                        .iter()
+                        .map(|placement| {
+                            std::mem::size_of_val(placement)
+                                + placement.path.len() * std::mem::size_of::<usize>()
+                        })
+                        .sum::<usize>();
+                    take(
+                        bytes,
+                        items,
+                        VOXEL_ENTRY_BYTES + size + 2 * std::mem::size_of::<usize>(),
+                    )?;
+                    fonts
+                        .voxel_placements
+                        .insert(key, Arc::downgrade(&scene.placements));
+                }
+                take(bytes, items, std::mem::size_of_val(scene.as_ref()))?;
+            }
             Geometry::Media { asset, .. } => {
                 fonts.shared();
                 let id = Arc::as_ptr(asset) as usize;
@@ -463,6 +773,36 @@ pub fn charge_with_budget(
         fonts.observe_depth(depth);
         take(bytes, items, std::mem::size_of_val(value))?;
         match value {
+            Value::VoxelGrid(volume) => voxel_volume(volume, bytes, items, fonts)?,
+            Value::VoxelMaterial(material) => voxel_material(material, bytes, items, fonts)?,
+            Value::VoxelTexture(texture) => voxel_texture(texture, bytes, items, fonts)?,
+            Value::VoxelLayout(layout) => voxel_layout(layout, bytes, items, fonts)?,
+            Value::Density(field) => {
+                let id = Arc::as_ptr(field) as usize;
+                fonts.shared();
+                if !fonts
+                    .density_fields
+                    .get(&id)
+                    .and_then(Weak::upgrade)
+                    .is_some_and(|old| Arc::ptr_eq(&old, field))
+                {
+                    take(bytes, items, VOXEL_ENTRY_BYTES + field.retained_bytes())?;
+                    fonts.density_fields.insert(id, Arc::downgrade(field));
+                }
+            }
+            Value::Curve(curve) => {
+                let id = Arc::as_ptr(curve) as usize;
+                fonts.shared();
+                if !fonts
+                    .curves
+                    .get(&id)
+                    .and_then(Weak::upgrade)
+                    .is_some_and(|old| Arc::ptr_eq(&old, curve))
+                {
+                    take(bytes, items, VOXEL_ENTRY_BYTES + curve.resident_bytes())?;
+                    fonts.curves.insert(id, Arc::downgrade(curve));
+                }
+            }
             Value::DataFrame(frame) => {
                 *bytes = bytes
                     .checked_sub(frame.retained_bytes)

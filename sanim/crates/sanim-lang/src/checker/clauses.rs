@@ -341,6 +341,7 @@ pub(super) fn infer(
         (Type::List(a, _), Type::List(b, _))
         | (Type::Option(a), Type::Option(b))
         | (Type::Array(a), Type::Array(b))
+        | (Type::Curve(a), Type::Curve(b))
         | (Type::Series(a), Type::Series(b)) => infer(a, b, bindings, budget)?,
         (Type::DataFrame { row: a, groups: ga }, Type::DataFrame { row: b, groups: gb })
             if ga == gb =>

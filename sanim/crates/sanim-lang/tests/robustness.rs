@@ -216,15 +216,72 @@ fn source_changes_during_prepare_discard_revision() {
 #[test]
 fn all_shipped_examples_prepare() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
-    let sources = FileSources::new(root).unwrap();
+    let sources = FileSources::new(&root).unwrap();
     let mut examples =
         std::fs::read_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples"))
             .unwrap()
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| name.ends_with(".sanim") && name != "theme.sanim")
+            .filter(|name| {
+                name.ends_with(".sanim")
+                    && !matches!(name.as_str(), "theme.sanim" | "voxel_structures.sanim")
+            })
             .collect::<Vec<_>>();
     examples.sort();
     for path in &examples {
+        if matches!(path.as_str(), "voxel_survival.sanim" | "voxel_valley.sanim") {
+            // The authored texture pack is generated outside the repository;
+            // reuse the actual demo generator rather than committing images or
+            // substituting test-only assets for this example.
+            let directory = tempfile::tempdir().unwrap();
+            let generated = std::process::Command::new("uv")
+                .args(["run", "--no-project", "python"])
+                .arg(root.join("voxel_pack.py"))
+                .arg(directory.path())
+                .output()
+                .unwrap();
+            assert!(
+                generated.status.success(),
+                "{}",
+                String::from_utf8_lossy(&generated.stderr)
+            );
+            let sources = FileSources::new(directory.path()).unwrap();
+            let prepared = Engine::default()
+                .prepare(
+                    if path == "voxel_survival.sanim" {
+                        "survival.sanim"
+                    } else {
+                        path
+                    },
+                    &sources,
+                    &BTreeMap::new(),
+                )
+                .unwrap_or_else(|error| panic!("{path}: {error}"));
+            assert!(!prepared.animation.layers.is_empty());
+            if path == "voxel_survival.sanim" {
+                std::fs::write(directory.path().join("structures_probe.sanim"), r#"
+import "./voxel_structures.sanim" as structures
+let specimen = structures.tree(seed=73)
+assert(specimen.get([7,0,7]) != None)
+let repeated = structures.tree(seed=73)
+let cover = structures.grass_material(read<VoxelTexture>("assets/minecraft/textures/block/oak_leaves.png"))
+Animation()
+"#).unwrap();
+                let probe = Engine::default()
+                    .prepare("structures_probe.sanim", &sources, &BTreeMap::new())
+                    .unwrap();
+                let (sanim_core::Value::VoxelGrid(a), sanim_core::Value::VoxelGrid(b)) =
+                    (&probe.bindings["specimen"], &probe.bindings["repeated"])
+                else {
+                    panic!("tree factory returns grids")
+                };
+                assert_eq!(a.dimensions(), [15, 27, 15]);
+                assert!(
+                    std::sync::Arc::ptr_eq(a, b),
+                    "pure factory should reuse the same immutable tree"
+                );
+            }
+            continue;
+        }
         let p = Engine::default()
             .prepare(path, &sources, &BTreeMap::new())
             .unwrap_or_else(|e| panic!("{path}: {e}"));
