@@ -1374,7 +1374,7 @@ impl qobject::InspectorBackend {
             return output.into_iter().map(QString::from).collect();
         }
         let Ok(output) = crate::with_controller(|controller| {
-            controller.control_expression_output(&document.target, &control)
+            controller.control_expression_output(&document.target, control)
         }) else {
             return QStringList::default();
         };
