@@ -12,7 +12,7 @@ pub(super) enum Dimension {
     Timeline,
 }
 
-struct SplitState {
+pub(super) struct SplitState {
     preferences: SharedPreferences,
     editor: Weak<Editor>,
     dimension: Dimension,
