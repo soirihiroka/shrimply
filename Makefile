@@ -257,6 +257,8 @@ appkit-build: appkit-icon
 	cp packaging/macos/Info.plist "$(APPKIT_APP)/Contents/Info.plist"
 	cp "$(APPKIT_ICON_DIR)/Assets.car" "$(APPKIT_ICON_DIR)/Shrimply.icns" "$(APPKIT_APP)/Contents/Resources/"
 	cp vendor/vision/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/OpenCV-Vision.txt"
+	cp crates/math/color/src/css/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color.txt"
+	cp crates/math/color/src/css/NOTICE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color-NOTICE.txt"
 
 appkit-release: appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "AppKit release requires macOS" >&2; exit 1; }
@@ -383,8 +385,12 @@ components-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(GTK_COMPONENTS_PACKAGE) -p $(QT_COMPONENTS_PACKAGE) -p $(GTK_COMPONENTS_DEMO_PACKAGE) -p $(QT_COMPONENTS_DEMO_PACKAGE) --all-targets
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) clippy -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(GTK_COMPONENTS_PACKAGE) -p $(QT_COMPONENTS_PACKAGE) -p $(GTK_COMPONENTS_DEMO_PACKAGE) -p $(QT_COMPONENTS_DEMO_PACKAGE) --all-targets -- -D warnings
 
-gtk-components-showcase: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) run -p $(GTK_COMPONENTS_DEMO_PACKAGE)
+.PHONY: gtk-components-build
+gtk-components-build: native-deps
+	$(DEV_BUILD_ENV) $(CARGO) build -p $(GTK_COMPONENTS_DEMO_PACKAGE)
+
+gtk-components-showcase: gtk-components-build
+	$(BUILD_ENV) $(CARGO_TARGET_DIR)/debug/shrimply-gtk-components-demo
 
 qt-components-showcase: qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) run -p $(QT_COMPONENTS_DEMO_PACKAGE)
@@ -640,6 +646,8 @@ install: release desktop-icon project-mime
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	$(INSTALL) -Dm644 vendor/vision/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
+	$(INSTALL) -Dm644 crates/math/color/src/css/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
+	$(INSTALL) -Dm644 crates/math/color/src/css/NOTICE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
 	$(INSTALL) -d "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	cp -a assets/icons/. "$(DESTDIR)$(ICONS_RESOURCE_DIR)/"
 	sed -e 's|^Exec=.*|Exec="$(BINDIR)/$(BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(BINDIR)/$(BIN_NAME)|' $(DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
@@ -668,6 +676,8 @@ install-qt: qt-release desktop-icon project-mime
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	$(INSTALL) -Dm644 vendor/rhubarb-lip-sync/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	$(INSTALL) -Dm644 vendor/vision/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
+	$(INSTALL) -Dm644 crates/math/color/src/css/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
+	$(INSTALL) -Dm644 crates/math/color/src/css/NOTICE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
 	sed -e 's|^Exec=.*|Exec="$(QT_BINDIR)/$(QT_BIN_NAME)" %f|' -e 's|^TryExec=.*|TryExec=$(QT_BINDIR)/$(QT_BIN_NAME)|' $(QT_DESKTOP_FILE) | $(INSTALL) -Dm644 /dev/stdin "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"
 	@if test -z "$(DESTDIR)"; then \
 		command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$(APPLICATIONSDIR)" >/dev/null || true; \
@@ -684,6 +694,8 @@ uninstall:
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/Rhubarb-Lip-Sync.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/OpenCV-Vision.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color.txt"
+	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/GTK-Pango-Color-NOTICE.txt"
 	rm -rf "$(DESTDIR)$(ICONS_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop"
 	$(MAKE) uninstall-desktop-assets

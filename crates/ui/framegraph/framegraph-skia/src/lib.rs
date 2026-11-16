@@ -2,9 +2,10 @@ use std::{cell::RefCell, rc::Rc};
 
 use shrimply_components_skia::canvas::TimelinePainter;
 pub use shrimply_keyframe_graph_skia::{
-    FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction, FrameGraphComponents,
-    FrameGraphInputResult, FrameGraphKey, FrameGraphModifiers, FrameGraphPointerButton,
-    FrameGraphPointerPosition, FrameGraphScrollInput, FrameGraphState, FrameGraphStatus,
+    FRAME_GRAPH_CONTEXT_ACTIONS, FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction,
+    FrameGraphComponents, FrameGraphContextAction, FrameGraphInputResult, FrameGraphKey,
+    FrameGraphModifiers, FrameGraphPointerButton, FrameGraphPointerPosition, FrameGraphScrollInput,
+    FrameGraphState, FrameGraphStatus,
 };
 use shrimply_keyframe_graph_skia::{GraphDomain, KeyframeGraph};
 use shrimply_math_core::Time;

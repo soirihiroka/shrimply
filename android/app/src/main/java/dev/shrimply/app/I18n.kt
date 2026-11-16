@@ -23,6 +23,7 @@ internal fun tr(key: String, vararg arguments: Pair<String, Any>): String {
 
 internal object NativeLayout {
     init { System.loadLibrary("shrimply_android") }
+    external fun panelDividerWidth(): Float
     external fun panelAnimationDurationMillis(): Int
     external fun panelAnimationProgress(progress: Float): Float
     external fun menuUsesBottomSheet(inputSource: String): Boolean
@@ -32,4 +33,10 @@ internal object NativeLayout {
     external fun transportStacked(width: Float): Boolean
     external fun choiceSearchable(count: Int): Boolean
     external fun matchingChoices(labels: String, query: String): String
+}
+
+
+internal object NativeColor {
+    init { System.loadLibrary("shrimply_android") }
+    external fun request(request: String): String
 }

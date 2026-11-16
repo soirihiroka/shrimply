@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -32,7 +33,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -47,16 +50,20 @@ internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled
     var categoryKey by rememberSaveable { mutableStateOf<String?>(null) }
     val category = categories.firstOrNull { it.getString("key") == categoryKey } ?: categories.firstOrNull()
     val send: (JSONObject) -> Unit = { payload -> command(payload.keys().asSequence().map { it to payload.get(it) }.toList().toTypedArray()) }
-    Column(modifier) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-            categories.forEach { candidate ->
-                IconToggleButton(checked = candidate == category, onCheckedChange = { categoryKey = candidate.getString("key") }) {
-                    Icon(painterResource(inspectorIcon(candidate.getString("icon"))), candidate.getString("label"), Modifier.size(16.dp))
+    Column(modifier.clipToBounds()) {
+        if (categories.size > 1) SingleChoiceSegmentedButtonRow(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp)
+        ) {
+            categories.forEachIndexed { index, candidate ->
+                SegmentedButton(selected = candidate == category,
+                    onClick = { categoryKey = candidate.getString("key") },
+                    shape = SegmentedButtonDefaults.itemShape(index, categories.size),
+                    icon = { Icon(painterResource(inspectorIcon(candidate.getString("icon"))), null, Modifier.size(16.dp)) }) {
+                    Text(candidate.getString("label"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
-        HorizontalDivider()
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.fillMaxSize().clipToBounds().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             category?.getJSONArray("items")?.objects()?.forEach { item -> key(item.getString("id")) { InspectorItem(timeline, item, enabled, send, selectFile) } }
         }
     }
@@ -108,6 +115,9 @@ internal fun inspectorIcon(icon: String): Int = when (icon) {
     "zoom-in-symbolic" -> R.drawable.zoom_in
     "zoom-out-symbolic" -> R.drawable.zoom_out
     "window-close-symbolic" -> R.drawable.window_close
+    "go-previous-symbolic" -> R.drawable.go_previous
+    "go-next-symbolic" -> R.drawable.go_next
+    "list-remove-symbolic" -> R.drawable.list_remove
     "list-add-symbolic" -> R.drawable.list_add
     "media-seek-backward-symbolic" -> R.drawable.media_seek_backward
     "media-seek-forward-symbolic" -> R.drawable.media_seek_forward
@@ -242,7 +252,8 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                         val choices = control.getJSONArray("choices").objects()
                         ChoiceInput(label, control.getString("display"), choices.map { it.getString("label") }, editable,
                             control.getString("choice_style") == "button", summary = if (settings) summary else "", settings = settings,
-                            description = control.optString("choice_description")) { send(choices[it].getJSONObject("command")) }
+                            description = control.optString("choice_description"),
+                            buttonIcon = control.optString("choice_icon").takeIf { it.isNotEmpty() }?.let(::inspectorIcon)) { send(choices[it].getJSONObject("command")) }
                     }
                     "progress" -> Column(Modifier.fillMaxWidth()) {
                         TextButton(onClick = { send(control.getJSONObject("command")) }, enabled = active) { Text(control.optString("cancel_label").ifEmpty { label }) }
@@ -265,6 +276,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                         }
                         if (widget == "loading") LinearProgressIndicator(Modifier.fillMaxWidth())
                     }
+                    "color" -> ColorInput(control, editable, send)
                     "number" -> NumberInput(timeline, control, editable)
                     "font" -> SettingsRow(label, control.getString("display"), editable,
                         modifier = Modifier.clickable(enabled = editable) { send(control.getJSONObject("command")) },
@@ -319,40 +331,35 @@ private fun InspectorExpression(timeline: TimelineSession, editor: JSONObject, e
     val owner = editor.getJSONObject("command").toString()
     val field = editor.getJSONArray("fields").getJSONObject(0)
     val source = field.getString("value")
-    val events = remember(timeline.identity, owner) { Channel<JSONObject>(Channel.UNLIMITED) }
     var value by remember(owner) { mutableStateOf(source) }
     var focused by remember(owner) { mutableStateOf(false) }
     var failure by remember(owner) { mutableStateOf<String?>(null) }
     val finish = remember(owner) { editor.getJSONObject("finish") }
     LaunchedEffect(source, focused) { if (!focused) value = source }
+    val scope = rememberCoroutineScope()
+    val submit: (JSONObject) -> Unit = { command -> scope.launch(start = CoroutineStart.UNDISPATCHED) {
+        try { timeline.request(command); failure = null }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (error: Exception) { failure = error.message }
+    } }
     LaunchedEffect(timeline.identity, owner) {
-        try {
-            for (command in events) {
-                try { timeline.request(command); failure = null }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (error: Exception) { failure = error.message }
-            }
-        } finally {
-            withContext(NonCancellable) {
-                // Preserve the last edit before the native field is disposed.
-                // A changed selection rejects stale opaque commands in Rust.
-                try {
-                    while (true) timeline.request(events.tryReceive().getOrNull() ?: break)
-                    timeline.request(finish)
-                } catch (_: Exception) { /* The owning selection may already be closed. */ }
-            }
-        }
+        try { awaitCancellation() }
+        finally { withContext(NonCancellable) {
+            // Every source packet is already queued; release its Rust owner afterwards.
+            try { timeline.request(finish) }
+            catch (_: Exception) { /* The owning project may already be closed. */ }
+        } }
     }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedTextField(value = value, onValueChange = {
             value = it
-            events.trySend(JSONObject(editor.getJSONObject("command").toString()).put("values", JSONArray(listOf(it))))
+            submit(JSONObject(editor.getJSONObject("command").toString()).put("values", JSONArray(listOf(it))))
         }, enabled = enabled, singleLine = false,
             label = if (!field.isNull("label") && field.getString("label").isNotEmpty()) { { Text(field.getString("label")) } } else null,
             textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
             keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Text),
             modifier = Modifier.fillMaxWidth().height(editor.getInt("height").dp).onFocusChanged {
-                if (focused && !it.isFocused) events.trySend(finish)
+                if (focused && !it.isFocused) submit(finish)
                 focused = it.isFocused
             })
         editor.getJSONObject("output").let { output ->

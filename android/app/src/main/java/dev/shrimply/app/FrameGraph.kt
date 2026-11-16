@@ -1,11 +1,10 @@
 package dev.shrimply.app
 
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -24,11 +23,11 @@ internal fun FrameGraphEditor(timeline: TimelineSession, graph: JSONObject) {
         try { timeline.request(command); error = null }
         catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (failure: Exception) { error = failure.message }
-    }; Unit }
+    } }
     Column(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
             graph.getJSONArray("actions").objects().forEach { action ->
-                IconButton(enabled = action.getBoolean("enabled"), onClick = { send(action.getJSONObject("command")) }) {
+                IconButton(modifier = Modifier.size(32.dp), enabled = action.getBoolean("enabled"), onClick = { send(action.getJSONObject("command")) }) {
                     Icon(painterResource(inspectorIcon(action.getString("icon"))), action.getString("label"), Modifier.size(16.dp))
                 }
             }
@@ -42,7 +41,11 @@ internal fun FrameGraphEditor(timeline: TimelineSession, graph: JSONObject) {
                     offset = DpOffset(menu.getDouble("x").dp, menu.getDouble("y").dp), atPoint = true) {
                     menu.getJSONArray("items").objects().forEach { item ->
                         DropdownMenuItem(text = { Text(item.getString("label")) },
-                            trailingIcon = { Checkbox(checked = item.getBoolean("selected"), onCheckedChange = null) },
+                            enabled = item.optBoolean("enabled", true),
+                            leadingIcon = item.optString("icon").takeIf { it.isNotEmpty() }?.let { icon ->
+                                { Icon(painterResource(inspectorIcon(icon)), null, Modifier.size(16.dp)) }
+                            },
+                            trailingIcon = if (item.has("selected")) { { Checkbox(checked = item.getBoolean("selected"), onCheckedChange = null) } } else null,
                             onClick = { send(item.getJSONObject("command")) })
                     }
                 }

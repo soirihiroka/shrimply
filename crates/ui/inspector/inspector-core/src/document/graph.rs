@@ -248,6 +248,9 @@ impl InspectorController {
                     .ok_or("unsupported interpolation")?;
                 self.set_control_interpolation(target, control, owner_id, index)
             }
+            FrameGraphAction::ContextMenuRequested { .. } => {
+                Err("frame graph context menus are presented by the native host".into())
+            }
             FrameGraphAction::TextInterpolationRequested { .. } => {
                 Err("text interpolation requires selecting an interpolation".into())
             }

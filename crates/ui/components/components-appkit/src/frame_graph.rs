@@ -4,7 +4,7 @@ use crate::{
 use objc2::rc::{Retained, Weak};
 use objc2_app_kit::{NSButton, NSImage, NSLayoutConstraint, NSStackView};
 use objc2_foundation::{MainThreadMarker, NSPoint, NSString};
-use shrimply_framegraph_skia::FrameGraphCommand;
+use shrimply_framegraph_skia::{FRAME_GRAPH_CONTEXT_ACTIONS, FrameGraphCommand};
 use shrimply_keyframe_graph_skia::{
     FrameGraphAction, FrameGraphComponentAction, FrameGraphComponents, FrameGraphState,
     FrameGraphStatus,
@@ -100,7 +100,48 @@ impl FrameGraph {
         let view = shrimply_framegraph_appkit::frame_graph_view(
             state.clone(),
             Rc::new(move |component_action| {
-                if let FrameGraphAction::InterpolationRequested {
+                if let FrameGraphAction::ContextMenuRequested { x, y, touch } =
+                    component_action.action
+                {
+                    if let Some(view) = action_view.borrow().as_ref().and_then(Weak::load) {
+                        let state = action_state.clone();
+                        let handler = action_handler.clone();
+                        let weak: Weak<shrimply_framegraph_appkit::FrameGraphView> =
+                            Weak::new(&view);
+                        let sync = action_sync.clone();
+                        show_searchable_menu_at(
+                            &view,
+                            (NSPoint::new(x, y), touch),
+                            "",
+                            FRAME_GRAPH_CONTEXT_ACTIONS
+                                .into_iter()
+                                .map(|action| StringChoice {
+                                    value: action.id.into(),
+                                    label: shrimply_i18n::text(action.label).into_owned(),
+                                })
+                                .collect(),
+                            String::new(),
+                            move |id| {
+                                let action = FRAME_GRAPH_CONTEXT_ACTIONS
+                                    .into_iter()
+                                    .find(|action| action.id == id)
+                                    .expect("graph context menu returned a known command");
+                                for action in
+                                    state.key(action.key).into_actions(state.active_component())
+                                {
+                                    handler(action);
+                                }
+                                if let Some(sync) = sync.borrow().as_ref() {
+                                    sync();
+                                }
+                                if let Some(view) = weak.load() {
+                                    view.render();
+                                }
+                            },
+                            mtm,
+                        );
+                    }
+                } else if let FrameGraphAction::InterpolationRequested {
                     owner_id,
                     interpolation,
                     x,

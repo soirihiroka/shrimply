@@ -5,6 +5,8 @@ pub use oklab::Oklab;
 
 mod adw;
 mod blend;
+mod css;
+pub use css::parse_css_color;
 #[cfg(feature = "gdk")]
 mod gdk;
 #[cfg(feature = "gif")]

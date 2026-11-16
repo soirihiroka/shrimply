@@ -6,9 +6,10 @@ use gtk::{gdk, glib};
 use shrimply_components_skia::canvas::UVec2;
 pub use shrimply_framegraph_skia::SharedFrameGraphState;
 use shrimply_framegraph_skia::{
-    FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction, FrameGraphComponents,
-    FrameGraphInputResult, FrameGraphKey, FrameGraphModifiers, FrameGraphPointerButton,
-    FrameGraphPointerPosition, FrameGraphScrollInput, FrameGraphState, FrameGraphStatus,
+    FRAME_GRAPH_CONTEXT_ACTIONS, FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction,
+    FrameGraphComponents, FrameGraphInputResult, FrameGraphKey, FrameGraphModifiers,
+    FrameGraphPointerButton, FrameGraphPointerPosition, FrameGraphScrollInput, FrameGraphState,
+    FrameGraphStatus,
 };
 use shrimply_math_interpolation::Interpolation;
 use shrimply_surface_gl_skia::TimelineRenderer;
@@ -493,7 +494,42 @@ fn finish_input(
     let redraw = result.redraw;
     for component_action in result.into_actions(state.active_component()) {
         let FrameGraphComponentAction { component, action } = component_action;
-        if let FrameGraphAction::InterpolationRequested {
+        if let FrameGraphAction::ContextMenuRequested { x, y, touch } = action {
+            let menu = gtk::gio::Menu::new();
+            let actions = gtk::gio::SimpleActionGroup::new();
+            for action in FRAME_GRAPH_CONTEXT_ACTIONS {
+                let item = gtk::gio::MenuItem::new(
+                    Some(crate::i18n::text(action.label).as_ref()),
+                    Some(&format!("graph-context.{}", action.id)),
+                );
+                item.set_icon(&gtk::gio::ThemedIcon::new(action.icon));
+                menu.append_item(&item);
+                let area = area.downgrade();
+                let state = state.clone();
+                let handler = handler.clone();
+                let sync = sync.clone();
+                actions.add_action(&super::menu_action(action.id, None, move || {
+                    if let Some(area) = area.upgrade() {
+                        finish_input(&area, &state, &handler, &sync, state.key(action.key));
+                    }
+                    None
+                }));
+            }
+            if shrimply_components_core::layout::menu_uses_bottom_sheet(if touch {
+                "touch"
+            } else {
+                "pointer"
+            }) {
+                super::action_menu_sheet(&menu, "graph-context", &actions, &[]).present(Some(area));
+            } else {
+                let popover = gtk::PopoverMenu::from_model(Some(&menu));
+                popover.insert_action_group("graph-context", Some(&actions));
+                popover.set_parent(area);
+                popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                super::unparent_on_close(&popover);
+                popover.popup();
+            }
+        } else if let FrameGraphAction::InterpolationRequested {
             owner_id,
             interpolation,
             x,

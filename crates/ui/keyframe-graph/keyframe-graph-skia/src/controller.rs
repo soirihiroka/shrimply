@@ -70,6 +70,48 @@ pub enum FrameGraphKey {
     TogglePlayback,
 }
 
+/// Commands exposed by every native graph context menu. Labels remain translation keys.
+#[derive(Clone, Copy)]
+pub struct FrameGraphContextAction {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub icon: &'static str,
+    pub key: FrameGraphKey,
+}
+
+pub const FRAME_GRAPH_CONTEXT_ACTIONS: [FrameGraphContextAction; 5] = [
+    FrameGraphContextAction {
+        id: "copy",
+        label: "Copy keyframes",
+        icon: "edit-copy-symbolic",
+        key: FrameGraphKey::Copy,
+    },
+    FrameGraphContextAction {
+        id: "paste",
+        label: "Paste keyframes",
+        icon: "edit-paste-symbolic",
+        key: FrameGraphKey::Paste,
+    },
+    FrameGraphContextAction {
+        id: "delete",
+        label: "Delete keyframes",
+        icon: "user-trash-symbolic",
+        key: FrameGraphKey::Delete,
+    },
+    FrameGraphContextAction {
+        id: "zoom-in",
+        label: "Zoom In",
+        icon: "zoom-in-symbolic",
+        key: FrameGraphKey::ZoomIn,
+    },
+    FrameGraphContextAction {
+        id: "zoom-out",
+        label: "Zoom Out",
+        icon: "zoom-out-symbolic",
+        key: FrameGraphKey::ZoomOut,
+    },
+];
+
 #[derive(Clone)]
 pub enum FrameGraphAction {
     PlayheadChanged(Time),
@@ -86,6 +128,11 @@ pub enum FrameGraphAction {
     EditCancelled,
     HistoryRequested {
         redo: bool,
+    },
+    ContextMenuRequested {
+        x: f64,
+        y: f64,
+        touch: bool,
     },
     InterpolationRequested {
         owner_id: Uuid,
@@ -729,30 +776,47 @@ impl FrameGraphState {
         }
         if button == FrameGraphPointerButton::Secondary {
             let content_height = graph_content_height(height);
-            return if let Some((owner_id, interpolation)) =
+            let domain = self.domain(width);
+            if let Some(time) = hit_graph_point(
+                &self.graph,
+                domain,
+                width,
+                content_height,
+                self.frame_step,
+                x,
+                y,
+            ) {
+                if !key_is_selected(&self.selected_keys, time) {
+                    set_key_selection(
+                        &mut self.selected_keys,
+                        &mut self.focused_key,
+                        vec![time],
+                        Some(time),
+                    );
+                }
+            } else if let Some((owner_id, interpolation)) =
                 self.hit_segment(width, content_height, x, y)
             {
-                vec![FrameGraphAction::InterpolationRequested {
+                return vec![FrameGraphAction::InterpolationRequested {
                     owner_id,
                     interpolation,
                     x,
                     y,
                     touch: false,
-                }]
+                }];
             } else if self.text_interpolation
                 && y > CURSOR_LANE_HEIGHT
                 && y < content_height
                 && let Some(owner_id) = self.segment_owner_at_x(width, x)
             {
-                vec![FrameGraphAction::TextInterpolationRequested {
+                return vec![FrameGraphAction::TextInterpolationRequested {
                     owner_id,
                     x,
                     y,
                     touch: false,
-                }]
-            } else {
-                Vec::new()
-            };
+                }];
+            }
+            return vec![FrameGraphAction::ContextMenuRequested { x, y, touch: false }];
         }
 
         let domain = self.domain(width);

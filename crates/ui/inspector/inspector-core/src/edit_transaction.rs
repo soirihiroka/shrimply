@@ -152,6 +152,7 @@ pub struct InspectorEditTransaction {
     target: InspectorTarget,
     path: PathBuf,
     revision: u64,
+    position: shrimply_math_core::Time,
     history_revision: u64,
     changed: bool,
 }
@@ -167,11 +168,13 @@ impl InspectorController {
         crate::model::target_value(&self.project.borrow(), target)
             .ok_or("Inspector target is unavailable")?;
         self.finish_live_edit();
+        let snapshot = player_state::snapshot(&self.player_state);
         Ok(InspectorEditTransaction {
             baseline: self.project.borrow().clone(),
             target: target.clone(),
             path: project::active_project_path(),
-            revision: player_state::snapshot(&self.player_state).revision,
+            revision: snapshot.revision,
+            position: snapshot.position,
             history_revision: project::history_revision(),
             changed: false,
         })
@@ -194,9 +197,39 @@ impl InspectorEditTransaction {
         controller: &InspectorController,
         edit: impl FnOnce(&InspectorController) -> Result<T, String>,
     ) -> Result<T, String> {
+        self.apply_checked(controller, edit, true)
+    }
+
+    /// An advertised native editor may drain queued text after losing selection.
+    /// The transaction remains bound to its original project, revision and target.
+    pub fn apply_retained<T>(
+        &mut self,
+        controller: &InspectorController,
+        edit: impl FnOnce(&InspectorController) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let position = self.position;
+        self.apply_checked(
+            controller,
+            |controller| crate::model::with_edit_position(position, || edit(controller)),
+            false,
+        )
+    }
+
+    fn apply_checked<T>(
+        &mut self,
+        controller: &InspectorController,
+        edit: impl FnOnce(&InspectorController) -> Result<T, String>,
+        selected: bool,
+    ) -> Result<T, String> {
         self.validate(controller)?;
-        if controller.target() != self.target {
+        if selected && controller.target() != self.target {
             return Err("Inspector selection changed".into());
+        }
+        if crate::model::target_value(&controller.project.borrow(), &self.target).is_none() {
+            return Err("Inspector target is unavailable".into());
+        }
+        if selected {
+            self.position = player_state::snapshot(&controller.player_state).position;
         }
         let result = project::with_provisional_edit(|| edit(controller));
         let revision = player_state::snapshot(&controller.player_state).revision;

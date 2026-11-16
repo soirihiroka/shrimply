@@ -96,11 +96,13 @@ internal fun AdaptiveMenuButton(enabled: Boolean, modifier: Modifier = Modifier,
 /** Native settings rows share the same searched, input-aware choice menu. */
 @Composable
 internal fun ChoiceInput(label: String, selected: String, labels: List<String>, enabled: Boolean = true,
-    button: Boolean = false, summary: String = "", settings: Boolean = false, description: String = "", select: (Int) -> Unit) {
+    button: Boolean = false, summary: String = "", settings: Boolean = false, description: String = "", buttonIcon: Int? = null, select: (Int) -> Unit) {
     AdaptiveMenuAnchor(anchor = { open ->
-        if (button) TextButton(onClick = open, enabled = enabled) {
-            Text(label)
-            Icon(painterResource(R.drawable.go_down), null, Modifier.padding(start = 4.dp).size(16.dp))
+        if (button) Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onClick = open, enabled = enabled) {
+                buttonIcon?.let { Icon(painterResource(it), null, Modifier.padding(end = 6.dp).size(16.dp)) }
+                Text(label)
+            }
         } else if (settings) SettingsRow(label, listOf(selected, summary).filter { it.isNotEmpty() }.joinToString("\n"), enabled,
             modifier = Modifier.clickable(enabled = enabled, onClick = open),
             trailing = { Icon(painterResource(R.drawable.go_down), null, Modifier.size(20.dp).alpha(if (enabled) 1f else 0.38f)) })

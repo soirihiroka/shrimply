@@ -13,7 +13,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
@@ -27,8 +29,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -50,7 +52,7 @@ import org.json.JSONObject
 import java.io.File
 
 private val ExpandedWidth = 840.dp
-private val DividerSize = 12.dp
+private val PaneHandleTargetSize = 48.dp
 private val InspectorMinimumWidth = 320.dp
 private val TimelineMinimumHeight = 120.dp
 private const val MaximumTimelineFraction = 0.75f
@@ -456,6 +458,7 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
     pendingOperation: String? = null, renderOnly: Boolean = false, windowCaption: WindowCaption = WindowCaption()) {
     var fullscreen by rememberSaveable(project.getString("path")) { mutableStateOf(false) }
     val inspectorState = rememberSaveableStateHolder()
+    val paneDividerSize = remember { NativeLayout.panelDividerWidth().dp }
     val window = checkNotNull(LocalActivity.current).window
     BackHandler(fullscreen && !renderOnly) { fullscreen = false }
     DisposableEffect(window, fullscreen, renderOnly) {
@@ -481,6 +484,8 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
     val inspectorWidth = inspectorDraft ?: layout.getDouble("inspector_width").toFloat()
     val currentTimelineFraction by rememberUpdatedState(timelineFraction)
     val currentInspectorWidth by rememberUpdatedState(inspectorWidth)
+    val inspectorDragInteraction = remember { MutableInteractionSource() }
+    val timelineDragInteraction = remember { MutableInteractionSource() }
     val inspectorOpen = layout.getBoolean("inspector_visible")
     val timelineOpen = layout.getBoolean("timeline_visible")
     val inspectSerial = timeline.snapshot.value.optJSONObject("timeline")?.optLong("inspect_serial") ?: 0L
@@ -537,31 +542,33 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
                 } })
             if (!fullscreen) HorizontalDivider()
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                val availableHeight = NativeLayout.splitPaneExtent(maxHeight.value, 1.dp.value, 1f)
+                val availableHeight = NativeLayout.splitPaneExtent(maxHeight.value, paneDividerSize.value, 1f)
                 val minimumTimelineFraction = if (availableHeight > 0f) (TimelineMinimumHeight.value / availableHeight).coerceAtMost(MaximumTimelineFraction) else MaximumTimelineFraction
                 val animation = tween<Float>(durationMillis = NativeLayout.panelAnimationDurationMillis(), easing = Easing { NativeLayout.panelAnimationProgress(it) })
                 val inspectorProgress by animateFloatAsState(if (inspectorOpen && !fullscreen) 1f else 0f, animation, label = "inspector")
                 val timelineProgress by animateFloatAsState(if (timelineOpen && !fullscreen) 1f else 0f, animation, label = "timeline")
                 val inspectorSize = expandedInspectorWidth * inspectorProgress
-                val timelineSize = (NativeLayout.splitPaneExtent(maxHeight.value, 1.dp.value,
+                val timelineSize = (NativeLayout.splitPaneExtent(maxHeight.value, paneDividerSize.value,
                     timelineFraction.coerceIn(minimumTimelineFraction, MaximumTimelineFraction)) * timelineProgress).dp
-                val dividerSize = 1.dp * timelineProgress
+                val dividerSize = paneDividerSize * timelineProgress
                 Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
                         Row(Modifier.fillMaxSize()) {
-                            if (sideBySide) Spacer(Modifier.width(inspectorSize + if (!fullscreen && (inspectorOpen || inspectorSize > 0.dp)) DividerSize else 0.dp))
+                            if (sideBySide) Spacer(Modifier.width(inspectorSize + if (!fullscreen && (inspectorOpen || inspectorSize > 0.dp)) paneDividerSize else 0.dp))
                             // Preview identity and its surface survive panel changes on every width.
-                            BoxWithConstraints(Modifier.weight(1f).fillMaxHeight()) {
-                                val previewCompact = NativeLayout.compactControls(maxWidth.value, maxHeight.value)
-                                Column(Modifier.fillMaxSize()) {
-                                    Row(Modifier.weight(1f).fillMaxWidth()) {
-                                        if (!fullscreen) PreviewControls(timeline, compact = previewCompact, pendingOperation = pendingOperation)
-                                        Box(Modifier.weight(1f).fillMaxHeight()) {
-                                            NativePreview(timeline, Modifier.fillMaxSize())
-                                            PreviewContextMenu(timeline)
+                            Surface(Modifier.weight(1f).fillMaxHeight(), color = MaterialTheme.colorScheme.background) {
+                                BoxWithConstraints(Modifier.fillMaxSize()) {
+                                    val previewCompact = NativeLayout.compactControls(maxWidth.value, maxHeight.value)
+                                    Column(Modifier.fillMaxSize()) {
+                                        Row(Modifier.weight(1f).fillMaxWidth()) {
+                                            if (!fullscreen) PreviewControls(timeline, compact = previewCompact, pendingOperation = pendingOperation)
+                                            Box(Modifier.weight(1f).fillMaxHeight()) {
+                                                NativePreview(timeline, Modifier.fillMaxSize())
+                                                PreviewContextMenu(timeline)
+                                            }
                                         }
+                                        Transport(playback, enabled, command, previewCompact, fullscreen) { fullscreen = !fullscreen }
                                     }
-                                    Transport(playback, enabled, command, previewCompact, fullscreen) { fullscreen = !fullscreen }
                                 }
                             }
                         }
@@ -575,46 +582,70 @@ private fun Editor(timeline: TimelineSession, project: JSONObject, playback: JSO
                                 }
                             }
                         }
-                        if (sideBySide && inspectorOpen && !fullscreen) Box(Modifier.offset { IntOffset(inspectorSize.roundToPx(), 0) }.width(DividerSize).fillMaxHeight().pointerInput(enabled, density, availableWidth) {
-                            if (!enabled) return@pointerInput
-                            detectDragGestures(onDragCancel = { inspectorDraft = null }, onDragEnd = {
-                                inspectorDraft?.let { preferred -> viewChange(JSONObject().put("inspector_width", preferred)) { inspectorDraft = null } }
-                            }) { change, delta ->
-                                change.consume()
-                                inspectorDraft = ((inspectorDraft ?: currentInspectorWidth) + delta.x / density).coerceIn(InspectorMinimumWidth.value, (availableWidth * InspectorMaximumWidthFraction).coerceAtLeast(InspectorMinimumWidth.value))
-                            }
-                        }, contentAlignment = Alignment.Center) { Box(Modifier.width(1.dp).fillMaxHeight().background(divider)) }
-                        if (timelineOpen && !fullscreen) Box(Modifier.align(Alignment.BottomCenter).zIndex(2f).fillMaxWidth().height(DividerSize).pointerInput(enabled, density, availableHeight) {
-                            if (!enabled) return@pointerInput
-                            detectDragGestures(onDragCancel = { timelineDraft = null }, onDragEnd = {
-                                timelineDraft?.let { preferred -> viewChange(JSONObject().put("timeline_fraction", preferred)) { timelineDraft = null } }
-                            }) { change, delta ->
-                                change.consume()
-                                if (availableHeight > 0f) timelineDraft = ((timelineDraft ?: currentTimelineFraction).coerceIn(minimumTimelineFraction, MaximumTimelineFraction) - delta.y / density / availableHeight).coerceIn(minimumTimelineFraction, MaximumTimelineFraction)
-                            }
-                        })
+                        if (sideBySide && inspectorOpen && !fullscreen) {
+                            Box(Modifier.offset { IntOffset(inspectorSize.roundToPx(), 0) }.width(paneDividerSize).fillMaxHeight().background(divider))
+                            VerticalDragHandle(
+                                modifier = Modifier.align(Alignment.CenterStart)
+                                    .offset(x = inspectorSize + paneDividerSize / 2 - PaneHandleTargetSize / 2)
+                                    .size(PaneHandleTargetSize).zIndex(2f)
+                                    .draggable(
+                                        state = rememberDraggableState { delta ->
+                                            inspectorDraft = ((inspectorDraft ?: currentInspectorWidth) + delta / density)
+                                                .coerceIn(InspectorMinimumWidth.value, (availableWidth * InspectorMaximumWidthFraction).coerceAtLeast(InspectorMinimumWidth.value))
+                                        },
+                                        orientation = Orientation.Horizontal,
+                                        enabled = enabled,
+                                        interactionSource = inspectorDragInteraction,
+                                        onDragStopped = {
+                                            inspectorDraft?.let { preferred -> viewChange(JSONObject().put("inspector_width", preferred)) { inspectorDraft = null } }
+                                        },
+                                    ),
+                                interactionSource = inspectorDragInteraction,
+                            )
+                        }
                     }
                     Box(Modifier.fillMaxWidth().height(dividerSize).background(divider))
-                    Row(Modifier.fillMaxWidth().height(timelineSize).clipToBounds()) {
-                        val toolsProgress = timeline.snapshot.value.optJSONObject("timeline")?.getDouble("tools_progress")?.toFloat() ?: 0f
-                        Box(Modifier.width(toolSize * toolsProgress).fillMaxHeight().clipToBounds()) {
-                        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides toolSize) {
-                        Column(Modifier.requiredWidth(toolSize).fillMaxHeight().verticalScroll(rememberScrollState())) {
-                            val tools = timeline.snapshot.value.optJSONObject("timeline")?.optJSONArray("tools")
-                            for (index in 0 until (tools?.length() ?: 0)) {
-                                val tool = checkNotNull(tools).getJSONObject(index)
-                                if (index > 0 && tool.getInt("section") != tools.getJSONObject(index - 1).getInt("section")) HorizontalDivider(Modifier.padding(vertical = 4.dp))
-                                IconToggleButton(checked = tool.getBoolean("active"), onCheckedChange = { command("timeline_tool", arrayOf("id" to tool.getString("id"))) }, enabled = enabled, modifier = Modifier.size(toolSize)) {
-                                    Icon(painterResource(timelineToolIcon(tool.getString("icon"))), tr(tool.getString("label")), Modifier.size(toolIconSize))
+                    Surface(Modifier.fillMaxWidth().height(timelineSize).clipToBounds(), color = MaterialTheme.colorScheme.background) {
+                        Row(Modifier.fillMaxSize()) {
+                            val toolsProgress = timeline.snapshot.value.optJSONObject("timeline")?.getDouble("tools_progress")?.toFloat() ?: 0f
+                            Box(Modifier.width(toolSize * toolsProgress).fillMaxHeight().clipToBounds()) {
+                                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides toolSize) {
+                                    Column(Modifier.requiredWidth(toolSize).fillMaxHeight().verticalScroll(rememberScrollState())) {
+                                        val tools = timeline.snapshot.value.optJSONObject("timeline")?.optJSONArray("tools")
+                                        for (index in 0 until (tools?.length() ?: 0)) {
+                                            val tool = checkNotNull(tools).getJSONObject(index)
+                                            if (index > 0 && tool.getInt("section") != tools.getJSONObject(index - 1).getInt("section")) HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                                            IconToggleButton(checked = tool.getBoolean("active"), onCheckedChange = { command("timeline_tool", arrayOf("id" to tool.getString("id"))) }, enabled = enabled, modifier = Modifier.size(toolSize)) {
+                                                Icon(painterResource(timelineToolIcon(tool.getString("icon"))), tr(tool.getString("label")), Modifier.size(toolIconSize))
+                                            }
+                                        }
+                                    }
                                 }
                             }
-
+                            Box(Modifier.weight(1f).fillMaxHeight()) {
+                                NativeSurface(timeline, Modifier.fillMaxSize())
+                            }
                         }
-                        }
-                        }
-                        Box(Modifier.weight(1f).fillMaxHeight()) {
-                            NativeSurface(timeline, Modifier.fillMaxSize())
-                        }
+                    }
+                }
+                if (timelineOpen && !fullscreen) {
+                    Box(Modifier.align(Alignment.BottomCenter)
+                        .offset(y = -timelineSize - dividerSize / 2 + PaneHandleTargetSize / 2)
+                        .size(PaneHandleTargetSize).zIndex(2f)
+                        .draggable(
+                            state = rememberDraggableState { delta ->
+                                if (availableHeight > 0f) timelineDraft = ((timelineDraft ?: currentTimelineFraction)
+                                    .coerceIn(minimumTimelineFraction, MaximumTimelineFraction) - delta / density / availableHeight)
+                                    .coerceIn(minimumTimelineFraction, MaximumTimelineFraction)
+                            },
+                            orientation = Orientation.Vertical,
+                            enabled = enabled,
+                            interactionSource = timelineDragInteraction,
+                            onDragStopped = {
+                                timelineDraft?.let { preferred -> viewChange(JSONObject().put("timeline_fraction", preferred)) { timelineDraft = null } }
+                            },
+                        ), contentAlignment = Alignment.Center) {
+                        VerticalDragHandle(Modifier.rotate(90f), interactionSource = timelineDragInteraction)
                     }
                 }
             }

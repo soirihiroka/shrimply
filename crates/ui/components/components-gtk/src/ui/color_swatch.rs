@@ -3,13 +3,14 @@ use std::cell::{Cell, OnceCell, RefCell};
 use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
+use shrimply_components_core::color::picker;
 use shrimply_math_color::Color;
 
 const WIDTH: i32 = 48;
 const HEIGHT: i32 = 32;
-const CHECKER_SIZE: f32 = 10.0;
-const CHECKER_LIGHT: f32 = 0xA8 as f32 / u8::MAX as f32;
-const CHECKER_DARK: f32 = 0x54 as f32 / u8::MAX as f32;
+const CHECKER_SIZE: f32 = picker::CHECKER_SIZE as f32;
+const CHECKER_LIGHT: f32 = picker::CHECKER_LIGHT as f32;
+const CHECKER_DARK: f32 = picker::CHECKER_DARK as f32;
 
 #[derive(Clone, Copy)]
 pub(super) enum SwatchShape {

@@ -247,6 +247,30 @@ impl Runtime {
         let operation = request["op"]
             .as_str()
             .ok_or("request requires an operation")?;
+        let inspector_handled = if matches!(operation, "inspector" | "inspector_numeric") {
+            let revision = player::snapshot(&self.player).revision;
+            let controller = self.inspector.as_ref().ok_or("Open a project first")?;
+            let result = self.inspector_interaction.request(
+                controller,
+                request,
+                self.preview_interaction.active()
+                    || self
+                        .framegraphs
+                        .sessions
+                        .values()
+                        .any(|graph| graph.is_editing()),
+            );
+            if result.as_ref().is_ok_and(Option::is_some) {
+                self.inspector_stamp = None;
+            }
+            if player::snapshot(&self.player).revision != revision {
+                self.inspector_stamp = None;
+                self.timeline_changed()?;
+            }
+            result?
+        } else {
+            None
+        };
         if matches!(
             operation,
             "open" | "create" | "close" | "undo" | "redo" | "play" | "pause" | "step" | "seek"
@@ -258,19 +282,21 @@ impl Runtime {
         if operation == "inspector_visible" {
             self.finish_numeric()?;
         }
-        if matches!(
-            operation,
-            "inspector"
-                | "inspector_numeric"
-                | "inspector_fonts"
-                | "inspector_file"
-                | "context_action"
-                | "context_control"
-                | "context_delete"
-                | "context_clipboard"
-                | "record_audio"
-                | "record_video"
-        ) {
+        if inspector_handled.is_none()
+            && matches!(
+                operation,
+                "inspector"
+                    | "inspector_numeric"
+                    | "inspector_fonts"
+                    | "inspector_file"
+                    | "context_action"
+                    | "context_control"
+                    | "context_delete"
+                    | "context_clipboard"
+                    | "record_audio"
+                    | "record_video"
+            )
+        {
             if self.preview_interaction.active() {
                 self.cancel_preview_edit()?;
             }
@@ -364,10 +390,17 @@ impl Runtime {
             }
             "inspector_fonts" => self.apply_inspector_fonts(request),
             "inspector_resource" => self.inspector_resource(request),
-            "inspector_numeric" => self.apply_inspector_numeric(request),
+            "inspector_numeric" => match inspector_handled {
+                Some(completed) => Ok(completed),
+                None => self.apply_inspector_numeric(request),
+            },
             "inspector_file" => self.apply_inspector_file(request, source),
             "inspector" => {
-                let message = self.apply_inspector(request)?;
+                let message = if inspector_handled.is_some() {
+                    None
+                } else {
+                    self.apply_inspector(request)?
+                };
                 let mut snapshot = self.backend.snapshot()?;
                 if let Some(message) = message {
                     snapshot["message"] = json!(message);
@@ -604,7 +637,7 @@ impl Runtime {
             }
             self.inspector = None;
             self.inspector_document = None;
-            self.inspector_interaction = Default::default();
+            self.inspector_interaction.clear();
             self.inspector_fonts = Default::default();
             self.inspector_stamp = None;
             self.inspector_status = "null".into();

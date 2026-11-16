@@ -95,7 +95,13 @@ foreach ($license in @(
     if (!(Test-Path $source)) { throw "Missing license file: $source" }
     Copy-Item $source (Join-Path $licenses $license.Name)
 }
-Copy-Item (Join-Path $root "vendor/vision/LICENSE") (Join-Path $licenses "OpenCV-Vision.txt")
+foreach ($license in @(
+    @{ Source = "vendor/vision/LICENSE"; Name = "OpenCV-Vision.txt" },
+    @{ Source = "crates/math/color/src/css/LICENSE"; Name = "GTK-Pango-Color.txt" },
+    @{ Source = "crates/math/color/src/css/NOTICE"; Name = "GTK-Pango-Color-NOTICE.txt" }
+)) {
+    Copy-Item (Join-Path $root $license.Source) (Join-Path $licenses $license.Name)
+}
 [IO.File]::WriteAllText(
     (Join-Path $licenses "ffmpeg-build-configuration.txt"),
     "$(($configuration | Out-String).TrimEnd())`r`n",

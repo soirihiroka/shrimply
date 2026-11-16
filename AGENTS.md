@@ -68,3 +68,8 @@ Try to put as much logic into the shared Rust backend as possible.
 Before you stop you must spawn a review agent to ensure that you are maximizing code resuablity.
 
 Keep code hygiene in mind, remove ALL duplicated logic BEFORE you add any new lines of code.
+
+Use the ignored root `LOCAL.md` for agent coordination. Read it at task start and
+before editing shared files. Append dated task ownership, progress, requests,
+and replies; preserve other agents' entries and check pending requests before
+finishing. Create it locally if absent; never commit it.

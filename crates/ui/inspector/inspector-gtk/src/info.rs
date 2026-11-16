@@ -4,31 +4,7 @@ use adw::prelude::*;
 use gtk::glib;
 use shrimply_components_gtk::tr;
 
-const INLINE_VALUE_MAX_CHARS: usize = 24;
-
-pub(super) fn property_row(title: &str, value: &str) -> adw::ActionRow {
-    let row = adw::ActionRow::builder()
-        .title(tr!(title).as_ref())
-        .use_markup(false)
-        .build();
-    if value.chars().count() <= INLINE_VALUE_MAX_CHARS && !value.contains('\n') {
-        let value = gtk::Label::builder()
-            .label(value)
-            .selectable(true)
-            .wrap(true)
-            .wrap_mode(gtk::pango::WrapMode::WordChar)
-            .max_width_chars(INLINE_VALUE_MAX_CHARS as i32)
-            .xalign(1.0)
-            .valign(gtk::Align::Center)
-            .build();
-        row.add_suffix(&value);
-    } else {
-        row.set_subtitle(value);
-        row.set_subtitle_selectable(true);
-        row.set_subtitle_lines(0);
-    }
-    row
-}
+pub(super) use shrimply_components_gtk::ui::property_row;
 
 pub(super) fn file_row(path: PathBuf, label: &str) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::new();

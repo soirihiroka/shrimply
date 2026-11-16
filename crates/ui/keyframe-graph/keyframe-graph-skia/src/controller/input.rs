@@ -230,7 +230,8 @@ impl FrameGraphComponents {
             );
             for action in &mut result.actions {
                 match &mut action.action {
-                    FrameGraphAction::InterpolationRequested { touch, .. }
+                    FrameGraphAction::ContextMenuRequested { touch, .. }
+                    | FrameGraphAction::InterpolationRequested { touch, .. }
                     | FrameGraphAction::TextInterpolationRequested { touch, .. } => *touch = true,
                     _ => {}
                 }

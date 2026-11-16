@@ -114,6 +114,14 @@ impl Runtime {
         Ok(())
     }
 
+    pub fn leave_numeric(&mut self) -> Result<(), String> {
+        if let Some(controller) = &self.inspector {
+            self.inspector_interaction.external_input(controller)?;
+        }
+        self.inspector_stamp = None;
+        Ok(())
+    }
+
     pub fn finish_numeric(&mut self) -> Result<(), String> {
         if let Some(controller) = &self.inspector {
             self.inspector_interaction.finish(controller)?;
@@ -151,11 +159,6 @@ impl Runtime {
     }
 
     pub(super) fn apply_inspector_numeric(&mut self, request: &Value) -> Result<Value, String> {
-        if request["event"] == "cancel" && !self.inspector_interaction.active() {
-            return Ok(
-                serde_json::json!({"active":false,"capture":false,"editing":false,"valid":true}),
-            );
-        }
         self.update_inspector();
         let controller = self.inspector.as_ref().ok_or("open a project first")?;
         let document = self
@@ -219,7 +222,9 @@ impl Runtime {
             self.preview_interaction.focus(Some(focus));
         }
         let revision = player::snapshot(&self.player).revision;
-        let result = document::remote::apply(controller, document, request);
+        let result = self
+            .inspector_interaction
+            .apply_control(controller, document, request);
         // A native control can commit or start asynchronous work before a later
         // operation fails. Publish the canonical document in either case.
         self.inspector_stamp = None;

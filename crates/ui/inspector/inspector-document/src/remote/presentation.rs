@@ -48,46 +48,39 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
     if control.kind == K::MultilineText && control.path == "/tags" {
         return super::tags::presentation(control, item, id);
     }
-    let widget = match control.kind {
-        K::FontFamilies => return super::fonts::presentation(control, item, id),
-        K::TtsEditor => return super::tts::presentation(control, item, id),
-        K::Boolean | K::LayeredBoolean | K::BeatDetection => "toggle",
-        K::Selector
-        | K::OptionalSelector
-        | K::OptionalNumberSelector
-        | K::LayeredSelector
-        | K::VoiceModel
-        | K::AudioCachePreset
-        | K::VisualCacheQuality
-        | K::AudioModifierMenu
-        | K::VisualModifierMenu => "choice",
-        K::Action => "button",
-        K::Analysis | K::AudioCache | K::VisualCache => "progress",
-        K::Performance => "live_rows",
-        K::ReadOnly | K::InfoHeading | K::LayeredDrawing => "text",
-        K::FileLocation => "file_location",
-        K::InfoArtwork => "image",
-        K::InfoLoading => "loading",
-        K::Number
-        | K::Fraction
-        | K::LayeredNumber
-        | K::Vector2
-        | K::Vector3
-        | K::LayeredVector2
-        | K::LayeredVector3 => "number",
-        K::Text
-        | K::MultilineText
-        | K::LayeredText
-        | K::Color
-        | K::LayeredColor
-        | K::ProjectSettings => {
-            if control.editable {
-                "editor"
-            } else {
-                "text"
+    let widget =
+        match control.kind {
+            K::FontFamilies => return super::fonts::presentation(control, item, id),
+            K::TtsEditor => return super::tts::presentation(control, item, id),
+            K::Boolean | K::LayeredBoolean | K::BeatDetection => "toggle",
+            K::Color | K::LayeredColor => "color",
+            K::Selector
+            | K::OptionalSelector
+            | K::OptionalNumberSelector
+            | K::LayeredSelector
+            | K::VoiceModel
+            | K::AudioCachePreset
+            | K::VisualCacheQuality
+            | K::AudioModifierMenu
+            | K::VisualModifierMenu => "choice",
+            K::Action => "button",
+            K::Analysis | K::AudioCache | K::VisualCache => "progress",
+            K::Performance => "live_rows",
+            K::ReadOnly | K::InfoHeading | K::LayeredDrawing => "text",
+            K::FileLocation => "file_location",
+            K::InfoArtwork => "image",
+            K::InfoLoading => "loading",
+            K::Number
+            | K::Fraction
+            | K::LayeredNumber
+            | K::Vector2
+            | K::Vector3
+            | K::LayeredVector2
+            | K::LayeredVector3 => "number",
+            K::Text | K::MultilineText | K::LayeredText | K::ProjectSettings => {
+                if control.editable { "editor" } else { "text" }
             }
-        }
-    };
+        };
     let command = |action: &str| json!({"item":item,"control":id,"action":action});
     let editable = control.editable && control.sensitive;
     let display = if control.components.is_empty() {
@@ -98,6 +91,27 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
     let mut result = json!({"id":id,"widget":widget,"label":text(&control.label),"subtitle":text(&control.subtitle),
         "tooltip":text(&control.tooltip),"enabled":control.sensitive,"editable":editable,"display":display});
     match widget {
+        "color" => {
+            let source = if control.components.is_empty() {
+                json!(control.value)
+            } else {
+                json!(control.components)
+            };
+            let color =
+                shrimply_components_core::color::picker::parse_color(&source, control.with_alpha)
+                    .expect("color inspector requires valid RGBA components");
+            result["display"] = json!(shrimply_components_core::color::color_hex(
+                color,
+                control.with_alpha
+            ));
+            result["argb"] = json!(u32::from_be_bytes([color.a, color.r, color.g, color.b]));
+            result["checker"] = json!(shrimply_components_core::color::picker::CHECKER_SIZE);
+            result["checker_dark"] = json!(shrimply_components_core::color::picker::CHECKER_DARK);
+            result["checker_light"] = json!(shrimply_components_core::color::picker::CHECKER_LIGHT);
+            result["picker"] = json!({"color":source,"with_alpha":control.with_alpha,"title":text(if control.tooltip.is_empty() { &control.label } else { &control.tooltip })});
+            result["command"] = command("components");
+        }
+
         "file_location" => {
             let mut next = command("show_in_files");
             next["op"] = json!("inspector_resource");
@@ -151,6 +165,9 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
                 ControlKind::AudioModifierMenu | ControlKind::VisualModifierMenu
             );
             result["choice_style"] = json!(if button { "button" } else { "row" });
+            if button {
+                result["choice_icon"] = json!("list-add-symbolic");
+            }
             result["label"] = json!(text(if control.label.is_empty() {
                 "Add modifier"
             } else {

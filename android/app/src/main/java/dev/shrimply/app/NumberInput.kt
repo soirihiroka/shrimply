@@ -38,6 +38,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
@@ -47,11 +50,11 @@ import org.json.JSONObject
 /** Native fields render Rust values and forward raw input; Rust owns all math. */
 @Composable
 internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled: Boolean) {
-    val id = control.getString("id")
-    val events = remember(timeline.identity, id) { Channel<JSONObject>(Channel.UNLIMITED) }
-    val command = remember(timeline.identity, id) { control.getJSONObject("command") }
-    var response by remember(id) { mutableStateOf<JSONObject?>(null) }
-    var failure by remember(id) { mutableStateOf<String?>(null) }
+    val owner = control.getJSONObject("command").toString()
+    val events = remember(timeline.identity, owner) { Channel<JSONObject>(Channel.UNLIMITED) }
+    val command = remember(timeline.identity, owner) { control.getJSONObject("command") }
+    var response by remember(owner) { mutableStateOf<JSONObject?>(null) }
+    var failure by remember(owner) { mutableStateOf<String?>(null) }
     val captured by rememberUpdatedState(response?.optBoolean("capture") == true)
     val density = LocalDensity.current.density
     val context = LocalContext.current
@@ -59,7 +62,7 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
     val model = response?.optJSONObject("number") ?: control
     val fields = model.getJSONArray("fields")
     val editingAxis = response?.takeUnless { it.isNull("editing_axis") }?.getInt("editing_axis")
-    var draft by remember(id) { mutableStateOf(TextFieldValue()) }
+    var draft by remember(owner) { mutableStateOf(TextFieldValue()) }
     val focus = remember { FocusRequester() }
 
     LaunchedEffect(control.getJSONArray("fields").toString(), control.optJSONObject("lock")?.toString(), control.optBoolean("interaction_active")) {
@@ -75,12 +78,20 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
             focus.requestFocus()
         }
     }
-    LaunchedEffect(timeline.identity, id) {
-        suspend fun execute(event: JSONObject): JSONObject {
-            val payload = JSONObject(command.toString())
-            event.keys().forEach { payload.put(it, event.get(it)) }
-            return timeline.request(payload)
-        }
+    suspend fun execute(event: JSONObject): JSONObject {
+        val payload = JSONObject(command.toString())
+        event.keys().forEach { payload.put(it, event.get(it)) }
+        return timeline.request(payload)
+    }
+    suspend fun receive(event: JSONObject) {
+        try { response = execute(event); failure = null }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { response = null; failure = error.message }
+    }
+    val scope = rememberCoroutineScope()
+    // Queue text before the next native focus/selection event, without awaiting each keystroke.
+    val submit: (JSONObject) -> Unit = { event -> scope.launch(start = CoroutineStart.UNDISPATCHED) { receive(event) } }
+    LaunchedEffect(timeline.identity, owner) {
         var pending: JSONObject? = null
         try {
             while (isActive) {
@@ -91,17 +102,18 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
                     val next = events.tryReceive().getOrNull() ?: break
                     if (next.optString("event") == "move" && next.optInt("contacts") == event.optInt("contacts")) event = next else { pending = next; break }
                 }
-                try {
-                    response = execute(event)
-                    failure = null
-                } catch (error: Exception) {
-                    response = null
-                    failure = error.message
-                }
+                receive(event)
             }
         } finally {
             withContext(NonCancellable) {
-                try { execute(JSONObject().put("event", "cancel")) } catch (_: Exception) { /* The owning project may already be closed. */ }
+                try {
+                    pending?.let { execute(it) }
+                    while (true) execute(events.tryReceive().getOrNull() ?: break)
+                } catch (_: Exception) { /* Rust reports conflicting project edits. */ }
+                finally {
+                    try { execute(JSONObject().put("event", "release")) }
+                    catch (_: Exception) { /* The owning project may already be closed. */ }
+                }
             }
         }
     }
@@ -118,18 +130,18 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
                 val field = fields.getJSONObject(axis)
                 Surface(Modifier.weight(1f), color = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, shape = MaterialTheme.shapes.small) {
                     if (editingAxis == axis) {
-                        var hadFocus by remember(id, axis) { mutableStateOf(false) }
+                        var hadFocus by remember(owner, axis) { mutableStateOf(false) }
                         BasicTextField(value = draft, onValueChange = {
                             draft = it
-                            events.trySend(JSONObject().put("event", "text").put("axis", axis).put("text", it.text))
+                            submit(JSONObject().put("event", "text").put("axis", axis).put("text", it.text))
                         }, enabled = enabled, singleLine = true,
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
                             keyboardOptions = KeyboardOptions(keyboardType = if (field.getString("keyboard") == "decimal") KeyboardType.Decimal else KeyboardType.Text, imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = { events.trySend(JSONObject().put("event", "commit").put("axis", axis).put("text", draft.text)) }),
+                            keyboardActions = KeyboardActions(onDone = { submit(JSONObject().put("event", "commit").put("axis", axis).put("text", draft.text)) }),
                             modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(8.dp).focusRequester(focus)
                                 .onFocusChanged { state ->
-                                    if (hadFocus && !state.isFocused) events.trySend(JSONObject().put("event", "commit").put("axis", axis).put("text", draft.text))
+                                    if (hadFocus && !state.isFocused) submit(JSONObject().put("event", "commit").put("axis", axis).put("text", draft.text))
                                     hadFocus = state.isFocused
                                 }.onPreviewKeyEvent {
                                     if (it.type == KeyEventType.KeyDown && it.key == Key.Escape) {
@@ -143,7 +155,7 @@ internal fun NumberInput(timeline: TimelineSession, control: JSONObject, enabled
                                 events.trySend(JSONObject().put("event", "edit").put("axis", axis)); true
                             } else false
                         }.focusable(enabled)
-                        .pointerInput(timeline.identity, id, axis, enabled, density) {
+                        .pointerInput(timeline.identity, owner, axis, enabled, density) {
                             if (!enabled) return@pointerInput
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)

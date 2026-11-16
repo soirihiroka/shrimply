@@ -204,7 +204,7 @@ fn transform_expression_output<T: TimelineExpressionValue>(
     let InspectorTarget::Item(address @ ItemAddress::Video { .. }) = target else {
         return Err("transform expression target is not a video item".to_string());
     };
-    let player = shrimply_editor_state::player_state::snapshot(&inspector.player_state);
+    let player = crate::model::player_snapshot(&inspector.player_state);
     let project = inspector.project.borrow();
     let item = project
         .video_item(address)

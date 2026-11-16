@@ -7,11 +7,11 @@ pub const PANEL_ANIMATION_DURATION_MS: u32 = 250;
 const COMPACT_CONTROLS_WIDTH: f32 = 600.0;
 const COMPACT_CONTROLS_HEIGHT: f32 = 480.0;
 pub const MIN_PREVIEW_WIDTH: f32 = 360.0;
-const INSPECTOR_DIVIDER_WIDTH: f32 = 12.0;
+pub const PANEL_DIVIDER_WIDTH: f32 = 1.0;
 pub const TRANSPORT_ROW_MIN_WIDTH: f32 = 520.0;
 
 pub fn inspector_min_width(inspector_width: f32) -> f32 {
-    inspector_width + MIN_PREVIEW_WIDTH + INSPECTOR_DIVIDER_WIDTH
+    inspector_width + MIN_PREVIEW_WIDTH + PANEL_DIVIDER_WIDTH
 }
 
 pub fn inspector_overlay(width: f32, inspector_width: f32) -> bool {

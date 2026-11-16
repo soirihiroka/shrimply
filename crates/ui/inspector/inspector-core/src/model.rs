@@ -14,6 +14,30 @@ use crate::target::InspectorTarget;
 
 mod audio;
 
+thread_local! {
+    static EDIT_POSITION: std::cell::Cell<Option<Time>> = const { std::cell::Cell::new(None) };
+}
+
+/// Inspector edits can retain their evaluation frame without seeking real playback.
+pub(crate) fn player_snapshot(player: &SharedPlayerState) -> player_state::Snapshot {
+    let mut snapshot = player_state::snapshot(player);
+    if let Some(position) = EDIT_POSITION.get() {
+        snapshot.position = position;
+    }
+    snapshot
+}
+
+pub(crate) fn with_edit_position<T>(position: Time, edit: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Time>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            EDIT_POSITION.set(self.0);
+        }
+    }
+    let _restore = Restore(EDIT_POSITION.replace(Some(position)));
+    edit()
+}
+
 pub const INSPECTOR_MIN_WIDTH: i32 = 320;
 pub(crate) const INSPECTOR_EDIT_COMMIT: &str = "inspector-edit";
 
@@ -322,7 +346,7 @@ impl InspectorController {
         &self,
         position: Time,
     ) -> shrimply_project_evaluation::FrameAudioAnalysis {
-        let revision = player_state::snapshot(&self.player_state).revision;
+        let revision = crate::model::player_snapshot(&self.player_state).revision;
         self.audio_sampler
             .borrow_mut()
             .sample(&self.project.borrow(), position, revision)
@@ -656,7 +680,7 @@ impl InspectorController {
                 return Err("keyframes require an item inspector target".to_string());
             };
             let project = self.project.borrow();
-            let position = player_state::snapshot(&self.player_state).position;
+            let position = crate::model::player_snapshot(&self.player_state).position;
             project
                 .keyframe_time(address, position)
                 .ok_or_else(|| "the current item time is not available".to_string())?
@@ -823,7 +847,7 @@ impl InspectorController {
                 let InspectorTarget::Item(address) = target else {
                     return Err("keyframes require an item inspector target".to_string());
                 };
-                let position = player_state::snapshot(&self.player_state).position;
+                let position = crate::model::player_snapshot(&self.player_state).position;
                 Some((
                     project
                         .keyframe_time(address, position)
@@ -1297,7 +1321,7 @@ pub(crate) fn target_runtime(
     player: &SharedPlayerState,
     target: &InspectorTarget,
 ) -> InspectorRuntime {
-    let snapshot = player_state::snapshot(player);
+    let snapshot = crate::model::player_snapshot(player);
     let address = match target {
         InspectorTarget::Item(address) | InspectorTarget::Transition { item: address, .. } => {
             Some(address)

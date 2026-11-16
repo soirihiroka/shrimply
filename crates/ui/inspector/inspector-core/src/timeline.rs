@@ -566,7 +566,7 @@ impl InspectorController {
         if &self.target() != target {
             return Err("inspector target changed".to_string());
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let project = self.project.borrow();
         let address = video_item_address(target)?;
         let position = project
@@ -619,7 +619,7 @@ impl InspectorController {
         if &self.target() != target {
             return Err("inspector target changed".to_string());
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let project = self.project.borrow();
         let address = video_item_address(target)?;
         let position = project
@@ -717,7 +717,7 @@ impl InspectorController {
         if &self.target() != target {
             return Err("inspector target changed".to_string());
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let project = self.project.borrow();
         let address = video_item_address(target)?;
         let position = project
@@ -755,7 +755,7 @@ impl InspectorController {
         if &self.target() != target {
             return Err("inspector target changed".to_string());
         }
-        let player = shrimply_editor_state::player_state::snapshot(&self.player_state);
+        let player = crate::model::player_snapshot(&self.player_state);
         let project = self.project.borrow();
         let address = video_item_address(target)?;
         let sequence_time = project

@@ -172,6 +172,11 @@ FocusScope {
                     ? root.textInterpolationIndexForOwner(ownerId) : -1
                 textInterpolationMenu.presentForInput(textInterpolationAnchor, touch)
             }
+            onContextMenuRequested: function(position, touch) {
+                contextAnchor.x = position.x
+                contextAnchor.y = controls.height + position.y
+                contextMenu.presentForInput(contextAnchor, touch)
+            }
             onInterpolationRequested: function(component, ownerId, index, position, touch) {
                 interpolationAnchor.x = position.x
                 interpolationAnchor.y = controls.height + position.y
@@ -251,6 +256,21 @@ FocusScope {
                 }
             }
         }
+    }
+
+    Item {
+        id: contextAnchor
+        width: 1
+        height: 1
+    }
+
+    SearchMenu {
+        id: contextMenu
+        searchEnabled: false
+        preferredWidth: 280
+        labels: graph.contextActionLabels()
+        onActivated: function(index) { graph.activateContextAction(index) }
+        onClosed: graph.forceActiveFocus(Qt.PopupFocusReason)
     }
 
     Item {

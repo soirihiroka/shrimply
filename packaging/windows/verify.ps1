@@ -19,12 +19,15 @@ $ffmpegDlls = @(
     "fdk-aac.dll",
     "opus.dll"
 )
-$ffmpegNotices = @(
+$requiredNotices = @(
     "ffmpeg.txt",
     "fdk-aac.txt",
     "nv-codec-headers.txt",
     "opus.txt",
-    "ffmpeg-build-configuration.txt"
+    "ffmpeg-build-configuration.txt",
+    "OpenCV-Vision.txt",
+    "GTK-Pango-Color.txt",
+    "GTK-Pango-Color-NOTICE.txt"
 )
 
 function Assert-PeX64([string]$path) {
@@ -64,9 +67,9 @@ function Assert-FfmpegPackage([string]$directory) {
         }
     }
     $licenses = Join-Path $directory "licenses"
-    foreach ($name in $ffmpegNotices) {
+    foreach ($name in $requiredNotices) {
         if (!(Test-Path (Join-Path $licenses $name))) {
-            throw "Packaged FFmpeg notice is missing $name"
+            throw "Packaged dependency notice is missing $name"
         }
     }
     $configuration = Get-Content (Join-Path $licenses "ffmpeg-build-configuration.txt") -Raw

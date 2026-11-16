@@ -3,9 +3,9 @@ use shrimply_components_core::layered::LayeredPropertyController;
 use shrimply_components_gtk::playback_shortcuts::attach_space_play_toggle;
 use shrimply_components_gtk::ui::{
     ColorPicker, InspectorCard, MultilineTextInput, Number2Picker, Number3Picker, NumberPicker,
-    ProgressButton, ProgressButtonState, ReadOnlyField, SingleLineTextInput, StringChoice,
-    control_row, labeled_string_selector, live_performance, modifier_menu, read_only_field,
-    split_button, switch_row, tabs,
+    ProgressButton, ProgressButtonState, SingleLineTextInput, StringChoice, control_row,
+    labeled_string_selector, live_performance, modifier_menu, property_row, split_button,
+    switch_row, tabs,
 };
 use shrimply_math_color::Color;
 use std::{cell::Cell, rc::Rc};
@@ -427,40 +427,40 @@ fn build_ui(app: &adw::Application) {
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
 
-    let info = gtk::Box::new(gtk::Orientation::Vertical, 10);
-    info.set_margin_top(16);
-    info.set_margin_bottom(16);
-    info.set_margin_start(16);
-    info.set_margin_end(16);
-    info.append(&info_row(
-        "Selected item",
-        &info_value("Example clip · 00:00:02:00"),
-    ));
-    info.append(&info_row(
-        "Component package",
-        &info_value("shrimply-components-gtk"),
-    ));
-    info.append(&info_row(
-        "Frame graph",
-        &info_value("Shared Rust renderer"),
-    ));
-    let home = gtk::glib::home_dir();
-    let folder = ReadOnlyField::builder(home.display().to_string())
-        .right_aligned()
-        .action("folder-open-symbolic", "Show in Folder", {
-            let home = home.clone();
-            let log = log.clone();
-            move |button| {
-                if let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
-                    button.upcast_ref(),
-                    home.clone(),
-                ) {
-                    log(format!("show in folder failed: {error}"));
-                }
-            }
-        })
+    let info = adw::PreferencesGroup::builder()
+        .margin_top(16)
+        .margin_bottom(16)
+        .margin_start(16)
+        .margin_end(16)
         .build();
-    info.append(&info_row("Home folder", &folder));
+    info.add(&property_row("Selected item", "Example clip · 00:00:02:00"));
+    info.add(&property_row(
+        "Component package",
+        "shrimply-components-gtk",
+    ));
+    info.add(&property_row("Frame graph", "Shared Rust renderer"));
+    let home = gtk::glib::home_dir();
+    let folder = property_row("Home folder", &home.display().to_string());
+    let reveal = gtk::Button::builder()
+        .icon_name("folder-open-symbolic")
+        .tooltip_text("Show in Folder")
+        .valign(gtk::Align::Center)
+        .css_classes(["flat"])
+        .build();
+    reveal.connect_clicked({
+        let log = log.clone();
+        move |button| {
+            if let Err(error) = shrimply_components_gtk::desktop_open::show_path_in_folder(
+                button.upcast_ref(),
+                home.clone(),
+            ) {
+                log(format!("show in folder failed: {error}"));
+            }
+        }
+    });
+    folder.add_suffix(&reveal);
+    folder.set_activatable_widget(Some(&reveal));
+    info.add(&folder);
     let info_scroller = gtk::ScrolledWindow::builder()
         .child(&info)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -516,28 +516,4 @@ fn build_ui(app: &adw::Application) {
         .content(&toolbar)
         .build();
     window.present();
-}
-
-fn info_value(value: &str) -> gtk::Label {
-    let value = read_only_field(value);
-    value.set_xalign(1.0);
-    value
-}
-
-fn info_row(label: &str, child: &impl IsA<gtk::Widget>) -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    row.set_hexpand(true);
-    row.append(
-        &gtk::Label::builder()
-            .label(label)
-            .halign(gtk::Align::Start)
-            .valign(gtk::Align::Center)
-            .width_chars(18)
-            .xalign(0.0)
-            .css_classes(["dim-label"])
-            .build(),
-    );
-    child.set_hexpand(true);
-    row.append(child);
-    row.upcast()
 }

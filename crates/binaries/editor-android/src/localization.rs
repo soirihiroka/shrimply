@@ -3,6 +3,14 @@ use jni::sys::{JNIEnv, jclass, jstring};
 static VM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeLayout_panelDividerWidth(
+    _env: *mut JNIEnv,
+    _class: jclass,
+) -> jni::sys::jfloat {
+    shrimply_components_core::layout::PANEL_DIVIDER_WIDTH
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_shrimply_app_NativeLayout_splitPaneExtent(
     _env: *mut JNIEnv,
     _class: jclass,
@@ -195,4 +203,27 @@ pub extern "system" fn Java_dev_shrimply_app_NativeLayout_panelAnimationProgress
     progress: jni::sys::jfloat,
 ) -> jni::sys::jfloat {
     shrimply_components_core::math::ease_out_cubic(f64::from(progress)) as jni::sys::jfloat
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn Java_dev_shrimply_app_NativeColor_request(
+    env: *mut JNIEnv,
+    _class: jclass,
+    request: jstring,
+) -> jstring {
+    let request: serde_json::Value =
+        serde_json::from_str(&unsafe { string(env, request) }).expect("color request must be JSON");
+    let response = shrimply_components_core::color::picker::request(&request)
+        .unwrap_or_else(|error| serde_json::json!({"error":shrimply_i18n::text(&error)}));
+    let characters = response.to_string().encode_utf16().collect::<Vec<_>>();
+    unsafe {
+        ((**env).v1_1.NewString)(
+            env,
+            characters.as_ptr(),
+            characters
+                .len()
+                .try_into()
+                .expect("color presentation fits JNI"),
+        )
+    }
 }

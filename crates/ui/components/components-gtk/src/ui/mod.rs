@@ -52,7 +52,7 @@ pub use number_picker::{
 };
 pub use pointer_lock::PointerLock;
 pub use progress_button::{ProgressButton, ProgressButtonState};
-pub use read_only_field::{ReadOnlyField, ReadOnlyFieldBuilder, read_only_field};
+pub use read_only_field::{ReadOnlyField, ReadOnlyFieldBuilder, property_row, read_only_field};
 pub use selector::{
     StringChoice, StringSelector, adaptive_choice, dropdown, enum_dropdown, enum_selector,
     labeled_string_selector, selector, string_selector,

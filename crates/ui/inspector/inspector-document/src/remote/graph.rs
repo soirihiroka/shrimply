@@ -1,7 +1,8 @@
 //! Retained shared framegraph session for native hosts with opaque control handles.
 use serde_json::{Value, json};
 use shrimply_framegraph_skia::{
-    FrameGraphAction, FrameGraphCommand, FrameGraphCore, FrameGraphInputResult, FrameGraphKey,
+    FRAME_GRAPH_CONTEXT_ACTIONS, FrameGraphAction, FrameGraphCommand, FrameGraphCore,
+    FrameGraphInputResult,
 };
 use shrimply_i18n::text;
 use shrimply_inspector_core::{
@@ -102,14 +103,9 @@ impl GraphSession {
         let action = |id: &str, label: &str, icon: &str, enabled: bool| json!({"label":label,"icon":icon,"enabled":enabled && self.is_editable(),"command":{"op":"framegraph_action","serial":self.serial,"action":id}});
         json!({"serial":self.serial,"surface":self.serial,"enabled":self.is_editable(),"height":self.core.preferred_height(),
             "actions":[
-                action("previous",state.command_label(FrameGraphCommand::PreviousKey).as_ref(),"media-seek-backward-symbolic",state.can_previous),
-                action("toggle",state.command_label(FrameGraphCommand::ToggleKey).as_ref(),if state.key_at_playhead {"user-trash-symbolic"} else {"list-add-symbolic"},true),
-                action("next",state.command_label(FrameGraphCommand::NextKey).as_ref(),"media-seek-forward-symbolic",state.can_next),
-                action("copy",text("Copy keyframes").as_ref(),"edit-copy-symbolic",true),
-                action("paste",text("Paste keyframes").as_ref(),"edit-paste-symbolic",true),
-                action("delete",text("Delete keyframes").as_ref(),"user-trash-symbolic",true),
-                action("zoom-in",text("Zoom In").as_ref(),"zoom-in-symbolic",true),
-                action("zoom-out",text("Zoom Out").as_ref(),"zoom-out-symbolic",true)
+                action("previous",state.command_label(FrameGraphCommand::PreviousKey).as_ref(),"go-previous-symbolic",state.can_previous),
+                action("toggle",state.command_label(FrameGraphCommand::ToggleKey).as_ref(),if state.key_at_playhead {"list-remove-symbolic"} else {"list-add-symbolic"},true),
+                action("next",state.command_label(FrameGraphCommand::NextKey).as_ref(),"go-next-symbolic",state.can_next)
             ],"menu":self.menu})
     }
 
@@ -118,29 +114,27 @@ impl GraphSession {
         controller: &InspectorController,
         request: &Value,
     ) -> Result<(), String> {
-        if !self.is_editable() {
-            return Err("Inspector control is unavailable".into());
-        }
         if request["serial"].as_u64() != Some(self.serial) {
             return Err("Frame graph changed".into());
         }
-        self.finish(controller)?;
         let action = request["action"]
             .as_str()
             .ok_or("Frame graph action is required")?;
+        if action == "menu-dismiss" {
+            self.menu = None;
+            return Ok(());
+        }
+        if controller.target() != self.target {
+            return Err("Inspector selection changed".into());
+        }
+        if !self.is_editable() {
+            return Err("Inspector control is unavailable".into());
+        }
+        self.finish(controller)?;
         let result = match action {
             "previous" => self.core.command(FrameGraphCommand::PreviousKey),
             "toggle" => self.core.command(FrameGraphCommand::ToggleKey),
             "next" => self.core.command(FrameGraphCommand::NextKey),
-            "copy" => self.core.key(FrameGraphKey::Copy),
-            "paste" => self.core.key(FrameGraphKey::Paste),
-            "delete" => self.core.key(FrameGraphKey::Delete),
-            "zoom-in" => self.core.key(FrameGraphKey::ZoomIn),
-            "zoom-out" => self.core.key(FrameGraphKey::ZoomOut),
-            "menu-dismiss" => {
-                self.menu = None;
-                return Ok(());
-            }
             "interpolation" => {
                 let owner = request["owner"]
                     .as_str()
@@ -178,8 +172,15 @@ impl GraphSession {
                 self.menu = None;
                 return self.refresh(controller);
             }
-            _ => return Err("Unknown frame graph action".into()),
+            id => self.core.key(
+                FRAME_GRAPH_CONTEXT_ACTIONS
+                    .into_iter()
+                    .find(|action| action.id == id)
+                    .ok_or("Unknown frame graph action")?
+                    .key,
+            ),
         };
+        self.menu = None;
         self.apply(controller, result, false)?;
         self.finish(controller)
     }
@@ -191,7 +192,10 @@ impl GraphSession {
         touch: bool,
     ) -> Result<Option<bool>, String> {
         if controller.target() != self.target {
-            return Err("Inspector selection changed".into());
+            // A native surface can deliver its last pointer packet or idle
+            // poll before the replacement inspector has detached the old view.
+            self.cancel(controller)?;
+            return Ok(None);
         }
         if result.actions.is_empty()
             && !result.redraw
@@ -205,6 +209,13 @@ impl GraphSession {
         }
         for action in result.actions {
             match action.action {
+                FrameGraphAction::ContextMenuRequested { x, y, touch } => {
+                    let items = FRAME_GRAPH_CONTEXT_ACTIONS.into_iter().map(|action| json!({
+                        "label":text(action.label), "icon":action.icon, "enabled":self.is_editable(),
+                        "command":{"op":"framegraph_action","serial":self.serial,"action":action.id}
+                    })).collect();
+                    self.menu = Some(self.choice_menu(items, x, y, touch));
+                }
                 FrameGraphAction::InterpolationRequested {
                     owner_id,
                     interpolation,
@@ -284,6 +295,22 @@ pub struct Graphs {
 }
 
 impl Graphs {
+    pub fn request(
+        &mut self,
+        controller: &InspectorController,
+        request: &Value,
+    ) -> Result<(), String> {
+        let surface = request["serial"]
+            .as_u64()
+            .and_then(|id| usize::try_from(id).ok())
+            .ok_or("Frame graph is required")?;
+        match self.sessions.get_mut(&surface) {
+            Some(graph) => graph.request(controller, request),
+            None if request["action"] == "menu-dismiss" => Ok(()),
+            None => Err("Frame graph changed".into()),
+        }
+    }
+
     pub fn clear(&mut self) {
         self.sessions.clear();
         self.handles.clear();

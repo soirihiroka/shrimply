@@ -10,6 +10,11 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.graphics.Bitmap
+import android.graphics.ColorSpace
+import android.graphics.PixelFormat
+import android.hardware.HardwareBuffer
+import android.media.ImageReader
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
@@ -24,6 +29,8 @@ import android.view.Surface
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Android's screen grant feeds a hardware encoder Surface without CPU pixel copies. */
@@ -34,6 +41,7 @@ class ScreenRecordingService : Service() {
         private const val Stop = "dev.shrimply.app.STOP_SCREEN_RECORDING"
         private const val PollTimeoutUs = 10_000L
         private const val StopTimeoutMs = 5_000L
+        private const val ImageTimeoutMs = 10_000L
         private class Delivery(val owner: String, @Volatile var event: (JSONObject) -> Unit) {
             @Volatile var terminal: JSONObject? = null
             @Volatile var abandoned = false
@@ -130,7 +138,72 @@ class ScreenRecordingService : Service() {
 
     override fun onDestroy() { stopping.set(true); super.onDestroy() }
 
+    private fun projection(resultCode: Int, grant: Intent?): MediaProjection {
+        check(grant != null) { "Screen capture permission was not granted" }
+        return checkNotNull(getSystemService(MediaProjectionManager::class.java).getMediaProjection(resultCode, grant)).also {
+            it.registerCallback(object : MediaProjection.Callback() {
+                override fun onStop() { stopping.set(true) }
+            }, Handler(Looper.getMainLooper()))
+        }
+    }
+
+    /** One consented frame for native pixel sampling, using the existing capture service. */
+    private fun captureImage(config: JSONObject, resultCode: Int, grant: Intent?) {
+        val id = config.getString("id")
+        val path = File(config.getString("path"))
+        var reader: ImageReader? = null
+        var projection: MediaProjection? = null
+        var display: VirtualDisplay? = null
+        var terminal = JSONObject().put("event", "cancelled")
+        try {
+            val width = config.getInt("screen_width")
+            val height = config.getInt("screen_height")
+            val frames = Semaphore(0)
+            val images = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2,
+                HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN)
+            reader = images
+            images.setOnImageAvailableListener({ frames.release() }, Handler(Looper.getMainLooper()))
+            val capture = projection(resultCode, grant)
+            projection = capture
+            display = capture.createVirtualDisplay(config.getString("notification_title"), width, height,
+                config.getInt("density_dpi"), DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, images.surface, null, null)
+            val deadline = android.os.SystemClock.elapsedRealtime() + ImageTimeoutMs
+            while (!stopping.get()) {
+                check(android.os.SystemClock.elapsedRealtime() < deadline) { "Screen capture returned no image" }
+                if (!frames.tryAcquire(100, TimeUnit.MILLISECONDS)) continue
+                val image = images.acquireLatestImage() ?: continue
+                image.use {
+                    checkNotNull(it.hardwareBuffer).use { buffer ->
+                        val hardware = checkNotNull(Bitmap.wrapHardwareBuffer(buffer, ColorSpace.get(ColorSpace.Named.SRGB)))
+                        val pixels = checkNotNull(hardware.copy(Bitmap.Config.ARGB_8888, false))
+                        try {
+                            path.outputStream().use { stream -> check(pixels.compress(Bitmap.CompressFormat.PNG, 100, stream)) }
+                        } finally { pixels.recycle(); hardware.recycle() }
+                    }
+                }
+                if (stopping.get()) break
+                terminal = JSONObject().put("event", "finished").put("path", path.absolutePath)
+                break
+            }
+        } catch (error: Exception) {
+            terminal = JSONObject().put("event", "failed").put("error", error.message ?: error.javaClass.simpleName)
+        } finally {
+            var cleanupFailure: Exception? = null
+            for (release in listOf<() -> Unit>({ display?.release() }, { projection?.stop() }, { reader?.close() })) {
+                try { release() } catch (error: Exception) { if (cleanupFailure == null) cleanupFailure = error }
+            }
+            if (cleanupFailure != null) terminal = JSONObject().put("event", "failed").put("error", cleanupFailure.message)
+            if (terminal.getString("event") != "finished" && path.exists() && !path.delete()) {
+                terminal = JSONObject().put("event", "failed").put("error", "capture_cleanup_failed")
+            }
+            deliver(id, terminal)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+    }
+
     private fun capture(config: JSONObject, resultCode: Int, grant: Intent?) {
+        if (config.optString("mode") == "image") { captureImage(config, resultCode, grant); return }
         val id = config.getString("id")
         var codec: MediaCodec? = null
         var surface: Surface? = null
@@ -177,11 +250,8 @@ class ScreenRecordingService : Service() {
             val activeMuxer = MediaMuxer(path.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
             muxer = activeMuxer
             activeCodec.start()
-            val activeProjection = checkNotNull(getSystemService(MediaProjectionManager::class.java).getMediaProjection(resultCode, grant))
+            val activeProjection = projection(resultCode, grant)
             projection = activeProjection
-            activeProjection.registerCallback(object : MediaProjection.Callback() {
-                override fun onStop() { stopping.set(true) }
-            }, Handler(Looper.getMainLooper()))
             display = activeProjection.createVirtualDisplay(config.getString("notification_title"), width, height,
                 config.getInt("density_dpi"), DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, surface, null, null)
             deliver(id, JSONObject().put("event", "ready").put("width", width).put("height", height))
@@ -242,7 +312,7 @@ class ScreenRecordingService : Service() {
             release { surface?.release() }
             if (successful && cleanupFailure != null) {
                 successful = false
-                terminal = JSONObject().put("event", "failed").put("error", cleanupFailure?.message)
+                terminal = JSONObject().put("event", "failed").put("error", cleanupFailure.message)
             }
             if (!successful && path.exists() && !path.delete()) terminal = JSONObject().put("event", "failed").put("error", "recording_cleanup_failed")
             deliver(id, terminal)

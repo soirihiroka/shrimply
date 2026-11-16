@@ -8,6 +8,9 @@ import android.view.WindowInsetsController
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.AndroidExternalSurface
+import androidx.compose.foundation.AndroidEmbeddedExternalSurface
+import androidx.compose.foundation.AndroidExternalSurfaceScope
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -126,7 +129,7 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
     val viewConfiguration = android.view.ViewConfiguration.get(LocalContext.current)
     val focus = remember { FocusRequester() }
     val mouseButton = remember { intArrayOf(-1) }
-    AndroidExternalSurface(modifier
+    val surfaceModifier = modifier
         .onGloballyPositioned { coordinates ->
             val origin = coordinates.positionInRoot()
             if (!graph) timeline.menuOrigin = DpOffset((origin.x / density).dp, (origin.y / density).dp)
@@ -193,13 +196,17 @@ internal fun NativeSurface(timeline: TimelineSession, modifier: Modifier, role: 
                 timeline.input(batch, role)
             }
             true
-        }) {
+        }
+    val onInit: AndroidExternalSurfaceScope.() -> Unit = {
         onSurface { surface, width, height ->
             timeline.surface(role, surface, width, height, density)
             surface.onChanged { w, h -> timeline.resize(role, w, h) }
             surface.onDestroyed { timeline.surface(role, null, 0, 0, density) }
         }
     }
+    // A scrolling graph must be composited and clipped with its inspector ancestors.
+    if (graph) AndroidEmbeddedExternalSurface(surfaceModifier.clipToBounds(), onInit = onInit)
+    else AndroidExternalSurface(surfaceModifier, onInit = onInit)
 }
 
 @Composable

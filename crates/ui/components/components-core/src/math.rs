@@ -15,3 +15,75 @@ pub fn split_pane_fraction(leading: f32, trailing: f32) -> Option<f32> {
     let content = leading + trailing;
     (leading > 0.0 && trailing > 0.0 && content.is_finite()).then(|| trailing / content)
 }
+
+pub fn image_sample_point(size: [u32; 2], position: [f64; 2], delta: [i32; 2]) -> [u32; 2] {
+    std::array::from_fn(|axis| {
+        assert!(size[axis] > 0, "image dimensions must be positive");
+        ((position[axis].clamp(0.0, 1.0) * f64::from(size[axis])) as u32)
+            .min(size[axis] - 1)
+            .saturating_add_signed(delta[axis])
+            .min(size[axis] - 1)
+    })
+}
+
+#[derive(Clone, Copy)]
+pub enum ColorSelection {
+    Plane,
+    Hue,
+    Alpha,
+}
+
+/// Match the picker axes on every renderer: value increases rightward and saturation upward.
+pub fn color_selection(
+    mut color: crate::color::Hsva,
+    control: ColorSelection,
+    position: [f32; 2],
+) -> crate::color::Hsva {
+    let [x, y] = position.map(|value| value.clamp(0.0, 1.0));
+    match control {
+        ColorSelection::Plane => {
+            color.value = x;
+            color.saturation = 1.0 - y;
+        }
+        ColorSelection::Hue => color.hue = x * 360.0,
+        ColorSelection::Alpha => color.alpha = x,
+    }
+    color
+}
+
+pub fn color_selection_key(
+    color: crate::color::Hsva,
+    control: ColorSelection,
+    key: &str,
+) -> Option<crate::color::Hsva> {
+    let byte_step = 1.0 / u8::MAX as f32;
+    let position = match control {
+        ColorSelection::Plane => match key {
+            "left" => [color.value - byte_step, 1.0 - color.saturation],
+            "right" => [color.value + byte_step, 1.0 - color.saturation],
+            "up" => [color.value, 1.0 - color.saturation - byte_step],
+            "down" => [color.value, 1.0 - color.saturation + byte_step],
+            _ => return None,
+        },
+        ColorSelection::Hue => [
+            (color.hue
+                + match key {
+                    "up" | "left" => -1.0,
+                    "down" | "right" => 1.0,
+                    _ => return None,
+                })
+                / 360.0,
+            0.0,
+        ],
+        ColorSelection::Alpha => [
+            color.alpha
+                + match key {
+                    "left" | "down" => -byte_step,
+                    "right" | "up" => byte_step,
+                    _ => return None,
+                },
+            0.0,
+        ],
+    };
+    Some(color_selection(color, control, position))
+}

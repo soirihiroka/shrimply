@@ -4,9 +4,15 @@ plugins {
 }
 val licenseAssetsDirectory = layout.buildDirectory.dir("generated/licenseAssets")
 val licenseAssets = tasks.register<Sync>("licenseAssets") {
-    from(rootProject.file("../vendor/vision/LICENSE")) {
-        into("licenses")
-        rename { "OpenCV-Vision.txt" }
+    mapOf(
+        "vendor/vision/LICENSE" to "OpenCV-Vision.txt",
+        "crates/math/color/src/css/LICENSE" to "GTK-Pango-Color.txt",
+        "crates/math/color/src/css/NOTICE" to "GTK-Pango-Color-NOTICE.txt",
+    ).forEach { (source, name) ->
+        from(rootProject.file("../$source")) {
+            into("licenses")
+            rename { name }
+        }
     }
     into(licenseAssetsDirectory)
 }

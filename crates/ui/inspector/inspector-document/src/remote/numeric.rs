@@ -1,4 +1,4 @@
-//! Number editing semantics shared by native inspector bridges.
+//! Retained control edits shared by native inspector bridges.
 use std::collections::HashMap;
 
 use serde_json::{Value, json};
@@ -15,6 +15,17 @@ use crate::InspectorDocument;
 pub struct Interaction {
     active: Option<Edit>,
     locks: HashMap<String, Lock>,
+    sessions: HashMap<u64, ControlSession>,
+    expression: Option<u64>,
+    next_session: u64,
+}
+
+struct ControlSession {
+    key: String,
+    target: InspectorTarget,
+    control: InspectorControl,
+    history_revision: u64,
+    displayed: bool,
 }
 
 struct Lock {
@@ -23,6 +34,8 @@ struct Lock {
 }
 
 struct Edit {
+    serial: u64,
+    detached: bool,
     key: String,
     target: InspectorTarget,
     control: InspectorControl,
@@ -76,18 +89,171 @@ pub(super) fn presentation(control: &InspectorControl, values: &[Fraction], lock
 
 impl Interaction {
     pub fn active(&self) -> bool {
-        self.active.is_some()
+        self.active.as_ref().is_some_and(|edit| !edit.detached)
     }
 
     pub fn synchronize(&mut self, controller: &InspectorController) -> Result<(), String> {
         if self
             .active
             .as_ref()
-            .is_some_and(|edit| edit.target != controller.target())
+            .is_some_and(|edit| !edit.detached && edit.target != controller.target())
         {
             self.cancel(controller)?;
         }
         Ok(())
+    }
+
+    /// A disposed editor closes its own history group, even after selection
+    /// changes. It must never resolve the replacement control or end its edit.
+    fn complete(&mut self, request: &Value) -> Result<Option<Value>, String> {
+        if request["action"] == "expression_finish" {
+            if !request["item"].is_string() || !request["control"].is_string() {
+                return Err("Expression completion requires its control handle".into());
+            }
+            let serial = request["edit_serial"]
+                .as_u64()
+                .ok_or("Expression session is required")?;
+            if self
+                .sessions
+                .get(&serial)
+                .is_some_and(|edit| edit.key != key(request))
+            {
+                return Err("Expression control changed".into());
+            }
+            if self.expression == Some(serial) {
+                self.finish_expression();
+            }
+            self.release_session(request);
+            return Ok(Some(Value::Null));
+        }
+        if request["op"] == "inspector_numeric"
+            && matches!(
+                request["event"].as_str(),
+                Some("move" | "end" | "cancel" | "commit" | "release")
+            )
+            && self.active.as_ref().is_none_or(|edit| {
+                edit.key != key(request) || request["edit_serial"].as_u64() != Some(edit.serial)
+            })
+        {
+            if request["event"] == "release" {
+                self.release_session(request);
+            }
+            return Ok(Some(
+                json!({"active":false,"capture":false,"editing":false,"valid":true}),
+            ));
+        }
+        Ok(None)
+    }
+
+    fn release_session(&mut self, request: &Value) {
+        if let Some(serial) = request["edit_serial"].as_u64()
+            && self
+                .sessions
+                .get(&serial)
+                .is_some_and(|edit| !edit.displayed && edit.key == key(request))
+            && self.expression != Some(serial)
+            && self
+                .active
+                .as_ref()
+                .is_none_or(|edit| edit.serial != serial)
+        {
+            self.sessions.remove(&serial);
+        }
+    }
+
+    fn finish_expression(&mut self) {
+        if let Some(serial) = self.expression.take()
+            && let Some(edit) = self.sessions.get(&serial)
+            && edit.history_revision == shrimply_project_document::project::history_revision()
+        {
+            shrimply_project_document::project::finish_coalesced_edit();
+        }
+    }
+
+    /// Drain an advertised editor against its original target, even when native
+    /// focus loss follows a timeline selection change. Other edits invalidate it.
+    pub fn request(
+        &mut self,
+        controller: &InspectorController,
+        request: &Value,
+        busy: bool,
+    ) -> Result<Option<Value>, String> {
+        if request["op"] == "inspector_numeric"
+            && self.active.as_ref().is_some_and(|edit| {
+                edit.detached
+                    && edit.key == key(request)
+                    && request["edit_serial"].as_u64() == Some(edit.serial)
+            })
+            && matches!(
+                request["event"].as_str(),
+                Some("text" | "commit" | "release" | "cancel")
+            )
+        {
+            if busy {
+                return Err(
+                    "Finish the current control gesture before completing the number".into(),
+                );
+            }
+            let edit = self.active.as_ref().expect("retained number");
+            let target = edit.target.clone();
+            let control = edit.control.clone();
+            return self
+                .apply_number(controller, &target, &control, request)
+                .map(Some);
+        }
+        if let Some(completed) = self.complete(request)? {
+            return Ok(Some(completed));
+        }
+        if request["action"] != "edit" || request["editor"] != "expression" {
+            return Ok(None);
+        }
+        let serial = request["edit_serial"]
+            .as_u64()
+            .ok_or("Expression session is required")?;
+        let edit = self
+            .sessions
+            .get(&serial)
+            .ok_or("Expression editor is closed")?;
+        if edit.key != key(request) {
+            return Err("Expression control changed".into());
+        }
+        if busy || self.active.is_some() {
+            return Err("Finish the current control gesture before editing the expression".into());
+        }
+        let revision = shrimply_project_document::project::history_revision();
+        if edit.history_revision != revision {
+            return Err("The project changed while the expression editor was open".into());
+        }
+        if self.expression != Some(serial) {
+            self.finish_expression();
+        }
+        let edit = self.sessions.get_mut(&serial).expect("retained expression");
+        let result = super::apply_expression(controller, &edit.target, &edit.control, request);
+        self.advance_sessions(revision);
+        self.expression = Some(serial);
+        result?;
+        Ok(Some(Value::Null))
+    }
+
+    pub fn apply_control(
+        &mut self,
+        controller: &InspectorController,
+        document: &InspectorDocument,
+        request: &Value,
+    ) -> Result<Option<String>, String> {
+        if self.request(controller, request, false)?.is_some() {
+            return Ok(None);
+        }
+        self.synchronize(controller)?;
+        self.finish_expression();
+        super::apply(controller, document, request)
+    }
+
+    pub fn clear(&mut self) {
+        self.active = None;
+        self.locks.clear();
+        self.sessions.clear();
+        self.expression = None;
     }
 
     pub fn cancel(&mut self, controller: &InspectorController) -> Result<(), String> {
@@ -97,7 +263,10 @@ impl Interaction {
         Ok(())
     }
 
-    pub fn snapshot(&self, document: &InspectorDocument) -> Value {
+    pub fn snapshot(&mut self, document: &InspectorDocument) -> Value {
+        for edit in self.sessions.values_mut() {
+            edit.displayed = false;
+        }
         let mut snapshot = super::snapshot(document);
         for category in snapshot["categories"]
             .as_array_mut()
@@ -105,9 +274,17 @@ impl Interaction {
         {
             for item in category["items"].as_array_mut().expect("inspector items") {
                 for control in item["controls"].as_array_mut().expect("inspector controls") {
+                    if control["expression_editor"].is_object() {
+                        let serial =
+                            self.advertise(document, &control["expression_editor"]["command"]);
+                        control["expression_editor"]["command"]["edit_serial"] = json!(serial);
+                        control["expression_editor"]["finish"]["edit_serial"] = json!(serial);
+                    }
                     if control["widget"] != "number" {
                         continue;
                     }
+                    let serial = self.advertise(document, &control["command"]);
+                    control["command"]["edit_serial"] = json!(serial);
                     let key = key(&control["command"]);
                     control["interaction_active"] =
                         json!(self.active.as_ref().is_some_and(|edit| edit.key == key));
@@ -132,7 +309,74 @@ impl Interaction {
                 }
             }
         }
+        let revision = shrimply_project_document::project::history_revision();
+        self.sessions.retain(|serial, edit| {
+            edit.displayed
+                || edit.history_revision == revision
+                || self.expression == Some(*serial)
+                || self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.serial == *serial)
+        });
         snapshot
+    }
+
+    fn advertise(&mut self, document: &InspectorDocument, request: &Value) -> u64 {
+        let key = key(request);
+        let revision = shrimply_project_document::project::history_revision();
+        let serial = self
+            .sessions
+            .iter()
+            .find_map(|(serial, edit)| {
+                (edit.key == key && edit.history_revision == revision).then_some(*serial)
+            })
+            .unwrap_or_else(|| {
+                self.next_session = self
+                    .next_session
+                    .checked_add(1)
+                    .expect("control session overflow");
+                let mut control = super::read_control(document, request)
+                    .expect("advertised inspector control")
+                    .clone();
+                // Source editing needs property identity/configuration, not a graph picture.
+                control.scalar_graph = None;
+                self.sessions.insert(
+                    self.next_session,
+                    ControlSession {
+                        key,
+                        target: document.target.clone(),
+                        control,
+                        history_revision: revision,
+                        displayed: false,
+                    },
+                );
+                self.next_session
+            });
+        self.sessions
+            .get_mut(&serial)
+            .expect("retained control")
+            .displayed = true;
+        serial
+    }
+
+    fn advance_sessions(&mut self, revision: u64) {
+        let next = shrimply_project_document::project::history_revision();
+        for edit in self.sessions.values_mut() {
+            if edit.history_revision == revision {
+                edit.history_revision = next;
+            }
+        }
+    }
+
+    /// Focus loss follows raw native input. Preserve typed edits until their last packet.
+    pub fn external_input(&mut self, controller: &InspectorController) -> Result<(), String> {
+        if let Some(edit) = self.active.as_mut().filter(|edit| edit.drag.is_none()) {
+            edit.detached = true;
+            Ok(())
+        } else {
+            self.finish(controller)
+        }
     }
 
     fn locked(&self, key: &str, control: &InspectorControl) -> bool {
@@ -143,10 +387,17 @@ impl Interaction {
 
     pub fn finish(&mut self, controller: &InspectorController) -> Result<(), String> {
         if let Some(mut edit) = self.active.take() {
-            edit.transaction.apply(controller, |controller| {
+            let revision = shrimply_project_document::project::history_revision();
+            let commit = |controller: &InspectorController| {
                 controller.commit_basic_control(&edit.target, &edit.control)
-            })?;
+            };
+            if edit.detached {
+                edit.transaction.apply_retained(controller, commit)?;
+            } else {
+                edit.transaction.apply(controller, commit)?;
+            }
             edit.transaction.finish(controller)?;
+            self.advance_sessions(revision);
         }
         Ok(())
     }
@@ -157,33 +408,43 @@ impl Interaction {
         document: &InspectorDocument,
         request: &Value,
     ) -> Result<Value, String> {
-        let result = self.apply_input(controller, document, request);
-        if let Err(error) = &result {
+        self.synchronize(controller)?;
+        if let Some(completed) = self.complete(request)? {
+            return Ok(completed);
+        }
+        if controller.target() != document.target {
+            return Err("Inspector selection changed".into());
+        }
+        let control = super::resolve_control(document, request)?;
+        self.apply_number(controller, &document.target, control, request)
+    }
+
+    fn apply_number(
+        &mut self,
+        controller: &InspectorController,
+        target: &InspectorTarget,
+        control: &InspectorControl,
+        request: &Value,
+    ) -> Result<Value, String> {
+        let result = self.update_number(controller, target, control, request);
+        if let Err(error) = &result
+            && self.active.as_ref().is_some_and(|edit| {
+                edit.key == key(request) && request["edit_serial"].as_u64() == Some(edit.serial)
+            })
+        {
             self.cancel(controller)
                 .map_err(|cleanup| format!("{error}; {cleanup}"))?;
         }
         result
     }
 
-    fn apply_input(
+    fn update_number(
         &mut self,
         controller: &InspectorController,
-        document: &InspectorDocument,
+        target: &InspectorTarget,
+        control: &InspectorControl,
         request: &Value,
     ) -> Result<Value, String> {
-        if request["event"] == "cancel"
-            && self
-                .active
-                .as_ref()
-                .is_none_or(|edit| edit.key != key(request))
-        {
-            return Ok(json!({"active":false,"capture":false,"editing":false,"valid":true}));
-        }
-        self.synchronize(controller)?;
-        if controller.target() != document.target {
-            return Err("Inspector selection changed".into());
-        }
-        let control = super::resolve_control(document, request)?;
         if !control.editable
             || !matches!(
                 control.kind,
@@ -204,9 +465,25 @@ impl Interaction {
             .ok_or("Numeric input event is required")?;
         if !matches!(
             event,
-            "begin" | "edit" | "move" | "end" | "cancel" | "text" | "commit" | "lock"
+            "begin" | "edit" | "move" | "end" | "cancel" | "text" | "commit" | "lock" | "release"
         ) {
             return Err("Unknown numeric input event".into());
+        }
+        let serial = request["edit_serial"]
+            .as_u64()
+            .ok_or("Numeric session is required")?;
+        let session = self
+            .sessions
+            .get(&serial)
+            .ok_or("Numeric editor is closed")?;
+        if session.key != key
+            || session.history_revision != shrimply_project_document::project::history_revision()
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|edit| edit.key == key && edit.serial != serial)
+        {
+            return Err("Numeric control changed".into());
         }
         let current = self
             .active
@@ -249,15 +526,17 @@ impl Interaction {
                 [0.0; 2]
             };
             self.active = Some(Edit {
+                serial,
+                detached: false,
                 key: key.clone(),
-                target: document.target.clone(),
+                target: target.clone(),
                 control: control.clone(),
                 axis,
                 origin,
                 touch: request["touch"].as_bool().unwrap_or(false),
                 drag: (event == "begin").then(|| NumberDrag::begin(current[axis])),
                 values: current.clone(),
-                transaction: controller.begin_control_edit(&document.target)?,
+                transaction: controller.begin_control_edit(target)?,
             });
         } else if self.active.as_ref().is_none_or(|edit| edit.key != key) {
             if matches!(event, "move" | "end" | "cancel" | "commit") {
@@ -269,6 +548,20 @@ impl Interaction {
             .as_u64()
             .is_some_and(|contacts| contacts > 1)
         {
+            return self.cancel_input(controller, control, &key);
+        }
+        if event == "release" {
+            if self.active.as_ref().is_some_and(|edit| edit.drag.is_none()) {
+                let values = self
+                    .active
+                    .as_ref()
+                    .expect("retained number")
+                    .values
+                    .clone();
+                self.finish(controller)?;
+                self.release_session(request);
+                return Ok(self.response(control, &values, false, true, &key));
+            }
             return self.cancel_input(controller, control, &key);
         }
         if event == "cancel" {
@@ -417,7 +710,7 @@ fn apply_value(
     if edit.values == values {
         return Ok(());
     }
-    edit.transaction.apply(controller, |controller| {
+    let write = |controller: &InspectorController| {
         if edit.control.kind == ControlKind::Fraction {
             controller.set_basic_control_fraction(&edit.target, &edit.control, values[0])
         } else if edit.control.components.is_empty() {
@@ -437,7 +730,12 @@ fn apply_value(
                     .collect::<Vec<_>>(),
             )
         }
-    })?;
+    };
+    if edit.detached {
+        edit.transaction.apply_retained(controller, write)?;
+    } else {
+        edit.transaction.apply(controller, write)?;
+    }
     edit.values = values;
     Ok(())
 }

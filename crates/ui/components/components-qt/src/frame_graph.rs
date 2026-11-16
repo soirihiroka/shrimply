@@ -6,10 +6,10 @@ use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QPoint, QPointF, QString, QStringList};
 use shrimply_components_skia::canvas::UVec2;
 use shrimply_keyframe_graph_skia::{
-    FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction, FrameGraphComponents,
-    FrameGraphKey, FrameGraphKeyMove, FrameGraphModifiers, FrameGraphPointerButton,
-    FrameGraphPointerPosition, FrameGraphScrollInput, FrameGraphState, KeyframeGraph,
-    KeyframePoint, RawSegment, SpeedSegment,
+    FRAME_GRAPH_CONTEXT_ACTIONS, FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction,
+    FrameGraphComponents, FrameGraphKey, FrameGraphKeyMove, FrameGraphModifiers,
+    FrameGraphPointerButton, FrameGraphPointerPosition, FrameGraphScrollInput, FrameGraphState,
+    KeyframeGraph, KeyframePoint, RawSegment, SpeedSegment,
 };
 use shrimply_math_color::Color;
 use shrimply_math_core::{Time, fraction_denominator, fraction_numerator};
@@ -130,6 +130,14 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "handleKey"]
         fn handle_key(self: Pin<&mut FrameGraphItem>, key: i32);
+
+        #[qinvokable]
+        #[cxx_name = "contextActionLabels"]
+        fn context_action_labels(self: &FrameGraphItem) -> QStringList;
+
+        #[qinvokable]
+        #[cxx_name = "activateContextAction"]
+        fn activate_context_action(self: Pin<&mut FrameGraphItem>, index: i32);
         #[qinvokable]
         #[cxx_name = "previousKey"]
         fn previous_key(self: Pin<&mut FrameGraphItem>);
@@ -321,6 +329,9 @@ pub mod qobject {
             numerator: i64,
             denominator: i64,
         );
+        #[qsignal]
+        #[cxx_name = "contextMenuRequested"]
+        fn context_menu_requested(self: Pin<&mut FrameGraphItem>, position: QPointF, touch: bool);
         #[qsignal]
         #[cxx_name = "textInterpolationRequested"]
         fn text_interpolation_requested(
@@ -591,6 +602,21 @@ impl qobject::FrameGraphItem {
             self.as_mut().request_update();
         }
         handled
+    }
+
+    pub fn context_action_labels(&self) -> QStringList {
+        FRAME_GRAPH_CONTEXT_ACTIONS
+            .into_iter()
+            .map(|action| shrimply_i18n_qt::text(action.label))
+            .collect()
+    }
+
+    pub fn activate_context_action(mut self: Pin<&mut Self>, index: i32) {
+        let action = FRAME_GRAPH_CONTEXT_ACTIONS
+            .get(usize::try_from(index).expect("graph context action index"))
+            .expect("graph context menu returned a known command");
+        let actions = self.rust().lock().state.input_key(action.key).actions;
+        self.as_mut().finish(actions);
     }
 
     pub fn handle_key(mut self: Pin<&mut Self>, key: i32) {
@@ -988,6 +1014,10 @@ impl qobject::FrameGraphItem {
                 FrameGraphAction::EditCancelled => self.as_mut().edit_cancelled(),
                 FrameGraphAction::HistoryRequested { redo } => {
                     self.as_mut().history_requested(redo)
+                }
+                FrameGraphAction::ContextMenuRequested { x, y, touch } => {
+                    self.as_mut()
+                        .context_menu_requested(QPointF::new(x, y), touch);
                 }
                 FrameGraphAction::InterpolationRequested {
                     owner_id,

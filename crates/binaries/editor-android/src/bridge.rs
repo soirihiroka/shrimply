@@ -422,7 +422,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
                 if begins_edit
                     && let Err(error) = runtime
                         .cancel_graph_edit()
-                        .and_then(|()| runtime.cancel_numeric())
+                        .and_then(|()| runtime.leave_numeric())
                 {
                     runtime.error = Some(error);
                     changed = true;

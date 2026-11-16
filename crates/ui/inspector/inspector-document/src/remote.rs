@@ -123,7 +123,7 @@ pub fn validate_file_command(
 
 /// Resolve controls anew; requests carry no writable property paths or indices
 /// into the project. A selection change, removed effect or changed kind fails.
-pub fn apply(
+fn apply(
     controller: &InspectorController,
     document: &InspectorDocument,
     request: &Value,
@@ -305,9 +305,8 @@ fn apply_control(
     if control.kind == ControlKind::TtsEditor {
         return tts::apply(controller, target, control, action, request);
     }
-    if action == "expression_finish" {
-        shrimply_project_document::project::finish_coalesced_edit();
-        return Ok(());
+    if action == "edit" && request["editor"] == "expression" {
+        return apply_expression(controller, target, control, request);
     }
     if action == "edit" {
         let values = request["values"]
@@ -315,13 +314,7 @@ fn apply_control(
             .filter(|values| values.iter().all(Value::is_string))
             .ok_or("editor values must be text")?;
         let mut request = request.clone();
-        let action = if request["editor"] == "expression" {
-            if values.len() != 1 {
-                return Err("expression editor requires one value".into());
-            }
-            request["value"] = values[0].clone();
-            "expression_source"
-        } else if !control.components.is_empty() {
+        let action = if !control.components.is_empty() {
             if values.len() != control.components.len() {
                 return Err("component count changed while the editor was open".into());
             }
@@ -440,19 +433,29 @@ fn apply_control(
                 controller.set_control_expression(target, control, enabled)
             };
         }
-        "expression_source" => {
-            if control.timeline_path.is_none() {
-                return Err("control has no expression".into());
-            }
-            return controller.set_control_expression_source(
-                target,
-                control,
-                request["value"]
-                    .as_str()
-                    .ok_or("expression source is required")?,
-            );
-        }
         _ => return Err("unknown inspector control action".into()),
     }
     controller.commit_basic_control(target, control)
+}
+
+fn apply_expression(
+    controller: &InspectorController,
+    target: &shrimply_inspector_core::InspectorTarget,
+    control: &InspectorControl,
+    request: &Value,
+) -> Result<(), String> {
+    if !control.editable || !control.sensitive || control.timeline_path.is_none() {
+        return Err("Expression control is unavailable".into());
+    }
+    let values = request["values"]
+        .as_array()
+        .ok_or("expression editor requires one value")?;
+    let [source] = values.as_slice() else {
+        return Err("expression editor requires one value".into());
+    };
+    controller.set_control_expression_source(
+        target,
+        control,
+        source.as_str().ok_or("expression source must be text")?,
+    )
 }

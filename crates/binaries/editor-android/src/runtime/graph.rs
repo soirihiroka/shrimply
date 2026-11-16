@@ -13,16 +13,8 @@ use super::Runtime;
 impl Runtime {
     pub(super) fn graph_request(&mut self, request: &Value) -> Result<Value, String> {
         self.update_inspector();
-        let surface = request["serial"]
-            .as_u64()
-            .and_then(|id| usize::try_from(id).ok())
-            .ok_or("Frame graph is required")?;
         let controller = self.inspector.as_ref().ok_or("Open a project first")?;
-        self.framegraphs
-            .sessions
-            .get_mut(&surface)
-            .ok_or("Frame graph changed")?
-            .request(controller, request)?;
+        self.framegraphs.request(controller, request)?;
         self.inspector_stamp = None;
         self.graph_dirty = true;
         self.timeline_changed()?;

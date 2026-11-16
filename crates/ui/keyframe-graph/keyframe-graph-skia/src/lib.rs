@@ -10,10 +10,11 @@ use uuid::Uuid;
 mod controller;
 mod math;
 pub use controller::{
-    FRAME_GRAPH_HEIGHT, FrameGraphAction, FrameGraphCommand, FrameGraphComponentAction,
-    FrameGraphComponents, FrameGraphInputResult, FrameGraphKey, FrameGraphKeyMove,
-    FrameGraphModifiers, FrameGraphPointerButton, FrameGraphPointerPosition, FrameGraphScrollInput,
-    FrameGraphState, FrameGraphStatus, GRAPH_SLIDER_HEIGHT,
+    FRAME_GRAPH_CONTEXT_ACTIONS, FRAME_GRAPH_HEIGHT, FrameGraphAction, FrameGraphCommand,
+    FrameGraphComponentAction, FrameGraphComponents, FrameGraphContextAction,
+    FrameGraphInputResult, FrameGraphKey, FrameGraphKeyMove, FrameGraphModifiers,
+    FrameGraphPointerButton, FrameGraphPointerPosition, FrameGraphScrollInput, FrameGraphState,
+    FrameGraphStatus, GRAPH_SLIDER_HEIGHT,
 };
 
 pub const GRAPH_PAD: f64 = 12.0;
