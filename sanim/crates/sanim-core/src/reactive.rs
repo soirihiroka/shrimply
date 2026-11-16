@@ -36,6 +36,10 @@ pub enum Node {
         list: NodeId,
         index: usize,
     },
+    Field {
+        record: NodeId,
+        name: String,
+    },
     List {
         values: Vec<NodeId>,
     },
@@ -60,7 +64,7 @@ pub struct CellChannel {
     pub tracks: Vector<Track>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "GraphData")]
 pub struct ReactiveGraph {
     nodes: Vector<Expression>,
@@ -72,16 +76,35 @@ pub struct ReactiveGraph {
     binding_count: usize,
     #[serde(skip)]
     metadata_bytes: usize,
+    native_byte_limit: usize,
+}
+impl Default for ReactiveGraph {
+    fn default() -> Self {
+        Self {
+            nodes: Vector::new(),
+            cells: OrdMap::new(),
+            bindings: OrdMap::new(),
+            track_count: 0,
+            binding_count: 0,
+            metadata_bytes: 0,
+            native_byte_limit: MAX_REACTIVE_BYTES,
+        }
+    }
 }
 #[derive(Deserialize)]
 struct GraphData {
     nodes: Vector<Expression>,
     cells: OrdMap<CellId, CellChannel>,
     bindings: OrdMap<String, OrdMap<Property, NodeId>>,
+    native_byte_limit: Option<usize>,
 }
 impl TryFrom<GraphData> for ReactiveGraph {
     type Error = String;
     fn try_from(data: GraphData) -> Result<Self, String> {
+        let native_byte_limit = data.native_byte_limit.unwrap_or(MAX_REACTIVE_BYTES);
+        if native_byte_limit > MAX_REACTIVE_BYTES {
+            return Err("retained native byte limit exceeds its hard budget".into());
+        }
         let mut graph = Self {
             nodes: data.nodes,
             cells: data.cells,
@@ -89,13 +112,45 @@ impl TryFrom<GraphData> for ReactiveGraph {
             track_count: 0,
             binding_count: 0,
             metadata_bytes: 0,
+            native_byte_limit: MAX_REACTIVE_BYTES,
         };
+        graph.set_native_byte_limit(native_byte_limit)?;
         (graph.track_count, graph.binding_count, graph.metadata_bytes) =
             graph.validated_counts()?;
         Ok(graph)
     }
 }
 impl ReactiveGraph {
+    pub fn set_native_byte_limit(&mut self, bytes: usize) -> Result<(), String> {
+        let limit = bytes.min(MAX_REACTIVE_BYTES);
+        // Restored prefixes can have been prepared under a larger host budget.
+        // Scan only when reducing the ceiling, not on every node insertion.
+        if limit < self.native_byte_limit {
+            let constants =
+                self.nodes
+                    .iter()
+                    .filter_map(|expression| match &expression.operation {
+                        Node::Constant(value) => Some(value),
+                        _ => None,
+                    });
+            let cells = self.cells.values().flat_map(|cell| {
+                std::iter::once(&cell.initial).chain(
+                    cell.tracks
+                        .iter()
+                        .flat_map(|track| [&track.from, &track.to]),
+                )
+            });
+            for value in constants.chain(cells) {
+                if let Value::Texture(texture) = value
+                    && texture.pixels().len() > limit
+                {
+                    return Err("retained texture exceeds the host byte budget".into());
+                }
+            }
+        }
+        self.native_byte_limit = limit;
+        Ok(())
+    }
     pub fn has_cell(&self, id: CellId) -> bool {
         self.cells.contains_key(&id)
     }
@@ -150,6 +205,7 @@ impl ReactiveGraph {
                 Node::Record { fields } => pending.extend(fields.values()),
                 Node::NativeConfig { arguments, .. } => pending.extend(arguments.values()),
                 Node::Index { list, .. } => pending.push(*list),
+                Node::Field { record, .. } => pending.push(*record),
             }
         }
         Ok(cells)
@@ -420,6 +476,17 @@ impl ReactiveGraph {
         native_work: &mut u64,
         native_limit: u64,
     ) -> Result<NodeId, String> {
+        // A literal record projection depends only on its selected child; edits
+        // to unrelated fields must not invalidate or evaluate that child.
+        if let Node::Field { record, name } = &operation
+            && let Some(Expression {
+                operation: Node::Record { fields },
+                ..
+            }) = self.nodes.get(*record)
+            && let Some(child) = fields.get(name)
+        {
+            return Ok(*child);
+        }
         if self.nodes.len() >= limit.min(MAX_REACTIVE_NODES) {
             return Err("retained expression node limit exceeded; move constant constructors or lists into a let binding before sig (for example let curve=Curve(...)), or simplify the signal".into());
         }
@@ -450,6 +517,13 @@ impl ReactiveGraph {
                 .map(|(name, id)| constant(id).map(|value| (name.clone(), value)))
                 .collect::<Option<OrdMap<_, _>>>()
                 .map(Value::Record),
+            Node::Field { record, name } => constant(record).and_then(|value| {
+                if let Value::Record(fields) = value {
+                    fields.get(name).cloned()
+                } else {
+                    None
+                }
+            }),
             Node::NativeConfig {
                 operation,
                 arguments,
@@ -459,18 +533,24 @@ impl ReactiveGraph {
                     .map(|(name, id)| constant(id).map(|value| (name.clone(), value)))
                     .collect::<Option<OrdMap<_, _>>>()
                 {
-                    let required = u64::try_from(operation.work(&arguments)?)
-                        .map_err(|_| "native folding work count overflow")?;
-                    let total = native_work
-                        .checked_add(required)
-                        .ok_or("native folding work count overflow")?;
-                    if total > native_limit {
-                        return Err("constant native folding exceeds the remaining native preparation work budget".into());
-                    }
-                    *native_work = total;
+                    let mut reservation_error = None;
                     // Folding is optional: a failing pure call must stay lazy when its
                     // parent short-circuits, rather than becoming a preparation error.
-                    operation.execute(&arguments).ok()
+                    let value=operation.evaluate(&arguments,|cost|{
+                        if cost.bytes.max(cost.output_bytes)>self.native_byte_limit{
+                            let message="constant native folding exceeds the host byte budget".to_string();reservation_error=Some(message.clone());return Err(message);
+                        }
+                        let required=u64::try_from(cost.work).map_err(|_|"native folding work count overflow")?;
+                        let total=native_work.checked_add(required).ok_or("native folding work count overflow")?;
+                        if total>native_limit {
+                            let message="constant native folding exceeds the remaining native preparation work budget".to_string();reservation_error=Some(message.clone());return Err(message);
+                        }
+                        *native_work=total;Ok(())
+                    });
+                    if let Some(error) = reservation_error {
+                        return Err(error);
+                    }
+                    value.ok()
                 } else {
                     None
                 }
@@ -485,6 +565,11 @@ impl ReactiveGraph {
         } else {
             operation
         };
+        if let Node::Constant(Value::Texture(texture)) = &operation
+            && texture.pixels().len() > self.native_byte_limit
+        {
+            return Err("retained texture exceeds the host byte budget".into());
+        }
         let bytes = self.reserve(node_bytes(&operation)?)?;
         self.nodes.push_back(Expression {
             operation,
@@ -541,6 +626,10 @@ impl ReactiveGraph {
             time,
             values: vec![None; self.nodes.len()],
             evaluated: 0,
+            native_work: 0,
+            texture_bytes: self.native_byte_limit,
+            texture_items: MAX_REACTIVE_NODES,
+            texture_budget: crate::value_budget::Budget::default(),
         })
     }
     fn describe(&self, operation: &Node, before: usize) -> Result<(Type, usize), String> {
@@ -648,6 +737,10 @@ impl ReactiveGraph {
                     .fixed_index(*index)?
                     .ok_or("retained indexing requires a List with a known fixed length")?;
                 Ok((inner, list.depth + 1))
+            }
+            Node::Field { record, name } => {
+                let record = child(*record)?;
+                Ok((record.ty.record_field(name)?, record.depth + 1))
             }
             Node::Template { parts } => {
                 let mut depth = 0;
@@ -1022,6 +1115,11 @@ impl ReactiveGraph {
                 {
                     children(*a, *b)
                 }
+                (Node::Field { record: a, name: x }, Node::Field { record: b, name: y })
+                    if x == y =>
+                {
+                    children(*a, *b)
+                }
                 (Node::Math { name: a, args: x }, Node::Math { name: b, args: y })
                     if a == b && x.len() == y.len() =>
                 {
@@ -1105,6 +1203,7 @@ fn node_bytes(node: &Node) -> Result<usize, String> {
             Node::Constant(value) => state_value_bytes(&value.ty(), value)?,
             Node::Unary { op, .. } | Node::Binary { op, .. } => op.len(),
             Node::Math { name, args } => name.len() + args.len() * std::mem::size_of::<NodeId>(),
+            Node::Field { name, .. } => name.len(),
             Node::List { values } => values.len() * std::mem::size_of::<NodeId>(),
             Node::Record { fields } => fields
                 .keys()
@@ -1134,6 +1233,10 @@ pub struct Sampler<'a> {
     time: Fraction,
     values: Vec<Option<Value>>,
     evaluated: usize,
+    native_work: usize,
+    texture_bytes: usize,
+    texture_items: usize,
+    texture_budget: crate::value_budget::Budget,
 }
 impl Sampler<'_> {
     pub fn evaluated_nodes(&self) -> usize {
@@ -1158,7 +1261,22 @@ impl Sampler<'_> {
                     .iter()
                     .map(|(name, id)| self.value(*id).map(|value| (name.clone(), value)))
                     .collect::<Result<imbl::OrdMap<_, _>, _>>()?;
-                operation.execute(&arguments)?
+                operation.evaluate(&arguments, |cost| {
+                    self.native_work = self
+                        .native_work
+                        .checked_add(cost.work)
+                        .ok_or("retained native work count overflow")?;
+                    if self.native_work > crate::math::texture::MAX_WORK {
+                        return Err("retained native sampling exceeds the frame work budget".into());
+                    }
+                    if cost.bytes > self.texture_bytes {
+                        return Err(
+                            "retained texture sampling exceeds the remaining frame byte budget"
+                                .into(),
+                        );
+                    }
+                    Ok(())
+                })?
             }
             Node::Constant(value) => value.clone(),
             Node::List { values } => {
@@ -1221,8 +1339,30 @@ impl Sampler<'_> {
                 .get(*index)
                 .cloned()
                 .ok_or("retained List index is out of range")?,
+            Node::Field { record, name } => {
+                let Value::Record(fields) = self.value(*record)? else {
+                    return Err(format!(
+                        "retained field '{name}' requires the checked record value"
+                    ));
+                };
+                fields.get(name).cloned().ok_or_else(|| {
+                    format!(
+                        "retained field '{name}' is missing; available fields: {}",
+                        fields.keys().cloned().collect::<Vec<_>>().join(", ")
+                    )
+                })?
+            }
         };
         leaf_type(&value)?;
+        if matches!(value, Value::Texture(_)) {
+            crate::value_budget::charge_with_budget(
+                &value,
+                &mut self.texture_bytes,
+                &mut self.texture_items,
+                MAX_REACTIVE_DEPTH,
+                &mut self.texture_budget,
+            )?;
+        }
         self.values[id] = Some(value.clone());
         self.evaluated += 1;
         Ok(value)
@@ -1267,14 +1407,15 @@ fn leaf_type(value: &Value) -> Result<Type, String> {
         Value::Font(font) => {
             font.validate()?;
         }
-        Value::Code(_)
+        Value::Element(_)
+        | Value::Code(_)
         | Value::VoxelGrid(_)
         | Value::VoxelLayout(_)
         | Value::Density(_)
         | Value::Curve(_)
         | Value::Random(_)
         | Value::VoxelMaterial(_)
-        | Value::VoxelTexture(_)
+        | Value::Texture(_)
         | Value::List(_)
         | Value::Record(_)
         | Value::Some(_)
@@ -1339,6 +1480,7 @@ fn property_type(property: Property, ty: &Type) -> Result<(), String> {
             Some(Unit::Length | Unit::Percent)
         ),
         Property::Fill => crate::Paint::ty().accepts(ty),
+        Property::Texture => crate::Type::Texture.accepts(ty),
         Property::Code
         | Property::VoxelVolume
         | Property::VoxelLayout

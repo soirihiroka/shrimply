@@ -1,107 +1,164 @@
-# A seeded landscape, reusable structures, physical water and a day–night camera journey.
-# Run voxel_pack.py to place this source and its original texture pack in one directory.
+# Cedar Falls: a seeded, warped landscape with an inhabited clearing.
 import "./voxel_structures.sanim" as structures
+import "./voxel_textures.sanim" as textures
 let palette = structures.materials
-let water = VoxelMaterial(color = Color("white"), transmission = 1, ior = 1.333,
-    roughness = 0.025, attenuation_color = Color("#38C5D8"), attenuation_distance = 12,
-    wave_strength = 0.055, wave_length = 9, wave_speed = 0.7)
-let rock = VoxelMaterial(texture = read<VoxelTexture>("assets/minecraft/textures/block/stone.png"))
-let falling_water = VoxelMaterial(color = Color("#97DDE8"), transmission = 0.28, ior = 1.333,
-    roughness = 0.35, wave_strength = 0.12, wave_length = 2, wave_speed = 3)
-let grass_blade = structures.grass_material(read<VoxelTexture>("assets/minecraft/textures/block/short_grass.png"))
+let seed = reflect(71, label = "Landscape Seed", key = "terrain.seed")
+let relief = reflect(58, label = "Ridge Height", key = "terrain.relief")
+let forest_density = reflect(0.78, label = "Forest Density", key = "terrain.forest")
+let rock = VoxelMaterial(texture = textures.stone)
+let water = VoxelMaterial(color = Color("white"), transmission = 1, ior = 1.333, roughness = 0.025,
+    attenuation_color = Color("#43B9AD"), attenuation_distance = 15,
+    wave_strength = 0.045, wave_length = 8, wave_speed = 0.55)
+let falling_water = VoxelMaterial(texture = textures.waterfall, transmission = 0.55, ior = 1.333,
+    roughness = 0.35, wave_strength = 0.1, wave_length = 2, wave_speed = 2)
+let grass = structures.grass_material(textures.short_grass)
+let flowers_white = structures.grass_material(textures.wildflower_white)
+let flowers_gold = structures.grass_material(textures.wildflower_gold)
 
-# Compose small fields, rather than prescribing a whole landscape generator.
-let basin = Distance(center = [98, 0, 85], axes = "xz").divide(34).pow(2).multiply(9).add(7)
-let hills = Noise(seed = 71, kind = "fbm", scale = 24, octaves = 4).multiply(5)
-let cliffs = Noise(seed = 19, kind = "ridged", scale = 13, octaves = 2).multiply(3)
-let natural = basin.add(hills).add(cliffs).clamp(5, 61)
-# A soft rectangular construction pad blends into the hillside.
-let pad_x = Density(axis = "x", offset =-50).abs().divide(32)
-let pad_z = Density(axis = "z", offset =-100).abs().divide(43)
-let blend = pad_x.max(pad_z).subtract(1).multiply(4).clamp(0, 1)
-let heights = natural.multiply(blend).add(Density(value = 1).subtract(blend).multiply(22))
-let bare = VoxelGrid(size = [176, 96, 176]).heightmap(heights, rock).surface(palette.sand, depth = 2).surface(palette.grass,
-    depth = 2, mask = Density(axis = "y").subtract(17))
-# Scatter uses native cutout cards, and a field masks the lake and the building pad.
-let dry = Density(axis = "y").subtract(17).clamp(0, 1).multiply(blend)
-let grass_density = Noise(seed = 13, scale = 8).remap(-1, 1, 0, 1).pow(3).multiply(0.4).multiply(dry)
-let plants = bare.scatter(grass_blade, density = grass_density, seed = 29, step = 1)
-mut terrain = plants.flood(level = 16, material = water)
-# An elevated spring feeds a stepped waterfall behind the lake.
-terrain = terrain.fill(min = [108, 16, 36], max = [117, 34, 43], material = rock)
-terrain = terrain.fill(min = [110, 33, 37], max = [115, 34, 43], material = water)
-terrain = terrain.fill(min = [111, 16, 42], max = [114, 34, 43], material = falling_water)
+# Independent wavelengths give the land a large silhouette and smaller detail.
+# Warping breaks circular contours; the river/lake carve only local low ground.
+let broad = (Noise(seed = seed, axes = "xz", scale = 73, octaves = 5, persistence = 0.46)
+    .warp(seed = seed + 101, axes = "xz", scale = 43, strength = 18).multiply(19).add(39))
+let rear = Density(axis = "z").remap(12, 150, 1, 0).clamp(0, 1)
+let ridges = (Noise(seed = seed + 17, kind = "ridged", axes = "xz", scale = 41, octaves = 3)
+    .warp(seed = seed + 103, axes = "xz", scale = 33, strength = 13)
+    .remap(-1, 1, 0, 1).pow(2).multiply(relief).multiply(rear))
+let uplands = broad.add(ridges)
+let lake = (Distance(axes = "xz").scale([1.2, 1, 0.9]).translate([145, 0, 133])
+    .warp(seed = seed + 211, axes = "xz", scale = 38, strength = 16))
+let lake_bed = lake.divide(49).pow(3).multiply(32).add(9)
+let river = (Density(axis = "x", offset =-148)
+    .add(Noise(seed = seed + 73, axes = "xz", scale = 55, octaves = 2).multiply(21)).abs())
+let river_bed = river.divide(9).pow(2).multiply(25).add(17).add(rear.pow(8).multiply(120))
+let natural = uplands.min(lake_bed).min(river_bed).clamp(7, 105)
+# An elliptical clearing has a smooth transition into unmodified terrain.
+let clearing = Distance(axes = "xz").scale([1, 1, 1.25]).translate([77, 0, 126])
+let wild = clearing.smoothstep(min = 38, max = 52)
+let heights = natural.multiply(wild).add(Density(value = 1).subtract(wild).multiply(32))
+let ground = (VoxelGrid(size = [224, 144, 208]).heightmap(heights, rock)
+    .surface(palette.sand, depth = 2, mask = Density(value = 24).subtract(Density(axis = "y")))
+    .surface(palette.grass, depth = 2, mask = Density(axis = "y").subtract(23)))
+let moisture = Noise(seed = seed + 53, axes = "xz", scale = 29, octaves = 3).remap(-1, 1, 0, 1)
+let dry = Density(axis = "y").smoothstep(min = 21, max = 26).multiply(wild)
+let meadow = moisture.smoothstep(min = 0.42, max = 0.63).multiply(dry)
+let grass_density = (Noise(seed = seed + 13, axes = "xz", scale = 9).remap(-1, 1, 0, 1).pow(2)
+    .multiply(0.22).multiply(dry))
+mut terrain = (ground.scatter(grass, density = grass_density, seed = seed + 29)
+    .scatter(flowers_white, density = meadow.multiply(0.07), seed = seed + 31)
+    .scatter(flowers_gold, density = meadow.multiply(0.035), seed = seed + 37)
+    .flood(level = 20, material = water))
+
+# The spring is a reusable noise-shaped rock outcrop, with two descending pools.
+let outcrop = (Density(value = 16).subtract(Distance().scale([1, 0.8, 0.85]).translate([16, 12, 15]))
+    .add(Noise(seed = seed + 301, scale = 5, octaves = 3).multiply(2.2)))
+mut spring = (VoxelGrid(size = [34, 35, 34]).density(outcrop, rock)
+    .surface(palette.grass, depth = 1, mask = Noise(seed = seed + 303, axes = "xz", scale = 9).subtract(0.05)))
+spring = (spring.erase(min = [12, 18, 11], max = [23, 35, 20])
+    .carve(Density(value = 4.5).subtract(Density(axis = "x", offset =-19).abs()), min = [13, 0, 20],
+        max = [25, 20, 34])
+    .fill(min = [12, 18, 11], max = [23, 20, 20], material = water)
+    .erase(min = [14, 10, 20], max = [23, 35, 26])
+    .fill(min = [14, 10, 20], max = [23, 12, 26], material = water)
+    .fill(min = [16, 12, 19], max = [21, 20, 20], material = falling_water)
+    .fill(min = [17, 0, 25], max = [22, 12, 26], material = falling_water))
+let outlet = Density(value = 5).subtract(Density(axis = "x", offset =-141.5).abs())
+terrain = terrain.carve(outlet, min = [135, 20, 94], max = [149, 42, 110]).place(child = spring, at = [122,
+        20, 70])
 
 let cabin = <VoxelPart volume={structures.cabin()}/>
 let tower = <VoxelPart volume={structures.tower()} offset={[0,0,3]}/>
-let farm = <VoxelPart volume={structures.garden()} offset={[1,0,0]}/>
-let homestead = <VoxelBox flow="z" gap={7} position_mode="absolute" at={[26,22,65]}>
+let farm = <VoxelPart volume={structures.garden()} offset={[3,0,0]}/>
+let homestead = <VoxelBox flow="z" gap={7} position_mode="absolute" at={[50,32,94]}>
     <VoxelBox flow="x" gap={4} align={["start","start","center"]}>
         {cabin}
         {tower}
     </VoxelBox>
     {farm}
 </VoxelBox>
-# A dock and stepped path meet the lake without placing two surfaces in one cell.
-mut dock = VoxelGrid(size = [176, 96, 176])
-dock = dock.fill(min = [65, 21, 96], max = [77, 22, 101], material = palette.cobble)
-for step in range(5) {
-    dock = dock.fill(min = [76 + step * 2, 20 - step, 96], max = [79 + step * 2, 21 - step, 101], material = palette.wood)
+
+# Walkways, garden fencing and the lake overlook form one reusable local asset.
+mut paths = VoxelGrid(size = [224, 144, 208])
+paths = paths.fill(min = [67, 32, 127], max = [74, 33, 141], material = palette.cobble)
+for x in [53, 84] {
+    for z in range(141, 173, 5) {
+        paths = paths.fill(min = [x, 32, z], max = [x + 1, 36, z + 1], material = palette.timber)
+    }
+    paths = paths.fill(min = [x, 34, 141], max = [x + 1, 35, 173], material = palette.timber)
 }
-dock = dock.fill(min = [85, 16, 94], max = [104, 17, 104], material = palette.wood)
-for x in [87, 101] {
-    for z in [95, 102] {
-        dock = dock.fill(min = [x, 8, z], max = [x + 1, 21, z + 1], material = palette.timber)
+for step in range(12) {
+    let x = 88 + step * 2
+    let y = 32 - step
+    terrain = terrain.erase(min = [x, y + 1, 124], max = [x + 3, 42, 129])
+    paths = paths.fill(min = [x, y, 124], max = [x + 3, y + 1, 129], material = palette.wood)
+}
+paths = paths.fill(min = [111, 20, 122], max = [138, 21, 131], material = palette.wood)
+for x in [114, 134] {
+    for z in [123, 129] {
+        paths = paths.fill(min = [x, 12, z], max = [x + 1, 25, z + 1], material = palette.timber)
     }
 }
-dock = dock.fill(min = [85, 20, 94], max = [104, 21, 95], material = palette.timber)
-dock = dock.fill(min = [85, 20, 103], max = [104, 21, 104], material = palette.timber)
-# Original crop rows and the bridge remain separate reusable construction assets.
-mut path = VoxelGrid(size = [176, 96, 176])
-path = path.fill(min = [43, 22, 100], max = [50, 23, 108], material = palette.cobble)
-for base in [[34, 22, 103], [60, 22, 103], [73, 22, 106]] {
-    path = path.fill(min = base, max = [base[0] + 1, base[1] + 5, base[2] + 1], material = palette.timber)
-    path = path.fill(min = [base[0], base[1] + 5, base[2]], max = [base[0] + 1, base[1] + 6, base[2] + 1],
+paths = paths.fill(min = [112, 24, 122], max = [138, 25, 123], material = palette.timber)
+for base in [[58, 32, 134], [86, 32, 134], [114, 21, 123], [134, 21, 129]] {
+    paths = paths.fill(min = base, max = [base[0] + 1, base[1] + 5, base[2] + 1], material = palette.timber)
+    paths = paths.fill(min = [base[0], base[1] + 5, base[2]], max = [base[0] + 1, base[1] + 6, base[2] + 1],
         material = palette.lantern)
 }
+paths = (paths.place(child = structures.barrel(), at = [80, 36, 124])
+    .place(child = structures.crate(), at = [56, 36, 124]))
 
-# Three asset variants are instanced at arbitrary positions, not copied per tree.
-let trees_a = structures.tree(seed = 11)
-let trees_b = structures.tree(seed = 23)
-let trees_c = structures.tree(seed = 37)
-let rng = Random(seed = 209)
-mut positions_a: List<List<Number, 3>> = []
-mut positions_b: List<List<Number, 3>> = []
-mut positions_c: List<List<Number, 3>> = []
-let candidates = bare.surface_points(step = 13)
-for point in candidates {
-    let index = point[0] * 176 + point[2]
+# Jittered, slope-aware sampling gives clustered forest rather than a tree grid.
+let rng = Random(seed = seed + 209)
+let oak_a = structures.tree(seed = 11)
+let oak_b = structures.tree(seed = 23)
+let pine_a = structures.pine(seed = 31, height = 36)
+let pine_b = structures.pine(seed = 43, height = 44)
+let rocks = structures.boulder(seed = 71)
+mut oaks_a: List<List<Number, 3>> = []
+mut oaks_b: List<List<Number, 3>> = []
+mut pines_a: List<List<Number, 3>> = []
+mut pines_b: List<List<Number, 3>> = []
+mut stones: List<List<Number, 3>> = []
+let tree_density = moisture.add(0.55).multiply(forest_density).clamp(0, 0.95)
+for point in ground.surface_points(step = 10, seed = seed + 209, jitter = 0.85, density = tree_density,
+    mask = wild.subtract(0.98), max_slope = 2.1) {
+    let index = point[0] * 208 + point[2]
     let x = point[0]
     let y = point[1]
     let z = point[2]
-    if x > 9 and x < 158 and z > 9 and z < 158 and y > 19 and y < 65 and blend.sample(point) > 0.98 and (x < 25 or z < 60 or (x > 132 and z < 110)) and (x - 112) ** 2 + (z - 42) ** 2 > 400 and rng.chance(index,
-        probability = 0.64) {
-        let origin = [x - 7, y, z - 7]
-        if index % 3 == 0 {
-            positions_a = append(positions_a, origin)
+    if (x > 12 and x < 202 and z > 10 and z < 186 and y > 24 and y < 88
+        and ((x - 139) ** 2 + (z - 87) ** 2 > 1100)
+        and (z < 90 or x < 43 or (x > 183 and z < 156))) {
+        if rng.chance(index + 300000, probability = 0.15) {
+            stones = append(stones, [x - 5, y - 2, z - 5])
         } else {
-            if index % 3 == 1 {
-                positions_b = append(positions_b, origin)
+            let origin = [x - 9, y, z - 9]
+            let variant = rng.integer(index + 400000, min = 0, max = 2)
+            if z < 76 or y > 57 {
+                if variant == 0 {
+                    pines_a = append(pines_a, origin)
+                } else {
+                    pines_b = append(pines_b, origin)
+                }
             } else {
-                positions_c = append(positions_c, origin)
+                if variant == 0 {
+                    oaks_a = append(oaks_a, origin)
+                } else {
+                    oaks_b = append(oaks_b, origin)
+                }
             }
         }
     }
 }
 let terrain_part = <VoxelPart volume={terrain} position_mode="absolute"/>
-let world = <VoxelBox size={[176,96,176]}>
+let world = <VoxelBox size={[224,144,208]}>
     {terrain_part}
     {homestead}
-    <VoxelPart volume={dock} position_mode="absolute"/>
-    <VoxelPart volume={path} position_mode="absolute"/>
-    {Instances(asset=trees_a,positions=positions_a,size=[176,96,176])}
-    {Instances(asset=trees_b,positions=positions_b,size=[176,96,176])}
-    {Instances(asset=trees_c,positions=positions_c,size=[176,96,176])}
+    <VoxelPart volume={paths} position_mode="absolute"/>
+    {Instances(asset=oak_a,positions=oaks_a,size=[224,144,208])}
+    {Instances(asset=oak_b,positions=oaks_b,size=[224,144,208])}
+    {Instances(asset=pine_a,positions=pines_a,size=[224,144,208])}
+    {Instances(asset=pine_b,positions=pines_b,size=[224,144,208])}
+    {Instances(asset=rocks,positions=stones,size=[224,144,208])}
 </VoxelBox>
 world.assert_disjoint(cabin, terrain_part)
 world.assert_disjoint(farm, terrain_part)
@@ -109,59 +166,50 @@ world.assert_disjoint(cabin, tower)
 world.assert_within(cabin, world)
 world.assert_within(farm, world)
 
-# All frame changes below retain the same immutable terrain and instance assets.
 mut progress = 0
-mut sun_angle = 40deg
-mut lens = 56deg
+mut sun_angle = 34deg
+mut lens = 53deg
 sig daylight = clamp(sin(sun_angle) * 1.6, 0, 1)
-sig sun = SunLight(direction = [cos(sun_angle), sin(sun_angle), 0.35], color = Color("#FFF0D2"), intensity = daylight * 1.2,
-    diameter = 5deg)
-sig moon = SunLight(direction = [-cos(sun_angle),-sin(sun_angle),-0.35], color = Color("#99BDFF"), intensity = (1 - daylight) * 0.22,
+sig sun = SunLight(direction = [cos(sun_angle), sin(sun_angle), 0.45], color = Color("#FFE2B8"), intensity = daylight * 1.1,
+    diameter = 6deg)
+sig moon = SunLight(direction = [-cos(sun_angle),-sin(sun_angle),-0.45], color = Color("#A5C8FF"), intensity = (1 - daylight) * 0.24,
     diameter = 3deg)
-sig sky = Environment(top = Color("#6D9DD8"), horizon = Color("#C5DDE9"), ground = Color("#475B43"),
-    intensity = 0.065 + daylight * 0.6, visible = true)
-sig lamp_strength = 18 + (1 - daylight) * 130
-sig porch_left = PointLight(position = [34.5, 31.5, 97.5], color = Color("#FFC37D"), intensity = lamp_strength,
-    radius = 1.2)
-sig porch_right = PointLight(position = [54.5, 31.5, 97.5], color = Color("#FFC37D"), intensity = lamp_strength,
-    radius = 1.2)
-sig tower_light = PointLight(position = [74, 54.5, 86], color = Color("#FFD494"), intensity = lamp_strength * 1.5,
+sig sky = Environment(top = Color("#78B3D4"), horizon = Color("#A9C9D5"), ground = Color("#4E6751"),
+    intensity = 0.09 + daylight * 0.58, visible = true)
+sig lamp_strength = 22 + (1 - daylight) * 150
+sig porch_left = PointLight(position = [58.5, 41.5, 126.5], color = Color("#FFD195"), intensity = lamp_strength,
+    radius = 1.3)
+sig porch_right = PointLight(position = [78.5, 41.5, 126.5], color = Color("#FFD195"), intensity = lamp_strength,
+    radius = 1.3)
+sig tower_light = PointLight(position = [98, 64.5, 115], color = Color("#FFD9A2"), intensity = lamp_strength * 1.6,
     radius = 1.8)
-sig garden_left = PointLight(position = [34.5, 27.5, 103.5], color = Color("#FFC37D"), intensity = lamp_strength,
+sig pier_light = PointLight(position = [114.5, 26.5, 123.5], color = Color("#FFD195"), intensity = lamp_strength,
     radius = 1.2)
-sig garden_right = PointLight(position = [60.5, 27.5, 103.5], color = Color("#FFC37D"), intensity = lamp_strength,
+sig garden_light = PointLight(position = [58.5, 37.5, 134.5], color = Color("#FFD195"), intensity = lamp_strength,
     radius = 1.2)
-let route = Curve(points = [[194, 136, 214], [171, 107, 170], [144, 76, 150], [132, 55, 130]])
-let framing = Curve(points = [[75, 30, 83], [73, 30, 86], [74, 28, 91], [76, 27, 90]])
+let route = Curve(points = [[194, 82, 194], [179, 72, 185], [161, 62, 173], [149, 59, 161]])
+let framing = Curve(points = [[111, 40, 105], [111, 40, 104], [114, 38, 105], [116, 37, 104]])
 sig shot = Camera(path = route, progress = progress, target = framing.at(progress), fov = lens)
 let scene = VoxelScene(layout = world, camera = shot, lights = [sun, moon, porch_left, porch_right, tower_light,
-        garden_left, garden_right], environment = sky)
-# Bézier handles edit travel timing independently of the spatial path.
-let travel = Curve(keys = [
-        Keyframe(time = 0s, value = 0, handle_out = {
+        pier_light, garden_light], environment = sky)
+let travel = Curve(keys = [Keyframe(time = 0s, value = 0, handle_out = {
                 time = 2s,
-                value = 0.02
+                value = 0.03
             }),
         Keyframe(time = 7s, value = 0.5, handle_in = {
                 time =-1s,
-                value =-0.12
+                value =-0.1
             }, handle_out = {
                 time = 1s,
-                value = 0.12
+                value = 0.1
             }),
         Keyframe(time = 14s, value = 1, handle_in = {
-                time =-3s,
-                value =-0.02
-            })
-    ])
-let framing_lens = Curve(keys = [
-        Keyframe(time = 0s, value = 56deg),
-        Keyframe(time = 8s, value = 52deg),
-        Keyframe(time = 14s, value = 58deg)
-    ])
+                time =-2s,
+                value =-0.04
+            })])
 <Animation>
     {scene.fade_in(duration=500ms)}
     {animate(progress,curve=travel)}
-    {animate(lens,curve=framing_lens)}
-    {animate(sun_angle,to=400deg,duration=14s,ease="linear")}
+    {animate(lens,to=57deg,duration=14s,ease="smootherstep")}
+    {animate(sun_angle,to=394deg,duration=14s,ease="linear")}
 </Animation>

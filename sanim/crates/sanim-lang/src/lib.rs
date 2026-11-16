@@ -7,6 +7,7 @@ mod cache;
 mod charts;
 mod checker;
 mod code_view;
+mod colors;
 pub mod dataframe;
 mod eval;
 #[cfg(all(test, feature = "native-text"))]
@@ -24,6 +25,7 @@ pub mod progress;
 mod reflection;
 mod scrolling;
 pub mod source;
+mod textures;
 mod timing;
 mod type_algebra;
 pub mod utilities;
@@ -612,18 +614,25 @@ impl Engine {
                     module.ast.statements.iter().any(|statement| {
                         let mut uses_family = false;
                         statement.visit_all_expressions(&mut |expression| {
-                        if let ast::ExprKind::Call { callee, .. } = &expression.kind
-                            && matches!(&callee.kind, ast::ExprKind::Name(name) if prelude::builtin(name).is_some_and(prelude::Builtin::uses_font_environment))
-                        {
-                            uses_family = true;
-                        }
-                    });
+                            if let ast::ExprKind::Call { callee, args, .. } = &expression.kind
+                                && crate::timing::builtin_call(
+                                    callee,
+                                    args,
+                                    &module.checked.native_methods,
+                                )
+                                .is_some_and(|call| call.builtin.uses_font_environment())
+                            {
+                                uses_family = true;
+                            }
+                        });
                         uses_family
                     })
                 });
             if family_fonts {
                 let epoch = sanim_data::font::system_font_epoch();
-                if self.font_environment.is_some() && self.font_environment != epoch {
+                if epoch.is_none()
+                    || self.font_environment.is_some() && self.font_environment != epoch
+                {
                     self.values.clear();
                     self.states.clear();
                 }

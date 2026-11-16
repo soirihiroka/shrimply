@@ -5200,6 +5200,7 @@ version = "0.1.0"
 dependencies = [
  "fraction",
  "glam 0.34.1",
+ "image",
  "imbl",
  "num-traits",
  "sanim-voxel",
@@ -5217,11 +5218,11 @@ name = "sanim-data"
 version = "0.1.0"
 dependencies = [
  "cairo-rs",
+ "image",
  "imbl",
  "num-traits",
  "pango",
  "pangocairo",
- "png",
  "rusqlite",
  "sanim-core",
  "sanim-voxel",
@@ -5254,6 +5255,7 @@ dependencies = [
  "regex",
  "sanim-core",
  "sanim-data",
+ "sanim-render",
  "sanim-voxel",
  "serde",
  "serde_json",
@@ -5277,6 +5279,7 @@ dependencies = [
  "sanim-data",
  "serde_json",
  "shrimply-drawing-skia",
+ "shrimply-fonts",
  "skia-safe",
 ]
 

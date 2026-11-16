@@ -4,27 +4,14 @@ mod material;
 mod procedural;
 mod verify;
 use crate::{
-    native, native_types,
-    prelude::{Builtin, Execution, Parameter},
+    native,
+    prelude::{Builtin, Execution, Parameter, parameter},
 };
 use sanim_core::*;
 use std::sync::{Arc, OnceLock};
 
-fn parameter(name: &'static str, ty: Type, required: bool) -> Parameter {
-    Parameter { name, ty, required }
-}
-
 fn declaration(name: &'static str, parameters: Vec<Parameter>, result: Type) -> Builtin {
-    Builtin {
-        name,
-        parameters,
-        result,
-        state_effect: false,
-        timing: Default::default(),
-        content: Default::default(),
-        execute: Execution::Native(execute),
-        check: native_types::fixed,
-    }
+    Builtin::pure(name, parameters, result, execute)
 }
 
 use sanim_core::voxel::config::coordinate_type;
@@ -198,10 +185,7 @@ pub(crate) fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Buil
     })
 }
 
-fn required<'a>(args: &'a imbl::OrdMap<String, Value>, name: &str) -> Result<&'a Value, String> {
-    args.get(name)
-        .ok_or_else(|| format!("missing voxel argument '{name}'"))
-}
+use crate::native::required;
 
 fn coordinates(value: &Value, dimensions: Option<[u32; 3]>) -> Result<[u32; 3], String> {
     let values = value.list()?;

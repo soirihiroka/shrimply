@@ -4,6 +4,7 @@ mod demand;
 mod functions;
 mod list_functions;
 mod lists;
+mod measure;
 mod native;
 mod plans;
 mod provenance;
@@ -146,6 +147,7 @@ pub(crate) fn evaluate(
         depth: 0,
         root_active: false,
         preparation,
+        measure_only,
         signal_return: None,
         type_bindings: Arc::default(),
         hotspots: imbl::OrdMap::new(),
@@ -261,6 +263,11 @@ pub(crate) fn evaluate(
         } else {
             0
         };
+        runtime
+            .animation
+            .reactive
+            .set_native_byte_limit(runtime.limits.data.max_bytes)
+            .map_err(|error| runtime.error("S140", error, Span::default()))?;
         for (index, statement) in module
             .ast
             .statements
@@ -292,7 +299,7 @@ pub(crate) fn evaluate(
         }
     }
     for key in overrides.keys() {
-        if !runtime.used_overrides.contains(key) {
+        if !measure_only && !runtime.used_overrides.contains(key) {
             return Err(runtime.error(
                 "S302",
                 format!(
@@ -342,6 +349,11 @@ pub(crate) fn evaluate(
         }
     };
     runtime.retain_binding_value(&Value::Animation(plan.clone()), Span::default())?;
+    runtime
+        .animation
+        .reactive
+        .set_native_byte_limit(runtime.limits.data.max_bytes)
+        .map_err(|error| runtime.error("S140", error, Span::default()))?;
     let plan_base = Arc::new(runtime.animation.clone());
     runtime
         .progress
@@ -460,6 +472,7 @@ pub(crate) struct Runtime<'a, 's> {
     overrides: &'a BTreeMap<String, Value>,
     limits: &'a Limits,
     preparation: crate::Preparation,
+    measure_only: bool,
     values: &'a mut crate::cache::ValueCache,
     assets: &'a mut crate::cache::ValueCache,
     databases: &'a mut sanim_data::sqlite::Databases,
@@ -817,6 +830,7 @@ impl Runtime<'_, '_> {
                 Some(digest(
                     &serde_json::to_vec(&(
                         SEMANTICS_VERSION,
+                        self.measure_only,
                         self.template_context(expr.span),
                         &self.type_bindings,
                         limits,
@@ -1248,6 +1262,9 @@ impl Runtime<'_, '_> {
                 }
             }
             ExprKind::Call { callee, args, .. } => {
+                if let Some(value) = self.measure_animation_call(callee, args, env, expr.span)? {
+                    return Ok(value);
+                }
                 if let Some(value) = self.staged_code_range(expr, env)? {
                     return Ok(value);
                 }

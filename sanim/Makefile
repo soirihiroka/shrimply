@@ -30,7 +30,7 @@ voxel-procedural-check:
 	$(CARGO) test -p sanim-lang --no-default-features --test voxel_procedural
 voxel-procedural-bench:
 	$(CARGO) test --release -p sanim-voxel --test procedural procedural_raster_benchmark -- --ignored --nocapture
-	$(CARGO) test --release -p sanim-lang --no-default-features --test voxel_procedural native_landscape_preparation_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test voxel_procedural native_ -- --ignored --nocapture --test-threads=1
 
 .PHONY: headless-check
 .PHONY: event-boundaries-check
@@ -587,3 +587,25 @@ curve-inline-bench:
 .PHONY: voxel-quality-bench
 voxel-quality-bench:
 	$(CARGO) test --release -p sanim-cli --test voxel_quality actual_valley_reconstruction_quality_benchmark -- --ignored --nocapture
+
+.PHONY: voxel-texture-check voxel-texture-bench
+voxel-texture-check:
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib --test voxel_textures --test texture_operations -- -D warnings
+	$(CARGO) test -p sanim-lang --no-default-features --test voxel_textures --test texture_operations
+	$(CARGO) test -p sanim-data --no-default-features --test textures
+voxel-texture-bench:
+	$(CARGO) test --release -p sanim-lang --no-default-features --test voxel_textures native_texture_generation_benchmark -- --ignored --nocapture
+	$(CARGO) test --release -p sanim-lang --no-default-features --test texture_operations retained_texture_performance_benchmark -- --ignored --nocapture
+
+.PHONY: texture-draw-bench
+texture-draw-bench:
+	$(CARGO) test --release -p sanim-lang --test media native_texture_drawing_performance_benchmark -- --ignored --nocapture
+
+.PHONY: color-check color-bench
+color-check:
+	$(CARGO) clippy -p sanim-core --lib --test perceptual_colors -- -D warnings
+	$(CARGO) clippy -p sanim-lang --no-default-features --lib --test perceptual_colors -- -D warnings
+	$(CARGO) test -p sanim-core --test perceptual_colors
+	$(CARGO) test -p sanim-lang --no-default-features --test perceptual_colors
+color-bench:
+	$(CARGO) test --release -p sanim-core --test perceptual_colors prepared_perceptual_ramp_benchmark -- --ignored --nocapture

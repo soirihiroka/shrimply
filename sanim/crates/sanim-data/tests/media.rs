@@ -6,6 +6,32 @@ const PNG: &[u8] = include_bytes!("../../../tests/fixtures/media-sample.png");
 const SVG: &[u8] = include_bytes!("../../../tests/fixtures/media-sample.svg");
 
 #[test]
+fn rgba_sources_share_the_media_cache_and_release_evicted_inputs() {
+    let _guard = MEDIA_CACHE_TESTS.lock().unwrap();
+    let pixels: Arc<[u8]> = Arc::from([255, 0, 0, 128, 0, 255, 0, 0]);
+    let input = Arc::downgrade(&pixels);
+    let prepared = shrimply_drawing_skia::media::prepare_rgba(&pixels, [2, 1]).unwrap();
+    let same = shrimply_drawing_skia::media::prepare_rgba(&pixels, [2, 1]).unwrap();
+    assert!(Arc::ptr_eq(&prepared, &same));
+    assert!(prepared.contains([0.25, 0.5]));
+    assert!(!prepared.contains([0.75, 0.5]));
+    assert!(shrimply_drawing_skia::media::prepare_rgba(&pixels, [1, 1]).is_err());
+    let bitmap = prepared.bitmap().unwrap().clone();
+    let old = Arc::downgrade(&prepared);
+    drop(pixels);
+    drop(same);
+    drop(prepared);
+    for index in 0..260u16 {
+        let pixels = Arc::from([index as u8, (index >> 8) as u8, 0, 255]);
+        shrimply_drawing_skia::media::prepare_rgba(&pixels, [1, 1]).unwrap();
+    }
+    assert!(old.upgrade().is_none());
+    assert!(input.upgrade().is_none());
+    // A recorded Skia image owns its data even after the source/cache are gone.
+    assert_eq!((bitmap.width(), bitmap.height()), (2, 1));
+}
+
+#[test]
 fn native_media_is_shared_across_hosts_and_preserves_bitmap_alpha_and_svg_vectors() {
     let _guard = MEDIA_CACHE_TESTS.lock().unwrap();
     for (bytes, kind) in [(PNG, Kind::Bitmap), (SVG, Kind::Svg)] {
@@ -14,8 +40,11 @@ fn native_media_is_shared_across_hosts_and_preserves_bitmap_alpha_and_svg_vector
         assert_eq!((asset.width, asset.height), (160, 96));
         assert_eq!(asset.kind, kind);
         let native = shrimply_drawing_skia::media::prepare(bytes.clone()).unwrap();
-        let same = shrimply_drawing_skia::media::prepare_hashed(asset.bytes(), asset.fingerprint())
-            .unwrap();
+        let sanim_core::media::Source::Encoded(source) = asset.source() else {
+            panic!("encoded source")
+        };
+        let same =
+            shrimply_drawing_skia::media::prepare_hashed(source, asset.fingerprint()).unwrap();
         assert!(Arc::ptr_eq(&native, &same));
         assert_eq!(native.bitmap().is_some(), kind == Kind::Bitmap);
         assert!(native.contains([0.5, 0.5]));

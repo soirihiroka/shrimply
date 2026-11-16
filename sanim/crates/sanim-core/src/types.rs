@@ -22,7 +22,7 @@ pub enum Type {
     Fraction,
     VoxelGrid,
     VoxelMaterial,
-    VoxelTexture,
+    Texture,
     VoxelLayout,
     Density,
     Random,
@@ -258,6 +258,26 @@ impl Signature {
 }
 
 impl Type {
+    /// Checked record projection is shared by the compiler and retained graph.
+    pub fn record_field(&self, name: &str) -> Result<Self, String> {
+        match self {
+            Self::Record(fields) => fields.get(name).cloned().ok_or_else(|| {
+                format!(
+                    "unknown field '{name}'; available fields: {}",
+                    fields.keys().cloned().collect::<Vec<_>>().join(", ")
+                )
+            }),
+            Self::Union(alternatives) => Self::union(
+                alternatives
+                    .iter()
+                    .map(|ty| ty.record_field(name))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            _ => Err(format!(
+                "field '{name}' requires a statically known record; received {self}"
+            )),
+        }
+    }
     pub fn signatures(&self) -> &[Signature] {
         match self {
             Self::Function(signature) => std::slice::from_ref(signature),
@@ -692,7 +712,7 @@ impl Type {
             | Self::Fraction
             | Self::Color
             | Self::Font => true,
-            Self::VoxelTexture => true,
+            Self::Texture => true,
             Self::BoundedVariable(_, bound) => match bound.as_ref() {
                 TypeBound::Readable | TypeBound::Reflectable | TypeBound::Numeric => true,
                 TypeBound::Type(ty) => ty.readable(),
@@ -710,7 +730,7 @@ impl Type {
     }
     pub fn data_convertible(&self) -> bool {
         match self {
-            Self::Font | Self::Code(_) | Self::VoxelTexture => false,
+            Self::Font | Self::Code(_) | Self::Texture => false,
             Self::BoundedVariable(_, bound) => match bound.as_ref() {
                 TypeBound::Numeric | TypeBound::Reflectable => true,
                 TypeBound::Type(ty) => ty.data_convertible(),
@@ -727,7 +747,7 @@ impl Type {
     }
     pub fn reflectable(&self) -> bool {
         match self {
-            Self::Font | Self::Code(_) | Self::VoxelTexture => false,
+            Self::Font | Self::Code(_) | Self::Texture => false,
             Self::BoundedVariable(_, bound) => match bound.as_ref() {
                 TypeBound::Reflectable | TypeBound::Numeric => true,
                 TypeBound::Type(ty) => ty.reflectable(),
@@ -826,7 +846,7 @@ impl std::fmt::Display for Type {
             }
             Self::VoxelGrid => write!(f, "VoxelGrid"),
             Self::VoxelMaterial => write!(f, "VoxelMaterial"),
-            Self::VoxelTexture => write!(f, "VoxelTexture"),
+            Self::Texture => write!(f, "Texture"),
             Self::VoxelLayout => write!(f, "VoxelLayout"),
             Self::Density => write!(f, "Density"),
             Self::Random => write!(f, "Random"),
@@ -949,34 +969,17 @@ impl Color {
             channels[3] = crate::math::decimal(&color.a.to_string())?;
             return Ok(Self(channels));
         }
-        let hex = match text {
-            "red" => "ff0000",
-            "green" => "008000",
-            "blue" => "0000ff",
-            "white" => "ffffff",
-            "black" => "000000",
-            "yellow" => "ffff00",
-            "orange" => "ffa500",
-            "purple" => "800080",
-            "transparent" => "00000000",
-            _ => text
-                .strip_prefix('#')
-                .ok_or_else(|| format!("unknown color '{text}'; use an Adwaita name such as 'blue3' or 'window_bg_dark', a basic color name, or #RRGGBB/#RRGGBBAA"))?,
-        };
-        if !hex.is_ascii() || !matches!(hex.len(), 6 | 8) {
-            return Err("expected #RRGGBB or #RRGGBBAA".into());
+        if text.trim().eq_ignore_ascii_case("transparent") {
+            return Ok(Self([Fraction::from(0); 4]));
         }
-        let mut channels = [Fraction::from(1); 4];
-        for (i, channel) in channels.iter_mut().enumerate().take(hex.len() / 2) {
-            *channel = Fraction::new(
-                u64::from(
-                    u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16)
-                        .map_err(|_| "invalid hex color")?,
-                ),
-                255u64,
-            );
-        }
-        Ok(Self(channels))
+        let color=shrimply_math_color::parse_css_color(text).ok_or_else(||format!(
+            "unknown color '{text}'; use an Adwaita name such as 'blue3', a CSS color name/hex/rgb/hsl string, or a typed Rgb/Hsl/Oklab/Oklch constructor"
+        ))?;
+        Ok(Self(
+            color
+                .to_array()
+                .map(|channel| Fraction::new(u64::from(channel), 255u64)),
+        ))
     }
 }
 
@@ -1005,7 +1008,7 @@ pub enum Value {
     Fraction(Fraction),
     VoxelGrid(Arc<sanim_voxel::Volume>),
     VoxelMaterial(Arc<sanim_voxel::Material>),
-    VoxelTexture(Arc<sanim_voxel::Texture>),
+    Texture(Arc<sanim_voxel::Texture>),
     VoxelLayout(Arc<sanim_voxel::layout::Node>),
     Density(Arc<sanim_voxel::procedural::Field>),
     Curve(Arc<crate::curve::Curve>),
@@ -1056,7 +1059,7 @@ impl Value {
             Self::Fraction(_) => Type::Fraction,
             Self::VoxelGrid(_) => Type::VoxelGrid,
             Self::VoxelMaterial(_) => Type::VoxelMaterial,
-            Self::VoxelTexture(_) => Type::VoxelTexture,
+            Self::Texture(_) => Type::Texture,
             Self::VoxelLayout(_) => Type::VoxelLayout,
             Self::Density(_) => Type::Density,
             Self::Curve(curve) => Type::Curve(Box::new(curve.value_type())),

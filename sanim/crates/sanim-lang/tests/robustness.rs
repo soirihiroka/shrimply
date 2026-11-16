@@ -223,70 +223,46 @@ fn all_shipped_examples_prepare() {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .filter(|name| {
                 name.ends_with(".sanim")
-                    && !matches!(name.as_str(), "theme.sanim" | "voxel_structures.sanim")
+                    && !matches!(
+                        name.as_str(),
+                        "theme.sanim" | "voxel_structures.sanim" | "voxel_textures.sanim"
+                    )
             })
             .collect::<Vec<_>>();
     examples.sort();
     for path in &examples {
-        if matches!(path.as_str(), "voxel_survival.sanim" | "voxel_valley.sanim") {
-            // The authored texture pack is generated outside the repository;
-            // reuse the actual demo generator rather than committing images or
-            // substituting test-only assets for this example.
-            let directory = tempfile::tempdir().unwrap();
-            let generated = std::process::Command::new("uv")
-                .args(["run", "--no-project", "python"])
-                .arg(root.join("voxel_pack.py"))
-                .arg(directory.path())
-                .output()
-                .unwrap();
-            assert!(
-                generated.status.success(),
-                "{}",
-                String::from_utf8_lossy(&generated.stderr)
-            );
-            let sources = FileSources::new(directory.path()).unwrap();
-            let prepared = Engine::default()
-                .prepare(
-                    if path == "voxel_survival.sanim" {
-                        "survival.sanim"
-                    } else {
-                        path
-                    },
-                    &sources,
-                    &BTreeMap::new(),
-                )
-                .unwrap_or_else(|error| panic!("{path}: {error}"));
-            assert!(!prepared.animation.layers.is_empty());
-            if path == "voxel_survival.sanim" {
-                std::fs::write(directory.path().join("structures_probe.sanim"), r#"
-import "./voxel_structures.sanim" as structures
-let specimen = structures.tree(seed=73)
-assert(specimen.get([7,0,7]) != None)
-let repeated = structures.tree(seed=73)
-let cover = structures.grass_material(read<VoxelTexture>("assets/minecraft/textures/block/oak_leaves.png"))
-Animation()
-"#).unwrap();
-                let probe = Engine::default()
-                    .prepare("structures_probe.sanim", &sources, &BTreeMap::new())
-                    .unwrap();
-                let (sanim_core::Value::VoxelGrid(a), sanim_core::Value::VoxelGrid(b)) =
-                    (&probe.bindings["specimen"], &probe.bindings["repeated"])
-                else {
-                    panic!("tree factory returns grids")
-                };
-                assert_eq!(a.dimensions(), [15, 27, 15]);
-                assert!(
-                    std::sync::Arc::ptr_eq(a, b),
-                    "pure factory should reuse the same immutable tree"
-                );
-            }
-            continue;
-        }
         let p = Engine::default()
             .prepare(path, &sources, &BTreeMap::new())
             .unwrap_or_else(|e| panic!("{path}: {e}"));
         assert!(!p.animation.layers.is_empty());
     }
+    let mut sources = MemorySources::default();
+    for name in ["voxel_structures.sanim", "voxel_textures.sanim"] {
+        sources.insert(name, std::fs::read_to_string(root.join(name)).unwrap());
+    }
+    sources.insert(
+        "main.sanim",
+        r#"
+import "./voxel_structures.sanim" as structures
+let specimen = structures.tree(seed=73)
+assert(specimen.get([9,0,9]) != None)
+let repeated = structures.tree(seed=73)
+Animation()
+"#,
+    );
+    let probe = Engine::default()
+        .prepare("main.sanim", &sources, &BTreeMap::new())
+        .unwrap();
+    let (Value::VoxelGrid(a), Value::VoxelGrid(b)) =
+        (&probe.bindings["specimen"], &probe.bindings["repeated"])
+    else {
+        panic!("tree factory returns grids")
+    };
+    assert_eq!(a.dimensions(), [19, 31, 19]);
+    assert!(
+        std::sync::Arc::ptr_eq(a, b),
+        "pure factory should reuse the same immutable tree"
+    );
 }
 
 #[test]

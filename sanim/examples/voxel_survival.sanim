@@ -1,4 +1,4 @@
-# An original Minecraft-inspired survival base. Generate its texture pack with voxel_pack.py.
+# An original Minecraft-inspired survival base with native procedural textures.
 import "./voxel_structures.sanim" as structures
 let grass = structures.materials.grass
 let stone = structures.materials.stone

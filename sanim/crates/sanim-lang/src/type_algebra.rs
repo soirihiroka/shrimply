@@ -152,12 +152,7 @@ pub(crate) fn member(ty: Type, name: &str) -> Result<Type, String> {
         Type::Dict | Type::Data => Err(format!(
             "dictionary values use brackets: write value[\"{name}\"] instead of value.{name}"
         )),
-        Type::Record(fields) => fields.get(name).cloned().ok_or_else(|| {
-            format!(
-                "unknown field '{name}'; available fields: {}",
-                fields.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        }),
+        Type::Record(fields) => Type::Record(fields).record_field(name),
         Type::Fraction if matches!(name, "numerator" | "denominator") => {
             Ok(Type::Numeric(Unit::Number))
         }

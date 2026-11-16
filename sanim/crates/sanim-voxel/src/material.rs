@@ -8,13 +8,14 @@ pub const MAX_MATERIALS: usize = 4095;
 const MAX_TEXTURE_DIMENSION: u32 = 4096;
 const CHANNELS: usize = 4;
 
-/// Decoded nearest-sampled block texture. Pixels are straight RGBA8, with cutout alpha.
+/// Immutable shared raster. Pixels are straight RGBA8, including continuous alpha.
 #[derive(Clone, Debug)]
 pub struct Texture {
     width: u32,
     height: u32,
     pixels: Arc<[u8]>,
     has_cutout: bool,
+    has_partial_alpha: bool,
     revision: u64,
 }
 
@@ -23,20 +24,17 @@ impl Texture {
         let bytes = texture_bytes(width, height)?;
         if pixels.len() != bytes {
             return Err(format!(
-                "voxel texture has {} bytes; {width}×{height} RGBA requires {bytes}",
+                "texture has {} bytes; {width}×{height} RGBA requires {bytes}",
                 pixels.len()
             ));
         }
         let mut has_cutout = false;
-        for (index, pixel) in pixels.chunks_exact(CHANNELS).enumerate() {
+        let mut has_partial_alpha = false;
+        for pixel in pixels.chunks_exact(CHANNELS) {
             match pixel[3] {
                 0 => has_cutout = true,
                 255 => {}
-                alpha => {
-                    return Err(format!(
-                        "voxel texture pixel {index} has alpha {alpha}; only opaque (255) or cutout (0) coverage is supported; use VoxelMaterial(transmission=...) for glass/water transparency"
-                    ));
-                }
+                _ => has_partial_alpha = true,
             }
         }
         Ok(Self {
@@ -44,6 +42,7 @@ impl Texture {
             height,
             pixels,
             has_cutout,
+            has_partial_alpha,
             revision: revision(),
         })
     }
@@ -58,6 +57,12 @@ impl Texture {
     }
     pub fn has_cutout(&self) -> bool {
         self.has_cutout
+    }
+    pub fn has_partial_alpha(&self) -> bool {
+        self.has_partial_alpha
+    }
+    pub fn has_alpha(&self) -> bool {
+        self.has_cutout || self.has_partial_alpha
     }
     pub fn revision(&self) -> u64 {
         self.revision
@@ -90,16 +95,16 @@ impl<'de> Deserialize<'de> for Texture {
             fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Texture, A::Error> {
                 let width = seq
                     .next_element()?
-                    .ok_or_else(|| serde::de::Error::custom("voxel texture width is missing"))?;
+                    .ok_or_else(|| serde::de::Error::custom("texture width is missing"))?;
                 let height = seq
                     .next_element()?
-                    .ok_or_else(|| serde::de::Error::custom("voxel texture height is missing"))?;
+                    .ok_or_else(|| serde::de::Error::custom("texture height is missing"))?;
                 let expected = texture_bytes(width, height).map_err(serde::de::Error::custom)?;
                 let pixels = seq
                     .next_element_seed(Pixels(expected))?
-                    .ok_or_else(|| serde::de::Error::custom("voxel texture pixels are missing"))?;
+                    .ok_or_else(|| serde::de::Error::custom("texture pixels are missing"))?;
                 if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                    return Err(serde::de::Error::custom("voxel texture has extra fields"));
+                    return Err(serde::de::Error::custom("texture has extra fields"));
                 }
                 Texture::new(width, height, pixels).map_err(serde::de::Error::custom)
             }
@@ -118,37 +123,38 @@ impl<'de> DeserializeSeed<'de> for Pixels {
 impl<'de> Visitor<'de> for Pixels {
     type Value = Arc<[u8]>;
     fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "exactly {} voxel texture bytes", self.0)
+        write!(formatter, "exactly {} texture bytes", self.0)
     }
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
         if seq.size_hint().is_some_and(|length| length != self.0) {
             return Err(serde::de::Error::custom(
-                "voxel texture byte count does not match its dimensions",
+                "texture byte count does not match its dimensions",
             ));
         }
         let mut pixels = Vec::new();
         while let Some(pixel) = seq.next_element()? {
             if pixels.len() == self.0 {
                 return Err(serde::de::Error::custom(
-                    "voxel texture has more pixels than its dimensions permit",
+                    "texture has more pixels than its dimensions permit",
                 ));
             }
             pixels.push(pixel);
         }
         if pixels.len() != self.0 {
             return Err(serde::de::Error::custom(
-                "voxel texture has fewer pixels than its dimensions require",
+                "texture has fewer pixels than its dimensions require",
             ));
         }
         Ok(pixels.into())
     }
 }
 
-fn texture_bytes(width: u32, height: u32) -> Result<usize, String> {
+/// Validate dimensions before allocating decoded or generated RGBA8 pixels.
+pub fn texture_bytes(width: u32, height: u32) -> Result<usize, String> {
     if width == 0 || height == 0 || width > MAX_TEXTURE_DIMENSION || height > MAX_TEXTURE_DIMENSION
     {
         return Err(format!(
-            "voxel texture dimensions {width}×{height} must each be 1..={MAX_TEXTURE_DIMENSION}"
+            "texture dimensions {width}×{height} must each be 1..={MAX_TEXTURE_DIMENSION}"
         ));
     }
     Ok(width as usize * height as usize * CHANNELS)
@@ -262,6 +268,26 @@ impl Material {
     pub fn textured(color: u32, faces: [Option<Arc<Texture>>; 6]) -> Result<Self, String> {
         if color & 0xff != 255 {
             return Err("voxel material colors must have opaque alpha (255); use VoxelMaterial(transmission=...) for glass/water transparency, or erase cells using material zero".into());
+        }
+        for (face, texture) in faces
+            .iter()
+            .enumerate()
+            .filter_map(|(face, texture)| texture.as_ref().map(|texture| (face, texture)))
+        {
+            if texture.has_partial_alpha() {
+                let (index, pixel) = texture
+                    .pixels()
+                    .chunks_exact(4)
+                    .enumerate()
+                    .find(|(_, pixel)| pixel[3] != 0 && pixel[3] != 255)
+                    .expect("partial alpha metadata");
+                return Err(format!(
+                    "voxel material face {face} texture pixel [{},{}] has alpha {}; voxel surfaces require opaque or binary cutout coverage. Use texture.cutout() for foliage, or VoxelMaterial(transmission=...) for glass/water",
+                    index % texture.width() as usize,
+                    index / texture.width() as usize,
+                    pixel[3]
+                ));
+            }
         }
         Ok(Self {
             color,

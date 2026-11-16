@@ -32,6 +32,147 @@ for row in rows { wait(row.delay * 1ms) }
 }
 
 #[test]
+fn duration_projection_preserves_nested_layout_and_does_not_pollute_real_preparation() {
+    let mut sources = MemorySources::default();
+    sources.insert("main.sanim",r#"
+fn<ref> intro():Animation {
+    let typeface=read<Font>("unavailable.ttf")
+    let title=<Label font={typeface}>Deferred visual target</Label>
+    return Animation(children=[title.fade_in(duration=250ms),title,wait(100ms)],flow="sequence",duration=1s)
+}
+intro()
+"#);
+    let mut engine = Engine::default();
+    engine.preparation = sanim_lang::Preparation::Demand;
+    let measured = engine
+        .duration("main.sanim", &sources, &Default::default())
+        .unwrap();
+    assert_eq!(measured.duration, Fraction::from(1));
+    assert_eq!(measured.statistics.decoded_assets, 0);
+    // A temporal-only plan must never escape through expression or prefix caches
+    // as a supposedly prepared visual scene in the same demand-mode engine.
+    assert!(
+        engine
+            .prepare("main.sanim", &sources, &Default::default())
+            .is_err()
+    );
+    assert_eq!(
+        engine
+            .duration("main.sanim", &sources, &Default::default())
+            .unwrap()
+            .duration,
+        Fraction::from(1)
+    );
+}
+
+#[test]
+fn geometry_dependent_durations_require_real_metrics_instead_of_substitutes() {
+    let mut sources = MemorySources::default();
+    sources.insert(
+        "main.sanim",
+        "let title=<Label>Measured width</Label>\nif title.width == 1pt {wait(1s)} else {wait(2s)}",
+    );
+    let error = Engine::default()
+        .duration("main.sanim", &sources, &Default::default())
+        .unwrap_err();
+    assert!(error.message.contains("native text layout"), "{error}");
+}
+
+#[test]
+fn visual_children_keep_zero_time_slots_for_temporal_gaps() {
+    let mut sources = MemorySources::default();
+    sources.insert(
+        "main.sanim",
+        r#"
+let a=<Label>First</Label>
+let b=<Label>Second</Label>
+Animation(children=[a,b],flow="sequence",gap=250ms)
+"#,
+    );
+    assert_eq!(
+        Engine::default()
+            .duration("main.sanim", &sources, &Default::default())
+            .unwrap()
+            .duration,
+        Fraction::new(1u64, 4u64)
+    );
+}
+
+#[test]
+fn named_fixed_visual_lists_project_their_known_length_without_font_layout() {
+    let mut sources = MemorySources::default();
+    sources.insert(
+        "main.sanim",
+        r#"
+let children=[<Label>First</Label>,<Label>Second</Label>]
+Animation(children=children,flow="sequence",gap=100ms)
+wait(1s)
+"#,
+    );
+    assert_eq!(
+        Engine::default()
+            .duration("main.sanim", &sources, &Default::default())
+            .unwrap()
+            .duration,
+        Fraction::new(11u64, 10u64)
+    );
+}
+
+#[test]
+fn projected_literal_child_lists_respect_host_limits_before_allocating_slots() {
+    let mut sources = MemorySources::default();
+    sources.insert(
+        "main.sanim",
+        r#"Animation(children=[<Label>a</Label>,<Label>b</Label>,<Label>c</Label>])"#,
+    );
+    let mut engine = Engine::default();
+    engine.limits.data.max_values = 2;
+    let error = engine
+        .duration("main.sanim", &sources, &Default::default())
+        .unwrap_err();
+    assert!(error.message.contains("temporal child list"), "{error}");
+}
+
+#[test]
+fn duration_accepts_valid_overrides_for_deferred_visual_reflections() {
+    let mut sources = MemorySources::default();
+    sources.insert(
+        "main.sanim",
+        r#"
+let title=<Label fill={reflect(Color("red"),key="ink")}>Deferred color</Label>
+title.fade_in(duration=250ms)
+"#,
+    );
+    let overrides = [(
+        "ink".to_string(),
+        Value::Color(sanim_core::Color::parse("blue").unwrap()),
+    )]
+    .into_iter()
+    .collect();
+    assert_eq!(
+        Engine::default()
+            .duration("main.sanim", &sources, &overrides)
+            .unwrap()
+            .duration,
+        Fraction::new(1u64, 4u64)
+    );
+    for (key, value) in [
+        (
+            "absent",
+            Value::Color(sanim_core::Color::parse("blue").unwrap()),
+        ),
+        ("ink", Value::String("invalid Color value".into())),
+    ] {
+        let overrides = [(key.to_string(), value)].into_iter().collect();
+        assert!(
+            Engine::default()
+                .duration("main.sanim", &sources, &overrides)
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn headless_data_sql_and_real_syntax_trees_remain_available() {
     let mut sources = MemorySources::default();
     sources.insert(
@@ -129,7 +270,9 @@ wait({tail}ms)
         assert_eq!(changed.duration, Fraction::new(edit + 10, 1000u64));
         assert_eq!(changed.statistics.executed_queries, 0);
         assert_eq!(changed.statistics.decoded_assets, 0);
-        assert!(changed.statistics.reused_queries > 0);
+        assert!(
+            changed.statistics.reused_queries > 0 || changed.statistics.restored_statements > 0
+        );
         black_box(changed);
     }
     let elapsed = start.elapsed();

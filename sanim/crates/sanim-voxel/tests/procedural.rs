@@ -1,6 +1,8 @@
 use sanim_voxel::{
     Volume,
-    procedural::{Binary, Field, Heightmap, MAX_FIELD_NODES, Noise, NoiseKind, Unary},
+    procedural::{
+        Axes, Binary, Field, Heightmap, MAX_FIELD_NODES, Noise, NoiseKind, SurfacePoints, Unary,
+    },
 };
 use std::sync::Arc;
 
@@ -74,6 +76,362 @@ fn noise_is_seeded_bounded_continuous_and_order_independent() {
     assert!((0.0..1.0).contains(&value));
     assert_eq!(value, sanim_voxel::procedural::random(42, 17));
     assert_ne!(value, sanim_voxel::procedural::random(42, 18));
+}
+
+#[test]
+fn planar_noise_is_continuous_seeded_and_independent_of_the_excluded_axis() {
+    let point = [13.17, -7.31, 25.61];
+    for kind in NoiseKind::ALL {
+        for axes in [Axes::Xy, Axes::Xz, Axes::Yz] {
+            let field = Field::noise(Noise {
+                seed: 71,
+                kind,
+                axes,
+                ..Default::default()
+            })
+            .unwrap();
+            let value = field.sample(point).unwrap();
+            assert!((-1.0..=1.0).contains(&value));
+            let excluded = axes.mask().iter().position(|included| !included).unwrap();
+            let mut changed = point;
+            changed[excluded] = 1e100;
+            assert_eq!(value, field.sample(changed).unwrap(), "{kind:?} {axes:?}");
+            changed = point;
+            let included = axes.mask().iter().position(|included| *included).unwrap();
+            changed[included] += 1e-6;
+            assert!((value - field.sample(changed).unwrap()).abs() < 1e-5);
+            let roundtrip: Field =
+                serde_json::from_slice(&serde_json::to_vec(&field).unwrap()).unwrap();
+            assert_eq!(value, roundtrip.sample(point).unwrap());
+            assert_eq!(field.fingerprint(), roundtrip.fingerprint());
+        }
+    }
+    let options = Noise {
+        seed: 71,
+        ..Default::default()
+    };
+    let xy = Field::noise(Noise {
+        axes: Axes::Xy,
+        ..options
+    })
+    .unwrap();
+    let xz = Field::noise(Noise {
+        axes: Axes::Xz,
+        ..options
+    })
+    .unwrap();
+    assert_eq!(
+        xy.sample([13.17, 25.61, 400.0]).unwrap(),
+        xz.sample(point).unwrap()
+    );
+}
+
+#[test]
+fn plane_warps_preserve_unselected_coordinates_and_bound_native_work() {
+    let options = Noise {
+        seed: 7,
+        axes: Axes::Xz,
+        ..Default::default()
+    };
+    let vertical = Field::axis(1).unwrap();
+    assert_eq!(vertical.warp(options, 12.0).unwrap(), vertical);
+    let horizontal = Field::axis(0).unwrap().warp(options, 12.0).unwrap();
+    assert_eq!(
+        horizontal.sample([13.17, 0.0, 25.61]).unwrap(),
+        horizontal.sample([13.17, 500.0, 25.61]).unwrap()
+    );
+    assert_ne!(horizontal.sample([13.17, 0.0, 25.61]).unwrap(), 13.17);
+    for kind in [NoiseKind::Value, NoiseKind::Gradient, NoiseKind::Cellular] {
+        let a = Field::noise(Noise {
+            kind,
+            octaves: 1,
+            ..options
+        })
+        .unwrap();
+        let b = Field::noise(Noise {
+            kind,
+            octaves: 8,
+            ..options
+        })
+        .unwrap();
+        assert_eq!(
+            a.sample_work(),
+            b.sample_work(),
+            "single-octave kernel {kind:?}"
+        );
+        assert_eq!(
+            a.sample([13.17, 0.0, 25.61]).unwrap(),
+            b.sample([13.17, 0.0, 25.61]).unwrap()
+        );
+    }
+    let plane = Field::noise(Noise {
+        kind: NoiseKind::Cellular,
+        ..options
+    })
+    .unwrap();
+    let volume = Field::noise(Noise {
+        kind: NoiseKind::Cellular,
+        axes: Axes::Xyz,
+        ..options
+    })
+    .unwrap();
+    assert!(plane.sample_work() < volume.sample_work());
+    assert!(serde_json::from_str::<Noise>(r#"{"axes":"yx"}"#).is_err());
+}
+
+#[test]
+fn smooth_masks_have_saturated_endpoints_flat_tangents_and_finite_bounds() {
+    let mask = Field::axis(0).unwrap().smoothstep(-2.0, 2.0).unwrap();
+    for (x, expected) in [
+        (-f64::MAX, 0.0),
+        (-2.0, 0.0),
+        (0.0, 0.5),
+        (2.0, 1.0),
+        (f64::MAX, 1.0),
+    ] {
+        assert_eq!(mask.sample([x, 0.0, 0.0]).unwrap(), expected);
+    }
+    let step = 1e-4;
+    assert!(mask.sample([-2.0 + step, 0.0, 0.0]).unwrap() / step < step);
+    assert!((1.0 - mask.sample([2.0 - step, 0.0, 0.0]).unwrap()) / step < step);
+    for (min, max) in [
+        (1.0, 1.0),
+        (2.0, 1.0),
+        (f64::NAN, 1.0),
+        (-f64::MAX, f64::MAX),
+    ] {
+        assert!(
+            Field::axis(0)
+                .unwrap()
+                .smoothstep(min, max)
+                .unwrap_err()
+                .contains("min < max")
+        );
+    }
+    let decoded: Field = serde_json::from_slice(&serde_json::to_vec(&mask).unwrap()).unwrap();
+    assert_eq!(mask, decoded);
+}
+
+#[test]
+fn pattern_fields_have_euclidean_periods_and_finite_native_trigonometry() {
+    let axis = Field::axis(0).unwrap();
+    assert_eq!(
+        axis.unary(Unary::Floor)
+            .unwrap()
+            .sample([-1.25, 0.0, 0.0])
+            .unwrap(),
+        -2.0
+    );
+    let fractional = axis.unary(Unary::Fract).unwrap();
+    assert_eq!(fractional.sample([-1.25, 0.0, 0.0]).unwrap(), 0.75);
+    assert!((0.0..1.0).contains(&fractional.sample([-f64::MIN_POSITIVE, 0.0, 0.0]).unwrap()));
+    for divisor in [2.0, -2.0] {
+        let modulo = axis
+            .binary(Binary::Modulo, &Field::constant(divisor).unwrap())
+            .unwrap();
+        assert_eq!(modulo.sample([-5.0, 0.0, 0.0]).unwrap(), 1.0);
+        assert_eq!(modulo.sample([5.0, 0.0, 0.0]).unwrap(), 1.0);
+    }
+    assert!(
+        axis.binary(Binary::Modulo, &Field::constant(0.0).unwrap())
+            .unwrap()
+            .sample([1.0, 0.0, 0.0])
+            .unwrap_err()
+            .contains("modulo divisor")
+    );
+    assert!(
+        (axis
+            .unary(Unary::Sin)
+            .unwrap()
+            .sample([std::f64::consts::FRAC_PI_2, 0.0, 0.0])
+            .unwrap()
+            - 1.0)
+            .abs()
+            < 1e-12
+    );
+    assert_eq!(
+        axis.unary(Unary::Cos).unwrap().sample([0.0; 3]).unwrap(),
+        1.0
+    );
+}
+
+#[test]
+fn surface_sampling_is_seeded_unique_and_filters_actual_raster_slopes() {
+    use std::collections::BTreeSet;
+    let ground = Volume::new([17, 20, 19])
+        .unwrap()
+        .fill_color([0; 3], [17, 8, 19], 0x55aa33ff)
+        .unwrap();
+    let options = SurfacePoints {
+        step: 4,
+        seed: 71,
+        jitter: 1.0,
+        ..Default::default()
+    };
+    let points = ground.surface_points(&options).unwrap();
+    assert_eq!(points.len(), 25);
+    assert_eq!(points.iter().copied().collect::<BTreeSet<_>>().len(), 25);
+    assert!(points.iter().all(|[x, y, z]| *x < 17 && *z < 19 && *y == 8));
+    assert_eq!(points, ground.surface_points(&options).unwrap());
+    assert_ne!(
+        points,
+        ground
+            .surface_points(&SurfacePoints {
+                seed: 72,
+                ..options
+            })
+            .unwrap()
+    );
+    let peak = ground
+        .fill_color([8, 8, 8], [9, 14, 9], 0x888888ff)
+        .unwrap();
+    let flat = peak
+        .surface_points(&SurfacePoints {
+            step: 1,
+            max_slope: Some(0.0),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(
+        flat.len(),
+        17 * 19 - 5,
+        "the peak and all four cliff-adjacent columns are rejected"
+    );
+    let mask = Field::axis(0)
+        .unwrap()
+        .binary(Binary::Subtract, &Field::constant(8.0).unwrap())
+        .unwrap();
+    let selected = peak
+        .surface_points(&SurfacePoints {
+            step: 1,
+            mask: Some(&mask),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(selected.iter().all(|point| point[0] >= 8));
+    let zero = Field::constant(0.0).unwrap();
+    assert!(
+        ground
+            .surface_points(&SurfacePoints {
+                density: Some(&zero),
+                ..options
+            })
+            .unwrap()
+            .is_empty()
+    );
+    let density = Field::constant(0.4).unwrap();
+    assert!(
+        ground
+            .surface_points_work(&SurfacePoints {
+                density: Some(&density),
+                mask: Some(&mask),
+                max_slope: Some(1.0),
+                ..options
+            })
+            .unwrap()
+            > ground.surface_points_work(&options).unwrap()
+    );
+    for invalid in [
+        SurfacePoints {
+            jitter: 1.1,
+            ..options
+        },
+        SurfacePoints {
+            jitter: f64::NAN,
+            ..options
+        },
+        SurfacePoints {
+            max_slope: Some(-1.0),
+            ..options
+        },
+        SurfacePoints { step: 0, ..options },
+    ] {
+        assert!(ground.surface_points_work(&invalid).is_err());
+    }
+    let large = Volume::new([257, 3, 257]).unwrap();
+    assert!(
+        large
+            .surface_points_work(&SurfacePoints {
+                step: 1,
+                ..Default::default()
+            })
+            .unwrap_err()
+            .contains("points")
+    );
+    assert!(
+        large.scatter_work(&density, 1).is_ok(),
+        "dense native scatter does not allocate a List or inherit its point count cap"
+    );
+}
+
+#[test]
+fn density_carving_reuses_chunk_rasterization_and_preserves_old_snapshots() {
+    let ground = Volume::new([24; 3])
+        .unwrap()
+        .fill_color([0; 3], [24; 3], 0x888888ff)
+        .unwrap();
+    let sphere = Field::constant(5.0)
+        .unwrap()
+        .binary(
+            Binary::Subtract,
+            &Field::distance([12.0; 3], [true; 3]).unwrap(),
+        )
+        .unwrap();
+    let carved = ground
+        .fill_density(&sphere, [4; 3], [20; 3], 0.0, sanim_voxel::EMPTY)
+        .unwrap();
+    assert_eq!(carved.get([12; 3]).unwrap(), sanim_voxel::EMPTY);
+    assert_ne!(ground.get([12; 3]).unwrap(), sanim_voxel::EMPTY);
+    assert_eq!(ground.get([0; 3]).unwrap(), carved.get([0; 3]).unwrap());
+    let old_chunk = ground.chunks().find(|(at, _)| *at == [0; 3]).unwrap().1;
+    let unchanged = carved.chunks().find(|(at, _)| *at == [0; 3]).unwrap().1;
+    assert!(Arc::ptr_eq(old_chunk, unchanged));
+    let rejected = ground
+        .fill_density(
+            &Field::constant(-1.0).unwrap(),
+            [0; 3],
+            [24; 3],
+            0.0,
+            sanim_voxel::EMPTY,
+        )
+        .unwrap();
+    assert!(ground.same_storage(&rejected));
+}
+
+#[test]
+fn foliage_cards_do_not_become_support_for_later_scatter_layers() {
+    let ground = Volume::new([8, 16, 8])
+        .unwrap()
+        .fill_color([0; 3], [8, 8, 8], 0x55aa33ff)
+        .unwrap();
+    let card = Arc::new(
+        sanim_voxel::Material::solid(0x338833ff)
+            .unwrap()
+            .with_geometry(sanim_voxel::MaterialGeometry::Cross)
+            .unwrap(),
+    );
+    let (ground, grass) = ground.with_material(card).unwrap();
+    let (ground, flower) = ground
+        .with_material(Arc::new(
+            sanim_voxel::Material::solid(0xffcc33ff)
+                .unwrap()
+                .with_geometry(sanim_voxel::MaterialGeometry::Cross)
+                .unwrap(),
+        ))
+        .unwrap();
+    let one = Field::constant(1.0).unwrap();
+    let plants = ground.scatter(&one, grass, 1, 1).unwrap();
+    let flowers = plants.scatter(&one, flower, 2, 1).unwrap();
+    assert_eq!(flowers.get([4, 8, 4]).unwrap(), flower);
+    assert_eq!(flowers.get([4, 9, 4]).unwrap(), sanim_voxel::EMPTY);
+    assert_eq!(plants.get([4, 8, 4]).unwrap(), grass);
+    assert!(
+        flowers
+            .surface_points(&SurfacePoints::default())
+            .unwrap()
+            .iter()
+            .all(|point| point[1] == 8)
+    );
 }
 
 #[test]
@@ -160,7 +518,12 @@ fn density_masks_and_surface_paint_preserve_cavities_and_snapshots() {
     );
     assert_eq!(painted.get([8, 13, 8]).unwrap(), grass);
     assert_eq!(hollow.get([8, 13, 8]).unwrap(), stone);
-    let points = painted.surface_points(4).unwrap();
+    let points = painted
+        .surface_points(&SurfacePoints {
+            step: 4,
+            ..Default::default()
+        })
+        .unwrap();
     for [x, y, z] in points {
         assert_ne!(painted.get([x, y - 1, z]).unwrap(), 0);
         assert_eq!(painted.get([x, y, z]).unwrap(), 0);
@@ -249,6 +612,42 @@ fn procedural_raster_benchmark() {
     assert!(
         native[1] < scalar[1],
         "native chunk batching must earn its complexity on representative terrain"
+    );
+    let mut medians = Vec::new();
+    for axes in [Axes::Xyz, Axes::Xz] {
+        let field = Field::noise(Noise {
+            seed: 42,
+            axes,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut sampler = field.sampler();
+        let mut times = Vec::new();
+        for _ in 0..5 {
+            let start = Instant::now();
+            let mut total = 0.0;
+            for z in 0..128 {
+                for x in 0..128 {
+                    total += sampler
+                        .sample([f64::from(x) + 0.5, 0.0, f64::from(z) + 0.5])
+                        .unwrap();
+                }
+            }
+            std::hint::black_box(total);
+            times.push(start.elapsed());
+        }
+        times.sort_unstable();
+        medians.push(times[2]);
+        eprintln!(
+            "noise axes={} four_octave_samples=16384 median_us={} retained_bytes={}",
+            axes.name(),
+            times[2].as_micros(),
+            field.retained_bytes()
+        );
+    }
+    assert!(
+        medians[1] < medians[0],
+        "plane-specific kernels must reduce native sampling cost"
     );
 }
 

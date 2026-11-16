@@ -25,6 +25,7 @@ sanim-voxel-render = { path = "crates/sanim-voxel-render" }
 wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "wgsl"] }
 pollster = "1"
 png = "0.18"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 fraction = { version = "0.17", features = ["with-serde-support"] }
 num-traits = "0.2"
 serde = { version = "1", features = ["derive", "rc"] }

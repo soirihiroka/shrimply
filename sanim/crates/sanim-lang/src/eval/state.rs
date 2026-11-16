@@ -140,6 +140,7 @@ impl Store {
                 ),
                 runtime.limits,
                 runtime.preparation,
+                runtime.measure_only,
                 runtime.animation.dpi,
                 runtime.animation.width,
                 runtime.animation.height,

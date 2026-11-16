@@ -728,9 +728,14 @@ pub fn charge_with_budget(
                         items,
                         MEDIA_ENTRY_BYTES
                             + std::mem::size_of_val(asset.as_ref())
-                            + asset.bytes().len()
                             + asset.fingerprint().len(),
                     )?;
+                    match asset.source() {
+                        crate::media::Source::Encoded(data) => take(bytes, items, data.len())?,
+                        crate::media::Source::Texture(texture) => {
+                            voxel_texture(texture, bytes, items, fonts)?
+                        }
+                    }
                     fonts.media.insert(id, Arc::downgrade(asset));
                 }
             }
@@ -775,7 +780,7 @@ pub fn charge_with_budget(
         match value {
             Value::VoxelGrid(volume) => voxel_volume(volume, bytes, items, fonts)?,
             Value::VoxelMaterial(material) => voxel_material(material, bytes, items, fonts)?,
-            Value::VoxelTexture(texture) => voxel_texture(texture, bytes, items, fonts)?,
+            Value::Texture(texture) => voxel_texture(texture, bytes, items, fonts)?,
             Value::VoxelLayout(layout) => voxel_layout(layout, bytes, items, fonts)?,
             Value::Density(field) => {
                 let id = Arc::as_ptr(field) as usize;

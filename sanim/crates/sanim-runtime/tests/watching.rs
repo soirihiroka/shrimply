@@ -71,13 +71,13 @@ fn voxel_texture_changes_reload_without_source_edits_or_render_requests() {
         writer.finish().unwrap();
     };
     write_tile([255, 0, 0, 255]);
-    fixture.write("main.sanim", "let texture=read<VoxelTexture>(\"block.png\")\nlet material=VoxelMaterial(texture=texture)\nlet grid=VoxelGrid(size=[8,8,8]).fill([0,0,0],[8,8,8],material)\nlet scene=VoxelScene(volume=grid)\nscene.fade_in()\nwait(1s)");
+    fixture.write("main.sanim", "let texture=read<Texture>(\"block.png\")\nlet material=VoxelMaterial(texture=texture)\nlet grid=VoxelGrid(size=[8,8,8]).fill([0,0,0],[8,8,8],material)\nlet scene=VoxelScene(volume=grid)\nscene.fade_in()\nwait(1s)");
     let runtime = fixture.open();
     let first = until(&runtime, |state| {
         state.prepared.is_some() && !state.preparing
     });
     let first_prepared = first.prepared.as_ref().unwrap();
-    let sanim_core::Value::VoxelTexture(original) = &first_prepared.bindings["texture"] else {
+    let sanim_core::Value::Texture(original) = &first_prepared.bindings["texture"] else {
         panic!("voxel texture")
     };
     assert_eq!(original.pixels().as_ref(), [255, 0, 0, 255]);
@@ -86,7 +86,7 @@ fn voxel_texture_changes_reload_without_source_edits_or_render_requests() {
     let updated = until(&runtime, |state| {
         state.revision > first.revision && !state.preparing && state.diagnostic.is_none()
     });
-    let sanim_core::Value::VoxelTexture(texture) =
+    let sanim_core::Value::Texture(texture) =
         &updated.prepared.as_ref().unwrap().bindings["texture"]
     else {
         panic!("updated voxel texture")

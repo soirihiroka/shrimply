@@ -20,6 +20,7 @@ for index in range(30) {
     let chosen = rng.integer(index, min=-3, max=5)
     assert(chosen >= -3 and chosen < 5)
 }
+
 assert(rng.chance(0,probability=0) == false)
 assert(rng.chance(0,probability=1) == true)
 let hill = Noise(seed=73,kind="fbm",scale=12,octaves=3).multiply(2).add(6)
@@ -35,6 +36,42 @@ Animation()
     .unwrap();
     assert!(matches!(prepared.bindings["field"], Value::Density(_)));
     assert!(matches!(prepared.bindings["rng"], Value::Random(42)));
+}
+
+#[test]
+fn planar_noise_warps_and_smooth_masks_share_the_native_field_api() {
+    prepare(
+        r#"
+let climate = (Noise(seed=71, axes="xz", scale=18, octaves=4)
+    .warp(seed=7, axes="xz", scale=35, strength=6))
+let wetness = climate.smoothstep(min=-0.3,max=0.3)
+assert(wetness.sample([13.17,0,25.61]) == wetness.sample([13.17,500,25.61]))
+let vertical = Density(axis="y").warp(seed=7,axes="xz",strength=12)
+assert(vertical.sample([13,22,25]) == 22)
+let shore = Density(axis="y").smoothstep(10,20)
+assert(shore.sample([0,0,0]) == 0)
+assert(shore.sample([0,15,0]) == 0.5)
+assert(shore.sample([0,30,0]) == 1)
+let disk = Distance(center=[10,0,10],axes="xz").warp(axes="xz",strength=4)
+assert(disk.sample([3,0,7]) == disk.sample([3,500,7]))
+Animation()
+"#,
+    )
+    .unwrap();
+    for (source, message) in [
+        ("let x=Noise(axes=\"yx\")\nAnimation()", "yx"),
+        (
+            "let x=Density(axis=\"x\").warp(axes=\"x\")\nAnimation()",
+            "x",
+        ),
+        (
+            "let x=Density(axis=\"x\").smoothstep(2,1)\nAnimation()",
+            "min < max",
+        ),
+    ] {
+        let error = prepare(source).unwrap_err();
+        assert!(error.message.contains(message), "{error}");
+    }
 }
 
 #[test]
@@ -71,6 +108,47 @@ wait(1s)
 }
 
 #[test]
+fn native_surface_selection_carving_and_pattern_fields_are_typed_and_pure() {
+    prepare(
+        r#"
+let ground = VoxelGrid(size=[24,16,24]).heightmap(Density(value=8),Color("green3"))
+let mask = Density(axis="x").subtract(10)
+let positions = ground.surface_points(step=4,seed=71,jitter=0.8,density=1,mask=mask,max_slope=0)
+assert(len(positions) > 0)
+for point in positions { assert(point[0] >= 10 and point[1] == 8) }
+let sphere = Density(value=4).subtract(Distance(center=[12,5,12]))
+let hollow = ground.carve(sphere,min=[8,1,8],max=[16,9,16])
+assert(hollow.get([12,5,12]) == None)
+assert(ground.get([12,5,12]) != None)
+let stripes = Density(axis="x").divide(4).floor().mod(2)
+assert(stripes.sample([-1,0,0]) == 1)
+let fraction = Density(axis="x").fract()
+assert(fraction.sample([-1.25,0,0]) == 0.75)
+assert(Density(axis="x").sin().sample([0,0,0]) == 0)
+assert(Density(axis="x").cos().sample([0,0,0]) == 1)
+Animation()
+"#,
+    )
+    .unwrap();
+    for (source, message) in [
+        (
+            "let p=VoxelGrid(size=[8,8,8]).surface_points(jitter=2)\nAnimation()",
+            "jitter",
+        ),
+        (
+            "let p=VoxelGrid(size=[8,8,8]).surface_points(max_slope=-1)\nAnimation()",
+            "max_slope",
+        ),
+        (
+            "let p=Density(axis=\"x\").mod(0).sample([1,0,0])\nAnimation()",
+            "modulo divisor",
+        ),
+    ] {
+        assert!(prepare(source).unwrap_err().message.contains(message));
+    }
+}
+
+#[test]
 fn procedural_errors_name_the_bad_parameter_and_reserve_work_before_sampling() {
     for (source, message) in [
         ("let x=Noise(octaves=99)\nAnimation()", "octaves"),
@@ -104,7 +182,7 @@ fn changing_only_timeline_suffix_preserves_field_and_raster_snapshots() {
     engine.limits.max_cache_entries = 32;
     engine.limits.max_cache_bytes = 2 * 1024 * 1024;
     let mut sources = MemorySources::default();
-    let source = "let field=Noise(seed=42).multiply(2).add(8)\nlet terrain=VoxelGrid(size=[16,16,16]).heightmap(field,Color(\"green3\"))\nlet scene=VoxelScene(volume=terrain)\nscene.fade_in()\nwait(1s)";
+    let source = "let field=Noise(seed=42,axes=\"xz\").warp(axes=\"xz\",strength=4).smoothstep(-0.5,0.5).multiply(2).add(8)\nlet terrain=VoxelGrid(size=[16,16,16]).heightmap(field,Color(\"green3\"))\nlet scene=VoxelScene(volume=terrain)\nscene.fade_in()\nwait(1s)";
     sources.insert("main.sanim", source);
     let original = engine
         .prepare("main.sanim", &sources, &BTreeMap::new())
@@ -346,5 +424,76 @@ fn native_landscape_preparation_benchmark() {
     assert!(
         times[3] < cold,
         "restoring immutable native outputs must earn a real benefit"
+    );
+}
+
+#[test]
+#[ignore = "manual same-result native selection versus repeated DSL field calls"]
+fn native_surface_selection_benchmark() {
+    use std::time::Instant;
+    const PREFIX: &str = r#"
+let terrain=VoxelGrid(size=[176,32,176]).heightmap(Density(value=8),Color("green3"))
+let probability=Noise(seed=19,axes="xz",scale=24).warp(seed=71,axes="xz",strength=5).add(1).divide(2)
+let mask=Density(axis="x").subtract(60)
+"#;
+    let choices = [
+        "let selected=terrain.surface_points(step=4,seed=42,density=probability,mask=mask,max_slope=0)\nAnimation()",
+        r#"
+let rng=Random(seed=42)
+mut selected:List<List<Number,3>>=[]
+for point in terrain.surface_points(step=4) {
+    let sample=[point[0]+0.5,point[1],point[2]+0.5]
+    if mask.sample(sample)>0 and rng.chance(point[0]*4294967296+point[2],probability=probability.sample(sample)) {
+        selected=append(selected,point)
+    }
+}
+Animation()
+"#,
+    ];
+    let mut reference = None;
+    let mut medians = Vec::new();
+    for (variant, suffix) in choices.into_iter().enumerate() {
+        let mut times = Vec::new();
+        for _ in 0..3 {
+            let mut engine = Engine::default();
+            let mut sources = MemorySources::default();
+            sources.insert("main.sanim", format!("{PREFIX}Animation()"));
+            engine
+                .prepare("main.sanim", &sources, &BTreeMap::new())
+                .unwrap();
+            sources.insert("main.sanim", format!("{PREFIX}{suffix}"));
+            let start = Instant::now();
+            let prepared = engine
+                .prepare("main.sanim", &sources, &BTreeMap::new())
+                .unwrap();
+            times.push(start.elapsed());
+            let selected = &prepared.bindings["selected"];
+            if let Some(reference) = &reference {
+                assert_eq!(
+                    reference, selected,
+                    "native selection must match equivalent repeated DSL sampling"
+                );
+            } else {
+                reference = Some(selected.clone());
+            }
+            eprintln!(
+                "surface selection variant={variant} points={} interpreted_ops={} native_work={}",
+                selected.list().unwrap().len(),
+                prepared.statistics.interpreted_operations,
+                prepared.statistics.native_work
+            );
+        }
+        times.sort_unstable();
+        medians.push(times[1]);
+    }
+    eprintln!(
+        "surface selection native_us={} repeated_dsl_us={} speedup={:.2}",
+        medians[0].as_micros(),
+        medians[1].as_micros(),
+        medians[1].as_secs_f64() / medians[0].as_secs_f64()
+    );
+    assert!(
+        medians[0] < medians[1],
+        "native selection must earn its additional API"
     );
 }

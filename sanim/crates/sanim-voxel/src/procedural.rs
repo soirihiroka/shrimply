@@ -2,7 +2,7 @@
 mod math;
 mod raster;
 pub use math::random;
-pub use raster::Heightmap;
+pub use raster::{Heightmap, SurfacePoints};
 
 use imbl::Vector;
 use serde::{
@@ -17,6 +17,49 @@ pub const MAX_FIELD_NODES: usize = 128;
 pub const MAX_OCTAVES: u32 = 8;
 pub const MAX_PROCEDURAL_WORK: usize = 64 * 1024 * 1024;
 pub const MAX_SURFACE_POINTS: usize = 65_536;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Axes {
+    Xy,
+    Xz,
+    Yz,
+    #[default]
+    Xyz,
+}
+impl Axes {
+    pub const ALL: [Self; 4] = [Self::Xy, Self::Xz, Self::Yz, Self::Xyz];
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Xy => "xy",
+            Self::Xz => "xz",
+            Self::Yz => "yz",
+            Self::Xyz => "xyz",
+        }
+    }
+    pub const fn mask(self) -> [bool; 3] {
+        match self {
+            Self::Xy => [true, true, false],
+            Self::Xz => [true, false, true],
+            Self::Yz => [false, true, true],
+            Self::Xyz => [true; 3],
+        }
+    }
+}
+impl FromStr for Axes {
+    type Err = String;
+    fn from_str(name: &str) -> Result<Self, String> {
+        Self::ALL
+            .into_iter()
+            .find(|axes| axes.name() == name)
+            .ok_or_else(|| {
+                format!(
+                    "unknown field axes '{name}'; use {}",
+                    Self::ALL.map(Self::name).join(", ")
+                )
+            })
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -71,6 +114,7 @@ pub struct Noise {
     pub octaves: u32,
     pub persistence: f64,
     pub lacunarity: f64,
+    pub axes: Axes,
 }
 impl Default for Noise {
     fn default() -> Self {
@@ -81,10 +125,18 @@ impl Default for Noise {
             octaves: 4,
             persistence: 0.5,
             lacunarity: 2.0,
+            axes: Axes::default(),
         }
     }
 }
 impl Noise {
+    fn octave_count(self) -> u32 {
+        if matches!(self.kind, NoiseKind::Fbm | NoiseKind::Ridged) {
+            self.octaves
+        } else {
+            1
+        }
+    }
     pub fn validate(&self) -> Result<(), String> {
         if !self.scale.is_finite() || self.scale <= 0.0 {
             return Err("noise scale must be finite and positive".into());
@@ -106,6 +158,11 @@ impl Noise {
 pub enum Unary {
     Abs,
     Negate,
+    Floor,
+    Fract,
+    Sin,
+    Cos,
+    Smoothstep,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Binary {
@@ -116,6 +173,7 @@ pub enum Binary {
     Min,
     Max,
     Power,
+    Modulo,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -253,9 +311,9 @@ impl Field {
                 Instruction::Noise { options, .. } => {
                     options.validate()?;
                     work += if options.kind == NoiseKind::Cellular {
-                        27
+                        if options.axes == Axes::Xyz { 27 } else { 9 }
                     } else {
-                        options.octaves as usize
+                        options.octave_count() as usize
                     };
                 }
                 Instruction::Distance { center, axes, .. }
@@ -354,6 +412,15 @@ impl Field {
         });
         Self::finish(code)
     }
+    pub fn smoothstep(&self, min: f64, max: f64) -> Result<Self, String> {
+        if !min.is_finite() || !max.is_finite() || min >= max || !(max - min).is_finite() {
+            return Err("density smoothstep requires finite min < max and a finite range".into());
+        }
+        self.clamp(min, max)?
+            .binary(Binary::Subtract, &Self::constant(min)?)?
+            .binary(Binary::Divide, &Self::constant(max - min)?)?
+            .unary(Unary::Smoothstep)
+    }
     pub fn transform(&self, offset: [f64; 3], scale: [f64; 3]) -> Result<Self, String> {
         if offset.iter().chain(&scale).any(|value| !value.is_finite()) || scale.contains(&0.0) {
             return Err(
@@ -390,8 +457,11 @@ impl Field {
             .collect(),
         );
         let magnitude = builder.push(Instruction::Constant(strength))?;
-        let mut axes = [0; 3];
+        let mut axes = [0, 1, 2];
         for (axis, target) in axes.iter_mut().enumerate() {
+            if !options.axes.mask()[axis] {
+                continue;
+            }
             let options = Noise {
                 seed: options.seed.wrapping_add(axis as u64),
                 ..options

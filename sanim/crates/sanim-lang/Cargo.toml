@@ -7,7 +7,7 @@ license.workspace = true
 [features]
 default = ["native-text", "media"]
 native-text = ["sanim-data/native-text"]
-media = ["sanim-data/media"]
+media = ["sanim-data/media", "dep:sanim-render"]
 
 [dependencies]
 imbl.workspace = true
@@ -18,6 +18,7 @@ shrimply-asset.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sanim-voxel.workspace = true
+sanim-render = { workspace = true, optional = true }
 
 [[bench]]
 name = "headless"

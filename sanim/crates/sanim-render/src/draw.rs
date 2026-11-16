@@ -635,8 +635,17 @@ pub(crate) fn element_draw<O: Output>(
             if canvas.quick_reject(&bounds) {
                 return Ok(());
             }
-            let prepared =
-                shrimply_drawing_skia::media::prepare_hashed(asset.bytes(), asset.fingerprint())?;
+            let prepared = match asset.source() {
+                sanim_core::media::Source::Encoded(bytes) => {
+                    shrimply_drawing_skia::media::prepare_hashed(bytes, asset.fingerprint())?
+                }
+                sanim_core::media::Source::Texture(texture) => {
+                    shrimply_drawing_skia::media::prepare_rgba(
+                        texture.pixels(),
+                        [texture.width(), texture.height()],
+                    )?
+                }
+            };
             if reveal.progress < Fraction::from(1) {
                 let mut visible = bounds;
                 visible.right = visible.left + visible.width() * to_f64(reveal.progress)? as f32;

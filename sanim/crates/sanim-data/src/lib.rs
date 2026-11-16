@@ -6,7 +6,7 @@ pub mod font;
 pub mod media;
 mod numpy;
 pub mod sqlite;
-pub mod voxel;
+pub mod texture;
 mod yaml;
 
 use sanim_core::{Color, Number, Type, Unit, Value};
@@ -78,8 +78,8 @@ pub fn decode(path: &str, bytes: &[u8], ty: &Type, limits: Limits) -> Result<Val
             bytes.to_vec(),
         ))));
     }
-    if *ty == Type::VoxelTexture {
-        return voxel::decode_texture(bytes, limits).map(Value::VoxelTexture);
+    if *ty == Type::Texture {
+        return texture::decode(bytes, limits).map(Value::Texture);
     }
     if let Type::Code(language) = ty {
         if limits.max_values == 0 {

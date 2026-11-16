@@ -22,7 +22,7 @@ fn water_is_typed_pure_and_uses_linear_attenuation_with_coherent_wave_parameters
     sources.insert(
         "main.sanim",
         r##"let _water=VoxelMaterial(transmission=1,ior=1.333,attenuation_color=Color("blue3"))
-let _texture=read<VoxelTexture>("absent.png")
+let _texture=read<Texture>("absent.png")
 Animation()"##,
     );
     assert_eq!(

@@ -8,6 +8,9 @@ pub struct Parameter {
     pub ty: Type,
     pub required: bool,
 }
+pub(crate) fn parameter(name: &'static str, ty: Type, required: bool) -> Parameter {
+    Parameter { name, ty, required }
+}
 pub(crate) type Evaluator = for<'a> fn(
     &str,
     &imbl::OrdMap<String, sanim_core::Value>,
@@ -53,6 +56,23 @@ pub struct Builtin {
     pub(crate) check: TypeRule,
 }
 impl Builtin {
+    pub(crate) fn pure(
+        name: &'static str,
+        parameters: Vec<Parameter>,
+        result: Type,
+        evaluate: Evaluator,
+    ) -> Self {
+        Self {
+            name,
+            parameters,
+            result,
+            state_effect: false,
+            timing: Default::default(),
+            content: Default::default(),
+            execute: Execution::Native(evaluate),
+            check: native_types::fixed,
+        }
+    }
     /// Capabilities arise from the one native execution registration, not a second name list.
     pub fn capabilities(&self) -> sanim_core::FnCapabilities {
         self.requirements(true)
@@ -80,7 +100,11 @@ impl Builtin {
             .parameters
             .iter()
             .position(|parameter| parameter.name == "src")
-            .is_none_or(|index| actuals.get(index).is_none_or(|ty| **ty != Type::Unit));
+            .is_none_or(|index| {
+                actuals
+                    .get(index)
+                    .is_none_or(|ty| !matches!(ty, Type::Unit | Type::Texture))
+            });
         let mut capabilities = self.requirements(source_read);
         if matches!(self.execute, Execution::Assertion { .. })
             && !actuals
@@ -98,6 +122,11 @@ impl Builtin {
                 .parameters
                 .iter()
                 .any(|parameter| parameter.ty == Type::Font)
+            || self.result == Type::Texture
+                && self
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.ty == Type::Element)
     }
 }
 
@@ -170,6 +199,7 @@ fn build_builtins() -> Vec<Builtin> {
     crate::dataframe::register(&mut out);
     crate::templates::register(&mut out);
     crate::voxel::register(&mut out);
+    crate::textures::register(&mut out);
     let mut add = |name, parameters, result, state_effect, execute, check| {
         out.push(Builtin {
             name,
@@ -488,6 +518,7 @@ fn build_builtins() -> Vec<Builtin> {
     out.extend(crate::charts::builtins(common()));
     crate::code_view::register(&mut out, common());
     crate::media::register(&mut out);
+    crate::colors::register(&mut out);
     out.extend(crate::utilities::builtins());
     crate::lists::register(&mut out);
     crate::animation_plan::register(&mut out);
@@ -520,6 +551,8 @@ pub fn all_builtins() -> impl Iterator<Item = &'static Builtin> {
         .chain(crate::code_view::methods().iter())
         .chain(crate::scrolling::methods().iter())
         .chain(crate::voxel::methods().iter())
+        .chain(crate::colors::methods().iter())
+        .chain(crate::textures::methods().iter())
         .chain(
             crate::list_functions::definitions()
                 .iter()
@@ -548,6 +581,8 @@ pub fn methods_for(receiver: &Type) -> impl Iterator<Item = &'static Builtin> {
         .chain(crate::scrolling::methods_for(receiver))
         .chain(crate::list_functions::methods_for(receiver))
         .chain(crate::voxel::methods_for(receiver))
+        .chain(crate::colors::methods_for(receiver))
+        .chain(crate::textures::methods_for(receiver))
 }
 
 #[derive(Clone)]
@@ -601,7 +636,7 @@ pub fn types() -> &'static std::collections::BTreeMap<&'static str, TypeDefiniti
             ("Fraction", Type::Fraction),
             ("VoxelGrid", Type::VoxelGrid),
             ("VoxelMaterial", Type::VoxelMaterial),
-            ("VoxelTexture", Type::VoxelTexture),
+            ("Texture", Type::Texture),
             ("VoxelLayout", Type::VoxelLayout),
             ("Density", Type::Density),
             ("Random", Type::Random),

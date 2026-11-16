@@ -5,6 +5,14 @@ use sanim_core::{
 };
 use std::sync::Arc;
 
+pub(crate) fn required<'a>(
+    args: &'a imbl::OrdMap<String, Value>,
+    name: &str,
+) -> Result<&'a Value, String> {
+    args.get(name)
+        .ok_or_else(|| format!("missing native argument '{name}'"))
+}
+
 pub(crate) struct Context<'a> {
     pub module: &'a str,
     pub identity: &'a [String],
@@ -48,10 +56,17 @@ pub(crate) fn configuration(
     args: &imbl::OrdMap<String, Value>,
     mut context: Context<'_>,
 ) -> Result<Value, String> {
+    #[cfg(feature = "media")]
+    if name == "Texture.draw" {
+        sanim_render::install_texture_drawing();
+    }
     let native = sanim_core::code::values::Native::from_name(name)
         .expect("registered native value constructor");
-    context.charge_work(native.work(args)?)?;
-    native.execute(args)
+    native.evaluate(args,|cost|{
+        let bytes=cost.bytes.max(cost.output_bytes);
+        if bytes>context.limits.data.max_bytes{return Err(format!("{name} requires {bytes} construction or retained bytes, exceeding the host byte budget {}",context.limits.data.max_bytes));}
+        context.charge_work(cost.work)
+    })
 }
 
 pub(crate) fn fraction(

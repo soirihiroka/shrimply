@@ -190,6 +190,35 @@ fn render_writes_actual_png() {
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
 }
 #[test]
+fn standalone_render_supports_native_texture_drawing() {
+    let (output, png) = run(
+        r#"
+let source=Texture(size=[32,32])
+let painted=source.draw(<Box width={12pt} height={12pt} fill="red" x_align={Align.Center} y_align={Align.Center}/>)
+let image=<Image src={painted} width={32pt} height={32pt} x_align={Align.Center} y_align={Align.Center}/>
+Animation(children=[image])
+wait(1s)
+"#,
+        &["render", "--output", "OUTPUT"],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut reader = png::Decoder::new(std::io::Cursor::new(png))
+        .read_info()
+        .unwrap();
+    let mut rgba = vec![0; reader.output_buffer_size().unwrap()];
+    let info = reader.next_frame(&mut rgba).unwrap();
+    assert_eq!((info.width, info.height), (32, 32));
+    assert_eq!(info.color_type, png::ColorType::Rgba);
+    assert_eq!(
+        &rgba[(16 * 32 + 16) * 4..(16 * 32 + 16) * 4 + 4],
+        [255, 0, 0, 255]
+    );
+}
+#[test]
 fn reflected_override_is_validated() {
     let (output, _) = run(
         "let duration: Duration=reflect(1s)\nwait(duration)\n",

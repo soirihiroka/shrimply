@@ -3,6 +3,7 @@ use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, CheckedSub, ToPrimitive, Ze
 use serde::{Deserialize, Serialize};
 pub mod camera;
 pub mod chart;
+pub mod color;
 pub mod curve;
 pub mod cycle;
 pub mod domain;
@@ -14,6 +15,7 @@ pub mod operations;
 pub mod paint;
 pub mod scroll;
 pub mod temporal;
+pub mod texture;
 pub mod voxel;
 
 const MAX_VISUAL_DENOMINATOR: u64 = 1_000_000;

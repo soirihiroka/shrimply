@@ -481,7 +481,9 @@ Reference guides
    scrolling
    code-view
    media
+   textures
    voxels
+   colors
    cli
    language-server
    vscode

@@ -18,10 +18,23 @@ enum Content {
     Bitmap(Image),
     Svg(Mutex<Option<Sendable<Dom>>>),
 }
+enum Source {
+    Encoded { _bytes: Arc<Vec<u8>> },
+    Rgba { _pixels: Arc<[u8]> },
+}
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Key {
+    Encoded(String),
+    Rgba { identity: usize, size: [u32; 2] },
+}
+fn cache() -> &'static Mutex<Cache<Key, Prepared>> {
+    static CACHE: OnceLock<Mutex<Cache<Key, Prepared>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(Cache::new(MAX_CACHE_BYTES, MAX_ENTRIES)))
+}
 pub struct Prepared {
     content: Content,
     size: [u32; 2],
-    _source: Arc<Vec<u8>>,
+    _source: Source,
     retained_bytes: usize,
     font_epoch: Option<shrimply_fonts::native::FontEpoch>,
 }
@@ -183,13 +196,12 @@ pub fn prepare_hashed_with_limit(
     fingerprint: &str,
     max_pixels: usize,
 ) -> Result<Arc<Prepared>, String> {
-    static CACHE: OnceLock<Mutex<Cache<String, Prepared>>> = OnceLock::new();
     if bytes.len() > MAX_SOURCE_BYTES {
         return Err("image source exceeds its byte budget".into());
     }
     verify_fingerprint(bytes, fingerprint)?;
-    let key = fingerprint.to_owned();
-    let cache = CACHE.get_or_init(|| Mutex::new(Cache::new(MAX_CACHE_BYTES, MAX_ENTRIES)));
+    let key = Key::Encoded(fingerprint.to_owned());
+    let cache = cache();
     let cached = cache.lock().expect("shared media cache poisoned").get(&key);
     if let Some(prepared) = cached {
         validate_size(prepared.size, max_pixels)?;
@@ -264,9 +276,67 @@ pub fn prepare_hashed_with_limit(
     let prepared = Arc::new(Prepared {
         content,
         size,
-        _source: bytes.clone(),
+        _source: Source::Encoded {
+            _bytes: bytes.clone(),
+        },
         retained_bytes: retained,
         font_epoch,
+    });
+    cache
+        .lock()
+        .expect("shared media cache poisoned")
+        .insert(key, prepared.clone(), retained);
+    Ok(prepared)
+}
+
+/// Prepare immutable straight-alpha RGBA pixels in the same bounded media cache.
+/// A raster is copied into owned Skia storage once; no PNG encode/decode or GPU
+/// readback is involved. Holding its source proves pointer-key identity safely.
+pub fn prepare_rgba(pixels: &Arc<[u8]>, size: [u32; 2]) -> Result<Arc<Prepared>, String> {
+    validate_size(size, MAX_PIXELS)?;
+    let expected = (size[0] as usize)
+        .checked_mul(size[1] as usize)
+        .and_then(|count| count.checked_mul(4))
+        .ok_or("RGBA source dimensions overflow")?;
+    if pixels.len() != expected || expected > MAX_SOURCE_BYTES {
+        return Err(
+            "RGBA source does not match its dimensions or exceeds the media byte budget".into(),
+        );
+    }
+    let retained = expected
+        .saturating_mul(2)
+        .saturating_add(std::mem::size_of::<Prepared>() + std::mem::size_of::<Key>());
+    if retained > MAX_CACHE_BYTES {
+        return Err("RGBA source and native raster exceed the shared media cache budget; reduce its resolution".into());
+    }
+    let key = Key::Rgba {
+        identity: Arc::as_ptr(pixels) as *const u8 as usize,
+        size,
+    };
+    let cache = cache();
+    if let Some(prepared) = cache.lock().expect("shared media cache poisoned").get(&key) {
+        return Ok(prepared);
+    }
+    let width = i32::try_from(size[0]).map_err(|_| "RGBA width exceeds the native image range")?;
+    let height =
+        i32::try_from(size[1]).map_err(|_| "RGBA height exceeds the native image range")?;
+    let info = skia_safe::ImageInfo::new(
+        (width, height),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Unpremul,
+        skia_safe::ColorSpace::new_srgb(),
+    );
+    let image =
+        skia_safe::images::raster_from_data(&info, Data::new_copy(pixels), size[0] as usize * 4)
+            .ok_or("could not prepare the immutable RGBA raster")?;
+    let prepared = Arc::new(Prepared {
+        content: Content::Bitmap(image),
+        size,
+        _source: Source::Rgba {
+            _pixels: pixels.clone(),
+        },
+        retained_bytes: retained,
+        font_epoch: None,
     });
     cache
         .lock()

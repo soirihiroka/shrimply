@@ -2,6 +2,7 @@ use num_traits::ConstZero;
 use serde::{Deserialize, Serialize};
 
 pub use oklab::Oklab;
+pub mod perceptual;
 
 mod adw;
 mod blend;
@@ -456,43 +457,16 @@ impl Color<u8> {
     }
 
     pub fn from_hsva(hue_degrees: f32, saturation: f32, value: f32, alpha: f32) -> Self {
-        let saturation = saturation.clamp(0.0, 1.0);
-        let value = value.clamp(0.0, 1.0);
-        let chroma = value * saturation;
-        let hue = hue_degrees.rem_euclid(360.0) / 60.0;
-        let secondary = chroma * (1.0 - (hue.rem_euclid(2.0) - 1.0).abs());
-        let (red, green, blue) = match hue as u8 {
-            0 => (chroma, secondary, 0.0),
-            1 => (secondary, chroma, 0.0),
-            2 => (0.0, chroma, secondary),
-            3 => (0.0, secondary, chroma),
-            4 => (secondary, 0.0, chroma),
-            _ => (chroma, 0.0, secondary),
-        };
-        let offset = value - chroma;
-        Self::from_srgba([red + offset, green + offset, blue + offset, alpha])
+        Self::from_srgba(perceptual::hsv_to_rgba([
+            hue_degrees,
+            saturation,
+            value,
+            alpha,
+        ]))
     }
 
     pub fn to_hsva(self) -> [f32; 4] {
-        let [red, green, blue, alpha] = self.to_srgba();
-        let maximum = red.max(green).max(blue);
-        let minimum = red.min(green).min(blue);
-        let chroma = maximum - minimum;
-        let hue = if chroma <= f32::EPSILON {
-            0.0
-        } else if maximum == red {
-            60.0 * ((green - blue) / chroma).rem_euclid(6.0)
-        } else if maximum == green {
-            60.0 * ((blue - red) / chroma + 2.0)
-        } else {
-            60.0 * ((red - green) / chroma + 4.0)
-        };
-        let saturation = if maximum <= f32::EPSILON {
-            0.0
-        } else {
-            chroma / maximum
-        };
-        [hue, saturation, maximum, alpha]
+        perceptual::rgba_to_hsv(self.to_srgba())
     }
 
     pub fn from_oklab(l: f32, a: f32, b: f32) -> Self {
@@ -509,8 +483,8 @@ impl Color<u8> {
     }
 
     pub fn relative_luminance(self) -> f32 {
-        let linear = oklab::oklab_to_linear_srgb(self.to_oklab());
-        0.2126 * linear.r + 0.7152 * linear.g + 0.0722 * linear.b
+        perceptual::relative_luminance(self.to_srgba())
+            .expect("byte color channels are normalized and finite")
     }
 
     pub fn oklab_distance(self, other: Self) -> f32 {

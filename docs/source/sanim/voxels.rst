@@ -129,6 +129,25 @@ broader intersections that static syntax cannot prove.
 Block texture packs
 -------------------
 
+Voxel materials use the same :doc:`Texture <textures>` values as ordinary 2D
+images. Textures can be authored entirely in Sanim:
+
+.. code-block:: text
+
+   let grain = Noise(seed=42, axes="xy", scale=3, octaves=3).remap(-1,1,0,1)
+   let texture = Texture(size=[16,16], field=grain,
+       colors=[Color("#514635"),Color("#A78A56")])
+   let leaves = Texture(size=[16,16], field=grain,
+       colors=[Color("#264E36"),Color("#71904C")],
+       mask=Noise(seed=9,axes="xy",scale=1).add(0.4))
+   let exact = Texture(size=[2,1], pixels=[Color("red"),Color("transparent")])
+   let wood = VoxelMaterial(texture=texture)
+
+``Texture`` supports continuous RGBA for 2D images. Voxel surfaces require
+opaque or binary cutout alpha; material construction reports the offending
+face and texel if partial alpha remains. Use ``texture.cutout(threshold=0.5)``
+after filtering foliage, or material ``transmission`` for physical glass/water.
+
 Read PNG textures through the ordinary watched asset API. Materials can use one
 texture, separate top/side/bottom textures, or individual left/right/front/back
 textures. This supports the directory structure used by Minecraft resource
@@ -137,9 +156,9 @@ packs without depending on Minecraft or its assets.
 .. code-block:: text
 
    let grass = VoxelMaterial(
-       top=read<VoxelTexture>("assets/minecraft/textures/block/grass_block_top.png"),
-       side=read<VoxelTexture>("assets/minecraft/textures/block/grass_block_side.png"),
-       bottom=read<VoxelTexture>("assets/minecraft/textures/block/dirt.png")
+       top=read<Texture>("assets/minecraft/textures/block/grass_block_top.png"),
+       side=read<Texture>("assets/minecraft/textures/block/grass_block_side.png"),
+       bottom=read<Texture>("assets/minecraft/textures/block/dirt.png")
    )
 
 Textures use nearest sampling. A material's color tints its texture; the default
@@ -186,7 +205,7 @@ grid. Reusing a subexpression evaluates it once per sample.
 
 .. code-block:: text
 
-   let hills = (Noise(seed=42, kind="fbm", scale=24, octaves=4)
+   let hills = (Noise(seed=42, kind="fbm", scale=24, octaves=4, axes="xz")
        .multiply(3).add(12))
    let basin = (Distance(center=[32,0,32], axes="xz")
        .divide(24).pow(2).multiply(8).add(5))
@@ -212,21 +231,47 @@ Noise kinds are ``"value"``, ``"gradient"``, ``"fbm"``, ``"ridged"``, and
 ``"cellular"``. Samples are continuous and lie within -1 to 1; ``scale`` is
 the feature size in cells. Defaults are seed 0, fBm, scale 32, four octaves,
 persistence 0.5, and lacunarity 2. Fractal modes support one to eight octaves.
+``axes`` accepts ``"xy"``, ``"xz"``, ``"yz"``, or ``"xyz"`` (the default).
+Planar noise uses a two-dimensional kernel and rotates fractal octaves within
+that plane. Use ``axes="xz"`` for height maps and climate masks: changing Y
+then cannot change the sampled value. Value, gradient, and cellular modes use
+one base octave; ``octaves``, ``persistence``, and ``lacunarity`` control fBm
+and ridged fractals. Seeds are stateless and sample order does not affect them.
 ``Distance`` returns Euclidean distance from ``center`` and defaults to all
 three axes; ``axes="xz"`` creates a horizontal radial mask.
 
 ``Density(value=...)`` creates a constant field. ``Density(axis="y")`` creates
 a coordinate field, with optional ``scale`` and ``offset``. Fields support
 ``add``, ``subtract``, ``multiply``, ``divide``, ``min``, ``max``, ``pow``,
-``abs``, ``negate``, ``clamp``, and ``remap``. Binary operations accept a Number
+``abs``, ``negate``, ``clamp``, ``smoothstep``, and ``remap``. Binary operations accept a Number
 or another field. ``translate([x,y,z])``, ``scale(number_or_three_components)``,
-and ``warp(seed=..., scale=..., strength=...)`` transform the sample domain.
+and ``warp(seed=..., scale=..., strength=..., axes="xyz")`` transform the sample domain.
+Warp strength is displacement in cells. A planar warp uses planar noise and
+leaves the excluded coordinate unchanged; for example, ``axes="xz"`` bends
+a shoreline without changing height. ``smoothstep(min=0,max=1)`` maps values
+to 0..1 with flat endpoint tangents and saturates outside finite ``min < max``.
+It is useful for blending elevation fields and scatter probabilities:
+
+.. code-block:: text
+
+   let moisture = (Noise(seed=7, axes="xz", scale=48)
+       .warp(seed=23, axes="xz", scale=64, strength=12)
+       .smoothstep(min=-0.25, max=0.3))
+
 ``sample([x,y,z])`` queries one point without rasterizing a grid.
+Periodic patterns use the same fields: ``floor()``, ``fract()``, ``sin()``,
+``cos()``, and ``mod(value)``. Fract returns the nonnegative fractional part;
+mod uses a nonnegative Euclidean remainder and rejects a zero divisor.
+Trigonometric fields use radians. For example,
+``Density(axis="x").divide(4).floor().mod(2)`` alternates four-cell stripes.
 
 ``heightmap(field, material)`` fills from Y=0 up to each clamped, floored height,
 sampling X/Z at cell centers. ``density(field, material, threshold=0)`` fills
 cells where the field meets the threshold, optionally within ``min``/``max``
-bounds. ``flood(level=..., material=...)`` fills only empty cells below an
+bounds. ``carve(field, threshold=0, min=..., max=...)`` removes cells under
+the same selection rule and uses that same chunk-batched rasterizer. This
+supports caves, arches, and channels without editing one voxel per DSL call.
+``flood(level=..., material=...)`` fills only empty cells below an
 integer waterline, preserving terrain and leaving cells at or above it unchanged.
 It fills enclosed empty spaces too; it does not simulate connected fluid flow.
 ``surface(material, depth=1, mask=...)`` recolors existing top layers without
@@ -237,10 +282,25 @@ For example, ``mask=Density(axis="y").subtract(17)`` keeps beds below the
 ``scatter(material, density=..., seed=..., step=1)`` places one
 cell immediately above selected surface columns; density accepts a Number or
 field and is clamped to 0..1. This is useful for densely scattered foliage
-without constructing one layout node per plant.
+without constructing one layout node per plant. Cross-card foliage is not a
+support surface, so layered flower scatters replace a grass card in the same
+cell instead of stacking plants in the air. Surface painting and point
+selection share this definition of the supporting terrain surface.
 
-``surface_points(step=4)`` returns cell coordinates immediately above sampled
-occupied columns. ``Instances`` places one shared asset at each supplied origin
+``surface_points(step=4, seed=0, jitter=0, density=1, mask=..., max_slope=...)``
+returns cell coordinates immediately above supporting cube columns, ignoring
+cross-card foliage. It scans
+one temporary raster height table and applies all selection natively, rather
+than sampling terrain fields repeatedly in a DSL loop. Density accepts a
+Number or field and is clamped to probability 0..1. A mask must be positive to
+include a point; both fields sample the selected cell center at its top boundary.
+Jitter 0 keeps the tile origin; 1 distributes points throughout each step-sized
+tile, preserving unique, in-bounds columns. Seeds are independent of traversal
+and mask rejection. ``max_slope`` limits local height rise per horizontal cell,
+using the four adjacent raster columns, so isolated peaks and cliff edges can
+be excluded. The slope test includes the X/Z gradient magnitude. Output is
+bounded to 65,536 candidate points and all field/neighbor work is prepaid.
+``Instances`` places one shared asset at each supplied origin
 and returns an absolute layout container. ``size`` can be inferred from numeric
 positions, but must be explicit for empty or percentage-based positions. Assets
 must fit completely inside it. Rendered instances retain their original asset
@@ -327,7 +387,7 @@ partially transparent coverage:
        wave_strength=0.055, wave_length=9, wave_speed=0.7
    )
    let glass = VoxelMaterial(transmission=1, ior=1.5, roughness=0.02)
-   let grass = VoxelMaterial(texture=read<VoxelTexture>("grass.png"),geometry="cross")
+   let grass = VoxelMaterial(texture=read<Texture>("grass.png"),geometry="cross")
 
 Water and glass refract the actual scene and apply Fresnel reflection, total
 internal reflection, and Beer absorption through the traveled material depth.
@@ -425,15 +485,14 @@ Animation and the survival-base example
    scene.fade_in(duration=300ms)
    animate(yaw, to=180deg, duration=6s, ease="linear")
 
-The example generator creates original pixel textures and a runnable source
-file outside the repository:
+The examples generate their original textures directly in Sanim. No external
+asset generator is required:
 
 .. code-block:: console
 
-   python sanim/examples/voxel_pack.py /tmp/sanim-survival
-   sanim voxel inspect /tmp/sanim-survival/survival.sanim --time 1s --output /tmp/survival-views
-   sanim voxel video /tmp/sanim-survival/survival.sanim --width 1280 --height 720 --mode path-traced --samples 32 --bounces 4 --output /tmp/survival.mp4
-   sanim voxel video /tmp/sanim-survival/voxel_valley.sanim --width 1280 --height 720 --mode path-traced --samples 64 --bounces 4 --output /tmp/valley.mp4
+   sanim voxel inspect sanim/examples/voxel_survival.sanim --time 1s --output /tmp/survival-views
+   sanim voxel video sanim/examples/voxel_survival.sanim --width 1280 --height 720 --mode path-traced --samples 32 --bounces 4 --output /tmp/survival.mp4
+   sanim voxel video sanim/examples/voxel_valley.sanim --width 1280 --height 720 --mode path-traced --samples 64 --bounces 4 --output /tmp/valley.mp4
 
 The independent renderer currently accepts one mounted ``VoxelScene`` per
 output. Mixing it with 2D layers is rejected explicitly.

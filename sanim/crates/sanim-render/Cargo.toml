@@ -12,6 +12,7 @@ serde_json.workspace = true
 
 shrimply-drawing-skia.workspace = true
 glam.workspace = true
+shrimply-fonts = { workspace = true, features = ["native"] }
 
 [dev-dependencies]
 sanim-lang.workspace = true

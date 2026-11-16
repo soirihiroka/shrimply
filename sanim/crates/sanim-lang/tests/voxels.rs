@@ -369,7 +369,7 @@ fn texture_reads_are_typed_watched_and_shared_across_material_faces() {
     let mut sources = MemorySources::default();
     sources.insert(
         "main.sanim",
-        r#"let tile=read<VoxelTexture>("tiles/grass.png")
+        r#"let tile=read<Texture>("tiles/grass.png")
         let grass=VoxelMaterial(texture=tile)
         let scene=VoxelScene(volume=VoxelGrid(size=[8,8,8]).fill([0,0,0],[8,8,8],grass))
         scene.fade_in()

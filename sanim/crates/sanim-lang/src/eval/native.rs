@@ -66,12 +66,9 @@ impl Runtime<'_, '_> {
             return self.list_function(builtin, &args, span);
         }
         if name == "Image"
-            && let Some(src) = args.get("src")
+            && let Some(Value::String(src)) = args.get("src")
         {
-            let value = self.read_media_resource(
-                src.string().map_err(|e| self.error("S305", e, span))?,
-                span,
-            )?;
+            let value = self.read_media_resource(src, span)?;
             args.insert("asset".into(), value);
         }
         if matches!(name, "CodeView" | "CodeView.patch" | "CodeRange.edit")

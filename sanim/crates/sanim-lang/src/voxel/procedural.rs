@@ -5,10 +5,12 @@ use crate::{
     prelude::{Builtin, Execution},
 };
 use sanim_core::*;
-use sanim_voxel::procedural::{Binary, Field, Heightmap, Noise, NoiseKind, Unary};
+use sanim_voxel::procedural::{
+    Axes, Binary, Field, Heightmap, Noise, NoiseKind, SurfacePoints, Unary,
+};
 use std::sync::Arc;
 
-const BINARY_METHODS: [(&str, Binary); 7] = [
+const BINARY_METHODS: [(&str, Binary); 8] = [
     ("Density.add", Binary::Add),
     ("Density.subtract", Binary::Subtract),
     ("Density.multiply", Binary::Multiply),
@@ -16,10 +18,15 @@ const BINARY_METHODS: [(&str, Binary); 7] = [
     ("Density.min", Binary::Min),
     ("Density.max", Binary::Max),
     ("Density.pow", Binary::Power),
+    ("Density.mod", Binary::Modulo),
 ];
-const UNARY_METHODS: [(&str, Unary); 2] = [
+const UNARY_METHODS: [(&str, Unary); 6] = [
     ("Density.abs", Unary::Abs),
     ("Density.negate", Unary::Negate),
+    ("Density.floor", Unary::Floor),
+    ("Density.fract", Unary::Fract),
+    ("Density.sin", Unary::Sin),
+    ("Density.cos", Unary::Cos),
 ];
 
 fn number() -> Type {
@@ -60,6 +67,7 @@ pub(super) fn register(out: &mut Vec<Builtin>) {
             parameter("octaves", number(), false),
             parameter("persistence", number(), false),
             parameter("lacunarity", number(), false),
+            parameter("axes", literals(Axes::ALL.map(Axes::name)), false),
         ],
         Type::Density,
     ));
@@ -77,7 +85,7 @@ pub(super) fn register(out: &mut Vec<Builtin>) {
         "Distance",
         vec![
             parameter("center", vector(), false),
-            parameter("axes", literals(["xz", "xy", "yz", "xyz"]), false),
+            parameter("axes", literals(Axes::ALL.map(Axes::name)), false),
         ],
         Type::Density,
     ));
@@ -138,15 +146,17 @@ pub(super) fn methods() -> Vec<Builtin> {
             Type::Density,
         ));
     }
-    out.push(builtin(
-        "Density.clamp",
-        vec![
-            parameter("field", Type::Density, true),
-            parameter("min", number(), false),
-            parameter("max", number(), false),
-        ],
-        Type::Density,
-    ));
+    for name in ["Density.clamp", "Density.smoothstep"] {
+        out.push(builtin(
+            name,
+            vec![
+                parameter("field", Type::Density, true),
+                parameter("min", number(), false),
+                parameter("max", number(), false),
+            ],
+            Type::Density,
+        ));
+    }
     out.push(builtin(
         "Density.remap",
         vec![
@@ -185,6 +195,7 @@ pub(super) fn methods() -> Vec<Builtin> {
             parameter("seed", number(), false),
             parameter("scale", number(), false),
             parameter("strength", number(), false),
+            parameter("axes", literals(Axes::ALL.map(Axes::name)), false),
         ],
         Type::Density,
     ));
@@ -197,13 +208,19 @@ pub(super) fn methods() -> Vec<Builtin> {
         number(),
     ));
     let material = Type::union([Type::Color, Type::VoxelMaterial]).expect("field material");
-    for name in ["VoxelGrid.heightmap", "VoxelGrid.density"] {
+    for name in [
+        "VoxelGrid.heightmap",
+        "VoxelGrid.density",
+        "VoxelGrid.carve",
+    ] {
         let mut parameters = vec![
             parameter("grid", Type::VoxelGrid, true),
             parameter("field", Type::Density, true),
-            parameter("material", material.clone(), true),
         ];
-        if name.ends_with("density") {
+        if name != "VoxelGrid.carve" {
+            parameters.push(parameter("material", material.clone(), true));
+        }
+        if name != "VoxelGrid.heightmap" {
             parameters.extend([
                 parameter("threshold", number(), false),
                 parameter("min", coordinate_type(), false),
@@ -236,7 +253,7 @@ pub(super) fn methods() -> Vec<Builtin> {
         vec![
             parameter("grid", Type::VoxelGrid, true),
             parameter("material", material, true),
-            parameter("density", scalar, false),
+            parameter("density", scalar.clone(), false),
             parameter("seed", number(), false),
             parameter("step", number(), false),
         ],
@@ -247,6 +264,11 @@ pub(super) fn methods() -> Vec<Builtin> {
         vec![
             parameter("grid", Type::VoxelGrid, true),
             parameter("step", number(), false),
+            parameter("seed", number(), false),
+            parameter("jitter", number(), false),
+            parameter("density", scalar, false),
+            parameter("mask", Type::Density, false),
+            parameter("max_slope", number(), false),
         ],
         Type::List(Box::new(vector()), ListLength::Unknown),
     ));
@@ -284,6 +306,11 @@ fn seed(args: &imbl::OrdMap<String, Value>, name: &str) -> Result<u64, String> {
     args.get(name)
         .map(|value| value.number()?.u64())
         .unwrap_or(Ok(0))
+}
+fn axes(args: &imbl::OrdMap<String, Value>) -> Result<Axes, String> {
+    args.get("axes")
+        .map(|value| value.string()?.parse())
+        .unwrap_or(Ok(Axes::default()))
 }
 fn triple(value: &Value) -> Result<[f64; 3], String> {
     let values = value.list()?;
@@ -449,6 +476,7 @@ fn execute(
                 .map_err(|_| "noise octave count exceeds u32")?,
             persistence: scalar(args, "persistence", 0.5)?,
             lacunarity: scalar(args, "lacunarity", 2.0)?,
+            axes: axes(args)?,
         };
         return Ok(Value::Density(Arc::new(Field::noise(options)?)));
     }
@@ -480,19 +508,10 @@ fn execute(
             .map(triple)
             .transpose()?
             .unwrap_or([0.0; 3]);
-        let axes = match args
-            .get("axes")
-            .map(Value::string)
-            .transpose()?
-            .unwrap_or("xyz")
-        {
-            "xyz" => [true; 3],
-            "xz" => [true, false, true],
-            "xy" => [true, true, false],
-            "yz" => [false, true, true],
-            _ => return Err("distance axes require xy, xz, yz, or xyz".into()),
-        };
-        return Ok(Value::Density(Arc::new(Field::distance(center, axes)?)));
+        return Ok(Value::Density(Arc::new(Field::distance(
+            center,
+            axes(args)?.mask(),
+        )?)));
     }
     if name.starts_with("Density.") {
         let field = density(required(args, "field")?)?;
@@ -502,6 +521,9 @@ fn execute(
         }
         let result = match name {
             "Density.clamp" => field.clamp(scalar(args, "min", 0.0)?, scalar(args, "max", 1.0)?)?,
+            "Density.smoothstep" => {
+                field.smoothstep(scalar(args, "min", 0.0)?, scalar(args, "max", 1.0)?)?
+            }
             "Density.translate" => field.transform(triple(required(args, "offset")?)?, [1.0; 3])?,
             "Density.scale" => field.transform(
                 [0.0; 3],
@@ -515,6 +537,7 @@ fn execute(
                     seed: seed(args, "seed")?,
                     scale: scalar(args, "scale", 32.0)?,
                     octaves: 3,
+                    axes: axes(args)?,
                     ..Default::default()
                 },
                 scalar(args, "strength", 3.0)?,
@@ -552,10 +575,22 @@ fn execute(
         return Err("procedural grid operation requires VoxelGrid".into());
     };
     if name == "VoxelGrid.surface_points" {
-        context.charge_work(grid.surface_work())?;
-        let step =
-            u32::try_from(integer(args, "step", 4)?).map_err(|_| "surface step exceeds u32")?;
-        let points = grid.surface_points(step)?;
+        let probability_field = args.get("density").map(density).transpose()?;
+        let mask = args.get("mask").map(density).transpose()?;
+        let options = SurfacePoints {
+            step: u32::try_from(integer(args, "step", 4)?)
+                .map_err(|_| "surface step exceeds u32")?,
+            seed: seed(args, "seed")?,
+            jitter: scalar(args, "jitter", 0.0)?,
+            density: probability_field.as_deref(),
+            mask: mask.as_deref(),
+            max_slope: args
+                .get("max_slope")
+                .map(|value| math::to_f64(value.number()?.value))
+                .transpose()?,
+        };
+        context.charge_work(grid.surface_points_work(&options)?)?;
+        let points = grid.surface_points(&options)?;
         let values = points
             .into_iter()
             .map(|point| {
@@ -607,6 +642,32 @@ fn execute(
             grid.place_many(child, &positions)?,
         )));
     }
+    if matches!(name, "VoxelGrid.density" | "VoxelGrid.carve") {
+        let (volume, material) = if name == "VoxelGrid.carve" {
+            (grid.as_ref().clone(), sanim_voxel::EMPTY)
+        } else {
+            edit_material(grid, required(args, "material")?)?
+        };
+        let field = density(required(args, "field")?)?;
+        let min = args
+            .get("min")
+            .map(|value| super::coordinates(value, Some(volume.dimensions())))
+            .transpose()?
+            .unwrap_or([0; 3]);
+        let max = args
+            .get("max")
+            .map(|value| super::coordinates(value, Some(volume.dimensions())))
+            .transpose()?
+            .unwrap_or(volume.dimensions());
+        context.charge_work(volume.density_work(&field, min, max)?)?;
+        return Ok(Value::VoxelGrid(Arc::new(volume.fill_density(
+            &field,
+            min,
+            max,
+            scalar(args, "threshold", 0.0)?,
+            material,
+        )?)));
+    }
     let (volume, material) = edit_material(grid, required(args, "material")?)?;
     let result = match name {
         "VoxelGrid.scatter" => {
@@ -626,21 +687,6 @@ fn execute(
             let plan = Heightmap::new(&field, volume.dimensions())?;
             context.charge_work(plan.work())?;
             plan.apply(&volume, material)?
-        }
-        "VoxelGrid.density" => {
-            let field = density(required(args, "field")?)?;
-            let min = args
-                .get("min")
-                .map(|value| super::coordinates(value, Some(volume.dimensions())))
-                .transpose()?
-                .unwrap_or([0; 3]);
-            let max = args
-                .get("max")
-                .map(|value| super::coordinates(value, Some(volume.dimensions())))
-                .transpose()?
-                .unwrap_or(volume.dimensions());
-            context.charge_work(volume.density_work(&field, min, max)?)?;
-            volume.fill_density(&field, min, max, scalar(args, "threshold", 0.0)?, material)?
         }
         "VoxelGrid.surface" => {
             let mask = args.get("mask").map(density).transpose()?;

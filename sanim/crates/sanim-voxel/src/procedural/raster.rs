@@ -1,7 +1,9 @@
 //! Chunk-batched field rasterization. Published volumes stay immutable.
+mod surface;
 use super::{Field, MAX_PROCEDURAL_WORK, MAX_SURFACE_POINTS};
 use crate::{CHUNK_EDGE, CHUNK_VOXELS, Chunk, EMPTY, Edit, MaterialId, Volume, index};
 use std::sync::Arc;
+pub use surface::SurfacePoints;
 
 /// A bounded two-byte-per-column plan; it is temporary native data, not a DSL List.
 pub struct Heightmap {
@@ -194,16 +196,11 @@ impl Volume {
         Ok(edit.finish())
     }
     pub fn scatter_work(&self, field: &Field, step: u32) -> Result<usize, String> {
-        if step == 0 {
-            return Err("scatter step must be positive".into());
-        }
-        checked_work(
-            self.surface_work().saturating_add(
-                (self.dimensions[0].div_ceil(step) as usize)
-                    .saturating_mul(self.dimensions[2].div_ceil(step) as usize)
-                    .saturating_mul(field.sample_work() + 1),
-            ),
-        )
+        self.surface_sampling_work(&SurfacePoints {
+            step,
+            density: Some(field),
+            ..Default::default()
+        })
     }
     /// Place one cell above sampled terrain columns using a continuous probability field.
     /// Native cutout cards reuse their material geometry; no layout node is allocated per blade.
@@ -218,22 +215,16 @@ impl Volume {
         if material == EMPTY || self.material(material).is_none() {
             return Err("scatter requires a nonempty material registered in the volume".into());
         }
-        let heights = self.surface_heights();
-        let width = self.dimensions[0];
-        let mut sampler = field.sampler();
         let mut changes = std::collections::BTreeMap::new();
-        for z in (0..self.dimensions[2]).step_by(step as usize) {
-            for x in (0..width).step_by(step as usize) {
-                let y = u32::from(heights[(x + width * z) as usize]);
-                if y == 0 || y >= self.dimensions[1] {
-                    continue;
-                }
-                let density =
-                    sampler.sample([f64::from(x) + 0.5, f64::from(y), f64::from(z) + 0.5])?;
-                if !super::math::scatter(seed, [x, z], density) {
-                    continue;
-                }
-                let point = [x, y, z];
+        self.visit_surface_points(
+            &SurfacePoints {
+                step,
+                density: Some(field),
+                seed,
+                ..Default::default()
+            },
+            self.dimensions[1].saturating_sub(1),
+            |point| {
                 let key = point.map(|axis| axis / CHUNK_EDGE);
                 let cells = changes.entry(key).or_insert_with(|| {
                     self.storage
@@ -248,8 +239,9 @@ impl Volume {
                             .into(),
                     );
                 }
-            }
-        }
+                Ok(())
+            },
+        )?;
         let mut edit = Edit::new(self);
         for (key, cells) in changes {
             edit.replace(key, Chunk::from_cells(cells).map(Arc::new))?;
@@ -380,8 +372,21 @@ impl Volume {
 
     fn surface_heights(&self) -> Vec<u16> {
         let [width, height, depth] = self.dimensions();
+        let cards = self
+            .materials()
+            .any(|(_, material)| material.geometry() == crate::MaterialGeometry::Cross);
+        let supports_surface = |id| {
+            id != EMPTY
+                && (!cards
+                    || self.material(id).is_some_and(|material| {
+                        material.geometry() == crate::MaterialGeometry::Cube
+                    }))
+        };
         let mut heights = vec![0u16; width as usize * depth as usize];
         for (key, chunk) in self.chunks() {
+            if chunk.uniform().is_some_and(|id| !supports_surface(id)) {
+                continue;
+            }
             let base = key.map(|axis| axis * CHUNK_EDGE);
             for z in 0..CHUNK_EDGE.min(depth - base[2]) {
                 for x in 0..CHUNK_EDGE.min(width - base[0]) {
@@ -395,7 +400,7 @@ impl Volume {
                     } else {
                         (0..CHUNK_EDGE.min(height - base[1]))
                             .rev()
-                            .find(|y| chunk.get([x, *y, z]) != EMPTY)
+                            .find(|y| supports_surface(chunk.get([x, *y, z])))
                             .map_or(0, |y| base[1] + y + 1)
                     };
                     heights[at] = heights[at].max(value as u16);
@@ -415,6 +420,7 @@ impl Volume {
             })
             .sum::<usize>()
             .saturating_add(self.dimensions[0] as usize * self.dimensions[2] as usize)
+            .saturating_add(self.palette.materials.len())
     }
     pub fn surface_paint_work(&self, mask: Option<&Field>) -> Result<usize, String> {
         checked_work(self.surface_work().saturating_add(mask.map_or(0, |field| {
@@ -498,29 +504,5 @@ impl Volume {
             }
         }
         Ok(edit.finish())
-    }
-    pub fn surface_points(&self, step: u32) -> Result<Vec<[u32; 3]>, String> {
-        if step == 0 {
-            return Err("surface point spacing must be positive".into());
-        }
-        let [width, _, depth] = self.dimensions();
-        let count = width.div_ceil(step) as usize * depth.div_ceil(step) as usize;
-        if count > MAX_SURFACE_POINTS {
-            return Err(format!(
-                "surface sampling may produce {count} points, exceeding {MAX_SURFACE_POINTS}; increase step"
-            ));
-        }
-        checked_work(self.surface_work())?;
-        let heights = self.surface_heights();
-        let mut points = Vec::with_capacity(count);
-        for z in (0..depth).step_by(step as usize) {
-            for x in (0..width).step_by(step as usize) {
-                let y = u32::from(heights[(x + width * z) as usize]);
-                if y > 0 {
-                    points.push([x, y, z]);
-                }
-            }
-        }
-        Ok(points)
     }
 }

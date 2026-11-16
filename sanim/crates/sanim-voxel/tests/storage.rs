@@ -118,8 +118,10 @@ fn textures_are_shared_across_faces_materials_and_serialization() {
         faces[5].as_ref().unwrap()
     ));
     assert_eq!(restored.resident_bytes(), volume.resident_bytes());
+    let rgba = Arc::new(Texture::new(1, 1, [0, 0, 0, 128].into()).unwrap());
+    assert!(rgba.has_partial_alpha());
     assert!(
-        Texture::new(1, 1, [0, 0, 0, 128].into())
+        Material::textured(BLUE, std::array::from_fn(|_| Some(rgba.clone())))
             .unwrap_err()
             .contains("cutout")
     );

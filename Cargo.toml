@@ -381,6 +381,7 @@ pest = "2"
 pest_derive = "2"
 pipewire = { version = "0.10", features = ["v0_3_44"] }
 png = "0.18"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
 poppler = { package = "poppler-rs", version = "0.26", features = ["v0_82"] }
 psd = "0.3"
 quick-xml = "0.42"

@@ -360,6 +360,7 @@ pub enum Property {
     VoxelLights,
     VoxelEnvironment,
     VoxelCamera,
+    Texture,
     Position,
     PositionMode,
     Overflow,
@@ -695,6 +696,16 @@ impl Element {
                     fields: vec![].into(),
                 }
             }
+            Property::Texture => match self.geometry.as_ref() {
+                Geometry::Media { asset, .. } => match asset.source() {
+                    crate::media::Source::Texture(texture) => Value::Texture(texture.clone()),
+                    _ => return Err(
+                        "this Image has an encoded source; read<Texture> to access editable pixels"
+                            .into(),
+                    ),
+                },
+                _ => return Err(format!("{} is not an Image", self.id)),
+            },
             Property::Text => match self.geometry.as_ref() {
                 Geometry::Text { text, .. } => Value::String(text.clone()),
                 _ => return Err(format!("{} does not have text content", self.id)),
@@ -812,6 +823,32 @@ impl Element {
             Property::OverflowWrap => {
                 self.layout.text.overflow_wrap =
                     Some(crate::text::OverflowWrap::parse(value.string()?)?);
+            }
+            Property::Texture => {
+                let Value::Texture(texture) = value else {
+                    return Err("Image src requires a Texture value during retained playback; source paths are resolved during preparation".into());
+                };
+                if matches!(self.geometry.as_ref(), Geometry::Media { asset, .. } if matches!(asset.source(), crate::media::Source::Texture(current) if Arc::ptr_eq(current, &texture)))
+                {
+                    return Ok(());
+                }
+                let asset = Arc::new(crate::media::Asset::from_texture(texture));
+                let [width, height] = math::media::element_size(
+                    [asset.width, asset.height],
+                    self.layout.width,
+                    self.layout.height,
+                )?;
+                let Geometry::Media {
+                    asset: current,
+                    width: current_width,
+                    height: current_height,
+                } = Arc::make_mut(&mut self.geometry)
+                else {
+                    return Err(format!("{} is not an Image", self.id));
+                };
+                *current = asset;
+                *current_width = width;
+                *current_height = height;
             }
             Property::Text => {
                 let Value::String(text) = value else {

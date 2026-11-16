@@ -12,7 +12,7 @@ mod fixture;
 #[test]
 #[ignore = "manual actual-valley GPU performance investigation"]
 fn actual_valley_same_process_gpu_benchmark() {
-    let (_temporary, prepared) = fixture::valley();
+    let prepared = fixture::valley();
     let mut renderer = Renderer::headless(Limits::default()).unwrap();
     let mut initialized = false;
     let preview_only = std::env::var_os("SANIM_VOXEL_PROFILE_PREVIEW").is_some();

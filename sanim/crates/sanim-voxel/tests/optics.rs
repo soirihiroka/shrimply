@@ -241,8 +241,9 @@ fn numerical_ranges_and_closed_medium_constraints_fail_clearly() {
             .contains("closed opaque")
     );
     material.with_geometry(MaterialGeometry::Cross).unwrap();
+    let partial = Arc::new(Texture::new(1, 1, Arc::from([255, 255, 255, 128])).unwrap());
     assert!(
-        Texture::new(1, 1, Arc::from([255, 255, 255, 128]))
+        Material::textured(0xffffffff, std::array::from_fn(|_| Some(partial.clone())))
             .unwrap_err()
             .contains("transmission")
     );

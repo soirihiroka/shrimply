@@ -35,7 +35,7 @@ pub(super) fn parameters() -> Vec<Parameter> {
     parameters.extend(
         TEXTURES
             .iter()
-            .map(|name| parameter(name, Type::VoxelTexture, false)),
+            .map(|name| parameter(name, Type::Texture, false)),
     );
     parameters.push(parameter("geometry", geometry, false));
     parameters.push(parameter("attenuation_color", Type::Color, false));
@@ -54,12 +54,10 @@ pub(super) fn build(
     let texture = |name: &str| -> Result<Option<Arc<sanim_voxel::Texture>>, String> {
         args.get(name)
             .map(|value| {
-                if let Value::VoxelTexture(texture) = value {
+                if let Value::Texture(texture) = value {
                     Ok(texture.clone())
                 } else {
-                    Err(format!(
-                        "{name} requires read<VoxelTexture>(\"texture.png\")"
-                    ))
+                    Err(format!("{name} requires a Texture value"))
                 }
             })
             .transpose()

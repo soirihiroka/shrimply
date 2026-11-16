@@ -51,7 +51,7 @@ impl Serialize for ValueKey<'_> {
                 #[serde(skip_serializing_if = "Option::is_none")]
                 geometry: Option<sanim_voxel::MaterialGeometry>,
             },
-            VoxelTexture(u64),
+            Texture(u64),
             VoxelLayout([u8; 32]),
             Density([u8; 32]),
             Curve(u64),
@@ -88,7 +88,7 @@ impl Serialize for ValueKey<'_> {
                 optics: (!material.optics().is_default()).then(|| material.optics().cache_key()),
                 geometry: (!material.geometry().is_default()).then_some(material.geometry()),
             },
-            Value::VoxelTexture(texture) => Key::VoxelTexture(texture.revision()),
+            Value::Texture(texture) => Key::Texture(texture.revision()),
             Value::VoxelLayout(node) => Key::VoxelLayout(node.fingerprint()),
             Value::Density(field) => Key::Density(field.fingerprint()),
             Value::Curve(curve) => Key::Curve(curve.revision()),

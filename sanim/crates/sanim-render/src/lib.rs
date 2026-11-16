@@ -5,8 +5,10 @@ use std::{collections::BTreeMap, rc::Rc, sync::Arc};
 mod draw;
 mod history;
 mod pick;
+mod texture;
 pub use pick::Hit;
 use sanim_core::cache::Cache;
+pub use texture::install_texture_drawing;
 
 #[derive(Clone, Debug)]
 pub struct Options {
@@ -281,6 +283,7 @@ impl Renderer {
     }
     /// Preserve immutable path geometry across source, style, timing and viewport edits.
     pub fn prepare(&mut self, animation: Animation) -> Result<Scene, String> {
+        install_texture_drawing();
         self.geometry_hints.retain(|_, hint| hint.alive());
         let live_paths: std::collections::BTreeSet<_> = self
             .geometry_hints

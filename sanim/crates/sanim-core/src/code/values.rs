@@ -8,6 +8,12 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+#[derive(Clone, Copy, Debug)]
+pub struct NativeCost {
+    pub work: usize,
+    pub bytes: usize,
+    pub output_bytes: usize,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Native {
     Color,
@@ -24,6 +30,8 @@ pub enum Native {
     PointLight,
     Environment,
     Camera(crate::voxel::camera::Op),
+    Perceptual(crate::math::color::Op),
+    Texture(crate::math::texture::Op),
 }
 impl Native {
     pub const CODE_VALUES: &'static [Self] = &[
@@ -35,6 +43,12 @@ impl Native {
         Self::CodeTheme,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
+        if let Some(operation) = crate::math::texture::Op::from_name(name) {
+            return Some(Self::Texture(operation));
+        }
+        if let Some(operation) = crate::math::color::Op::from_name(name) {
+            return Some(Self::Perceptual(operation));
+        }
         if let Some(operation) = crate::voxel::camera::Op::from_name(name) {
             return Some(Self::Camera(operation));
         }
@@ -53,6 +67,8 @@ impl Native {
     }
     pub fn name(self) -> &'static str {
         match self {
+            Self::Texture(operation) => operation.name(),
+            Self::Perceptual(operation) => operation.name(),
             Self::Camera(operation) => operation.name(),
             Self::Color => "Color",
             Self::Font => "Font",
@@ -72,6 +88,8 @@ impl Native {
     pub fn signature(self) -> (Vec<(&'static str, Type, bool)>, Type) {
         let num = Type::Numeric(Unit::Number);
         match self {
+            Self::Texture(operation) => operation.signature(),
+            Self::Perceptual(operation) => operation.signature(),
             Self::Camera(operation) => crate::voxel::camera::signature(operation),
             Self::VoxelBox | Self::VoxelPart => crate::voxel::config::signature(self.name()),
             Self::SunLight | Self::PointLight | Self::Environment => {
@@ -156,18 +174,44 @@ impl Native {
         }
         if let Self::Camera(operation) = self {
             crate::voxel::camera::checked_result(operation, actuals, result)
+        } else if let Self::Texture(operation) = self {
+            operation.check(actuals, result)
         } else {
             Ok(result)
         }
     }
     /// Native constructors reserve their work before allocating immutable results.
-    pub fn work(self, args: &imbl::OrdMap<String, Value>) -> Result<usize, String> {
+    fn work(self, args: &imbl::OrdMap<String, Value>) -> Result<usize, String> {
         match self {
+            Self::Texture(_) => unreachable!("texture work is reserved by atomic evaluate"),
+            Self::Perceptual(operation) => Ok(operation.work()),
             Self::Camera(operation) => crate::voxel::camera::work(operation, args),
             _ => Ok(0),
         }
     }
+    /// Reserve the actual execution choice while a cached result remains pinned.
+    pub fn evaluate(
+        self,
+        args: &imbl::OrdMap<String, Value>,
+        mut reserve: impl FnMut(NativeCost) -> Result<(), String>,
+    ) -> Result<Value, String> {
+        if let Self::Texture(operation) = self {
+            return operation.evaluate(args, reserve);
+        }
+        reserve(NativeCost {
+            work: self.work(args)?,
+            bytes: 0,
+            output_bytes: 0,
+        })?;
+        self.execute(args)
+    }
     pub fn execute(self, args: &imbl::OrdMap<String, Value>) -> Result<Value, String> {
+        if let Self::Texture(operation) = self {
+            return operation.execute(args);
+        }
+        if let Self::Perceptual(operation) = self {
+            return operation.execute(args);
+        }
         if let Self::Camera(operation) = self {
             return crate::voxel::camera::execute(operation, args);
         }

@@ -7,7 +7,7 @@ fn changing_native_font_epoch_invalidates_retained_text_prefixes() {
         "let label=Label(\"Epoch test\")\nAnimation(children=[label])\nwait(1s)",
         "fn caption():Element{return Label(\"Epoch test\")}\nlet label=caption()\nAnimation(children=[label])\nwait(1s)",
         "fn snippet():Element{return CodeView(code=r\"print(1)\",lang=\"python\")}\nlet label=snippet()\nAnimation(children=[label])\nwait(1s)",
-    ] {
+    ].into_iter().chain(cfg!(feature="media").then_some("fn decal():Texture{return Texture(size=[64,32]).draw(<Label font_size={8pt}>Epoch</Label>)}\nlet stamp=decal()\nlet image=<Image src={stamp}/>\nAnimation(children=[image])\nwait(1s)")) {
         let mut files = MemorySources::default();
         files.insert("main.sanim", source);
         let mut engine = Engine::default();

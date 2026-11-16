@@ -25,7 +25,9 @@ pub use lighting::{
     MAX_LIGHT_INTENSITY, MAX_LIGHTS, MIN_LIGHT_DISTANCE, PointLight, SceneLightParameters,
     SunLight, deserialize_lights, scene_light_parameters,
 };
-pub use material::{Material, MaterialGeometry, MaterialId, OpticalProperties, Texture};
+pub use material::{
+    Material, MaterialGeometry, MaterialId, OpticalProperties, Texture, texture_bytes,
+};
 
 use imbl::{OrdMap, ordmap::DiffItem};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

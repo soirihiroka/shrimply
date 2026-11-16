@@ -36,7 +36,7 @@ fn measure(mut draw: impl FnMut() -> Frame) -> (Frame, Duration) {
 #[test]
 #[ignore = "manual actual-valley reconstruction quality/performance benchmark"]
 fn actual_valley_reconstruction_quality_benchmark() {
-    let (_temporary, prepared) = fixture::valley();
+    let prepared = fixture::valley();
     let time = Fraction::from(3);
     let elements = prepared.animation.sample(time).unwrap();
     let Geometry::Voxel(scene) = elements[0].geometry.as_ref() else {

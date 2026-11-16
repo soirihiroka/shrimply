@@ -270,7 +270,9 @@ impl Runtime<'_, '_> {
             }
             // Constructor shorthand supplies only axes without an explicit
             // override. Both axis bindings share the same expression node.
-            let properties = if label == "overflow" {
+            let properties = if name == "Image" && label == "src" {
+                vec![Property::Texture]
+            } else if label == "overflow" {
                 [
                     ("overflow_x", Property::OverflowX),
                     ("overflow_y", Property::OverflowY),
@@ -314,6 +316,10 @@ impl Runtime<'_, '_> {
         Ok(())
     }
     fn graph_node(&mut self, node: Node, span: Span) -> Result<NodeId, Diagnostic> {
+        self.animation
+            .reactive
+            .set_native_byte_limit(self.limits.data.max_bytes)
+            .map_err(|error| self.error("S140", error, span))?;
         let mut work = 0;
         let node = self
             .animation
@@ -444,6 +450,10 @@ impl Runtime<'_, '_> {
                 match self.expression(base,env)? {
                     Value::Record(fields) if !self.signal_in(base,env)=>{
                         let value=fields.get(name).cloned().ok_or_else(||self.error("S140",format!("unknown record field '{name}'"),expr.span))?;self.graph_node(Node::Constant(value),expr.span)
+                    }
+                    Value::Record(_)=>{
+                        let record=self.lower_expression(base,env,locals,depth+1)?;
+                        self.graph_node(Node::Field{record,name:name.clone()},expr.span)
                     }
                     Value::Element(element)=>{
                         let property=property_name(name).ok_or_else(||self.error("S140","unsupported retained element property",expr.span))?;

@@ -182,30 +182,19 @@ fn survival_water_hard_shadows_match_cpu_visibility() {
     use sanim_voxel_render::{
         AmbientOcclusion, AoMode, Limits, RenderSettings, Renderer, ShadowMode,
     };
-    let directory = tempfile::tempdir().unwrap();
-    let generator =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/voxel_pack.py");
-    assert!(
-        Command::new("uv")
-            .args(["run", "--no-project", "python"])
-            .arg(generator)
-            .arg(directory.path())
-            .status()
-            .unwrap()
-            .success()
-    );
-    // This regression isolates opaque visibility precision, independent of the water showcase's optics.
-    let source = directory.path().join("survival.sanim");
-    let text = fs::read_to_string(&source).unwrap();
-    let text=text.lines().map(|line|if line.starts_with("let water = ") { "let water = VoxelMaterial(texture=read<VoxelTexture>(\"assets/minecraft/textures/block/water_still.png\"), transmission=0)" } else {line}).collect::<Vec<_>>().join("\n");
-    fs::write(source, text).unwrap();
-    let sources = FileSources::new(directory.path()).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+    let sources = FileSources::new(root).unwrap();
     let prepared = Engine::default()
-        .prepare("survival.sanim", &sources, &Default::default())
+        .prepare("voxel_survival.sanim", &sources, &Default::default())
         .unwrap();
     let Value::VoxelMaterial(water) = &prepared.bindings["water"] else {
         panic!("water material");
     };
+    assert_eq!(
+        water.optics().transmission,
+        0.,
+        "the visibility oracle needs opaque water"
+    );
     let mut options = RenderSettings {
         width: 1280,
         height: 720,

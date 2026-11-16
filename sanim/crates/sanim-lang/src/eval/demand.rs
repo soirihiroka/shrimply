@@ -5,6 +5,17 @@ use reactive::{Node, Signal};
 
 impl Runtime<'_, '_> {
     pub(super) fn should_defer(&self, expression: &Expr, env: &Env, span: Span) -> bool {
+        // Measuring a temporal plan does not require materializing its visual
+        // targets. Keep the real expression available if geometry is observed.
+        if self.measure_only
+            && !self.expression_mutates(expression)
+            && self.binding_type(span).is_ok_and(|ty| {
+                ty == Type::Font
+                    || ty.contains_element() && !ty.contains_animation() && !ty.contains_function()
+            })
+        {
+            return true;
+        }
         if self.preparation != crate::Preparation::Demand
             || self.expression_mutates(expression)
             || self.binding_type(span).is_ok_and(|ty| {
