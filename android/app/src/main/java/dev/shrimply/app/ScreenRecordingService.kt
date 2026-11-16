@@ -49,6 +49,8 @@ class ScreenRecordingService : Service() {
         }
         private val deliveries = ConcurrentHashMap<String, Delivery>()
 
+        internal fun busy(): Boolean = deliveries.values.any { it.terminal == null }
+
         private fun deliver(id: String, value: JSONObject) {
             value.put("id", id)
             deliveries[id]?.let { delivery ->

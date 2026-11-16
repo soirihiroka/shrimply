@@ -172,7 +172,9 @@ internal fun rememberScreenColorPicker(labels: JSONObject, onColor: (Int) -> Uni
         }
     }
     return {
-        if (pending == null && bitmap == null) {
+        // A new projection grant can revoke an existing recording before the service sees it.
+        if (ScreenRecordingService.busy()) currentError(labels.getString("sample_error"))
+        else if (pending == null && bitmap == null) {
             val bounds = activity.windowManager.maximumWindowMetrics.bounds
             val config = JSONObject().put("mode", "image").put("id", UUID.randomUUID().toString())
                 .put("path", File.createTempFile("color-sample-", ".png", context.cacheDir).absolutePath)
