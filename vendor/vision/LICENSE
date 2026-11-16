@@ -204,7 +204,7 @@
 
 Legacy source notices retained verbatim:
 
-modules/imgproc/src/featureselect.cpp
+modules/features/src/featureselect.cpp
 /*M///////////////////////////////////////////////////////////////////////////////////////
 //
 //  IMPORTANT: READ BEFORE DOWNLOADING, COPYING, INSTALLING OR USING.
@@ -305,6 +305,7 @@ modules/video/src/lkpyramid.cpp
 //
 // Copyright (C) 2000, Intel Corporation, all rights reserved.
 // Copyright (C) 2013, OpenCV Foundation, all rights reserved.
+// Copyright (C) 2026, Advanced Micro Devices, Inc., all rights reserved.
 // Third party copyrights are property of their respective owners.
 //
 // Redistribution and use in source and binary forms, with or without modification,
@@ -333,6 +334,12 @@ modules/video/src/lkpyramid.cpp
 //
 //M*/
 
+modules/video/src/lkpyramid.simd.hpp
+// This file is part of OpenCV project.
+// It is subject to the license terms in the LICENSE file found in the top-level directory
+// of this distribution and at http://opencv.org/license.html
+// Copyright (C) 2026, Advanced Micro Devices, Inc., all rights reserved.
+
 modules/imgproc/src/color_rgb.simd.hpp
 // This file is part of OpenCV project.
 // It is subject to the license terms in the LICENSE file found in the top-level directory
@@ -345,7 +352,7 @@ modules/imgproc/src/color.simd_helpers.hpp
 // of this distribution and at http://opencv.org/license.html
 //constants for conversion from/to RGB and Gray, YUV, YCrCb according to BT.601
 
-modules/calib3d/src/ptsetreg.cpp
+modules/geometry/src/ptsetreg.cpp
 /*M///////////////////////////////////////////////////////////////////////////////////////
 //
 //  IMPORTANT: READ BEFORE DOWNLOADING, COPYING, INSTALLING OR USING.
@@ -389,7 +396,7 @@ modules/calib3d/src/ptsetreg.cpp
 //
 //M*/
 
-modules/calib3d/src/precomp.hpp
+modules/geometry/src/precomp.hpp
 /*M///////////////////////////////////////////////////////////////////////////////////////
 //
 //  IMPORTANT: READ BEFORE DOWNLOADING, COPYING, INSTALLING OR USING.

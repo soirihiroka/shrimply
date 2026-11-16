@@ -1,4 +1,4 @@
-// Source-derived OpenCV 4.13.0 modules/video/src/lkpyramid.cpp:189-760.
+// Source-derived OpenCV 5.1.0 modules/video/src/lkpyramid.cpp:109-835.
 // Copyright Intel Corporation 2000-2008, Willow Garage 2009,
 // OpenCV Foundation 2013. See ../LICENSE for the complete BSD notice.
 // One cooperative workgroup owns a feature through every pyramid level. Image pyramids
@@ -84,7 +84,7 @@ void vision_pyr_down(uint3 id : SV_DispatchThreadID, uniform uint *image,
   image[target.z + id.x] = uint((sum + 128) >> 8);
 }
 
-// calcScharrDeriv, including reflected image borders; the sampler above
+// ScharrDerivInvoker_SIMD, including reflected image borders; the sampler above
 // separately supplies the original zero-padded derivative border to LK.
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
 void vision_scharr(uint3 id : SV_DispatchThreadID, uniform uint *image,
@@ -108,7 +108,7 @@ void vision_scharr(uint3 id : SV_DispatchThreadID, uniform uint *image,
   derivatives[size.z + id.x] = int2(dx, dy);
 }
 
-// OpenCV contrib 4.13 cudaoptflow/src/cuda/pyrlk.cu:sparseKernel maps one
+// OpenCV contrib 5.1 cudaoptflow/src/cuda/pyrlk.cu:sparseKernel maps one
 // workgroup to each feature and cooperatively loads its window. Preserve the
 // scalar reference's row-major reductions while parallelizing memory access.
 static const uint VISION_GROUP_SIZE = 64;

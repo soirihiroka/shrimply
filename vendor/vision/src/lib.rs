@@ -53,7 +53,7 @@ impl RgbaImage {
 
     pub fn gray(&self) -> Result<GrayImage, String> {
         self.validate()?;
-        // OpenCV 4.13 color_rgb.simd.hpp RGB2Gray<uchar>, color.simd_helpers.hpp.
+        // OpenCV 5.1 color_rgb.simd.hpp RGB2Gray<uchar>, color.simd_helpers.hpp.
         const RED: u32 = 9_798;
         const GREEN: u32 = 19_235;
         const BLUE: u32 = 3_735;

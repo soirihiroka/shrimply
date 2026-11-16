@@ -1,6 +1,7 @@
-// Source-derived translation of OpenCV 4.13.0 featureselect.cpp, corner.cpp,
-// pyramids.cpp and lkpyramid.cpp. Copyright Intel Corporation 2000 and
-// OpenCV Foundation 2013. Distributed under the notice in ../LICENSE.
+// Source-derived translation of OpenCV 5.1.0 features/featureselect.cpp, imgproc/corner.cpp,
+// imgproc/pyramids.cpp, video/lkpyramid.cpp and lkpyramid.simd.hpp.
+// Copyright Intel Corporation 2000,
+// OpenCV Foundation 2013, and Advanced Micro Devices 2026. See ../LICENSE.
 use crate::GrayImage;
 
 #[derive(Clone, Copy, Debug)]
