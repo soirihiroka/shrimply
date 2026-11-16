@@ -34,6 +34,7 @@ api! {
     new_device: unsafe extern "C" fn(i32) -> Handle = "oidnNewDeviceByID",
     cuda_supported: unsafe extern "C" fn(i32) -> bool = "oidnIsCUDADeviceSupported",
     new_cuda: unsafe extern "C" fn(*const i32, *const Handle, i32) -> Handle = "oidnNewCUDADevice",
+    #[cfg(target_os = "linux")]
     device_int: unsafe extern "C" fn(Handle, *const c_char) -> i32 = "oidnGetDeviceInt",
     commit_device: unsafe extern "C" fn(Handle) = "oidnCommitDevice",
     sync_device: unsafe extern "C" fn(Handle) = "oidnSyncDevice",
