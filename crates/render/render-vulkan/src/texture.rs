@@ -25,14 +25,24 @@ struct Storage {
     width: u32,
     height: u32,
     levels: u32,
+    mipmapped: bool,
 }
 
 impl Texture {
-    pub(crate) fn new(device: Arc<Device>, width: u32, height: u32) -> Result<Self, String> {
+    pub(crate) fn new(
+        device: Arc<Device>,
+        width: u32,
+        height: u32,
+        mipmapped: bool,
+    ) -> Result<Self, String> {
         if width == 0 || height == 0 {
             return Err("Vulkan presentation dimensions must be positive".into());
         }
-        let levels = width.max(height).ilog2() + 1;
+        let levels = if mipmapped {
+            width.max(height).ilog2() + 1
+        } else {
+            1
+        };
         #[cfg(target_os = "linux")]
         let mut external = vk::ExternalMemoryImageCreateInfo::default()
             .handle_types(vk::ExternalMemoryHandleTypeFlags::OPAQUE_FD);
@@ -48,17 +58,26 @@ impl Texture {
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(
+            .usage(if mipmapped {
                 vk::ImageUsageFlags::SAMPLED
                     | vk::ImageUsageFlags::STORAGE
                     | vk::ImageUsageFlags::COLOR_ATTACHMENT
                     | vk::ImageUsageFlags::TRANSFER_SRC
-                    | vk::ImageUsageFlags::TRANSFER_DST,
-            )
+                    | vk::ImageUsageFlags::TRANSFER_DST
+            } else {
+                // Skia requires both transfer capabilities for borrowed textures.
+                vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_SRC
+                    | vk::ImageUsageFlags::TRANSFER_DST
+            })
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .initial_layout(vk::ImageLayout::UNDEFINED);
         #[cfg(target_os = "linux")]
-        let info = info.push_next(&mut external);
+        let info = if mipmapped {
+            info.push_next(&mut external)
+        } else {
+            info
+        };
         let image = unsafe { device.raw.create_image(&info, None) }
             .map_err(|e| format!("Create Vulkan presentation texture: {e:?}"))?;
         let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
@@ -83,7 +102,11 @@ impl Texture {
             .memory_type_index(index)
             .push_next(&mut dedicated);
         #[cfg(target_os = "linux")]
-        let info = info.push_next(&mut export);
+        let info = if mipmapped {
+            info.push_next(&mut export)
+        } else {
+            info
+        };
         let memory = match unsafe { device.raw.allocate_memory(&info, None) } {
             Ok(memory) => memory,
             Err(e) => {
@@ -111,6 +134,7 @@ impl Texture {
             width,
             height,
             levels,
+            mipmapped,
         })))
     }
     pub(crate) fn bytes(&self) -> u64 {
@@ -120,7 +144,7 @@ impl Texture {
         // Linux releases every presentation image to EXTERNAL ownership, even
         // frames dropped before GL import. Only fence-bearing Vulkan borrowers
         // currently return ownership through their Rust allocation leases.
-        cfg!(target_os = "android")
+        cfg!(target_os = "android") || !self.0.mipmapped
     }
     pub(crate) fn unused(&self) -> bool {
         Arc::strong_count(&self.0) == 1 && self.cacheable()
@@ -150,6 +174,9 @@ impl Texture {
     }
     pub(crate) fn image(&self) -> vk::Image {
         self.0.image
+    }
+    pub(crate) fn mipmapped(&self) -> bool {
+        self.0.mipmapped
     }
     /// A Skia draw can split into several submissions. Serialize the entire
     /// layout/read/restore transaction only against other readers of this image.

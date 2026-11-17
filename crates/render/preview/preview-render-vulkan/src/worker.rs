@@ -4,6 +4,7 @@ use shrimply_preview_render_core::worker::*;
 use shrimply_project_document::project::{Project, Time};
 use shrimply_render_vulkan::{Buffer, Texture};
 use std::{
+    collections::VecDeque,
     sync::{
         Arc,
         atomic::Ordering,
@@ -58,6 +59,7 @@ struct Request {
     accuracy: CompositeAccuracy,
     id: u64,
     generation: u64,
+    started: Instant,
 }
 
 struct Pending {
@@ -94,10 +96,10 @@ pub fn worker<F: From<Frame> + Send + 'static>(
     let mut exclusion = None;
     let mut request = None;
     let mut last_request = None;
-    let mut pending: Option<Pending> = None;
+    let mut pending: VecDeque<Pending> = VecDeque::new();
     let mut serial = 0_u64;
     loop {
-        let next = if request.is_some() || pending.is_some() {
+        let next = if request.is_some() || !pending.is_empty() {
             match channels.command_rx.recv_timeout(GPU_POLL_INTERVAL) {
                 Ok(command) => Some(command),
                 Err(mpsc::RecvTimeoutError::Timeout) => None,
@@ -160,22 +162,25 @@ pub fn worker<F: From<Frame> + Send + 'static>(
                         accuracy,
                         id: request_id,
                         generation: cancel_generation,
+                        started: Instant::now(),
                     });
                     last_request = request;
                 }
             }
         }
-        if let Some(frame) = &pending {
+        while let Some(frame) = pending.front() {
             match frame.frame.completed() {
-                Ok(false) => continue,
+                Ok(false) => break,
                 Err(error) => {
                     let _ = channels.event_tx.try_send(VideoEvent::Error(error));
-                    pending = None;
+                    pending.pop_front();
                     continue;
                 }
                 Ok(true) => {}
             }
-            let pending_frame = pending.take().expect("polled Vulkan frame disappeared");
+            let pending_frame = pending
+                .pop_front()
+                .expect("polled Vulkan frame disappeared");
             shrimply_profiling::record(
                 "Vulkan compositor / GPU completion and polling",
                 pending_frame.submitted.elapsed(),
@@ -187,12 +192,13 @@ pub fn worker<F: From<Frame> + Send + 'static>(
                 && pending_frame.revision == revision
                 && pending_frame.exclusion == exclusion
             {
+                shrimply_profiling::increment("Vulkan compositor / GPU frames completed");
                 let elapsed = pending_frame.started.elapsed();
                 let width = pending_frame.frame.rendered.width;
                 let height = pending_frame.frame.rendered.height;
                 let loading = pending_frame.frame.rendered.loading;
                 let audio_analysis = pending_frame.frame.rendered.audio_analysis.clone();
-                let settled = pending_frame.frame.rendered.accuracy.content_accurate() && !loading;
+                let settled = pending_frame.frame.rendered.accuracy.settled(loading);
                 let sanim_sources = pending_frame.frame.rendered.sanim_sources.clone();
                 let source_frame = pending_frame.frame.rendered.source_frame;
                 let (display, rendered) = pending_frame.frame.into_buffers();
@@ -253,11 +259,17 @@ pub fn worker<F: From<Frame> + Send + 'static>(
         let Some(current) = request else {
             continue;
         };
+        if pending.len() >= shrimply_render_core::PREVIEW_FRAMES_IN_FLIGHT
+            || pending
+                .iter()
+                .any(|pending| pending.request.id == current.id)
+        {
+            continue;
+        }
         if channels.cancel_generation.load(Ordering::Acquire) != current.generation {
             request = None;
             continue;
         }
-        let started = Instant::now();
         let prepared = {
             let _measurement = shrimply_profiling::measure("Vulkan compositor / Prepare scene");
             compositor.prepare(&project, current.position, current.accuracy)
@@ -278,15 +290,24 @@ pub fn worker<F: From<Frame> + Send + 'static>(
             .transpose()
         }) {
             Ok(Some(frame)) => {
-                pending = Some(Pending {
+                if current.accuracy.continuous_playback()
+                    && !frame.rendered.loading
+                    && let Some(observer) = &channels.playback_observer
+                {
+                    observer(PlaybackRenderEvent::Submitted {
+                        request_id: current.id,
+                        position: current.position,
+                    });
+                }
+                pending.push_back(Pending {
                     frame,
                     request: current,
                     revision,
                     project_generation,
                     exclusion,
-                    started,
+                    started: current.started,
                     submitted: Instant::now(),
-                })
+                });
             }
             Ok(None) => {
                 if !compositor.needs_update() {

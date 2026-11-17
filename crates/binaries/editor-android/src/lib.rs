@@ -7,7 +7,6 @@ mod bridge;
 mod input;
 #[cfg(target_os = "android")]
 mod localization;
-mod math;
 #[cfg(target_os = "android")]
 mod preview;
 mod project;

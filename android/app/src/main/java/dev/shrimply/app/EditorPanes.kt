@@ -30,7 +30,11 @@ internal fun EditorPanes(
     inspector: @Composable () -> Unit,
     timeline: @Composable () -> Unit,
 ) {
-    val arrangement = object : ThreePaneScaffoldOverride {
+    val currentInspectorWidth by rememberUpdatedState(inspectorWidth)
+    val currentTimelineFraction by rememberUpdatedState(timelineFraction)
+    val currentInspectorVisible by rememberUpdatedState(inspectorVisible)
+    val currentTimelineVisible by rememberUpdatedState(timelineVisible)
+    val arrangement = remember { object : ThreePaneScaffoldOverride {
         @Composable
         override fun ThreePaneScaffoldOverrideScope.ThreePaneScaffold() {
             Layout(modifier = modifier.clipToBounds(), content = {
@@ -39,7 +43,7 @@ internal fun EditorPanes(
                 Box { tertiaryPane?.invoke() }
             }) { measurables, constraints ->
                 val bounds = NativeLayout.editorPaneBounds(constraints.maxWidth / density, constraints.maxHeight / density,
-                    inspectorWidth, timelineFraction, inspectorVisible, timelineVisible)
+                    currentInspectorWidth, currentTimelineFraction, currentInspectorVisible, currentTimelineVisible)
                     .map { (it * density).roundToInt() }
                 val panes = measurables.mapIndexed { index, measurable ->
                     measurable.measure(Constraints.fixed(bounds[index * 4 + 2], bounds[index * 4 + 3]))
@@ -49,7 +53,7 @@ internal fun EditorPanes(
                 }
             }
         }
-    }
+    } }
     val value = ThreePaneScaffoldValue(
         primary = PaneAdaptedValue.Expanded,
         secondary = if (!inspectorVisible) PaneAdaptedValue.Hidden

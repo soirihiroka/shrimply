@@ -933,6 +933,12 @@ fn video_compositor_worker(
                 if accuracy.continuous_playback()
                     && let Some(observer) = &playback_observer
                 {
+                    if rendered.frame.is_some() && !rendered.loading {
+                        observer(PlaybackRenderEvent::Submitted {
+                            request_id,
+                            position,
+                        });
+                    }
                     observer(PlaybackRenderEvent::Completed {
                         request_id,
                         position,
@@ -968,9 +974,7 @@ fn video_compositor_worker(
                                 position,
                                 revision: project_revision,
                                 excluded_item_id: preview_exclusion,
-                                settled: (accuracy.content_accurate()
-                                    || (accuracy.time_accurate() && !accuracy.local_scrub()))
-                                    && !rendered.loading,
+                                settled: accuracy.settled(rendered.loading),
                                 render_elapsed,
                                 render_generation,
                             },

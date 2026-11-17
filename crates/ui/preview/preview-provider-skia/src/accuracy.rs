@@ -37,6 +37,10 @@ impl CompositeAccuracy {
         local_scrub: false,
         continuous_playback: true,
     };
+    pub const CONTINUOUS_FULLY_ACCURATE: Self = Self {
+        content: Accuracy::Accurate,
+        ..Self::CONTINUOUS_TIME_ACCURATE
+    };
     pub const LOCAL_TIME_ACCURATE: Self = Self {
         time: Accuracy::Accurate,
         content: Accuracy::BestEffort,
@@ -70,5 +74,9 @@ impl CompositeAccuracy {
 
     pub const fn continuous_playback(self) -> bool {
         self.continuous_playback
+    }
+
+    pub const fn settled(self, loading: bool) -> bool {
+        (self.content_accurate() || (self.time_accurate() && !self.local_scrub())) && !loading
     }
 }

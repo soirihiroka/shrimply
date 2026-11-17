@@ -194,7 +194,14 @@ impl Compositor {
     }
 
     pub fn set_interaction(&mut self, playing: bool, scrubbing: bool) {
-        self.scene.set_interaction(playing, scrubbing);
+        use shrimply_preview_render_core::CompositeAccuracy;
+        self.scene.set_interaction(if playing {
+            CompositeAccuracy::CONTINUOUS_TIME_ACCURATE
+        } else if scrubbing {
+            CompositeAccuracy::BEST_EFFORT
+        } else {
+            CompositeAccuracy::FULLY_ACCURATE
+        });
     }
 
     pub fn set_sam2_analysis_target(
@@ -427,7 +434,7 @@ impl Compositor {
                         .as_mut()
                         .expect("initialized Metal compositor")
                         .draw_vector(layer.render_size, |canvas| {
-                            frame.draw(canvas, &mut Default::default())
+                            frame.draw(canvas, &mut self.scene.expressions)
                         })?,
                     None,
                 ),

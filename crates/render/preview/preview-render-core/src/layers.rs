@@ -106,6 +106,7 @@ impl Scene {
                         native: project.canvas_size,
                         transform: transform.composed(),
                         transition: generated_transition,
+                        morph_endpoint: paired_morph && clip_transition.is_some_and(|transition| transition.definition.kind == shrimply_project_document::project::VisualClipTransitionKind::Morph),
                         svg: match self.media.frame(&prepared.address, media::Plane::Content) {
                             Some(media::Frame::Svg(svg)) => Some(svg.clone()),
                             _ => None,

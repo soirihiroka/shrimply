@@ -130,6 +130,10 @@ impl<F: 'static> PreviewMedia<F> {
         media.connect();
         send(
             &media.inner.video_tx,
+            VideoCommand::set_project(Arc::new(project.borrow().clone()), snapshot.revision),
+        );
+        send(
+            &media.inner.video_tx,
             VideoCommand::Render {
                 position: snapshot.position,
                 accuracy: CompositeAccuracy::FULLY_ACCURATE,
@@ -201,6 +205,8 @@ impl<F: 'static> PreviewMedia<F> {
                     update.render_elapsed = Some(render_elapsed);
                     if revision == self.inner.expected_revision.get() {
                         update.visual = Some(event);
+                    } else {
+                        shrimply_profiling::increment("Preview / Stale project frames discarded");
                     }
                 }
                 event @ VideoEvent::Clear {

@@ -13,7 +13,7 @@ use std::{
 };
 use uuid::Uuid;
 
-const PREVIEW_DISPLAY_SURFACES: usize = 2;
+const PREVIEW_DISPLAY_SURFACES: usize = shrimply_render_core::PREVIEW_FRAMES_IN_FLIGHT;
 
 pub enum VideoCommand {
     SetProject {

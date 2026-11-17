@@ -19,6 +19,7 @@ internal fun interface TimelineListener { fun changed(payload: String) }
 internal object NativeTimeline {
     init { System.loadLibrary("shrimply_android") }
     external fun initialize(application: android.content.Context, config: String, cache: String, fonts: String)
+    external fun throughput(path: String, scene: String, frames: Int): String
     external fun create(stress: Boolean, benchmark: Boolean, listener: TimelineListener): Long
     external fun request(handle: Long, request: String, descriptor: Int): String
     external fun surface(handle: Long, role: Int, surface: Surface?, width: Int, height: Int, density: Float)

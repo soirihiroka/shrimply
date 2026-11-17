@@ -10,6 +10,10 @@ pub enum RenderEvent {
         request_id: u64,
         position: Time,
     },
+    Submitted {
+        request_id: u64,
+        position: Time,
+    },
     Completed {
         request_id: u64,
         position: Time,
@@ -30,6 +34,7 @@ pub struct SourceFrameTracker {
 
 impl SourceFrameTracker {
     pub fn submitted(&mut self, source: Option<u64>) {
+        crate::increment("Preview / Frames submitted");
         let Some(source) = source else {
             *self = Self::default();
             return;

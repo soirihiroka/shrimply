@@ -67,6 +67,21 @@ class MainActivity : ComponentActivity() {
         })[EditorModel::class.java]
         timeline = model.timeline
         projects = model.projects
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) intent.getStringExtra("throughput_project")?.let { path ->
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            Thread {
+                try {
+                    val report = NativeTimeline.throughput(path, intent.getStringExtra("throughput_scene") ?: "project",
+                        intent.getIntExtra("throughput_frames", 600))
+                    java.io.File(cacheDir, "pipeline-throughput.json").writeText(report)
+                    android.util.Log.i("ShrimplyTimeline", "throughput_done")
+                } catch (failure: Exception) {
+                    android.util.Log.e("ShrimplyTimeline", "throughput_failed", failure)
+                } finally {
+                    runOnUiThread { window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+                }
+            }.start()
+        }
         val customCaptionSupported = Build.VERSION.SDK_INT >= 35 &&
             packageManager.hasSystemFeature(PackageManager.FEATURE_FREEFORM_WINDOW_MANAGEMENT)
         val caption = mutableStateOf(WindowCaption())
@@ -75,6 +90,26 @@ class MainActivity : ComponentActivity() {
             view.onApplyWindowInsets(insets)
         }
         setContent {
+            if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                val project = intent.getStringExtra("debug_project")
+                LaunchedEffect(timeline.identity, project) {
+                    if (project != null) {
+                        timeline.request("open", "path" to project)
+                        timeline.request("remove_recent", "path" to project)
+                        if (intent.getBooleanExtra("debug_playback_capture", false)) {
+                            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            try {
+                                timeline.request("performance_clear")
+                                timeline.request("play")
+                                kotlinx.coroutines.delay(java.time.Duration.ofMinutes(1).toMillis())
+                                timeline.request("pause")
+                                val report = timeline.request("performance_copy").getString("clipboard")
+                                java.io.File(cacheDir, "playback-performance.json").writeText(report)
+                            } finally { window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+                        }
+                    }
+                }
+            }
             val currentCaption = caption.value
             val context = LocalContext.current
             val dark = isSystemInDarkTheme()

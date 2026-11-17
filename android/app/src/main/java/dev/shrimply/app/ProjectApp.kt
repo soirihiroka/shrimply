@@ -101,16 +101,16 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     var lastActionToken by rememberSaveable { mutableStateOf<String?>(null) }
     var commentText by rememberSaveable { mutableStateOf("") }
 
-    fun action(block: suspend () -> Unit) {
+    fun action(blocking: Boolean = true, block: suspend () -> Unit) {
         scope.launch { operations.withLock {
             // Picker results must queue behind startup/settings requests, never disappear
             // because rotation temporarily marks the new composition busy.
-            busy = true
+            if (blocking) busy = true
             try { block() } catch (failure: Exception) { error = failure.message ?: "The project operation failed." }
-            finally { busy = false; progress = "" }
+            finally { if (blocking) { busy = false; progress = "" } }
         } }
     }
-    fun command(operation: String, arguments: Array<out Pair<String, Any>>) = action {
+    fun command(operation: String, arguments: Array<out Pair<String, Any>>) = action(blocking = false) {
         val result = timeline.request(operation, *arguments)
         if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
         if (result.has("message")) android.widget.Toast.makeText(context, result.getString("message"), android.widget.Toast.LENGTH_SHORT).show()
@@ -249,7 +249,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
                 export = { exportFolder.launch(null) },
                 exportVideo = { exportSettings = "video" },
                 exportCaptions = { exportSettings = "captions" },
-                viewChange = { changes, finished -> action {
+                viewChange = { changes, finished -> action(blocking = false) {
                     try {
                         val saved = timeline.request("editor_layout", "changes" to changes)
                         val fields = changes.keys().asSequence().toList()

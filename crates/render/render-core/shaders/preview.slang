@@ -6,13 +6,14 @@ import nis_coefficients;
 
 #if defined(SHRIMPLY_VULKAN)
 // Remove unused filter implementations before the driver allocates registers.
-[[vk::constant_id(0)]] const uint COMPOSITE_OPTIONS = 0xffffffffu;
+static const uint ALIGNED_RGBA = 1u << 27;
+[[vk::constant_id(0)]] const uint COMPOSITE_OPTIONS = ~ALIGNED_RGBA;
 // Upper bits describe optional compositor paths; lower bits select samplers.
 static const uint ADVANCED_BLEND = 1u << 31;
 static const uint MOTION_SAMPLES = 1u << 30;
 static const uint EXTENDED_BORDER = 1u << 29;
 static const uint GENERAL_ADDRESS = 1u << 28;
-static const uint SAMPLER_MASK = GENERAL_ADDRESS - 1u;
+static const uint SAMPLER_MASK = ALIGNED_RGBA - 1u;
 #define SAMPLE_ENABLED(method) ((COMPOSITE_OPTIONS & (1u << uint(VideoSampleMethod::method))) != 0u)
 #else
 #define SAMPLE_ENABLED(method) true
@@ -756,6 +757,12 @@ uint layer_sample_points(Nv12LayerParams p, float x, float y,
   }
   return 1u;
 }
+Color finish_rgba_sample(float4 sum) {
+  float alpha = clamp(sum.w, 0.0f, 1.0f);
+  return color_unpremultiply(color(clamp(sum.x, 0.0f, alpha),
+                                   clamp(sum.y, 0.0f, alpha),
+                                   clamp(sum.z, 0.0f, alpha), alpha));
+}
 Color sample_rgba_layer(Nv12LayerParams p, float x, float y) {
   float3 points[5];
   uint count = layer_sample_points(p, x, y, points);
@@ -764,10 +771,7 @@ Color sample_rgba_layer(Nv12LayerParams p, float x, float y) {
     Color sample = sample_rgba_plain(p, points[i].x, points[i].y);
     sum += float4(sample.r, sample.g, sample.b, sample.a) * points[i].z;
   }
-  float alpha = clamp(sum.w, 0.0f, 1.0f);
-  return color_unpremultiply(color(clamp(sum.x, 0.0f, alpha),
-                                   clamp(sum.y, 0.0f, alpha),
-                                   clamp(sum.z, 0.0f, alpha), alpha));
+  return finish_rgba_sample(sum);
 }
 float4 sample_nv12_plain_values(Nv12LayerParams p, float source_x,
                                 float source_y) {
@@ -926,6 +930,23 @@ uint composite_pixel(Nv12LayerParams *layers, BufferIndex layer_count,
   }
   return pixel;
 }
+#if defined(SHRIMPLY_VULKAN)
+// The host verifies packed, canvas-sized, identity-mapped normal RGBA layers.
+// Keep the generic sampler's premultiplication, clamping and per-layer rounding.
+uint composite_aligned_rgba_pixel(uint i, Nv12LayerParams *layers,
+    BufferIndex layer_count, uint background) {
+  uint pixel = background;
+  for (BufferIndex index = 0; index < layer_count; ++index) {
+    Nv12LayerParams layer = layers[index];
+    Color p = color_premultiply(color_from_rgba(layer.rgba[i]));
+    Color source = finish_rgba_sample(float4(p.r, p.g, p.b, p.a));
+    pixel = color_to_rgba(blend_over(source, color_from_rgba(pixel),
+        LayerBlendMode::Normal, source.a * layer.opacity, true));
+  }
+  return pixel;
+}
+#endif
+
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)] void
 composite_nv12_layers(uint3 id : SV_DispatchThreadID,
                       uniform Nv12LayerParams *layers,
@@ -935,6 +956,12 @@ composite_nv12_layers(uint3 id : SV_DispatchThreadID,
   uint i = id.x;
   if (i >= output_count)
     return;
+#if defined(SHRIMPLY_VULKAN)
+  if ((COMPOSITE_OPTIONS & ALIGNED_RGBA) != 0u) {
+    output[i] = composite_aligned_rgba_pixel(i, layers, layer_count, background);
+    return;
+  }
+#endif
   output[i] = background;
   if (layer_count == 0u)
     return;

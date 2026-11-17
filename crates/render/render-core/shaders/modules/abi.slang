@@ -364,6 +364,7 @@ enum TextureAddressMode : EnumStorage {
 enum LayerKind : EnumStorage {
   Nv12,
   Rgba,
+  RgbaOpaque,
 };
 
 struct Nv12LayerParams {
@@ -391,6 +392,7 @@ struct Nv12LayerParams {
   TextureAddressMode address_mode;
   LayerKind kind;
 #endif
+
 };
 
 LayerBlendMode layer_blend_mode(Nv12LayerParams value) {

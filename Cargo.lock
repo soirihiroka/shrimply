@@ -7378,6 +7378,7 @@ dependencies = [
  "shrimply-profiling",
  "shrimply-project-document",
  "shrimply-project-evaluation",
+ "shrimply-property-model",
  "shrimply-render-core",
  "shrimply-render-vulkan",
  "shrimply-scene-3d",

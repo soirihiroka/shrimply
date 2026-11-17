@@ -20,6 +20,8 @@ pub use texture::Texture;
 #[cfg(target_os = "linux")]
 #[path = "external.rs"]
 mod external;
+#[path = "quads.rs"]
+mod quads;
 #[cfg(target_os = "linux")]
 #[path = "vaapi.rs"]
 mod vaapi;
@@ -61,11 +63,13 @@ const ADVANCED_BLEND: u32 = 1 << 31;
 const MOTION_SAMPLES: u32 = 1 << 30;
 const EXTENDED_BORDER: u32 = 1 << 29;
 const GENERAL_ADDRESS: u32 = 1 << 28;
+const ALIGNED_RGBA: u32 = 1 << 27;
 // Bound retained allocations across changing canvas sizes and effect graphs.
 const MAX_CACHED_BUFFER_BYTES: usize = 256 * 1024 * 1024;
 const MAX_CACHED_BUFFERS: usize = 64;
-// Current, pending and two presentation readers. Further readers stay uncached.
-const MAX_CACHED_PRESENTATION_TEXTURES: usize = 4;
+// Current, bounded GPU submissions and two presentation readers.
+const MAX_CACHED_PRESENTATION_TEXTURES: usize =
+    shrimply_render_core::PREVIEW_FRAMES_IN_FLIGHT * 3 + 3;
 
 struct Field {
     name: &'static str,
@@ -268,6 +272,16 @@ impl Renderer {
             pipeline_layout.as_raw(),
         );
         if !self.kernels.contains_key(&key) {
+            if layout.name == "composite_nv12_layers" {
+                shrimply_profiling::set_counter(
+                    "Vulkan rendering / Composite options",
+                    u64::from(arguments.specialization),
+                );
+                shrimply_profiling::set_counter(
+                    "Vulkan rendering / Composite workgroup size",
+                    layout.group.iter().product::<usize>() as u64,
+                );
+            }
             let code = ash::util::read_spv(&mut std::io::Cursor::new(arguments.code))
                 .map_err(|e| e.to_string())?;
             let shader = unsafe {
@@ -688,8 +702,9 @@ impl Renderer {
             .checked_mul(height as usize)
             .ok_or("Canvas size overflow")?;
         u32::try_from(count).map_err(|_| "Canvas exceeds the Slang pixel index range")?;
-        let output = self.allocate(count.checked_mul(4).ok_or("Canvas byte size overflow")?)?;
+        let length = count.checked_mul(4).ok_or("Canvas byte size overflow")?;
         if layers.is_empty() {
+            let output = self.allocate(length)?;
             let command = self.command()?;
             unsafe {
                 self.device.raw.cmd_fill_buffer(
@@ -703,13 +718,17 @@ impl Renderer {
             let submission = self.submit(command, vec![output.clone()])?;
             return Ok(Frame { submission, output });
         }
-        let mut resources = vec![output.clone()];
+        let mut resources = Vec::new();
         let mut parameters = Vec::with_capacity(layers.len());
         for (params, buffer) in layers {
             let mut params = *params;
             if params.source_width == 0
                 || params.source_height == 0
-                || params.kind != shrimply_render_core::LayerKind::Rgba
+                || !matches!(
+                    params.kind,
+                    shrimply_render_core::LayerKind::Rgba
+                        | shrimply_render_core::LayerKind::RgbaOpaque
+                )
                 || params.rgba_pitch < params.source_width as usize * size_of::<u32>()
                 || !params.rgba_pitch.is_multiple_of(size_of::<u32>())
                 || params.motion_transform_count > params.motion_sample_count
@@ -749,6 +768,29 @@ impl Renderer {
             parameters.push(params);
             resources.push(buffer.clone());
         }
+        let aligned = parameters
+            .iter()
+            .all(|p| shrimply_render_core::math::aligned_rgba_layer(p, width, height));
+        if !aligned
+            && parameters.iter().zip(layers).all(|(p, (_, buffer))| {
+                (p.source_width as usize).checked_mul(size_of::<u32>()) == Some(p.rgba_pitch)
+                    && p.rgba_pitch.checked_mul(p.source_height as usize) == Some(buffer.len())
+            })
+        {
+            let quads: Vec<_> = parameters
+                .iter()
+                .copied()
+                .zip(layers.iter().map(|(_, buffer)| buffer.clone()))
+                .collect();
+            if let Some(frame) = self.composite_quads(&quads, (width, height), background)? {
+                return Ok(frame);
+            }
+        }
+        if aligned {
+            shrimply_profiling::increment("Vulkan rendering / Aligned RGBA compositions");
+        }
+        let output = self.allocate(length)?;
+        resources.push(output.clone());
         let layers_address = if parameters.is_empty() {
             0
         } else {
@@ -808,6 +850,9 @@ impl Renderer {
                     0
                 }
         });
+        if aligned {
+            arguments.specialization |= ALIGNED_RGBA;
+        }
         arguments
             .set("layers", &layers_address.to_ne_bytes())?
             .set("layer_count", &(parameters.len() as u64).to_ne_bytes())?
@@ -820,18 +865,32 @@ impl Renderer {
         Ok(Frame { submission, output })
     }
 
-    fn presentation_allocation(&self, width: u32, height: u32) -> Result<Texture, String> {
+    fn presentation_allocation(
+        &self,
+        width: u32,
+        height: u32,
+        mipmapped: bool,
+    ) -> Result<Texture, String> {
         let mut textures = self.textures.borrow_mut();
+        let levels = if mipmapped {
+            width.max(height).ilog2() + 1
+        } else {
+            1
+        };
         textures.retain(Texture::cacheable);
         if let Some(texture) = textures.iter().find(|texture| {
-            texture.width() == width && texture.height() == height && texture.unused()
+            texture.width() == width
+                && texture.height() == height
+                && texture.levels() == levels
+                && texture.mipmapped() == mipmapped
+                && texture.unused()
         }) {
             shrimply_profiling::increment("Vulkan rendering / Presentation textures reused");
             return Ok(texture.clone());
         }
         let _measurement =
             shrimply_profiling::measure("Vulkan rendering / Allocate presentation texture");
-        let texture = Texture::new(self.device.clone(), width, height)?;
+        let texture = Texture::new(self.device.clone(), width, height, mipmapped)?;
         shrimply_profiling::increment("Vulkan rendering / Presentation textures allocated");
         let mut retained = textures.iter().map(Texture::bytes).sum::<u64>();
         while !textures.is_empty()
@@ -857,6 +916,15 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<(Texture, Submission), String> {
+        self.upload_texture(source, (width, height), true)
+    }
+
+    fn upload_texture(
+        &self,
+        source: &Buffer,
+        (width, height): (u32, u32),
+        presentation: bool,
+    ) -> Result<(Texture, Submission), String> {
         if (width as usize)
             .checked_mul(height as usize)
             .and_then(|count| count.checked_mul(size_of::<u32>()))
@@ -864,7 +932,7 @@ impl Renderer {
         {
             return Err("Presentation dimensions do not match the composited buffer".into());
         }
-        let texture = self.presentation_allocation(width, height)?;
+        let texture = self.presentation_allocation(width, height, presentation)?;
         let command = self.command()?;
         let range = vk::ImageSubresourceRange::default()
             .aspect_mask(vk::ImageAspectFlags::COLOR)
@@ -962,20 +1030,23 @@ impl Renderer {
                     vk::Filter::LINEAR,
                 );
             }
-            #[cfg(target_os = "linux")]
-            let (source_family, destination_family, access, stage) = (
-                self.device.family,
-                vk::QUEUE_FAMILY_EXTERNAL,
-                vk::AccessFlags::empty(),
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-            );
-            #[cfg(target_os = "android")]
-            let (source_family, destination_family, access, stage) = (
-                vk::QUEUE_FAMILY_IGNORED,
-                vk::QUEUE_FAMILY_IGNORED,
-                vk::AccessFlags::SHADER_READ,
-                vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::COMPUTE_SHADER,
-            );
+            let (source_family, destination_family, access, stage) =
+                if cfg!(target_os = "linux") && presentation {
+                    (
+                        self.device.family,
+                        vk::QUEUE_FAMILY_EXTERNAL,
+                        vk::AccessFlags::empty(),
+                        vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                    )
+                } else {
+                    (
+                        vk::QUEUE_FAMILY_IGNORED,
+                        vk::QUEUE_FAMILY_IGNORED,
+                        vk::AccessFlags::SHADER_READ,
+                        vk::PipelineStageFlags::FRAGMENT_SHADER
+                            | vk::PipelineStageFlags::COMPUTE_SHADER,
+                    )
+                };
             let mut releases = Vec::new();
             for (base, count, layout) in [
                 (
@@ -993,7 +1064,11 @@ impl Renderer {
                     releases.push(
                         vk::ImageMemoryBarrier::default()
                             .old_layout(layout)
-                            .new_layout(vk::ImageLayout::GENERAL)
+                            .new_layout(if presentation {
+                                vk::ImageLayout::GENERAL
+                            } else {
+                                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+                            })
                             .src_queue_family_index(source_family)
                             .dst_queue_family_index(destination_family)
                             .dst_access_mask(access)

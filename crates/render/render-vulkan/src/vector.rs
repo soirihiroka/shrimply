@@ -2,6 +2,12 @@ use crate::{Buffer, Renderer, Submission};
 use ash::{vk, vk::Handle};
 use skia_safe::{AlphaType, Canvas, ColorType, ImageInfo, gpu};
 
+pub(super) enum SurfaceFormat {
+    Rgba8,
+    OpaqueRgba8,
+    RgbaF16,
+}
+
 impl Renderer {
     pub fn mesh_flow(
         &mut self,
@@ -92,18 +98,44 @@ impl Renderer {
         size: (u32, u32),
         draw: impl FnOnce(&Canvas) -> Result<(), String>,
     ) -> Result<(Buffer, Submission), String> {
+        self.draw_surface(size, SurfaceFormat::Rgba8, draw)
+    }
+
+    pub(super) fn draw_surface(
+        &mut self,
+        size: (u32, u32),
+        format: SurfaceFormat,
+        draw: impl FnOnce(&Canvas) -> Result<(), String>,
+    ) -> Result<(Buffer, Submission), String> {
+        let _total = shrimply_profiling::measure("Vulkan vector / Total");
+        let allocation = shrimply_profiling::measure("Vulkan vector / Allocate surface");
         let dimensions = (
             i32::try_from(size.0).map_err(|_| "Vector width exceeds Skia limits")?,
             i32::try_from(size.1).map_err(|_| "Vector height exceeds Skia limits")?,
         );
-        let length = (size.0 as usize)
+        let (color_type, pixel_bytes, conversion) = match format {
+            SurfaceFormat::Rgba8 => (
+                ColorType::RGBA8888,
+                size_of::<u32>(),
+                Some("unpremultiply_rgba"),
+            ),
+            SurfaceFormat::OpaqueRgba8 => (ColorType::RGBA8888, size_of::<u32>(), None),
+            SurfaceFormat::RgbaF16 => (
+                ColorType::RGBAF16,
+                size_of::<[u16; 4]>(),
+                Some("unpremultiply_rgba_f16"),
+            ),
+        };
+        let count = (size.0 as usize)
             .checked_mul(size.1 as usize)
-            .and_then(|count| count.checked_mul(4))
             .ok_or("Vector surface size overflow")?;
+        let length = count
+            .checked_mul(pixel_bytes)
+            .ok_or("Vector surface byte size overflow")?;
         if self.skia.is_none() {
             self.skia = Some(self.device.skia_context(false)?);
         }
-        let info = ImageInfo::new(dimensions, ColorType::RGBA8888, AlphaType::Premul, None);
+        let info = ImageInfo::new(dimensions, color_type, AlphaType::Premul, None);
         let skia = self.skia.as_mut().expect("initialized Vulkan Skia context");
         let mut surface = gpu::surfaces::render_target(
             skia,
@@ -116,10 +148,18 @@ impl Renderer {
             None,
         )
         .ok_or("Allocate Vulkan vector surface")?;
+        drop(allocation);
+        let recording = shrimply_profiling::measure("Vulkan vector / Record geometry");
         surface.canvas().clear(skia_safe::Color::TRANSPARENT);
         draw(surface.canvas())?;
+        drop(recording);
+        let snapshot = shrimply_profiling::measure("Vulkan vector / Snapshot surface");
         let image = surface.image_snapshot();
+        drop(snapshot);
+        let flush = shrimply_profiling::measure("Vulkan vector / Flush Skia");
         skia.flush_and_submit();
+        drop(flush);
+        let copying = shrimply_profiling::measure("Vulkan vector / Submit image copy");
         let (texture, origin) = gpu::images::get_backend_texture_from_image(&image, false)
             .ok_or("Get Vulkan vector texture")?;
         if origin != gpu::SurfaceOrigin::TopLeft {
@@ -192,14 +232,24 @@ impl Renderer {
         }
         let mut copy = self.submit(command, vec![copied.clone()])?;
         copy._images.push(image);
-        let output = self.allocate(length)?;
-        let mut arguments = self.arguments("unpremultiply_rgba")?;
+        drop(copying);
+        // Premultiplied and straight RGBA are identical for proven opaque output.
+        let Some(conversion) = conversion else {
+            return Ok((copied, copy));
+        };
+        let _conversion = shrimply_profiling::measure("Vulkan vector / Submit alpha conversion");
+        let output = self.allocate(
+            count
+                .checked_mul(size_of::<u32>())
+                .ok_or("Vector output byte size overflow")?,
+        )?;
+        let mut arguments = self.arguments(conversion)?;
         arguments
             .set("input", &copied.address().to_ne_bytes())?
             .set("output", &output.address().to_ne_bytes())?
-            .set("count", &((length / 4) as u64).to_ne_bytes())?;
+            .set("count", &(count as u64).to_ne_bytes())?;
         let mut converted =
-            unsafe { self.dispatch(arguments, vec![copied, output.clone()], [length / 4, 1, 1]) }?;
+            unsafe { self.dispatch(arguments, vec![copied, output.clone()], [count, 1, 1]) }?;
         converted._prior.push(copy);
         Ok((output, converted))
     }

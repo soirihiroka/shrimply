@@ -181,8 +181,7 @@ impl Compositor {
         time: Time,
         accuracy: shrimply_preview_render_core::CompositeAccuracy,
     ) -> Result<Option<FramePlan>, String> {
-        self.scene
-            .set_interaction(accuracy.continuous_playback(), !accuracy.time_accurate());
+        self.scene.set_interaction(accuracy);
         self.scene.prepare(project, time)
     }
     pub fn render(&mut self, plan: FramePlan) -> Result<Presented, String> {
@@ -442,7 +441,7 @@ impl Compositor {
                 Source::Generated(frame) => {
                     let (buffer, submission) =
                         self.renderer.draw_vector(layer.render_size, |canvas| {
-                            frame.draw(canvas, &mut Default::default())
+                            frame.draw(canvas, &mut self.scene.expressions)
                         })?;
                     submissions.push(submission);
                     buffer
@@ -597,7 +596,20 @@ impl Compositor {
                     submissions,
                 )?;
             }
-            result.push((state.sampled(), buffer));
+            let mut parameters = state.sampled();
+            // Native YCbCr decoder imports have no alpha channel. Effects may
+            // introduce transparency, so only untouched sources retain this fact.
+            if matches!(layer.source, Source::Video(_))
+                && layer.effects.is_empty()
+                && layer.transitions.is_empty()
+                && layer.motion_blur.is_none()
+                && layer.alpha_mask.is_none()
+                && layer.video_mask.is_none()
+                && layer.stabilization.is_none()
+            {
+                parameters.kind = shrimply_render_core::LayerKind::RgbaOpaque;
+            }
+            result.push((parameters, buffer));
         }
         Ok(result)
     }

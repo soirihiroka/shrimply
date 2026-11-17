@@ -62,7 +62,18 @@ pub struct Compiler {
 
 impl Compiler {
     pub fn new(directory: &Path, output: &Path) -> Self {
-        println!("cargo:rerun-if-changed={}", directory.display());
+        // Track file edits explicitly as well as directory additions/removals.
+        let mut pending = vec![directory.to_path_buf()];
+        while let Some(path) = pending.pop() {
+            println!("cargo:rerun-if-changed={}", path.display());
+            if path.is_dir() {
+                pending.extend(
+                    path.read_dir()
+                        .expect("read shader sources")
+                        .map(|entry| entry.expect("shader source entry").path()),
+                );
+            }
+        }
         println!("cargo:rerun-if-changed={}", crate::LIBRARY_DIR);
         // Load the bridge built with this crate; it links the pinned Slang C++ API.
         #[cfg(windows)]

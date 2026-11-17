@@ -42,14 +42,12 @@ pub fn snapshot(document: &InspectorDocument) -> Value {
             let id = item_key(document, category.key, &key);
             let controls: Vec<_> = section.controls.iter().enumerate().filter(|(_, control)| control.visible)
                 .map(|(index, control)| presentation::control(control, &id, &control_key(control, index))).collect();
-            let mut actions: Vec<_> = header.into_iter().flat_map(|header| &header.actions).enumerate().map(|(index, action)| {
+            let actions: Vec<_> = header.into_iter().flat_map(|header| &header.actions).enumerate().map(|(index, action)| {
                 json!({"label":text(action.tooltip),"icon":action.icon,"enabled":action.sensitive,"command":{"item":id,"action":"header_action","index":index}})
             }).collect();
-            if header.is_some_and(|header| header.reset.is_some()) {
-                actions.insert(0,json!({"label":text("Reset"),"icon":"view-refresh-symbolic","enabled":true,"command":{"item":id,"action":"reset"}}));
-            }
-            if controls.is_empty() && actions.is_empty() && header.is_none_or(|header| header.toggle.is_none() && header.button_toggle.is_none()) { return None; }
-            Some(json!({"id":id,"title":text(title),"controls":controls,"actions":actions,"actions_label":text("Actions"),
+            if controls.is_empty() && actions.is_empty() && header.is_none_or(|header| header.reset.is_none() && header.toggle.is_none() && header.button_toggle.is_none()) { return None; }
+            Some(json!({"id":id,"key":key,"card":header.is_some(),"title":text(title),"controls":controls,"actions":actions,"actions_label":text("Actions"),
+                "reset":header.filter(|header|header.reset.is_some()).map(|_|json!({"label":text("Reset"),"icon":"edit-undo-symbolic","command":{"item":id,"action":"reset"}})),
                 "toggle":header.and_then(|header| header.toggle.as_ref()).map(|toggle|json!({"selected":toggle.active,"label":text(toggle.tooltip),"command":{"item":id,"action":"toggle"}})),
                 "button_toggle":header.and_then(|header| header.button_toggle.as_ref()).map(|toggle|json!({"selected":toggle.active,"label":text(toggle.tooltip),"icon":toggle.icon,"command":{"item":id,"action":"button_toggle"}}))}))
         }).collect();
@@ -224,10 +222,17 @@ pub fn preview_focus(
         return None;
     }
     let focus = resolve_control(document, request)
-        .ok()?
-        .preview_focus
-        .as_ref()?;
-    let focused = controller.resolve_preview_focus(&document.target, focus)?;
+        .ok()
+        .and_then(|control| control.preview_focus.clone())
+        .or_else(|| {
+            let (_, header) = resolve_item(document, request).ok()?;
+            let header = header?;
+            Some(shrimply_inspector_core::item::ControlPreviewFocus::new(
+                header.presentation.key.clone(),
+                header.presentation.preview_target,
+            ))
+        })?;
+    let focused = controller.resolve_preview_focus(&document.target, &focus)?;
     Some((focused.item, focused.target))
 }
 

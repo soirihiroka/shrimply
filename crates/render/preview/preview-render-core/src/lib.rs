@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod capture;
 mod decode;
 pub use decode::DecodedImage;
@@ -141,7 +142,8 @@ pub struct Scene {
         std::rc::Rc<std::cell::RefCell<shrimply_paint_skia::PaintCache>>,
     >,
     media: media::Media,
-    expressions: TransformExpressionCache,
+    /// Evaluation and vector drawing share one engine and compiled-expression lifetime.
+    pub expressions: TransformExpressionCache,
     previous_time: Option<Time>,
     playing: bool,
     scrubbing: bool,
@@ -237,9 +239,10 @@ impl Scene {
             || self.scrubbing && self.requested_accuracy != CompositeAccuracy::FULLY_ACCURATE
     }
 
-    pub fn set_interaction(&mut self, playing: bool, scrubbing: bool) {
-        self.playing = playing;
-        self.scrubbing = scrubbing;
+    pub fn set_interaction(&mut self, accuracy: CompositeAccuracy) {
+        self.playing = accuracy.continuous_playback();
+        self.scrubbing = !accuracy.time_accurate();
+        self.requested_accuracy = accuracy;
     }
 
     /// Request another frame without discarding decoder or source caches.
@@ -314,7 +317,7 @@ impl Scene {
             .moved_at
             .is_none_or(|moved| now.duration_since(moved) >= FINAL_PREVIEW_DELAY);
         let accuracy = if self.playing {
-            CompositeAccuracy::CONTINUOUS_TIME_ACCURATE
+            self.requested_accuracy
         } else if !self.scrubbing || settled {
             CompositeAccuracy::FULLY_ACCURATE
         } else {

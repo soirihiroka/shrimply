@@ -6,6 +6,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 pub use fraction::{BigFraction, Fraction, GenericFraction, Ratio, Sign};
 pub mod events;
+mod statistics;
+pub use statistics::percentile;
 
 pub const FRACTION_ZERO: Fraction =
     GenericFraction::Rational(Sign::Plus, fraction::Ratio::new_raw(0, 1));

@@ -107,6 +107,15 @@ fn main() {
                 } else {
                     &artifacts.filename
                 };
+                let prepared;
+                let code = if module == "preview"
+                    && matches!(target, shrimply_slang_build::Target::VulkanWordStorage)
+                {
+                    prepared = prepare_portable_shader(&output, code);
+                    &prepared
+                } else {
+                    code
+                };
                 writeln!(generated, "Module {{ code: include_bytes!(concat!(env!(\"OUT_DIR\"), \"/{code}\")), kernels: &[").unwrap();
                 for entry in selected {
                     let name = entry["name"].as_str().expect("kernel name");
@@ -233,7 +242,7 @@ fn main() {
             let module_reflection: serde_json::Value =
                 serde_json::from_slice(&module.reflection).expect("Software OBJ entry reflection");
             let code = if word_storage {
-                prepare_object_shader(&output, &module.filename)
+                prepare_portable_shader(&output, &module.filename)
             } else {
                 module.filename.clone()
             };
@@ -524,7 +533,7 @@ fn enum_values(abi: &[u8], name: &str) -> std::collections::BTreeMap<String, u32
 }
 
 #[cfg(target_os = "linux")]
-fn prepare_object_shader(output: &std::path::Path, source: &str) -> String {
+fn prepare_portable_shader(output: &std::path::Path, source: &str) -> String {
     use std::process::Command;
     let filename = format!(
         "{}_prepared.spv",
@@ -562,24 +571,24 @@ fn prepare_object_shader(output: &std::path::Path, source: &str) -> String {
         .arg("-o")
         .arg(&temporary)
         .status()
-        .expect("Portable 3D shaders require SPIRV-Tools; install spirv-opt or set SPIRV_OPT");
+        .expect("Portable Vulkan shaders require SPIRV-Tools; install spirv-opt or set SPIRV_OPT");
     assert!(
         status.success(),
-        "prepare software OBJ shader {source}: {status}"
+        "prepare portable Vulkan shader {source}: {status}"
     );
-    let code = std::fs::read(&temporary).expect("read optimized object shader");
+    let code = std::fs::read(&temporary).expect("read optimized Vulkan shader");
     std::fs::write(&temporary, shrimply_slang_build::order_declarations(&code))
-        .expect("order object shader declarations");
+        .expect("order Vulkan shader declarations");
     let validator = std::env::var_os("SPIRV_VAL").unwrap_or_else(|| "spirv-val".into());
     let status = Command::new(validator)
         .args(["--target-env", "vulkan1.1", "--scalar-block-layout"])
         .arg(&temporary)
         .status()
-        .expect("Portable 3D shaders require SPIRV-Tools; install spirv-val or set SPIRV_VAL");
+        .expect("Portable Vulkan shaders require SPIRV-Tools; install spirv-val or set SPIRV_VAL");
     assert!(
         status.success(),
-        "validate software OBJ shader {source}: {status}"
+        "validate portable Vulkan shader {source}: {status}"
     );
-    std::fs::rename(&temporary, &destination).expect("install validated object shader");
+    std::fs::rename(&temporary, &destination).expect("install validated Vulkan shader");
     filename
 }

@@ -1,5 +1,6 @@
 import abi;
 import color;
+import math;
 
 float2 video_chroma(ByteStorage *plane, BufferIndex pitch, uint width, uint height,
                     int x, int y) {
@@ -50,6 +51,16 @@ void unpremultiply_rgba(uint3 id : SV_DispatchThreadID,
                         uniform BufferIndex count) {
   if (id.x < count)
     output[id.x] = color_to_rgba(color_unpremultiply(color_from_rgba(input[id.x])));
+}
+
+[shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]
+void unpremultiply_rgba_f16(uint3 id : SV_DispatchThreadID,
+                            uniform uint2 *input, uniform uint *output,
+                            uniform BufferIndex count) {
+  if (id.x < count) {
+    float4 value = unpack_rgba_f16(input[id.x]);
+    output[id.x] = color_to_rgba(color_unpremultiply(color(value.x, value.y, value.z, value.w)));
+  }
 }
 
 [shader("compute")][numthreads(COMPUTE_GROUP_SIZE, 1, 1)]

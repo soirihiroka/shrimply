@@ -3,6 +3,7 @@ package dev.shrimply.app
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -12,7 +13,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +26,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -49,8 +52,7 @@ internal fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { ge
 @Composable
 internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled: Boolean, command: (Array<out Pair<String, Any>>) -> Unit, modifier: Modifier, selectFile: (JSONObject) -> Unit) {
     val categories = document?.optJSONArray("categories")?.objects().orEmpty()
-    var categoryKey by rememberSaveable { mutableStateOf<String?>(null) }
-    val category = categories.firstOrNull { it.getString("key") == categoryKey } ?: categories.firstOrNull()
+    val category = categories.firstOrNull { it.getBoolean("selected") }
     val send: (JSONObject) -> Unit = { payload -> command(payload.keys().asSequence().map { it to payload.get(it) }.toList().toTypedArray()) }
     Column(modifier.clipToBounds()) {
         if (categories.size > 1) SingleChoiceSegmentedButtonRow(
@@ -58,21 +60,37 @@ internal fun Inspector(timeline: TimelineSession, document: JSONObject?, enabled
         ) {
             categories.forEachIndexed { index, candidate ->
                 SegmentedButton(selected = candidate == category,
-                    onClick = { categoryKey = candidate.getString("key") },
+                    onClick = { send(candidate.getJSONObject("command")) },
                     shape = SegmentedButtonDefaults.itemShape(index, categories.size),
                     icon = { Icon(painterResource(inspectorIcon(candidate.getString("icon"))), null, Modifier.size(16.dp)) }) {
                     Text(candidate.getString("label"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
-        LazyColumn(Modifier.fillMaxSize().clipToBounds(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        LazyColumn(Modifier.fillMaxSize().clipToBounds(), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp)) {
             category?.getJSONArray("items")?.objects()?.forEachIndexed { index, section ->
                 val id = section.getString("id")
-                if (section.getString("title").isNotEmpty()) item(key = "$id/header", contentType = "header") {
-                    Box(Modifier.padding(top = if (index == 0) 0.dp else 8.dp)) { InspectorItemHeader(section, enabled, send) }
+                val card = section.getBoolean("card")
+                val expanded = section.optBoolean("expanded", true)
+                val controls = if (expanded) section.getJSONArray("controls").objects() else emptyList()
+                if (index > 0) item(key = "$id/gap", contentType = "gap") { Spacer(Modifier.height(8.dp)) }
+                if (card) item(key = "$id/header", contentType = "header") {
+                    Card(Modifier.fillMaxWidth().animateItem(),
+                        shape = if (controls.isEmpty()) MaterialTheme.shapes.medium else MaterialTheme.shapes.medium.copy(bottomStart = CornerSize(0.dp), bottomEnd = CornerSize(0.dp)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                        Box(Modifier.padding(horizontal = 8.dp)) { InspectorItemHeader(section, enabled, send) }
+                    }
                 }
-                items(section.getJSONArray("controls").objects(), key = { "$id/${it.getString("id")}" }, contentType = { it.getString("widget") }) { control ->
-                    InspectorControl(timeline, control, enabled, send, selectFile)
+                itemsIndexed(controls, key = { _, control -> "$id/${control.getString("id")}" }, contentType = { _, control -> control.getString("widget") }) { row, control ->
+                    if (card) Card(Modifier.fillMaxWidth().animateItem(),
+                        shape = MaterialTheme.shapes.medium.copy(topStart = CornerSize(0.dp), topEnd = CornerSize(0.dp),
+                            bottomStart = if (row == controls.lastIndex) MaterialTheme.shapes.medium.bottomStart else CornerSize(0.dp),
+                            bottomEnd = if (row == controls.lastIndex) MaterialTheme.shapes.medium.bottomEnd else CornerSize(0.dp)),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                        Box(Modifier.padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = if (row == controls.lastIndex) 12.dp else 4.dp)) {
+                            InspectorControl(timeline, control, enabled, send, selectFile)
+                        }
+                    } else Box(Modifier.padding(vertical = 2.dp)) { InspectorControl(timeline, control, enabled, send, selectFile) }
                 }
             }
         }
@@ -136,6 +154,7 @@ internal fun inspectorIcon(icon: String): Int = when (icon) {
     "go-down-symbolic" -> R.drawable.go_down
     "user-trash-symbolic" -> R.drawable.user_trash
     "view-refresh-symbolic" -> R.drawable.view_refresh
+    "edit-undo-symbolic" -> R.drawable.edit_undo
     else -> error("Unknown native icon: $icon")
 }
 
@@ -143,12 +162,23 @@ internal fun inspectorIcon(icon: String): Int = when (icon) {
 private fun InspectorItemHeader(item: JSONObject, enabled: Boolean, send: (JSONObject) -> Unit) {
     val title = item.getString("title")
     if (title.isNotEmpty()) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        item.optJSONObject("expansion")?.let { expansion ->
+            val rotation by animateFloatAsState(if (item.getBoolean("expanded")) 90f else 0f, label = "Inspector fold")
+            IconButton(onClick = { send(expansion.getJSONObject("command")) }, enabled = enabled) {
+                Icon(painterResource(R.drawable.go_next), expansion.getString("label"), Modifier.size(16.dp).rotate(rotation))
+            }
+        }
         Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
         item.optJSONObject("toggle")?.let { toggle -> Switch(checked = toggle.getBoolean("selected"), enabled = enabled,
             onCheckedChange = { send(toggle.getJSONObject("command")) }, modifier = Modifier.semantics { contentDescription = title }) }
         item.optJSONObject("button_toggle")?.let { toggle ->
             IconToggleButton(checked = toggle.getBoolean("selected"), enabled = enabled, onCheckedChange = { send(toggle.getJSONObject("command")) }) {
                 Icon(painterResource(inspectorIcon(toggle.getString("icon"))), toggle.getString("label"), Modifier.size(16.dp))
+            }
+        }
+        item.optJSONObject("reset")?.let { reset ->
+            IconButton(onClick = { send(reset.getJSONObject("command")) }, enabled = enabled) {
+                Icon(painterResource(inspectorIcon(reset.getString("icon"))), reset.getString("label"), Modifier.size(16.dp))
             }
         }
         if (item.getJSONArray("actions").length() > 0) AdaptiveMenuButton(enabled,

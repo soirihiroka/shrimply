@@ -283,7 +283,8 @@ impl Media {
                 // Playback can show the last completed frame. A precise seek,
                 // capture, or export must wait for this exact request.
                 !request.accuracy.time_accurate()
-                    || request.accuracy.continuous_playback()
+                    || (request.accuracy.continuous_playback()
+                        && !request.accuracy.content_accurate())
                     || completed == request
             })
         });

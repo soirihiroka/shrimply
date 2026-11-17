@@ -66,6 +66,11 @@ impl Frame {
 }
 
 pub(crate) fn draw(renderer: &mut Renderer, frame: &Frame, density: f32) -> bool {
+    shrimply_profiling::increment(if frame.texture.is_some() {
+        "Preview / Frames with texture"
+    } else {
+        "Preview / Frames without texture"
+    });
     renderer.draw_texture(
         frame.texture.as_ref(),
         None,

@@ -297,7 +297,9 @@ float blend_channel(float s, float d, LayerBlendMode mode) {
 Color blend_rgb(Color source, Color destination, LayerBlendMode mode,
                 bool clamp_rgb) {
   Color result;
-  if (mode == LayerBlendMode::Hue)
+  if (mode == LayerBlendMode::Normal || mode == LayerBlendMode::PassThrough)
+    result = source;
+  else if (mode == LayerBlendMode::Hue)
     result = blend_with_luminosity(
         blend_with_saturation(source, blend_saturation(destination)),
         blend_luminosity(destination));

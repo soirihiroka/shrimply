@@ -1,7 +1,4 @@
-use crate::{
-    math,
-    runtime::{Runtime, SharedLifecycle},
-};
+use crate::runtime::{Runtime, SharedLifecycle};
 use jni::sys::{JNIEnv, jboolean, jfloat, jfloatArray, jint, jlong, jobject};
 use jni::{
     EnvUnowned,
@@ -11,6 +8,7 @@ use jni::{
 };
 use ndk::native_window::NativeWindow;
 use serde_json::{Value, json};
+use shrimply_math_core as math;
 use shrimply_player_core as player;
 use shrimply_render_vulkan::surface::Renderer;
 use std::{
@@ -31,6 +29,14 @@ const MAX_IDLE_GRAPH_SURFACES: usize = 2;
 const FRAME_BUDGET_NS: u128 = 1_000_000_000 / 60;
 static FONT_RESOURCES: std::sync::OnceLock<(Vec<std::path::PathBuf>, std::path::PathBuf)> =
     std::sync::OnceLock::new();
+
+fn initialize_fonts() {
+    let (directories, cache) = FONT_RESOURCES
+        .get()
+        .expect("Android font resources configured");
+    shrimply_fonts::native::fontconfig::initialize(directories, cache)
+        .expect("initialize shared native font resources");
+}
 
 #[link(name = "log")]
 unsafe extern "C" {
@@ -129,11 +135,7 @@ fn publish_frame(targets: &RenderTargets, surface: usize, frame: Frame) {
 /// The canonical document, its history and Scene stay on one worker. Only Skia's
 /// immutable display list crosses to the Vulkan worker; no pixels cross the CPU.
 fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(&str)) {
-    let (directories, cache) = FONT_RESOURCES
-        .get()
-        .expect("Android font resources configured");
-    shrimply_fonts::native::fontconfig::initialize(directories, cache)
-        .expect("initialize shared native font resources");
+    initialize_fonts();
     let ProjectWorker {
         receive,
         wake,
@@ -1143,6 +1145,55 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_initialize<'caller>(
             Ok(())
         })
         .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_throughput<'caller>(
+    mut unowned: EnvUnowned<'caller>,
+    _this: JObject<'caller>,
+    path: JString<'caller>,
+    kind: JString<'caller>,
+    frames: jint,
+) -> JString<'caller> {
+    unowned
+        .with_env(|env| -> jni::errors::Result<JString<'caller>> {
+            let path = path.try_to_string(env)?;
+            let kind = kind.try_to_string(env)?;
+            let result: Result<String, String> = (|| {
+                initialize_fonts();
+                let count = u64::try_from(frames).map_err(|_| "Invalid frame count")?;
+                let project = shrimply_project_document::project::load_project_snapshot(
+                    std::path::Path::new(&path),
+                )?;
+                let project = shrimply_preview_render_core::benchmark::scene(project, &kind)?;
+                let report = shrimply_preview_render_core::benchmark::run(
+                    project,
+                    count,
+                    |project, observer| {
+                        shrimply_preview_render_vulkan::worker::spawn_worker(
+                            project,
+                            Default::default(),
+                            Some(observer),
+                            None,
+                        )
+                    },
+                    // The production Vulkan worker publishes only after its GPU fence completes.
+                    |_| Ok(()),
+                )?;
+                std::fs::write(
+                    shrimply_path_core::cache_directory()?.join("pipeline-last-frame.png"),
+                    report.frame.png()?,
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(report.text)
+            })();
+            let response = match result {
+                Ok(report) => json!({"ok":true,"report":report}),
+                Err(error) => json!({"ok":false,"error":error}),
+            };
+            env.new_string(response.to_string())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
 }
 
 #[unsafe(no_mangle)]

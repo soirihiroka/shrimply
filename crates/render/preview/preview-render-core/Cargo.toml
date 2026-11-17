@@ -18,6 +18,7 @@ shrimply-video-decoder.workspace = true
 shrimply-visual-frame.workspace = true
 skia-safe = { workspace = true, features = ["svg", "textlayout"] }
 shrimply-project-document = { workspace = true, default-features = true }
+shrimply-property-model.workspace = true
 shrimply-manim-state = { workspace = true }
 shrimply-project-evaluation = { workspace = true }
 shrimply-math-core = { workspace = true }

@@ -13,6 +13,7 @@ use crate::InspectorDocument;
 
 #[derive(Default)]
 pub struct Interaction {
+    list: shrimply_inspector_core::list::InspectorListState,
     active: Option<Edit>,
     locks: HashMap<String, Lock>,
     sessions: HashMap<u64, ControlSession>,
@@ -241,6 +242,36 @@ impl Interaction {
         document: &InspectorDocument,
         request: &Value,
     ) -> Result<Option<String>, String> {
+        if request["action"] == "category" {
+            if controller.target() != document.target {
+                return Err("Inspector selection changed".into());
+            }
+            let category = request["category"]
+                .as_str()
+                .ok_or("Inspector category is required")?;
+            if !document
+                .categories
+                .iter()
+                .any(|candidate| candidate.key == category)
+            {
+                return Err("Inspector category is unavailable".into());
+            }
+            self.list.set_active_category(&document.target, category);
+            return Ok(None);
+        }
+        if request["action"] == "expand" {
+            if controller.target() != document.target {
+                return Err("Inspector selection changed".into());
+            }
+            let (_, header) = super::resolve_item(document, request)?;
+            let header = header.ok_or("Inspector section has no header")?;
+            let expanded = request["expanded"]
+                .as_bool()
+                .ok_or("Expansion state is required")?;
+            self.list
+                .set_expanded(&document.target, &header.presentation.key, expanded);
+            return Ok(None);
+        }
         if self.request(controller, request, false)?.is_some() {
             return Ok(None);
         }
@@ -250,6 +281,7 @@ impl Interaction {
     }
 
     pub fn clear(&mut self) {
+        self.list = Default::default();
         self.active = None;
         self.locks.clear();
         self.sessions.clear();
@@ -268,11 +300,31 @@ impl Interaction {
             edit.displayed = false;
         }
         let mut snapshot = super::snapshot(document);
-        for category in snapshot["categories"]
+        let categories = snapshot["categories"]
             .as_array_mut()
-            .expect("inspector categories")
-        {
+            .expect("inspector categories");
+        let selected = self
+            .list
+            .active_category(&document.target)
+            .and_then(|key| {
+                categories
+                    .iter()
+                    .position(|category| category["key"] == key)
+            })
+            .unwrap_or_default();
+        for (index, category) in categories.iter_mut().enumerate() {
+            category["selected"] = json!(index == selected);
+            category["command"] = json!({"action":"category","category":category["key"]});
             for item in category["items"].as_array_mut().expect("inspector items") {
+                if item["card"] == true {
+                    let expanded = self.list.expanded(
+                        &document.target,
+                        item["key"].as_str().expect("inspector item key"),
+                    );
+                    item["expanded"] = json!(expanded);
+                    item["expansion"] = json!({"label":text(if expanded {"Collapse"} else {"Expand"}),
+                        "command":{"item":item["id"],"action":"expand","expanded":!expanded}});
+                }
                 for control in item["controls"].as_array_mut().expect("inspector controls") {
                     if control["expression_editor"].is_object() {
                         let serial =

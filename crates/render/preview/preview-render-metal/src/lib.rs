@@ -615,6 +615,12 @@ fn worker(
                 timing.reported = true;
                 if let Some(observer) = &shared.playback_observer {
                     observer(
+                        shrimply_preview_provider_skia::performance::RenderEvent::Submitted {
+                            request_id: completed_request_id,
+                            position: frame.time,
+                        },
+                    );
+                    observer(
                         shrimply_preview_provider_skia::performance::RenderEvent::Completed {
                             request_id: completed_request_id,
                             position: frame.time,

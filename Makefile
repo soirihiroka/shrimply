@@ -533,7 +533,7 @@ gpu-export-benchmark: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-export-cuda --example gpu_export -- "$(or $(PROJECT),$(VIDEO))" "$(OUTPUT)" "$(or $(FORMAT),h264)" "$(or $(FRAMES),120)" "$(or $(RATE_CONTROL),cqp)"
 
 gpu-playback-benchmark: native-deps cuda-artifacts
-	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)" "$(or $(ACCURACY),playback)"
+	$(DEV_BUILD_ENV) $(CARGO) run --profile $(or $(PROFILE),dev) -p shrimply-visual-cuda --example gpu_playback -- "$(PROJECT)" "$(or $(FRAMES),120)"
 
 .PHONY: video-decode-benchmark
 video-decode-benchmark:
@@ -776,6 +776,11 @@ android-check: android-build
 
 android-benchmark: android-device-check
 	ANDROID_SERIAL="$(ANDROID_SERIAL)" python3 packaging/android-benchmark.py $(or $(STRESS),false)
+
+.PHONY: android-pipeline-benchmark
+android-pipeline-benchmark: android-device-check
+	@test -n "$(PROJECT)" || { echo "Set PROJECT to a native project path on the Android device" >&2; exit 1; }
+	ANDROID_SERIAL="$(ANDROID_SERIAL)" python3 packaging/android-benchmark.py throughput "$(PROJECT)" "$(or $(SCENE),project)" "$(or $(FRAMES),600)"
 
 .PHONY: android-layout-check android-dependency-check
 android-layout-check:
