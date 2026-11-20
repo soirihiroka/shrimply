@@ -90,10 +90,10 @@ list-bench:
 
 .PHONY: check test fmt fmt-check bench frame-cache-bench state-cache-bench runtime-hot-bench reflection-bench run build
 check: fmt
-	$(CARGO) clippy --workspace --all-targets -- -D warnings
-	$(CARGO) test --workspace --no-fail-fast
+	$(CARGO) clippy --workspace --exclude sanim-presenter --all-targets -- -D warnings
+	$(MAKE) test CARGO="$(CARGO)"
 test:
-	$(CARGO) test --workspace --no-fail-fast
+	$(CARGO) test --workspace --exclude sanim-presenter --no-fail-fast
 fmt:
 	uv run --no-project python ../packaging/format_workspace.py --manifest Cargo.toml -- $(CARGO)
 fmt-check:
@@ -142,7 +142,13 @@ absolute-layout-bench:
 run:
 	$(CARGO) run -p sanim-cli -- $(ARGS)
 build:
-	$(CARGO) build --workspace --exclude sanim-lsp --release
+	$(CARGO) build --workspace --exclude sanim-lsp --exclude sanim-presenter --release
+
+.PHONY: presenter-check presenter-release
+presenter-check:
+	$(CARGO) clippy -p sanim-presenter --all-targets $(ARGS) -- -D warnings
+presenter-release:
+	$(CARGO) build --locked --release -p sanim-presenter
 
 .PHONY: lsp-build lsp-check lsp-bench lsp-utility-bench lsp-install
 lsp-install: lsp-build

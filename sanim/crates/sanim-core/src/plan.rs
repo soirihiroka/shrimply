@@ -157,6 +157,7 @@ pub enum Node {
         animation: Arc<Animation>,
         count: Option<usize>,
     },
+    Page,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Receipt {

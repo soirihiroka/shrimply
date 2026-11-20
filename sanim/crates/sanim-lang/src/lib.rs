@@ -32,6 +32,7 @@ pub mod utilities;
 mod voxel;
 pub mod watch;
 
+pub use animation_plan::presentation::{PageStop, Presentation};
 pub use checker::{Checked as CheckedModule, NativeMethod};
 pub use eval::state::ExecutionState;
 pub use lint::{AnalyzedModule, LintDiagnostic, LintReport, LintSeverity};
@@ -265,6 +266,7 @@ impl Prepared {
         self.validate_contracts(&lowered.animation)?;
         let mut result = self.clone();
         result.animation = lowered.animation;
+        result.plan_base = Arc::new(base);
         result.temporal_layout = lowered.layout;
         result.time_map = time_map;
         result.fingerprint = digest(

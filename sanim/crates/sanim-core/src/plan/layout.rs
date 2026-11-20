@@ -44,6 +44,7 @@ impl Size {
 }
 struct Measured {
     animation: Arc<Animation>,
+    is_page: bool,
     children: Vec<Measured>,
     intrinsic: Size,
     size: Size,
@@ -169,7 +170,7 @@ fn measure(
                 horizon: *value,
             }
         }
-        Node::Element(_) => Size::finite(zero),
+        Node::Element(_) | Node::Page => Size::finite(zero),
         Node::Cell { duration, .. } => Size::finite(temporal::nonnegative("duration", *duration)?),
         Node::Container(items)
         | Node::Effect {
@@ -180,7 +181,7 @@ fn measure(
         } => {
             let mut cursor = Some(zero);
             let mut horizon = Some(zero);
-            let mut flow_count = 0;
+            let mut has_item = false;
             for child in items {
                 let child = measure(child.clone(), depth + 1, budget)?;
                 let margin = math::timeline_end(
@@ -189,7 +190,7 @@ fn measure(
                 )?;
                 let occupancy = add(child.size.main, Some(margin))?;
                 let absolute = child.animation.style.position_mode == crate::PositionMode::Absolute;
-                if !absolute && style.flow == Flow::Sequence && flow_count != 0 {
+                if !absolute && !child.is_page && style.flow == Flow::Sequence && has_item {
                     cursor = add(cursor, Some(style.gap))?;
                 }
                 let origin = if !absolute && style.flow == Flow::Sequence {
@@ -210,7 +211,7 @@ fn measure(
                     } else {
                         cursor = maximum(cursor, occupancy);
                     }
-                    flow_count += 1;
+                    has_item |= !child.is_page;
                 }
                 children.push(child);
             }
@@ -329,6 +330,7 @@ fn measure(
         }
     };
     Ok(Measured {
+        is_page: matches!(animation.node.as_ref(), Node::Page),
         animation,
         children,
         intrinsic: raw,
@@ -485,8 +487,8 @@ fn place(
         .children
         .iter()
         .filter(|child| child.animation.style.position_mode != crate::PositionMode::Absolute);
-    let flow_count = flow_children.clone().count();
-    for (i, child) in flow_children.enumerate() {
+    let mut flow_count = 0;
+    for child in flow_children {
         let child_size = resolve_extent(child, content, false, children_constrained)?.extent;
         if let Some(v) = child_size {
             let v = temporal::end(
@@ -497,7 +499,7 @@ fn place(
                 )?,
             )?;
             occupied = if style.flow == Flow::Sequence {
-                if i > 0 {
+                if !child.is_page && flow_count > 0 {
                     occupied = temporal::end(occupied, style.gap)?;
                 }
                 temporal::end(occupied, v)?
@@ -507,6 +509,7 @@ fn place(
         } else {
             infinite_occupancy = true;
         }
+        flow_count += usize::from(!child.is_page);
     }
     let single_occupied = occupied;
     if repeating && repeat > 1 {
@@ -575,16 +578,24 @@ fn place(
     };
     {
         let mut flow_index = 0;
+        let sequential = style.flow == Flow::Sequence || repeating;
+        let mut past_infinite = false;
         for (child_index, child) in node.children.iter().enumerate() {
             let absolute = child.animation.style.position_mode == crate::PositionMode::Absolute;
+            if !absolute && past_infinite {
+                continue;
+            }
+            let flow_item = !absolute && !child.is_page;
+            // A page reserves time in the presenter while leaving the surrounding gaps alone.
+            if flow_item && sequential && flow_index > 0 {
+                cursor = temporal::end(cursor, temporal::end(style.gap, extra)?)?;
+            }
             let at = if absolute {
                 temporal::end(
                     start,
                     temporal::end(style.padding_start, child.animation.style.margin_start)?,
                 )?
-            } else if style.flow == Flow::Parallel
-                && !matches!(node.animation.node.as_ref(), Node::Repeat { .. })
-            {
+            } else if !sequential {
                 let occupied = resolve_extent(child, content, false, children_constrained)?
                     .extent
                     .map(|v| {
@@ -634,19 +645,18 @@ fn place(
                 },
                 output,
             )?;
-            if !absolute
-                && (style.flow == Flow::Sequence
-                    || matches!(node.animation.node.as_ref(), Node::Repeat { .. }))
-            {
+            if !absolute && sequential {
                 let Some(length) =
                     resolve_extent(child, content, false, children_constrained)?.extent
                 else {
-                    if !node.children.iter().skip(child_index + 1).any(|next| {
+                    if node.children.iter().skip(child_index + 1).any(|next| {
                         next.animation.style.position_mode != crate::PositionMode::Absolute
+                            && (!next.is_page || next.size.main != Some(zero))
                     }) {
-                        continue;
+                        return Err("an infinite animation must be the last blocking item; use absolute positioning to place it outside temporal flow".into());
                     }
-                    return Err("an infinite animation must be the last blocking item; use absolute positioning to place it outside temporal flow".into());
+                    past_infinite = true;
+                    continue;
                 };
                 cursor = temporal::end(
                     cursor,
@@ -658,11 +668,8 @@ fn place(
                         )?,
                     )?,
                 )?;
-                if flow_index + 1 < flow_count {
-                    cursor = temporal::end(cursor, temporal::end(style.gap, extra)?)?;
-                }
             }
-            if !absolute {
+            if flow_item {
                 flow_index += 1;
             }
         }

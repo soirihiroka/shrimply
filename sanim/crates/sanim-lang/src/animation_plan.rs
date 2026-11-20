@@ -1,5 +1,6 @@
 //! Pure temporal composition. Only the returned root is lowered into the shared scene IR.
 mod cells;
+pub(crate) mod presentation;
 use crate::{
     Limits,
     native::{self, Context},
@@ -133,6 +134,7 @@ pub(crate) fn register(out: &mut Vec<Builtin>) {
             true,
         )],
     ));
+    out.push(builtin("page", vec![]));
     out.push(builtin(
         "animate",
         vec![
@@ -251,6 +253,7 @@ fn construct(
         } else {
             Some(crate::timing::Timing::default().value(args.get("duration"))?)
         }),
+        "page" => Node::Page,
         "Animation.repeat" => {
             let Some(Value::Animation(animation)) = args.get("animation") else {
                 return Err("repeat requires an Animation".into());
@@ -374,10 +377,7 @@ pub(crate) fn measure(
     available: Option<Fraction>,
     limits: &Limits,
 ) -> Result<(Fraction, bool, Arc<[plan::Receipt]>), plan::LayoutError> {
-    let layout = plan.layout(
-        available,
-        limits.max_operations.try_into().unwrap_or(usize::MAX),
-    )?;
+    let layout = layout(plan, available, limits)?;
     let indefinite = layout.duration.is_none();
     let finite = layout.finite_prefix;
     Ok((finite, indefinite, layout.receipts))
@@ -388,10 +388,25 @@ pub(crate) fn lower(
     available: Option<Fraction>,
     limits: &Limits,
 ) -> Result<Lowered, plan::LayoutError> {
-    let layout = plan.layout(
+    lower_layout(layout(plan, available, limits)?, base, limits)
+}
+
+fn layout(
+    plan: &plan::Animation,
+    available: Option<Fraction>,
+    limits: &Limits,
+) -> Result<plan::Layout, plan::LayoutError> {
+    plan.layout(
         available,
         limits.max_operations.try_into().unwrap_or(usize::MAX),
-    )?;
+    )
+}
+
+fn lower_layout(
+    layout: plan::Layout,
+    base: &sanim_core::Animation,
+    limits: &Limits,
+) -> Result<Lowered, plan::LayoutError> {
     let mut animation = base.clone();
     let mut budget = limits.data.max_bytes;
     let mut work = 0;

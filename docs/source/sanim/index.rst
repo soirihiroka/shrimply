@@ -1,7 +1,7 @@
 Sanim
 =====
 
-Sanim is a standalone, headless animation scripting language for Shrimply. It has its own Rust workspace so language development and tests do not build the editor, GPU kernels, Python, or GUI dependencies.
+Sanim is a standalone animation scripting language for Shrimply. Its Rust workspace provides a headless CLI and a separate native presenter.
 
 .. code:: text
 
@@ -44,6 +44,43 @@ Reflected inputs accept typed JSON overrides. For example:
    make -C sanim run ARGS='check examples/data.sanim --set data.sanim::bar_color="\"#FF8800\""'
 
 The CLI has ``check``, ``inspect``, ``duration``, ``render``, ``video``, and ``watch`` commands. Standalone output defaults to 1920×1080, 30 FPS and 96 DPI. Video streams headless Skia frames to an external FFmpeg encoder for H.264 MP4 output. ``--help`` describes frame/time selection, output sizing, and bounded watch sessions. ``inspect`` exports source dependencies, reflected values, resolved types and symbols, temporal layout, verification evidence, and performance measurements as JSON. ``--progress`` emits observed preparation phases/counts as JSON on stderr, leaving the command's stdout protocol unchanged. Counts are phase-local; unknown totals remain unknown rather than becoming an estimated overall percentage.
+
+Sanim Presenter
+---------------
+
+Open a finite 2D deck with ``sanim-presenter deck.sanim``. Playback starts when
+the window opens and holds at the first stop. Right Arrow, Page Down, and Space
+play to the next stop. Left Arrow and Page Up jump back to the previous
+stop. During a transition, Previous returns to the last stop you reached.
+F11 toggles fullscreen and Escape leaves it.
+
+Put ``page()`` in the deck's outer animation sequence wherever playback should
+pause. Ordinary Sanim gives each marker zero duration during rendering and
+export. Use ``wait(duration)`` for timed pauses. Layers persist across pages, so
+explicitly hide or animate away elements when advancing.
+
+.. code-block:: text
+
+   bg(Color("#121826"))
+   let first = Text("First page", font_size=64pt)
+   Animation(children=[first])
+   page()
+   first.fade_out(duration=0s)
+   let second = Text("Second page", font_size=64pt)
+   Animation(children=[second])
+   page()
+   second.fade_out(duration=300ms)
+   let third = Text("Third page", font_size=64pt)
+   third.fade_in(duration=300ms)
+   page()
+
+Build with ``make -C sanim presenter-release``. Extract a release archive and
+run the executable inside it. The Linux x86-64 release targets Ubuntu 26.04
+with GTK 4 and Pango 1.57. On Ubuntu, install ``libgtk-4-1``,
+``libpango-1.0-0``, and ``libpangocairo-1.0-0``. The macOS Apple Silicon
+release includes its native libraries in ``lib/``. Keep that directory beside
+the executable. Tags beginning with ``sanim-presenter-v`` publish both archives
+to GitHub Releases.
 
 Crates
 ------

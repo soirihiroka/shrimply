@@ -482,7 +482,7 @@ pub fn charge_with_budget(
                 }
             }
             Node::Repeat { animation, .. } => plan(animation, bytes, items, depth - 1, budget)?,
-            Node::Hold(_) => {}
+            Node::Hold(_) | Node::Page => {}
         }
         budget.plans.insert(id, Arc::downgrade(value));
         Ok(())
