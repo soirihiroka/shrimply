@@ -27,8 +27,6 @@ Platform support status:
 
 <img width="300" height="396" alt="platformsupport-" src="https://github.com/user-attachments/assets/2631184e-ad24-4cb5-80ff-d2af377933ca" />
 
-
-
 Shrimply is pre-alpha software (though we are getting closer to the first alpha release), which means you should expect:
 
 - Major changes in behavior
@@ -40,12 +38,6 @@ Shrimply is pre-alpha software (though we are getting closer to the first alpha 
 If you noticed any performance/correctness issue, please open [issues](https://github.com/soirihiroka/shrimply/issues).
 
 See the [documentation](https://shrimply.pages.dev) for more.
-
-## CLI
-
-Shrimply now has an agent friendly CLI that replaces the MCP.
-
-See the [CLI guide](docs/source/integrations/cli.rst) for details.
 
 ## Contributing
 
