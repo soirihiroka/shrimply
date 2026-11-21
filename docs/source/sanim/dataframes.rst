@@ -3,7 +3,7 @@ DataFrames
 
 ``DataFrame(rows)`` creates an immutable query plan over an existing ``List<Record>``. The rows remain in the same persistent, copy-on-write list storage. Chaining a filter, projection, sort, aggregation, or join builds a bounded plan. SQLite executes that plan when ``to_list()``, a Series reduction, or ``len()`` requests values. There is no Python/Pandas dependency and no second Rust row-processing engine.
 
-.. code-block:: text
+.. code-block:: sanim
 
    type Measurement = {case_name: String, before: Number, after: Number}
    let df = DataFrame(read<List<Measurement>>("measurements.csv"))

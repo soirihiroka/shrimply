@@ -24,4 +24,10 @@ Follow edit points
 
 Turn :guilabel:`Follow cuts` off to keep the model's own timing.
 
-If no speech is found, the project stays unchanged.
+Requirements and limits
+-----------------------
+
+* Runs on **CUDA or CPU**.
+* **Audio limit**: up to 512 MiB for both the uploaded audio buffer and the
+  decoded mono audio.
+* If no speech is found, the project stays unchanged.

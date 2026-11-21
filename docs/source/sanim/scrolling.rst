@@ -17,7 +17,7 @@ Scrolling is a layout behavior of ordinary ``Box`` elements. A Box fills the ava
 
 ``overflow`` sets both axes. ``overflow_x`` and ``overflow_y`` override their respective axes independently. For example, ``overflow_x="hidden" overflow_y="auto"`` shows only the vertical scrollbar when needed. The equivalent bare utilities are ``overflow-auto``, ``overflow-x-hidden`` and ``overflow-y-auto``.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let content = <Box flex flex-col width={300pt} height={800pt}>
        <Label>First item</Label>
@@ -33,7 +33,7 @@ Scroll offsets are ordinary two-element Lists. Points describe content offsets; 
 
 Axis targets preserve their units: ``scroll_to(y=100%)`` stays at the bottom when the viewport resizes. When specifying both ``x=`` and ``y=``, use the same unit for both.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let code = <CodeView src="./example.py" width={80%} height={50%} />
    Animation(children=[code])
@@ -47,7 +47,7 @@ The default ``align="nearest"`` moves only enough to reveal the requested line. 
 
 For a shared reactive offset, supply ``scroll=`` and animate its mutable input:
 
-.. code-block:: text
+.. code-block:: sanim
 
    mut offset = [0pt, 0pt]
    let viewport = <Box overflow="auto" width={300pt} height={120pt} scroll={offset}>
@@ -66,7 +66,7 @@ All drawables have the same layout metadata and common alignment, box-size and p
 
 Use ``absolute`` for a child that should retain its authored ``position`` and alignment instead of taking space in block or flex flow. Its points and percentages remain relative to its parent. Absolute children do not determine an automatic container height, but their painted bounds still contribute to scroll overflow. Give a full-canvas composition an explicit containing box:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let marker = <Box absolute position={[-20%, 10%]} width={2*(12pt)} height={2*(12pt)} rounded-full fill="light1" x_align={Align.Center} y_align={Align.Center}/>
    let stage = <Box w-full h-full x_align={Align.Center} y_align={Align.Center}>

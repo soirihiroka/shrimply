@@ -79,8 +79,8 @@ Shrimply recognizes these source types:
        inserts that file. Import fails for incompatible codecs, attachments,
        or supplemental packet data such as VP9 WebM transparency.
    * - Video codecs
-     - H.264/AVC, H.265/HEVC, AV1, VP8, VP9, and other codecs with FFmpeg
-       CUDA decoding
+     - H.264/AVC, H.265/HEVC, AV1, VP8, VP9, and other codecs supported by the
+       active GPU backend's FFmpeg hardware decoder
    * - Images and documents
      - JPEG, JPEG XL, PNG, WebP, HEIC/HEIF, AVIF, GIF, SVG, and PDF
    * - Audio
@@ -91,8 +91,9 @@ Shrimply recognizes these source types:
      - PSD and Krita
    * - 3D content
      - OBJ, GLB, and PLY
-   * - Application sources
-     - :doc:`Blender files <blender>` and :doc:`Manim scenes <manim>`
+   * - Application and animation sources
+     - :doc:`Blender files <blender>`, :doc:`Manim scenes <manim>`, and
+       :doc:`Sanim scenes <../sanim/editor-and-presenter>`
 
 Project opening additionally accepts native Shrimply projects, Shrimply JSON,
 OpenTimelineIO, and :doc:`Kdenlive projects <kdenlive-import>`.
@@ -100,8 +101,8 @@ Saving an imported OpenTimelineIO or Kdenlive project puts its MKV and WebM
 derivatives beside the new project. Clips that share a source share one MP4.
 Relink missing MKV or WebM files before importing.
 
-Video decoding requires both a matching FFmpeg CUDA decoder and codec support
-from the installed NVIDIA GPU.
+Video playback and decoding require a supported GPU; see :doc:`/linux`,
+:doc:`/macos`, or :doc:`/windows` for system requirements.
 
 Create media
 ------------

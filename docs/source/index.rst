@@ -12,25 +12,28 @@ Shrimply is a simple yet powerful cross-platform video editor.
    :alt: Shrimply editor showing the inspector, video preview, and multitrack timeline
    :width: 100%
 
-.. raw:: html
-
-   <iframe src="https://yapioca.com/embed/thread/?i=oxB4ibobSf-GU8BdisXgIg&amp;design=material" title="Yapioca thread" width="100%" height="640" style="border:0" loading="lazy" allowfullscreen></iframe>
-
-Installation
-------------
-
-* :doc:`Flatpak (Linux) <flatpak>`
-* :doc:`Homebrew (macOS) <homebrew>`
-
-Get started
------------
+Start here
+----------
 
 * :doc:`Getting started <getting-started>`
-* :doc:`Editor <guides/editor>`
+* :doc:`Linux <linux>`
+* :doc:`macOS <macos>`
+* :doc:`Windows <windows>`
 
-Programmatic animation
-----------------------
+Editing
+-------
 
+* :doc:`Editor & timeline <guides/editor>`
+* :doc:`Media & imports <guides/media>`
+* :doc:`Modifiers, keyframes, and transitions <guides/modifiers>`
+* :doc:`Property expressions <guides/expressions>`
+* :doc:`Export & rendering <guides/export>`
+
+Compute, automation, and Sanim
+------------------------------
+
+* :doc:`Compute server <server/index>`
+* :doc:`Agent editing CLI <integrations/cli>`
 * :doc:`Sanim animation language <sanim/index>`
 
 License
@@ -41,25 +44,21 @@ License
 .. toctree::
    :maxdepth: 2
    :hidden:
-   :caption: Getting started
+   :caption: Start here
 
    getting-started
-   guides/editor
-
-.. toctree::
-   :maxdepth: 2
-   :hidden:
-   :caption: Installation
-
-   Flatpak (Linux) <flatpak>
-   Homebrew (macOS) <homebrew>
+   linux
+   macos
+   windows
 
 .. toctree::
    :maxdepth: 2
    :hidden:
    :caption: Editing
 
+   guides/editor
    guides/media
+   guides/modifiers
    guides/expressions
    guides/export
 
@@ -72,7 +71,7 @@ License
    integrations/cli
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
    :hidden:
    :caption: Sanim
 
@@ -84,6 +83,5 @@ License
    :caption: Project information
 
    security
-   development
-   python-dependencies
    licenses
+   development

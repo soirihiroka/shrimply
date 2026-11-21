@@ -4,11 +4,13 @@ Getting Started
 Run Shrimply
 ------------
 
-Shrimply is currently pre-alpha software. On Linux, see :doc:`flatpak` for
-installation, updates, and known limitations. On macOS, see :doc:`homebrew`
-for installation and updates.
+Shrimply is currently pre-alpha software. See your platform's page for system
+requirements and installation:
 
-To build Shrimply from source, see :doc:`development`.
+* :doc:`linux`
+* :doc:`macos`
+* :doc:`windows`
+* Build from source: :doc:`development`
 
 Create a project
 ----------------
@@ -32,25 +34,25 @@ Build a timeline
 ----------------
 
 Open the application menu and choose :menuselection:`New Track` to add a
-caption, video, or audio track. Drop or paste media onto a compatible track,
-then select a clip to edit it in the inspector.
+caption, video, audio, or comment track. Drop or paste media onto a compatible
+track, then select a clip to edit it in the inspector.
 
-Timeline shortcuts:
+Essential shortcuts:
 
 * :kbd:`Space`: play or pause
 * :kbd:`S`: split every clip at the playhead
-* :kbd:`Shift+S`: split and select the clips on the left
-* :kbd:`Q`: ripple-trim the selected clip to the playhead
 * :kbd:`D`: delete the selection
-* :kbd:`Shift+D`: ripple cut
-* :kbd:`Ctrl+X`: cut
-* :kbd:`Z`: toggle timeline zoom
-* :kbd:`Ctrl+Z`: undo
-* :kbd:`Ctrl+Shift+Z`: redo
+* :kbd:`Ctrl+Z` / :kbd:`Ctrl+Shift+Z`: undo / redo
+
+In the GTK app, press :kbd:`Ctrl+?` (or open **Keyboard Shortcuts** from the
+application menu) to browse all shortcuts. See :doc:`guides/editor` for
+timeline editing tools, :doc:`guides/media` for supported formats, and
+:doc:`guides/modifiers` for keyframes, effects, and transitions.
 
 Save and export
 ---------------
 
 Use :menuselection:`Save` or :menuselection:`Save As` to write the project.
-Select :guilabel:`Export` to render a video or GIF, export WebVTT captions, or
-write project data. See :doc:`guides/export` for formats and encoder details.
+Select :guilabel:`Export` to render a video or GIF, export captions, or write
+project data. See :doc:`guides/export` for formats, encoders, and command-line
+rendering.

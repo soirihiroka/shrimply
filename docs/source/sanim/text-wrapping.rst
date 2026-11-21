@@ -3,7 +3,7 @@ Text wrapping
 
 Text and Label default to HTML's ``white-space: normal``. CodeView defaults to ``pre``, like ``<pre><code>``: source newlines, spaces and tabs are preserved and long lines overflow. Width comes from the element or its parent's content box, after padding and flex sizing. A width signal causes immediate reflow at the sampled width; it does not add a code transition or crossfade.
 
-.. code-block:: text
+.. code-block:: sanim
 
    mut width = 400pt
    mut policy: "normal" | "pre-wrap" | "nowrap" = "normal"
@@ -39,12 +39,10 @@ Collapsible whitespace means ASCII spaces, tabs and segment breaks. Nonbreaking 
 
 The latter two have the same result at an explicit constrained width. Sanim does not expose CSS ``min-content`` sizing, where browsers distinguish their intrinsic width contributions. These are wrapping policies, independent of ``flex-wrap``, which wraps whole children. ``overflow-x-hidden`` clips overflow; ``overflow-x-auto`` can show a scrollbar. Clipping does not enable wrapping.
 
-CodeView keeps its source text and shared syntax tree intact. Soft rows retain original logical line/Unicode-column coordinates; a continuation row does not get an invented line number. With collapsed source newlines, the gutter shows the first source line on that visual row. Native width, style spans, tabs and wrapping are part of the shared Pango layout cache key. Cached frame replay does no new layout or glyph preparation.
+CodeView keeps its source text and shared syntax tree intact. Soft rows retain original logical line/Unicode-column coordinates; a continuation row does not get an invented line number. With collapsed source newlines, the gutter shows the first source line on that visual row.
 
-Native layouts share normalized source text, style spans and source mappings across widths. Paragraph measurement defers outlines until a renderer requests them; CodeView uses the shared native glyph outlines for its visible pieces.
+See `the width-loop example <https://github.com/soirihiroka/shrimply/blob/main/sanim/examples/text_wrapping.sanim>`__ for narrow/wide cycles under all four wrapping policies:
 
-Run ``make -C sanim text-wrapping-check`` for normalization, native wrapping, source mapping, inherited signals and deterministic cache performance regressions. The `width-loop example <https://github.com/soirihiroka/shrimply/blob/main/sanim/examples/text_wrapping.sanim>`__ repeats narrow/wide cycles under four wrapping policies. Render it from the repository root:
+.. code-block:: console
 
-.. code-block:: sh
-
-   make -C sanim run ARGS='video examples/text_wrapping.sanim --output /tmp/text-wrapping.mp4'
+   $ shrimply sanim video sanim/examples/text_wrapping.sanim --output /tmp/text-wrapping.mp4

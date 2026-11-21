@@ -13,7 +13,7 @@ Constructing blocks
 allocation. Uniform bricks use one material value. Editing a grid returns a new
 grid sharing unchanged storage; previous snapshots remain valid.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let grass = VoxelMaterial(color=Color("green3"))
    let ground = VoxelGrid(size=[32,8,32]).fill(
@@ -38,7 +38,7 @@ support intrinsic sizing, definite cell sizes, parent-relative percentages,
 gaps, symmetric per-axis padding, cross-axis alignment, and space distribution.
 This layout is independent of camera orientation and output pixel dimensions.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let layout = <VoxelBox
        size={[80,40,60]} flow="x" gap={4} padding={[2,1,2]}
@@ -71,7 +71,7 @@ once to the voxel lattice. The child must fit completely inside the container.
 Numeric and percentage anchors and offsets retain their exact fractional
 values until that final snap, including alignment and space distribution.
 
-.. code-block:: text
+.. code-block:: sanim
 
    <VoxelPart volume={house} position_mode="absolute"
        at={[50%,0%,50%]} anchor={[50%,0%,50%]} offset={[0,4,0]}/>
@@ -98,7 +98,7 @@ Geometry and framing assertions
 Assertions are pure and fail with a source location, layout paths, offending
 cell or projected corner, and a suggested repair.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let house_part = <VoxelPart volume={house}/>
    let tree_part = <VoxelPart volume={tree} absolute at={[40,0,0]}/>
@@ -129,10 +129,10 @@ broader intersections that static syntax cannot prove.
 Block texture packs
 -------------------
 
-Voxel materials use the same :doc:`Texture <textures>` values as ordinary 2D
+Voxel materials use the same :doc:`Texture <images-and-textures>` values as ordinary 2D
 images. Textures can be authored entirely in Sanim:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let grain = Noise(seed=42, axes="xy", scale=3, octaves=3).remap(-1,1,0,1)
    let texture = Texture(size=[16,16], field=grain,
@@ -153,7 +153,7 @@ texture, separate top/side/bottom textures, or individual left/right/front/back
 textures. This supports the directory structure used by Minecraft resource
 packs without depending on Minecraft or its assets.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let grass = VoxelMaterial(
        top=read<Texture>("assets/minecraft/textures/block/grass_block_top.png"),
@@ -203,7 +203,7 @@ not generate a world or execute a Sanim callback for every cell. Native bulk
 operations evaluate one shared, bounded field program and publish an immutable
 grid. Reusing a subexpression evaluates it once per sample.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let hills = (Noise(seed=42, kind="fbm", scale=24, octaves=4, axes="xz")
        .multiply(3).add(12))
@@ -252,7 +252,7 @@ a shoreline without changing height. ``smoothstep(min=0,max=1)`` maps values
 to 0..1 with flat endpoint tangents and saturates outside finite ``min < max``.
 It is useful for blending elevation fields and scatter probabilities:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let moisture = (Noise(seed=7, axes="xz", scale=48)
        .warp(seed=23, axes="xz", scale=64, strength=12)
@@ -314,24 +314,10 @@ Ranges include ``min`` and exclude ``max``. Inserting an unrelated random call
 does not move the sequence. Seeds and indices are nonnegative 64-bit integers.
 
 Fields are limited to 128 shared instructions; bulk operations validate work
-budgets before expensive sampling. Native algorithms share a separate cumulative
-64-million-unit preparation budget; voxel cells do not count as interpreted
-DSL steps. Hosts configure ``Limits.max_native_work``; the CLI exposes
-``--max-native-work``. Restoring an execution prefix also restores its native
-work accounting. Profiles report executed native work as ``native_work`` and
-include it in the total ``operations`` count; ``interpreted_operations`` excludes
-native loops. P001 warnings use interpreted work only. P004 reports a native
-call when its measured time exceeds the configured preparation warning time.
-Native height plans use two temporary bytes
-per X/Z column, then share uniform bricks and unchanged grid storage. Surface
-point lists are limited to 65,536 entries; an ``Instances`` group has at most
-4,095 children and also follows the scene's spatial-candidate budgets. Use
-native scatter for dense ground cover.
-
-``make -C sanim voxel-procedural-check`` checks these APIs, immutable snapshots,
-bounded hot-edit ownership, and error paths. ``voxel-procedural-bench`` compares
-native heightmap batching with repeated immutable column edits and verifies
-that the resulting grids are identical.
+budgets before sampling. Hosts and the CLI (``--max-native-work``) bound
+cumulative native preparation work. Surface point lists are limited to 65,536
+entries; an ``Instances`` group has at most 4,095 children. Use native
+``scatter`` for dense ground cover.
 
 Lighting
 --------
@@ -379,7 +365,7 @@ Opaque cubes remain the default. Binary texture alpha cuts holes for leaves,
 windows, and plants. Physical transparency uses ``transmission`` rather than
 partially transparent coverage:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let water = VoxelMaterial(
        transmission=1, ior=1.333, roughness=0.025,
@@ -412,7 +398,7 @@ and the separation of coverage and transmission in
 Multiple lights and environment
 -------------------------------
 
-.. code-block:: text
+.. code-block:: sanim
 
    mut brightness = 200
    sig lamp = PointLight(position=[50%,12,25%],color=Color("#FFC37D"),
@@ -440,7 +426,7 @@ so adding a light does not introduce whole-surface brightness speckles.
 Camera recipes and curves
 -------------------------
 
-.. code-block:: text
+.. code-block:: sanim
 
    let route = Curve(points=[[120%,60%,120%],[100%,40%,90%],[20%,30%,80%]])
    let targets = Curve(points=[[50%,25%,50%],[45%,30%,50%],[40%,25%,45%]])
@@ -478,7 +464,7 @@ framing, and spatial path edits without rebuilding voxel geometry.
 Animation and the survival-base example
 ---------------------------------------
 
-.. code-block:: text
+.. code-block:: sanim
 
    mut yaw = 0deg
    let scene = VoxelScene(layout=layout, yaw=yaw)
@@ -543,27 +529,3 @@ reconstruction principles described in
 `Spatiotemporal Variance-Guided Filtering <https://research.nvidia.com/labs/rtr/publication/schied2017spatiotemporal/>`_.
 Frame reconstruction stays on the GPU, without a GPU-to-CPU-to-GPU round trip.
 Texture mipmaps are prepared once during upload.
-
-Validation and performance
---------------------------
-
-``make -C sanim voxel-check`` runs the headless model, language, inspection,
-watch, and editor-completion regressions. ``voxel-gpu-check`` additionally
-exercises a real GPU. ``voxel-bench`` measures retained GPU resources, camera
-edits, and held layout; ``voxel-storage-bench`` measures persistent brick edits.
-``voxel-valley-bench`` prepares the actual example once and retains one GPU
-renderer across day/night, lighting, sample-count, and bounce-count measurements.
-It verifies that those changes upload no voxel geometry. Set
-``SANIM_VOXEL_PROFILE_SOURCE`` to profile another generated example, or
-``SANIM_VOXEL_PROFILE_SMALL=1`` to restrict the sweep to 64×36.
-``SANIM_VOXEL_PROFILE_PREVIEW=1`` instead measures flat previews at 1280×720,
-with shadows disabled and with four soft-shadow samples per light.
-
-Run GPU timings without concurrent rendering. Export benchmarks include pixel
-readback; embedded GPU rendering does not require it.
-
-The GPU checks also compare hard-shadow visibility on the generated survival
-scene against independent CPU rays at five orbit positions. They report the
-sampled pixels and boundary exclusions explicitly. Surface ray origins use the
-exact crossed voxel plane, preventing rounding errors from placing a shadow
-ray inside its own surface.

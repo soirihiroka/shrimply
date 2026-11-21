@@ -8,7 +8,7 @@ name/hex/rgb/hsl parser, including ``Color("rebeccapurple")`` and ``Color("#abc"
 
 Typed constructors avoid the byte quantization of legacy CSS string parsing:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let rgb = Rgb(0.2, 0.5, 0.8, alpha=0.75)
    let hsl = Hsl(210deg, 0.6, 0.5)
@@ -23,7 +23,7 @@ produce source diagnostics rather than silently clamping arguments.
 
 Conversion methods return typed records, including their alpha:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let rgb_channels = accent.to_rgb()       # red, green, blue, alpha
    let hsl_channels = accent.to_hsl()       # hue, saturation, lightness, alpha
@@ -40,7 +40,7 @@ premultiplied alpha; OKLCH lightness and chroma are premultiplied while hue is
 interpolated around the selected angular path. Gray or fully transparent
 endpoints do not introduce an arbitrary hue. Endpoints are preserved exactly.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let warm = Color("orange3")
    let cool = Color("blue3")
@@ -77,7 +77,7 @@ native graph as other animated properties. Sampling never interprets source
 functions again. Multiple fields of one conversion share a frame-local result;
 projecting a literal record depends only on the selected field.
 
-.. code-block:: text
+.. code-block:: sanim
 
    mut hue = 30deg
    sig tint = Oklch(0.72, 0.12, hue)

@@ -12,3 +12,6 @@ Shrimply asks again.
 
 Trust includes anything that file imports or runs. This is not a sandbox.
 Approve files you control, or whose authors you trust.
+
+Sanim (``.sanim``) scenes run inside Sanim's bounded compiler and do not execute
+arbitrary external programs.

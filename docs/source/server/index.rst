@@ -2,19 +2,32 @@ Compute Server
 ==============
 
 The compute server is optional. It runs transcription, text-to-speech, video
-segmentation, voice conversion, camera tracking, and video generation on this
-machine.
+segmentation, voice conversion, camera tracking, and video generation on a
+local or remote Linux machine.
+
+Requirements
+------------
+
+* **OS**: Linux (other OS untested).
+* **Local run**: Python 3.14 and `uv <https://docs.astral.sh/uv/>`__.
+* **Docker run**: Docker with the NVIDIA Container Toolkit for GPU access.
+* **GPU vs. CPU**:
+
+  * **Video Generation** and **VGGT-SLAM** camera tracking require an NVIDIA
+    CUDA GPU and are hidden in Shrimply when the server is set to CPU.
+  * **Transcription**, **Text to Speech**, **Video Segmentation (SAM2)**,
+    **Voice Conversion**, and **COLMAP** camera tracking work on CUDA or CPU.
 
 Run locally
 -----------
 
-The server needs Python 3.14. From the repository root:
+From the repository root:
 
 .. code-block:: console
 
    $ make dev-server
 
-From the ``server`` directory:
+Or from the ``server`` directory:
 
 .. code-block:: console
 
@@ -23,55 +36,55 @@ From the ``server`` directory:
 Models download the first time you use them. Leave the server running until
 the job finishes.
 
-Connect Shrimply
-----------------
+Configuration
+~~~~~~~~~~~~~
 
-The server listens at ``http://127.0.0.1:8787``. In Shrimply, open
-:menuselection:`Preferences --> External`, select the local server under
-:guilabel:`Inference Servers`, and pick a device.
+Useful environment variables:
 
-Shrimply shows the features that server offers. Anything it does not offer
-stays out of the editor.
+* ``SHRIMPLY_SERVER_HOST`` (default ``0.0.0.0``) and ``SHRIMPLY_SERVER_PORT``
+  (default ``8787``) — listen address and port.
+* ``SHRIMPLY_SERVER_SHARE=1`` — opens a temporary public ``gradio.live`` URL.
+  Anyone with that URL can run every model; share it only with people you
+  trust and stop the process when finished.
+* ``SHRIMPLY_MODEL_IDLE_TTL_SECONDS`` (default ``600``) — idle time before
+  unloading an unused worker model.
+* ``SHRIMPLY_PNEUMA_MODEL_DIR`` — directory for voice-conversion models.
 
-Share access
-------------
+Run with Docker Compose
+-----------------------
 
-``SHRIMPLY_SERVER_SHARE=1`` opens a temporary public ``gradio.live`` URL.
-That URL can run every model. Share it with people you trust, and stop the
-process when you want it gone.
-
-.. code-block:: console
-
-   $ SHRIMPLY_SERVER_SHARE=1 uv run --locked src/main.py
-
-Containers
-----------
-
-Docker Compose enables the GPU and keeps downloaded models between runs.
+Docker Compose enables the GPU and persists downloaded models across runs:
 
 .. code-block:: console
 
    $ cd server
    $ docker compose up
 
-The default image uses CUDA 12.6. To use CUDA 13.0:
+The default image uses **CUDA 12.6**. For **CUDA 13.0** (requires a Turing or
+newer NVIDIA GPU and a compatible driver; keep CUDA 12.6 for older supported
+GPUs):
 
 .. code-block:: console
 
    $ SHRIMPLY_SERVER_TAG=prerelease-cuda13.0 docker compose up
 
-Build either image from the repository root:
+To build server container images locally, see :doc:`/development`.
 
-.. code-block:: console
+Connect Shrimply
+----------------
 
-   $ docker build -t shrimply-server:cuda12.6 server
-   $ docker build --build-arg CUDA_VERSION=13.0 -t shrimply-server:cuda13.0 server
+The server listens on port ``8787`` by default (``http://127.0.0.1:8787``
+locally). In Shrimply, open :menuselection:`Preferences --> External`, select
+the server under :guilabel:`Inference Servers`, and choose a compute device.
 
-Python dependencies are installed during the image build. Model downloads remain
-persistent in the Compose volumes. The CUDA 13.0 build also compiles PyCOLMAP;
-CI caches that wheel stage separately from application source changes. Its build
-uses two compiler jobs by default; ``--build-arg BUILD_JOBS=8`` can speed up a
-local build with sufficient memory.
+Shrimply only displays features supported by the selected server and device.
+
+Supported audio formats
+-----------------------
+
+Audio uploads accept WAV, MP3, FLAC, AIFF, M4A/AAC, ALAC, and Ogg/Vorbis/Opus
+(decoded and resampled automatically to each model's required rate). Per-feature
+upload and duration limits are listed on each feature page below.
 
 Features
 --------
@@ -86,9 +99,16 @@ Features
 Troubleshooting
 ---------------
 
-If a model is missing or the connection fails, check the selected server in
-:menuselection:`Preferences --> External`. The first request waits while its
-model downloads.
+* **No models or missing features**: check the selected server and device in
+  :menuselection:`Preferences --> External`. Video Generation and VGGT-SLAM
+  only appear when a CUDA device is selected.
+* **First request takes a long time**: models download on first use and are
+  cached afterward.
+* **Upload or size error**: check the file size and duration limits on the
+  feature's page (for example, 15 seconds for TTS voice references, or 64–512
+  MiB upload caps).
+* **Device switch rejected (server busy)**: wait for active compute jobs to
+  finish or cancel them before switching compute devices.
 
 .. toctree::
    :maxdepth: 1
@@ -100,4 +120,3 @@ model downloads.
    voice-conversion
    camera-tracking
    video-generation
-   media-formats

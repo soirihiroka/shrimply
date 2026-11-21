@@ -18,10 +18,16 @@ Available methods
 -----------------
 
 ``COLMAP``
-   Extra controls for quality and the camera model.
+   Works on CUDA or CPU. Provides extra controls for quality and the camera
+   model.
 
 ``VGGT-SLAM``
-   A second tracker.
+   Requires an **NVIDIA CUDA** device on the compute server. Hidden when the
+   server is set to CPU.
 
-A lower analysis frame rate is faster and can miss quick camera moves. If the
-footage or the settings change, select :guilabel:`Analyze Again`.
+Requirements and limits
+-----------------------
+
+* A lower analysis frame rate is faster and can miss quick camera moves. If the
+  footage or the settings change, select :guilabel:`Analyze Again`.
+* Very long clips are bounded by the server's 8 GiB frame archive limit.

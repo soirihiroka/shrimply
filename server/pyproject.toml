@@ -19,6 +19,7 @@ dependencies = [
     "opencv-python-headless>=5,<6",
     "pydantic>=2.12,<3",
     "peft>=0.20,<1",
+    # Gradio 6.x requires Pillow <13.
     "pillow>=12,<13",
     "pycolmap-cuda12>=4.2.1,<5",
     "pytorch-lightning>=2.6,<3",
@@ -48,6 +49,9 @@ dependencies = [
 dev = ["pyrefly==1.4.0", "types-tqdm>=4.70"]
 
 [tool.uv]
+# Upstream metadata disagreements (Qwen requests unused sox/onnxruntime and older
+# transformers; VGGT requests numpy<2 and non-headless opencv; NeMo requests older
+# pynini). Always run with `uv run --locked`; raw `uv pip check` reports these.
 exclude-dependencies = ["onnxruntime", "opencv-python", "sox"]
 override-dependencies = [
     "numpy>=2.5,<2.6",

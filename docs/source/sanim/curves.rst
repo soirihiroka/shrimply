@@ -7,7 +7,7 @@ exact timestamp and an ordinary numeric value. A scalar curve has type
 A vector curve uses a fixed numeric List, for example ``Curve<List<Length,2>>``.
 Every key preserves the value's units and List length.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let size_keys = reflect([
        Keyframe(time=0s, value=24pt),
@@ -36,7 +36,7 @@ returns the last timestamp as a ``Duration``.
 
 A curve can drive a mutable value directly:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let movement = Curve(keys=[
        Keyframe(time=0s, value=0),
@@ -67,7 +67,7 @@ handles to prevent overshooting adjacent values. ``"auto"`` uses smooth finite
 difference tangents and permits overshoot. For manual handles, use ``"manual"``
 and provide the handles consumed by each Bézier segment:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let travel = Curve(keys=[
        Keyframe(time=0s, value=0,

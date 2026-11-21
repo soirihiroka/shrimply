@@ -1,6 +1,8 @@
 Text to Speech
 ==============
 
+Generate speech audio directly on an audio track or from existing caption clips.
+
 Create a speech item
 --------------------
 
@@ -29,3 +31,12 @@ design) and IndexTTS 2 and 2.5.
 
 IndexTTS is under the :ref:`bilibili Model Use License Agreement <indextts-license>`.
 Read that agreement before downloading the model.
+
+Requirements and limits
+-----------------------
+
+* Runs on **CUDA or CPU**.
+* **Reference audio**: Shrimply uploads original reference audio without
+  requiring manual conversion to WAV. Voice and emotion reference clips are
+  limited to **15 seconds** and **64 MiB**.
+* **Output**: generated speech is returned as WAV audio on the timeline.

@@ -3,7 +3,7 @@ Native CodeView
 
 CodeView is a rendered element with a cached, immutable syntax tree. Displayed code is never executed.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let code = <CodeView src="test.py" font_size={18pt}/>
    Animation(children=[code])
@@ -13,7 +13,7 @@ CodeView is a rendered element with a cached, immutable syntax tree. Displayed c
 
 Source and patch files are watched like other Sanim resources. Language is detected from the source filename; ``lang="python"`` overrides it. Inline source uses a literal body:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let code = <CodeView lang="python">
        def greet(name):
@@ -22,7 +22,7 @@ Source and patch files are watched like other Sanim resources. Language is detec
 
 Outer blank lines and the common indentation are removed. Relative indentation, braces, quotes and foreign operators remain literal: ``{name}`` above belongs to Python. Use ``code={expression}`` for a Sanim string or signal instead. Provide exactly one source: ``src``, a body, or ``code``.
 
-.. code-block:: text
+.. code-block:: sanim
 
    mut count = 1
    sig snippet = "count = {count:d}"
@@ -55,7 +55,7 @@ Code ranges and independent folding
 
 ``view.range(...)`` returns one typed selection; ``view.ranges(...)`` returns a list. A singular query reports ambiguity instead of choosing an unrelated match. Bound selections capture the source snapshot at construction. An inline chain such as ``view.range(name="updated_function").fold(...)`` resolves its query when that animation is placed, so it can select syntax introduced by an earlier patch plan. Include the CodeView in an ``Animation`` when using a separately bound selection.
 
-.. code-block:: text
+.. code-block:: sanim
 
    Animation(children=[code])
    let push: CodeRange = code.range(name="WorkQueue.push")
@@ -91,7 +91,7 @@ Levels select syntax depth; they do not trigger a fold. ``range`` requires a uni
 
 Every operation consumes the same range representation:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let section = code.range(name="WorkQueue.push")
    section.select(duration=200ms)
@@ -112,7 +112,7 @@ GNOME styles and precise overrides
 
 The default theme follows GNOME SourceView's Adwaita semantic colors. Code uses the shared native font pipeline; default is monospace. Configure exact semantic styles and source spans without replacing the syntax tree:
 
-.. code-block:: text
+.. code-block:: sanim
 
    let theme = CodeTheme(rules=[
        CodeRule("keyword", CodeStyle(fill=Color("orange2"), bold=true)),
@@ -133,7 +133,7 @@ Viewports
 
 Line numbers and scope controls are both hidden by default. Set ``line_numbers=true`` or ``scope_indicators=true`` to opt in independently. Both constructor inputs also accept signals. For a timed reveal or hide, use the ordinary presentation style operation:
 
-.. code-block:: text
+.. code-block:: sanim
 
    code.style(line_numbers=true, scope_indicators=true, duration=300ms)
    let block = code.range(name="main")
@@ -145,12 +145,10 @@ Gutter changes fade the controls while source text moves to its new inset and re
 
 Immediate signal assignments still commit immediately; use a timed ``.style`` call to animate static presentation flags. A property controlled by a signal has one writer, so ``.style`` cannot also write that property. The `scrolling CodeView example <https://github.com/soirihiroka/shrimply/blob/main/sanim/examples/code_view_scroller.sanim>`__ demonstrates scrolling, rotating scope controls, animated gutters and a small patch transition.
 
-.. code-block:: text
+.. code-block:: sanim
 
    let code = <CodeView src="long.py" width={600pt} height={320pt}/>
    Animation(children=[code])
    code.scroll_to(line=40, duration=500ms)
 
 Provide both width and height for a clipped viewport. ``scroll=[x, y]`` accepts lengths or percentages of the overflow range. Scrolling shares the native layout, clipping and picking pipeline; offscreen glyph paths are culled.
-
-The headless ``sanim-data`` grammar adapter exposes ``Grammar::new``, ``parse_with`` and native parser registration for custom queries or parsers under a registered language identifier. Adding a new language name currently requires extending the core language registry and its grammar configuration. It keeps the actual native tree instead of copying it into a second generic AST. Syntax, shape and frame caches are byte- and entry-bounded; persistent snapshots share their source, trees, options and event maps.

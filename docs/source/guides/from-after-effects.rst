@@ -7,7 +7,7 @@ Effects expression will not work.
 
 ``value`` is the property before the expression. ``time`` is seconds. ``t``
 and ``local_t`` are the same as ``time``. The last value in the script is
-the result. See :doc:`expression-basics` for the full list.
+the result. See :doc:`expressions` for the full list.
 
 Continuous motion
 -----------------

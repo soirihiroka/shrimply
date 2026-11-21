@@ -2,7 +2,7 @@ Video Segmentation
 ==================
 
 The :guilabel:`Segment Anything 2` modifier follows a subject through a video
-and makes a mask.
+and creates an alpha mask.
 
 Create a mask
 -------------
@@ -25,4 +25,10 @@ it. :guilabel:`Invert` swaps inside and outside.
 After you move a point, change the box, or pick another model, select
 :guilabel:`Reanalyze`.
 
-The server can offer SAM 2.1 tiny, small, base-plus, and large.
+Requirements and limits
+-----------------------
+
+* Runs on **CUDA or CPU** (CUDA is strongly recommended for longer clips).
+* The server can offer SAM 2.1 tiny, small, base-plus, and large.
+* Very long or high-frame-count clips are bounded by the server's 8 GiB frame
+  archive limit.
