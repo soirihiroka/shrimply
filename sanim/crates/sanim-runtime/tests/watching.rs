@@ -619,7 +619,7 @@ fn text_resources_reload_as_strings_without_interpreting_their_contents() {
     files.write("title.txt", "Original {literal}\n");
     files.write(
         "main.sanim",
-        "let words=read<String>(\"title.txt\")\nlet label=Text(words)\nAnimation(children=[label])\nwait(1s)",
+        "let words=read<String>(\"title.txt\")\nif words!=\"\" {wait(1s)}",
     );
     let runtime = files.open();
     let first = until(&runtime, |state| {
