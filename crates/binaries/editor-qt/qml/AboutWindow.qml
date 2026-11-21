@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -55,12 +57,12 @@ ApplicationWindow {
                         font.bold: true
                     }
                     Label {
-                        text: backend.translate("Version") + " " + backend.applicationVersion()
+                        text: root.backend.translate("Version") + " " + root.backend.applicationVersion()
                         opacity: 0.7
                     }
                     Label {
                         Layout.fillWidth: true
-                        text: backend.translate("A simple yet powerful cross platform video editor.")
+                        text: root.backend.translate("A simple yet powerful cross platform video editor.")
                         wrapMode: Text.Wrap
                     }
                     Label {
@@ -75,9 +77,9 @@ ApplicationWindow {
             id: tabs
             Layout.fillWidth: true
 
-            TabButton { text: backend.translate("About") }
-            TabButton { text: backend.translate("Authors") }
-            TabButton { text: backend.translate("License") }
+            TabButton { text: root.backend.translate("About") }
+            TabButton { text: root.backend.translate("Credits") }
+            TabButton { text: root.backend.translate("License") }
         }
 
         StackLayout {
@@ -94,22 +96,26 @@ ApplicationWindow {
 
                     Label {
                         Layout.fillWidth: true
-                        text: backend.translate("A simple yet powerful cross platform video editor.")
+                        text: root.backend.translate("A simple yet powerful cross platform video editor.")
                         font.pointSize: 14
                         wrapMode: Text.Wrap
                     }
-                    RowLayout {
-                        Button {
-                            text: backend.translate("Website")
-                            icon.name: "internet-services-symbolic"
-                            onClicked: Qt.openUrlExternally("https://github.com/soirihiroka/shrimply")
+                    GridLayout {
+                        columns: 2
+
+                        Repeater {
+                            model: root.backend.aboutLinkLabels()
+
+                            Button {
+                                id: linkButton
+
+                                required property int index
+                                required property string modelData
+
+                                text: linkButton.modelData
+                                onClicked: Qt.openUrlExternally(root.backend.aboutLinkUrl(linkButton.index))
+                            }
                         }
-                        Button {
-                            text: backend.translate("Report an Issue")
-                            icon.name: "tools-report-bug"
-                            onClicked: Qt.openUrlExternally("https://github.com/soirihiroka/shrimply/issues/new")
-                        }
-                        Item { Layout.fillWidth: true }
                     }
                     Item { Layout.fillHeight: true }
                 }
@@ -120,14 +126,21 @@ ApplicationWindow {
 
                 ColumnLayout {
                     anchors.fill: parent
-                    spacing: 8
+                    spacing: 12
 
-                    Label { text: "Soiri Hiroka"; font.bold: true }
-                    Label { text: backend.translate("Developer and maintainer"); opacity: 0.7 }
-                    Label { text: "Codex"; font.bold: true; Layout.topMargin: 12 }
-                    Label { text: backend.translate("AI development agent"); opacity: 0.7 }
-                    Label { text: "Gemini"; font.bold: true; Layout.topMargin: 12 }
-                    Label { text: backend.translate("AI development agent"); opacity: 0.7 }
+                    Repeater {
+                        model: root.backend.creditHeadings()
+
+                        ColumnLayout {
+                            id: creditSection
+
+                            required property int index
+                            required property string modelData
+
+                            Label { text: creditSection.modelData; font.bold: true }
+                            Label { text: root.backend.creditEntries(creditSection.index) }
+                        }
+                    }
                     Item { Layout.fillHeight: true }
                 }
             }
@@ -136,11 +149,11 @@ ApplicationWindow {
                 clip: true
 
                 TextArea {
-                    text: backend.licenseText()
+                    text: root.backend.licenseText()
                     readOnly: true
                     selectByMouse: true
                     wrapMode: TextEdit.NoWrap
-                    font.family: backend.fixedFontFamily
+                    font.family: root.backend.fixedFontFamily
                     background: null
                 }
             }

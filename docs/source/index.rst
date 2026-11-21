@@ -12,6 +12,10 @@ Shrimply is a simple yet powerful cross-platform video editor.
    :alt: Shrimply editor showing the inspector, video preview, and multitrack timeline
    :width: 100%
 
+.. raw:: html
+
+   <iframe src="https://yapioca.com/embed/thread/?i=oxB4ibobSf-GU8BdisXgIg&amp;design=material" title="Yapioca thread" width="100%" height="640" style="border:0" loading="lazy" allowfullscreen></iframe>
+
 Start here
 ----------
 

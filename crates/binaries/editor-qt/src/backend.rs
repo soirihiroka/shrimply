@@ -1,6 +1,7 @@
 use core::pin::Pin;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList, QUrl};
+use shrimply_components_qt::about;
 use shrimply_cross_ui_core::editor::{EditorSession, LoadEvent, ProjectLoader};
 use shrimply_editor_state::player_state;
 use shrimply_math_core::{Fraction, frame_count, frame_index, time_from_signed_frame};
@@ -179,6 +180,18 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "applicationVersion"]
         fn application_version(self: Pin<&mut EditorBackend>) -> QString;
+        #[qinvokable]
+        #[cxx_name = "creditHeadings"]
+        fn credit_headings(self: &EditorBackend) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "creditEntries"]
+        fn credit_entries(self: &EditorBackend, index: i32) -> QString;
+        #[qinvokable]
+        #[cxx_name = "aboutLinkLabels"]
+        fn about_link_labels(self: &EditorBackend) -> QStringList;
+        #[qinvokable]
+        #[cxx_name = "aboutLinkUrl"]
+        fn about_link_url(self: &EditorBackend, index: i32) -> QUrl;
         #[qinvokable]
         #[cxx_name = "licenseText"]
         fn license_text(self: Pin<&mut EditorBackend>) -> QString;
@@ -751,6 +764,34 @@ impl qobject::EditorBackend {
 
     pub fn application_version(self: Pin<&mut Self>) -> QString {
         QString::from(env!("CARGO_PKG_VERSION"))
+    }
+
+    pub fn credit_headings(&self) -> QStringList {
+        about::CREDIT_SECTIONS
+            .iter()
+            .map(|(heading, _)| shrimply_i18n_qt::text(heading))
+            .collect()
+    }
+
+    pub fn credit_entries(&self, index: i32) -> QString {
+        about::CREDIT_SECTIONS
+            .get(index as usize)
+            .map(|(_, entries)| QString::from(&entries.join("\n")))
+            .unwrap_or_default()
+    }
+
+    pub fn about_link_labels(&self) -> QStringList {
+        about::LINKS
+            .iter()
+            .map(|(label, _)| shrimply_i18n_qt::text(label))
+            .collect()
+    }
+
+    pub fn about_link_url(&self, index: i32) -> QUrl {
+        about::LINKS
+            .get(index as usize)
+            .map(|&(_, url)| QUrl::from(url))
+            .unwrap_or_default()
     }
 
     pub fn license_text(self: Pin<&mut Self>) -> QString {
