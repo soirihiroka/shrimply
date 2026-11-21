@@ -6,8 +6,9 @@ use shrimply_preview_provider_skia::{
     AxisFeatures, AxisGap, AxisSnapKind, BOUNDS_HANDLES, BoundsHandle, Color, Cursor, CursorUpdate,
     PointerEvent, PreviewBuilder, PreviewContext, PreviewEditOutcome, PreviewEditSink,
     PreviewItemGeometry, PreviewProvider, PreviewRefresh, PreviewResponse, PreviewTarget,
-    PreviewViewport, Rect, SnapAxis, SnapResult, SnapScene, TransformBoxOverlay,
-    bounds_handle_position, draw_control_line, hit_keypoint, rotation_handle_segment,
+    PreviewViewport, Rect, SnapAxis, SnapResult, SnapScene, bounds_handle_position, draw_anchor,
+    draw_bounds_handles, draw_control_line, draw_control_rect, draw_rotation_handle, hit_keypoint,
+    rotation_handle_segment, selection_color,
 };
 use shrimply_property_model::timeline_value::{
     TimelineBase, TimelineCurveKeyframe, TimelineValue, TimelineValueType,
@@ -548,7 +549,7 @@ impl PreviewProvider for TransformHandler {
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
         context: &dyn PreviewContext,
     ) {
-        let color = context.selection_color();
+        let color = selection_color();
         let viewport = context.viewport();
         for (axis, snap) in [
             (SnapAxis::X, self.snap_feedback.x),
@@ -599,26 +600,27 @@ impl PreviewProvider for TransformHandler {
             }
         }
         let map = self.screen_map(context);
-        let resize_handles = self.position_editable
+        let rotation = self
+            .rotation_editable
+            .then(|| self.rotation_segment(context));
+        draw_control_rect(painter, map, self.geometry.bounds, color);
+        if let Some((stem, knob)) = rotation {
+            draw_control_line(painter, stem, knob, color);
+        }
+        if self.position_editable
             && (self.scale_editable
                 || matches!(
                     self.resize,
                     ResizeTarget::Text { editable: true, .. }
                         | ResizeTarget::Shape { editable: true, .. }
-                ));
-        TransformBoxOverlay::new(
-            map,
-            self.geometry.bounds,
-            color,
-            context.selection_foreground_color(),
-        )
-        .with_resize_handles(resize_handles)
-        .with_rotation(
-            self.rotation_editable
-                .then(|| self.rotation_segment(context)),
-        )
-        .with_anchor(Some(self.anchor(context)))
-        .draw(painter);
+                ))
+        {
+            draw_bounds_handles(painter, map, self.geometry.bounds, color);
+        }
+        if let Some((_, knob)) = rotation {
+            draw_rotation_handle(painter, knob);
+        }
+        draw_anchor(painter, self.anchor(context));
     }
 
     fn on_pointer(

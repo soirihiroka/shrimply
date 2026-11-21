@@ -4,7 +4,7 @@ use shrimply_preview_provider_skia::{
     PreviewEditSink, PreviewFacetKey, PreviewItemGeometry, PreviewProvider, PreviewRefresh,
     PreviewResponse, PreviewTarget, Rect, Stroke, draw_anchor, draw_control_line,
     draw_control_polyline, draw_keypoints, draw_rotation_handle, hit_keypoint,
-    rotation_handle_segment,
+    rotation_handle_segment, selection_color,
 };
 
 use super::super::{AlphaMaskShape, VisualAlphaMask};
@@ -194,8 +194,7 @@ impl PreviewProvider for AlphaMaskHandler {
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
         context: &dyn PreviewContext,
     ) {
-        let color = context.selection_color();
-        let foreground = context.selection_foreground_color();
+        let color = selection_color();
         let map = self.map(context);
         let center = self.center_screen(context);
         let rotation = self
@@ -231,10 +230,10 @@ impl PreviewProvider for AlphaMaskHandler {
             draw_keypoints(painter, &corners, color);
         }
         if let Some((_, knob)) = rotation {
-            draw_rotation_handle(painter, knob, color, foreground);
+            draw_rotation_handle(painter, knob);
         }
         if self.center_editable {
-            draw_anchor(painter, center, color);
+            draw_anchor(painter, center);
         }
     }
 

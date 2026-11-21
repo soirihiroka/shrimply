@@ -101,13 +101,13 @@ impl PreviewProvider for MaskPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
         preview::draw_rect(
             painter,
             self.map,
             Rect::from_min_size(glam::Vec2::ZERO, self.size),
-            context.selection_color(),
+            preview::selection_color(),
         );
     }
 

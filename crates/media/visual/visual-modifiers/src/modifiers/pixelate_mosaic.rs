@@ -100,7 +100,7 @@ impl PreviewProvider for MosaicPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        _context: &dyn PreviewContext,
+        __context: &dyn PreviewContext,
     ) {
         let (center, handles) = self.points();
         for (handle, color) in [(handles[0], WIDTH_COLOR), (handles[1], HEIGHT_COLOR)] {

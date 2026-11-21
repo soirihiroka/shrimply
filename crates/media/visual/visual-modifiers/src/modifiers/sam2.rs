@@ -374,25 +374,25 @@ impl PreviewProvider for Sam2Preview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
         preview::draw_rect(
             painter,
             self.item_map,
             Rect::from_min_size(Vec2::ZERO, self.item_size),
-            context.selection_color(),
+            preview::selection_color(),
         );
         if let Some(box_prompt) = self.box_prompt {
             let rect = Rect {
                 min: box_prompt.min * self.prompt_size,
                 max: box_prompt.max * self.prompt_size,
             };
-            preview::draw_rect(painter, self.prompt_map, rect, context.selection_color());
+            preview::draw_rect(painter, self.prompt_map, rect, preview::selection_color());
             for point in Self::box_corners(box_prompt) {
                 preview::draw_handle(
                     painter,
                     self.prompt_map.transform_point2(point * self.prompt_size),
-                    context.selection_color(),
+                    preview::selection_color(),
                 );
             }
         }

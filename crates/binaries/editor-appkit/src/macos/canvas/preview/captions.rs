@@ -38,10 +38,10 @@ impl CanvasView {
                 }
                 _ => None,
             };
-            let target = if state.controller.sequence == PointerSequence::Idle
-                && !state.guide_input.active()
+            let target = if state.surface.is_idle()
                 && (!matches!(event, PointerEvent::Hover(_))
-                    || state.guide_input.cursor() == GuideCursor::Default)
+                    || state.surface.guide_cursor()
+                        == shrimply_preview_interaction_skia::guides::GuideCursor::Default)
             {
                 point.and_then(|point| {
                     let project = session.project.borrow();
@@ -73,7 +73,10 @@ impl CanvasView {
                 objc2_app_kit::NSCursor::IBeamCursor().set();
                 return Ok(true);
             }
-            if previous.is_some() && state.guide_input.cursor() == GuideCursor::Default {
+            if previous.is_some()
+                && state.surface.guide_cursor()
+                    == shrimply_preview_interaction_skia::guides::GuideCursor::Default
+            {
                 objc2_app_kit::NSCursor::arrowCursor().set();
             }
             if matches!(event, PointerEvent::Begin(_)) {

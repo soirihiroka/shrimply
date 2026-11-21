@@ -1,6 +1,6 @@
 use super::*;
 use shrimply_editor_state::{player_state, preferences, preview_focus};
-use shrimply_preview_interaction_skia::controller::Preparation;
+use shrimply_preview_interaction_skia::surface::{Clock, Configuration};
 use shrimply_preview_provider_skia::{
     Cursor, CursorUpdate, Key, KeyState, KeyboardEvent, Modifiers, PointerButton, PointerEvent,
     PointerInput, PointerSample, PointerTool, PreviewRefresh, PreviewResponse,
@@ -8,6 +8,32 @@ use shrimply_preview_provider_skia::{
 use shrimply_timeline_skia::selection_state;
 
 impl CanvasView {
+    pub(in crate::macos::canvas) fn preview_configuration(
+        &self,
+        state: &State,
+        prefs: &preferences::PreferencesSnapshot,
+    ) -> Configuration {
+        let size = self.bounds().size;
+        Configuration {
+            size: glam::vec2(size.width.max(1.0) as f32, size.height.max(1.0) as f32),
+            padding: prefs.preview_padding_px,
+            guides_visible: state.guides_visible,
+            fullscreen: state.fullscreen,
+            snap_enabled: prefs.timeline_magnet == "true",
+            snap_radius: prefs.timeline_snap_radius_px as f32,
+            navigation_enabled: prefs.preview_zoom_pan_enabled,
+        }
+    }
+
+    pub(in crate::macos::canvas) fn preview_clock(&self) -> Clock {
+        let player = player_state::snapshot(&self.ivars().session.player_state);
+        Clock {
+            revision: player.revision,
+            position: player.position,
+            moving: player.playing || player.scrubbing,
+        }
+    }
+
     pub(in crate::macos::canvas) fn prepare_preview(&self) -> Result<(), String> {
         if self.window().is_none_or(|window| !window.isKeyWindow())
             || self.isHiddenOrHasHiddenAncestor()
@@ -15,202 +41,48 @@ impl CanvasView {
             return Ok(());
         }
         let session = &self.ivars().session;
-        let player = player_state::snapshot(&session.player_state);
+        let clock = self.preview_clock();
         let prefs = preferences::snapshot(&session.preferences);
         let focus = preview_focus::snapshot(&session.preview_focus);
-        let response = {
-            let mut content = self.ivars().content.borrow_mut();
-            let Content::Preview(state) = &mut *content else {
-                return Ok(());
-            };
-            let mut project = session.project.borrow_mut();
-            let selected =
-                selection_state::focused_video_address(&session.selection_state, &project);
-            let target = selected
-                .as_ref()
-                .and_then(|address| project.video_item(address))
-                .map(|item| {
-                    focus
-                        .as_ref()
-                        .filter(|focus| {
-                            Some(&focus.item) == selected.as_ref()
-                                && item.owns_preview_target(focus.target)
-                        })
-                        .map_or_else(|| item.default_preview_target(), |focus| focus.target)
-                });
-            let selection = selected.as_ref().zip(target);
-            let changed_selection = state
-                .controller
-                .provider
-                .as_ref()
-                .is_some_and(|prepared| selection != Some((&prepared.item, prepared.target)));
-            let response = if changed_selection {
-                state.controller.cancel(&mut project, &state.expressions)
-            } else {
-                PreviewResponse::IGNORED
-            };
-            state.sync_guides(&project.preview_guides, prefs.preview_guides_visible);
-            let size = self.bounds().size;
-            let viewport = guides::viewport(
-                glam::IVec2::new(size.width as i32, size.height as i32),
-                project.canvas_size,
-                prefs.preview_padding_px,
-                state.guides_visible,
-                state.fullscreen,
-            );
-            if !prefs.preview_zoom_pan_enabled {
-                if state.navigation.active() {
-                    objc2_app_kit::NSCursor::arrowCursor().set();
-                }
-                state.navigation.reset();
-            }
-            let bounds = guides::bounds(
-                glam::vec2(size.width as f32, size.height as f32),
-                prefs.preview_padding_px,
-                state.guides_visible,
-                state.fullscreen,
-            );
-            let viewport = state.navigation.viewport(viewport, bounds);
-            state.viewport = Some(viewport);
-            // While time is moving, controls belong to the displayed frame, not the
-            // advancing playback clock. Waiting for an exact clock match tears
-            // down the provider (and its caches/base exclusion) between frames.
-            if let Some((_, frame_time, audio_analysis)) =
-                state.audio_analysis.as_ref().filter(|(revision, time, _)| {
-                    *revision == player.revision
-                        && (player.playing || player.scrubbing || *time == player.position)
-                })
-            {
-                let had_provider = state.controller.provider.is_some();
-                let invalidated = state.controller.context_invalidated
-                    && state.controller.sequence == PointerSequence::Idle;
-                state.controller.ensure(
-                    &project,
-                    selection,
-                    *frame_time,
-                    Preparation {
-                        project_revision: player.revision,
-                        viewport,
-                        audio_analysis,
-                        expression_cache: &state.expressions,
-                        snap_enabled: prefs.timeline_magnet == "true",
-                        snap_radius_px: prefs.timeline_snap_radius_px as f32,
-                        guides: state
-                            .guides_visible
-                            .then_some(project.preview_guides.as_ref()),
-                        camera_sampler: |id, source, time| {
-                            shrimply_visual_core::camera_reconstruction::sample(id, source, time)
-                                .map(|camera| {
-                                    shrimply_project_document::project::TrackedCameraPreview {
-                                        position: camera.position,
-                                        rotation: camera.rotation,
-                                        projection: camera.projection,
-                                        vertical_fov_degrees: camera.vertical_fov_degrees,
-                                    }
-                                })
-                        },
-                    },
-                )?;
-                if had_provider != state.controller.provider.is_some() || invalidated {
-                    self.ivars().surface_dirty.set(true);
-                }
-            } else if state.controller.sequence == PointerSequence::Idle
-                && state.controller.provider.take().is_some()
-            {
-                self.ivars().surface_dirty.set(true);
-            }
-            let excluded = state
-                .controller
-                .provider
-                .as_ref()
-                .and_then(|prepared| prepared.provider.base_frame_exclusion());
-            state.controller.base_exclusion = excluded;
-            state.renderer.set_exclusion(excluded);
-            state.renderer.set_project_revision(player.revision);
-            response
-        };
-        self.apply_preview_response(response)
-    }
-
-    fn preview_navigation(&self, event: PointerEvent<'_>) -> Option<PreviewResponse> {
-        let prefs = preferences::snapshot(&self.ivars().session.preferences);
         let mut content = self.ivars().content.borrow_mut();
         let Content::Preview(state) = &mut *content else {
-            return None;
+            return Ok(());
         };
-        let size = self.bounds().size;
-        let fit = guides::viewport(
-            glam::IVec2::new(size.width as i32, size.height as i32),
-            self.ivars().session.project.borrow().canvas_size,
-            prefs.preview_padding_px,
-            state.guides_visible,
-            state.fullscreen,
-        );
-        let bounds = guides::bounds(
-            glam::vec2(size.width as f32, size.height as f32),
-            prefs.preview_padding_px,
-            state.guides_visible,
-            state.fullscreen,
-        );
-        let response = state.navigation.pointer(
-            fit,
-            bounds,
-            event,
-            prefs.preview_zoom_pan_enabled,
-            state.controller.sequence != PointerSequence::Idle || state.guide_input.active(),
-        );
-        if response.is_some_and(|response| response.redraw) {
-            state.viewport = Some(state.navigation.viewport(fit, bounds));
-            state.controller.context_invalidated = true;
-            state.caption_split_hover = None;
+        let project = session.project.borrow();
+        let selected = selection_state::focused_video_address(&session.selection_state, &project);
+        state.sync_guides(prefs.preview_guides_visible);
+        state
+            .surface
+            .focus(focus.map(|focus| (focus.item, focus.target)));
+        let configuration = self.preview_configuration(state, &prefs);
+        let had_provider = state.surface.provider().is_some();
+        let invalidated = state.surface.context_invalidated() && state.surface.is_idle();
+        state
+            .surface
+            .ensure_readonly(&project, selected.as_ref(), clock, configuration)?;
+        if had_provider != state.surface.provider().is_some() || invalidated {
+            self.ivars().surface_dirty.set(true);
         }
-        response
+        if let Some(exclusion) = state.surface.exclusion_update() {
+            state.renderer.set_exclusion(exclusion);
+        }
+        state.renderer.set_project_revision(clock.revision);
+        Ok(())
     }
 
     pub(in crate::macos::canvas) fn preview_pointer_event(&self, event: PointerEvent<'_>) -> bool {
-        if let Some(response) = self.preview_navigation(event) {
-            if let Err(error) = self.apply_preview_response(response) {
-                self.show_error(&error);
-            }
-            return true;
-        }
         let result = self.prepare_preview().and_then(|()| {
             if self.preview_caption_pointer(&event)? {
                 return Ok(true);
             }
+            let session = &self.ivars().session;
+            let clock = self.preview_clock();
+            let prefs = preferences::snapshot(&session.preferences);
             let response = {
                 let mut content = self.ivars().content.borrow_mut();
                 let Content::Preview(state) = &mut *content else {
                     return Ok(false);
                 };
-                if state.guide_input.active() || state.controller.sequence == PointerSequence::Guide
-                {
-                    return Ok(true);
-                }
-                if matches!(event, PointerEvent::Hover(_))
-                    && state.guide_input.cursor() != GuideCursor::Default
-                {
-                    return Ok(true);
-                }
-                if let PointerEvent::Begin(input) = event {
-                    let prefs = preferences::snapshot(&self.ivars().session.preferences);
-                    let size = self.bounds().size;
-                    if !state
-                        .navigation
-                        .clip_rect(
-                            guides::bounds(
-                                glam::vec2(size.width as f32, size.height as f32),
-                                prefs.preview_padding_px,
-                                state.guides_visible,
-                                state.fullscreen,
-                            ),
-                            glam::vec2(size.width as f32, size.height as f32),
-                        )
-                        .contains(input.sample.position)
-                    {
-                        return Ok(false);
-                    }
-                }
                 match event {
                     PointerEvent::Begin(input) => state.last_sample = Some(input.sample),
                     PointerEvent::Samples { input, .. } => {
@@ -226,11 +98,24 @@ impl CanvasView {
                     PointerEvent::End(_) | PointerEvent::Cancel => state.last_sample = None,
                     _ => {}
                 }
-                state.controller.pointer(
-                    &mut self.ivars().session.project.borrow_mut(),
-                    &state.expressions,
+                let mut project = session.project.borrow_mut();
+                let selected =
+                    selection_state::focused_video_address(&session.selection_state, &project);
+                let configuration = self.preview_configuration(state, &prefs);
+                let response = state.surface.pointer(
+                    &mut project,
+                    selected.as_ref(),
+                    clock,
+                    configuration,
                     event,
-                )
+                )?;
+                if let Some(exclusion) = state.surface.exclusion_update() {
+                    state.renderer.set_exclusion(exclusion);
+                }
+                if response.redraw && state.surface.navigation_active() {
+                    state.caption_split_hover = None;
+                }
+                response
             };
             self.apply_preview_response(response)?;
             Ok(response.handled)
@@ -262,11 +147,6 @@ impl CanvasView {
             Some(key) => Key::Character(key.to_ascii_lowercase()),
             None => Key::Unknown,
         };
-        let guide_active = matches!(&*self.ivars().content.borrow(), Content::Preview(preview) if preview.guide_input.active() || preview.navigation.active());
-        if key == Key::Escape && guide_active {
-            self.cancel_preview_pointer();
-            return true;
-        }
         self.preview_key_event(KeyboardEvent {
             key,
             state,
@@ -280,16 +160,33 @@ impl CanvasView {
             self.show_error(&error);
             return true;
         }
+        let session = &self.ivars().session;
+        let clock = self.preview_clock();
+        let prefs = preferences::snapshot(&session.preferences);
         let response = {
             let mut content = self.ivars().content.borrow_mut();
             let Content::Preview(preview) = &mut *content else {
                 return false;
             };
-            preview.controller.keyboard(
-                &mut self.ivars().session.project.borrow_mut(),
-                &preview.expressions,
+            let mut project = session.project.borrow_mut();
+            let selected =
+                selection_state::focused_video_address(&session.selection_state, &project);
+            let configuration = self.preview_configuration(preview, &prefs);
+            match preview.surface.keyboard(
+                &mut project,
+                selected.as_ref(),
+                clock,
+                configuration,
                 event,
-            )
+            ) {
+                Ok(response) => response,
+                Err(error) => {
+                    drop(project);
+                    drop(content);
+                    self.show_error(&error);
+                    return true;
+                }
+            }
         };
         if let Err(error) = self.apply_preview_response(response) {
             self.show_error(&error);
@@ -371,11 +268,8 @@ impl CanvasView {
         }
         self.set_preview_cursor(response.cursor);
         let session = &self.ivars().session;
-        if response.edit.commits() {
-            shrimply_project_document::project::commit_edit_checked(
-                &session.project.borrow(),
-                "preview-provider",
-            )?;
+        if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() {
+            let _ = state.surface.take_committed();
         }
         if response.edit.refresh != PreviewRefresh::NONE {
             player_state::refresh_project(
@@ -392,7 +286,7 @@ impl CanvasView {
             && let Content::Preview(state) = &mut *self.ivars().content.borrow_mut()
         {
             state
-                .controller
+                .surface
                 .project_committed(player_state::snapshot(&session.player_state).revision);
         }
         Ok(())
@@ -400,7 +294,7 @@ impl CanvasView {
 
     pub(in crate::macos::canvas) fn refresh_live_preview(&self) {
         let requested = match &mut *self.ivars().content.borrow_mut() {
-            Content::Preview(state) => state.controller.take_live_base_request(),
+            Content::Preview(state) => state.surface.take_live_base_request(),
             _ => false,
         };
         if requested {
@@ -415,7 +309,7 @@ impl CanvasView {
             );
             if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() {
                 state
-                    .controller
+                    .surface
                     .live_base_requested(player_state::snapshot(player).revision);
             }
         }
@@ -443,8 +337,7 @@ impl CanvasView {
             Cursor::Default => NSCursor::arrowCursor().set(),
             Cursor::Pointer => NSCursor::pointingHandCursor().set(),
             Cursor::Crosshair => NSCursor::crosshairCursor().set(),
-            Cursor::Move => NSCursor::openHandCursor().set(),
-            Cursor::Grab => NSCursor::openHandCursor().set(),
+            Cursor::Move | Cursor::Grab => NSCursor::openHandCursor().set(),
             Cursor::Grabbing => NSCursor::closedHandCursor().set(),
             Cursor::Text => NSCursor::IBeamCursor().set(),
             Cursor::ResizeHorizontal => {

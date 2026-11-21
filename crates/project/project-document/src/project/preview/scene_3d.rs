@@ -509,7 +509,10 @@ impl PreviewProvider for SceneHandler {
                     painter,
                     &points,
                     true,
-                    Paint::stroke(Stroke::new(context.selection_color(), LINE_WIDTH)),
+                    Paint::stroke(Stroke::new(
+                        shrimply_preview_provider_skia::selection_color(),
+                        LINE_WIDTH,
+                    )),
                 );
             }
             if active.is_none_or(|(active_entry, _)| active_entry == index) {
@@ -834,7 +837,7 @@ fn draw_entry(
         let color = if matches!(entry.kind, TargetKind::PointLight | TargetKind::SunLight) {
             Color::new(1.0, 0.8, 0.29, 0.9)
         } else {
-            context.selection_color()
+            shrimply_preview_provider_skia::selection_color()
         };
         shrimply_preview_provider_skia::drawing::circle(
             painter,

@@ -57,14 +57,6 @@ impl<B: PreviewBuilder> PreviewContext for LocalTimeBuilder<'_, B> {
         self.base.viewport()
     }
 
-    fn selection_color(&self) -> shrimply_preview_provider_skia::Color {
-        self.base.selection_color()
-    }
-
-    fn selection_foreground_color(&self) -> shrimply_preview_provider_skia::Color {
-        self.base.selection_foreground_color()
-    }
-
     fn target_geometry(&self, target: PreviewTarget) -> Option<PreviewItemGeometry> {
         self.base.target_geometry(target)
     }

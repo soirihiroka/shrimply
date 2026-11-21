@@ -381,7 +381,7 @@ impl ShapeHandler {
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
         context: &dyn PreviewContext,
     ) {
-        let color = context.selection_color();
+        let color = shrimply_preview_provider_skia::selection_color();
         let guide = Color::new(0.88, 0.88, 0.88, 0.6);
         match self.controls.shape {
             ShapeKind::Star => {
@@ -509,7 +509,7 @@ impl ShapeHandler {
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
         context: &dyn PreviewContext,
     ) {
-        let color = context.selection_color();
+        let color = shrimply_preview_provider_skia::selection_color();
         let outline = Vec2::splat(self.controls.outline_width);
         draw_control_rect(
             painter,

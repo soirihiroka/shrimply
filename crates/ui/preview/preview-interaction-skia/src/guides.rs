@@ -368,8 +368,8 @@ pub fn draw(
     guides: &PreviewGuides,
     viewport: PreviewViewport,
     surface_rect: Rect,
-    color: Color,
 ) {
+    let color = shrimply_preview_provider_skia::selection_color();
     for guide in &guides.vertical {
         let x = viewport
             .canvas_point_to_screen(GlamVec2::new(*guide, 0.0))

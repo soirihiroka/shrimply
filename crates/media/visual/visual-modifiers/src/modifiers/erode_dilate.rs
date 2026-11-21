@@ -70,7 +70,7 @@ impl PreviewProvider for ErodeDilatePreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        _context: &dyn PreviewContext,
+        __context: &dyn PreviewContext,
     ) {
         let (center, handle) = self.points();
         super::preview::draw_line(painter, center, handle, RADIUS_COLOR);

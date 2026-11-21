@@ -567,35 +567,31 @@ impl PreviewProvider for PaintHandler {
             &mut self.onion_cache.borrow_mut(),
             &state,
         );
-        match state.mode {
-            PaintPreviewMode::Pen if state.adjusting && !state.eraser => draw_adjust_nodes(
-                canvas,
-                &self.drawing,
-                &self.mapping,
-                &state,
-                context.selection_color(),
-            ),
-            PaintPreviewMode::StrokeTransform => {
-                draw_stroke_transform(
+        shrimply_preview_provider_skia::with_control_outline(canvas, |canvas| {
+            let selection_color = shrimply_preview_provider_skia::selection_color();
+            match state.mode {
+                PaintPreviewMode::Pen if state.adjusting && !state.eraser => draw_adjust_nodes(
                     canvas,
+                    &self.drawing,
                     &self.mapping,
-                    context.selection_color(),
-                    context.selection_foreground_color(),
+                    &state,
+                    selection_color,
+                ),
+                PaintPreviewMode::StrokeTransform => draw_stroke_transform(canvas, &self.mapping),
+                PaintPreviewMode::Pen | PaintPreviewMode::Fill => {}
+            }
+            if self.gesture.is_none() {
+                let Some(pointer) = self.pointer else { return };
+                draw_tool_cursor(
+                    canvas,
+                    self.mapping,
+                    &state,
+                    self.stroke_options,
+                    pointer,
+                    selection_color,
                 );
             }
-            PaintPreviewMode::Pen | PaintPreviewMode::Fill => {}
-        }
-        if self.gesture.is_none() {
-            let Some(pointer) = self.pointer else { return };
-            draw_tool_cursor(
-                canvas,
-                self.mapping,
-                &state,
-                self.stroke_options,
-                pointer,
-                context.selection_color(),
-            );
-        }
+        });
     }
 
     fn on_pointer(
@@ -1467,7 +1463,10 @@ impl PaintGesture {
             canvas,
             self.latest.position,
             radius,
-            Paint::stroke(Stroke::new(context.selection_color(), 2.0)),
+            Paint::stroke(Stroke::new(
+                shrimply_preview_provider_skia::selection_color(),
+                2.0,
+            )),
         );
         false
     }
@@ -1820,24 +1819,24 @@ fn draw_adjust_nodes(
 fn draw_stroke_transform(
     painter: &shrimply_preview_provider_skia::PreviewCanvas,
     mapping: &PaintMapping,
-    selection_color: Color,
-    selection_foreground: Color,
 ) {
+    let color = shrimply_preview_provider_skia::selection_color();
     let bounds =
         shrimply_preview_provider_skia::Rect::from_min_size(Vec2::ZERO, mapping.source_size);
+    let (stem, rotation) = rotation_handle(*mapping);
     let anchor = mapping
         .item_to_screen
         .transform_point2(mapping.stroke.position);
-    shrimply_preview_provider_skia::TransformBoxOverlay::new(
+    shrimply_preview_provider_skia::draw_control_rect(painter, mapping.raw_to_screen, bounds, color);
+    shrimply_preview_provider_skia::draw_control_line(painter, stem, rotation, color);
+    shrimply_preview_provider_skia::draw_bounds_handles(
+        painter,
         mapping.raw_to_screen,
         bounds,
-        selection_color,
-        selection_foreground,
-    )
-    .with_resize_handles(true)
-    .with_rotation(Some(rotation_handle(*mapping)))
-    .with_anchor(Some(anchor))
-    .draw(painter);
+        color,
+    );
+    shrimply_preview_provider_skia::draw_rotation_handle(painter, rotation);
+    shrimply_preview_provider_skia::draw_anchor(painter, anchor);
 }
 
 fn hit_stroke_transform(mapping: PaintMapping, point: Vec2) -> StrokeTransformDrag {

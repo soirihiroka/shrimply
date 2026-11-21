@@ -1,6 +1,6 @@
 use crate::provider::{
-    BuildContext, CameraSampler, GeometryPreparation, SnapPreparation, prepare_geometry,
-    prepare_snap_scene, update_text_source_size,
+    BuildContext, GeometryPreparation, SnapPreparation, prepare_geometry, prepare_snap_scene,
+    update_text_source_size,
 };
 use glam::Vec2 as GlamVec2;
 use shrimply_preview_provider_skia::{
@@ -105,7 +105,6 @@ pub struct Preparation<'a> {
     pub snap_enabled: bool,
     pub snap_radius_px: f32,
     pub guides: Option<&'a PreviewGuides>,
-    pub camera_sampler: CameraSampler,
 }
 
 pub fn prepare_target(
@@ -132,7 +131,6 @@ pub fn prepare_target(
             expression_cache: preparation.expression_cache,
             viewport,
             extensions: Some(extensions),
-            camera_sampler: preparation.camera_sampler,
         },
     )?;
     drop(geometry_timing);
@@ -674,6 +672,18 @@ impl Controller {
         true
     }
 
+    pub fn exclusion_update(&mut self) -> Option<Option<uuid::Uuid>> {
+        let exclusion = self
+            .provider
+            .as_ref()
+            .and_then(|provider| provider.provider.base_frame_exclusion());
+        if exclusion == self.base_exclusion {
+            return None;
+        }
+        self.base_exclusion = exclusion;
+        Some(exclusion)
+    }
+
     pub fn take_live_base_request(&mut self) -> bool {
         if self.live_base_pending && self.live_base_in_flight.is_none() {
             self.live_base_pending = false;
@@ -709,7 +719,13 @@ impl Controller {
             let context = prepared
                 .context
                 .context(expression_cache, Some(&self.extensions));
-            prepared.provider.on_draw(canvas, &context);
+            if prepared.provider.base_frame_exclusion().is_some() {
+                prepared.provider.on_draw(canvas, &context);
+            } else {
+                shrimply_preview_provider_skia::with_control_outline(canvas, |canvas| {
+                    prepared.provider.on_draw(canvas, &context);
+                });
+            }
         }
     }
 }

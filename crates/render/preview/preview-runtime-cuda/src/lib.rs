@@ -11,10 +11,9 @@ pub use shrimply_preview_interaction_skia::captions;
 mod cuda_gl;
 #[cfg(target_os = "linux")]
 mod intel_gl;
-pub use shrimply_preview_interaction_skia::overlay::background_color;
-pub use shrimply_preview_interaction_skia::{geometry, guides, navigation, overlay};
+pub use shrimply_preview_interaction_skia::surface::background_color;
+pub use shrimply_preview_interaction_skia::{geometry, guides, navigation, provider, surface};
 mod media;
-pub mod provider;
 pub mod renderer;
 
 pub use media::{PreviewMedia, PreviewMediaUpdate, StepDirection};

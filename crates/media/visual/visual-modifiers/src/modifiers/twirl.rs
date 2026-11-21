@@ -54,12 +54,12 @@ impl PreviewProvider for TwirlPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
         super::preview::draw_handle(
             painter,
             self.map.transform_point2(self.point * self.size),
-            context.selection_color(),
+            preview::selection_color(),
         );
     }
     fn on_pointer(

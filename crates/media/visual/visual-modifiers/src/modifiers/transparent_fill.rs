@@ -209,13 +209,13 @@ impl PreviewProvider for TransparentFillPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
         preview::draw_rect(
             painter,
             self.item_map,
             Rect::from_min_size(Vec2::ZERO, self.item_size),
-            context.selection_color(),
+            preview::selection_color(),
         );
         let color = shrimply_preview_provider_skia::Color::new(0.94, 0.27, 0.27, 1.0);
         for (_, point, _) in &self.points {

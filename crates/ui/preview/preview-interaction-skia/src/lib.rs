@@ -4,7 +4,5 @@ pub mod fullscreen;
 pub mod geometry;
 pub mod guides;
 pub mod navigation;
-pub mod overlay;
 pub mod provider;
-
 pub mod surface;

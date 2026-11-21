@@ -161,7 +161,6 @@ define_class!(
                 scene.pointer_exited();
                 objc2_app_kit::NSCursor::arrowCursor().set();
             }
-            if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() { state.guide_input.pointer_leave(); }
             self.preview_pointer_event(PointerEvent::Leave);
         }
 
@@ -231,7 +230,7 @@ define_class!(
             };
             if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() {
                 use shrimply_paint_edit_skia::{PAINT_PREVIEW_STATE, PaintPreviewMode, PaintPreviewState};
-                state.controller.update_extension(PAINT_PREVIEW_STATE, |paint: &mut PaintPreviewState| match tool {
+                state.surface.update_extension(PAINT_PREVIEW_STATE, |paint: &mut PaintPreviewState| match tool {
                     PaintTool::Pen => { paint.set_mode(PaintPreviewMode::Pen); paint.set_eraser(false); paint.adjusting = false; }
                     PaintTool::Fill => { paint.set_mode(PaintPreviewMode::Fill); paint.set_eraser(false); paint.adjusting = false; }
                     PaintTool::Eraser => { paint.set_eraser(!paint.eraser); if paint.eraser { paint.adjusting = false; } }
@@ -264,10 +263,7 @@ define_class!(
 
         #[unsafe(method(rightMouseDown:))]
         fn right_mouse_down(&self, event: &NSEvent) {
-            if matches!(&*self.ivars().content.borrow(), Content::Preview(state)
-                if state.controller.sequence
-                    != shrimply_preview_interaction_skia::controller::PointerSequence::Idle)
-            {
+            if matches!(&*self.ivars().content.borrow(), Content::Preview(state) if !state.surface.is_idle()) {
                 return;
             }
             self.ivars().secondary_preview_active.set(false);
@@ -398,10 +394,7 @@ define_class!(
             let control = event.modifierFlags().contains(NSEventModifierFlags::Control);
             self.ivars().suppress_primary.set(control);
             if control {
-                if matches!(&*self.ivars().content.borrow(), Content::Preview(state)
-                    if state.controller.sequence
-                        != shrimply_preview_interaction_skia::controller::PointerSequence::Idle)
-                {
+                if matches!(&*self.ivars().content.borrow(), Content::Preview(state) if !state.surface.is_idle()) {
                     return;
                 }
                 self.ivars().secondary_preview_active.set(false);
@@ -424,7 +417,6 @@ define_class!(
                 else { scene.pointer_down(self.point(event), toggle, extend); }
                 Self::set_timeline_cursor(scene.pointer_cursor());
             }
-            self.preview_pointer_down(self.point(event));
             self.preview_pointer_event(PointerEvent::Begin(self.preview_input(event)));
         }
 
@@ -447,7 +439,6 @@ define_class!(
                 );
                 Self::set_timeline_cursor(scene.pointer_cursor());
             }
-            self.preview_pointer_move(self.point(event));
             let input = self.preview_input(event);
             self.preview_pointer_event(PointerEvent::Samples { input, samples: &[input.sample] });
         }
@@ -478,7 +469,6 @@ define_class!(
                 Self::set_timeline_cursor(scene.pointer_cursor());
             }
             self.update_tracking();
-            if let Err(error) = self.preview_pointer_up(point) { self.show_error(&error); }
             let input = self.preview_input(event);
             self.preview_pointer_event(PointerEvent::Samples { input, samples: &[input.sample] });
             self.preview_pointer_event(PointerEvent::End(input));
@@ -599,7 +589,7 @@ impl CanvasView {
         let content = self.ivars().content.borrow();
         let state = match &*content {
             Content::Preview(preview) => preview
-                .controller
+                .surface
                 .extension::<PaintPreviewState>(PAINT_PREVIEW_STATE),
             _ => None,
         };
@@ -657,7 +647,6 @@ impl CanvasView {
             scene.pointer_moved(point);
             Self::set_timeline_cursor(scene.pointer_cursor());
         }
-        self.preview_pointer_move(point);
     }
 
     fn set_timeline_cursor(cursor: shrimply_timeline_skia::view::TimelineCursor) {
@@ -1007,7 +996,7 @@ impl CanvasView {
                 self.ivars().session.audio_levels.take_peaks(),
                 std::time::Instant::now(),
             ),
-            Content::Preview(preview) => std::mem::take(&mut preview.controller.frame_pending),
+            Content::Preview(preview) => preview.surface.take_frame_pending(),
         };
         let mut renderer = self.ivars().renderer.borrow_mut();
         let resized = renderer.layer().contentsScale() != scale
@@ -1089,47 +1078,24 @@ impl CanvasView {
                         meter.draw(canvas, size.width as f32, size.height as f32);
                     }
                     Content::Preview(preview) => {
-                        let player = shrimply_editor_state::player_state::snapshot(
-                            &self.ivars().session.player_state,
-                        );
+                        let clock = self.preview_clock();
                         let project = self.ivars().session.project.borrow();
                         let frame = project.canvas_size;
                         let prefs = shrimply_editor_state::preferences::snapshot(
                             &self.ivars().session.preferences,
                         );
-                        preview.sync_guides(&project.preview_guides, prefs.preview_guides_visible);
-                        let viewport = shrimply_preview_interaction_skia::guides::viewport(
-                            glam::IVec2::new(size.width as i32, size.height as i32),
-                            frame,
-                            prefs.preview_padding_px,
-                            preview.guides_visible,
-                            preview.fullscreen,
-                        );
-                        if !prefs.preview_zoom_pan_enabled {
-                            if preview.navigation.active() {
-                                objc2_app_kit::NSCursor::arrowCursor().set();
-                            }
-                            preview.navigation.reset();
-                        }
-                        let bounds = shrimply_preview_interaction_skia::guides::bounds(
-                            glam::vec2(size.width as f32, size.height as f32),
-                            prefs.preview_padding_px,
-                            preview.guides_visible,
-                            preview.fullscreen,
-                        );
-                        let viewport = preview.navigation.viewport(viewport, bounds);
-                        preview.viewport = Some(viewport);
-                        let content = viewport.content_rect;
-                        let clip_rect = preview
-                            .navigation
-                            .clip_rect(bounds, glam::vec2(size.width as f32, size.height as f32));
-                        shrimply_preview_interaction_skia::overlay::draw_background(
+                        preview.sync_guides(prefs.preview_guides_visible);
+                        let configuration = self.preview_configuration(preview, &prefs);
+                        let layout = preview.surface.layout(&project, configuration);
+                        let content = layout.viewport.content_rect;
+                        let clip_rect = layout.clip_rect;
+                        shrimply_preview_interaction_skia::surface::draw_background(
                             canvas,
-                            shrimply_preview_interaction_skia::overlay::BackgroundAppearance {
+                            shrimply_preview_interaction_skia::surface::BackgroundAppearance {
                                 content_rect: content,
                                 clip_rect,
                                 background:
-                                    shrimply_preview_interaction_skia::overlay::background_color(
+                                    shrimply_preview_interaction_skia::surface::background_color(
                                         shrimply_cross_ui_theme::current().view_bg,
                                         preview.fullscreen,
                                     ),
@@ -1163,49 +1129,36 @@ impl CanvasView {
                             result = preview.renderer.draw(canvas, sampling);
                         }
                         canvas.restore();
+                        let focused_video =
+                            shrimply_timeline_skia::selection_state::focused_video_address(
+                                &self.ivars().session.selection_state,
+                                &project,
+                            );
                         let focused_caption =
                             shrimply_timeline_skia::selection_state::focused_item_address(
                                 &self.ivars().session.selection_state,
                                 &project,
                             )
                             .filter(|address| project.caption_item(address).is_some());
-                        let surface_rect = shrimply_components_skia::Rect::from_min_size(
-                            glam::Vec2::ZERO,
-                            glam::Vec2::new(size.width as f32, size.height as f32),
-                        );
                         let _timing = shrimply_process_reporting::diagnostics::timing(
                             "Preview paint / interaction overlay",
                         );
-                        shrimply_preview_interaction_skia::overlay::draw_overlay(
+                        if let Err(error) = preview.surface.draw_overlay(
                             canvas,
-                            &shrimply_preview_interaction_skia::overlay::PreviewOverlayFrame {
-                                project: &project,
-                                position: player.position,
-                                captions: preview::captions::appearance(
-                                    size,
-                                    &prefs,
-                                    preview.caption_bottom_inset,
-                                ),
-                                caption_split_hover: focused_caption
-                                    .as_ref()
-                                    .zip(preview.caption_split_hover),
-                                interaction:
-                                    shrimply_preview_interaction_skia::overlay::InteractionOverlay {
-                                        viewport,
-                                        clip_rect,
-                                        surface_rect,
-                                        guides: preview.guides_visible.then_some(
-                                            preview
-                                                .edited_guides
-                                                .as_deref()
-                                                .unwrap_or(&project.preview_guides),
-                                        ),
-                                    },
-                            },
-                            &mut preview.controller,
-                            &preview.expressions,
+                            &project,
+                            focused_video.as_ref(),
+                            clock,
+                            configuration,
+                            preview::captions::appearance(
+                                size,
+                                &prefs,
+                                preview.caption_bottom_inset,
+                            ),
+                            focused_caption.as_ref().zip(preview.caption_split_hover),
                             |_| {},
-                        );
+                        ) {
+                            result = Err(error);
+                        }
                     }
                 }
             });

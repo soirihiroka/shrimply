@@ -98,10 +98,10 @@ impl PreviewProvider for WavePreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
         let (center, amplitude, angle) = self.points();
-        let color = context.selection_color();
+        let color = preview::selection_color();
         super::preview::draw_line(painter, center, amplitude, color);
         super::preview::draw_handle(painter, amplitude, color);
         super::preview::draw_line(painter, center, angle, color);

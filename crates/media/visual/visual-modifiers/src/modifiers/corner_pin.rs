@@ -182,9 +182,9 @@ impl PreviewProvider for CornerPinPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
-        let color = context.selection_color();
+        let color = preview::selection_color();
         let points = self
             .local_corners()
             .map(|point| self.map.transform_point2(point));

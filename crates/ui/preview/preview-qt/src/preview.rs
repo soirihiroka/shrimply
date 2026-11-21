@@ -2,11 +2,10 @@ use super::*;
 use shrimply_editor_state::preview_focus::{self, SharedPreviewFocus};
 use shrimply_paint_edit_skia::{PAINT_PREVIEW_STATE, PaintPreviewMode, PaintPreviewState};
 use shrimply_preview_provider_skia::{
-    Cursor, CursorUpdate, Key, KeyboardEvent, Modifiers, PointerButton, PointerEvent, PointerInput,
-    PointerSample, PointerTool, PreviewRefresh, PreviewResponse, PreviewViewport,
+    Cursor, Key, KeyboardEvent, Modifiers, PointerButton, PointerEvent, PointerInput,
+    PointerSample, PointerTool, PreviewRefresh, PreviewResponse,
 };
-use shrimply_preview_runtime_cuda::controller::{self, Controller, PointerSequence, Preparation};
-use shrimply_project_evaluation::{FrameAudioAnalysis, TransformExpressionCache};
+use shrimply_preview_runtime_cuda::surface::{Clock, Configuration, Surface};
 use shrimply_timeline_edit::selection_state::{self, SharedSelectionState};
 use std::cell::Cell;
 
@@ -20,16 +19,10 @@ pub struct ToolkitPreview {
     video_tx: VideoCommandSender,
     audio_player: Rc<AudioPlayer>,
     renderer: Option<renderer::ToolkitPreviewRenderer>,
-    navigation: shrimply_preview_runtime_cuda::navigation::Navigation,
-    guide_input: guides::GuideInput,
+    surface: Surface,
     frame: Option<CompositedVideoFrame>,
     frame_rate_label: String,
     fullscreen: bool,
-    expression_cache: RefCell<TransformExpressionCache>,
-    audio_analysis: FrameAudioAnalysis,
-    controller: Controller,
-    provider_cursor: Cursor,
-    guide_active: bool,
     provider_invalidated: Rc<Cell<bool>>,
 }
 
@@ -51,7 +44,6 @@ impl ToolkitPreview {
             shrimply_visual_cuda::compositor::spawn_worker_with_resources_and_observer,
         );
         let video_tx = media.sender();
-        let controller = Controller::default();
         let provider_invalidated = Rc::new(Cell::new(false));
         let selection_invalidated = provider_invalidated.clone();
         selection_state::connect_named(
@@ -73,18 +65,53 @@ impl ToolkitPreview {
             video_tx,
             audio_player,
             renderer: None,
-            navigation: Default::default(),
-            guide_input: guides::GuideInput::default(),
+            surface: Surface::default(),
             frame: None,
             frame_rate_label: String::from("--"),
             fullscreen: false,
-            expression_cache: RefCell::new(TransformExpressionCache::default()),
-            audio_analysis: FrameAudioAnalysis::default(),
-            controller,
-            provider_cursor: Cursor::Default,
-            guide_active: false,
             provider_invalidated,
         })
+    }
+
+    fn configuration(
+        &self,
+        preferences: &preferences_store::PreferencesSnapshot,
+        size: glam::Vec2,
+    ) -> Configuration {
+        Configuration {
+            size,
+            padding: preferences.preview_padding_px,
+            guides_visible: preferences.preview_guides_visible,
+            fullscreen: self.fullscreen,
+            snap_enabled: preferences.timeline_magnet == "true",
+            snap_radius: preferences.timeline_snap_radius_px as f32,
+            navigation_enabled: preferences.preview_zoom_pan_enabled,
+        }
+    }
+
+    fn clock(&self) -> Clock {
+        let snapshot = player_state::snapshot(&self.player_state);
+        Clock {
+            revision: snapshot.revision,
+            position: snapshot.position,
+            moving: snapshot.playing || snapshot.scrubbing,
+        }
+    }
+
+    fn sync_focus(&mut self) {
+        self.surface.focus(
+            preview_focus::snapshot(&self.preview_focus)
+                .map(|focused| (focused.item, focused.target)),
+        );
+    }
+
+    fn prepare_invalidation(&mut self) {
+        if self.provider_invalidated.replace(false) {
+            if self.surface.active() {
+                self.pointer_cancel();
+            }
+            self.surface.invalidate();
+        }
     }
 
     pub fn render(
@@ -95,27 +122,12 @@ impl ToolkitPreview {
         background_color: Color,
         fullscreen: bool,
     ) -> Result<(), String> {
-        self.synchronize_history();
         self.fullscreen = fullscreen;
-        if !preferences_store::snapshot(&self.preferences).preview_zoom_pan_enabled {
-            if self.navigation.active() {
-                self.provider_cursor = Cursor::Default;
-            }
-            self.navigation.reset();
-        }
-        if self.provider_invalidated.replace(false) {
-            if self.controller.sequence != PointerSequence::Idle {
-                self.pointer_cancel();
-            }
-            self.controller.context_invalidated = true;
-        }
+        self.prepare_invalidation();
         let background_color =
             shrimply_preview_runtime_cuda::background_color(background_color, fullscreen);
         self.schedule_live_base();
         let update = self.media.poll();
-        // Media callbacks can adopt durable metadata/parameter edits before a
-        // base-frame receipt enters the shared controller.
-        self.synchronize_history();
         assert!(update.running, "video compositor stopped unexpectedly");
         if let Some(label) = update.render_elapsed.and_then(rendered_frame_rate_label) {
             self.frame_rate_label = label;
@@ -124,71 +136,68 @@ impl ToolkitPreview {
             Some(VideoEvent::Frame {
                 frame,
                 audio_analysis,
+                position,
                 revision,
                 excluded_item_id,
                 ..
             }) if self
-                .controller
-                .accept_base_frame(revision, excluded_item_id) =>
+                .surface
+                .presented(revision, position, excluded_item_id, &audio_analysis) =>
             {
                 self.frame = Some(frame);
-                self.audio_analysis = audio_analysis;
             }
             Some(VideoEvent::Clear {
                 audio_analysis,
+                position,
                 revision,
                 excluded_item_id,
                 ..
             }) if self
-                .controller
-                .accept_base_frame(revision, excluded_item_id) =>
+                .surface
+                .presented(revision, position, excluded_item_id, &audio_analysis) =>
             {
                 self.frame = None;
-                self.audio_analysis = audio_analysis;
             }
             Some(VideoEvent::Frame { .. } | VideoEvent::Clear { .. }) => {}
             Some(_) => unreachable!(),
             None => {}
         }
         self.schedule_live_base();
-        let snapshot = player_state::snapshot(&self.player_state);
         if self.renderer.is_none() {
             self.renderer = Some(renderer::ToolkitPreviewRenderer::new()?);
         }
+        self.sync_focus();
+        let clock = self.clock();
         let project_handle = self.project.clone();
         let project = project_handle.borrow();
+        let selected = selection_state::focused_video_address(&self.selection_state, &project);
         let preferences = preferences_store::snapshot(&self.preferences);
-        let surface = glam::IVec2::new(width.max(1) as i32, height.max(1) as i32);
+        let surface_px = glam::IVec2::new(width.max(1) as i32, height.max(1) as i32);
         let scale = pixels_per_point.max(1.0);
-        let viewport_surface =
-            glam::vec2(width.max(1) as f32 / scale, height.max(1) as f32 / scale);
-        let viewport = renderer::toolkit_guide_viewport(
-            &project,
-            &preferences,
-            width.max(1) as f32 / scale,
-            height.max(1) as f32 / scale,
-            fullscreen,
-        );
-        let bounds = guides::bounds(
-            viewport_surface,
-            preferences.preview_padding_px,
-            preferences.preview_guides_visible,
-            self.fullscreen,
-        );
-        let viewport = self.navigation.viewport(viewport, bounds);
-        self.update_overlay(
-            &project,
-            &preferences,
-            snapshot.position,
-            snapshot.revision,
-            viewport,
-        )?;
-        self.update_base_exclusion(snapshot.position);
-        let clip_rect = self.navigation.clip_rect(bounds, viewport_surface);
+        let logical_surface = glam::vec2(width.max(1) as f32 / scale, height.max(1) as f32 / scale);
+        let configuration = self.configuration(&preferences, logical_surface);
+        self.surface
+            .ensure_readonly(&project, selected.as_ref(), clock, configuration)?;
+        self.update_base_exclusion(clock.position);
+        let layout = self.surface.layout(&project, configuration);
+        let appearance = Appearance {
+            content_rect: layout.viewport.content_rect,
+            clip_rect: layout.clip_rect,
+            shadow_size_px: preferences.preview_shadow_size_px,
+            background_color,
+            upsample_method: preferences.preview_upsample_method,
+            downsample_method: preferences.preview_downsample_method,
+        };
+        let captions = CaptionAppearance {
+            preview_rect: layout.surface_rect,
+            font_size: preferences.caption_font_size,
+            background_color: preferences.caption_background_color,
+            bottom_inset: 0.0,
+        };
+        let mut draw_result = Ok(());
         let Self {
             renderer,
-            controller,
-            expression_cache,
+            surface,
             frame,
             ..
         } = self;
@@ -196,30 +205,30 @@ impl ToolkitPreview {
             .as_mut()
             .expect("toolkit preview renderer was initialized")
             .render(
-                &project,
-                snapshot.position,
                 frame.as_ref(),
-                surface,
+                surface_px,
                 pixels_per_point,
-                background_color,
-                &preferences,
-                viewport,
-                clip_rect,
-                controller,
-                expression_cache,
-            )
+                appearance,
+                |canvas| {
+                    draw_result = surface.draw_overlay(
+                        canvas,
+                        &project,
+                        selected.as_ref(),
+                        clock,
+                        configuration,
+                        captions,
+                        None,
+                        |_| {},
+                    );
+                },
+            )?;
+        draw_result
     }
 
     fn update_base_exclusion(&mut self, position: Time) {
-        let exclusion = self
-            .controller
-            .provider
-            .as_ref()
-            .and_then(|overlay| overlay.provider.base_frame_exclusion());
-        if exclusion == self.controller.base_exclusion {
+        let Some(exclusion) = self.surface.exclusion_update() else {
             return;
-        }
-        self.controller.base_exclusion = exclusion;
+        };
         for command in [
             VideoCommand::SetPreviewExclusion(exclusion),
             VideoCommand::Render {
@@ -234,7 +243,7 @@ impl ToolkitPreview {
     }
 
     fn schedule_live_base(&mut self) {
-        if !self.controller.take_live_base_request() {
+        if !self.surface.take_live_base_request() {
             return;
         }
         player_state::refresh_project(
@@ -245,87 +254,12 @@ impl ToolkitPreview {
                 ..Default::default()
             },
         );
-        self.controller
+        self.surface
             .live_base_requested(player_state::snapshot(&self.player_state).revision);
     }
 
-    fn synchronize_history(&mut self) {
-        if self.controller.synchronize_history() {
-            // These drafts belong to the old history owner. Never roll them back
-            // into the replacement model through GuideInput/provider Cancel.
-            self.guide_input = guides::GuideInput::default();
-            self.guide_active = false;
-            self.navigation.cancel();
-            self.provider_cursor = Cursor::Default;
-        }
-    }
-
-    fn prepare_input(&mut self) {
-        self.synchronize_history();
-        if self.provider_invalidated.get() {
-            self.pointer_cancel();
-            self.provider_invalidated.set(false);
-            self.controller.context_invalidated = true;
-        }
-    }
-
-    fn update_overlay(
-        &mut self,
-        project: &Project,
-        preferences: &preferences_store::PreferencesSnapshot,
-        position: Time,
-        revision: u64,
-        viewport: PreviewViewport,
-    ) -> Result<(), String> {
-        let selected = selection_state::focused_video_address(&self.selection_state, project);
-        let focused = preview_focus::snapshot(&self.preview_focus);
-        let selection = controller::selection(
-            project,
-            selected.as_ref(),
-            focused
-                .as_ref()
-                .map(|focused| (&focused.item, focused.target)),
-        );
-        self.controller.ensure(
-            project,
-            selection,
-            position,
-            Preparation {
-                project_revision: revision,
-                viewport,
-                audio_analysis: &self.audio_analysis,
-                expression_cache: &self.expression_cache,
-                snap_enabled: preferences.timeline_magnet == "true",
-                snap_radius_px: preferences.timeline_snap_radius_px as f32,
-                guides: preferences
-                    .preview_guides_visible
-                    .then_some(project.preview_guides.as_ref()),
-                camera_sampler: shrimply_preview_runtime_cuda::provider::sample_camera,
-            },
-        )?;
-        Ok(())
-    }
-
-    fn dispatch_provider(&mut self, event: PointerEvent<'_>) -> PreviewResponse {
-        if self.provider_invalidated.get() {
-            return PreviewResponse::IGNORED.redraw();
-        }
-        let response = self.controller.pointer(
-            &mut self.project.borrow_mut(),
-            &self.expression_cache,
-            event,
-        );
-        self.apply_provider_response(response);
-        response
-    }
-
     fn apply_provider_response(&mut self, response: PreviewResponse) {
-        match response.cursor {
-            CursorUpdate::Keep => {}
-            CursorUpdate::Set(cursor) => self.provider_cursor = cursor,
-            CursorUpdate::Clear => self.provider_cursor = Cursor::Default,
-        }
-        controller::commit_response(&self.project.borrow(), response, "preview-provider");
+        let _ = self.surface.take_committed();
         if response.edit.refresh != PreviewRefresh::NONE {
             player_state::refresh_project(
                 &self.player_state,
@@ -338,9 +272,38 @@ impl ToolkitPreview {
             );
         }
         if response.edit.commits() {
-            self.controller
+            self.surface
                 .project_committed(player_state::snapshot(&self.player_state).revision);
         }
+    }
+
+    fn dispatch_pointer(&mut self, size: glam::Vec2, event: PointerEvent<'_>) -> PreviewResponse {
+        if !size.is_finite() || size.min_element() <= 0.0 {
+            return PreviewResponse::IGNORED;
+        }
+        self.prepare_invalidation();
+        self.sync_focus();
+        let clock = self.clock();
+        let preferences = preferences_store::snapshot(&self.preferences);
+        let configuration = self.configuration(&preferences, size);
+        let project_handle = self.project.clone();
+        let mut project = project_handle.borrow_mut();
+        let selected = selection_state::focused_video_address(&self.selection_state, &project);
+        let response =
+            match self
+                .surface
+                .pointer(&mut project, selected.as_ref(), clock, configuration, event)
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::error!(%error, "could not handle Qt preview pointer event");
+                    return PreviewResponse::IGNORED;
+                }
+            };
+        drop(project);
+        self.update_base_exclusion(clock.position);
+        self.apply_provider_response(response);
+        response
     }
 
     pub fn destroy(&mut self) {
@@ -374,20 +337,16 @@ impl ToolkitPreview {
     }
 
     fn paint_state<R>(&self, read: impl FnOnce(&PaintPreviewState) -> R) -> R {
-        let state = self
-            .controller
-            .extensions
-            .get(&PAINT_PREVIEW_STATE)
-            .and_then(|value| value.downcast_ref::<PaintPreviewState>())
-            .expect("Qt paint preview state is missing");
-        read(state)
+        read(
+            self.surface
+                .extension::<PaintPreviewState>(PAINT_PREVIEW_STATE)
+                .expect("Qt paint preview state is missing"),
+        )
     }
 
     fn update_paint_state(&mut self, update: impl FnOnce(&mut PaintPreviewState)) {
-        self.synchronize_history();
         assert!(
-            self.controller
-                .update_extension(PAINT_PREVIEW_STATE, update),
+            self.surface.update_extension(PAINT_PREVIEW_STATE, update),
             "Qt paint preview state is missing"
         );
     }
@@ -431,87 +390,20 @@ impl ToolkitPreview {
     }
 
     pub fn navigate(&mut self, size: glam::Vec2, event: PointerEvent<'_>) -> bool {
-        self.synchronize_history();
-        let preferences = preferences_store::snapshot(&self.preferences);
-        let fit = renderer::toolkit_guide_viewport(
-            &self.project.borrow(),
-            &preferences,
-            size.x,
-            size.y,
-            self.fullscreen,
-        );
-        let bounds = guides::bounds(
-            size,
-            preferences.preview_padding_px,
-            preferences.preview_guides_visible,
-            self.fullscreen,
-        );
-        let response = self.navigation.pointer(
-            fit,
-            bounds,
-            event,
-            preferences.preview_zoom_pan_enabled,
-            self.controller.sequence != PointerSequence::Idle || self.guide_active,
-        );
-        if response.is_some_and(|response| response.redraw) {
-            self.provider_cursor = if self.navigation.active() {
-                Cursor::Grabbing
-            } else {
-                Cursor::Default
-            };
-        }
-        response.is_some_and(|response| response.handled)
+        self.dispatch_pointer(size, event).handled
     }
 
     pub fn pointer_move(&mut self, width: f32, height: f32, x: f32, y: f32, modifiers: Modifiers) {
-        self.synchronize_history();
-        if self.navigation.active() {
-            self.navigate(
-                glam::vec2(width, height),
-                PointerEvent::Hover(pointer_input(pointer_sample(x, y), modifiers)),
-            );
-            return;
-        }
-        if self.controller.sequence == PointerSequence::Active {
-            let sample = pointer_sample(x, y);
-            self.dispatch_provider(PointerEvent::Samples {
+        let sample = pointer_sample(x, y);
+        let event = if self.surface.active() {
+            PointerEvent::Samples {
                 input: pointer_input(sample, modifiers),
                 samples: std::slice::from_ref(&sample),
-            });
-            return;
-        }
-        let preferences = preferences_store::snapshot(&self.preferences);
-        let mut project = self.project.borrow_mut();
-        let viewport_surface = glam::vec2(width, height);
-        let viewport = renderer::toolkit_guide_viewport(
-            &project,
-            &preferences,
-            width,
-            height,
-            self.fullscreen,
-        );
-        let bounds = guides::bounds(
-            viewport_surface,
-            preferences.preview_padding_px,
-            preferences.preview_guides_visible,
-            self.fullscreen,
-        );
-        let viewport = self.navigation.viewport(viewport, bounds);
-        self.guide_input.pointer_move(
-            &mut project.preview_guides,
-            viewport,
-            preferences.preview_guides_visible,
-            glam::vec2(x, y),
-        );
-        drop(project);
-        if self.guide_input.cursor() == guides::GuideCursor::Default {
-            self.dispatch_provider(PointerEvent::Hover(pointer_input(
-                pointer_sample(x, y),
-                modifiers,
-            )));
+            }
         } else {
-            self.provider_cursor = Cursor::Default;
-        }
+            PointerEvent::Hover(pointer_input(sample, modifiers))
+        };
+        self.dispatch_pointer(glam::vec2(width, height), event);
     }
 
     pub fn pointer_press(
@@ -522,66 +414,13 @@ impl ToolkitPreview {
         y: f32,
         modifiers: Modifiers,
     ) -> bool {
-        self.prepare_input();
-        if self.navigation.active() {
-            return false;
-        }
-        let preferences = preferences_store::snapshot(&self.preferences);
-        let mut project = self.project.borrow_mut();
-        let viewport_surface = glam::vec2(width, height);
-        let viewport = renderer::toolkit_guide_viewport(
-            &project,
-            &preferences,
-            width,
-            height,
-            self.fullscreen,
-        );
-        let bounds = guides::bounds(
-            viewport_surface,
-            preferences.preview_padding_px,
-            preferences.preview_guides_visible,
-            self.fullscreen,
-        );
-        let viewport = self.navigation.viewport(viewport, bounds);
-        if self.guide_input.pointer_press(
-            &mut project.preview_guides,
-            viewport,
-            preferences.preview_guides_visible,
-            glam::vec2(x, y),
-        ) {
-            self.guide_active = true;
-            self.controller.sequence = PointerSequence::Guide;
-            return true;
-        }
-        drop(project);
-        if !self
-            .navigation
-            .clip_rect(bounds, viewport_surface)
-            .contains(glam::vec2(x, y))
-        {
-            return false;
-        }
-        let player = player_state::snapshot(&self.player_state);
-        let project_handle = self.project.clone();
-        if let Err(error) = self.update_overlay(
-            &project_handle.borrow(),
-            &preferences,
-            player.position,
-            player.revision,
-            viewport,
-        ) {
-            tracing::error!(%error, "could not prepare Qt preview interaction");
-            return false;
-        }
-        self.update_base_exclusion(player.position);
         let sample = pointer_sample(x, y);
-        let response =
-            self.dispatch_provider(PointerEvent::Begin(pointer_input(sample, modifiers)));
+        let response = self.dispatch_pointer(
+            glam::vec2(width, height),
+            PointerEvent::Begin(pointer_input(sample, modifiers)),
+        );
         if !response.handled {
-            let canceled = self
-                .controller
-                .teardown(&mut self.project.borrow_mut(), &self.expression_cache);
-            self.apply_provider_response(canceled);
+            self.pointer_cancel();
         }
         response.handled
     }
@@ -594,132 +433,70 @@ impl ToolkitPreview {
         y: f32,
         modifiers: Modifiers,
     ) {
-        self.synchronize_history();
-        let preferences = preferences_store::snapshot(&self.preferences);
-        let mut project = self.project.borrow_mut();
-        let viewport_surface = glam::vec2(width, height);
-        let viewport = renderer::toolkit_guide_viewport(
-            &project,
-            &preferences,
-            width,
-            height,
-            self.fullscreen,
+        let sample = pointer_sample(x, y);
+        self.dispatch_pointer(
+            glam::vec2(width, height),
+            PointerEvent::End(pointer_input(sample, modifiers)),
         );
-        let bounds = guides::bounds(
-            viewport_surface,
-            preferences.preview_padding_px,
-            preferences.preview_guides_visible,
-            self.fullscreen,
-        );
-        let viewport = self.navigation.viewport(viewport, bounds);
-        let changed = self.guide_active.then(|| {
-            self.guide_input.pointer_release(
-                &mut project.preview_guides,
-                viewport,
-                glam::vec2(x, y),
-            )
-        });
-        drop(project);
-        if changed.flatten() == Some(true) {
-            guides::commit_edit(&self.project.borrow());
-            self.controller
-                .project_committed(player_state::snapshot(&self.player_state).revision);
-        }
-        if self.guide_active {
-            self.guide_active = false;
-            self.controller.sequence = PointerSequence::Idle;
-            self.controller.context_invalidated = true;
-            return;
-        }
-        if self.controller.sequence == PointerSequence::Active {
-            let sample = pointer_sample(x, y);
-            self.dispatch_provider(PointerEvent::End(pointer_input(sample, modifiers)));
-            self.provider_cursor = Cursor::Default;
-        }
     }
 
     pub fn keyboard(&mut self, size: glam::Vec2, event: KeyboardEvent) -> bool {
         if !size.is_finite() || size.min_element() <= 0.0 {
             return false;
         }
-        self.prepare_input();
-        if let Some(response) = self.navigation.keyboard(event) {
-            self.apply_provider_response(response);
-            return response.handled;
-        }
+        self.prepare_invalidation();
+        self.sync_focus();
+        let clock = self.clock();
         let preferences = preferences_store::snapshot(&self.preferences);
+        let configuration = self.configuration(&preferences, size);
         let project_handle = self.project.clone();
-        let project = project_handle.borrow();
-        let fit = renderer::toolkit_guide_viewport(
-            &project,
-            &preferences,
-            size.x,
-            size.y,
-            self.fullscreen,
-        );
-        let bounds = guides::bounds(
-            size,
-            preferences.preview_padding_px,
-            preferences.preview_guides_visible,
-            self.fullscreen,
-        );
-        let viewport = self.navigation.viewport(fit, bounds);
-        let player = player_state::snapshot(&self.player_state);
-        let prepared = self.update_overlay(
-            &project,
-            &preferences,
-            player.position,
-            player.revision,
-            viewport,
-        );
-        drop(project);
-        if let Err(error) = prepared {
-            tracing::error!(%error, "could not prepare Qt preview keyboard interaction");
-            return false;
-        }
-        self.update_base_exclusion(player.position);
-        let response = self.controller.keyboard(
-            &mut self.project.borrow_mut(),
-            &self.expression_cache,
+        let mut project = project_handle.borrow_mut();
+        let selected = selection_state::focused_video_address(&self.selection_state, &project);
+        let response = match self.surface.keyboard(
+            &mut project,
+            selected.as_ref(),
+            clock,
+            configuration,
             event,
-        );
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::error!(%error, "could not handle Qt preview keyboard event");
+                return false;
+            }
+        };
+        drop(project);
+        self.update_base_exclusion(clock.position);
         self.apply_provider_response(response);
         response.handled
     }
 
     pub fn pointer_cancel(&mut self) {
-        self.synchronize_history();
-        self.navigation.cancel();
-        if self.guide_active {
-            self.guide_input
-                .pointer_cancel(&mut self.project.borrow_mut().preview_guides);
-            self.guide_active = false;
-        }
-        let response = self
-            .controller
-            .teardown(&mut self.project.borrow_mut(), &self.expression_cache);
+        let project_handle = self.project.clone();
+        let response = self.surface.cancel(&mut project_handle.borrow_mut());
         self.apply_provider_response(response);
-        self.provider_cursor = Cursor::Default;
     }
 
     pub fn pointer_leave(&mut self) {
-        self.synchronize_history();
-        self.guide_input.pointer_leave();
-        if self.controller.sequence != PointerSequence::Active {
-            self.dispatch_provider(PointerEvent::Leave);
-            self.provider_cursor = Cursor::Default;
+        if !self.surface.active() {
+            let project_handle = self.project.clone();
+            let mut project = project_handle.borrow_mut();
+            let selected = selection_state::focused_video_address(&self.selection_state, &project);
+            let clock = self.clock();
+            let preferences = preferences_store::snapshot(&self.preferences);
+            let configuration = self.configuration(&preferences, glam::Vec2::ONE);
+            let _ = self.surface.pointer(
+                &mut project,
+                selected.as_ref(),
+                clock,
+                configuration,
+                PointerEvent::Leave,
+            );
         }
     }
 
     pub fn pointer_cursor(&self) -> u8 {
-        if self.navigation.active() {
-            return provider_cursor_code(Cursor::Grabbing);
-        }
-        match self.guide_input.cursor() {
-            guides::GuideCursor::ResizeHorizontal => 1,
-            guides::GuideCursor::ResizeVertical => 2,
-            guides::GuideCursor::Default => provider_cursor_code(self.provider_cursor),
-        }
+        provider_cursor_code(self.surface.cursor())
     }
 }
 
@@ -797,17 +574,10 @@ fn provider_cursor_code(cursor: Cursor) -> u8 {
         Cursor::Grab => 6,
         Cursor::Grabbing => 7,
         Cursor::Text => 8,
-        Cursor::ResizeHorizontal => 9,
-        Cursor::ResizeVertical => 10,
-        Cursor::ResizeDiagonalDown => 11,
-        Cursor::ResizeDiagonalUp => 12,
-        Cursor::Hidden => 13,
-    }
-}
-
-impl Drop for ToolkitPreview {
-    fn drop(&mut self) {
-        self.media.stop();
-        self.audio_player.stop();
+        Cursor::ResizeHorizontal => 1,
+        Cursor::ResizeVertical => 2,
+        Cursor::ResizeDiagonalDown => 9,
+        Cursor::ResizeDiagonalUp => 10,
+        Cursor::Hidden => 11,
     }
 }

@@ -95,10 +95,10 @@ impl PreviewProvider for DirectionalBlurPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
         let (center, radius, angle) = self.points();
-        let color = context.selection_color();
+        let color = preview::selection_color();
         super::preview::draw_line(painter, center, radius, color);
         super::preview::draw_handle(painter, radius, color);
         super::preview::draw_line(painter, center, angle, color);

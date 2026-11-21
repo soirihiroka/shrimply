@@ -10,6 +10,9 @@ use shrimply_preview_provider_skia::{
     CursorUpdate, Key, KeyState, KeyboardEvent, Modifiers, PointerButton, PointerEvent,
     PointerInput, PointerSample, PointerTool, PreviewExtensionKey, PreviewRefresh, PreviewResponse,
 };
+use shrimply_preview_runtime_cuda::captions::{self, CaptionAppearance};
+use shrimply_preview_runtime_cuda::renderer::{Appearance, VideoRenderer};
+use shrimply_preview_runtime_cuda::surface::{Clock, Configuration, Surface};
 
 use crate::player_state::{self, SharedPlayerState};
 use crate::preferences::store as preferences_store;
@@ -17,11 +20,10 @@ use crate::preview_focus::{self, SharedPreviewFocus};
 use crate::project::{ItemAddress, Project, Time};
 use crate::selection_state::{self, SharedSelectionState};
 use crate::timeline::renderer::{Color, Rect, vec2};
-use crate::transform_eval::{FrameAudioAnalysis, TransformExpressionCache};
+use crate::transform_eval::FrameAudioAnalysis;
 use crate::video::compositor::{CompositeAccuracy, VideoCommand, VideoCommandSender};
 use crate::video::gpu::CompositedVideoFrame;
 
-use shrimply_preview_runtime_cuda::captions::{self, CaptionAppearance};
 #[path = "preview_surface/dispatch.rs"]
 mod dispatch;
 use dispatch::{
@@ -32,17 +34,10 @@ mod cursor;
 use cursor::name as cursor_name;
 #[path = "preview_surface/geometry.rs"]
 mod geometry;
-#[path = "preview_surface/gtk_guides.rs"]
-mod gtk_guides;
 #[path = "preview_surface/sanim_inspector.rs"]
 mod sanim_inspector;
 #[path = "preview_surface/touch.rs"]
 mod touch;
-use geometry::surface_viewport;
-use shrimply_preview_runtime_cuda::controller::Preparation;
-use shrimply_preview_runtime_cuda::guides;
-use shrimply_preview_runtime_cuda::overlay::{self, InteractionOverlay, PreviewOverlayFrame};
-use shrimply_preview_runtime_cuda::renderer::{Appearance, VideoRenderer};
 
 #[derive(Clone)]
 pub struct VideoSurface {
@@ -53,7 +48,6 @@ pub struct VideoSurface {
 #[derive(Clone)]
 pub struct PreviewController {
     surface: VideoSurface,
-    controller: Rc<RefCell<PreviewControllerState>>,
     project: Rc<RefCell<Project>>,
     player_state: SharedPlayerState,
     selection_state: SharedSelectionState,
@@ -73,8 +67,8 @@ struct VideoSurfaceState {
     presentation: Option<Presentation>,
     renderer: Option<VideoRenderer>,
     frame: Option<CompositedVideoFrame>,
-    audio_analysis: FrameAudioAnalysis,
-    expression_cache: RefCell<TransformExpressionCache>,
+    surface: Surface,
+    video_tx: VideoCommandSender,
     guides_visible: bool,
     snap_enabled: bool,
     snap_radius_px: u32,
@@ -88,8 +82,43 @@ struct VideoSurfaceState {
     preview_downsample_method: preferences_store::PreviewDownsampleMethod,
     fullscreen: bool,
     zoom_pan_enabled: bool,
-    navigation: shrimply_preview_runtime_cuda::navigation::Navigation,
-    touch: shrimply_components_skia::input::TouchInput,
+}
+
+impl VideoSurfaceState {
+    fn configuration(&self, area: &gtk::GLArea) -> Configuration {
+        Configuration {
+            size: glam::vec2(area.width().max(1) as f32, area.height().max(1) as f32),
+            padding: self.preview_padding_px,
+            guides_visible: self.guides_visible,
+            fullscreen: self.fullscreen,
+            snap_enabled: self.snap_enabled,
+            snap_radius: self.snap_radius_px as f32,
+            navigation_enabled: self.zoom_pan_enabled,
+        }
+    }
+
+    fn sync_focus(&mut self, preview_focus: &SharedPreviewFocus) {
+        self.surface.focus(
+            preview_focus::snapshot(preview_focus).map(|focused| (focused.item, focused.target)),
+        );
+    }
+
+    fn send_exclusion_update(&mut self, position: Time) {
+        let Some(item_id) = self.surface.exclusion_update() else {
+            return;
+        };
+        for command in [
+            VideoCommand::SetPreviewExclusion(item_id),
+            VideoCommand::Render {
+                position,
+                accuracy: CompositeAccuracy::FULLY_ACCURATE,
+            },
+        ] {
+            if let Err(error) = self.video_tx.send(command) {
+                tracing::error!(%error, "could not update the preview base frame");
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -99,41 +128,11 @@ struct Presentation {
     settled: bool,
 }
 
-struct PreviewControllerState {
-    core: shrimply_preview_runtime_cuda::controller::Controller,
-    video_tx: VideoCommandSender,
-}
-
-use shrimply_preview_runtime_cuda::controller::PointerSequence;
-
-fn set_base_exclusion(
-    controller: &mut PreviewControllerState,
-    item_id: Option<uuid::Uuid>,
-    position: Time,
-) {
-    if controller.core.base_exclusion == item_id {
-        return;
-    }
-    controller.core.base_exclusion = item_id;
-    for command in [
-        VideoCommand::SetPreviewExclusion(item_id),
-        VideoCommand::Render {
-            position,
-            accuracy: CompositeAccuracy::FULLY_ACCURATE,
-        },
-    ] {
-        if let Err(error) = controller.video_tx.send(command) {
-            tracing::error!(%error, "could not update the preview base frame");
-        }
-    }
-}
-
 impl PreviewController {
     /// Widget-owned callbacks retain the shared state without retaining their widget.
     pub(crate) fn weak(&self) -> impl Fn() -> Option<Self> + 'static + use<> {
         let area = self.widget().downgrade();
         let state = self.surface.state.clone();
-        let controller = self.controller.clone();
         let project = self.project.clone();
         let player_state = self.player_state.clone();
         let selection_state = self.selection_state.clone();
@@ -144,7 +143,6 @@ impl PreviewController {
                     area: area.upgrade()?,
                     state: state.clone(),
                 },
-                controller: controller.clone(),
                 project: project.clone(),
                 player_state: player_state.clone(),
                 selection_state: selection_state.clone(),
@@ -177,8 +175,8 @@ impl PreviewController {
             presentation: None,
             renderer: None,
             frame: None,
-            audio_analysis: FrameAudioAnalysis::default(),
-            expression_cache: RefCell::new(TransformExpressionCache::default()),
+            surface: Surface::default(),
+            video_tx,
             guides_visible: preference.preview_guides_visible,
             snap_enabled: preference.timeline_magnet == "true",
             snap_radius_px: preference.timeline_snap_radius_px,
@@ -192,12 +190,6 @@ impl PreviewController {
             preview_downsample_method: preference.preview_downsample_method,
             fullscreen: false,
             zoom_pan_enabled: preference.preview_zoom_pan_enabled,
-            navigation: Default::default(),
-            touch: Default::default(),
-        }));
-        let controller = Rc::new(RefCell::new(PreviewControllerState {
-            core: Default::default(),
-            video_tx,
         }));
 
         let preview = Self {
@@ -205,7 +197,6 @@ impl PreviewController {
                 area: area.clone(),
                 state: state.clone(),
             },
-            controller: controller.clone(),
             project: project.clone(),
             player_state: player_state.clone(),
             selection_state: selection_state.clone(),
@@ -218,10 +209,9 @@ impl PreviewController {
             selection_state.clone(),
             preview_focus.clone(),
             state.clone(),
-            controller.clone(),
         );
         attach_input(&preview);
-        attach_frame_scheduler(&area, player_state.clone(), controller.clone());
+        attach_frame_scheduler(&area, player_state.clone(), state.clone());
         let resize_state = state.clone();
         area.connect_resize(move |_, _, _| resize_state.borrow().sanim_inspector.dismiss());
 
@@ -230,32 +220,27 @@ impl PreviewController {
             area.make_current();
             let mut state = unrealize_state.borrow_mut();
             state.sanim_inspector.dismiss();
-            state.navigation.cancel();
             if let Some(mut renderer) = state.renderer.take() {
                 renderer.destroy();
             }
         });
         let unmap_state = state.clone();
         area.connect_unmap(move |area| {
-            let mut state = unmap_state.borrow_mut();
-            state.sanim_inspector.dismiss();
-            state.navigation.cancel();
+            unmap_state.borrow().sanim_inspector.dismiss();
             area.set_cursor_from_name(None);
         });
         let selection_area = area.clone();
         let selection_project = project.clone();
         let selection_player = player_state.clone();
         let selection_surface = state.clone();
-        let selection_controller = controller.clone();
         selection_state::connect_named(&selection_state, "preview provider selection", move || {
             let area = selection_area.clone();
             let project = selection_project.clone();
             let player = selection_player.clone();
             let surface = selection_surface.clone();
-            let controller = selection_controller.clone();
             glib::idle_add_local_once(move || {
                 surface.borrow().sanim_inspector.dismiss();
-                cancel_provider(&area, &project, &player, &surface, &controller, false);
+                cancel_provider(&area, &project, &player, &surface, false);
                 area.queue_render();
             });
         });
@@ -263,7 +248,6 @@ impl PreviewController {
         let focus_project = project.clone();
         let focus_player = player_state.clone();
         let focus_surface = state.clone();
-        let focus_controller = controller.clone();
         preview_focus::connect_named(&preview_focus, "preview provider focus", move || {
             focus_surface.borrow().sanim_inspector.dismiss();
             cancel_provider(
@@ -271,7 +255,6 @@ impl PreviewController {
                 &focus_project,
                 &focus_player,
                 &focus_surface,
-                &focus_controller,
                 false,
             );
             focus_area.set_cursor_from_name(None);
@@ -293,13 +276,11 @@ impl PreviewController {
         );
         let preference_area = area.clone();
         let preference_state = state.clone();
-        let preference_controller = controller.clone();
         preferences_store::connect(&preferences, move |preference| {
             let mut state = preference_state.borrow_mut();
             state.sanim_inspector.dismiss();
             state.zoom_pan_enabled = preference.preview_zoom_pan_enabled;
             if !state.zoom_pan_enabled {
-                state.navigation.reset();
                 preference_area.set_cursor_from_name(None);
             }
             state.caption_font_size = preference.caption_font_size;
@@ -311,8 +292,8 @@ impl PreviewController {
             state.guides_visible = preference.preview_guides_visible;
             state.snap_enabled = preference.timeline_magnet == "true";
             state.snap_radius_px = preference.timeline_snap_radius_px;
+            state.surface.invalidate();
             drop(state);
-            preference_controller.borrow_mut().core.context_invalidated = true;
             preference_area.queue_render();
         });
         let style = adw::StyleManager::for_display(&area.display());
@@ -355,7 +336,6 @@ impl PreviewController {
                 selection_state: &self.selection_state,
                 preview_focus: &self.preview_focus,
                 state: &self.surface.state,
-                controller: &self.controller,
             },
             point,
         );
@@ -366,12 +346,10 @@ impl PreviewController {
         key: PreviewExtensionKey,
         read: impl FnOnce(&T) -> R,
     ) -> R {
-        let controller = self.controller.borrow();
-        let value = controller
-            .core
-            .extensions
-            .get(&key)
-            .and_then(|value| value.downcast_ref())
+        let state = self.surface.state.borrow();
+        let value = state
+            .surface
+            .extension::<T>(key)
             .expect("preview state extension has the wrong type");
         read(value)
     }
@@ -381,18 +359,17 @@ impl PreviewController {
         key: PreviewExtensionKey,
         update: impl FnOnce(&mut T) -> R,
     ) -> R {
-        let result = {
-            let mut controller = self.controller.borrow_mut();
-            let value = controller
-                .core
-                .extensions
-                .get_mut(&key)
-                .and_then(|value| value.downcast_mut())
-                .expect("preview state extension has the wrong type");
-            update(value)
-        };
+        let mut output = None;
+        assert!(
+            self.surface
+                .state
+                .borrow_mut()
+                .surface
+                .update_extension(key, |value: &mut T| output = Some(update(value))),
+            "preview state extension has the wrong type"
+        );
         self.area.queue_render();
-        result
+        output.expect("preview state updated")
     }
 
     pub fn set_frame(
@@ -404,20 +381,23 @@ impl PreviewController {
         excluded_item_id: Option<uuid::Uuid>,
         settled: bool,
     ) {
-        let mut controller = self.controller.borrow_mut();
-        if !controller
-            .core
-            .accept_base_frame(revision, excluded_item_id)
+        let mut state = self.surface.state.borrow_mut();
+        if !state
+            .surface
+            .presented(revision, position, excluded_item_id, &audio_analysis)
         {
             return;
         }
-        drop(controller);
-        self.surface.state.borrow_mut().presentation = Some(Presentation {
+        state.presentation = Some(Presentation {
             position,
             revision,
             settled,
         });
-        self.surface.set_frame(frame, audio_analysis);
+        if state.frame.as_ref().map(|item| item.storage_key) != Some(frame.storage_key) {
+            state.frame = Some(frame);
+        }
+        drop(state);
+        self.area.queue_render();
     }
 
     pub fn clear_frame(
@@ -426,41 +406,22 @@ impl PreviewController {
         revision: u64,
         excluded_item_id: Option<uuid::Uuid>,
     ) {
-        let mut controller = self.controller.borrow_mut();
-        if !controller
-            .core
-            .accept_base_frame(revision, excluded_item_id)
+        let mut state = self.surface.state.borrow_mut();
+        if !state
+            .surface
+            .presented(revision, Time::ZERO, excluded_item_id, &audio_analysis)
         {
             return;
         }
-        drop(controller);
-        self.surface.clear_frame(audio_analysis);
+        state.sanim_inspector.dismiss();
+        state.presentation = None;
+        state.frame = None;
+        drop(state);
+        self.area.queue_render();
     }
 }
 
 impl VideoSurface {
-    fn set_frame(&self, frame: CompositedVideoFrame, audio_analysis: FrameAudioAnalysis) {
-        let mut state = self.state.borrow_mut();
-        if state.frame.as_ref().map(|frame| frame.storage_key) != Some(frame.storage_key)
-            || !state.audio_analysis.same_frame(&audio_analysis)
-        {
-            state.frame = Some(frame);
-            state.audio_analysis = audio_analysis;
-        }
-        drop(state);
-        self.area.queue_render();
-    }
-
-    fn clear_frame(&self, audio_analysis: FrameAudioAnalysis) {
-        let mut state = self.state.borrow_mut();
-        state.sanim_inspector.dismiss();
-        state.presentation = None;
-        state.frame = None;
-        state.audio_analysis = audio_analysis;
-        drop(state);
-        self.area.queue_render();
-    }
-
     pub fn widget(&self) -> &gtk::GLArea {
         &self.area
     }
@@ -515,7 +476,6 @@ fn attach_render(
     selection_state: SharedSelectionState,
     preview_focus: SharedPreviewFocus,
     state: Rc<RefCell<VideoSurfaceState>>,
-    controller: Rc<RefCell<PreviewControllerState>>,
 ) {
     area.connect_render(move |area, _| {
         if let Some(error) = area.error() {
@@ -523,19 +483,21 @@ fn attach_render(
             return glib::Propagation::Stop;
         }
         let surface_scale = area.scale_factor().max(1) as f32;
-        let surface = IVec2::new(
+        let surface_px = IVec2::new(
             (area.width().max(1) as f32 * surface_scale) as i32,
             (area.height().max(1) as f32 * surface_scale) as i32,
         );
         let project = project.borrow();
         let player = player_state::snapshot(&player_state);
-        let position = player.position;
+        let clock = Clock {
+            revision: player.revision,
+            position: player.position,
+            moving: player.playing || player.scrubbing,
+        };
         let focused_video = selection_state::focused_video_address(&selection_state, &project);
         let focused_caption = selection_state::focused_item_address(&selection_state, &project)
             .filter(|address| project.caption_item(address).is_some());
-        let focused_preview = preview_focus::snapshot(&preview_focus);
         let mut state = state.borrow_mut();
-        let mut controller = controller.borrow_mut();
         if state.renderer.is_none() {
             match VideoRenderer::new() {
                 Ok(renderer) => state.renderer = Some(renderer),
@@ -545,57 +507,37 @@ fn attach_render(
                 }
             }
         }
-        let viewport = surface_viewport(area, &project, &state);
-        let content_rect = viewport.content_rect;
-        let clip_rect = state.navigation.clip_rect(
-            geometry::surface_bounds(area, &state),
-            glam::vec2(area.width() as f32, area.height() as f32),
-        );
+        state.sync_focus(&preview_focus);
+        let configuration = state.configuration(area);
+        if let Err(error) =
+            state
+                .surface
+                .ensure_readonly(&project, focused_video.as_ref(), clock, configuration)
+        {
+            tracing::error!(%error, "Could not prepare preview provider");
+            return glib::Propagation::Stop;
+        }
+        state.send_exclusion_update(clock.position);
+        let layout = state.surface.layout(&project, configuration);
         let background_color = shrimply_preview_runtime_cuda::background_color(
             geometry::theme_window_color(area),
             state.fullscreen,
         );
-        let guides = state
-            .guides_visible
-            .then_some(project.preview_guides.as_ref());
-        let prepared = controller.core.ensure(
-            &project,
-            shrimply_preview_runtime_cuda::controller::selection(
-                &project,
-                focused_video.as_ref(),
-                focused_preview
-                    .as_ref()
-                    .map(|focused| (&focused.item, focused.target)),
-            ),
-            position,
-            Preparation {
-                project_revision: player.revision,
-                viewport,
-                audio_analysis: &state.audio_analysis,
-                expression_cache: &state.expression_cache,
-                snap_enabled: state.snap_enabled,
-                snap_radius_px: state.snap_radius_px as f32,
-                guides,
-                camera_sampler: shrimply_preview_runtime_cuda::provider::sample_camera,
-            },
-        );
-        let exclusion = controller
-            .core
-            .provider
-            .as_ref()
-            .and_then(|prepared| prepared.provider.base_frame_exclusion());
-        set_base_exclusion(&mut controller, exclusion, position);
-        if let Err(error) = prepared {
-            tracing::error!(%error, "Could not prepare preview provider");
-            return glib::Propagation::Stop;
-        }
-        let caption_bottom_inset = state.caption_bottom_inset;
-        let caption_font_size = state.caption_font_size;
-        let caption_background_color = state.caption_background_color;
-        let caption_split_hover = state.caption_split_hover;
-        let shadow_size_px = state.preview_shadow_size_px;
-        let upsample_method = state.preview_upsample_method;
-        let downsample_method = state.preview_downsample_method;
+        let captions = CaptionAppearance {
+            preview_rect: layout.surface_rect,
+            font_size: state.caption_font_size,
+            background_color: state.caption_background_color,
+            bottom_inset: state.caption_bottom_inset,
+        };
+        let caption_split_hover = focused_caption.as_ref().zip(state.caption_split_hover);
+        let appearance = Appearance {
+            content_rect: layout.viewport.content_rect,
+            clip_rect: layout.clip_rect,
+            shadow_size_px: state.preview_shadow_size_px,
+            background_color,
+            upsample_method: state.preview_upsample_method,
+            downsample_method: state.preview_downsample_method,
+        };
         let sanim_inspector = state.sanim_inspector.clone();
         let sanim_sources = state
             .frame
@@ -604,53 +546,30 @@ fn attach_render(
         let VideoSurfaceState {
             renderer,
             frame,
-            expression_cache,
+            surface,
             ..
         } = &mut *state;
-        let core = &mut controller.core;
         let result = renderer
             .as_mut()
             .expect("preview renderer was initialized")
             .render(
-                surface,
+                surface_px,
                 surface_scale,
                 frame.as_ref(),
-                Appearance {
-                    content_rect,
-                    clip_rect,
-                    shadow_size_px,
-                    background_color,
-                    upsample_method,
-                    downsample_method,
-                },
+                appearance,
                 |timeline_painter| {
-                    let surface_rect = Rect::from_min_size(
-                        vec2(0.0, 0.0),
-                        vec2(area.width().max(1) as f32, area.height().max(1) as f32),
-                    );
-                    overlay::draw_overlay(
+                    if let Err(error) = surface.draw_overlay(
                         timeline_painter.canvas(),
-                        &PreviewOverlayFrame {
-                            project: &project,
-                            position,
-                            captions: CaptionAppearance {
-                                preview_rect: surface_rect,
-                                font_size: caption_font_size,
-                                background_color: caption_background_color,
-                                bottom_inset: caption_bottom_inset,
-                            },
-                            caption_split_hover: focused_caption.as_ref().zip(caption_split_hover),
-                            interaction: InteractionOverlay {
-                                viewport,
-                                clip_rect,
-                                surface_rect,
-                                guides,
-                            },
-                        },
-                        core,
-                        expression_cache,
+                        &project,
+                        focused_video.as_ref(),
+                        clock,
+                        configuration,
+                        captions,
+                        caption_split_hover,
                         |canvas| sanim_inspector.draw(canvas, sanim_sources.as_deref()),
-                    );
+                    ) {
+                        tracing::error!(%error, "Could not draw preview overlay");
+                    }
                 },
             );
         if let Err(error) = result {
@@ -668,161 +587,67 @@ struct ProviderDispatch<'a> {
     selection_state: &'a SharedSelectionState,
     preview_focus: &'a SharedPreviewFocus,
     state: &'a Rc<RefCell<VideoSurfaceState>>,
-    controller: &'a Rc<RefCell<PreviewControllerState>>,
 }
 
-fn ensure_provider(surface: &ProviderDispatch<'_>) -> bool {
-    let player = player_state::snapshot(surface.player_state);
-    let project = surface.project.borrow();
-    let state = surface.state.borrow();
-    let selected = selection_state::focused_video_address(surface.selection_state, &project);
-    let focused = preview_focus::snapshot(surface.preview_focus);
-    let mut controller = surface.controller.borrow_mut();
-    let prepared = controller.core.ensure(
-        &project,
-        shrimply_preview_runtime_cuda::controller::selection(
-            &project,
-            selected.as_ref(),
-            focused
-                .as_ref()
-                .map(|focused| (&focused.item, focused.target)),
-        ),
-        player.position,
-        Preparation {
-            project_revision: player.revision,
-            viewport: surface_viewport(surface.area, &project, &state),
-            audio_analysis: &state.audio_analysis,
-            expression_cache: &state.expression_cache,
-            snap_enabled: state.snap_enabled,
-            snap_radius_px: state.snap_radius_px as f32,
-            guides: state
-                .guides_visible
-                .then_some(project.preview_guides.as_ref()),
-            camera_sampler: shrimply_preview_runtime_cuda::provider::sample_camera,
-        },
-    );
-    let exclusion = controller
-        .core
-        .provider
-        .as_ref()
-        .and_then(|prepared| prepared.provider.base_frame_exclusion());
-    set_base_exclusion(&mut controller, exclusion, player.position);
-    prepared.unwrap_or_else(|error| {
-        tracing::error!(%error, "Could not prepare preview provider");
-        false
-    })
+impl ProviderDispatch<'_> {
+    fn clock(&self) -> Clock {
+        let player = player_state::snapshot(self.player_state);
+        Clock {
+            revision: player.revision,
+            position: player.position,
+            moving: player.playing || player.scrubbing,
+        }
+    }
 }
 
 fn dispatch_pointer(surface: ProviderDispatch<'_>, event: PointerEvent<'_>) -> PreviewResponse {
-    let navigation_response = {
-        let mut state = surface.state.borrow_mut();
-        let project = surface.project.borrow();
-        let fit = geometry::fit_viewport(surface.area, &project, &state);
-        let bounds = geometry::surface_bounds(surface.area, &state);
-        let enabled = state.zoom_pan_enabled;
-        let busy = surface.controller.borrow().core.sequence != PointerSequence::Idle;
-        state.navigation.pointer(fit, bounds, event, enabled, busy)
-    };
-    if let Some(response) = navigation_response {
-        if !response.redraw {
-            return response;
-        }
-        surface.state.borrow().sanim_inspector.dismiss();
-        surface.controller.borrow_mut().core.context_invalidated = true;
-        surface
-            .area
-            .set_cursor_from_name(if surface.state.borrow().navigation.active() {
-                Some("grabbing")
-            } else {
-                None
-            });
-        surface.area.queue_render();
-        return response;
-    }
-    if let PointerEvent::Begin(input) = event {
-        let state = surface.state.borrow();
-        if !state
-            .navigation
-            .clip_rect(
-                geometry::surface_bounds(surface.area, &state),
-                glam::vec2(surface.area.width() as f32, surface.area.height() as f32),
-            )
-            .contains(input.sample.position)
-        {
-            return PreviewResponse::IGNORED;
-        }
-    }
-    if !surface.controller.borrow_mut().core.accepts_pointer(event) {
-        return PreviewResponse::IGNORED;
-    }
-    ensure_provider(&surface);
+    let clock = surface.clock();
     let response = {
         let mut project = surface.project.borrow_mut();
-        let state = surface.state.borrow();
-        surface
-            .controller
-            .borrow_mut()
-            .core
-            .pointer(&mut project, &state.expression_cache, event)
+        let selected = selection_state::focused_video_address(surface.selection_state, &project);
+        let mut state = surface.state.borrow_mut();
+        let config = state.configuration(surface.area);
+        state.sync_focus(surface.preview_focus);
+        let result = state
+            .surface
+            .pointer(&mut project, selected.as_ref(), clock, config, event);
+        state.send_exclusion_update(clock.position);
+        match result {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::error!(%error, "Could not dispatch preview pointer event");
+                return PreviewResponse::IGNORED;
+            }
+        }
     };
-    apply_response(
-        surface.area,
-        surface.project,
-        surface.player_state,
-        response,
-        "preview-provider",
-    );
-    if response.edit.commits() {
-        surface
-            .controller
-            .borrow_mut()
-            .core
-            .project_committed(player_state::snapshot(surface.player_state).revision);
+    if response.redraw && surface.state.borrow().surface.navigation_active() {
+        surface.state.borrow().sanim_inspector.dismiss();
     }
+    apply_response(surface.area, surface.player_state, surface.state, response);
     response
 }
 
 fn dispatch_keyboard(surface: ProviderDispatch<'_>, event: KeyboardEvent) -> PreviewResponse {
-    let navigation = surface.state.borrow_mut().navigation.keyboard(event);
-    if let Some(response) = navigation {
-        apply_response(
-            surface.area,
-            surface.project,
-            surface.player_state,
-            response,
-            "preview-navigation",
-        );
-        if response.redraw {
-            surface.area.queue_render();
-        }
-        return response;
-    }
-    if !ensure_provider(&surface) {
-        return PreviewResponse::IGNORED;
-    }
+    let clock = surface.clock();
     let response = {
         let mut project = surface.project.borrow_mut();
-        let state = surface.state.borrow();
-        surface
-            .controller
-            .borrow_mut()
-            .core
-            .keyboard(&mut project, &state.expression_cache, event)
+        let selected = selection_state::focused_video_address(surface.selection_state, &project);
+        let mut state = surface.state.borrow_mut();
+        let config = state.configuration(surface.area);
+        state.sync_focus(surface.preview_focus);
+        let result = state
+            .surface
+            .keyboard(&mut project, selected.as_ref(), clock, config, event);
+        state.send_exclusion_update(clock.position);
+        match result {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::error!(%error, "Could not dispatch preview keyboard event");
+                return PreviewResponse::IGNORED;
+            }
+        }
     };
-    apply_response(
-        surface.area,
-        surface.project,
-        surface.player_state,
-        response,
-        "preview-keyboard",
-    );
-    if response.edit.commits() {
-        surface
-            .controller
-            .borrow_mut()
-            .core
-            .project_committed(player_state::snapshot(surface.player_state).revision);
-    }
+    apply_response(surface.area, surface.player_state, surface.state, response);
     response
 }
 
@@ -831,30 +656,17 @@ fn cancel_provider(
     project: &Rc<RefCell<Project>>,
     player_state: &SharedPlayerState,
     state: &Rc<RefCell<VideoSurfaceState>>,
-    controller: &Rc<RefCell<PreviewControllerState>>,
-    end_sequence: bool,
+    teardown: bool,
 ) {
+    let position = player_state::snapshot(player_state).position;
     let response = {
         let mut project = project.borrow_mut();
         let mut state = state.borrow_mut();
-        state.navigation.cancel();
-        let mut controller = controller.borrow_mut();
-        if end_sequence {
-            controller
-                .core
-                .teardown(&mut project, &state.expression_cache)
-        } else {
-            controller
-                .core
-                .cancel(&mut project, &state.expression_cache)
-        }
+        let response = state.surface.cancel_with(&mut project, teardown);
+        state.send_exclusion_update(position);
+        response
     };
-    apply_response(area, project, player_state, response, "preview-cancel");
-    set_base_exclusion(
-        &mut controller.borrow_mut(),
-        None,
-        player_state::snapshot(player_state).position,
-    );
+    apply_response(area, player_state, state, response);
 }
 
 fn attach_input(preview: &PreviewController) {
@@ -864,567 +676,441 @@ fn attach_input(preview: &PreviewController) {
     let selection_state = preview.selection_state.clone();
     let preview_focus = preview.preview_focus.clone();
     let state = preview.surface.state.clone();
-    let controller = preview.controller.clone();
     let sequence_button = Rc::new(Cell::new(0));
     let sequence_origin = Rc::new(Cell::new(None::<PointerSample>));
     let sequence_moved = Rc::new(Cell::new(false));
     let sequence_inspect = Rc::new(Cell::new(false));
-    let guide_input = Rc::new(RefCell::new(guides::GuideInput::default()));
-    touch::attach(preview, guide_input.clone());
-    let ruler_hover = Cell::new(false);
+    touch::attach(preview);
     let caption_hover = Cell::new(false);
 
     let motion = gtk::EventControllerMotion::new();
-    let motion_area = area.clone();
-    let motion_project = project.clone();
-    let motion_player = player_state.clone();
-    let motion_selection = selection_state.clone();
-    let motion_focus = preview_focus.clone();
-    let motion_state = state.clone();
-    let motion_controller = controller.clone();
-    let motion_guides = guide_input.clone();
-    motion.connect_motion(move |source, x, y| {
-        let position = GlamVec2::new(x as f32, y as f32);
-        if motion_state.borrow().navigation.active() {
-            return;
-        }
-        if motion_controller.borrow().core.sequence != PointerSequence::Idle {
-            if motion_state
-                .borrow_mut()
-                .caption_split_hover
-                .take()
-                .is_some()
-            {
-                motion_area.queue_render();
+    {
+        let area = area.clone();
+        let project = project.clone();
+        let player_state = player_state.clone();
+        let selection_state = selection_state.clone();
+        let preview_focus = preview_focus.clone();
+        let state = state.clone();
+        motion.connect_motion(move |source, x, y| {
+            let position = GlamVec2::new(x as f32, y as f32);
+            if !state.borrow().surface.is_idle() {
+                if state.borrow_mut().caption_split_hover.take().is_some() {
+                    area.queue_render();
+                }
+                return;
             }
-            return;
-        }
-        let guide_cursor = gtk_guides::move_to(
-            &motion_guides,
-            &motion_area,
-            &motion_project,
-            &motion_state,
-            position,
-        );
-        if guide_cursor != guides::GuideCursor::Default {
-            if motion_state
-                .borrow_mut()
-                .caption_split_hover
-                .take()
-                .is_some()
-            {
-                motion_area.queue_render();
+            let dispatch = ProviderDispatch {
+                area: &area,
+                project: &project,
+                player_state: &player_state,
+                selection_state: &selection_state,
+                preview_focus: &preview_focus,
+                state: &state,
+            };
+            let split_active = caption_split_at_pointer(
+                &area,
+                &project,
+                &player_state,
+                &selection_state,
+                &state,
+                position,
+            )
+            .is_some();
+            if split_active {
+                if state.borrow().caption_split_hover != Some(position) {
+                    state.borrow_mut().caption_split_hover = Some(position);
+                    area.queue_render();
+                }
+                caption_hover.set(true);
+                area.set_cursor_from_name(Some("text"));
+                return;
             }
-            caption_hover.set(false);
-            ruler_hover.set(true);
-            motion_area.set_cursor_from_name(guide_cursor.name());
-            return;
-        }
-        if ruler_hover.replace(false) {
-            motion_area.set_cursor_from_name(None);
-        }
-        let split_active = caption_split_at_pointer(
-            &motion_area,
-            &motion_project,
-            &motion_player,
-            &motion_selection,
-            &motion_state,
-            position,
-        )
-        .is_some();
-        let hover = split_active.then_some(position);
-        if motion_state.borrow().caption_split_hover != hover {
-            motion_state.borrow_mut().caption_split_hover = hover;
-            motion_area.queue_render();
-        }
-        if split_active {
-            caption_hover.set(true);
-            motion_area.set_cursor_from_name(Some("text"));
-            return;
-        }
-        if caption_hover.replace(false) {
-            motion_area.set_cursor_from_name(None);
-        }
-        dispatch_pointer(
-            ProviderDispatch {
-                area: &motion_area,
-                project: &motion_project,
-                player_state: &motion_player,
-                selection_state: &motion_selection,
-                preview_focus: &motion_focus,
-                state: &motion_state,
-                controller: &motion_controller,
-            },
-            PointerEvent::Hover(pointer_input(source, position, 0)),
-        );
-    });
-    let leave_area = area.clone();
-    let leave_project = project.clone();
-    let leave_player = player_state.clone();
-    let leave_selection = selection_state.clone();
-    let leave_focus = preview_focus.clone();
-    let leave_state = state.clone();
-    let leave_controller = controller.clone();
-    let leave_guides = guide_input.clone();
-    motion.connect_leave(move |_| {
-        if leave_state
-            .borrow_mut()
-            .caption_split_hover
-            .take()
-            .is_some()
-        {
-            leave_area.queue_render();
-        }
-        if leave_controller.borrow().core.sequence != PointerSequence::Idle {
-            return;
-        }
-        leave_guides.borrow_mut().pointer_leave();
-        dispatch_pointer(
-            ProviderDispatch {
-                area: &leave_area,
-                project: &leave_project,
-                player_state: &leave_player,
-                selection_state: &leave_selection,
-                preview_focus: &leave_focus,
-                state: &leave_state,
-                controller: &leave_controller,
-            },
-            PointerEvent::Leave,
-        );
-        leave_area.set_cursor_from_name(None);
-    });
+            if state.borrow_mut().caption_split_hover.take().is_some() {
+                area.queue_render();
+            }
+            if caption_hover.replace(false) {
+                area.set_cursor_from_name(None);
+            }
+            dispatch_pointer(
+                dispatch,
+                PointerEvent::Hover(pointer_input(source, position, 0)),
+            );
+        });
+    }
+    {
+        let area = area.clone();
+        let project = project.clone();
+        let player_state = player_state.clone();
+        let selection_state = selection_state.clone();
+        let preview_focus = preview_focus.clone();
+        let state = state.clone();
+        motion.connect_leave(move |_| {
+            if state.borrow_mut().caption_split_hover.take().is_some() {
+                area.queue_render();
+            }
+            if !state.borrow().surface.is_idle() {
+                return;
+            }
+            dispatch_pointer(
+                ProviderDispatch {
+                    area: &area,
+                    project: &project,
+                    player_state: &player_state,
+                    selection_state: &selection_state,
+                    preview_focus: &preview_focus,
+                    state: &state,
+                },
+                PointerEvent::Leave,
+            );
+            area.set_cursor_from_name(None);
+        });
+    }
     area.add_controller(motion);
 
     let pointer = gtk::GestureStylus::new();
     pointer.set_button(0);
     pointer.set_stylus_only(false);
-    let begin_area = area.clone();
-    let begin_project = project.clone();
-    let begin_player = player_state.clone();
-    let begin_selection = selection_state.clone();
-    let begin_focus = preview_focus.clone();
-    let begin_state = state.clone();
-    let begin_controller = controller.clone();
-    let begin_button = sequence_button.clone();
-    let begin_origin = sequence_origin.clone();
-    let begin_moved = sequence_moved.clone();
-    let begin_inspect = sequence_inspect.clone();
-    let begin_guides = guide_input.clone();
-    pointer.connect_down(move |source, x, y| {
-        if begin_controller.borrow().core.sequence != PointerSequence::Idle
-            && source.current_button() == 2
-        {
-            return;
-        }
-        if begin_state.borrow().navigation.active() {
-            return;
-        }
-        begin_area.grab_focus();
-        begin_state.borrow().sanim_inspector.dismiss();
-        let button = source.current_button();
-        begin_button.set(button);
-        let input = pointer_input(source, GlamVec2::new(x as f32, y as f32), button);
-        begin_origin.set(Some(input.sample));
-        begin_moved.set(false);
-        begin_inspect.set(false);
-        if button == 1 {
-            let began_guide = gtk_guides::press(
-                &begin_guides,
-                &begin_area,
-                &begin_project,
-                &begin_state,
-                input.sample.position,
-            );
-            if began_guide {
-                begin_controller.borrow_mut().core.sequence = PointerSequence::Guide;
-                begin_area.set_cursor_from_name(begin_guides.borrow().cursor().name());
-                begin_area.queue_render();
+    {
+        let area = area.clone();
+        let project = project.clone();
+        let player_state = player_state.clone();
+        let selection_state = selection_state.clone();
+        let preview_focus = preview_focus.clone();
+        let state = state.clone();
+        let sequence_button = sequence_button.clone();
+        let sequence_origin = sequence_origin.clone();
+        let sequence_moved = sequence_moved.clone();
+        let sequence_inspect = sequence_inspect.clone();
+        pointer.connect_down(move |source, x, y| {
+            let button = source.current_button();
+            if (!state.borrow().surface.is_idle() && button == 2)
+                || state.borrow().surface.navigation_active()
+            {
                 return;
             }
-        }
-        if button == 1
-            && split_caption_at_pointer(
-                &begin_area,
-                &begin_project,
-                &begin_player,
-                &begin_selection,
-                &begin_state,
-                input.sample.position,
-            )
-        {
-            return;
-        }
-        let response = dispatch_pointer(
-            ProviderDispatch {
-                area: &begin_area,
-                project: &begin_project,
-                player_state: &begin_player,
-                selection_state: &begin_selection,
-                preview_focus: &begin_focus,
-                state: &begin_state,
-                controller: &begin_controller,
-            },
-            PointerEvent::Begin(input),
-        );
-        if button == 1
-            && input.modifiers == Modifiers::NONE
-            && !player_state::snapshot(&begin_player).playing
-        {
-            let project = begin_project.borrow();
-            let controller = begin_controller.borrow();
-            begin_inspect.set(
-                selection_state::focused_video_address(&begin_selection, &project)
-                    .and_then(|address| project.video_item(&address))
-                    .is_some_and(|item| {
-                        matches!(item.content, crate::project::VideoItemContent::Sanim(_))
-                            && controller.core.provider.as_ref().is_none_or(|provider| {
-                                provider.target == item.default_preview_target()
-                            })
-                    }),
-            );
-        }
-        if button == 2 && response.handled {
-            source.set_state(gtk::EventSequenceState::Claimed);
-        }
-    });
-    let update_area = area.clone();
-    let update_project = project.clone();
-    let update_player = player_state.clone();
-    let update_selection = selection_state.clone();
-    let update_focus = preview_focus.clone();
-    let update_state = state.clone();
-    let update_controller = controller.clone();
-    let update_button = sequence_button.clone();
-    let update_origin = sequence_origin.clone();
-    let update_moved = sequence_moved.clone();
-    let update_inspect = sequence_inspect.clone();
-    let update_guides = guide_input.clone();
-    let update_pointer = move |source: &gtk::GestureStylus, x: f64, y: f64| {
-        let input = pointer_input(
-            source,
-            GlamVec2::new(x as f32, y as f32),
-            update_button.get(),
-        );
-        let surface = ProviderDispatch {
-            area: &update_area,
-            project: &update_project,
-            player_state: &update_player,
-            selection_state: &update_selection,
-            preview_focus: &update_focus,
-            state: &update_state,
-            controller: &update_controller,
-        };
-        if update_state.borrow().navigation.active() {
-            dispatch_pointer(surface, PointerEvent::Hover(input));
-            return;
-        }
-        let mut samples = pointer_backlog(source);
-        if samples.last().copied() != Some(input.sample) {
-            samples.push(input.sample);
-        }
-        let changed = update_origin.get().is_some_and(|origin| {
-            samples.iter().any(|sample| {
-                pointer_sample_changed(
-                    &update_area,
-                    *sample,
-                    origin,
-                    update_inspect.get() && !update_moved.get(),
+            area.grab_focus();
+            state.borrow().sanim_inspector.dismiss();
+            sequence_button.set(button);
+            let input = pointer_input(source, GlamVec2::new(x as f32, y as f32), button);
+            sequence_origin.set(Some(input.sample));
+            sequence_moved.set(false);
+            sequence_inspect.set(false);
+            if button == 1
+                && split_caption_at_pointer(
+                    &area,
+                    &project,
+                    &player_state,
+                    &selection_state,
+                    &state,
+                    input.sample.position,
                 )
-            })
+            {
+                return;
+            }
+            let response = dispatch_pointer(
+                ProviderDispatch {
+                    area: &area,
+                    project: &project,
+                    player_state: &player_state,
+                    selection_state: &selection_state,
+                    preview_focus: &preview_focus,
+                    state: &state,
+                },
+                PointerEvent::Begin(input),
+            );
+            if button == 1
+                && input.modifiers == Modifiers::NONE
+                && !player_state::snapshot(&player_state).playing
+            {
+                let project = project.borrow();
+                let state = state.borrow();
+                sequence_inspect.set(
+                    selection_state::focused_video_address(&selection_state, &project)
+                        .and_then(|address| project.video_item(&address))
+                        .is_some_and(|item| {
+                            matches!(item.content, crate::project::VideoItemContent::Sanim(_))
+                                && state.surface.provider().is_none_or(|provider| {
+                                    provider.target == item.default_preview_target()
+                                })
+                        }),
+                );
+            }
+            if button == 2 && response.handled {
+                source.set_state(gtk::EventSequenceState::Claimed);
+            }
         });
-        if !changed {
-            return;
-        }
-        update_moved.set(true);
-        if update_guides.borrow().active() {
-            let cursor = gtk_guides::move_to(
-                &update_guides,
-                &update_area,
-                &update_project,
-                &update_state,
-                input.sample.position,
+    }
+    let update_pointer = {
+        let area = area.clone();
+        let project = project.clone();
+        let player_state = player_state.clone();
+        let selection_state = selection_state.clone();
+        let preview_focus = preview_focus.clone();
+        let state = state.clone();
+        let sequence_button = sequence_button.clone();
+        let sequence_origin = sequence_origin.clone();
+        let sequence_moved = sequence_moved.clone();
+        let sequence_inspect = sequence_inspect.clone();
+        move |source: &gtk::GestureStylus, x: f64, y: f64| {
+            let input = pointer_input(
+                source,
+                GlamVec2::new(x as f32, y as f32),
+                sequence_button.get(),
             );
-            update_area.set_cursor_from_name(cursor.name());
-            update_area.queue_render();
-            return;
-        }
-        dispatch_pointer(
-            surface,
-            PointerEvent::Samples {
-                input,
-                samples: &samples,
-            },
-        );
-    };
-    pointer.connect_motion(update_pointer.clone());
-    let proximity_state = state.clone();
-    // GTK emits middle-button motion as proximity; only primary-button motion
-    // uses the stylus motion signal. Both feed the same navigation core.
-    pointer.connect_proximity(move |source, x, y| {
-        if proximity_state.borrow().navigation.active() {
-            update_pointer(source, x, y);
-        }
-    });
-    let end_area = area.clone();
-    let end_project = project.clone();
-    let end_player = player_state.clone();
-    let end_selection = selection_state.clone();
-    let end_focus = preview_focus.clone();
-    let end_state = state.clone();
-    let end_controller = controller.clone();
-    let end_button = sequence_button.clone();
-    let end_origin = sequence_origin.clone();
-    let end_moved = sequence_moved.clone();
-    let end_inspect = sequence_inspect.clone();
-    let end_guides = guide_input.clone();
-    pointer.connect_up(move |source, x, y| {
-        let input = pointer_input(source, GlamVec2::new(x as f32, y as f32), end_button.get());
-        let mut samples = pointer_backlog(source);
-        if end_origin.get().is_some_and(|origin| {
-            samples
-                .iter()
-                .chain(std::iter::once(&input.sample))
-                .any(|sample| {
-                    pointer_sample_changed(
-                        &end_area,
-                        *sample,
-                        origin,
-                        end_inspect.get() && !end_moved.get(),
-                    )
-                })
-        }) {
-            end_moved.set(true);
-        }
-        if end_guides.borrow().active() {
-            gtk_guides::finish(
-                &end_guides,
-                &end_area,
-                &end_project,
-                &end_state,
-                &end_controller,
-                input.sample.position,
-            );
-            end_button.set(0);
-            end_origin.set(None);
-            end_moved.set(false);
-            return;
-        }
-        if !samples.is_empty() && end_moved.get() {
+            let dispatch = ProviderDispatch {
+                area: &area,
+                project: &project,
+                player_state: &player_state,
+                selection_state: &selection_state,
+                preview_focus: &preview_focus,
+                state: &state,
+            };
+            if state.borrow().surface.navigation_active() {
+                dispatch_pointer(dispatch, PointerEvent::Hover(input));
+                return;
+            }
+            let mut samples = pointer_backlog(source);
             if samples.last().copied() != Some(input.sample) {
                 samples.push(input.sample);
             }
+            let changed = sequence_origin.get().is_some_and(|origin| {
+                samples.iter().any(|sample| {
+                    pointer_sample_changed(
+                        &area,
+                        *sample,
+                        origin,
+                        sequence_inspect.get() && !sequence_moved.get(),
+                    )
+                })
+            });
+            if !changed {
+                return;
+            }
+            sequence_moved.set(true);
             dispatch_pointer(
-                ProviderDispatch {
-                    area: &end_area,
-                    project: &end_project,
-                    player_state: &end_player,
-                    selection_state: &end_selection,
-                    preview_focus: &end_focus,
-                    state: &end_state,
-                    controller: &end_controller,
-                },
+                dispatch,
                 PointerEvent::Samples {
                     input,
                     samples: &samples,
                 },
             );
         }
-        let provider_input = if end_inspect.get() && !end_moved.get() {
-            PointerInput {
-                sample: end_origin.get().expect("inspection press has an origin"),
-                ..input
-            }
-        } else {
-            input
-        };
-        dispatch_pointer(
-            ProviderDispatch {
-                area: &end_area,
-                project: &end_project,
-                player_state: &end_player,
-                selection_state: &end_selection,
-                preview_focus: &end_focus,
-                state: &end_state,
-                controller: &end_controller,
-            },
-            PointerEvent::End(provider_input),
-        );
-        if end_button.get() == 1 && !end_moved.get() && input.modifiers == Modifiers::NONE {
-            sanim_inspector::inspect(
-                ProviderDispatch {
-                    area: &end_area,
-                    project: &end_project,
-                    player_state: &end_player,
-                    selection_state: &end_selection,
-                    preview_focus: &end_focus,
-                    state: &end_state,
-                    controller: &end_controller,
-                },
-                input.sample.position,
+    };
+    pointer.connect_motion(update_pointer.clone());
+    let proximity_state = state.clone();
+    pointer.connect_proximity(move |source, x, y| {
+        if proximity_state.borrow().surface.navigation_active() {
+            update_pointer(source, x, y);
+        }
+    });
+    {
+        let area = area.clone();
+        let project = project.clone();
+        let player_state = player_state.clone();
+        let selection_state = selection_state.clone();
+        let preview_focus = preview_focus.clone();
+        let state = state.clone();
+        let sequence_button = sequence_button.clone();
+        let sequence_origin = sequence_origin.clone();
+        let sequence_moved = sequence_moved.clone();
+        let sequence_inspect = sequence_inspect.clone();
+        pointer.connect_up(move |source, x, y| {
+            let input = pointer_input(
+                source,
+                GlamVec2::new(x as f32, y as f32),
+                sequence_button.get(),
             );
-        }
-        end_button.set(0);
-        end_origin.set(None);
-        end_moved.set(false);
-        end_area.set_cursor_from_name(None);
-    });
-    let cancel_area = area.clone();
-    let cancel_project = project.clone();
-    let cancel_player = player_state.clone();
-    let cancel_selection = selection_state.clone();
-    let cancel_focus = preview_focus.clone();
-    let cancel_state = state.clone();
-    let cancel_controller = controller.clone();
-    let cancel_button = sequence_button.clone();
-    let cancel_origin = sequence_origin.clone();
-    let cancel_moved = sequence_moved.clone();
-    let cancel_guides = guide_input;
-    pointer.connect_cancel(move |_, _| {
-        if gtk_guides::cancel(
-            &cancel_guides,
-            &cancel_area,
-            &cancel_project,
-            &cancel_controller,
-        ) {
-            cancel_button.set(0);
-            cancel_origin.set(None);
-            cancel_moved.set(false);
-            return;
-        }
-        dispatch_pointer(
-            ProviderDispatch {
-                area: &cancel_area,
-                project: &cancel_project,
-                player_state: &cancel_player,
-                selection_state: &cancel_selection,
-                preview_focus: &cancel_focus,
-                state: &cancel_state,
-                controller: &cancel_controller,
-            },
-            PointerEvent::Cancel,
-        );
-        cancel_button.set(0);
-        cancel_origin.set(None);
-        cancel_moved.set(false);
-        cancel_area.set_cursor_from_name(None);
-    });
+            let mut samples = pointer_backlog(source);
+            if sequence_origin.get().is_some_and(|origin| {
+                samples
+                    .iter()
+                    .chain(std::iter::once(&input.sample))
+                    .any(|sample| {
+                        pointer_sample_changed(
+                            &area,
+                            *sample,
+                            origin,
+                            sequence_inspect.get() && !sequence_moved.get(),
+                        )
+                    })
+            }) {
+                sequence_moved.set(true);
+            }
+            let dispatch = ProviderDispatch {
+                area: &area,
+                project: &project,
+                player_state: &player_state,
+                selection_state: &selection_state,
+                preview_focus: &preview_focus,
+                state: &state,
+            };
+            let was_guide = state.borrow().surface.guides_active();
+            if !was_guide && !samples.is_empty() && sequence_moved.get() {
+                if samples.last().copied() != Some(input.sample) {
+                    samples.push(input.sample);
+                }
+                dispatch_pointer(
+                    dispatch,
+                    PointerEvent::Samples {
+                        input,
+                        samples: &samples,
+                    },
+                );
+            }
+            let provider_input = if !was_guide && sequence_inspect.get() && !sequence_moved.get() {
+                PointerInput {
+                    sample: sequence_origin
+                        .get()
+                        .expect("inspection press has an origin"),
+                    ..input
+                }
+            } else {
+                input
+            };
+            dispatch_pointer(dispatch, PointerEvent::End(provider_input));
+            if !was_guide
+                && sequence_button.get() == 1
+                && !sequence_moved.get()
+                && input.modifiers == Modifiers::NONE
+            {
+                sanim_inspector::inspect(dispatch, input.sample.position);
+            }
+            sequence_button.set(0);
+            sequence_origin.set(None);
+            sequence_moved.set(false);
+            area.set_cursor_from_name(None);
+        });
+    }
+    {
+        let area = area.clone();
+        let project = project.clone();
+        let player_state = player_state.clone();
+        let selection_state = selection_state.clone();
+        let preview_focus = preview_focus.clone();
+        let state = state.clone();
+        pointer.connect_cancel(move |_, _| {
+            dispatch_pointer(
+                ProviderDispatch {
+                    area: &area,
+                    project: &project,
+                    player_state: &player_state,
+                    selection_state: &selection_state,
+                    preview_focus: &preview_focus,
+                    state: &state,
+                },
+                PointerEvent::Cancel,
+            );
+            sequence_button.set(0);
+            sequence_origin.set(None);
+            sequence_moved.set(false);
+            area.set_cursor_from_name(None);
+        });
+    }
     area.add_controller(pointer);
 
     let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
-    let scroll_area = area.clone();
-    let scroll_project = project.clone();
-    let scroll_player = player_state.clone();
-    let scroll_selection = selection_state.clone();
-    let scroll_focus = preview_focus.clone();
-    let scroll_state = state.clone();
-    let scroll_controller = controller.clone();
-    scroll.connect_scroll(move |source, dx, dy| {
-        let position = source
-            .current_event()
-            .and_then(|event| event.position())
-            .map_or_else(
-                || {
-                    GlamVec2::new(
-                        scroll_area.width() as f32 * 0.5,
-                        scroll_area.height() as f32 * 0.5,
-                    )
+    {
+        let area = area.clone();
+        let project = project.clone();
+        let player_state = player_state.clone();
+        let selection_state = selection_state.clone();
+        let preview_focus = preview_focus.clone();
+        let state = state.clone();
+        scroll.connect_scroll(move |source, dx, dy| {
+            let position = source
+                .current_event()
+                .and_then(|event| event.position())
+                .map_or_else(
+                    || GlamVec2::new(area.width() as f32 * 0.5, area.height() as f32 * 0.5),
+                    |(x, y)| {
+                        let native = area.native().expect("preview must have a native surface");
+                        let (offset_x, offset_y) = native.surface_transform();
+                        let native_widget = native
+                            .dynamic_cast::<gtk::Widget>()
+                            .expect("native surface must be a widget");
+                        native_widget
+                            .compute_point(
+                                &area,
+                                &gtk::graphene::Point::new(
+                                    (x - offset_x) as f32,
+                                    (y - offset_y) as f32,
+                                ),
+                            )
+                            .map(|point| GlamVec2::new(point.x(), point.y()))
+                            .expect("preview must share its native coordinate space")
+                    },
+                );
+            let delta = shrimply_preview_provider_skia::math::preview_scroll_delta(
+                GlamVec2::new(dx as f32, dy as f32),
+                source.unit() == gdk::ScrollUnit::Surface,
+                state.borrow().zoom_pan_enabled,
+            );
+            let response = dispatch_pointer(
+                ProviderDispatch {
+                    area: &area,
+                    project: &project,
+                    player_state: &player_state,
+                    selection_state: &selection_state,
+                    preview_focus: &preview_focus,
+                    state: &state,
                 },
-                |(x, y)| {
-                    let native = scroll_area
-                        .native()
-                        .expect("preview must have a native surface");
-                    let (offset_x, offset_y) = native.surface_transform();
-                    let native_widget = native
-                        .dynamic_cast::<gtk::Widget>()
-                        .expect("native surface must be a widget");
-                    native_widget
-                        .compute_point(
-                            &scroll_area,
-                            &gtk::graphene::Point::new(
-                                (x - offset_x) as f32,
-                                (y - offset_y) as f32,
-                            ),
-                        )
-                        .map(|point| GlamVec2::new(point.x(), point.y()))
-                        .expect("preview must share its native coordinate space")
+                PointerEvent::Scroll {
+                    input: pointer_input(source, position, 0),
+                    delta,
                 },
             );
-        let delta = shrimply_preview_provider_skia::math::preview_scroll_delta(
-            GlamVec2::new(dx as f32, dy as f32),
-            source.unit() == gdk::ScrollUnit::Surface,
-            scroll_state.borrow().zoom_pan_enabled,
-        );
-        let response = dispatch_pointer(
-            ProviderDispatch {
-                area: &scroll_area,
-                project: &scroll_project,
-                player_state: &scroll_player,
-                selection_state: &scroll_selection,
-                preview_focus: &scroll_focus,
-                state: &scroll_state,
-                controller: &scroll_controller,
-            },
-            PointerEvent::Scroll {
-                input: pointer_input(source, position, 0),
-                delta,
-            },
-        );
-        if response.handled {
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
+            if response.handled {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+    }
     area.add_controller(scroll);
 
     let key = gtk::EventControllerKey::new();
-    let key_area = area.clone();
-    let key_project = project.clone();
-    let key_player = player_state.clone();
-    let key_selection = selection_state.clone();
-    let key_focus = preview_focus.clone();
-    let key_state = state.clone();
-    let key_controller = controller.clone();
-    key.connect_key_pressed(move |_, key, _, modifiers| {
-        let response = dispatch_keyboard(
-            ProviderDispatch {
-                area: &key_area,
-                project: &key_project,
-                player_state: &key_player,
-                selection_state: &key_selection,
-                preview_focus: &key_focus,
-                state: &key_state,
-                controller: &key_controller,
-            },
-            keyboard_event(key, KeyState::Pressed, modifiers),
-        );
-        if response.handled {
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
-    let release_area = area.clone();
-    let release_project = project;
-    let release_player = player_state;
-    let release_selection = selection_state;
-    let release_focus = preview_focus;
-    let release_state = state;
-    let release_controller = controller;
-    key.connect_key_released(move |_, key, _, modifiers| {
-        dispatch_keyboard(
-            ProviderDispatch {
-                area: &release_area,
-                project: &release_project,
-                player_state: &release_player,
-                selection_state: &release_selection,
-                preview_focus: &release_focus,
-                state: &release_state,
-                controller: &release_controller,
-            },
-            keyboard_event(key, KeyState::Released, modifiers),
-        );
-    });
+    {
+        let area = area.clone();
+        let project = project.clone();
+        let player_state = player_state.clone();
+        let selection_state = selection_state.clone();
+        let preview_focus = preview_focus.clone();
+        let state = state.clone();
+        key.connect_key_pressed(move |_, key, _, modifiers| {
+            let response = dispatch_keyboard(
+                ProviderDispatch {
+                    area: &area,
+                    project: &project,
+                    player_state: &player_state,
+                    selection_state: &selection_state,
+                    preview_focus: &preview_focus,
+                    state: &state,
+                },
+                keyboard_event(key, KeyState::Pressed, modifiers),
+            );
+            if response.handled {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+    }
+    {
+        let area = area.clone();
+        key.connect_key_released(move |_, key, _, modifiers| {
+            dispatch_keyboard(
+                ProviderDispatch {
+                    area: &area,
+                    project: &project,
+                    player_state: &player_state,
+                    selection_state: &selection_state,
+                    preview_focus: &preview_focus,
+                    state: &state,
+                },
+                keyboard_event(key, KeyState::Released, modifiers),
+            );
+        });
+    }
     area.add_controller(key);
 }
 

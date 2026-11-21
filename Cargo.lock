@@ -7646,6 +7646,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.34.1",
  "shrimply-components-skia",
+ "shrimply-cross-ui-theme",
  "shrimply-drawing-skia",
  "shrimply-math-color",
  "shrimply-math-core",

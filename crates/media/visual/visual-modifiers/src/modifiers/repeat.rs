@@ -208,9 +208,9 @@ impl PreviewProvider for RepeatPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
-        let color = context.selection_color();
+        let color = preview::selection_color();
         let center = self.map.transform_point2(self.center());
         let step = self.map.transform_point2(self.step_point());
         let row = self.map.transform_point2(self.row_point());

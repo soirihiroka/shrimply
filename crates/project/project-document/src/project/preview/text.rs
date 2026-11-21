@@ -201,7 +201,7 @@ impl PreviewProvider for TextAppearanceHandler {
                 min: content_bounds.min - outline,
                 max: content_bounds.max + outline,
             },
-            context.selection_color(),
+            shrimply_preview_provider_skia::selection_color(),
         );
 
         let center = map.transform_point2(content_bounds.center());

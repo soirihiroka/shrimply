@@ -199,16 +199,12 @@ impl PreviewProvider for CropPreview {
     fn on_draw(
         &mut self,
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
-        context: &dyn PreviewContext,
+        _context: &dyn PreviewContext,
     ) {
-        preview::TransformBoxOverlay::new(
-            self.map,
-            self.rect(),
-            context.selection_color(),
-            context.selection_foreground_color(),
-        )
-        .with_resize_handles(true)
-        .draw(painter);
+        let color = preview::selection_color();
+        let rect = self.rect();
+        preview::draw_rect(painter, self.map, rect, color);
+        preview::draw_bounds_handles(painter, self.map, rect, color);
     }
     fn on_pointer(
         &mut self,

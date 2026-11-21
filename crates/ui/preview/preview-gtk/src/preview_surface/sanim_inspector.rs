@@ -69,15 +69,17 @@ impl Inspector {
         let points = selected
             .quad
             .map(|p| matrix.transform_point2(GlamVec2::from(p)));
-        let accent = shrimply_cross_ui_theme::current().accent_bg;
-        for index in 0..points.len() {
-            shrimply_preview_provider_skia::draw_control_line(
-                canvas,
-                points[index],
-                points[(index + 1) % points.len()],
-                accent,
-            );
-        }
+        let accent = shrimply_preview_provider_skia::selection_color();
+        shrimply_preview_provider_skia::with_control_outline(canvas, |canvas| {
+            for index in 0..points.len() {
+                shrimply_preview_provider_skia::draw_control_line(
+                    canvas,
+                    points[index],
+                    points[(index + 1) % points.len()],
+                    accent,
+                );
+            }
+        });
     }
 
     fn open(&self, area: &gtk::GLArea, point: GlamVec2) -> (u64, gtk::Box) {
@@ -190,7 +192,6 @@ pub(super) fn inspect(surface: ProviderDispatch<'_>, point: GlamVec2) {
     let (request, matrix) = {
         let project = surface.project.borrow();
         let state = surface.state.borrow();
-        let controller = surface.controller.borrow();
         let Some(address) =
             selection_state::focused_video_address(surface.selection_state, &project)
         else {
@@ -208,9 +209,12 @@ pub(super) fn inspect(surface: ProviderDispatch<'_>, point: GlamVec2) {
         }
         // Reuse editing geometry when available. A focused modifier such as
         // Rasterize need not have an editing provider to inspect its Sanim source.
-        let viewport = surface_viewport(surface.area, &project, &state);
-        let provider = controller.core.provider.as_ref().filter(|provider| {
-            !controller.core.context_invalidated
+        let viewport = state
+            .surface
+            .layout(&project, state.configuration(surface.area))
+            .viewport;
+        let provider = state.surface.provider().filter(|provider| {
+            !state.surface.context_invalidated()
                 && provider.project_revision == selected.revision
                 && provider.context.item_id == selected.item
                 && provider.context.timeline_position == selected.position
@@ -225,10 +229,12 @@ pub(super) fn inspect(surface: ProviderDispatch<'_>, point: GlamVec2) {
                 &project,
                 &address,
                 selected.position,
-                &state.audio_analysis,
-                &state.expression_cache,
-                viewport,
-                Some(&controller.core.extensions),
+                shrimply_preview_runtime_cuda::provider::GeometryPreparation {
+                    audio_analysis: state.surface.audio_analysis(),
+                    expression_cache: state.surface.expressions(),
+                    viewport,
+                    extensions: Some(state.surface.extensions()),
+                },
             );
             let Some(prepared) = fallback.as_ref() else {
                 let (_, content) = inspector.open(surface.area, point);
@@ -241,7 +247,7 @@ pub(super) fn inspect(surface: ProviderDispatch<'_>, point: GlamVec2) {
             (&prepared.evaluation, prepared.geometry, viewport)
         };
         {
-            let mut cache = state.expression_cache.borrow_mut();
+            let mut cache = state.surface.expressions().borrow_mut();
             if !crate::transform_eval::resolve_bool(&item.visibility, evaluation, &mut cache)
                 || crate::transform_eval::resolve_scalar(
                     &item.compositing.opacity,
@@ -304,7 +310,6 @@ pub(super) fn inspect(surface: ProviderDispatch<'_>, point: GlamVec2) {
     let selection = surface.selection_state.clone();
     let focus = surface.preview_focus.clone();
     let state = surface.state.clone();
-    let controller = surface.controller.clone();
     // Gio delivers completion to GTK; neither source files nor result channels are polled.
     glib::spawn_future_local(async move {
         let result = gtk::gio::spawn_blocking(move || receiver.recv())
@@ -327,7 +332,6 @@ pub(super) fn inspect(surface: ProviderDispatch<'_>, point: GlamVec2) {
             selection_state: &selection,
             preview_focus: &focus,
             state: &state,
-            controller: &controller,
         });
         if current.as_ref() != Some(&selected)
             || state.borrow().presentation
@@ -497,15 +501,18 @@ mod tests {
     #[test]
     fn sanim_inspector_geometry_survives_a_focused_rasterize_without_an_editing_provider() {
         let (project, address, viewport, modifier) = scene();
-        let expressions = RefCell::new(TransformExpressionCache::default());
+        let expressions = RefCell::new(crate::transform_eval::TransformExpressionCache::default());
+        let audio = FrameAudioAnalysis::default();
         let prepared = shrimply_preview_runtime_cuda::provider::prepare_geometry(
             &project,
             &address,
             Time::ZERO,
-            &FrameAudioAnalysis::default(),
-            &expressions,
-            viewport,
-            None,
+            shrimply_preview_runtime_cuda::provider::GeometryPreparation {
+                audio_analysis: &audio,
+                expression_cache: &expressions,
+                viewport,
+                extensions: None,
+            },
         )
         .expect("Sanim source geometry is independent of its modifier editing provider");
         let context = prepared.context(Time::ZERO, &expressions, viewport);
@@ -540,7 +547,8 @@ mod tests {
                 Project::regenerate_video_property_ids(&mut sibling);
                 project.video_tracks[0].items.push(sibling);
             }
-            let expressions = RefCell::new(TransformExpressionCache::default());
+            let expressions =
+                RefCell::new(crate::transform_eval::TransformExpressionCache::default());
             let audio = FrameAudioAnalysis::default();
             let started = std::time::Instant::now();
             for _ in 0..CLICKS {
@@ -549,10 +557,12 @@ mod tests {
                         &project,
                         &address,
                         Time::ZERO,
-                        &audio,
-                        &expressions,
-                        viewport,
-                        None,
+                        shrimply_preview_runtime_cuda::provider::GeometryPreparation {
+                            audio_analysis: &audio,
+                            expression_cache: &expressions,
+                            viewport,
+                            extensions: None,
+                        },
                     )
                     .unwrap(),
                 );

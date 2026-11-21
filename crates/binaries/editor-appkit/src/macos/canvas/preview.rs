@@ -1,8 +1,5 @@
 use super::*;
-use shrimply_preview_interaction_skia::controller::{Controller, PointerSequence};
-use shrimply_preview_interaction_skia::guides::{self, GuideCursor, GuideInput};
-use shrimply_preview_provider_skia::PreviewViewport;
-use shrimply_project_document::project::PreviewGuides;
+use shrimply_preview_interaction_skia::surface::Surface;
 
 pub(super) mod captions;
 mod context_menu;
@@ -10,26 +7,15 @@ mod input;
 
 pub struct State {
     pub renderer: shrimply_preview_render_metal::Renderer,
-    pub viewport: Option<PreviewViewport>,
-    pub navigation: shrimply_preview_interaction_skia::navigation::Navigation,
+    pub surface: Surface,
     pub guides_visible: bool,
     pub fullscreen: bool,
     pub caption_bottom_inset: f32,
-    pub guide_input: GuideInput,
-    pub edited_guides: Option<Box<PreviewGuides>>,
-    pub baseline_guides: Option<Box<PreviewGuides>>,
     pub guide_button: Option<Retained<objc2_app_kit::NSButton>>,
     pub loading_done: Option<Retained<objc2_app_kit::NSButton>>,
     pub loading_spinner: Option<Retained<objc2_app_kit::NSProgressIndicator>>,
     pub frame_rate_label: Option<Retained<objc2_app_kit::NSTextField>>,
     pub loading_indicator: shrimply_preview_provider_skia::playback::LoadingIndicator,
-    pub controller: Controller,
-    pub expressions: RefCell<shrimply_project_evaluation::TransformExpressionCache>,
-    pub audio_analysis: Option<(
-        u64,
-        shrimply_math_core::Time,
-        shrimply_project_evaluation::FrameAudioAnalysis,
-    )>,
     pub presented_frame: Option<u32>,
     pub cursor_hidden: bool,
     pub last_sample: Option<shrimply_preview_provider_skia::PointerSample>,
@@ -51,22 +37,15 @@ impl State {
             })));
         Self {
             renderer,
-            viewport: None,
-            navigation: Default::default(),
+            surface: Surface::default(),
             guides_visible: false,
             fullscreen: false,
             caption_bottom_inset: 0.0,
-            guide_input: GuideInput::default(),
-            edited_guides: None,
-            baseline_guides: None,
             guide_button: Some(guide_button),
             loading_done: Some(loading_done),
             loading_spinner: Some(loading_spinner),
             frame_rate_label: Some(frame_rate_label),
             loading_indicator: Default::default(),
-            controller: Controller::default(),
-            expressions: RefCell::default(),
-            audio_analysis: None,
             presented_frame: None,
             cursor_hidden: false,
             last_sample: None,
@@ -114,14 +93,7 @@ impl State {
         }
     }
 
-    pub fn sync_guides(&mut self, guides: &PreviewGuides, visible: bool) {
-        if self.guides_visible != visible
-            || self.baseline_guides.as_ref().is_some_and(|baseline| {
-                baseline.vertical != guides.vertical || baseline.horizontal != guides.horizontal
-            })
-        {
-            self.cancel_guides();
-        }
+    pub fn sync_guides(&mut self, visible: bool) {
         self.guides_visible = visible;
         if let Some(button) = &self.guide_button {
             super::super::layout::set_toggle_selected(
@@ -129,18 +101,6 @@ impl State {
                 visible,
                 super::super::layout::ToggleStyle::Solid,
             );
-        }
-    }
-
-    fn cancel_guides(&mut self) {
-        if self.guide_input.active() || self.edited_guides.is_some() {
-            objc2_app_kit::NSCursor::arrowCursor().set();
-        }
-        self.guide_input = GuideInput::default();
-        self.edited_guides = None;
-        self.baseline_guides = None;
-        if self.controller.sequence == PointerSequence::Guide {
-            self.controller.sequence = PointerSequence::Idle;
         }
     }
 }
@@ -224,15 +184,11 @@ impl CanvasView {
             }
             if let Some((id, revision, exclusion)) = preview.renderer.presented_frame()
                 && preview.presented_frame != Some(id)
-                && preview.controller.accept_base_frame(revision, exclusion)
+                && let Some((time, audio)) = preview.renderer.presented_audio()
+                && preview.surface.presented(revision, time, exclusion, audio)
             {
                 preview.presented_frame = Some(id);
-                let (time, audio) = preview
-                    .renderer
-                    .presented_audio()
-                    .expect("accepted frame has audio analysis");
-                preview.audio_analysis = Some((revision, time, audio.clone()));
-                preview.controller.context_invalidated = true;
+                preview.surface.invalidate();
                 self.ivars().surface_dirty.set(true);
             }
             preview.sync_loading(shrimply_project_document::project::scaled_time_delta(
@@ -251,105 +207,6 @@ impl CanvasView {
         result
     }
 
-    pub(super) fn preview_pointer_move(&self, point: glam::Vec2) {
-        let mut content = self.ivars().content.borrow_mut();
-        let Content::Preview(state) = &mut *content else {
-            return;
-        };
-        if state.navigation.active() {
-            return;
-        }
-        let Some(viewport) = state.viewport else {
-            return;
-        };
-        let project = self.ivars().session.project.borrow();
-        state.sync_guides(&project.preview_guides, state.guides_visible);
-        let mut guides = state
-            .edited_guides
-            .take()
-            .unwrap_or_else(|| project.preview_guides.clone());
-        state
-            .guide_input
-            .pointer_move(&mut guides, viewport, state.guides_visible, point);
-        if state.guide_input.active() {
-            state.edited_guides = Some(guides);
-            self.ivars().surface_dirty.set(true);
-        }
-        match state.guide_input.cursor() {
-            GuideCursor::Default => objc2_app_kit::NSCursor::arrowCursor().set(),
-            GuideCursor::ResizeHorizontal => {
-                objc2_app_kit::NSCursor::columnResizeCursorInDirections(
-                    objc2_app_kit::NSHorizontalDirections::All,
-                )
-                .set()
-            }
-            GuideCursor::ResizeVertical => objc2_app_kit::NSCursor::rowResizeCursorInDirections(
-                objc2_app_kit::NSVerticalDirections::All,
-            )
-            .set(),
-        }
-    }
-
-    pub(super) fn preview_pointer_down(&self, point: glam::Vec2) {
-        let mut content = self.ivars().content.borrow_mut();
-        let Content::Preview(state) = &mut *content else {
-            return;
-        };
-        if state.navigation.active() {
-            return;
-        }
-        let Some(viewport) = state.viewport else {
-            return;
-        };
-        let mut guides = self.ivars().session.project.borrow().preview_guides.clone();
-        let baseline = guides.clone();
-        if state
-            .guide_input
-            .pointer_press(&mut guides, viewport, state.guides_visible, point)
-        {
-            state.edited_guides = Some(guides);
-            state.baseline_guides = Some(baseline);
-            state.controller.sequence = PointerSequence::Guide;
-            self.ivars().surface_dirty.set(true);
-        }
-    }
-
-    pub(super) fn preview_pointer_up(&self, point: glam::Vec2) -> Result<(), String> {
-        self.preview_pointer_move(point);
-        let edited = {
-            let mut content = self.ivars().content.borrow_mut();
-            let Content::Preview(state) = &mut *content else {
-                return Ok(());
-            };
-            if state.navigation.active() {
-                return Ok(());
-            }
-            let Some(viewport) = state.viewport else {
-                return Ok(());
-            };
-            state.baseline_guides = None;
-            if state.controller.sequence == PointerSequence::Guide {
-                state.controller.sequence = PointerSequence::Idle;
-                state.controller.context_invalidated = true;
-            }
-            state.edited_guides.take().and_then(|mut guides| {
-                state
-                    .guide_input
-                    .pointer_release(&mut guides, viewport, point)
-                    .unwrap_or(false)
-                    .then_some(guides)
-            })
-        };
-        if let Some(guides) = edited {
-            let mut project = self.ivars().session.project.borrow().clone();
-            project.preview_guides = guides;
-            shrimply_project_document::project::commit_edit_checked(&project, "preview-guide")?;
-            *self.ivars().session.project.borrow_mut() = project;
-        }
-        objc2_app_kit::NSCursor::arrowCursor().set();
-        Ok(())
-    }
-
     pub(super) fn cancel_preview_pointer(&self) {
         self.finish_preview_pointer(false);
     }
@@ -361,33 +218,17 @@ impl CanvasView {
     fn finish_preview_pointer(&self, teardown: bool) {
         self.ivars().surface_dirty.set(true);
         let reset_cursor = matches!(&*self.ivars().content.borrow(), Content::Preview(state)
-            if state.navigation.active() || state.controller.provider.is_some() || state.guide_input.active() || state.cursor_hidden || state.caption_split_hover.is_some());
+            if !state.surface.is_idle() || state.surface.provider().is_some() || state.cursor_hidden || state.caption_split_hover.is_some());
         let response = if let Content::Preview(state) = &mut *self.ivars().content.borrow_mut() {
-            state.navigation.cancel();
-            state.cancel_guides();
             state.last_sample = None;
             state.caption_split_hover = None;
-            if state.controller.provider.is_some() {
-                let response = if teardown {
-                    state.controller.teardown(
-                        &mut self.ivars().session.project.borrow_mut(),
-                        &state.expressions,
-                    )
-                } else {
-                    state.controller.cancel(
-                        &mut self.ivars().session.project.borrow_mut(),
-                        &state.expressions,
-                    )
-                };
-                state.controller.base_exclusion = None;
-                state.renderer.set_exclusion(None);
-                Some(response)
-            } else {
-                if teardown {
-                    state.controller.sequence = PointerSequence::Idle;
-                }
-                None
+            let response = state
+                .surface
+                .cancel_with(&mut self.ivars().session.project.borrow_mut(), teardown);
+            if let Some(exclusion) = state.surface.exclusion_update() {
+                state.renderer.set_exclusion(exclusion);
             }
+            Some(response)
         } else {
             None
         };
@@ -422,9 +263,7 @@ impl CanvasView {
             self.ivars().surface_dirty.set(true);
         }
     }
-}
 
-impl CanvasView {
     pub fn poll_startup(&self) -> Result<shrimply_preview_render_metal::StartupStatus, String> {
         use shrimply_editor_state::player_state;
         use shrimply_preview_render_metal::StartupStatus;

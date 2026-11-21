@@ -1,24 +1,59 @@
-//! Toolkit-independent preview controls, guides, navigation and recorded overlay.
+//! Toolkit-independent preview lifecycle, controls, guides, navigation, and Skia overlay.
 use std::cell::RefCell;
 
 use glam::Vec2;
-use shrimply_components_skia::input::{TouchAction, TouchChange, TouchInput};
+use shrimply_components_skia::{
+    canvas::TimelinePainter,
+    input::{TouchAction, TouchChange, TouchInput},
+};
 pub use shrimply_paint_edit_skia::toolbar as paint_toolbar;
 pub use shrimply_preview_provider_skia::math::{pen_tilt, preview_scroll_delta};
 pub use shrimply_preview_provider_skia::{
-    Color, Key, KeyState, KeyboardEvent, Modifiers, PointerButton, PointerEvent, PointerInput,
-    PointerSample, PointerTool, PreviewRefresh, PreviewResponse, PreviewTarget, PreviewViewport,
-    Rect,
+    Color, Cursor, CursorUpdate, Key, KeyState, KeyboardEvent, Modifiers, PointerButton,
+    PointerEvent, PointerInput, PointerSample, PointerTool, PreviewExtensionKey, PreviewRefresh,
+    PreviewResponse, PreviewTarget, PreviewViewport, Rect,
 };
 use shrimply_project_document::project::{ItemAddress, PreviewGuides, Project, Time};
 use shrimply_project_evaluation::{FrameAudioAnalysis, TransformExpressionCache};
 
 use crate::{
-    controller::{self, Controller, PointerSequence, Preparation},
-    guides::{self, GuideInput},
+    captions::{self, CaptionAppearance},
+    controller::{self, Controller, PointerSequence, Preparation, PreparedProvider},
+    guides::{self, GuideCursor, GuideInput},
     navigation::Navigation,
-    overlay::{self, InteractionOverlay},
 };
+
+pub fn background_color(window_color: Color, fullscreen: bool) -> Color {
+    if fullscreen {
+        Color::BLACK
+    } else {
+        window_color
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct BackgroundAppearance {
+    pub content_rect: Rect,
+    pub clip_rect: Rect,
+    pub background: Color,
+    pub shadow_size: u32,
+    pub pixel_scale: f32,
+}
+
+pub fn draw_background(target: &skia_safe::Canvas, appearance: BackgroundAppearance) {
+    shrimply_preview_provider_skia::canvas::draw_background(
+        target,
+        shrimply_preview_provider_skia::canvas::Appearance {
+            content_rect: Rect::from_min_max(
+                appearance.content_rect.min.max(appearance.clip_rect.min),
+                appearance.content_rect.max.min(appearance.clip_rect.max),
+            ),
+            background: appearance.background,
+            shadow_size: appearance.shadow_size,
+            pixel_scale: appearance.pixel_scale,
+        },
+    );
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct Configuration {
@@ -41,6 +76,7 @@ impl Configuration {
             self.fullscreen,
         )
     }
+
     fn bounds(self) -> Rect {
         guides::bounds(
             self.size,
@@ -49,6 +85,15 @@ impl Configuration {
             self.fullscreen,
         )
     }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub struct Layout {
+    pub fit: PreviewViewport,
+    pub bounds: Rect,
+    pub viewport: PreviewViewport,
+    pub clip_rect: Rect,
+    pub surface_rect: Rect,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -104,6 +149,7 @@ pub struct Surface {
     stamp: Option<Stamp>,
     overlay: Option<Overlay>,
     committed: bool,
+    cursor: Cursor,
 }
 
 impl Surface {
@@ -141,6 +187,20 @@ impl Surface {
         result
     }
 
+    pub fn extension<T: 'static>(&self, key: PreviewExtensionKey) -> Option<&T> {
+        self.core.extension(key)
+    }
+
+    pub fn update_extension<T: 'static>(
+        &mut self,
+        key: PreviewExtensionKey,
+        update: impl FnOnce(&mut T),
+    ) -> bool {
+        self.synchronize_history();
+        self.stamp = None;
+        self.core.update_extension(key, update)
+    }
+
     fn synchronize_history(&mut self) {
         if self.core.synchronize_history() {
             // The model already belongs to another edit. Dropping these drafts must
@@ -151,6 +211,19 @@ impl Surface {
             self.stamp = None;
             self.overlay = None;
             self.committed = false;
+            self.cursor = Cursor::Default;
+        }
+    }
+
+    pub fn layout(&self, project: &Project, configuration: Configuration) -> Layout {
+        let fit = configuration.fit(project);
+        let bounds = configuration.bounds();
+        Layout {
+            fit,
+            bounds,
+            viewport: self.navigation.viewport(fit, bounds),
+            clip_rect: self.navigation.clip_rect(bounds, configuration.size),
+            surface_rect: Rect::from_min_size(Vec2::ZERO, configuration.size),
         }
     }
 
@@ -158,10 +231,71 @@ impl Surface {
         self.overlay.as_ref()
     }
 
+    pub fn provider(&self) -> Option<&PreparedProvider> {
+        self.core.provider.as_ref()
+    }
+
+    pub fn context_invalidated(&self) -> bool {
+        self.core.context_invalidated
+    }
+
+    pub fn audio_analysis(&self) -> &FrameAudioAnalysis {
+        &self.audio
+    }
+
+    pub fn expressions(&self) -> &RefCell<TransformExpressionCache> {
+        &self.expressions
+    }
+
+    pub fn extensions(
+        &self,
+    ) -> &std::collections::HashMap<PreviewExtensionKey, Box<dyn std::any::Any>> {
+        &self.core.extensions
+    }
+
     pub fn focus(&mut self, focus: Option<(ItemAddress, PreviewTarget)>) {
         if self.focused != focus {
             self.focused = focus;
-            self.core.context_invalidated = true;
+            self.invalidate();
+        }
+    }
+
+    pub fn invalidate(&mut self) {
+        self.core.context_invalidated = true;
+        self.core.frame_pending = true;
+        self.stamp = None;
+    }
+
+    pub fn take_frame_pending(&mut self) -> bool {
+        std::mem::take(&mut self.core.frame_pending)
+    }
+
+    pub fn navigation_active(&self) -> bool {
+        self.navigation.active()
+    }
+
+    pub fn guides_active(&self) -> bool {
+        self.guides.active()
+    }
+
+    pub fn guide_cursor(&self) -> GuideCursor {
+        self.guides.cursor()
+    }
+
+    pub fn is_idle(&self) -> bool {
+        self.core.sequence == PointerSequence::Idle
+            && !self.guides.active()
+            && !self.navigation.active()
+    }
+
+    pub fn cursor(&self) -> Cursor {
+        if self.navigation.active() {
+            return Cursor::Grabbing;
+        }
+        match self.guides.cursor() {
+            GuideCursor::ResizeHorizontal => Cursor::ResizeHorizontal,
+            GuideCursor::ResizeVertical => Cursor::ResizeVertical,
+            GuideCursor::Default => self.cursor,
         }
     }
 
@@ -196,6 +330,54 @@ impl Surface {
             .map_or(clock.position, |(_, position)| position)
     }
 
+    pub fn ensure_readonly(
+        &mut self,
+        project: &Project,
+        selected: Option<&ItemAddress>,
+        clock: Clock,
+        configuration: Configuration,
+    ) -> Result<bool, String> {
+        self.synchronize_history();
+        if !configuration.size.is_finite() || configuration.size.min_element() <= 0.0 {
+            return Err("Preview surface is empty".into());
+        }
+        if self
+            .focused
+            .as_ref()
+            .is_some_and(|(address, _)| Some(address) != selected)
+        {
+            self.focused = None;
+        }
+        if !configuration.navigation_enabled {
+            self.navigation.reset();
+        }
+        let selection = controller::selection(
+            project,
+            selected,
+            self.focused
+                .as_ref()
+                .map(|(address, target)| (address, *target)),
+        );
+        let viewport = self.layout(project, configuration).viewport;
+        let position = self.displayed_position(clock);
+        self.core.ensure(
+            project,
+            selection,
+            position,
+            Preparation {
+                project_revision: clock.revision,
+                viewport,
+                audio_analysis: &self.audio,
+                expression_cache: &self.expressions,
+                snap_enabled: configuration.snap_enabled,
+                snap_radius_px: configuration.snap_radius,
+                guides: configuration
+                    .guides_visible
+                    .then_some(project.preview_guides.as_ref()),
+            },
+        )
+    }
+
     fn ensure(
         &mut self,
         project: &mut Project,
@@ -220,43 +402,26 @@ impl Surface {
             self.focused
                 .as_ref()
                 .map(|(address, target)| (address, *target)),
-        );
-        let selected = selection.map(|(address, target)| (address.clone(), target));
+        )
+        .map(|(address, target)| (address.clone(), target));
         let changed = self.stamp.as_ref().is_some_and(|stamp| {
-            stamp.selected != selected || stamp.configuration != configuration
+            stamp.selected != selection || stamp.configuration != configuration
         });
         let response = if changed && self.core.sequence != PointerSequence::Idle {
-            self.cancel_pointer(project)
+            self.cancel_pointer(project, true)
         } else {
             PreviewResponse::IGNORED
         };
-        if !configuration.navigation_enabled {
-            self.navigation.reset();
-        }
-        let viewport = self
-            .navigation
-            .viewport(configuration.fit(project), configuration.bounds());
-        let position = self.displayed_position(clock);
-        self.core.ensure(
-            project,
-            selected
-                .as_ref()
-                .map(|(address, target)| (address, *target)),
-            position,
-            Preparation {
-                project_revision: clock.revision,
-                viewport,
-                audio_analysis: &self.audio,
-                expression_cache: &self.expressions,
-                snap_enabled: configuration.snap_enabled,
-                snap_radius_px: configuration.snap_radius,
-                guides: configuration
-                    .guides_visible
-                    .then_some(project.preview_guides.as_ref()),
-                camera_sampler: crate::provider::sample_camera,
-            },
-        )?;
+        self.ensure_readonly(project, selected, clock, configuration)?;
         Ok(response)
+    }
+
+    fn apply_cursor(&mut self, update: CursorUpdate) {
+        match update {
+            CursorUpdate::Keep => {}
+            CursorUpdate::Set(cursor) => self.cursor = cursor,
+            CursorUpdate::Clear => self.cursor = Cursor::Default,
+        }
     }
 
     pub fn pointer(
@@ -268,53 +433,87 @@ impl Surface {
         event: PointerEvent<'_>,
     ) -> Result<PreviewResponse, String> {
         let mut response = self.ensure(project, selected, clock, configuration)?;
-        let fit = configuration.fit(project);
-        let bounds = configuration.bounds();
+        let layout = self.layout(project, configuration);
         if let Some(navigation) = self.navigation.pointer(
-            fit,
-            bounds,
+            layout.fit,
+            layout.bounds,
             event,
             configuration.navigation_enabled,
-            self.core.sequence != PointerSequence::Idle,
+            self.core.sequence != PointerSequence::Idle || self.guides.active(),
         ) {
             self.core.context_invalidated |= navigation.redraw;
             self.core.frame_pending |= navigation.redraw;
+            self.apply_cursor(navigation.cursor);
             response.merge(navigation);
             return Ok(response);
         }
-        let viewport = self.navigation.viewport(fit, bounds);
+        if matches!(event, PointerEvent::Leave) {
+            self.guides.pointer_leave();
+            self.cursor = Cursor::Default;
+            if self.core.sequence == PointerSequence::Idle {
+                let provider = self.core.pointer(project, &self.expressions, event);
+                response.merge(provider);
+            }
+            response.cursor = CursorUpdate::Clear;
+            return Ok(response);
+        }
         let guide = match event {
             PointerEvent::Begin(input) if input.button == PointerButton::Primary => {
                 self.guides.pointer_press(
                     &mut project.preview_guides,
-                    viewport,
+                    layout.viewport,
                     configuration.guides_visible,
                     input.sample.position,
                 )
             }
-            PointerEvent::Hover(input) | PointerEvent::Samples { input, .. } => {
-                let active = self.guides.active();
+            PointerEvent::Hover(input) => {
                 self.guides.pointer_move(
                     &mut project.preview_guides,
-                    viewport,
+                    layout.viewport,
                     configuration.guides_visible,
                     input.sample.position,
                 );
+                if self.guides.active() {
+                    true
+                } else if let Some(cursor) = guide_cursor(self.guides.cursor()) {
+                    self.cursor = cursor;
+                    response.merge(PreviewResponse {
+                        handled: true,
+                        cursor: CursorUpdate::Set(cursor),
+                        ..PreviewResponse::IGNORED
+                    });
+                    return Ok(response);
+                } else {
+                    false
+                }
+            }
+            PointerEvent::Samples { input, .. } => {
+                let active = self.guides.active();
+                if active {
+                    self.guides.pointer_move(
+                        &mut project.preview_guides,
+                        layout.viewport,
+                        configuration.guides_visible,
+                        input.sample.position,
+                    );
+                }
                 active
             }
             PointerEvent::End(input) => {
                 let changed = self.guides.pointer_release(
                     &mut project.preview_guides,
-                    viewport,
+                    layout.viewport,
                     input.sample.position,
                 );
                 if changed == Some(true) {
                     guides::commit_edit(project);
                     self.committed = true;
                     self.core.project_committed(clock.revision);
+                    self.core.context_invalidated = true;
                 }
                 changed.is_some()
             }
+            PointerEvent::Cancel => self.guides.pointer_cancel(&mut project.preview_guides),
             _ => false,
         };
         if guide {
@@ -324,14 +523,19 @@ impl Surface {
                 PointerSequence::Idle
             };
             self.core.frame_pending = true;
-            response.merge(PreviewResponse::handled().redraw());
+            let cursor =
+                guide_cursor(self.guides.cursor()).map_or(CursorUpdate::Clear, CursorUpdate::Set);
+            self.apply_cursor(cursor);
+            response.merge(PreviewResponse {
+                handled: true,
+                redraw: true,
+                cursor,
+                edit: Default::default(),
+            });
             return Ok(response);
         }
         if let PointerEvent::Begin(input) = event
-            && !self
-                .navigation
-                .clip_rect(bounds, configuration.size)
-                .contains(input.sample.position)
+            && !layout.clip_rect.contains(input.sample.position)
         {
             return Ok(response);
         }
@@ -341,6 +545,7 @@ impl Surface {
             self.core.project_committed(clock.revision);
             self.committed = true;
         }
+        self.apply_cursor(provider.cursor);
         response.merge(provider);
         Ok(response)
     }
@@ -354,8 +559,14 @@ impl Surface {
         event: KeyboardEvent,
     ) -> Result<PreviewResponse, String> {
         let mut response = self.ensure(project, selected, clock, configuration)?;
+        if event.key == Key::Escape && self.guides.active() {
+            let canceled = self.cancel_pointer(project, true);
+            response.merge(canceled);
+            return Ok(response);
+        }
         if let Some(navigation) = self.navigation.keyboard(event) {
             self.core.frame_pending |= navigation.redraw;
+            self.apply_cursor(navigation.cursor);
             response.merge(navigation);
             return Ok(response);
         }
@@ -365,6 +576,7 @@ impl Surface {
             self.core.project_committed(clock.revision);
             self.committed = true;
         }
+        self.apply_cursor(keyboard.cursor);
         response.merge(keyboard);
         Ok(response)
     }
@@ -413,9 +625,9 @@ impl Surface {
                     configuration,
                     PointerEvent::End(pointer(point)),
                 )?),
-                TouchAction::Cancel(_) => output.response.merge(self.cancel_pointer(project)),
+                TouchAction::Cancel(_) => output.response.merge(self.cancel_pointer(project, true)),
                 TouchAction::History { redo } => {
-                    output.response.merge(self.cancel_pointer(project));
+                    output.response.merge(self.cancel_pointer(project, true));
                     output.history = Some(redo);
                 }
                 TouchAction::Transform {
@@ -432,8 +644,7 @@ impl Surface {
                             scale,
                         )
                     {
-                        self.core.context_invalidated = true;
-                        self.core.frame_pending = true;
+                        self.invalidate();
                         output.response.redraw = true;
                     }
                 }
@@ -447,31 +658,31 @@ impl Surface {
         self.touch.poll_long_press()
     }
 
-    fn cancel_pointer(&mut self, project: &mut Project) -> PreviewResponse {
-        let mut response = self.core.teardown(project, &self.expressions);
+    fn cancel_pointer(&mut self, project: &mut Project, teardown: bool) -> PreviewResponse {
+        let mut response = if teardown {
+            self.core.teardown(project, &self.expressions)
+        } else {
+            self.core.cancel(project, &self.expressions)
+        };
         response.redraw |= self.guides.pointer_cancel(&mut project.preview_guides);
         self.navigation.cancel();
+        self.cursor = Cursor::Default;
         self.core.frame_pending |= response.redraw;
         response
     }
 
     pub fn cancel(&mut self, project: &mut Project) -> PreviewResponse {
+        self.cancel_with(project, true)
+    }
+
+    pub fn cancel_with(&mut self, project: &mut Project, teardown: bool) -> PreviewResponse {
         self.synchronize_history();
         self.touch.cancel();
-        self.cancel_pointer(project)
+        self.cancel_pointer(project, teardown)
     }
 
     pub fn exclusion_update(&mut self) -> Option<Option<uuid::Uuid>> {
-        let exclusion = self
-            .core
-            .provider
-            .as_ref()
-            .and_then(|provider| provider.provider.base_frame_exclusion());
-        if exclusion == self.core.base_exclusion {
-            return None;
-        }
-        self.core.base_exclusion = exclusion;
-        Some(exclusion)
+        self.core.exclusion_update()
     }
 
     pub fn take_committed(&mut self) -> bool {
@@ -487,13 +698,43 @@ impl Surface {
     pub fn take_live_base_request(&mut self) -> bool {
         self.core.take_live_base_request()
     }
+
     pub fn live_base_requested(&mut self, revision: u64) {
         self.core.live_base_requested(revision);
     }
+
     pub fn project_committed(&mut self, revision: u64) {
         self.core.project_committed(revision);
     }
 
+    /// Live Skia overlay draw used directly by GTK, Qt, and AppKit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_overlay(
+        &mut self,
+        canvas: &skia_safe::Canvas,
+        project: &Project,
+        selected: Option<&ItemAddress>,
+        clock: Clock,
+        configuration: Configuration,
+        captions: CaptionAppearance,
+        caption_split_hover: Option<(&ItemAddress, Vec2)>,
+        after_controls: impl FnOnce(&skia_safe::Canvas),
+    ) -> Result<(), String> {
+        self.ensure_readonly(project, selected, clock, configuration)?;
+        let layout = self.layout(project, configuration);
+        let accent = shrimply_preview_provider_skia::selection_color();
+        captions::draw_captions(
+            &TimelinePainter::new(canvas),
+            project,
+            self.displayed_position(clock),
+            captions,
+            caption_split_hover.map(|(address, point)| (address, point, accent)),
+        );
+        self.draw_interaction(canvas, project, configuration, layout, after_controls);
+        Ok(())
+    }
+
+    /// Off-thread recorded Skia overlay used by Android's separate Vulkan render thread.
     pub fn prepare_overlay(
         &mut self,
         project: &mut Project,
@@ -502,12 +743,7 @@ impl Surface {
         configuration: Configuration,
     ) -> Result<PreviewResponse, String> {
         let response = self.ensure(project, selected, clock, configuration)?;
-        let viewport = self
-            .navigation
-            .viewport(configuration.fit(project), configuration.bounds());
-        let clip = self
-            .navigation
-            .clip_rect(configuration.bounds(), configuration.size);
+        let layout = self.layout(project, configuration);
         let selection = controller::selection(
             project,
             selected,
@@ -529,8 +765,8 @@ impl Surface {
             }),
             selected: selection,
             configuration,
-            viewport,
-            clip,
+            viewport: layout.viewport,
+            clip: layout.clip_rect,
             guides: project.preview_guides.as_ref().clone(),
             theme_colors: {
                 let theme = shrimply_cross_ui_theme::current();
@@ -551,31 +787,52 @@ impl Surface {
             skia_safe::Rect::from_wh(configuration.size.x, configuration.size.y),
             false,
         );
-        overlay::draw_interaction(
-            canvas,
-            &InteractionOverlay {
-                viewport,
-                clip_rect: clip,
-                surface_rect: Rect::from_min_size(Vec2::ZERO, configuration.size),
-                guides: configuration
-                    .guides_visible
-                    .then_some(project.preview_guides.as_ref()),
-            },
-            &mut self.core,
-            &self.expressions,
-            |_| {},
-        );
+        self.draw_interaction(canvas, project, configuration, layout, |_| {});
         let picture = recorder
             .finish_recording_as_picture(None)
             .expect("record shared preview controls");
         self.overlay = Some(Overlay {
             picture,
-            viewport,
-            clip,
+            viewport: layout.viewport,
+            clip: layout.clip_rect,
             size: configuration.size,
         });
         self.stamp = Some(stamp);
         self.core.frame_pending = false;
         Ok(response)
+    }
+
+    fn draw_interaction(
+        &mut self,
+        canvas: &skia_safe::Canvas,
+        project: &Project,
+        configuration: Configuration,
+        layout: Layout,
+        after_controls: impl FnOnce(&skia_safe::Canvas),
+    ) {
+        if configuration.guides_visible {
+            guides::draw(
+                &TimelinePainter::new(canvas),
+                &project.preview_guides,
+                layout.viewport,
+                layout.surface_rect,
+            );
+        }
+        canvas.save();
+        canvas.clip_rect(skia_safe::Rect::from(layout.clip_rect), None, false);
+        if let Some(retiring) = self.core.retiring_provider.as_mut() {
+            retiring.context.viewport = layout.viewport;
+        }
+        self.core.draw(canvas, &self.expressions);
+        after_controls(canvas);
+        canvas.restore();
+    }
+}
+
+fn guide_cursor(cursor: GuideCursor) -> Option<Cursor> {
+    match cursor {
+        GuideCursor::Default => None,
+        GuideCursor::ResizeHorizontal => Some(Cursor::ResizeHorizontal),
+        GuideCursor::ResizeVertical => Some(Cursor::ResizeVertical),
     }
 }

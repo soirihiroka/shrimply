@@ -247,18 +247,14 @@ impl PreviewProvider for TransformPreview {
         painter: &shrimply_preview_provider_skia::PreviewCanvas,
         context: &dyn PreviewContext,
     ) {
+        let color = preview::selection_color();
         let bounds = self.bounds();
-        let rotation = self.rotation_points(context.viewport().surface_rect);
-        preview::TransformBoxOverlay::new(
-            self.screen_map,
-            bounds,
-            context.selection_color(),
-            context.selection_foreground_color(),
-        )
-        .with_resize_handles(true)
-        .with_rotation(Some(rotation))
-        .with_anchor(Some(self.anchor_screen()))
-        .draw(painter);
+        let (stem, rotation) = self.rotation_points(context.viewport().surface_rect);
+        preview::draw_rect(painter, self.screen_map, bounds, color);
+        preview::draw_line(painter, stem, rotation, color);
+        preview::draw_bounds_handles(painter, self.screen_map, bounds, color);
+        preview::draw_rotation_handle(painter, rotation);
+        preview::draw_anchor(painter, self.anchor_screen());
     }
 
     fn on_pointer(

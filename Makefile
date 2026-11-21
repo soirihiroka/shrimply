@@ -197,7 +197,7 @@ ifeq ($(HOST_OS),Linux)
 .PHONY: linux-ffmpeg
 linux-ffmpeg:
 ifeq ($(strip $(SHRIMPLY_FFMPEG_PREFIX)),)
-	uv run --no-project --python 3.13 python packaging/linux-ffmpeg.py "$(LINUX_FFMPEG_CACHE)"
+	PKG_CONFIG="$(PKG_CONFIG)" PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" uv run --no-project --python 3.13 python packaging/linux-ffmpeg.py "$(LINUX_FFMPEG_CACHE)"
 else
 	@test -f "$(FFMPEG_PREFIX)/include/libavcodec/avcodec.h" && test -f "$(FFMPEG_PREFIX)/lib/libavcodec.so" || { echo "Missing packaged FFmpeg under $(FFMPEG_PREFIX)" >&2; exit 1; }
 	@$(HOST_MEDIA_ENV) "$(FFMPEG_PREFIX)/bin/ffmpeg" -version | awk -v required="$$(cat external/ffmpeg/RELEASE)" 'NR == 1 { actual = $$3; sub(/^n/, "", actual) } END { if (actual != required || !required) { print "Expected project FFmpeg " required ", found " actual > "/dev/stderr"; exit 1 } }'

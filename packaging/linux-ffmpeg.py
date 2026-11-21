@@ -13,14 +13,16 @@ from native_sources import ffmpeg_revision, ffmpeg_source
 def main():
     cache = Path(sys.argv[1]).resolve()
     cache.mkdir(parents=True, exist_ok=True)
+    pkg_config = os.environ.get("PKG_CONFIG") or "/usr/bin/pkg-config"
     options = [
+        f"--pkg-config={pkg_config}",
         "--enable-shared", "--disable-static", "--disable-doc", "--disable-debug", "--disable-ffplay",
         "--enable-ffnvcodec", "--enable-nvdec", "--enable-nvenc", "--enable-vaapi", "--enable-libdrm",
         "--enable-vulkan", "--enable-gnutls", "--enable-libopus", "--enable-libmp3lame",
         "--enable-libvorbis", "--enable-libdav1d", "--enable-gpl", "--enable-libx264", "--enable-libx265",
         "--enable-nonfree", "--enable-libfdk-aac",
     ]
-    build_env = {k: os.environ.get(k) for k in ("CC", "CFLAGS", "CPPFLAGS", "LDFLAGS", "PKG_CONFIG_PATH")}
+    build_env = {k: os.environ.get(k) for k in ("CC", "CFLAGS", "CPPFLAGS", "LDFLAGS", "PKG_CONFIG", "PKG_CONFIG_PATH")}
     key = hashlib.sha256(repr((ffmpeg_revision(), options, build_env, str(cache))).encode()).hexdigest()
     prefix = cache / key
     with (cache / ".build.lock").open("a") as lock:

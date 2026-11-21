@@ -3,16 +3,24 @@ use super::*;
 pub(super) fn attach_frame_scheduler(
     area: &gtk::GLArea,
     player_state: SharedPlayerState,
-    controller: Rc<RefCell<PreviewControllerState>>,
+    state: Rc<RefCell<VideoSurfaceState>>,
 ) {
     area.add_tick_callback(move |area, _| {
-        let mut controller_state = controller.borrow_mut();
-        let live_base_pending = controller_state.core.take_live_base_request();
-        let frame_pending = std::mem::take(&mut controller_state.core.frame_pending);
-        if !frame_pending && !live_base_pending {
-            return glib::ControlFlow::Continue;
+        let (live_base_pending, frame_pending, context_point) = {
+            let mut state = state.borrow_mut();
+            (
+                state.surface.take_live_base_request(),
+                state.surface.take_frame_pending(),
+                state.surface.poll_context(),
+            )
+        };
+        if let Some(point) = context_point {
+            area.activate_action(
+                "preview-context.open",
+                Some(&(f64::from(point.x), f64::from(point.y), true).to_variant()),
+            )
+            .expect("preview context menu is installed");
         }
-        drop(controller_state);
         if live_base_pending {
             player_state::refresh_project(
                 &player_state,
@@ -22,9 +30,10 @@ pub(super) fn attach_frame_scheduler(
                     ..Default::default()
                 },
             );
-            let revision = player_state::snapshot(&player_state).revision;
-            let mut controller = controller.borrow_mut();
-            controller.core.live_base_requested(revision);
+            state
+                .borrow_mut()
+                .surface
+                .live_base_requested(player_state::snapshot(&player_state).revision);
         }
         if frame_pending {
             area.queue_render();
@@ -35,21 +44,16 @@ pub(super) fn attach_frame_scheduler(
 
 pub(super) fn apply_response(
     area: &gtk::GLArea,
-    project: &Rc<RefCell<Project>>,
     player_state: &SharedPlayerState,
+    state: &Rc<RefCell<VideoSurfaceState>>,
     response: PreviewResponse,
-    commit_name: &'static str,
 ) {
     match response.cursor {
         CursorUpdate::Keep => {}
         CursorUpdate::Set(value) => area.set_cursor_from_name(Some(cursor_name(value))),
         CursorUpdate::Clear => area.set_cursor_from_name(None),
     }
-    shrimply_preview_runtime_cuda::controller::commit_response(
-        &project.borrow(),
-        response,
-        commit_name,
-    );
+    let _ = state.borrow_mut().surface.take_committed();
     if response.edit.refresh != PreviewRefresh::NONE {
         player_state::refresh_project(
             player_state,
@@ -60,6 +64,15 @@ pub(super) fn apply_response(
                 ..Default::default()
             },
         );
+    }
+    if response.edit.commits() {
+        state
+            .borrow_mut()
+            .surface
+            .project_committed(player_state::snapshot(player_state).revision);
+    }
+    if response.redraw {
+        area.queue_render();
     }
 }
 

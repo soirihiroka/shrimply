@@ -1,7 +1,6 @@
 use std::{any::Any, cell::RefCell, collections::HashMap};
 
 use glam::Vec2;
-use shrimply_math_color::Color;
 use shrimply_preview_provider_skia::{
     PreviewBuilder, PreviewContext, PreviewExtensionKey, PreviewItemGeometry, PreviewTarget,
     PreviewViewport, SnapScene,
@@ -21,16 +20,12 @@ pub struct SnapPreparation<'a> {
     pub radius_px: f32,
 }
 
-pub type CameraSampler =
-    fn(uuid::Uuid, &shrimply_3dgs_core::TrackingCameraSource, Time) -> Option<TrackedCameraPreview>;
-
 #[derive(Clone, Copy)]
 pub struct GeometryPreparation<'a> {
     pub audio_analysis: &'a shrimply_project_evaluation::FrameAudioAnalysis,
     pub expression_cache: &'a RefCell<TransformExpressionCache>,
     pub viewport: PreviewViewport,
     pub extensions: Option<&'a HashMap<PreviewExtensionKey, Box<dyn Any>>>,
-    pub camera_sampler: CameraSampler,
 }
 
 pub struct PreparedGeometry {
@@ -73,7 +68,6 @@ pub fn prepare_geometry(
         expression_cache,
         viewport,
         extensions,
-        camera_sampler,
     } = preparation;
     let item = project.video_item(address)?;
     let sequence_position = project.timeline_time_to_sequence(&address.track(), position)?;
@@ -92,7 +86,7 @@ pub fn prepare_geometry(
                     .flatten()
                     .any(|track| track.id == source.track_id)
         })
-        .and_then(|source| camera_sampler(item.id, source, evaluation.local_time()));
+        .and_then(|source| sample_camera(item.id, source, evaluation.local_time()));
     let context = BuildContext::new(
         &evaluation,
         position,
@@ -292,14 +286,6 @@ impl PreviewContext for BuildContext<'_> {
 
     fn viewport(&self) -> PreviewViewport {
         self.viewport
-    }
-
-    fn selection_color(&self) -> Color {
-        shrimply_cross_ui_theme::current().accent_bg
-    }
-
-    fn selection_foreground_color(&self) -> Color {
-        shrimply_cross_ui_theme::current().accent_fg
     }
 
     fn target_geometry(&self, _target: PreviewTarget) -> Option<PreviewItemGeometry> {

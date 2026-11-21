@@ -609,11 +609,6 @@ pub trait PreviewContext {
     fn timeline_position(&self) -> Time;
     fn local_time(&self) -> Time;
     fn viewport(&self) -> PreviewViewport;
-    fn selection_color(&self) -> Color;
-
-    fn selection_foreground_color(&self) -> Color {
-        Color::WHITE
-    }
     fn target_geometry(&self, target: PreviewTarget) -> Option<PreviewItemGeometry>;
     fn source_size(&self, item_id: Uuid) -> Option<Vec2>;
     fn item_geometry(&self, item_id: Uuid) -> Option<PreviewItemGeometry>;
@@ -896,9 +891,9 @@ pub mod controls;
 pub mod math;
 
 pub use controls::{
-    BOUNDS_HANDLES, BoundsHandle, CONTROL_LINE_WIDTH, CONTROL_SHADOW_WIDTH, KEYPOINT_HIT_RADIUS,
-    KEYPOINT_RADIUS, ROTATION_HANDLE_OFFSET, TransformBoxOverlay, bounds_handle_cursor,
-    bounds_handle_position, draw_anchor, draw_bounds_handles, draw_control_line,
-    draw_control_polyline, draw_control_rect, draw_keypoint, draw_keypoints, draw_rotation_handle,
-    hit_keypoint, rotation_handle_segment,
+    BOUNDS_HANDLES, BoundsHandle, CONTROL_LINE_WIDTH, KEYPOINT_HIT_RADIUS, KEYPOINT_RADIUS,
+    ROTATION_HANDLE_OFFSET, bounds_handle_cursor, bounds_handle_position, draw_anchor,
+    draw_bounds_handles, draw_control_line, draw_control_polyline, draw_control_rect,
+    draw_keypoint, draw_keypoints, draw_rotation_handle, hit_keypoint, rotation_handle_segment,
+    selection_color, selection_foreground, with_control_outline,
 };
