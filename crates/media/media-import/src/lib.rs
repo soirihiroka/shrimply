@@ -182,15 +182,18 @@ pub fn request_inspection(
         .1
 }
 
+fn media_extension(path: &Path) -> Option<&str> {
+    let extension = path.extension()?.to_str()?;
+    if extension.eq_ignore_ascii_case("part") {
+        Path::new(path.file_stem()?).extension()?.to_str()
+    } else {
+        Some(extension)
+    }
+}
+
 pub fn file_kind(path: &Path) -> Option<FileKind> {
     use VisualMediaKind::*;
-    let extension = path.extension()?.to_str()?;
-    let extension = if extension.eq_ignore_ascii_case("part") {
-        Path::new(path.file_stem()?).extension()?.to_str()?
-    } else {
-        extension
-    };
-    Some(match extension.to_ascii_lowercase().as_str() {
+    Some(match media_extension(path)?.to_ascii_lowercase().as_str() {
         "mp4" | "mov" => FileKind::Visual(Video),
         "mkv" | "webm" => FileKind::RemuxToMp4,
         "gif" => FileKind::Visual(Gif),
