@@ -16,7 +16,7 @@
  
      { "android/media/MediaCodecInfo$CodecProfileLevel", NULL, NULL, FF_JNI_CLASS, OFFSET(codec_profile_level_class), 1 },
          { "android/media/MediaCodecInfo$CodecProfileLevel", "profile", "I", FF_JNI_FIELD, OFFSET(profile_id), 1 },
-@@ -469,7 +471,8 @@
+@@ -483,7 +485,8 @@
      return -1;
  }
  
@@ -26,7 +26,7 @@
  {
      int ret;
      int i;
-@@ -483,6 +486,7 @@
+@@ -497,6 +500,7 @@
      struct JNIAMediaFormatFields mediaformat_jfields = { 0 };
  
      jobject codec_name = NULL;
@@ -34,7 +34,7 @@
  
      jobject info = NULL;
      jobject type = NULL;
-@@ -500,6 +504,12 @@
+@@ -514,6 +518,12 @@
  
      if ((ret = ff_jni_init_jfields(env, &mediaformat_jfields, jni_amediaformat_mapping, 0, log_ctx)) < 0) {
          goto done;
@@ -47,7 +47,7 @@
      }
  
      codec_count = (*env)->CallStaticIntMethod(env, jfields.mediacodec_list_class, jfields.get_codec_count_id);
-@@ -564,6 +574,9 @@
+@@ -578,6 +588,9 @@
          (*env)->DeleteLocalRef(env, codec_name);
          codec_name = NULL;
  
@@ -57,7 +57,7 @@
          /* Skip software decoders */
          if (
              strstr(name, "OMX.google") ||
-@@ -597,6 +610,15 @@
+@@ -611,6 +624,15 @@
                  goto done;
              }
  
@@ -73,7 +73,7 @@
              profile_levels = (*env)->GetObjectField(env, capabilities, jfields.profile_levels_id);
              if (ff_jni_exception_check(env, 1, log_ctx) < 0) {
                  goto done;
-@@ -666,6 +688,7 @@
+@@ -680,6 +702,7 @@
      }
  
  done:
@@ -81,7 +81,7 @@
      (*env)->DeleteLocalRef(env, codec_name);
      (*env)->DeleteLocalRef(env, info);
      (*env)->DeleteLocalRef(env, type);
-@@ -684,6 +707,20 @@
+@@ -698,6 +721,20 @@
      }
  
      return name;
@@ -201,7 +201,7 @@
  }
  
  static int extract_extradata_support(AVCodecContext *avctx)
-@@ -310,7 +332,9 @@
+@@ -310,7 +342,9 @@
  static void on_format_changed(FFAMediaCodec *codec, void *userdata,
                                FFAMediaFormat *format)
  {
@@ -212,7 +212,7 @@
  }
  
  static int mediacodec_init_async_state(AVCodecContext *avctx)
-@@ -358,10 +382,24 @@
+@@ -358,10 +392,24 @@
  
  static int mediacodec_generate_extradata(AVCodecContext *avctx);
  
@@ -241,7 +241,7 @@
  
      // Handle common options in AVCodecContext first.
      if (avctx->qmin >= 0) {
-@@ -389,6 +427,7 @@
+@@ -389,6 +437,7 @@
          ff_AMediaFormat_setInt32(format, "video-qp-p-max", s->qp_p_max);
      if (s->qp_b_max >= 0)
          ff_AMediaFormat_setInt32(format, "video-qp-b-max", s->qp_b_max);
@@ -249,7 +249,7 @@
  }
  
  static av_cold int mediacodec_init(AVCodecContext *avctx)
-@@ -527,7 +566,9 @@
+@@ -527,7 +576,9 @@
          if (s->bitrate_mode == BITRATE_MODE_CQ && avctx->global_quality > 0)
              ff_AMediaFormat_setInt32(format, "quality", avctx->global_quality);
      }
@@ -260,7 +260,7 @@
  
      // frame-rate and i-frame-interval are required to configure codec
      if (avctx->framerate.num >= avctx->framerate.den && avctx->framerate.den > 0) {
-@@ -604,7 +645,9 @@
+@@ -604,7 +655,9 @@
      if (ret)
          goto bailout;
  
@@ -271,7 +271,7 @@
  
      s->frame = av_frame_alloc();
      if (!s->frame) {
-@@ -686,8 +729,8 @@
+@@ -686,8 +739,8 @@
          return AVERROR(EAGAIN);
  
      if (ff_AMediaCodec_infoOutputFormatChanged(codec, index)) {

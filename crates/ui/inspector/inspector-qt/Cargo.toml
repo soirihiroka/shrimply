@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 shrimply-inspector-document.workspace = true
-base64.workspace = true
 cxx.workspace = true
 cxx-qt.workspace = true
 cxx-qt-lib = { workspace = true, features = ["qt_full"] }

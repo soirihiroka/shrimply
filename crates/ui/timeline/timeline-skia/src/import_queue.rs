@@ -157,12 +157,7 @@ pub struct ImportQueue {
 
 impl Phase {
     fn new(paths: Vec<PathBuf>, canvas_size: CanvasSize, default_duration: Time) -> Self {
-        if paths.iter().any(|path| {
-            matches!(
-                import::file_kind(path),
-                Some(import::FileKind::Mkv | import::FileKind::WebM)
-            )
-        }) {
+        if paths.iter().any(|path| import::requires_mp4_remux(path)) {
             Self::Pending {
                 sources: paths,
                 canvas_size,
@@ -312,7 +307,7 @@ impl ImportQueue {
         destination: Destination,
         default_duration: Time,
     ) -> Result<ImportStart, String> {
-        crate::external_content::external_files_need_remux(&paths)?;
+        crate::external_content::validate_dropped_files(&paths)?;
         let pending = PendingBatch {
             batch,
             target: destination.target,
@@ -418,10 +413,7 @@ impl ImportQueue {
                         if worker_cancellation.is_cancelled() {
                             return Err("Media import was cancelled".into());
                         }
-                        if matches!(
-                            import::file_kind(&path),
-                            Some(import::FileKind::Mkv | import::FileKind::WebM)
-                        ) {
+                        if import::requires_mp4_remux(&path) {
                             let source = Asset::new(path.clone()).snapshot()?;
                             let output = import::remux_to_mp4(&path, worker_cancellation.clone())?;
                             source.verify_current()?;

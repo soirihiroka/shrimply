@@ -1,17 +1,56 @@
 use std::{
-    hash::{DefaultHasher, Hash, Hasher},
-    path::PathBuf,
+    io::Write,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc},
     thread,
 };
 
 use super::{InspectorMedia, MediaInfoPresentation};
 
+/// A bounded PNG produced by the shared still-image decoder on the metadata worker.
+/// Its file lives as long as the metadata or a native inspector holds the thumbnail.
+#[derive(Debug)]
+pub struct Artwork(tempfile::TempPath);
+
+impl PartialEq for Artwork {
+    fn eq(&self, other: &Self) -> bool {
+        self.path() == other.path()
+    }
+}
+
+impl Artwork {
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+
+    fn prepare(bytes: Vec<u8>) -> Result<Arc<Self>, String> {
+        let source = shrimply_drawing_skia::media::prepare(Arc::new(bytes))?;
+        let mut surface = source.thumbnail(
+            super::ARTWORK_PREVIEW_HEIGHT,
+            skia_safe::ColorType::N32,
+            skia_safe::ColorSpace::new_srgb(),
+        )?;
+        let encoded = surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .ok_or("Could not encode artwork thumbnail")?;
+        let directory = shrimply_path_core::cache_directory()?;
+        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let mut file = tempfile::Builder::new()
+            .prefix("artwork-")
+            .suffix(".png")
+            .tempfile_in(directory)
+            .map_err(|error| error.to_string())?;
+        file.write_all(encoded.as_bytes())
+            .map_err(|error| error.to_string())?;
+        Ok(Arc::new(Self(file.into_temp_path())))
+    }
+}
+
 #[derive(Debug)]
 pub struct CachedMetadata {
     pub presentation: MediaInfoPresentation,
-    pub artwork: Option<Arc<[u8]>>,
-    pub artwork_version: Option<String>,
+    pub artwork: Option<Result<Arc<Artwork>, String>>,
     pub audio_stream_count: u32,
     pub video_stream_count: u32,
 }
@@ -92,15 +131,10 @@ impl Metadata {
             thread::spawn(move || {
                 let result = shrimply_media_info::inspect(&key.path, key.revision).map(|info| {
                     let mut presentation = super::media_info_presentation(&info, format_date);
-                    let artwork: Option<Arc<[u8]>> = presentation
+                    let artwork = presentation
                         .artwork
                         .take()
-                        .map(|artwork| artwork.data.into());
-                    let artwork_version = artwork.as_deref().map(|bytes| {
-                        let mut hash = DefaultHasher::new();
-                        bytes.hash(&mut hash);
-                        format!("{:016x}", hash.finish())
-                    });
+                        .map(|artwork| Artwork::prepare(artwork.data));
                     let stream_count = |kind| {
                         u32::try_from(
                             info.streams
@@ -113,7 +147,6 @@ impl Metadata {
                     Arc::new(CachedMetadata {
                         presentation,
                         artwork,
-                        artwork_version,
                         audio_stream_count: stream_count("audio"),
                         video_stream_count: stream_count("video"),
                     })

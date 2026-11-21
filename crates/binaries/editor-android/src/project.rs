@@ -4,6 +4,7 @@ mod watch;
 use serde_json::{Value, json};
 use shrimply_math_core::Time;
 use shrimply_project_document::{self as document, Project};
+use shrimply_timeline_edit::selection_state;
 use std::{
     cell::{Ref, RefCell},
     fs,
@@ -11,11 +12,15 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+pub(crate) use watch::MirrorListener;
 
 pub(crate) struct ProjectBackend {
     project: Option<Rc<RefCell<Project>>>,
     path: Option<PathBuf>,
     watcher: Option<watch::Watch>,
+    mirror_root: Option<String>,
+    mirror_listener: Option<MirrorListener>,
+    pub selection: selection_state::SharedSelectionState,
     pub(crate) wake: Arc<dyn Fn() + Send + Sync>,
     fingerprint: Option<String>,
     status: Rc<RefCell<document::CommitStatus>>,
@@ -27,7 +32,10 @@ pub(crate) struct ProjectBackend {
     pub preferences: shrimply_preferences_core::SharedPreferences,
 }
 impl ProjectBackend {
-    pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Result<Self, String> {
+    pub fn new(
+        wake: impl Fn() + Send + Sync + 'static,
+        mirror_listener: Option<MirrorListener>,
+    ) -> Result<Self, String> {
         let status = Rc::new(RefCell::new(document::CommitStatus::Idle));
         let observed = status.clone();
         document::connect_commit_status(move |value| *observed.borrow_mut() = value);
@@ -35,6 +43,9 @@ impl ProjectBackend {
             project: None,
             path: None,
             watcher: None,
+            mirror_root: None,
+            mirror_listener,
+            selection: selection_state::new(),
             wake: Arc::new(wake),
             fingerprint: None,
             status,
@@ -85,11 +96,6 @@ impl ProjectBackend {
         match string(request, "op")? {
             "status" => {}
             "recents" => self.recents = recent_presentations()?,
-            "import_probe" => {
-                shrimply_media_import::file_kind(Path::new(string(request, "name")?))
-                    .ok_or("unsupported file type")?;
-                return Ok(json!({}));
-            }
             "create" => {
                 if self.project.is_some() {
                     return Err("close the current project before creating another project".into());
@@ -102,7 +108,7 @@ impl ProjectBackend {
                 fs::create_dir_all(path.parent().ok_or("project path requires a directory")?)
                     .map_err(|error| format!("could not create project directory: {error}"))?;
                 document::create_new_project_file(&path, &project)?;
-                self.open(&path)?;
+                self.open(&path, None)?;
             }
             "settings_schema" => return Ok(settings_schema()),
             "settings" => {
@@ -115,7 +121,10 @@ impl ProjectBackend {
                 })?;
                 self.touch_recent()?;
             }
-            "open" => self.open(Path::new(string(request, "path")?))?,
+            "open" => self.open(
+                Path::new(string(request, "path")?),
+                request["mirror_root"].as_str().map(Path::new),
+            )?,
             "close" => self.close()?,
             "save" => self.save()?,
             "save_as" => {
@@ -123,6 +132,10 @@ impl ProjectBackend {
                 let path = std::path::absolute(string(request, "path")?)
                     .map_err(|error| error.to_string())?;
                 document::save_as(&path)?;
+                self.mirror_root = self
+                    .mirror_root
+                    .take()
+                    .filter(|root| path.starts_with(root));
                 self.path = Some(path);
                 self.observe_saved()?;
                 self.watch()?;
@@ -228,7 +241,7 @@ impl ProjectBackend {
                 shrimply_recent_projects::clear()?;
                 self.recents.clear();
             }
-            "import_file" => self.import_file(request, None)?,
+            "import_file" => return self.import_file(request, None),
             "reload" => {
                 self.reload()?;
             }
@@ -252,23 +265,34 @@ impl ProjectBackend {
             return Err("choose a source file before adding imported media".into());
         }
         let text = if action == TrackAddAction::Comment {
-            Some(string(request, "text")?.to_owned())
+            Some(string(request, "text")?)
         } else {
             None
         };
         let (start, end) = self.interval(request)?;
         let preferences = shrimply_preferences_core::snapshot(&self.preferences);
-        self.edit("Add timeline item", |project| {
-            let index = target_index(project, kind, request)?;
-            if index == 0 && shrimply_timeline_edit::selection_state::track_address(project, TrackKey { kind, track_index: index }).is_none() {
-                shrimply_timeline_edit::edit::create_track(project, &document::SequenceScopeId::root(), kind, true)?;
+        let item = self.edit("Add timeline item", |project| {
+            let key = TrackKey {
+                kind,
+                track_index: target_index(project, kind, request)?,
+            };
+            if key.track_index == 0 && selection_state::track_address(project, key).is_none() {
+                shrimply_timeline_edit::edit::create_track(
+                    project,
+                    &document::SequenceScopeId::root(),
+                    kind,
+                    true,
+                )?;
             }
-            let settings = TrackAddSettings { default_visual_duration:end.saturating_sub(start), default_text_font_family:&preferences.default_text_font_family };
-            let (address, mut item) = shrimply_timeline_edit::prepare_track_add(project, TrackKey {kind,track_index:index}, action, start, settings)?.ok_or("the destination is occupied or the track no longer exists; choose a gap before adding an item")?;
-            if let document::ProjectItem::Comment(comment) = &mut item { comment.text = text.expect("comment action requires text"); }
-            project.insert_item(&address, item).ok_or("the destination changed while adding the item")?;
-            Ok(())
-        })
+            let settings = TrackAddSettings {
+                default_visual_duration: end.saturating_sub(start),
+                default_text_font_family: &preferences.default_text_font_family,
+            };
+            let item = shrimply_timeline_edit::insert_track_add(project, key, action, start, settings, text)?;
+            item.ok_or_else(|| "the destination is occupied or the track no longer exists; choose a gap before adding an item".to_owned())
+        })?;
+        selection_state::select_item_address(&self.selection, &*self.required()?, item);
+        Ok(())
     }
 
     pub fn position(&self, request: &Value) -> Result<Time, String> {
@@ -323,32 +347,52 @@ impl ProjectBackend {
         Ok((start, start.saturating_add(duration)))
     }
 
-    fn edit(
+    fn edit<T>(
         &mut self,
         message: &str,
-        update: impl FnOnce(&mut Project) -> Result<(), String>,
-    ) -> Result<(), String> {
+        update: impl FnOnce(&mut Project) -> Result<T, String>,
+    ) -> Result<T, String> {
         // The shared transaction persists before advancing the shared undo cursor
         // or exposing the new model. Failed edits retain the previous project.
         // An external save may precede its queued native watch notification.
         self.reload()?;
         let mut candidate = self.required()?.clone();
-        update(&mut candidate)?;
+        let value = update(&mut candidate)?;
         candidate.ensure_ids();
         document::commit_edit_saved(&candidate, message)?;
         *self.project.as_ref().expect("open project").borrow_mut() = candidate;
         self.observe_saved()?;
         self.revision += 1;
-        Ok(())
+        Ok(value)
     }
 
-    fn open(&mut self, path: &Path) -> Result<(), String> {
+    fn open(&mut self, path: &Path, mirror_root: Option<&Path>) -> Result<(), String> {
         if self.project.is_some() {
             return Err("close the current project before opening another project".into());
         }
         let path = path
             .canonicalize()
             .map_err(|error| format!("could not open {}: {error}", path.display()))?;
+        let mirror_root = mirror_root
+            .map(Path::canonicalize)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        if mirror_root
+            .as_ref()
+            .is_some_and(|root| !root.is_dir() || !path.starts_with(root))
+        {
+            return Err("project is outside the selected source folder".into());
+        }
+        let mirror_root = mirror_root
+            .map(|root| {
+                root.into_os_string()
+                    .into_string()
+                    .map_err(|_| "the mirror root must be a UTF-8 path")
+            })
+            .transpose()?;
+        if mirror_root.is_some() && self.mirror_listener.is_none() {
+            return Err("the document-provider mirror has no storage listener".into());
+        }
         let prepared = document::prepare_project(&path).map_err(|error| match error {
             document::ProjectLoadError::LockedByOtherInstance { owner } => {
                 format!("project is already open in process {}", owner.pid())
@@ -358,6 +402,7 @@ impl ProjectBackend {
         let project = document::activate_project(prepared);
         self.project = Some(Rc::new(RefCell::new(project)));
         self.path = Some(path);
+        self.mirror_root = mirror_root;
         self.revision += 1;
         if let Err(error) = self
             .observe_saved()
@@ -394,8 +439,10 @@ impl ProjectBackend {
         self.save()?;
         document::shutdown_history()?;
         self.watcher = None;
+        self.mirror_root = None;
         document::release_project_lock(self.path.as_ref().expect("open project has a path"));
         self.project = None;
+        self.selection = selection_state::new();
         self.path = None;
         self.fingerprint = None;
         self.error = None;
@@ -430,10 +477,16 @@ impl ProjectBackend {
 
     fn watch(&mut self) -> Result<(), String> {
         self.watcher = None;
-        if self.active
+        if (self.active || self.mirror_root.is_some())
             && let Some(path) = &self.path
         {
-            self.watcher = Some(watch::Watch::new(path, self.wake.clone())?);
+            self.watcher = Some(watch::Watch::new(
+                path,
+                self.mirror_root
+                    .as_deref()
+                    .zip(self.mirror_listener.clone()),
+                self.wake.clone(),
+            )?);
         }
         Ok(())
     }
@@ -499,7 +552,9 @@ impl ProjectBackend {
             self.save()?;
         }
         self.active = active;
-        self.watch()?;
+        if self.mirror_root.is_none() {
+            self.watch()?;
+        }
         if active && self.project.is_some() {
             self.reload()?;
         }
@@ -551,21 +606,11 @@ impl ProjectBackend {
         shrimply_media_import::stage_source(source_path, source, name, directory)
     }
 
-    pub fn import_descriptor(
-        &mut self,
-        request: &Value,
-        source: fs::File,
-    ) -> Result<Value, String> {
-        self.validate_target(request)?;
-        self.import_file(request, Some(source))?;
-        self.snapshot()
-    }
-
-    fn import_file(
+    pub fn import_file(
         &mut self,
         request: &Value,
         source_file: Option<fs::File>,
-    ) -> Result<(), String> {
+    ) -> Result<Value, String> {
         use shrimply_timeline_edit::TrackKind;
         let source = Path::new(string(request, "path")?);
         let name = request
@@ -577,6 +622,7 @@ impl ProjectBackend {
             return Err("imported file name must not contain a directory".into());
         }
         shrimply_media_import::file_kind(Path::new(name)).ok_or("unsupported file type")?;
+        let remux = shrimply_media_import::requires_mp4_remux(Path::new(name));
         let destinations: Vec<&Value> = if let Some(targets) = request
             .get("import_targets")
             .filter(|value| !value.is_null())
@@ -607,21 +653,30 @@ impl ProjectBackend {
             }
         }
         let (start, end) = self.interval(request)?;
-        let staged = shrimply_media_import::stage_source(
-            source,
-            source_file,
-            name,
-            self.path
-                .as_ref()
-                .ok_or("open a project first")?
-                .parent()
-                .expect("project directory"),
-        )?;
-        let destination = staged.path.clone();
+        if remux && request["remux_confirmed"] != true {
+            let mut prompt = remux_confirmation();
+            prompt["position"] = json!(start);
+            return Ok(prompt);
+        }
+        let mut staged = self.stage_picked_file(request, source_file)?;
         let mut inspected_snapshot = None;
         let project_path = self.path.as_ref().expect("open project path").clone();
         let result = (|| {
-            inspected_snapshot = Some(shrimply_asset::Asset::new(&destination).snapshot()?);
+            let original =
+                inspected_snapshot.insert(shrimply_asset::Asset::new(&staged.path).snapshot()?);
+            if remux {
+                let output = shrimply_media_import::remux_to_mp4(&staged.path, Default::default())?;
+                original.verify_current()?;
+                let inspected = shrimply_asset::Asset::new(output.path()).snapshot()?;
+                // Only the descriptor copy is ours. A pre-existing project source is retained.
+                self.discard_staged(&staged, Some(original))?;
+                staged = shrimply_media_import::StagedSource {
+                    path: output.path().to_owned(),
+                    created: true,
+                };
+                inspected_snapshot = Some(inspected);
+                output.keep();
+            }
             self.edit("Import file", |project| {
                 use shrimply_editing_api::{imports, preview};
                 let mut targets = Vec::new();
@@ -655,7 +710,7 @@ impl ProjectBackend {
                 let collision = if targets.is_empty() { "new_track" } else { "reject" };
                 let frame = start.as_frame(project.fps);
                 let request = preview::edit_request("insert_files", json!({
-                    "files":[{"source":destination,"targets":targets}], "frame":frame, "link":true, "collision":collision,
+                    "files":[{"source":staged.path,"targets":targets}], "frame":frame, "link":true, "collision":collision,
                 }))?.expect("insert_files is a shared edit operation");
                 let mut prepared = imports::prepare(
                     project.clone(),
@@ -674,7 +729,8 @@ impl ProjectBackend {
             self.discard_staged(&staged, inspected_snapshot.as_ref())
                 .map_err(|cleanup| format!("{error}; {cleanup}"))?;
         }
-        result
+        result?;
+        self.snapshot()
     }
 
     pub fn discard_staged(
@@ -706,6 +762,12 @@ impl ProjectBackend {
             )
         })
     }
+}
+
+pub(super) fn remux_confirmation() -> Value {
+    let prompt = shrimply_timeline_skia::external_content::remux_prompt();
+    json!({"confirmation": {"title": prompt.title, "body": prompt.body,
+        "confirm_label": prompt.confirm, "cancel_label": prompt.cancel}})
 }
 
 /// Native date formatting and filesystem metadata are refreshed with history,

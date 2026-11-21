@@ -7,6 +7,7 @@ mod items;
 mod layers;
 pub mod math;
 mod media;
+pub use shrimply_drawing_skia::media::rgba_pixels;
 pub mod playback;
 pub mod worker;
 
@@ -38,6 +39,17 @@ pub struct Layer {
     pub alpha_mask: Option<shrimply_visual_core::alpha_mask::ResolvedShapeAlphaMask>,
     pub video_mask: Option<VideoMask>,
     pub stabilization: Option<shrimply_visual_core::stabilization::StabilizationWarp>,
+}
+
+impl Layer {
+    pub fn has_effects(&self) -> bool {
+        !self.effects.is_empty()
+            || !self.transitions.is_empty()
+            || self.motion_blur.is_some()
+            || self.alpha_mask.is_some()
+            || self.video_mask.is_some()
+            || self.stabilization.is_some()
+    }
 }
 
 pub struct VideoMask {

@@ -12,6 +12,7 @@ name = "video_decode"
 required-features = ["cuda-frames"]
 
 [dependencies]
+shrimply-media-info.workspace = true
 shrimply-gpu-cuda = { workspace = true, optional = true }
 ffmpeg-next.workspace = true
 libc.workspace = true

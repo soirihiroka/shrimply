@@ -1,5 +1,3 @@
-use std::io::Cursor;
-use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, TryRecvError, sync_channel};
 use std::time::{Duration, Instant};
@@ -10,16 +8,13 @@ use crate::visual_source::VisualSourceCache;
 use crate::visual_source::{
     VisualElement, VisualPrepareRequest, VisualRender, VisualRenderRequest,
 };
-use ffmpeg::{format, media};
-use ffmpeg_next as ffmpeg;
-use rayon::prelude::*;
 use shrimply_asset::{Asset, AssetSnapshot};
+use shrimply_drawing_skia::media::{self, animation::Animation};
 use shrimply_gpu_cuda_memory::{ResourceKey, global as gpu_memory};
 use shrimply_project_document::project::{Time, VideoItem, VideoItemContent};
 use shrimply_visual_core::vectorize::{Output as VectorizedOutput, Plan as VectorizePlan};
 use uuid::Uuid;
 
-const PARALLEL_RGBA_COPY_MIN_BYTES: usize = 1024 * 1024;
 const VECTORIZE_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub struct ImageDecodeSession {
@@ -28,10 +23,10 @@ pub struct ImageDecodeSession {
     width: u32,
     height: u32,
     kind: ImageDecodeKind,
-    raster: Option<RasterDecoder>,
-    gif_pending: Option<Receiver<Result<DecodedGif, String>>>,
-    gif_frames: Vec<GifFrame>,
-    gif_error: Option<String>,
+    animation_pending: Option<Receiver<Result<Vec<u8>, String>>>,
+    animation: Option<Animation>,
+    animation_frame: Option<(Time, Rc<VisualFrame>)>,
+    animation_error: Option<String>,
     vectorize_request: Option<VectorizeRequest>,
     vectorize_pending: Option<VectorizePending>,
     vectorized: Option<VectorizedImage>,
@@ -41,7 +36,7 @@ pub struct ImageDecodeSession {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ImageDecodeKind {
     Image,
-    Gif,
+    Animation,
 }
 
 struct VectorizeRequest {
@@ -60,32 +55,6 @@ struct VectorizedImage {
     source_key: ResourceKey,
     width: u32,
     height: u32,
-}
-
-struct DecodedRgba {
-    pixels: Vec<u8>,
-    width: u32,
-    height: u32,
-}
-
-struct DecodedGif {
-    frames: Vec<(Time, VisualFrame)>,
-    width: u32,
-    height: u32,
-}
-
-struct GifFrame {
-    position: Time,
-    source: VisualFrame,
-    gpu: Option<Rc<VisualFrame>>,
-}
-
-struct RasterDecoder {
-    input: format::context::Input,
-    stream_index: usize,
-    decoder: ffmpeg::decoder::Video,
-    scaler: ffmpeg::software::scaling::context::Context,
-    eof: bool,
 }
 
 impl ImageDecodeSession {
@@ -129,7 +98,7 @@ impl ImageDecodeSession {
     pub fn new(item: &VideoItem) -> Result<Self, String> {
         let kind = match &item.content {
             VideoItemContent::Image => ImageDecodeKind::Image,
-            VideoItemContent::Gif => ImageDecodeKind::Gif,
+            VideoItemContent::Gif | VideoItemContent::AnimatedImage => ImageDecodeKind::Animation,
             _ => return Err("visual media decoder received a non-image item".to_string()),
         };
         Ok(Self {
@@ -138,10 +107,10 @@ impl ImageDecodeSession {
             width: item.source_width.max(1),
             height: item.source_height.max(1),
             kind,
-            raster: None,
-            gif_pending: None,
-            gif_frames: Vec::new(),
-            gif_error: None,
+            animation_pending: None,
+            animation: None,
+            animation_frame: None,
+            animation_error: None,
             vectorize_request: None,
             vectorize_pending: None,
             vectorized: None,
@@ -192,7 +161,7 @@ impl ImageDecodeSession {
                 .vectorize_request
                 .as_ref()
                 .expect("vectorization request disappeared");
-            let file = self.file.clone();
+            let snapshot = self.snapshot.clone();
             let trace_key = request.key.clone();
             let plan = request.plan.clone();
             let (sender, result) = sync_channel(1);
@@ -201,9 +170,10 @@ impl ImageDecodeSession {
                 result,
             });
             rayon::spawn(move || {
-                let traced = decode_still_rgba(&file).and_then(|decoded| {
-                    plan.vectorize_rgba(decoded.pixels, decoded.width, decoded.height)
-                        .map_err(|error| format!("could not vectorize {}: {error}", file.display()))
+                let traced = decode_still_rgba(&snapshot).and_then(|([width, height], pixels)| {
+                    plan.vectorize_rgba(pixels, width, height).map_err(|error| {
+                        format!("could not vectorize {}: {error}", snapshot.path().display())
+                    })
                 });
                 let _ = sender.send(traced);
             });
@@ -330,80 +300,78 @@ impl ImageDecodeSession {
     ) -> Result<Option<Rc<VisualFrame>>, String> {
         match self.kind {
             ImageDecodeKind::Image => self.raster_frame_at(compositor),
-            ImageDecodeKind::Gif => self.gif_frame_at(source_position, compositor),
+            ImageDecodeKind::Animation => self.animation_frame_at(source_position, compositor),
         }
     }
 
-    fn request_gif(&mut self) {
-        if self.gif_pending.is_some() || !self.gif_frames.is_empty() || self.gif_error.is_some() {
+    fn request_animation(&mut self) {
+        if self.animation_pending.is_some()
+            || self.animation.is_some()
+            || self.animation_error.is_some()
+        {
             return;
         }
         let snapshot = self.snapshot.clone();
         let (sender, result) = sync_channel(1);
-        self.gif_pending = Some(result);
+        self.animation_pending = Some(result);
         rayon::spawn(move || {
-            let _ = sender.send(decode_gif(snapshot));
+            let _ = sender.send(snapshot.read_bounded(media::MAX_SOURCE_BYTES));
         });
-        shrimply_profiling::increment("GIF decode / Prepared requests submitted");
+        shrimply_profiling::increment("animated image decode / Prepared requests submitted");
     }
 
-    fn poll_gif(&mut self) {
-        let Some(pending) = &self.gif_pending else {
+    fn poll_animation(&mut self) {
+        let Some(pending) = &self.animation_pending else {
             return;
         };
         let result = match pending.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err("GIF decoder stopped unexpectedly".to_string()),
-        };
-        self.gif_pending = None;
-        match result {
-            Ok(decoded) => {
-                self.width = decoded.width;
-                self.height = decoded.height;
-                self.gif_frames = decoded
-                    .frames
-                    .into_iter()
-                    .map(|(position, source)| GifFrame {
-                        position,
-                        source,
-                        gpu: None,
-                    })
-                    .collect();
+            Err(TryRecvError::Disconnected) => {
+                Err("animated image decoder stopped unexpectedly".to_string())
             }
-            Err(error) => self.gif_error = Some(error),
+        };
+        self.animation_pending = None;
+        match result.and_then(|bytes| Animation::open(&bytes)) {
+            Ok(animation) => {
+                [self.width, self.height] = animation.dimensions();
+                self.animation = Some(animation);
+            }
+            Err(error) => self.animation_error = Some(error),
         }
     }
 
-    fn gif_frame_at(
+    fn animation_frame_at(
         &mut self,
         target: Time,
         compositor: &mut CudaVideoCompositor,
     ) -> Result<Option<Rc<VisualFrame>>, String> {
-        self.poll_gif();
-        if let Some(error) = &self.gif_error {
+        self.poll_animation();
+        if let Some(error) = &self.animation_error {
             return Err(error.clone());
         }
-        if self.gif_frames.is_empty() {
-            self.request_gif();
-            return Ok(None);
-        }
-        let Some(index) = self
-            .gif_frames
-            .partition_point(|frame| frame.position <= target)
-            .checked_sub(1)
-        else {
+        let Some(animation) = self.animation.as_mut() else {
+            self.request_animation();
             return Ok(None);
         };
-        let frame = &mut self.gif_frames[index];
-        if frame.gpu.is_none() {
-            shrimply_profiling::increment("GIF frame GPU residency / Miss");
-            frame.gpu = Some(Rc::new(compositor.upload_frame(&frame.source)?));
+        let (position, image) = animation.frame_at(target)?;
+        if self
+            .animation_frame
+            .as_ref()
+            .is_none_or(|(cached, _)| *cached != position)
+        {
+            shrimply_profiling::increment("animated image frame GPU residency / Miss");
+            let source =
+                VisualFrame::from_rgba_bytes(self.width, self.height, media::rgba_pixels(&image)?)?;
+            self.animation_frame = Some((position, Rc::new(compositor.upload_frame(&source)?)));
         } else {
-            shrimply_profiling::increment("GIF frame GPU residency / Hit");
+            shrimply_profiling::increment("animated image frame GPU residency / Hit");
         }
-        let frame = frame.gpu.as_ref().expect("GIF frame was just uploaded");
-        compositor.prepare_host_backed_frame(frame, "resident GIF frame")?;
+        let (_, frame) = self
+            .animation_frame
+            .as_ref()
+            .expect("decoded animated image frame is resident");
+        compositor.prepare_host_backed_frame(frame, "resident animated image frame")?;
         Ok(Some(frame.clone()))
     }
 
@@ -423,100 +391,9 @@ impl ImageDecodeSession {
         if gpu_memory().contains_resource(&self.image_key()) {
             return Ok(None);
         }
-        if self.raster.is_none() {
-            self.open_raster_decoder()?;
-        }
-
-        loop {
-            if self.receive_frame()? {
-                let frame = gpu_memory()
-                    .get_resource::<VisualFrame>(&self.image_key())?
-                    .ok_or_else(|| "decoded image source disappeared".to_string())?;
-                return self.upload_still_frame(&frame, compositor).map(Some);
-            }
-            let Some(raster) = &mut self.raster else {
-                return Ok(None);
-            };
-            if raster.eof {
-                return Ok(None);
-            }
-            let mut sent_packet = false;
-            for (stream, packet) in raster.input.packets() {
-                if stream.index() != raster.stream_index {
-                    continue;
-                }
-                raster
-                    .decoder
-                    .send_packet(&packet)
-                    .map_err(|error| error.to_string())?;
-                sent_packet = true;
-                break;
-            }
-            if !sent_packet {
-                match raster.decoder.send_eof() {
-                    Ok(()) | Err(ffmpeg::Error::Eof) => raster.eof = true,
-                    Err(error) => return Err(error.to_string()),
-                }
-            }
-        }
-    }
-
-    fn open_raster_decoder(&mut self) -> Result<(), String> {
-        ffmpeg::init().map_err(|error| error.to_string())?;
-        let input = format::input(&self.file)
-            .map_err(|error| format!("could not open {}: {error}", self.file.display()))?;
-        let (stream_index, parameters) = {
-            let stream = input
-                .streams()
-                .find(|stream| stream.parameters().medium() == media::Type::Video)
-                .ok_or_else(|| format!("{} has no video stream", self.file.display()))?;
-            (stream.index(), stream.parameters())
-        };
-        let context = ffmpeg::codec::context::Context::from_parameters(parameters)
-            .map_err(|error| error.to_string())?;
-        let decoder = context
-            .decoder()
-            .video()
-            .map_err(|error| error.to_string())?;
-        self.width = decoder.width().max(1);
-        self.height = decoder.height().max(1);
-        let scaler = ffmpeg::software::scaling::context::Context::get(
-            decoder.format(),
-            self.width,
-            self.height,
-            format::Pixel::RGBA,
-            self.width,
-            self.height,
-            ffmpeg::software::scaling::flag::Flags::BILINEAR,
-        )
-        .map_err(|error| error.to_string())?;
-        self.raster = Some(RasterDecoder {
-            input,
-            stream_index,
-            decoder,
-            scaler,
-            eof: false,
-        });
-        Ok(())
-    }
-
-    fn receive_frame(&mut self) -> Result<bool, String> {
-        let Some(raster) = &mut self.raster else {
-            return Ok(false);
-        };
-        let mut decoded = ffmpeg::frame::Video::empty();
-        if raster.decoder.receive_frame(&mut decoded).is_err() {
-            return Ok(false);
-        }
-        let mut rgba = ffmpeg::frame::Video::empty();
-        raster
-            .scaler
-            .run(&decoded, &mut rgba)
-            .map_err(|error| error.to_string())?;
-        let pixels = tight_rgba_from_rows(rgba.data(0), rgba.stride(0), self.width, self.height)?;
-        let source = VisualFrame::from_rgba_bytes(self.width, self.height, pixels)?;
-        gpu_memory().insert_resource(self.image_key(), source.bytes(), source)?;
-        Ok(true)
+        let frame = decode_still_image(&self.snapshot)?;
+        gpu_memory().insert_resource(self.image_key(), frame.bytes(), frame.clone())?;
+        self.upload_still_frame(&frame, compositor).map(Some)
     }
 }
 
@@ -530,7 +407,10 @@ impl VisualElement for ImageDecodeSession {
             && matches!(
                 (self.kind, &item.content),
                 (ImageDecodeKind::Image, VideoItemContent::Image)
-                    | (ImageDecodeKind::Gif, VideoItemContent::Gif)
+                    | (
+                        ImageDecodeKind::Animation,
+                        VideoItemContent::Gif | VideoItemContent::AnimatedImage
+                    )
             )
             && self.snapshot.is_current()
     }
@@ -541,8 +421,8 @@ impl VisualElement for ImageDecodeSession {
         _track_id: Uuid,
         _cache: &mut VisualSourceCache,
     ) -> Result<(), String> {
-        if self.kind == ImageDecodeKind::Gif {
-            self.request_gif();
+        if self.kind == ImageDecodeKind::Animation {
+            self.request_animation();
             return Ok(());
         }
         if self.request_vectorization(request.item)?.is_some() {
@@ -555,7 +435,7 @@ impl VisualElement for ImageDecodeSession {
             return Ok(());
         }
         rayon::spawn(move || {
-            let decoded = decode_still_image(&file, snapshot);
+            let decoded = decode_still_image(&snapshot);
             let bytes = decoded.as_ref().map_or(0, VisualFrame::bytes);
             if let Err(error) = gpu_memory().finish_resource_load(key, bytes, decoded) {
                 tracing::error!(file = %file.display(), %error, "could not finish loading image");
@@ -604,252 +484,17 @@ impl VisualElement for ImageDecodeSession {
     }
 }
 
-fn decode_gif(snapshot: AssetSnapshot) -> Result<DecodedGif, String> {
-    ffmpeg::init().map_err(|error| error.to_string())?;
-    let source = snapshot.read()?;
-    let io = format::context::StreamIo::from_read_seek(Cursor::new(source))
-        .map_err(|error| error.to_string())?;
-    let filename = snapshot.path().to_string_lossy();
-    let mut input = format::input_from_stream(io, Some(&filename), None).map_err(|error| {
-        format!(
-            "could not open {} from memory: {error}",
-            snapshot.path().display()
-        )
-    })?;
-    let (stream_index, time_base, stream_start_time, parameters) = {
-        let stream = input
-            .streams()
-            .find(|stream| stream.parameters().medium() == media::Type::Video)
-            .ok_or_else(|| format!("{} has no video stream", snapshot.path().display()))?;
-        (
-            stream.index(),
-            stream.time_base(),
-            stream.start_time(),
-            stream.parameters(),
-        )
-    };
-    let context = ffmpeg::codec::context::Context::from_parameters(parameters)
-        .map_err(|error| error.to_string())?;
-    let mut decoder = context
-        .decoder()
-        .video()
-        .map_err(|error| error.to_string())?;
-    let width = decoder.width().max(1);
-    let height = decoder.height().max(1);
-    let mut scaler = ffmpeg::software::scaling::context::Context::get(
-        decoder.format(),
-        width,
-        height,
-        format::Pixel::RGBA,
-        width,
-        height,
-        ffmpeg::software::scaling::flag::Flags::BILINEAR,
-    )
-    .map_err(|error| error.to_string())?;
-    let mut packets = input.packets();
-    let mut frames = Vec::new();
-    let mut frame_index = 0;
-    loop {
-        let eof = match packets.find(|(stream, _)| stream.index() == stream_index) {
-            Some((_, packet)) => {
-                decoder
-                    .send_packet(&packet)
-                    .map_err(|error| error.to_string())?;
-                false
-            }
-            None => {
-                match decoder.send_eof() {
-                    Ok(()) | Err(ffmpeg::Error::Eof) => {}
-                    Err(error) => return Err(error.to_string()),
-                }
-                true
-            }
-        };
-        let mut decoded = ffmpeg::frame::Video::empty();
-        while decoder.receive_frame(&mut decoded).is_ok() {
-            let position = frame_time(&decoded, time_base, stream_start_time, frame_index);
-            frame_index += 1;
-            let mut rgba = ffmpeg::frame::Video::empty();
-            scaler
-                .run(&decoded, &mut rgba)
-                .map_err(|error| error.to_string())?;
-            let pixels = tight_rgba_from_rows(rgba.data(0), rgba.stride(0), width, height)?;
-            frames.push((
-                position,
-                VisualFrame::from_rgba_bytes(width, height, pixels)?,
-            ));
-        }
-        if eof {
-            break;
-        }
-    }
-    snapshot.verify_current()?;
-    if frames.is_empty() {
-        return Err(format!(
-            "{} contains no GIF frames",
-            snapshot.path().display()
-        ));
-    }
-    Ok(DecodedGif {
-        frames,
-        width,
-        height,
-    })
+fn decode_still_rgba(snapshot: &AssetSnapshot) -> Result<([u32; 2], Vec<u8>), String> {
+    let prepared = media::prepare(std::sync::Arc::new(
+        snapshot.read_bounded(media::MAX_SOURCE_BYTES)?,
+    ))?;
+    let image = prepared
+        .bitmap()
+        .ok_or("still image source is not a bitmap")?;
+    Ok((prepared.dimensions(), media::rgba_pixels(image)?))
 }
 
-fn decode_still_image(
-    file: &Asset,
-    expected_snapshot: AssetSnapshot,
-) -> Result<VisualFrame, String> {
-    let decoded = decode_still_rgba(file.path())?;
-    expected_snapshot.verify_current()?;
-    VisualFrame::from_rgba_bytes(decoded.width, decoded.height, decoded.pixels)
-}
-
-fn decode_still_rgba(file: &Path) -> Result<DecodedRgba, String> {
-    let encoded = std::fs::read(file)
-        .map_err(|error| format!("could not read {}: {error}", file.display()))?;
-    if skia_safe::Image::from_encoded(skia_safe::Data::new_copy(&encoded)).is_some() {
-        let prepared = shrimply_drawing_skia::media::prepare(std::sync::Arc::new(encoded))?;
-        let image = prepared
-            .bitmap()
-            .expect("bitmap codec recognized its source");
-        let [width, height] = prepared.dimensions();
-        let row_bytes = width as usize * 4;
-        let mut pixels = vec![0u8; row_bytes * height as usize];
-        let info = skia_safe::ImageInfo::new(
-            (width as i32, height as i32),
-            skia_safe::ColorType::RGBA8888,
-            skia_safe::AlphaType::Unpremul,
-            None,
-        );
-        if !image.read_pixels(
-            &info,
-            &mut pixels,
-            row_bytes,
-            (0, 0),
-            skia_safe::image::CachingHint::Allow,
-        ) {
-            return Err(format!("could not read decoded bitmap {}", file.display()));
-        }
-        return Ok(DecodedRgba {
-            pixels,
-            width,
-            height,
-        });
-    }
-    // Keep FFmpeg for still formats outside Skia's installed codec set.
-
-    ffmpeg::init().map_err(|error| error.to_string())?;
-    let mut input = format::input(file)
-        .map_err(|error| format!("could not open {}: {error}", file.display()))?;
-    let (stream_index, parameters) = {
-        let stream = input
-            .streams()
-            .find(|stream| stream.parameters().medium() == media::Type::Video)
-            .ok_or_else(|| format!("{} has no video stream", file.display()))?;
-        (stream.index(), stream.parameters())
-    };
-    let context = ffmpeg::codec::context::Context::from_parameters(parameters)
-        .map_err(|error| error.to_string())?;
-    let mut decoder = context
-        .decoder()
-        .video()
-        .map_err(|error| error.to_string())?;
-    let width = decoder.width().max(1);
-    let height = decoder.height().max(1);
-    let mut decoded = ffmpeg::frame::Video::empty();
-    let mut received = false;
-    for (stream, packet) in input.packets() {
-        if stream.index() != stream_index {
-            continue;
-        }
-        decoder
-            .send_packet(&packet)
-            .map_err(|error| error.to_string())?;
-        if decoder.receive_frame(&mut decoded).is_ok() {
-            received = true;
-            break;
-        }
-    }
-    if !received {
-        decoder.send_eof().map_err(|error| error.to_string())?;
-        decoder
-            .receive_frame(&mut decoded)
-            .map_err(|error| error.to_string())?;
-    }
-    let mut scaler = ffmpeg::software::scaling::context::Context::get(
-        decoder.format(),
-        width,
-        height,
-        format::Pixel::RGBA,
-        width,
-        height,
-        ffmpeg::software::scaling::flag::Flags::BILINEAR,
-    )
-    .map_err(|error| error.to_string())?;
-    let mut rgba = ffmpeg::frame::Video::empty();
-    scaler
-        .run(&decoded, &mut rgba)
-        .map_err(|error| error.to_string())?;
-    Ok(DecodedRgba {
-        width,
-        height,
-        pixels: tight_rgba_from_rows(rgba.data(0), rgba.stride(0), width, height)?,
-    })
-}
-
-fn tight_rgba_from_rows(
-    rows: &[u8],
-    stride: usize,
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>, String> {
-    let row_bytes = width as usize * 4;
-    if stride < row_bytes {
-        return Err("RGBA frame stride is smaller than row width".to_string());
-    }
-    let needed = stride
-        .checked_mul(height as usize)
-        .ok_or_else(|| "RGBA frame is too large".to_string())?;
-    if rows.len() < needed {
-        return Err("RGBA frame plane is truncated".to_string());
-    }
-    if stride == row_bytes {
-        return Ok(rows[..needed].to_vec());
-    }
-    let mut pixels = vec![0; row_bytes * height as usize];
-    if pixels.len() >= PARALLEL_RGBA_COPY_MIN_BYTES {
-        pixels
-            .par_chunks_exact_mut(row_bytes)
-            .zip(rows.par_chunks_exact(stride))
-            .for_each(|(destination, source)| destination.copy_from_slice(&source[..row_bytes]));
-    } else {
-        for (destination, source) in pixels
-            .chunks_exact_mut(row_bytes)
-            .zip(rows.chunks_exact(stride))
-        {
-            destination.copy_from_slice(&source[..row_bytes]);
-        }
-    }
-    Ok(pixels)
-}
-
-fn frame_time(
-    frame: &ffmpeg::frame::Video,
-    time_base: ffmpeg::Rational,
-    stream_start_time: i64,
-    frame_index: usize,
-) -> Time {
-    let Some(timestamp) = frame.timestamp() else {
-        return Time::from_fraction(frame_index.min(i64::MAX as usize) as i64, 30);
-    };
-    let start_time = if stream_start_time > 0 {
-        stream_start_time
-    } else {
-        0
-    };
-    let timestamp = timestamp.saturating_sub(start_time).max(0);
-    let numerator = timestamp.saturating_mul(time_base.numerator() as i64);
-    Time::from_fraction(numerator, time_base.denominator() as i64)
+fn decode_still_image(snapshot: &AssetSnapshot) -> Result<VisualFrame, String> {
+    let ([width, height], pixels) = decode_still_rgba(snapshot)?;
+    VisualFrame::from_rgba_bytes(width, height, pixels)
 }

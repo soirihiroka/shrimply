@@ -243,9 +243,7 @@ pub struct ScreenRecording {
 
 impl ScreenRecording {
     pub fn start(fps: shrimply_math_core::Fraction, mtm: MainThreadMarker) -> Result<Self, String> {
-        let directory =
-            shrimply_project_document::project::project_directory().join("media/recordings");
-        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let directory = shrimply_project_document::project::recording_directory()?;
         let path = directory.join(format!("{}.mp4", uuid::Uuid::new_v4()));
         let (sender, events) = mpsc::channel();
         let recording = RecordingDelegate::alloc().set_ivars(RecordingDelegateIvars {

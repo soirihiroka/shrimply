@@ -9,7 +9,7 @@ fn canonical_io_receipts_do_not_adopt_racing_external_writes_as_our_baseline() {
         return;
     };
     let path = root.join("project/receipt.shrimp");
-    let mut backend = ProjectBackend::new(|| {}).unwrap();
+    let mut backend = ProjectBackend::new(|| {}, None).unwrap();
     backend
         .dispatch(&json!({"op":"create","path":path,"name":"Original"}))
         .unwrap();
@@ -145,9 +145,12 @@ fn canonical_project_lifecycle_history_and_external_reload() {
     };
     let path = root.join("project").join("actual.shrimp");
     let (send, events) = std::sync::mpsc::sync_channel(1);
-    let mut backend = ProjectBackend::new(move || {
-        let _ = send.try_send(());
-    })
+    let mut backend = ProjectBackend::new(
+        move || {
+            let _ = send.try_send(());
+        },
+        None,
+    )
     .unwrap();
     backend
         .dispatch(&json!({"op":"create","path":path,"name":"Original"}))
@@ -399,7 +402,7 @@ fn project_edit_memory_benchmark() {
     let Some(root) = isolated_root("project::tests::project_edit_memory_benchmark", true) else {
         return;
     };
-    let mut backend = ProjectBackend::new(|| {}).unwrap();
+    let mut backend = ProjectBackend::new(|| {}, None).unwrap();
     backend
         .dispatch(
             &json!({"op":"create","path":root.join("project/benchmark.shrimp"),"name":"Benchmark"}),

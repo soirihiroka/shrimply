@@ -234,6 +234,9 @@ pub(super) fn render_project_frame(
             shrimply_project_document::project::VideoItemContent::Media => "Video item / Media",
             shrimply_project_document::project::VideoItemContent::Image => "Video item / Image",
             shrimply_project_document::project::VideoItemContent::Gif => "Video item / GIF",
+            shrimply_project_document::project::VideoItemContent::AnimatedImage => {
+                "Video item / Animated image"
+            }
             shrimply_project_document::project::VideoItemContent::Svg => "Video item / SVG",
             shrimply_project_document::project::VideoItemContent::Pdf(_) => "Video item / PDF",
             shrimply_project_document::project::VideoItemContent::Manim(_) => "Video item / Manim",

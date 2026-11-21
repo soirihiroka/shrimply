@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-video-decoder.workspace = true
+shrimply-media-info.workspace = true
 sanim-lang = { workspace = true, features = ["native-text", "media"] }
 shrimply-trust-core.workspace = true
 shrimply-drawing-skia.workspace = true
-shrimply-video-decoder.workspace = true
-skia-safe.workspace = true
 ffmpeg-next.workspace = true
 glam.workspace = true
 hashbrown.workspace = true

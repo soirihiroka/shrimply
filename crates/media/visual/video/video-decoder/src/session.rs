@@ -172,7 +172,7 @@ impl VideoDecoderSession {
     ) -> Result<Self, String> {
         source.verify_current()?;
         ffmpeg::init().map_err(|error| error.to_string())?;
-        let input = ffmpeg::format::input_with_interrupt(&source.path(), move || {
+        let input = shrimply_media_info::demux::open_with_interrupt(source.path(), move || {
             cancellation.as_ref().is_some_and(DecodeControl::superseded)
         })
         .map_err(|error| error.to_string())?;

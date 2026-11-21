@@ -271,7 +271,7 @@ internal fun InspectorControl(timeline: TimelineSession, control: JSONObject, en
                             } },
                             modifier = Modifier.fillMaxWidth().clickable(enabled = active) { send(reveal.getJSONObject("command")) })
                     }
-                    "image" -> InspectorImage(timeline, control)
+                    "image" -> InspectorImage(control)
                     "toggle" -> if (settings) {
                         val checked = control.getBoolean("selected")
                         SettingsRow(label, summary, editable,
@@ -415,19 +415,16 @@ private fun InspectorExpression(timeline: TimelineSession, editor: JSONObject, e
     }
 }
 
-/** Native image decoding and drawing; Rust owns the resource and presentation. */
+/** Display the bounded thumbnail prepared by the shared Rust metadata worker. */
 @Composable
-private fun InspectorImage(timeline: TimelineSession, control: JSONObject) {
-    val resource = control.getJSONObject("resource")
-    val key = resource.toString()
+private fun InspectorImage(control: JSONObject) {
+    val key = control.getString("thumbnail")
     var image by remember(key) { mutableStateOf<ImageBitmap?>(null) }
     var failure by remember(key) { mutableStateOf<String?>(null) }
     LaunchedEffect(key) {
         try {
-            val result = timeline.request(resource)
             image = withContext(Dispatchers.IO) {
-                val bytes = android.util.Base64.decode(result.getString("image"), android.util.Base64.DEFAULT)
-                android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes))).asImageBitmap()
+                checkNotNull(android.graphics.BitmapFactory.decodeFile(key)) { control.getString("error") }.asImageBitmap()
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (error: Exception) { failure = error.message ?: control.getString("error") }

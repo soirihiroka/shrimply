@@ -13,6 +13,7 @@ impl GpuFrame for ImportedFrame {
     type Context = Renderer;
 
     fn import(renderer: &mut Renderer, source: Arc<VideoFrame>) -> Result<Self, String> {
+        let _measurement = shrimply_profiling::measure("Vulkan rendering / Import video");
         let (output, submission) = renderer.import_video(&source)?;
         Ok(Self {
             source,

@@ -119,7 +119,7 @@ modules:
       - --disable-static
       - --enable-shared
       - --disable-doc
-      - --disable-programs
+      - --disable-ffplay
       - --enable-libfdk-aac
       - --enable-nonfree
       - --enable-libopus
@@ -130,8 +130,11 @@ modules:
       - --enable-gnutls
     sources:
       - type: archive
-        url: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
-        sha256: 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+        path: '@SHRIMPLY_FFMPEG@'
+        strip-components: 0
+      - type: shell
+        commands:
+          - cp RELEASE FF_VERSION
 
   - name: poppler
     buildsystem: cmake-ninja
@@ -165,6 +168,7 @@ modules:
         CARGO_TARGET_DIR: /run/ccache/cargo-target
         CARGO_UNSTABLE_CHECKSUM_FRESHNESS: "true"
         SHRIMPLY_BUILD_GIT_HASH: '@SHRIMPLY_GIT_HASH@'
+        SHRIMPLY_FFMPEG_PREFIX: /app
         # Link the bundled FFmpeg before the SDK's incompatible version.
         RUSTFLAGS: "-L native=/app/lib -C link-arg=-fuse-ld=lld"
         PATH: /run/host/usr/local/cargo/bin:/run/host/usr/local/cuda-12.9/bin:/usr/lib/sdk/llvm22/bin:/app/bin:/usr/bin
@@ -183,7 +187,7 @@ modules:
         RUSTUP=/run/host/usr/local/cargo/bin/rustup
         CUDA_PTX_TARGET="${CUDA_PTX_TARGET}"
       - >-
-        make install PREFIX=/app
+        make install PREFIX=/app MANIM_PYAV=
         RUSTUP=/run/host/usr/local/cargo/bin/rustup
         CUDA_PTX_TARGET="${CUDA_PTX_TARGET}"
       # Compile Python extensions against the SDK, never on the user's machine.

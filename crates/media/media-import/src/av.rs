@@ -1,4 +1,6 @@
 //! FFmpeg media inspection and remuxing.
+mod vp9;
+
 use super::*;
 use ffmpeg::{Rational, codec, encoder, format, media};
 use ffmpeg_next as ffmpeg;
@@ -7,10 +9,9 @@ pub(super) fn inspect(
     source: Asset,
     snapshot: AssetSnapshot,
     file_kind: FileKind,
-    default_visual_duration: Time,
 ) -> Result<MediaInfo, String> {
     let path = snapshot.path();
-    let input = format::input(path)
+    let input = shrimply_media_info::demux::open(path)
         .map_err(|error| format!("could not open {}: {error}", path.display()))?;
     let mut video_streams = 0;
     let mut video_sizes = Vec::new();
@@ -41,18 +42,7 @@ pub(super) fn inspect(
                         ));
                     }
                 }
-                let (width, height) = unsafe {
-                    let parameters = stream.parameters();
-                    let parameters = &*parameters.as_ptr();
-                    (parameters.width, parameters.height)
-                };
-                if width <= 0 || height <= 0 {
-                    return Err(format!(
-                        "{} has a video stream without positive dimensions",
-                        path.display()
-                    ));
-                }
-                video_sizes.push(UVec2::new(width as u32, height as u32));
+                video_sizes.push(track_dimensions(&snapshot, video_streams - 1, &stream)?);
             }
             media::Type::Audio => audio_streams += 1,
             _ => {}
@@ -77,54 +67,12 @@ pub(super) fn inspect(
         return Err(format!("{} has no audio or video streams", path.display()));
     }
 
-    if file_kind == FileKind::Image {
-        if video_sizes.iter().any(|size| {
-            (size.x as usize)
-                .checked_mul(size.y as usize)
-                .is_none_or(|pixels| pixels > shrimply_drawing_skia::media::MAX_PIXELS)
-        }) {
-            return Err("image dimensions exceed the pixel budget".into());
-        }
-        use shrimply_video_decoder::{DecoderBackend, NextFrame, VideoDecoderSession};
-        let mut decoder =
-            VideoDecoderSession::open(&snapshot, 0, |_| Ok(DecoderBackend::Software), None)?;
-        match decoder.next_frame([None, None])? {
-            NextFrame::Frame((_, frame))
-                if !frame.native().is_corrupt()
-                    && frame.native().decode_error_flags().is_empty() => {}
-            _ => return Err(format!("{} has no complete decoded image", path.display())),
-        }
-    }
-
-    let source_duration = Time::from_fraction(
+    let duration = Time::from_fraction(
         input.duration().max(0),
         i64::from(ffmpeg::sys::AV_TIME_BASE),
     )
     .max(stream_duration);
-    let visual_kind = match file_kind {
-        FileKind::Image => Some(VisualMediaKind::Image),
-        FileKind::Gif => Some(VisualMediaKind::Gif),
-        FileKind::Mp4 | FileKind::Mov | FileKind::Mkv | FileKind::WebM if video_streams > 0 => {
-            Some(VisualMediaKind::Video)
-        }
-        _ => None,
-    };
-    if matches!(file_kind, FileKind::Image | FileKind::Gif) {
-        audio_streams = 0;
-        video_streams = video_streams.min(1);
-        video_sizes.truncate(video_streams);
-    }
-    let duration = if file_kind == FileKind::Image
-        || file_kind == FileKind::Gif && source_duration <= Time::ZERO
-    {
-        default_visual_duration
-    } else {
-        source_duration
-    };
-
-    if file_kind == FileKind::Image {
-        video_fps = None;
-    }
+    let visual_kind = (video_streams > 0).then_some(VisualMediaKind::Video);
     snapshot.verify_current()?;
     Ok(MediaInfo {
         source,
@@ -140,36 +88,55 @@ pub(super) fn inspect(
     })
 }
 
-pub fn remux_mkv_to_mp4(input: &Path) -> Result<PathBuf, String> {
-    let file = remux_to_mp4(input, shrimply_resource_pipeline::CancelToken::default())?;
-    let path = file.path().to_path_buf();
-    file.keep();
-    Ok(path)
+pub fn video_dimensions(path: &Path, track_id: u32) -> Option<UVec2> {
+    ffmpeg::init().ok()?;
+    let source = Asset::new(path).snapshot().ok()?;
+    let input = shrimply_media_info::demux::open(path).ok()?;
+    let stream = input
+        .streams()
+        .filter(|stream| {
+            stream.parameters().medium() == media::Type::Video
+                && !stream
+                    .disposition()
+                    .contains(format::stream::Disposition::ATTACHED_PIC)
+        })
+        .nth(track_id as usize)?;
+    track_dimensions(&source, track_id as usize, &stream).ok()
+}
+
+fn track_dimensions(
+    source: &AssetSnapshot,
+    index: usize,
+    stream: &format::stream::Stream<'_>,
+) -> Result<UVec2, String> {
+    let parameters = stream.parameters();
+    let raw = unsafe { &*parameters.as_ptr() };
+    if raw.width > 0 && raw.height > 0 {
+        return Ok(UVec2::new(raw.width as u32, raw.height as u32));
+    }
+    use shrimply_video_decoder::{DecoderBackend, NextFrame, VideoDecoderSession};
+    let mut decoder = VideoDecoderSession::open(
+        source,
+        index.try_into().map_err(|_| "Video track index overflow")?,
+        DecoderBackend::hardware_for_readback,
+        None,
+    )?;
+    match decoder.next_frame([None, None])? {
+        NextFrame::Frame((_, frame)) => {
+            Ok(UVec2::new(frame.native().width(), frame.native().height()))
+        }
+        _ => Err(format!(
+            "Could not determine video dimensions for {}",
+            source.path().display()
+        )),
+    }
 }
 
 pub fn remux_to_mp4(
     input: &Path,
     cancellation: shrimply_resource_pipeline::CancelToken,
 ) -> Result<OwnedFile, String> {
-    let mut path = input.with_extension("mp4");
-    loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(_) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let mut name = input
-                    .file_stem()
-                    .ok_or("source has no filename")?
-                    .to_os_string();
-                name.push(format!("-{}.mp4", uuid::Uuid::new_v4()));
-                path = input.with_file_name(name);
-            }
-            Err(error) => return Err(format!("could not create {}: {error}", path.display())),
-        }
-    }
+    let (path, _) = super::staging::create_unique(input.with_extension("mp4"))?;
     let output = OwnedFile::new(path);
     remux(input, output.path(), cancellation)?;
     Ok(output)
@@ -182,7 +149,7 @@ fn remux(
 ) -> Result<(), String> {
     let interrupt = cancellation.clone();
     let mut input_context =
-        format::input_with_interrupt(input, move || interrupt.is_cancelled())
+        shrimply_media_info::demux::open_with_interrupt(input, move || interrupt.is_cancelled())
             .map_err(|error| format!("could not open {}: {error}", input.display()))?;
     let mut output_context = format::output(output)
         .map_err(|error| format!("could not create {}: {error}", output.display()))?;
@@ -207,7 +174,13 @@ fn remux(
         let mut output_stream = output_context
             .add_stream(encoder::find(codec::Id::None))
             .map_err(|error| format!("could not add output stream: {error}"))?;
-        output_stream.set_parameters(input_stream.parameters());
+        let mut parameters = input_stream.parameters();
+        if parameters.id() == codec::Id::VP9 && unsafe { (*parameters.as_ptr()).format } < 0 {
+            // FFmpeg's packet-only VP9 parser leaves the MP4 configuration incomplete.
+            parameters = parameters.clone();
+            vp9::complete(input, input_index, &mut parameters, &cancellation)?;
+        }
+        output_stream.set_parameters(parameters);
         unsafe {
             (*output_stream.parameters().as_mut_ptr()).codec_tag = 0;
         }

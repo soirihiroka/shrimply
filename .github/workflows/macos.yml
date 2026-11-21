@@ -8,6 +8,9 @@ on:
       - ".github/workflows/macos.yml"
       - ".github/scripts/**"
       - "packaging/macos/**"
+      - "packaging/macos-ffmpeg.py"
+      - "packaging/native_sources.py"
+      - "packaging/bundle-pyav.py"
       - ".cargo/**"
       - ".gitmodules"
       - "assets/**"
@@ -114,7 +117,7 @@ jobs:
         shell: bash
         run: |
           native_versions="$(brew list --versions)"
-          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" \
+          native_hash="$(printf '%s\n' "${ImageOS}" "${ImageVersion}" "${native_versions}" "$(git -C external/ffmpeg rev-parse HEAD)" \
             | LC_ALL=C sort | shasum -a 256 | cut -d ' ' -f 1)"
           echo "prefix=macos-application-v2${{ inputs.check_only && '-debug' || '' }}-macos-26-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml') }}-${native_hash}" >> "${GITHUB_OUTPUT}"
 
@@ -130,6 +133,12 @@ jobs:
           restore-keys: |
             ${{ steps.application-cache-key.outputs.prefix }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'external/**/Cargo.toml', '.cargo/config.toml', 'Makefile', '.github/workflows/macos.yml') }}-
             ${{ steps.application-cache-key.outputs.prefix }}-
+
+      - name: Cache hardware-only FFmpeg
+        uses: actions/cache@v6
+        with:
+          path: target/macos-ffmpeg
+          key: ${{ steps.application-cache-key.outputs.prefix }}-ffmpeg-${{ hashFiles('packaging/native_sources.py', 'packaging/macos-ffmpeg.py', 'packaging/macos/ffmpeg-hardware.patch') }}
 
       - name: Cache PocketSphinx resources
         uses: actions/cache@v6
@@ -177,6 +186,7 @@ jobs:
           contents="${MACOS_APP}/Contents"
           mkdir -p "${contents}/Frameworks" "${contents}/MacOS" "${contents}/Resources/licenses"
           install -m 755 target/release/shrimply "${contents}/MacOS/shrimply"
+          install -m 755 target/macos-ffmpeg/install/bin/ffmpeg "${contents}/MacOS/shrimply-ffmpeg"
           install -m 644 packaging/macos/Info.plist "${contents}/Info.plist"
           install -m 644 vendor/vision/LICENSE "${contents}/Resources/licenses/OpenCV-Vision.txt"
           install -m 644 crates/math/color/src/css/LICENSE "${contents}/Resources/licenses/GTK-Pango-Color.txt"
@@ -190,24 +200,39 @@ jobs:
           manim_revision="$(git -C external/manim rev-parse HEAD)"
           sed "s|^manimgl = .*|manimgl = { url = \"https://github.com/3b1b/manim/archive/${manim_revision}.tar.gz\" }|" \
             "${python_project}/pyproject.toml" > "${bundled_project}/pyproject.toml"
+          uv run --no-project --python 3.14 python packaging/bundle-pyav.py \
+            "${python_project}" "${bundled_project}" --prefix target/macos-ffmpeg/install
           uv lock --python 3.14 --project "${bundled_project}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "${contents}/Info.plist"
 
           cp target/macos-icon/Assets.car target/macos-icon/Shrimply.icns "${contents}/Resources/"
 
+          # The application binaries and PyAV extensions load from different
+          # directories; each carries a relative path to the same Frameworks.
+          binaries=("${contents}/MacOS/shrimply" "${contents}/MacOS/shrimply-ffmpeg" "${contents}/MacOS/uv")
+          while IFS= read -r -d '' extension; do binaries+=("${extension}"); done \
+            < <(find "${bundled_project}/av" -name '*.so' -print0)
+          fix_files=()
+          for binary in "${binaries[@]}"; do fix_files+=(--fix-file "${binary}"); done
           bundle_log="${RUNNER_TEMP}/dylibbundler.log"
           if ! dylibbundler \
             --bundle-deps \
             --overwrite-dir \
-            --fix-file "${contents}/MacOS/shrimply" \
-            --fix-file "${contents}/MacOS/uv" \
+            "${fix_files[@]}" \
             --dest-dir "${contents}/Frameworks" \
-            --install-path '@executable_path/../Frameworks/' \
+            --install-path '@rpath/' \
             > "${bundle_log}" 2>&1; then
             tail -n 200 "${bundle_log}"
             exit 1
           fi
 
+          for binary in "${binaries[@]}"; do
+            relative="$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))' "${contents}/Frameworks" "${binary}")"
+            rpath="@loader_path/${relative}"
+            if ! otool -l "${binary}" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }' | grep -Fx "${rpath}" >/dev/null; then
+              install_name_tool -add_rpath "${rpath}" "${binary}"
+            fi
+          done
           find "${contents}/MacOS" "${contents}/Frameworks" -type f -print0 \
             | while IFS= read -r -d '' binary; do
                 otool -l "${binary}" \
@@ -216,6 +241,7 @@ jobs:
                       install_name_tool -delete_rpath "${duplicate}" "${binary}" 2>> "${bundle_log}"
                     done
               done
+          find "${bundled_project}/av" -name '*.so' -exec codesign --force --sign - {} \;
           xattr -cr "${MACOS_APP}"
           codesign --force --deep --sign - "${MACOS_APP}"
 
@@ -235,13 +261,19 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${contents}/Info.plist")" = "shrimply"
           test "$(lipo -archs "${contents}/MacOS/shrimply")" = "arm64"
           env PATH=/usr/bin:/bin "${contents}/MacOS/uv" --version
+          ffmpeg_version="$(env PATH=/usr/bin:/bin "${contents}/MacOS/shrimply-ffmpeg" -version)"
+          test "$(awk 'NR == 1 {print $3}' <<< "${ffmpeg_version}")" = "$(cat external/ffmpeg/RELEASE)"
           test -s "${contents}/Resources/manim-worker/pyproject.toml"
           test -s "${contents}/Resources/manim-worker/uv.lock"
           test ! -d "${contents}/Resources/manim-worker/.venv"
 
+          worker="${contents}/Resources/manim-worker"
+          EXPECTED_FFMPEG="$(cat external/ffmpeg/RELEASE)" PYTHONPATH="${worker}" \
+            "${contents}/MacOS/uv" run --no-project --python 3.14 python -c \
+              'import av, os; assert av.ffmpeg_version_info == os.environ["EXPECTED_FFMPEG"], av.ffmpeg_version_info'
           dependencies="${RUNNER_TEMP}/macos-dependencies.txt"
-          find "${contents}/MacOS" "${contents}/Frameworks" -type f -print0 \
-            | xargs -0 otool -L > "${dependencies}"
+          { find "${contents}/MacOS" "${contents}/Frameworks" -type f -print0
+            find "${worker}/av" -name '*.so' -print0; } | xargs -0 otool -L > "${dependencies}"
           external_dependencies="$(awk '$1 ~ /^\// && $1 !~ /^\/System\/Library\// && $1 !~ /^\/usr\/lib\// { print $1 }' "${dependencies}")"
           if [[ -n "${external_dependencies}" ]]; then
             echo "Application bundle retains external dependencies:" >&2

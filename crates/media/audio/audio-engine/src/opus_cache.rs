@@ -25,7 +25,7 @@ pub(super) fn transcode(input: &Path, output: &Path) -> Result<(), String> {
 }
 
 fn duration(path: &Path) -> Result<Time, String> {
-    let input = ffmpeg::format::input(path)
+    let input = shrimply_media_info::demux::open(path)
         .map_err(|error| format!("Could not open Pneuma output: {error}"))?;
     let duration = input.duration();
     if duration > 0 {

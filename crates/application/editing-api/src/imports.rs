@@ -461,9 +461,7 @@ fn apply_import(
             if request.link {
                 linked_sources.push(Asset::new(source.inspect.clone()).snapshot()?);
             }
-            let kind = native::file_kind(&source.inspect)
-                .ok_or_else(|| format!("unsupported file type: {}", source.inspect.display()))?;
-            remux_source(&mut source, kind, request.link)?;
+            let kind = prepare_import_source(&mut source, request.link)?;
             let frame = crate::edit::frame_with_offset(anchor, entry.offset_frames)
                 .map_err(|error| format!("import {error}"))?;
             let projected_start = time_from_frame(frame, project.fps)
@@ -534,23 +532,23 @@ fn apply_import(
     })
 }
 
-fn remux_source(
-    source: &mut SourcePaths,
-    kind: native::FileKind,
-    link: bool,
-) -> Result<(), String> {
-    if matches!(kind, native::FileKind::Mkv | native::FileKind::WebM) {
+fn prepare_import_source(source: &mut SourcePaths, link: bool) -> Result<native::FileKind, String> {
+    let kind = native::file_kind(&source.inspect)
+        .ok_or_else(|| format!("unsupported file type: {}", source.inspect.display()))?;
+    if native::requires_mp4_remux(&source.inspect) {
         if link {
             return Err("MKV/WebM requires an MP4 derivative and cannot be linked".into());
         }
-        source.inspect = native::remux_mkv_to_mp4(&source.inspect)?;
+        let file = native::remux_to_mp4(&source.inspect, Default::default())?;
+        source.inspect = file.path().to_path_buf();
         let name = source
             .inspect
             .file_name()
             .ok_or("remux output has no file name")?;
         source.stored.set_file_name(name);
+        file.keep();
     }
-    Ok(())
+    Ok(kind)
 }
 
 fn apply_media(

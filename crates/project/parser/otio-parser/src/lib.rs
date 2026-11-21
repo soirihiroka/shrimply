@@ -1,10 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ffmpeg_next as ffmpeg;
-use glam::UVec2;
 use serde_json::{Map, Number, Value, json};
 use shrimply_math_core::{Fraction, time_from_frame};
+use shrimply_media_import::video_dimensions;
 use shrimply_project_document::project::{
     AudioTransition, Background, BackgroundGenerator, CanvasSize, Color, PROJECT_FORMAT_VERSION,
     SolidColor, Time, Transform, TransitionSide, VideoItem, VideoSampleMethod, VisualSource,
@@ -340,8 +339,12 @@ fn external_visual(
 ) -> Result<Value, String> {
     let path = media_path(reference, base)?;
     warn_missing_media(&path, warnings);
-    let content = visual_source(&path);
-    let dimensions = visual_dimensions(&path, &content);
+    let (content, dimensions) =
+        match shrimply_media_import::image_reference(&path, canvas_size, end.saturating_sub(start))
+        {
+            Some((content, size)) => (content, size.ok()),
+            None => (VisualSource::Media, video_dimensions(&path, 0)),
+        };
     let transform = dimensions
         .map(|size| Transform::natural_size(canvas_size, size.x, size.y))
         .unwrap_or_else(|| Transform::fill(canvas_size));
@@ -447,50 +450,6 @@ fn media_path(reference: &Value, base: &Path) -> Result<PathBuf, String> {
     } else {
         base.join(path)
     })
-}
-
-fn visual_source(path: &Path) -> VisualSource {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default();
-    if extension.eq_ignore_ascii_case("gif") {
-        VisualSource::Gif
-    } else if extension.eq_ignore_ascii_case("svg") {
-        VisualSource::Svg
-    } else if extension.eq_ignore_ascii_case("pdf") {
-        VisualSource::Pdf(Box::default())
-    } else if extension.eq_ignore_ascii_case("kra") || extension.eq_ignore_ascii_case("psd") {
-        VisualSource::LayeredImage(Box::default())
-    } else if ["avif", "bmp", "jpeg", "jpg", "png", "tif", "tiff", "webp"]
-        .iter()
-        .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-    {
-        VisualSource::Image
-    } else {
-        VisualSource::Media
-    }
-}
-
-fn visual_dimensions(path: &Path, content: &VisualSource) -> Option<UVec2> {
-    if matches!(content, VisualSource::Pdf(_)) {
-        let page = shrimply_pdf::page_sizes(fs::read(path).ok()?)
-            .ok()?
-            .into_iter()
-            .next()?;
-        return Some(UVec2::new(page.width, page.height));
-    }
-    if matches!(content, VisualSource::LayeredImage(_)) {
-        return shrimply_layered_image_loader::load(path)
-            .ok()
-            .map(|image| UVec2::new(image.width, image.height));
-    }
-    ffmpeg::init().ok()?;
-    let input = ffmpeg::format::input(path).ok()?;
-    let stream = input.streams().best(ffmpeg::media::Type::Video)?;
-    let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters()).ok()?;
-    let decoder = context.decoder().video().ok()?;
-    Some(UVec2::new(decoder.width(), decoder.height()))
 }
 
 fn warn_missing_media(path: &Path, warnings: &mut Vec<String>) {

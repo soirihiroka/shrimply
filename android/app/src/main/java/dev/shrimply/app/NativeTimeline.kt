@@ -20,7 +20,7 @@ internal object NativeTimeline {
     init { System.loadLibrary("shrimply_android") }
     external fun initialize(application: android.content.Context, config: String, cache: String, fonts: String)
     external fun throughput(path: String, scene: String, frames: Int): String
-    external fun create(stress: Boolean, benchmark: Boolean, listener: TimelineListener): Long
+    external fun create(stress: Boolean, benchmark: Boolean, files: ProjectFiles, listener: TimelineListener): Long
     external fun request(handle: Long, request: String, descriptor: Int): String
     external fun surface(handle: Long, role: Int, surface: Surface?, width: Int, height: Int, density: Float)
     external fun visible(handle: Long, role: Int, visible: Boolean)
@@ -33,7 +33,7 @@ internal object NativeTimeline {
 /** Project I/O runs on one executor. Rendering and exact playback belong to Rust.
  * Lifecycle surface release remains synchronous; a closed handle is never reused.
  */
-internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoCloseable {
+internal class TimelineSession(stress: Boolean, benchmark: Boolean, projects: ProjectFiles) : AutoCloseable {
     val identity = java.util.UUID.randomUUID().toString()
     val snapshot = mutableStateOf(JSONObject())
     var menuOrigin = DpOffset.Zero
@@ -52,7 +52,7 @@ internal class TimelineSession(stress: Boolean, benchmark: Boolean) : AutoClosea
             if (latest.get() != null && posted.compareAndSet(false, true)) main.post(this)
         }
     }
-    private val handle = AtomicLong(NativeTimeline.create(stress, benchmark, TimelineListener { payload ->
+    private val handle = AtomicLong(NativeTimeline.create(stress, benchmark, projects, TimelineListener { payload ->
         if (!closed.get()) {
             latest.set(payload)
             if (posted.compareAndSet(false, true)) main.post(update)

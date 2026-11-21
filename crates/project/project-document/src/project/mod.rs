@@ -95,7 +95,9 @@ pub use shrimply_paint_model::{
     PaintTransform, ResolvedPaintFillOptions, ResolvedPaintStrokeEndOptions,
     ResolvedPaintStrokeOptions, ResolvedPaintTextureOptions,
 };
-pub use shrimply_path_core::{active_project_path, project_directory, set_active_project_path};
+pub use shrimply_path_core::{
+    active_project_path, project_directory, recording_directory, set_active_project_path,
+};
 pub use shrimply_project_types::{
     AudioClipTransitionCurve, COMMON_FRAME_RATES, CanvasSize, DEFAULT_CANVAS_SIZE,
     DEFAULT_PROJECT_FPS, FrameRate, ItemKey, MAX_CANVAS_DIMENSION, MIN_CANVAS_DIMENSION,
@@ -1338,6 +1340,7 @@ impl VideoItem {
             VideoItemContent::Media
             | VideoItemContent::Image
             | VideoItemContent::Gif
+            | VideoItemContent::AnimatedImage
             | VideoItemContent::Pdf(_)
             | VideoItemContent::Blender(_)
             | VideoItemContent::LayeredImage(_)
@@ -1590,6 +1593,7 @@ fn ensure_video_property_ids(item: &mut VideoItem, seen: &mut HashSet<Uuid>) {
         VideoItemContent::Media
         | VideoItemContent::Image
         | VideoItemContent::Gif
+        | VideoItemContent::AnimatedImage
         | VideoItemContent::Svg
         | VideoItemContent::Pdf(_)
         | VideoItemContent::Manim(_)

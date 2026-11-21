@@ -1,7 +1,9 @@
-use ffmpeg_next::{format::Pixel, frame::Video, software::scaling};
+use ffmpeg_next::format::Pixel;
 use shrimply_asset::Asset;
 use shrimply_math_core::{Time, fraction_as_u32_ratio};
-use shrimply_video_decoder::{DecodeOutcome, DecoderBackend, NextFrame, VideoDecoderSession};
+use shrimply_video_decoder::{
+    DecodeOutcome, DecoderBackend, NextFrame, RgbFrameConverter, VideoDecoderSession,
+};
 use shrimply_vision::{RgbaImage, math::rotate_rgba};
 use std::{ops::Range, path::Path};
 
@@ -13,7 +15,7 @@ pub struct VideoChunk {
     pub frame_rate_numerator: u32,
     pub frame_rate_denominator: u32,
     decoder: VideoDecoderSession,
-    scaler: Option<scaling::Context>,
+    scaler: RgbFrameConverter,
     rotation_degrees: i32,
     analysis_start: u64,
     analysis_end: u64,
@@ -30,10 +32,12 @@ impl VideoChunk {
         overlap_seconds: u32,
     ) -> Result<Self, String> {
         let source = Asset::new(input).snapshot()?;
-        // The former VideoCapture path returned CPU pixels; use the same software
-        // decoding policy through the shared session rather than another FFmpeg loop.
-        let decoder =
-            VideoDecoderSession::open(&source, track_id, |_| Ok(DecoderBackend::Software), None)?;
+        let decoder = VideoDecoderSession::open(
+            &source,
+            track_id,
+            DecoderBackend::hardware_for_readback,
+            None,
+        )?;
         let rotation_degrees = decoder.rotation_degrees();
         let (width, height) = decoder.dimensions();
         let (width, height) = if rotation_degrees % 180 == 90 {
@@ -67,7 +71,7 @@ impl VideoChunk {
             frame_rate_numerator,
             frame_rate_denominator,
             decoder,
-            scaler: None,
+            scaler: RgbFrameConverter::new(Pixel::BGR24)?,
             rotation_degrees,
             analysis_start,
             analysis_end,
@@ -81,10 +85,7 @@ impl VideoChunk {
             return Ok(None);
         }
         let decoded = if self.next_frame == self.analysis_start {
-            match self
-                .decoder
-                .frame_by_index(self.analysis_start, [None, None])?
-            {
+            match self.decoder.frame_by_index(self.next_frame, [None, None])? {
                 DecodeOutcome::Frame(frame) => frame,
                 DecodeOutcome::Superseded(_) => {
                     return Err("video stabilization decode was superseded".into());
@@ -103,7 +104,8 @@ impl VideoChunk {
             self.next_frame = self.analysis_end;
             return Ok(None);
         };
-        let frame = frame.native();
+        let downloaded = frame.download()?;
+        let frame = downloaded.as_ref().unwrap_or_else(|| frame.native());
         let (width, height) = if self.rotation_degrees % 180 == 90 {
             (self.height, self.width)
         } else {
@@ -112,32 +114,8 @@ impl VideoChunk {
         if frame.width() != width || frame.height() != height {
             return Err("video stabilization frame dimensions changed".into());
         }
-        if self
-            .scaler
-            .as_ref()
-            .is_none_or(|scaler| scaler.input().format != frame.format())
-        {
-            self.scaler = Some(
-                scaling::Context::get(
-                    frame.format(),
-                    width,
-                    height,
-                    Pixel::BGR24,
-                    width,
-                    height,
-                    scaling::flag::Flags::BICUBIC,
-                )
-                .map_err(|error| format!("create stabilization color conversion: {error}"))?,
-            );
-        }
-        // Keep VideoCapture's BGR24 conversion before channel reordering; changing
-        // swscale's destination format can change its integer color rounding.
-        let mut bgr = Video::empty();
-        self.scaler
-            .as_mut()
-            .expect("stabilization scaler initialized")
-            .run(frame, &mut bgr)
-            .map_err(|error| format!("convert stabilization frame: {error}"))?;
+        // Keep the stabilization reference pipeline’s BGR24 conversion before channel reordering.
+        let bgr = self.scaler.convert(frame)?;
         let row_bytes = width as usize * 3;
         let data = bgr
             .data(0)

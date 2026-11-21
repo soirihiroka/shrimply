@@ -94,6 +94,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
     var choicesBottomSheet by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var comment by rememberSaveable { mutableStateOf(false) }
     var importTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingRemux by rememberSaveable(workspaceKey) { mutableStateOf<String?>(null) }
     var commentTarget by rememberSaveable { mutableStateOf<String?>(null) }
     var trackMenuTarget by rememberSaveable { mutableStateOf<String?>(null) }
     var inspectorFileTarget by rememberSaveable { mutableStateOf<String?>(null) }
@@ -115,7 +116,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         if (result.has("show_in_files")) files.showInFiles(result.getString("show_in_files"))
         if (result.has("message")) android.widget.Toast.makeText(context, result.getString("message"), android.widget.Toast.LENGTH_SHORT).show()
     }
-    fun open(path: String) = action { timeline.request("open", "path" to path) }
+    fun open(path: String) = action { timeline.request(files.openRequest(path)) }
     fun closeProject() = action {
         timeline.request("save")
         project?.optString("path")?.let { files.flush(it) }
@@ -126,7 +127,7 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         if (uri != null) action {
             context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             val found = files.openTree(uri) { file -> scope.launch { progress = file } }
-            if (found.size == 1) timeline.request("open", "path" to found.single().absolutePath) else choices = found
+            if (found.size == 1) timeline.request(files.openRequest(found.single().absolutePath, reconciled = true)) else choices = found
         }
     }
     val exportFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -149,15 +150,32 @@ internal fun ProjectApp(timeline: TimelineSession, files: ProjectFiles, caption:
         saveCompletedExport(result.data?.data?.takeIf { result.resultCode == android.app.Activity.RESULT_OK })
     }
     val saveExportFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> saveCompletedExport(uri) }
+    fun importPicked(uri: android.net.Uri, destination: String, confirmedName: String? = null) = action {
+        val target = targetArguments(destination)
+        var confirmation: String? = null
+        files.importFile(uri) { name, path, descriptor ->
+            check(confirmedName == null || confirmedName == name) { "The selected file changed. Select it again." }
+            val result = timeline.request("import_file", "path" to path, "name" to name, *target,
+                "remux_confirmed" to (confirmedName != null), descriptor = descriptor)
+            confirmation = result.optJSONObject("confirmation")?.let { prompt ->
+                val placement = JSONObject(destination).put("position", result.get("position"))
+                JSONObject().put("uri", uri.toString()).put("destination", placement.toString())
+                    .put("name", name).put("prompt", prompt).toString()
+            }
+        }
+        pendingRemux = confirmation
+    }
     val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val destination = importTarget
         importTarget = null
-        if (uri != null && destination != null) action {
-            val target = targetArguments(destination)
-            files.importFile(uri) { name, path, descriptor ->
-                timeline.request("import_probe", "name" to name, *target)
-                timeline.request("import_file", "path" to path, "name" to name, *target, descriptor = descriptor)
-            }
+        if (uri != null && destination != null) importPicked(uri, destination)
+    }
+    pendingRemux?.let { encoded ->
+        val pending = JSONObject(encoded)
+        RemuxConfirmation(pending.getJSONObject("prompt")) { accepted ->
+            pendingRemux = null
+            if (accepted) importPicked(android.net.Uri.parse(pending.getString("uri")),
+                pending.getString("destination"), pending.getString("name"))
         }
     }
     val inspectorFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->

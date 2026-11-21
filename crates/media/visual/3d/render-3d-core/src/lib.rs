@@ -1,14 +1,15 @@
+mod environment;
 mod math;
+pub use environment::{
+    DecodedEnvironment, load_environment, load_environment as decode_environment,
+};
 
 use std::{
     fmt,
-    mem::size_of,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use ffmpeg::{format, media};
-use ffmpeg_next as ffmpeg;
 use glam::{Mat4, Vec3};
 use shrimply_asset::{Asset, AssetSnapshot};
 use shrimply_math_color::Color;
@@ -68,7 +69,6 @@ impl From<&obj::MeshMaterial> for ComputeMaterial {
     }
 }
 
-const MAX_ENVIRONMENT_WIDTH: u32 = 2048;
 pub const MAX_SCENE_LIGHTS: usize = 32;
 pub const MAX_SCENE_GROUNDS: usize = 32;
 
@@ -1103,140 +1103,6 @@ fn reflected_texture_mapping(mapping: shrimply_scene_3d::TextureMapping) -> obj:
         settings: mapping.settings,
         rotation_filter: mapping.rotation_filter,
     }
-}
-
-pub struct DecodedEnvironment {
-    pub pixels: Vec<Color>,
-    pub width: u32,
-    pub height: u32,
-}
-
-pub fn load_environment(path: impl AsRef<Path>) -> Result<DecodedEnvironment, Render3dError> {
-    let path = path.as_ref();
-    ffmpeg::init()
-        .map_err(|error| Render3dError::message(format!("initialize FFmpeg: {error}")))?;
-    let mut input = format::input(path).map_err(|error| {
-        Render3dError::message(format!("decode environment {}: {error}", path.display()))
-    })?;
-    let stream = input.streams().best(media::Type::Video).ok_or_else(|| {
-        Render3dError::message(format!(
-            "environment {} has no image stream",
-            path.display()
-        ))
-    })?;
-    let stream_index = stream.index();
-    let context = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
-        .map_err(|error| Render3dError::message(error.to_string()))?;
-    let mut decoder = context.decoder().video().map_err(|error| {
-        Render3dError::message(format!(
-            "unsupported environment decoder for {}: {error}",
-            path.display()
-        ))
-    })?;
-    let width = decoder.width().clamp(1, MAX_ENVIRONMENT_WIDTH);
-    let height = (u64::from(decoder.height()) * u64::from(width)
-        / u64::from(decoder.width().max(1)))
-    .max(1)
-    .try_into()
-    .map_err(|_| Render3dError::message("environment height overflow"))?;
-    let mut scaler = ffmpeg::software::scaling::context::Context::get(
-        decoder.format(),
-        decoder.width(),
-        decoder.height(),
-        format::Pixel::GBRPF32LE,
-        width,
-        height,
-        ffmpeg::software::scaling::flag::Flags::BILINEAR,
-    )
-    .map_err(|error| Render3dError::message(format!("create environment scaler: {error}")))?;
-    for (packet_stream, packet) in input.packets() {
-        if packet_stream.index() != stream_index {
-            continue;
-        }
-        decoder
-            .send_packet(&packet)
-            .map_err(|error| Render3dError::message(error.to_string()))?;
-        let mut decoded = ffmpeg::frame::Video::empty();
-        if decoder.receive_frame(&mut decoded).is_ok() {
-            let mut planar = ffmpeg::frame::Video::empty();
-            scaler
-                .run(&decoded, &mut planar)
-                .map_err(|error| Render3dError::message(format!("convert environment: {error}")))?;
-            return interleave_environment(path, &planar, width, height);
-        }
-    }
-    decoder
-        .send_eof()
-        .map_err(|error| Render3dError::message(error.to_string()))?;
-    let mut decoded = ffmpeg::frame::Video::empty();
-    decoder.receive_frame(&mut decoded).map_err(|error| {
-        Render3dError::message(format!(
-            "environment {} produced no frame: {error}",
-            path.display()
-        ))
-    })?;
-    let mut planar = ffmpeg::frame::Video::empty();
-    scaler
-        .run(&decoded, &mut planar)
-        .map_err(|error| Render3dError::message(format!("convert environment: {error}")))?;
-    interleave_environment(path, &planar, width, height)
-}
-
-pub fn decode_environment(path: impl AsRef<Path>) -> Result<DecodedEnvironment, Render3dError> {
-    load_environment(path)
-}
-
-fn interleave_environment(
-    path: &Path,
-    frame: &ffmpeg::frame::Video,
-    width: u32,
-    height: u32,
-) -> Result<DecodedEnvironment, Render3dError> {
-    let linear = matches!(
-        path.extension()
-            .and_then(|value| value.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("hdr" | "exr")
-    );
-    let count = width as usize * height as usize;
-    let mut pixels = Vec::with_capacity(count);
-    for y in 0..height as usize {
-        for x in 0..width as usize {
-            let read = |plane: usize| -> Result<f32, Render3dError> {
-                let offset = y
-                    .checked_mul(frame.stride(plane))
-                    .and_then(|value| value.checked_add(x * size_of::<f32>()))
-                    .ok_or_else(|| Render3dError::message("environment row overflow"))?;
-                let bytes: [u8; 4] = frame
-                    .data(plane)
-                    .get(offset..offset + size_of::<f32>())
-                    .ok_or_else(|| Render3dError::message("short environment frame"))?
-                    .try_into()
-                    .expect("four bytes");
-                Ok(f32::from_le_bytes(bytes))
-            };
-            let convert = |value: f32| {
-                if linear {
-                    value
-                } else if value <= 0.04045 {
-                    value / 12.92
-                } else {
-                    ((value + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            pixels.push(Color::from_rgb(
-                convert(read(2)?),
-                convert(read(0)?),
-                convert(read(1)?),
-            ));
-        }
-    }
-    Ok(DecodedEnvironment {
-        pixels,
-        width,
-        height,
-    })
 }
 
 pub fn validate_scene(

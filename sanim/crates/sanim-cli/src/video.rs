@@ -4,7 +4,7 @@ use sanim_lang::Prepared;
 use sanim_render::Renderer;
 use std::{
     io::{Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -55,6 +55,65 @@ pub(super) fn render(
     Ok(())
 }
 
+fn ffmpeg(override_path: Option<&Path>) -> Result<(PathBuf, &'static str), String> {
+    let executable = override_path.map(Path::to_owned).unwrap_or_else(|| {
+        let bundled = std::env::current_exe().ok().map(|app| {
+            app.with_file_name(format!("shrimply-ffmpeg{}", std::env::consts::EXE_SUFFIX))
+        });
+        let development = std::env::var_os("FFMPEG_DIR").map(|prefix| {
+            PathBuf::from(prefix).join(if cfg!(windows) {
+                "tools/ffmpeg/ffmpeg.exe"
+            } else {
+                "bin/ffmpeg"
+            })
+        });
+        bundled
+            .into_iter()
+            .chain(development)
+            .find(|path| path.is_file())
+            .unwrap_or_else(|| PathBuf::from("ffmpeg"))
+    });
+    // The encoder listing also prints the linked release in FFmpeg's banner.
+    let probe = Command::new(&executable)
+        .arg("-encoders")
+        .output()
+        .map_err(|error| {
+            format!("could not start FFmpeg: {error}; install ffmpeg or pass --ffmpeg PATH")
+        })?;
+    let banner = String::from_utf8_lossy(&probe.stderr);
+    if !probe.status.success() {
+        return Err(format!(
+            "could not query FFmpeg encoders at {} ({}): {}",
+            executable.display(),
+            probe.status,
+            banner.trim()
+        ));
+    }
+    let expected = include_str!("../../../../external/ffmpeg/RELEASE").trim();
+    let version = banner
+        .lines()
+        .find_map(|line| line.strip_prefix("ffmpeg version "))
+        .and_then(|line| line.split_ascii_whitespace().next())
+        .unwrap_or("unknown");
+    // Releases built in a Git checkout may retain the upstream tag's n prefix.
+    if version.strip_prefix('n').unwrap_or(version) != expected {
+        return Err(format!(
+            "expected FFmpeg {expected}, found {version} at {}; pass --ffmpeg PATH",
+            executable.display()
+        ));
+    }
+    let listing = String::from_utf8_lossy(&probe.stdout);
+    let encoder = ["libx264", "h264_nvenc"]
+        .into_iter()
+        .find(|name| {
+            listing
+                .lines()
+                .any(|line| line.split_ascii_whitespace().nth(1) == Some(*name))
+        })
+        .ok_or("FFmpeg needs the libx264 or h264_nvenc encoder for H.264 video")?;
+    Ok((executable, encoder))
+}
+
 pub(super) fn encode(
     args: &Args,
     rate: sanim_core::Fraction,
@@ -89,7 +148,8 @@ pub(super) fn encode(
         .tempfile_in(directory)
         .map_err(|e| format!("video output: {e}"))?;
     let mut errors = tempfile::tempfile().map_err(|e| e.to_string())?;
-    let mut encoder = Command::new(args.ffmpeg.as_deref().unwrap_or(Path::new("ffmpeg")))
+    let (executable, codec) = ffmpeg(args.ffmpeg.as_deref())?;
+    let mut encoder = Command::new(executable)
         .args([
             "-hide_banner",
             "-loglevel",
@@ -110,7 +170,7 @@ pub(super) fn encode(
             "pipe:0",
             "-an",
             "-c:v",
-            "libx264",
+            codec,
             "-pix_fmt",
             "yuv420p",
             "-movflags",
@@ -123,9 +183,7 @@ pub(super) fn encode(
         .stdout(Stdio::null())
         .stderr(Stdio::from(errors.try_clone().map_err(|e| e.to_string())?))
         .spawn()
-        .map_err(|e| {
-            format!("could not start FFmpeg: {e}; install ffmpeg or pass --ffmpeg PATH")
-        })?;
+        .map_err(|e| format!("could not start FFmpeg encoder: {e}"))?;
     let started = std::time::Instant::now();
     let result = (|| {
         let mut input = encoder.stdin.take().ok_or("FFmpeg stdin unavailable")?;

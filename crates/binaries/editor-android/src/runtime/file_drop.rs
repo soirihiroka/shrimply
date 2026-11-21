@@ -110,11 +110,8 @@ impl Runtime {
                     )?;
                 if started.needs_remux {
                     session.remux = Some(started.batch);
-                    let prompt = shrimply_timeline_skia::external_content::remux_prompt();
-                    let result = json!({"confirmation":{"title":prompt.title,"body":prompt.body,
-                        "confirm_label":prompt.confirm,"cancel_label":prompt.cancel}});
                     self.file_drop = Some(session);
-                    Ok(result)
+                    Ok(crate::project::remux_confirmation())
                 } else {
                     Ok(json!({}))
                 }

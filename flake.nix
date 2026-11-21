@@ -13,6 +13,7 @@
   };
 
   inputs = {
+    self.submodules = true;
     manim = {
       url = "github:3b1b/manim/9d57bcf9edea2486f214e190931de2a5537f23c1";
       flake = false;
@@ -61,11 +62,27 @@
           };
         in
         {
+          shrimply-ffmpeg =
+            let
+              source = ./external/ffmpeg;
+              codec = (prev.ffmpeg.override {
+                inherit source;
+                version = final.lib.removeSuffix "\n" (builtins.readFile (source + "/RELEASE"));
+              }).overrideAttrs (old: {
+                # The pinned nixpkgs recipe still configures the removed OpenGL output.
+                configureFlags = builtins.filter (flag: flag != "--disable-opengl") old.configureFlags;
+                postPatch = (old.postPatch or "") + "\ncp RELEASE FF_VERSION\n";
+              });
+            in final.symlinkJoin {
+              name = "shrimply-ffmpeg-${codec.version}";
+              paths = [ (final.lib.getBin codec) (final.lib.getLib codec) (final.lib.getDev codec) ];
+            };
           shrimply-slang = prev.callPackage ./pkgs/slang.nix { };
           shrimply-oidn = prev.callPackage ./pkgs/oidn.nix { };
           shrimply =
             (final.callPackage ./pkgs/shrimply.nix {
               inherit rustPlatform;
+              ffmpeg = final.shrimply-ffmpeg;
               manimSrc = manim;
               optixSrc = optix;
               rhubarbSrc = rhubarb;
@@ -80,7 +97,8 @@
                     let
                       rel = final.lib.removePrefix (toString self + "/") (toString path);
                     in
-                    !(rel == "external" || final.lib.hasPrefix "external/" rel);
+                    !final.lib.hasPrefix "external/" rel
+                    || rel == "external/ffmpeg" || final.lib.hasPrefix "external/ffmpeg/" rel;
                 };
               };
         };
@@ -102,6 +120,7 @@
       };
       devShells.${system}.default = pkgs.callPackage ./pkgs/dev-shell.nix {
         inherit rustToolchain;
+        ffmpeg = pkgs.shrimply-ffmpeg;
       };
     };
 }

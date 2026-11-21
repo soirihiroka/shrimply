@@ -58,7 +58,7 @@ fn main() -> Result<(), String> {
         // Native projects retain their timeline duration and linked asset paths.
         shrimply_project_document::project::load_project_snapshot(&source)?
     } else {
-        let input = ffmpeg::format::input(&source).map_err(|e| e.to_string())?;
+        let input = shrimply_media_info::demux::open(&source).map_err(|e| e.to_string())?;
         let stream = input
             .streams()
             .best(ffmpeg::media::Type::Video)

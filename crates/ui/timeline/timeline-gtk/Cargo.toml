@@ -34,7 +34,7 @@ shrimply-components-gtk = { workspace = true }
 shrimply-inspector-core = { workspace = true, default-features = true }
 shrimply-pointer-lock-wayland = { workspace = true }
 shrimply-visual-cuda = { workspace = true }
-shrimply-video-recording = { workspace = true }
+shrimply-video-recording = { workspace = true, features = ["capture"] }
 shrimply-visual-modifiers = { workspace = true, default-features = true }
 shrimply-math-color = { workspace = true, features = ["gdk"] }
 shrimply-components-skia = { workspace = true }

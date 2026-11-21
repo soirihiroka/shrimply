@@ -11,7 +11,7 @@ use crate::{
 };
 use shrimply_player_core::{self as player_state, ProjectChange, SharedPlayerState};
 use shrimply_property_model::timeline_value::{TimelineBool, TimelineValue};
-use std::{cell::RefCell, path::PathBuf};
+use std::cell::RefCell;
 
 pub struct AudioRecording {
     pub key: TrackKey,
@@ -136,56 +136,7 @@ pub enum VideoRecordingCommand {
     Stop,
 }
 
-pub enum VideoRecordingEvent {
-    Ready { width: u32, height: u32 },
-    Cancelled,
-    Finished(Result<FinishedVideoRecording, String>),
-}
-
-pub struct FinishedVideoRecording {
-    path: Option<PathBuf>,
-    pub duration: Time,
-    pub width: u32,
-    pub height: u32,
-    pub alpha_track_id: Option<u32>,
-}
-
-impl FinishedVideoRecording {
-    pub fn new(
-        path: PathBuf,
-        duration: Time,
-        width: u32,
-        height: u32,
-        alpha_track_id: Option<u32>,
-    ) -> Self {
-        Self {
-            path: Some(path),
-            duration,
-            width,
-            height,
-            alpha_track_id,
-        }
-    }
-
-    fn path(&self) -> &std::path::Path {
-        self.path.as_deref().expect("recording file is owned")
-    }
-
-    fn keep(mut self) {
-        self.path.take();
-    }
-}
-
-impl Drop for FinishedVideoRecording {
-    fn drop(&mut self) {
-        if let Some(path) = self.path.take()
-            && let Err(error) = std::fs::remove_file(&path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(path = %path.display(), %error, "Could not remove abandoned screen recording");
-        }
-    }
-}
+pub use shrimply_video_recording::{FinishedVideoRecording, VideoRecordingEvent};
 
 pub(crate) struct ActiveVideoRecording {
     track_id: uuid::Uuid,

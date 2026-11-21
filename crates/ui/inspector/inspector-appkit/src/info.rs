@@ -3,13 +3,9 @@ use objc2_app_kit::{
     NSFont, NSImage, NSImageScaling, NSImageView, NSLayoutConstraintOrientation,
     NSLayoutPriorityDefaultLow, NSTextField, NSView,
 };
-use objc2_foundation::{
-    MainThreadMarker, NSData, NSDate, NSDateFormatter, NSDateFormatterStyle, NSString,
-};
+use objc2_foundation::{MainThreadMarker, NSDate, NSDateFormatter, NSDateFormatterStyle, NSString};
 use shrimply_components_appkit::{ReadOnlyField, Spinner, control_row, row_stack};
 use shrimply_inspector_core::{ControlKind, InspectorControl};
-
-const MAX_ARTWORK_HEIGHT: f64 = 240.0;
 
 pub(super) fn format_date(seconds: i64) -> Option<String> {
     objc2::rc::autoreleasepool(|_| {
@@ -53,14 +49,15 @@ pub(super) fn view(control: &InspectorControl, mtm: MainThreadMarker) -> Retaine
             control_row(&control.label, &row, mtm)
         }
         ControlKind::InfoArtwork => {
-            let bytes = control
-                .image_bytes
-                .as_deref()
-                .expect("artwork control must contain image bytes");
-            let Some(image) = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(bytes))
+            let artwork = control
+                .artwork
+                .as_ref()
+                .expect("artwork requires a thumbnail");
+            let path = NSString::from_str(&artwork.path().to_string_lossy());
+            let Some(image) = NSImage::initWithContentsOfFile(NSImage::alloc(), &path)
                 .filter(|image| image.size().width > 0.0 && image.size().height > 0.0)
             else {
-                return ReadOnlyField::new("Artwork format is not supported by macOS", false, mtm)
+                return ReadOnlyField::new("Could not display the artwork thumbnail", false, mtm)
                     .view()
                     .as_super()
                     .into();
@@ -74,7 +71,7 @@ pub(super) fn view(control: &InspectorControl, mtm: MainThreadMarker) -> Retaine
                 NSLayoutConstraintOrientation::Horizontal,
             );
             view.heightAnchor()
-                .constraintLessThanOrEqualToConstant(image.size().height.min(MAX_ARTWORK_HEIGHT))
+                .constraintLessThanOrEqualToConstant(image.size().height)
                 .setActive(true);
             view.setContentCompressionResistancePriority_forOrientation(
                 NSLayoutPriorityDefaultLow,

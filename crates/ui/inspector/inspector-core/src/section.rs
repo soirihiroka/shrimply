@@ -338,8 +338,7 @@ pub struct InspectorControl {
     /// Scalar numeric values are in display units, like NumberSpec and scalar_graph.
     /// Convert user edits back to storage with store_number.
     pub value: String,
-    pub image_bytes: Option<std::sync::Arc<[u8]>>,
-    pub image_version: Option<String>,
+    pub artwork: Option<std::sync::Arc<crate::info::metadata::Artwork>>,
     pub components: Vec<String>,
     pub kind: ControlKind,
     pub editable: bool,
@@ -403,8 +402,7 @@ impl InspectorControl {
             subtitle: String::new(),
             tooltip: String::new(),
             value: String::new(),
-            image_bytes: None,
-            image_version: None,
+            artwork: None,
             components: Vec::new(),
             kind,
             editable: true,

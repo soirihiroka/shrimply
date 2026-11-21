@@ -349,7 +349,7 @@ pub(crate) fn target_media(project: &Project, target: &InspectorTarget) -> Optio
         ItemRef::Video(item) if !matches!(item.content, VideoItemContent::FoldedSequence(_)) => {
             let selected = if matches!(
                 item.content,
-                VideoItemContent::Media | VideoItemContent::Gif
+                VideoItemContent::Media | VideoItemContent::Gif | VideoItemContent::AnimatedImage
             ) {
                 SourceMetadata::Video(item.track_id)
             } else {

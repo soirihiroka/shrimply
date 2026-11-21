@@ -80,6 +80,38 @@ impl VideoFrame {
         &self.native
     }
 
+    /// Download device-backed pixels when a CPU consumer needs them. MediaCodec
+    /// byte-buffer output already exposes addressable planes.
+    pub fn download(&self) -> Result<Option<Video>, String> {
+        let source = unsafe { &*self.native.as_ptr() };
+        if source.hw_frames_ctx.is_null() {
+            if source.data[0].is_null() {
+                return Err(
+                    "The decoder returned an opaque surface without a readback device".into(),
+                );
+            }
+            return Ok(None);
+        }
+        let mut frame = Video::empty();
+        let status =
+            unsafe { sys::av_hwframe_transfer_data(frame.as_mut_ptr(), self.native.as_ptr(), 0) };
+        if status < 0 {
+            return Err(format!(
+                "Download hardware video frame: {}",
+                ffmpeg_next::Error::from(status)
+            ));
+        }
+        // The transfer copies planes only. Preserve color range, matrix and HDR metadata.
+        let status = unsafe { sys::av_frame_copy_props(frame.as_mut_ptr(), self.native.as_ptr()) };
+        if status < 0 {
+            return Err(format!(
+                "Copy decoded frame properties: {}",
+                ffmpeg_next::Error::from(status)
+            ));
+        }
+        Ok(Some(frame))
+    }
+
     /// Decoded content identity, independent of recycled codec/GPU allocations.
     pub fn id(&self) -> u64 {
         self.id

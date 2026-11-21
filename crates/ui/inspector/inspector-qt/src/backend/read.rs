@@ -750,12 +750,9 @@ impl qobject::InspectorBackend {
         let target = self.document().map(|document| document.target.clone());
         self.control(category, item, control)
             .map_or_else(QString::default, |control| {
-                if let Some(bytes) = &control.image_bytes {
-                    use base64::Engine;
-                    QString::from(format!(
-                        "data:application/octet-stream;base64,{}",
-                        base64::engine::general_purpose::STANDARD.encode(bytes)
-                    ))
+                if let Some(artwork) = &control.artwork {
+                    QUrl::from_local_file(&QString::from(artwork.path().to_string_lossy().as_ref()))
+                        .to_qstring()
                 } else if control.kind == ControlKind::Fraction {
                     QString::from(fraction_value(control).to_string())
                 } else if control.kind == ControlKind::LayeredNumber {

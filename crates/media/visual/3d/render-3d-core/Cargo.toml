@@ -5,7 +5,8 @@ edition = "2024"
 build = "build.rs"
 
 [dependencies]
-ffmpeg-next.workspace = true
+skia-safe.workspace = true
+shrimply-drawing-skia.workspace = true
 glam.workspace = true
 serde = { workspace = true, features = ["derive"] }
 shrimply-asset = { workspace = true }

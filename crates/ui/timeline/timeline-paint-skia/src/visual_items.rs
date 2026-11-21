@@ -36,7 +36,7 @@ pub fn draw_video_item(
 
 pub fn video_item_icon(content: &VideoItemContent) -> Icon {
     match content {
-        VideoItemContent::Gif => Icon("container3-symbolic"),
+        VideoItemContent::Gif | VideoItemContent::AnimatedImage => Icon("container3-symbolic"),
         VideoItemContent::Media => Icon("video-camera-symbolic"),
         VideoItemContent::Image => Icon("image-symbolic"),
         VideoItemContent::Text(_) => Icon("draw-text-symbolic"),

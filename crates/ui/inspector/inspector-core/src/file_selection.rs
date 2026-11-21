@@ -24,11 +24,16 @@ impl InspectorControlAction {
             },
             Self::SelectScene3dEnvironment => FileSelection {
                 title: "Select environment image",
-                extensions: &["png", "jpg", "jpeg", "webp", "avif", "hdr", "exr"],
+                extensions: &[
+                    "png", "jpg", "jpeg", "webp", "avif", "heic", "heif", "jxl", "hdr", "exr",
+                ],
             },
             Self::SelectPaintTexture { .. } => FileSelection {
                 title: "Select paint texture",
-                extensions: &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"],
+                extensions: &[
+                    "png", "jpg", "jpeg", "webp", "avif", "heic", "heif", "jxl", "gif", "bmp",
+                    "tif", "tiff",
+                ],
             },
             _ => return None,
         })

@@ -228,7 +228,7 @@ fn preload_for(item: &VideoItem) -> Option<Box<dyn Preload + '_>> {
             weight: 1,
         })),
         VideoItemContent::Media => Some(Box::new(VideoPreload(item))),
-        VideoItemContent::Gif => Some(Box::new(VisualPreload {
+        VideoItemContent::Gif | VideoItemContent::AnimatedImage => Some(Box::new(VisualPreload {
             item,
             class: PreloadClass::Video,
             lead_time: Time::from_seconds(VIDEO_PRELOAD_SECONDS),

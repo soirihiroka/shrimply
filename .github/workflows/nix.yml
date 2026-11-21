@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - ".github/workflows/nix.yml"
+      - "external/ffmpeg"
       - "flake.nix"
       - "flake.lock"
       - "pkgs/**"
@@ -63,6 +64,8 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install Nix
         uses: cachix/install-nix-action@v30

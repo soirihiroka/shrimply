@@ -24,7 +24,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** Only URI leases, coordinates, and native presentation live here. Rust owns the import. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun Modifier.fileDropTarget(
     timeline: TimelineSession,
@@ -117,18 +116,24 @@ internal fun Modifier.fileDropTarget(
                 catch (failure: Exception) { report(failure.message ?: failure.toString()) }
             }
         }
-        ModalBottomSheet(onDismissRequest = { finish(false) }) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(prompt.getString("title"), style = MaterialTheme.typography.headlineSmall)
-                Text(prompt.getString("body"))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { finish(false) }) { Text(prompt.getString("cancel_label")) }
-                    Button(onClick = { finish(true) }) { Text(prompt.getString("confirm_label")) }
-                }
-            }
-        }
+        RemuxConfirmation(prompt, ::finish)
     }
     return onGloballyPositioned { coordinates[0] = it }
         .dragAndDropTarget(shouldStartDragAndDrop = { currentPath != null }, target = target)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun RemuxConfirmation(prompt: JSONObject, finish: (Boolean) -> Unit) {
+    ModalBottomSheet(onDismissRequest = { finish(false) }) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(prompt.getString("title"), style = MaterialTheme.typography.headlineSmall)
+            Text(prompt.getString("body"))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = { finish(false) }) { Text(prompt.getString("cancel_label")) }
+                Button(onClick = { finish(true) }) { Text(prompt.getString("confirm_label")) }
+            }
+        }
+    }
 }

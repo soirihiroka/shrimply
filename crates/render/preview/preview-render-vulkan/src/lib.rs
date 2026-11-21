@@ -13,15 +13,16 @@ mod manim;
 pub mod modifier_cache;
 mod morph;
 mod sam2;
+#[path = "../../preview-render-core/src/gpu_sources.rs"]
+mod sources;
 pub mod worker;
 pub use sam2::Sam2ProxyFrameSource;
 
-use gpu::{Buffer, ImportedFrame, Renderer, Submission};
+use gpu::{Buffer, Renderer, Submission};
 use shrimply_math_core::Time;
-use shrimply_preview_render_core::{DecodedImage, FramePlan, Layer, Scene, Source};
+use shrimply_preview_render_core::{FramePlan, Layer, Scene, Source};
 use shrimply_project_document::project::Project;
-use shrimply_render_core::{Nv12LayerParams, effects::SpatialState};
-use shrimply_visual_frame::{GpuFrame, VideoFrame};
+use shrimply_render_core::Nv12LayerParams;
 use std::{
     collections::{HashMap, HashSet},
     rc::Rc,
@@ -79,12 +80,9 @@ pub struct Compositor {
     morphs: HashMap<shrimply_preview_render_core::MorphCacheKey, morph::Cached>,
     used_morphs: HashSet<shrimply_preview_render_core::MorphCacheKey>,
     pub renderer: Renderer,
-    images: HashMap<u32, Buffer>,
+    sources: sources::Sources,
     layered_sources: HashMap<(String, usize), Buffer>,
     used_layered_sources: HashSet<(String, usize)>,
-    videos: HashMap<usize, ImportedFrame>,
-    used_images: HashSet<u32>,
-    used_videos: HashSet<usize>,
     sam2_proxy: Option<Buffer>,
     sam2_target: Option<shrimply_visual_core::sam2::analysis::AnalysisTarget>,
     #[cfg(target_os = "linux")]
@@ -107,12 +105,9 @@ impl Compositor {
             morphs: HashMap::new(),
             used_morphs: HashSet::new(),
             renderer,
-            images: HashMap::new(),
+            sources: sources::Sources::default(),
             layered_sources: HashMap::new(),
             used_layered_sources: HashSet::new(),
-            videos: HashMap::new(),
-            used_images: HashSet::new(),
-            used_videos: HashSet::new(),
             sam2_proxy: None,
             sam2_target: None,
             #[cfg(target_os = "linux")]
@@ -149,9 +144,8 @@ impl Compositor {
         self.scene.invalidate();
         self.morphs.clear();
         self.renderer.clear_video_contexts();
-        self.images.clear();
+        self.sources = sources::Sources::default();
         self.layered_sources.clear();
-        self.videos.clear();
         #[cfg(target_os = "linux")]
         {
             self.manim_slots.clear();
@@ -318,10 +312,9 @@ impl Compositor {
         }
         let direct_video = source_frame.is_some();
         let mut submissions = Vec::new();
-        self.used_images.clear();
+        self.sources.begin_frame();
         self.used_morphs.clear();
         self.used_layered_sources.clear();
-        self.used_videos.clear();
         #[cfg(target_os = "linux")]
         self.used_manim.clear();
         let mut external_masks = Vec::new();
@@ -349,10 +342,9 @@ impl Compositor {
             buffer
         };
         self.morphs.retain(|key, _| self.used_morphs.contains(key));
-        self.images.retain(|key, _| self.used_images.contains(key));
+        self.sources.retain_used();
         self.layered_sources
             .retain(|key, _| self.used_layered_sources.contains(key));
-        self.videos.retain(|key, _| self.used_videos.contains(key));
         #[cfg(target_os = "linux")]
         self.manim_slots.retain(|key, slot| {
             if self.used_manim.contains(key) {
@@ -376,51 +368,6 @@ impl Compositor {
         })
     }
 
-    fn image(&mut self, image: &skia_safe::Image) -> Result<Buffer, String> {
-        let key = image.unique_id();
-        self.used_images.insert(key);
-        if let Some(buffer) = self.images.get(&key) {
-            return Ok(buffer.clone());
-        }
-        let info = skia_safe::ImageInfo::new(
-            image.dimensions(),
-            skia_safe::ColorType::RGBA8888,
-            skia_safe::AlphaType::Unpremul,
-            None,
-        );
-        let stride = info.min_row_bytes();
-        let mut bytes = vec![0; info.compute_byte_size(stride)];
-        if !image.read_pixels(
-            &info,
-            &mut bytes,
-            stride,
-            (0, 0),
-            skia_safe::image::CachingHint::Allow,
-        ) {
-            return Err("Read static image for Vulkan compositor".into());
-        }
-        let buffer = self.renderer.upload(&bytes)?;
-        self.images.insert(key, buffer.clone());
-        Ok(buffer)
-    }
-    fn video(&mut self, video: &Arc<VideoFrame>) -> Result<Buffer, String> {
-        let key = Arc::as_ptr(video) as usize;
-        self.used_videos.insert(key);
-        if let Some(imported) = self.videos.get(&key) {
-            return Ok(imported.output.clone());
-        }
-        let _measurement = shrimply_profiling::measure("Vulkan rendering / Import video");
-        let imported = ImportedFrame::import(&mut self.renderer, video.clone())?;
-        let buffer = imported.output.clone();
-        self.videos.insert(key, imported);
-        Ok(buffer)
-    }
-    fn decoded(&mut self, image: &DecodedImage) -> Result<Buffer, String> {
-        match image {
-            DecodedImage::Raster(image) => self.image(image),
-            DecodedImage::Video(video) => self.video(video),
-        }
-    }
     fn layers(
         &mut self,
         layers: &[Layer],
@@ -435,9 +382,9 @@ impl Compositor {
                 result.extend(self.raster_morph(morph, size, external_masks, submissions)?);
                 continue;
             }
-            let mut buffer = match &layer.source {
-                Source::Image(image) => self.image(image)?,
-                Source::Video(video) => self.video(video)?,
+            let buffer = match &layer.source {
+                Source::Image(image) => self.sources.image(&self.renderer, image)?,
+                Source::Video(video) => self.sources.video(&mut self.renderer, video)?,
                 Source::Generated(frame) => {
                     let (buffer, submission) =
                         self.renderer.draw_vector(layer.render_size, |canvas| {
@@ -497,116 +444,22 @@ impl Compositor {
                 }
                 Source::RasterMorph(_) => unreachable!("handled before source rendering"),
             };
-            let mut state = SpatialState {
-                parameters: layer.parameters,
-                transform: layer.transform,
-                texture_edges: [0.0; 4],
-                modifier_crop: [0.0; 4],
-                modifier_crop_pixels: [0.0; 4],
-            };
-            if let Some(stabilization) = &layer.stabilization {
-                (state, buffer) = effects::apply_stabilization(
-                    &mut self.renderer,
-                    buffer,
-                    state,
-                    stabilization,
-                    layer.render_size,
-                    submissions,
-                )?;
-            }
-            if let Some(mask) = &layer.video_mask {
-                let mask_buffer = self.decoded(&mask.image)?;
-                let (mut parameters, _) = shrimply_render_core::effects::materialization(
-                    layer.parameters,
-                    mask.size.0,
-                    mask.size.1,
-                );
-                parameters.source_width = mask.image.width() as u32;
-                parameters.source_height = mask.image.height() as u32;
-                parameters.rgba_pitch = parameters.source_width as usize * 4;
-                parameters.inverse = shrimply_render_core::math::Mat3::IDENTITY;
-                parameters.sample_method = mask.sampling;
-                let (mask_buffer, submission) = self
-                    .renderer
-                    .composite_buffers(&[(parameters, mask_buffer)], mask.size.0, mask.size.1, 0)?
-                    .into_parts();
-                submissions.push(submission);
-                buffer = alpha_mask::video(
-                    &mut self.renderer,
-                    buffer,
-                    (
-                        state.parameters.source_width,
-                        state.parameters.source_height,
-                    ),
-                    mask_buffer,
-                    mask.size,
-                    submissions,
-                )?;
-            }
-            (state, buffer) = effects::apply_modifiers(
+            let (mut parameters, buffer) = effects::apply_layer(
                 &mut self.renderer,
-                buffer,
-                state,
-                effects::ModifierRequest {
-                    operations: &layer.effects,
-                    size: layer.render_size,
-                    external_masks: effects::ExternalMasks {
-                        frames: external_masks,
-                        size,
-                        output_transform: layer.output_transform,
-                    },
+                layer,
+                (layer.parameters, buffer),
+                effects::LayerResources {
+                    sources: &mut self.sources,
+                    external_masks,
+                    canvas_size: size,
                     sam2_target: self.sam2_target.as_ref(),
                     sam2_proxy: &mut self.sam2_proxy,
                 },
                 submissions,
             )?;
-            if let Some(samples) = &layer.motion_blur {
-                (state, buffer) = effects::apply_motion_blur(
-                    &mut self.renderer,
-                    buffer,
-                    state,
-                    samples,
-                    layer.render_size,
-                    submissions,
-                )?;
-            }
-            for transition in &layer.transitions {
-                state.transform = transition.transform * state.transform;
-                if let Some(effect) = transition.effect {
-                    (state, buffer) = effects::apply_transition(
-                        &mut self.renderer,
-                        buffer,
-                        state,
-                        effect,
-                        layer.render_size,
-                        submissions,
-                    )?;
-                }
-            }
-            state.transform = layer.output_transform * state.transform;
-            if let Some(mask) = &layer.alpha_mask {
-                buffer = alpha_mask::apply(
-                    &mut self.renderer,
-                    buffer,
-                    (
-                        state.parameters.source_width,
-                        state.parameters.source_height,
-                    ),
-                    mask,
-                    submissions,
-                )?;
-            }
-            let mut parameters = state.sampled();
             // Native YCbCr decoder imports have no alpha channel. Effects may
             // introduce transparency, so only untouched sources retain this fact.
-            if matches!(layer.source, Source::Video(_))
-                && layer.effects.is_empty()
-                && layer.transitions.is_empty()
-                && layer.motion_blur.is_none()
-                && layer.alpha_mask.is_none()
-                && layer.video_mask.is_none()
-                && layer.stabilization.is_none()
-            {
+            if matches!(layer.source, Source::Video(_)) && !layer.has_effects() {
                 parameters.kind = shrimply_render_core::LayerKind::RgbaOpaque;
             }
             result.push((parameters, buffer));

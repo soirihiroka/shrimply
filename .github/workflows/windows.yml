@@ -7,6 +7,9 @@ on:
       - ".github/workflows/windows.yml"
       - ".github/scripts/publish-prerelease.sh"
       - "packaging/windows/**"
+      - "packaging/windows-ffmpeg.py"
+      - "packaging/native_sources.py"
+      - "packaging/bundle-pyav.py"
       - ".cargo/**"
       - ".gitmodules"
       - "assets/**"
@@ -87,7 +90,9 @@ jobs:
         shell: powershell
         run: |
           $sdk = $env:WindowsSDKVersion.TrimEnd('\')
-          "key=$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          $ffmpeg = git -C external/ffmpeg rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "key=ffmpeg-$ffmpeg-$env:ImageOS-$env:ImageVersion-msvc-$env:VCToolsVersion-sdk-$sdk-x64" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
 
       - name: Install host tools
         shell: powershell
@@ -172,7 +177,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .ci/vcpkg/binary-cache/ffmpeg
-          key: windows-vcpkg-ffmpeg-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1') }}
+          key: windows-vcpkg-ffmpeg-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
 
       - name: Install FFmpeg
         shell: powershell
@@ -197,14 +202,15 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: .ci/vcpkg/binary-cache/runtime
-          key: windows-vcpkg-runtime-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1') }}
+          key: windows-vcpkg-runtime-v4-cuda-12.9.2-${{ steps.native-cache-abi.outputs.key }}-${{ hashFiles('packaging/windows/vcpkg/**', 'packaging/windows/build-ffmpeg.ps1', 'packaging/windows-ffmpeg.py', 'packaging/native_sources.py') }}
 
       - name: Install remaining native libraries
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force .ci/vcpkg/binary-cache/runtime | Out-Null
           $env:VCPKG_BINARY_SOURCES = "clear;files,$pwd\.ci\vcpkg\binary-cache\runtime,readwrite;files,$pwd\.ci\vcpkg\binary-cache\ffmpeg,read"
-          & .ci/vcpkg/vcpkg.exe install --triplet x64-windows --x-manifest-root packaging/windows/vcpkg/runtime --x-install-root "$env:VCPKG_INSTALLED_DIR"
+          & packaging/windows/build-ffmpeg.ps1 -Manifest runtime `
+            -VcpkgRoot "$pwd\.ci\vcpkg" -InstalledDir "$env:VCPKG_INSTALLED_DIR"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Save remaining native library cache

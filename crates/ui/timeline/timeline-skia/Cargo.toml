@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-video-recording.workspace = true
 shrimply-asset.workspace = true
 shrimply-media-import.workspace = true
 async-channel.workspace = true

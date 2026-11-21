@@ -3,8 +3,11 @@ use shrimply_resource_pipeline::cache::Cache;
 use skia_safe::{Canvas, ConditionallySend, Data, FontMgr, Image, Paint, Rect, Sendable, svg::Dom};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-#[cfg(target_os = "android")]
-mod android;
+pub mod animation;
+mod gif;
+mod heif;
+mod jxl;
+mod raster;
 
 const MAX_CACHE_BYTES: usize = 128 * 1024 * 1024;
 const MAX_ENTRIES: usize = 128;
@@ -108,6 +111,38 @@ impl Prepared {
             skia_safe::image::CachingHint::Allow,
         ) && pixel[3] != 0
     }
+    /// Rasterize a bounded, color-managed preview, filtering bitmap sources
+    /// and drawing vectors directly at their final pixel size.
+    pub fn thumbnail(
+        &self,
+        max_edge: u32,
+        color_type: skia_safe::ColorType,
+        color_space: skia_safe::ColorSpace,
+    ) -> Result<skia_safe::Surface, String> {
+        let [width, height] = shrimply_math_geometry::fit_pixel_dimensions(self.size, max_edge);
+        let info = skia_safe::ImageInfo::new(
+            (width as i32, height as i32),
+            color_type,
+            skia_safe::AlphaType::Premul,
+            color_space,
+        );
+        let mut surface =
+            skia_safe::surfaces::raster(&info, None, None).ok_or("Allocate image preview")?;
+        let bounds = Rect::from_wh(width as f32, height as f32);
+        if let Some(image) = self.bitmap() {
+            surface.canvas().draw_image_rect_with_sampling_options(
+                image,
+                None,
+                bounds,
+                skia_safe::FilterMode::Linear,
+                &Paint::default(),
+            );
+        } else {
+            self.draw(surface.canvas(), &bounds, 1.)?;
+        }
+        Ok(surface)
+    }
+
     /// Replay vectors or a retained CPU-decoded image onto the destination canvas.
     /// GPU canvases upload images normally; SVG is never rasterized for replay.
     pub fn draw(&self, canvas: &Canvas, destination: &Rect, opacity: f32) -> Result<(), String> {
@@ -215,22 +250,23 @@ pub fn prepare_hashed_with_limit(
         }
     }
     let mut font_epoch = None;
-    let (content, size) = if let Some(mut codec) =
-        skia_safe::Codec::from_data(Data::new_copy(bytes))
-    {
+    let (content, size) = if jxl::recognizes(bytes) {
+        let decoder = jxl::JpegXl::open(bytes, max_pixels)?;
+        let size = decoder.dimensions();
+        (Content::Bitmap(decoder.frame(0)?), size)
+    } else if let Some(format) = raster::format(bytes) {
+        let (image, size) = raster::decode(bytes, format, max_pixels)?;
+        (Content::Bitmap(image), size)
+    } else if bytes.get(4..8) == Some(b"ftyp") {
+        let (image, size) = heif::decode(bytes, max_pixels)?;
+        (Content::Bitmap(image), size)
+    } else if let Some(mut codec) = skia_safe::Codec::from_data(Data::new_copy(bytes)) {
         let mut info = codec.info();
         if info.alpha_type() != skia_safe::AlphaType::Opaque {
             info = info.with_alpha_type(skia_safe::AlphaType::Unpremul);
         }
         let origin = codec.origin();
-        let output_info = if origin.swaps_width_height() {
-            skia_safe::codec::pixmap_utils::swap_width_height(&info)
-        } else {
-            info.clone()
-        };
-        let width = u32::try_from(output_info.width()).map_err(|_| "invalid image width")?;
-        let height = u32::try_from(output_info.height()).map_err(|_| "invalid image height")?;
-        validate_size([width, height], max_pixels)?;
+        validate_size([info.width() as u32, info.height() as u32], max_pixels)?;
         let mut bitmap = skia_safe::Bitmap::new();
         if !bitmap.try_alloc_pixels_flags(&info) {
             return Err("could not allocate decoded image".into());
@@ -252,72 +288,39 @@ pub fn prepare_hashed_with_limit(
         if result != skia_safe::codec::Result::Success {
             return Err(format!("image cannot be decoded completely: {result:?}"));
         }
-        if origin != skia_safe::EncodedOrigin::TopLeft {
-            let mut oriented = skia_safe::Bitmap::new();
-            if !oriented.try_alloc_pixels_flags(&output_info) {
-                return Err("could not allocate oriented image".into());
-            }
-            {
-                let source = bitmap.peek_pixels().ok_or("decoded image has no pixels")?;
-                let mut target = oriented
-                    .peek_pixels()
-                    .ok_or("oriented image has no pixels")?;
-                // Both pixmaps borrow uniquely owned, initialized local bitmap storage.
-                if !unsafe { skia_safe::codec::pixmap_utils::orient(&mut target, &source, origin) }
-                {
-                    return Err("could not apply image orientation".into());
-                }
-            }
-            bitmap = oriented;
-        }
-        bitmap.set_immutable();
-        (Content::Bitmap(bitmap.as_image()), [width, height])
+        let (image, size) = bitmap_image(orient(bitmap, origin)?);
+        (Content::Bitmap(image), size)
     } else {
-        #[cfg(target_os = "android")]
-        let native = android::decode(bytes, max_pixels);
-        #[cfg(not(target_os = "android"))]
-        let native: Result<Option<(Image, [u32; 2])>, String> = Ok(None);
-        let (image, error) = match native {
-            Ok(image) => (image, None),
-            Err(error) => (None, Some(error)),
-        };
-        if let Some((image, size)) = image {
-            (Content::Bitmap(image), size)
-        } else {
-            font_epoch = shrimply_fonts::native::system_font_epoch();
-            let dom = Dom::from_bytes(bytes, FontMgr::new()).map_err(|_| {
-                error.unwrap_or_else(|| {
-                    "source is neither a supported bitmap nor a valid SVG".into()
-                })
-            })?;
-            let root = dom.root();
-            let intrinsic = shrimply_math_geometry::intrinsic_size(
-                [
-                    shrimply_math_geometry::svg_length_px(*root.width()),
-                    shrimply_math_geometry::svg_length_px(*root.height()),
-                ],
-                root.view_box()
-                    .map(|rect| glam::vec2(rect.width(), rect.height())),
-                glam::vec2(DEFAULT_SVG_SIZE[0] as f32, DEFAULT_SVG_SIZE[1] as f32),
-            );
-            if !intrinsic.is_finite()
-                || intrinsic.x <= 0.
-                || intrinsic.y <= 0.
-                || intrinsic.x > u32::MAX as f32
-                || intrinsic.y > u32::MAX as f32
-            {
-                return Err("SVG has invalid intrinsic dimensions".into());
-            }
-            let size = [intrinsic.x.ceil() as u32, intrinsic.y.ceil() as u32];
-            validate_size(size, max_pixels)?;
-            drop(root);
-            (
-                Content::Svg(Mutex::new(Some(
-                    dom.wrap_send().map_err(|_| "SVG was not uniquely owned")?,
-                ))),
-                size,
-            )
+        font_epoch = shrimply_fonts::native::system_font_epoch();
+        let dom = Dom::from_bytes(bytes, FontMgr::new())
+            .map_err(|_| "source is neither a supported bitmap nor a valid SVG")?;
+        let root = dom.root();
+        let intrinsic = shrimply_math_geometry::intrinsic_size(
+            [
+                shrimply_math_geometry::svg_length_px(*root.width()),
+                shrimply_math_geometry::svg_length_px(*root.height()),
+            ],
+            root.view_box()
+                .map(|rect| glam::vec2(rect.width(), rect.height())),
+            glam::vec2(DEFAULT_SVG_SIZE[0] as f32, DEFAULT_SVG_SIZE[1] as f32),
+        );
+        if !intrinsic.is_finite()
+            || intrinsic.x <= 0.
+            || intrinsic.y <= 0.
+            || intrinsic.x > u32::MAX as f32
+            || intrinsic.y > u32::MAX as f32
+        {
+            return Err("SVG has invalid intrinsic dimensions".into());
         }
+        let size = [intrinsic.x.ceil() as u32, intrinsic.y.ceil() as u32];
+        validate_size(size, max_pixels)?;
+        drop(root);
+        (
+            Content::Svg(Mutex::new(Some(
+                dom.wrap_send().map_err(|_| "SVG was not uniquely owned")?,
+            ))),
+            size,
+        )
     };
     let retained = bytes
         .len()
@@ -431,4 +434,66 @@ pub fn encode_rgba_png(width: i32, height: i32, pixels: &[u8]) -> Result<Vec<u8>
         .encode(None, skia_safe::EncodedImageFormat::PNG, None)
         .map(|data| data.as_bytes().to_vec())
         .ok_or_else(|| "Could not encode the captured image".into())
+}
+
+pub fn rgba_pixels(image: &Image) -> Result<Vec<u8>, String> {
+    let width = usize::try_from(image.width()).map_err(|_| "Image width is negative")?;
+    let height = usize::try_from(image.height()).map_err(|_| "Image height is negative")?;
+    let row_bytes = width
+        .checked_mul(size_of::<u32>())
+        .ok_or("Image row size overflow")?;
+    let mut pixels = vec![0; row_bytes.checked_mul(height).ok_or("Image size overflow")?];
+    let info = skia_safe::ImageInfo::new(
+        image.dimensions(),
+        skia_safe::ColorType::RGBA8888,
+        skia_safe::AlphaType::Unpremul,
+        skia_safe::ColorSpace::new_srgb(),
+    );
+    if !image.read_pixels(
+        &info,
+        &mut pixels,
+        row_bytes,
+        (0, 0),
+        skia_safe::image::CachingHint::Allow,
+    ) {
+        return Err("Could not read RGBA image pixels".into());
+    }
+    Ok(pixels)
+}
+
+fn orient(
+    mut bitmap: skia_safe::Bitmap,
+    origin: skia_safe::EncodedOrigin,
+) -> Result<skia_safe::Bitmap, String> {
+    if origin != skia_safe::EncodedOrigin::TopLeft {
+        let output_info = if origin.swaps_width_height() {
+            skia_safe::codec::pixmap_utils::swap_width_height(bitmap.info())
+        } else {
+            bitmap.info().clone()
+        };
+        let mut oriented = skia_safe::Bitmap::new();
+        if !oriented.try_alloc_pixels_flags(&output_info) {
+            return Err("could not allocate oriented image".into());
+        }
+        {
+            let source = bitmap.peek_pixels().ok_or("decoded image has no pixels")?;
+            let mut target = oriented
+                .peek_pixels()
+                .ok_or("oriented image has no pixels")?;
+            // Both pixmaps borrow uniquely owned, initialized local bitmap storage.
+            if !unsafe { skia_safe::codec::pixmap_utils::orient(&mut target, &source, origin) } {
+                return Err("could not apply image orientation".into());
+            }
+        }
+        bitmap = oriented;
+    }
+    Ok(bitmap)
+}
+
+fn bitmap_image(mut bitmap: skia_safe::Bitmap) -> (Image, [u32; 2]) {
+    bitmap.set_immutable();
+    (
+        bitmap.as_image(),
+        [bitmap.width() as u32, bitmap.height() as u32],
+    )
 }

@@ -110,19 +110,7 @@ $env:CARGO_TERM_COLOR = "always"
 $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = $linker
 $env:QMAKE = $qmakePath
 
-& $pkgConfig --exists libavcodec libavformat libavfilter libavdevice libswresample libswscale
-if ($LASTEXITCODE -ne 0) {
-    foreach ($path in @(
-        "include/libavutil/avutil.h",
-        "lib/avutil.lib",
-        "lib/avcodec.lib",
-        "lib/avformat.lib"
-    )) {
-        if (!(Test-Path (Join-Path $ffmpegRoot $path))) {
-            throw "Missing FFmpeg development file: $path"
-        }
-    }
-}
+& (Join-Path $PSScriptRoot "verify-ffmpeg.ps1") -FfmpegRoot $ffmpegRoot -DevelopmentFilesOnly
 
 & $pkgConfig --exists poppler-glib pango pangocairo rubberband
 if ($LASTEXITCODE -ne 0) {

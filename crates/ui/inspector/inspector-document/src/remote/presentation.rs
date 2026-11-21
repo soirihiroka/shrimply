@@ -119,15 +119,13 @@ pub(super) fn control(control: &InspectorControl, item: &str, id: &str) -> Value
             result["enabled"] = json!(control.sensitive && !control.value.is_empty());
         }
         "image" => {
-            let mut next = command("image");
-            next["op"] = json!("inspector_resource");
-            next["version"] = json!(
+            result["thumbnail"] = json!(
                 control
-                    .image_version
+                    .artwork
                     .as_ref()
-                    .expect("artwork control requires a content version")
+                    .expect("artwork control requires a thumbnail")
+                    .path()
             );
-            result["resource"] = next;
             result["height"] = json!(shrimply_inspector_core::info::ARTWORK_PREVIEW_HEIGHT);
             result["error"] = json!(text("Artwork format is not supported."));
         }

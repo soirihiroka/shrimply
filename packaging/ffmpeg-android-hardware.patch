@@ -16,7 +16,7 @@
  
      { "android/media/MediaCodecInfo$CodecCapabilities", NULL, NULL, FF_JNI_CLASS, OFFSET(codec_capabilities_class), 1 },
          { "android/media/MediaCodecInfo$CodecCapabilities", "colorFormats", "[I", FF_JNI_FIELD, OFFSET(color_formats_id), 1 },
-@@ -540,6 +542,15 @@
+@@ -554,6 +556,15 @@
              }
          }
  
@@ -34,8 +34,8 @@
              goto done;
 --- a/libavcodec/mediacodecdec_common.c
 +++ b/libavcodec/mediacodecdec_common.c
-@@ -781,7 +781,9 @@
-     if (!s->codec_name) {
+@@ -796,7 +796,9 @@
+         av_log(avctx, AV_LOG_INFO, "Failed to getCodecNameByType(%s, %d)\n", mime, profile);
          // getCodecNameByType() can fail due to missing JVM, while NDK
          // mediacodec can be used without JVM.
 -        if (!s->use_ndk_codec) {
@@ -44,4 +44,4 @@
 +        if (!s->use_ndk_codec || avctx->hw_device_ctx) {
              return AVERROR_EXTERNAL;
          }
-         av_log(avctx, AV_LOG_INFO, "Failed to getCodecNameByType\n");
+     } else {

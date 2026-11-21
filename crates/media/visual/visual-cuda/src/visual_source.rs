@@ -146,7 +146,7 @@ pub fn create_renderer(
 ) -> Result<Box<dyn VisualElement>, String> {
     match &item.content {
         VideoItemContent::Media => Err("media renderer requires a per-track decoder".to_string()),
-        VideoItemContent::Image | VideoItemContent::Gif => {
+        VideoItemContent::Image | VideoItemContent::Gif | VideoItemContent::AnimatedImage => {
             Ok(Box::new(ImageDecodeSession::new(item)?))
         }
         VideoItemContent::Svg => Ok(Box::new(SvgRenderSession::new(item, canvas_size)?)),

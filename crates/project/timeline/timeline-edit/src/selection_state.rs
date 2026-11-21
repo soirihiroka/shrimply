@@ -347,6 +347,10 @@ pub fn set_selected_nested_items(
     notify_listeners(listeners);
 }
 
+pub fn select_item_address(state: &SharedSelectionState, project: &Project, item: ItemAddress) {
+    set_selected_item_addresses(state, project, vec![item.clone()], Some(item));
+}
+
 pub fn set_selected_item_addresses(
     state: &SharedSelectionState,
     project: &Project,

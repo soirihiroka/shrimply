@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+shrimply-media-info.workspace = true
 hashbrown.workspace = true
 cached.workspace = true
 cpal.workspace = true

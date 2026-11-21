@@ -1,6 +1,7 @@
 mod track_add_actions;
 pub use track_add_actions::{
-    TrackAddAction, TrackAddMenuEntry, TrackAddSettings, prepare_track_add, track_add_menu,
+    TrackAddAction, TrackAddMenuEntry, TrackAddSettings, insert_track_add, prepare_track_add,
+    track_add_menu,
 };
 pub mod edit;
 pub mod selection_state;

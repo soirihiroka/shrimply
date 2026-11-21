@@ -25,10 +25,8 @@ use shrimply_timeline_skia::{
     },
     view::{TimelineCursor, TimelineScrollEvent, TimelineScrollInput},
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use shrimply_video_recording as video_recording;
-#[cfg(windows)]
-use shrimply_video_recording_windows as video_recording;
 pub use shrimply_visual_cuda::compositor::RgbaVideoFrame as RenderedVideoFrame;
 #[cfg(target_os = "linux")]
 use std::ffi::c_void;
@@ -204,44 +202,17 @@ impl ToolkitTimeline {
                 Some(Ok(event)) => event,
                 Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => return,
                 Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
-                    video_recording::ScreenRecordingEvent::Finished(Err(
+                    video_recording::VideoRecordingEvent::Finished(Err(
                         "Screen capture stopped without a final event".into(),
                     ))
                 }
             };
             let terminal = matches!(
                 event,
-                video_recording::ScreenRecordingEvent::Cancelled
-                    | video_recording::ScreenRecordingEvent::Finished(_)
+                video_recording::VideoRecordingEvent::Cancelled
+                    | video_recording::VideoRecordingEvent::Finished(_)
             );
-            let event = match event {
-                video_recording::ScreenRecordingEvent::Ready { width, height } => {
-                    shrimply_timeline_skia::recording::VideoRecordingEvent::Ready { width, height }
-                }
-                video_recording::ScreenRecordingEvent::Cancelled => {
-                    shrimply_timeline_skia::recording::VideoRecordingEvent::Cancelled
-                }
-                video_recording::ScreenRecordingEvent::Finished(result) => {
-                    shrimply_timeline_skia::recording::VideoRecordingEvent::Finished(result.map(
-                        |finished| {
-                            let duration = finished.duration;
-                            let width = finished.width;
-                            let height = finished.height;
-                            shrimply_timeline_skia::recording::FinishedVideoRecording::new(
-                                finished.into_path(),
-                                duration,
-                                width,
-                                height,
-                                if cfg!(target_os = "linux") {
-                                    Some(1)
-                                } else {
-                                    None
-                                },
-                            )
-                        },
-                    ))
-                }
-            };
+
             let result = self.scene.handle_video_recording_event(event);
             if terminal {
                 self.screen_recording = None;

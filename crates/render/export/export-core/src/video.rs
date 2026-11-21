@@ -16,7 +16,7 @@ use shrimply_project_document::project::{self, Project, Time};
 const AUDIO_CHANNELS: usize = 2;
 const DEFAULT_AUDIO_FRAME_SIZE: usize = 1024;
 const EXPORT_DEBUG_FRAME_PERIOD: u64 = 300;
-mod mux;
+pub(crate) mod mux;
 pub mod progress;
 pub mod settings;
 

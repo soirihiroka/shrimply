@@ -5,8 +5,10 @@ fn sanim_import_uses_native_clip_metadata() {
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("scene.sanim");
     std::fs::write(&path, "wait(2s)\n").unwrap();
-    assert_eq!(file_kind(&path), Some(FileKind::Sanim));
-    assert!(direct_media_kind(FileKind::Sanim));
+    assert_eq!(
+        file_kind(&path),
+        Some(FileKind::Visual(VisualMediaKind::Sanim))
+    );
     let info = inspect(
         path,
         CanvasSize {

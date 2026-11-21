@@ -5,7 +5,9 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.database.ContentObserver
 import android.net.Uri
-import android.os.FileObserver
+import org.json.JSONObject
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
@@ -26,18 +28,22 @@ import java.util.UUID
 internal class ProjectFiles(context: Context) : AutoCloseable {
     private val context = context.applicationContext
     private companion object {
+        val mutex = Mutex()
         const val MAX_MIRRORED_ENTRIES = 16_384
+        const val UPLOAD_CLEANUP = 0
+        const val UPLOAD_STAGED = 1
+        const val UPLOAD_WRITING = 2
+        const val UPLOAD_CREATING = 3
+        const val UPLOAD_RESTORING = 4
         val PRIVATE_FILE = Regex("(?:.*\\.(?:shrimp|sjson|json)\\.lock|.*\\.(?:shrimp|sjson|json)\\.tmp-\\d+(?:-\\d+)?|\\.incoming-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})")
     }
     private val resolver = context.contentResolver
     private val origins = context.getSharedPreferences("project-origins", Context.MODE_PRIVATE)
     private val root = File(context.filesDir, "projects").apply { mkdirs() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val mutex = Mutex()
     private val main = Handler(Looper.getMainLooper())
     private var contentObserver: ContentObserver? = null
-    private val observers = mutableMapOf<String, FileObserver>()
-    private val watchLock = Any()
+    @Volatile private var localChange: ((String, String) -> Unit)? = null
     private var sync: Channel<Unit>? = null
     private var sourceTree: Uri? = null
     private val sourceFiles = mutableMapOf<String, Pair<Entry, File>>()
@@ -47,6 +53,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     @Volatile private var closed = false
     private val mirrorDatabase = lazy {
         this.context.openOrCreateDatabase("project-mirrors.sqlite", Context.MODE_PRIVATE, null).apply {
+            execSQL("CREATE TABLE IF NOT EXISTS uploads (stage TEXT PRIMARY KEY, tree TEXT NOT NULL, parent TEXT NOT NULL, name TEXT NOT NULL, mime TEXT NOT NULL, uri TEXT, previous TEXT, wanted TEXT NOT NULL, ready INTEGER NOT NULL, siblings TEXT, UNIQUE(tree,parent,name))")
             execSQL("CREATE TABLE IF NOT EXISTS fingerprints (uri TEXT PRIMARY KEY, hash TEXT NOT NULL)")
             execSQL("CREATE TABLE IF NOT EXISTS source_entries (uri TEXT PRIMARY KEY, tree TEXT NOT NULL, path TEXT NOT NULL, mime TEXT NOT NULL)")
         }
@@ -72,10 +79,10 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         mutex.withLock {
             check(!closing) { "Project session closed" }
             val existing = origins.all.entries.firstOrNull { it.value == tree.toString() }?.key?.let(::File)
-            val folder = existing?.takeIf(File::isDirectory) ?: File(root, UUID.randomUUID().toString()).apply { check(mkdir()) }
+            val folder = existing ?: File(root, UUID.randomUUID().toString())
             try {
-                if (sourceTree != tree) restoreSources(tree, folder)
-                copyFrom(tree, DocumentsContract.getTreeDocumentId(tree), folder, progress)
+                restoreSources(tree, folder)
+                reconcile(tree, folder, progress)
                 val projects = folder.walkTopDown().onEnter { it.name != ".snapshots" }.filter { it.isFile && it.extension.equals("shrimp", true) }.toList()
                 check(projects.isNotEmpty()) { "This folder does not contain a .shrimp project." }
                 check(origins.edit().putString(folder.absolutePath, tree.toString()).commit()) { "Could not remember the project folder." }
@@ -87,10 +94,27 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         }
     }
 
+    suspend fun openRequest(path: String, reconciled: Boolean = false): JSONObject = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            check(!closing) { "Project session closed" }
+            val folder = projectRoot(File(path))
+            JSONObject().put("op", "open").put("path", path).apply {
+                origins.getString(folder.absolutePath, null)?.let(Uri::parse)?.let { tree ->
+                    if (!reconciled) {
+                        restoreSources(tree, folder)
+                        reconcile(tree, folder) {}
+                    }
+                    put("mirror_root", folder.absolutePath)
+                }
+            }
+        }
+    }
+
     suspend fun exportTree(projectPath: String, tree: Uri, progress: (String) -> Unit) = withContext(Dispatchers.IO) {
         mutex.withLock {
             check(!closing) { "Project session closed" }
             val folder = projectRoot(File(projectPath))
+            recoverUploads(tree)
             copyTo(folder, tree, DocumentsContract.getTreeDocumentId(tree), progress = progress)
         }
     }
@@ -114,6 +138,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             check(!closing) { "Project session closed" }
             val folder = File(path).canonicalFile
             check(folder.toPath().startsWith(File(context.cacheDir, "exports").canonicalFile.toPath()) && folder.isDirectory) { "The completed export is unavailable." }
+            recoverUploads(destination)
             copyTo(folder, destination, DocumentsContract.getTreeDocumentId(destination), mime, progress)
         }
     }
@@ -123,7 +148,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         // scans behind the complete native import, including validation/rollback.
         mutex.withLock {
             check(!closing) { "Project session closed" }
-            val name = resolver.query(source, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use {
+            val name = resolver.query(source, arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), android.os.Bundle.EMPTY, null)?.use {
                 if (it.moveToFirst()) it.getString(0) else null
             } ?: throw IllegalArgumentException("The selected file has no name.")
             checkName(name)
@@ -142,7 +167,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             check(!closing) { "Project session closed" }
             val folder = projectRoot(File(projectPath))
             origins.getString(folder.absolutePath, null)?.let(Uri::parse)?.let { tree ->
-                copyTo(folder, tree, DocumentsContract.getTreeDocumentId(tree)) {}
+                reconcile(tree, folder) {}
             }
         }
     }
@@ -196,6 +221,21 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         }
     }
 
+    private fun reconcile(tree: Uri, folder: File, progress: (String) -> Unit) {
+        if (sourceTree != tree) restoreSources(tree, folder)
+        recoverUploads(tree)
+        if (folder.isDirectory) deleteMissingSources(tree, folder, listOf(""))
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
+        copyFrom(tree, rootId, folder, progress = progress)
+        // copyFrom already reconciled every tracked file. Upload only local additions.
+        val tracked = sourceFiles.values.mapTo(HashSet()) { it.second }
+        folder.walkTopDown().onEnter { !ignored(it.name) }.filter { it != folder && it !in tracked && !ignored(it.name) }.forEach {
+            if (it.isDirectory) destinationDirectory(folder, it, tree) else writeChangedFile(folder, it, tree)
+        }
+    }
+
+    fun localChanged(root: String, relativePath: String) { localChange?.invoke(root, relativePath) }
+
     fun attach(projectPath: String?, error: (String) -> Unit): Int {
         detach()
         check(!closing) { "Project session closed" }
@@ -208,21 +248,23 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         val outgoing = mutableSetOf<String>()
         val updates = Channel<Unit>(Channel.CONFLATED)
         sync = updates
+        localChange = { root, relative ->
+            if (root == folder.absolutePath) queueChange(outgoing, relative, "", updates)
+        }
         scope.launch {
-            try {
-                mutex.withLock { if (epoch == generation && sourceTree != tree) restoreSources(tree, folder) }
-                watchLocal(folder, epoch) { changed -> queueChange(outgoing, changed, "", updates) }
-            } catch (failure: Exception) { report(epoch, failure); return@launch }
             for (ignored in updates) {
                 try {
                     mutex.withLock {
                         if (epoch != generation) return@launch
                         if (sourceTree != tree) restoreSources(tree, folder)
                         val changed = takeChanges(outgoing)
-                        // Apply known local deletions before a provider echo can restore them.
-                        if (deleteMissingSources(tree, folder, changed)) {
-                            watchLocal(folder, epoch) { next -> queueChange(outgoing, next, "", updates) }
+                        if ("" in changed) {
+                            takeChanges(incoming)
+                            reconcile(tree, folder) {}
+                            return@withLock
                         }
+                        recoverUploads(tree)
+                        deleteMissingSources(tree, folder, changed)
                         val remoteChanges = takeChanges(incoming)
                         if (remoteChanges.isNotEmpty()) {
                             var fullScan = false
@@ -230,20 +272,21 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                                 val id = runCatching { DocumentsContract.getDocumentId(Uri.parse(changed)) }.getOrNull()
                                 val known = sourceFiles[id]
                                 if (known == null || known.second.isDirectory) fullScan = true
-                                else syncFile(tree, known.first, known.second) {}
+                                else try {
+                                    syncFile(tree, known.first, known.second) {}
+                                } catch (_: java.io.FileNotFoundException) {
+                                    // Only a completed directory listing can confirm a deletion or replacement.
+                                    fullScan = true
+                                }
                             }
                             if (fullScan) {
                                 copyFrom(tree, DocumentsContract.getTreeDocumentId(tree), folder) {}
-                                watchLocal(folder, epoch) { changed -> queueChange(outgoing, changed, "", updates) }
                             }
                         }
                         for (relative in changed) {
                             val file = File(folder, relative)
                             if (file.isFile) writeChangedFile(folder, file, tree)
-                            else if (file.isDirectory) {
-                                writeChangedDirectory(folder, file, tree)
-                                watchLocal(folder, epoch) { next -> queueChange(outgoing, next, "", updates) }
-                            }
+                            else if (file.isDirectory) copyTo(file, tree, destinationDirectory(folder, file, tree)) {}
                         }
                     }
                 } catch (failure: Exception) { report(epoch, failure) }
@@ -256,6 +299,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         try {
             resolver.registerContentObserver(tree, true, observer)
             contentObserver = observer
+            queueChange(outgoing, "", "", updates)
         } catch (failure: Exception) { report(epoch, failure) }
         return epoch
     }
@@ -273,48 +317,37 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         changes.toList().also { changes.clear() }
     }
 
-    private fun watchLocal(folder: File, epoch: Int, changed: (String) -> Unit) {
-        synchronized(watchLock) {
-            val removed = observers.keys.filter { !File(it).isDirectory }
-            removed.forEach { observers.remove(it)?.stopWatching() }
-        }
-        folder.walkTopDown().filter(File::isDirectory).forEach { directory ->
-            synchronized(watchLock) {
-                if (epoch != generation || observers.containsKey(directory.absolutePath)) return@forEach
-                check(observers.size < MAX_MIRRORED_ENTRIES) { "The project folder exceeds its directory budget." }
-                observers[directory.absolutePath] = object : FileObserver(directory, CLOSE_WRITE or MOVED_TO or CREATE or DELETE or MOVED_FROM) {
-                    override fun onEvent(event: Int, path: String?) {
-                        if (path != null && !ignored(path)) {
-                            val file = File(directory, path)
-                            // A created regular file can still be copying. Publish on close/rename.
-                            if (event and (CLOSE_WRITE or MOVED_TO or DELETE or MOVED_FROM) != 0 || file.isDirectory) changed(file.relativeTo(folder).path)
-                        }
-                    }
-                }.also(FileObserver::startWatching)
-            }
-        }
-    }
-
     private fun destinationDirectory(root: File, directory: File, tree: Uri): String {
         var parent = DocumentsContract.getTreeDocumentId(tree)
         var local = root
         for (part in directory.relativeTo(root).path.split(File.separatorChar).filter(String::isNotEmpty)) {
             val existing = entries(tree, parent).firstOrNull { it.name == part }
-            check(existing == null || existing.mime == DocumentsContract.Document.MIME_TYPE_DIR) { "'$part' is a file in the destination folder." }
-            parent = existing?.id ?: DocumentsContract.createDocument(resolver,
-                DocumentsContract.buildDocumentUriUsingTree(tree, parent), DocumentsContract.Document.MIME_TYPE_DIR, part)
-                ?.let(DocumentsContract::getDocumentId) ?: throw IllegalArgumentException("Could not create '$part'.")
+            parent = destinationSubdirectory(tree, parent, part, existing)
             local = File(local, part)
             if (tree == sourceTree) rememberEntry(tree, Entry(parent, part, DocumentsContract.Document.MIME_TYPE_DIR), local)
         }
         return parent
     }
+    private fun destinationSubdirectory(tree: Uri, parent: String, name: String, existing: Entry?): String {
+        if (existing != null) {
+            check(existing.mime == DocumentsContract.Document.MIME_TYPE_DIR) { "'$name' is a file in the destination folder." }
+            return existing.id
+        }
+        val uri = DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, parent), DocumentsContract.Document.MIME_TYPE_DIR, name)
+            ?: error("Could not create '$name'.")
+        val id = DocumentsContract.getDocumentId(uri)
+        val created = inspect(tree, id)
+        if (created?.name != name || created.mime != DocumentsContract.Document.MIME_TYPE_DIR) {
+            if (created?.mime == DocumentsContract.Document.MIME_TYPE_DIR && entries(tree, id).isEmpty()) {
+                check(DocumentsContract.deleteDocument(resolver, uri)) { "Could not remove the directory the provider named '${created.name}'." }
+            }
+            error("The provider cannot preserve the directory name '$name'.")
+        }
+        return id
+    }
     private fun writeChangedFile(root: File, file: File, tree: Uri) {
         val parent = destinationDirectory(root, file.parentFile!!, tree)
         writeFile(file, tree, parent, entries(tree, parent).firstOrNull { it.name == file.name })
-    }
-    private fun writeChangedDirectory(root: File, directory: File, tree: Uri) {
-        copyTo(directory, tree, destinationDirectory(root, directory, tree)) {}
     }
 
     private fun report(epoch: Int, failure: Exception) {
@@ -350,29 +383,47 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         }
     }
 
-    private fun entries(tree: Uri, parent: String): List<Entry> {
-        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parent)
-        return resolver.query(children, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { cursor ->
+    private fun entries(tree: Uri, parent: String) =
+        queryEntries(DocumentsContract.buildChildDocumentsUriUsingTree(tree, parent))
+
+    private fun queryEntries(uri: Uri): List<Entry> {
+        fun query() = resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), android.os.Bundle.EMPTY, null)
+            ?: error("The document provider could not list the project folder.")
+        fun complete(cursor: android.database.Cursor): List<Entry>? {
+            cursor.extras.getString(DocumentsContract.EXTRA_ERROR)?.let { error(it) }
+            if (cursor.extras.getBoolean(DocumentsContract.EXTRA_LOADING)) return null
             val names = mutableSetOf<String>()
-            buildList { while (cursor.moveToNext()) {
+            return buildList { while (cursor.moveToNext()) {
                 check(size < MAX_MIRRORED_ENTRIES) { "The provider folder exceeds its file budget." }
                 val entry = Entry(cursor.getString(0), cursor.getString(1), cursor.getString(2))
                 checkName(entry.name)
                 check(names.add(entry.name)) { "The provider returned duplicate file names." }
                 add(entry)
             } }
-        } ?: throw IllegalArgumentException("The document provider could not list the project folder.")
+        }
+        while (true) {
+            query().use { cursor ->
+                complete(cursor)?.let { return it }
+                val changed = CountDownLatch(1)
+                val observer = object : ContentObserver(null) {
+                    override fun onChange(selfChange: Boolean) = changed.countDown()
+                }
+                cursor.registerContentObserver(observer)
+                try {
+                    // Close the race between the initial query and observer registration.
+                    query().use { complete(it) }?.let { return it }
+                    check(changed.await(30, TimeUnit.SECONDS)) { "The document provider is still loading. Retry when the folder is available." }
+                    check(!closing) { "Project session closed" }
+                } finally { cursor.unregisterContentObserver(observer) }
+            }
+        }
     }
 
     private fun inspect(tree: Uri, id: String): Entry? {
-        val uri = DocumentsContract.buildDocumentUriUsingTree(tree, id)
-        val cursor = resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
-            DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)
-            ?: throw IllegalArgumentException("Could not inspect the source document.")
-        return cursor.use {
-            if (!it.moveToFirst()) null else Entry(it.getString(0), it.getString(1), it.getString(2)).also { entry -> checkName(entry.name) }
-        }
+        val result = queryEntries(DocumentsContract.buildDocumentUriUsingTree(tree, id))
+        check(result.size <= 1) { "The provider returned multiple entries for one document." }
+        return result.firstOrNull()?.also { check(it.id == id) { "The provider returned a different document." } }
     }
 
     private fun checkName(name: String) {
@@ -382,7 +433,8 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
     }
     private fun ignored(name: String) = PRIVATE_FILE.matches(name)
 
-    private fun copyFrom(tree: Uri, parent: String, folder: File, progress: (String) -> Unit) {
+    private fun copyFrom(tree: Uri, parent: String, folder: File, visited: MutableSet<String> = mutableSetOf(), progress: (String) -> Unit) {
+        check(visited.size < MAX_MIRRORED_ENTRIES && visited.add(parent)) { "The provider returned a repeated directory or exceeded the directory budget." }
         check(folder.isDirectory || folder.mkdirs()) { "Could not create the project folder." }
         val children = entries(tree, parent)
         val identifiers = children.map(Entry::id).toSet()
@@ -416,9 +468,13 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
                 check(file == target && previous.mime == entry.mime) { "'${previous.name}' was renamed or changed file type externally. The local version was kept; export local changes before reopening the source." }
             }
             check(sourceFiles.containsKey(entry.id) || sourceFiles.size < MAX_MIRRORED_ENTRIES) { "The selected folder contains too many files. Choose the folder containing this project and its media." }
-            rememberEntry(tree, entry, target)
-            if (entry.mime == DocumentsContract.Document.MIME_TYPE_DIR) copyFrom(tree, entry.id, target, progress)
-            else syncFile(tree, entry, target, progress)
+            if (entry.mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                copyFrom(tree, entry.id, target, visited, progress)
+                rememberEntry(tree, entry, target)
+            } else {
+                syncFile(tree, entry, target, progress)
+                if (target.isFile) rememberEntry(tree, entry, target)
+            }
         }
     }
 
@@ -451,19 +507,33 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         sourceFiles.keys.removeAll(removed.toSet())
     }
 
-    private fun deleteMissingSources(tree: Uri, folder: File, changed: List<String>): Boolean {
-        if (changed.isEmpty()) return false
+    private fun deleteMissingSources(tree: Uri, folder: File, changed: List<String>) {
+        if (changed.isEmpty()) return
         val missing = changed.map { File(folder, it) }.filter { !it.exists() }.toSet()
         val full = "" in changed
-        if (!full && missing.isEmpty()) return false
-        val affected = sourceFiles.filter { (_, value) ->
-            val file = value.second
-            !file.exists() && (full || generateSequence(file) { it.parentFile?.takeIf { parent -> parent.toPath().startsWith(folder.toPath()) } }.any { it in missing })
+        if (!full && missing.isEmpty()) return
+        val directories = sourceFiles.values.filter { it.first.mime == DocumentsContract.Document.MIME_TYPE_DIR }.associate { it.second to it.first }
+        val absent = sourceFiles.filter { (_, value) ->
+            !value.second.exists() && (full || generateSequence(value.second) { it.parentFile }.any { it in missing })
         }
+        // Older mirrors registered incoming entries before copying their bytes. An
+        // unverified descendant makes its whole missing subtree a download, never a deletion.
+        val incomplete = absent.mapNotNull { (id, value) ->
+            val (entry, file) = value
+            val missingReceipt = entry.mime != DocumentsContract.Document.MIME_TYPE_DIR &&
+                baseline(DocumentsContract.buildDocumentUriUsingTree(tree, id)) == null
+            val parents = generateSequence(file.parentFile) { it.parentFile }.takeWhile { it != folder }
+            if (missingReceipt || parents.any { it !in directories }) {
+                generateSequence(file) { it.parentFile }.takeWhile { it != folder && !it.exists() }.last()
+            } else null
+        }.toSet()
+        val affected = absent.filterValues { (_, file) -> generateSequence(file) { it.parentFile }.none { it in incomplete } }
         val paths = affected.values.map { it.second }.toSet()
         val roots = affected.values.filter { (_, file) -> generateSequence(file.parentFile) { it.parentFile }.none { it in paths } }
-        val directories = sourceFiles.values.filter { it.first.mime == DocumentsContract.Document.MIME_TYPE_DIR }.associate { it.second to it.first }
         val parentListings = mutableMapOf<String, Map<String, Entry>>()
+        val alreadyGone = mutableSetOf<String>()
+        fun parentId(file: File) = if (file == folder) DocumentsContract.getTreeDocumentId(tree)
+            else directories[file]?.id ?: error("The source parent is not tracked. Its contents were kept.")
         // Preflight every descendant before deleting a provider directory. Unknown,
         // renamed or externally modified children preserve the entire remote subtree.
         for (root in roots) {
@@ -471,15 +541,21 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             pending.add(root)
             while (pending.isNotEmpty()) {
                 val (expected, file) = pending.removeFirst()
-                val current = inspect(tree, expected.id) ?: continue
+                val current = inspect(tree, expected.id)
+                if (current == null) {
+                    check(file == root.second && entries(tree, parentId(requireNotNull(file.parentFile))).none { it.id == expected.id }) {
+                        "The provider still lists '${expected.name}' but could not inspect it. Its contents were kept."
+                    }
+                    alreadyGone.add(expected.id)
+                    continue
+                }
                 check(current == expected) { "'${expected.name}' changed externally while being removed locally. The source was kept." }
                 if (file == root.second) {
                     var ancestor = file
                     var identity = expected
                     while (ancestor != folder) {
                         val parent = ancestor.parentFile ?: error("The mirrored path has no parent.")
-                        val parentId = if (parent == folder) DocumentsContract.getTreeDocumentId(tree)
-                            else directories[parent]?.id ?: error("The source parent is not tracked. Its contents were kept.")
+                        val parentId = parentId(parent)
                         val listing = parentListings.getOrPut(parentId) {
                             entries(tree, parentId).filter { it.id in sourceFiles }.associateBy(Entry::id)
                         }
@@ -512,7 +588,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             for ((entry, target) in roots) {
                 check(!target.exists()) { "'${entry.name}' was recreated locally during synchronization. The source was kept." }
                 val current = inspect(tree, entry.id)
-                check(current == null || current == entry) { "'${entry.name}' changed externally during deletion. The source was kept." }
+                check(if (entry.id in alreadyGone) current == null else current == entry) { "'${entry.name}' changed externally during deletion. The source was kept." }
                 if (current != null) {
                     check(DocumentsContract.deleteDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, entry.id))) { "Could not delete source '${entry.name}'." }
                 }
@@ -523,43 +599,36 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             // partially failed batch. Do not forget provider deletions that failed.
             if (deleted.isNotEmpty()) forgetSources(tree, deleted)
         }
-        return affected.values.any { it.first.mime == DocumentsContract.Document.MIME_TYPE_DIR }
     }
 
     private fun syncFile(tree: Uri, entry: Entry, target: File, progress: (String) -> Unit) {
         progress(entry.name)
         val uri = DocumentsContract.buildDocumentUriUsingTree(tree, entry.id)
-        try {
-            val current = inspect(tree, entry.id) ?: throw java.io.FileNotFoundException(entry.name)
-            check(current == entry) { "'${entry.name}' was renamed or changed file type externally. The local version was kept." }
-            val remoteHash = resolver.openInputStream(uri)?.use { digest(it) }
-                ?: throw IllegalArgumentException("Could not read '${entry.name}'.")
-            val localHash = target.takeIf(File::isFile)?.inputStream()?.use { digest(it) }
-            if (remoteHash.contentEquals(localHash)) { rememberHash(uri, remoteHash); return }
-            val base = baseline(uri)
-            if (localHash != null && hashLabel(localHash) != base) {
-                check(base != null && hashLabel(remoteHash) == base) { "'${entry.name}' has different changes on this device and in its source folder. Export the local project before reopening its source." }
-                writeChangedFile(projectRoot(target), target, tree)
-                return
-            }
-            val incoming = File(target.parentFile, ".incoming-${UUID.randomUUID()}")
-            try {
-                resolver.openInputStream(uri)?.use { input -> incoming.outputStream().use { output -> copy(input, output) } }
-                    ?: throw IllegalArgumentException("Could not read '${entry.name}'.")
-                check(incoming.inputStream().use { digest(it) }.contentEquals(remoteHash)) {
-                    "'${entry.name}' changed while being read. The local version was kept; retry synchronization."
-                }
-                check(target.takeIf(File::isFile)?.inputStream()?.use { digest(it) }.let { latest ->
-                    if (localHash == null) latest == null else latest != null && latest.contentEquals(localHash)
-                }) { "'${entry.name}' changed locally while synchronizing. The local version was kept; retry synchronization." }
-                Files.move(incoming.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                rememberHash(uri, remoteHash)
-            } finally { incoming.delete() }
-        } catch (missing: java.io.FileNotFoundException) {
-            val deleted = resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)?.use { it.count == 0 } == true
-            if (!deleted) throw missing
-            removeDeletedSource(tree, entry.id, target)
+        val current = inspect(tree, entry.id) ?: throw java.io.FileNotFoundException(entry.name)
+        check(current == entry) { "'${entry.name}' was renamed or changed file type externally. The local version was kept." }
+        val remoteHash = resolver.openInputStream(uri)?.use { digest(it) }
+            ?: throw IllegalArgumentException("Could not read '${entry.name}'.")
+        val localHash = target.takeIf(File::isFile)?.inputStream()?.use { digest(it) }
+        if (remoteHash.contentEquals(localHash)) { rememberHash(uri, remoteHash); return }
+        val base = baseline(uri)
+        if (localHash != null && hashLabel(localHash) != base) {
+            check(base != null && hashLabel(remoteHash) == base) { "'${entry.name}' has different changes on this device and in its source folder. Export the local project before reopening its source." }
+            writeChangedFile(projectRoot(target), target, tree)
+            return
         }
+        val incoming = File(target.parentFile, ".incoming-${UUID.randomUUID()}")
+        try {
+            resolver.openInputStream(uri)?.use { input -> incoming.outputStream().use { output -> copy(input, output) } }
+                ?: throw IllegalArgumentException("Could not read '${entry.name}'.")
+            check(incoming.inputStream().use { digest(it) }.contentEquals(remoteHash)) {
+                "'${entry.name}' changed while being read. The local version was kept; retry synchronization."
+            }
+            check(target.takeIf(File::isFile)?.inputStream()?.use { digest(it) }.let { latest ->
+                if (localHash == null) latest == null else latest != null && latest.contentEquals(localHash)
+            }) { "'${entry.name}' changed locally while synchronizing. The local version was kept; retry synchronization." }
+            Files.move(incoming.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            rememberHash(uri, remoteHash)
+        } finally { incoming.delete() }
     }
 
     private fun copyTo(folder: File, tree: Uri, parent: String, mime: String = "application/octet-stream", progress: (String) -> Unit) {
@@ -572,11 +641,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
             progress(file.name)
             val existing = destination[file.name]
             if (file.isDirectory) {
-                check(existing == null || existing.mime == DocumentsContract.Document.MIME_TYPE_DIR) { "'${file.name}' is a file in the destination folder." }
-                val uri = existing?.let { DocumentsContract.buildDocumentUriUsingTree(tree, it.id) }
-                    ?: DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, parent), DocumentsContract.Document.MIME_TYPE_DIR, file.name)
-                    ?: throw IllegalArgumentException("Could not create '${file.name}'.")
-                val id = DocumentsContract.getDocumentId(uri)
+                val id = destinationSubdirectory(tree, parent, file.name, existing)
                 if (tree == sourceTree) rememberEntry(tree, Entry(id, file.name, DocumentsContract.Document.MIME_TYPE_DIR), file)
                 copyTo(file, tree, id, mime, progress)
             } else {
@@ -590,34 +655,172 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         // Lease the local inode before creating a remote document. A failed native
         // import may already have removed the path by the time its event is handled.
         file.inputStream().use { input ->
-        val localHash = digest(input)
-        input.channel.position(0)
-        check(tree != sourceTree || existing != null || sourceFiles.size < MAX_MIRRORED_ENTRIES) { "The project folder exceeds its file budget." }
-        val uri = existing?.let { DocumentsContract.buildDocumentUriUsingTree(tree, it.id) }
-            ?: DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, parent), mime, file.name)
-            ?: throw IllegalArgumentException("Could not create '${file.name}'.")
-        val entry = Entry(DocumentsContract.getDocumentId(uri), file.name, existing?.mime ?: mime)
-        if (tree == sourceTree) rememberEntry(tree, entry, file)
-        if (existing != null) {
-            val remoteHash = resolver.openInputStream(uri)?.use { digest(it) }
-                ?: throw IllegalArgumentException("Could not read destination '${file.name}'.")
-            if (remoteHash.contentEquals(localHash)) { rememberHash(uri, localHash); return }
-            val base = baseline(uri)
-            check(base != null && (hashLabel(remoteHash) == base || hashLabel(localHash) == base)) {
-                "'${file.name}' already has different content in the destination folder. Export to an empty folder to preserve both versions."
+            val localHash = digest(input)
+            val wanted = checkNotNull(hashLabel(localHash))
+            input.channel.position(0)
+            check(tree != sourceTree || existing != null || sourceFiles.size < MAX_MIRRORED_ENTRIES) { "The project folder exceeds its file budget." }
+            val uri = existing?.let { DocumentsContract.buildDocumentUriUsingTree(tree, it.id) }
+            var previous: String? = null
+            if (uri != null) {
+                previous = resolver.openInputStream(uri)?.use { hashLabel(digest(it)) }
+                    ?: error("Could not read destination '${file.name}'.")
+                if (previous == wanted) {
+                    if (tree == sourceTree) rememberEntry(tree, existing, file)
+                    rememberHash(uri, localHash)
+                    return
+                }
+                val base = baseline(uri)
+                check(base != null && (previous == base || wanted == base)) {
+                    "'${file.name}' has conflicting changes. Export to an empty folder to preserve both versions."
+                }
+                if (wanted == base) {
+                    check(tree == sourceTree) { "The export destination has newer content. Choose an empty folder." }
+                    syncFile(tree, existing, file) {}
+                    return
+                }
             }
-            if (hashLabel(localHash) == base) {
-                check(tree == sourceTree) { "The export destination has newer content. Choose an empty folder." }
-                syncFile(tree, entry, file) {}
-                return
+            // SAF provides no atomic replacement primitive for an existing document URI.
+            // Keep the exact intended replacement in private durable storage before truncating.
+            val stage = File(context.getDir("uploads", Context.MODE_PRIVATE), UUID.randomUUID().toString())
+            val upload = Upload(stage, parent, file.name, existing?.mime ?: mime, uri, previous, wanted)
+            mirrorDatabase.value.execSQL("INSERT INTO uploads(stage,tree,parent,name,mime,uri,previous,wanted,ready) VALUES(?,?,?,?,?,?,?,?,?)",
+                arrayOf<Any?>(stage.name, tree.toString(), parent, file.name, upload.mime, uri?.toString(), previous, wanted, UPLOAD_CLEANUP))
+            try {
+                saveStage(input, stage, wanted)
+                if (uri != null) {
+                    checkNotNull(resolver.openInputStream(uri)).use {
+                        saveStage(it, originalStage(stage), checkNotNull(previous))
+                    }
+                }
+                setUploadPhase(stage, UPLOAD_STAGED)
+            } catch (failure: Exception) {
+                removeStage(stage)
+                throw failure
+            }
+            val destination = finishUpload(tree, upload, UPLOAD_STAGED)
+            if (tree == sourceTree) rememberEntry(tree, Entry(DocumentsContract.getDocumentId(destination), file.name, existing?.mime ?: mime), file)
+        }
+    }
+
+    private data class Upload(val stage: File, val parent: String, val name: String, val mime: String,
+                              val original: Uri?, val previous: String?, val wanted: String)
+
+    private fun setUploadPhase(stage: File, phase: Int) {
+        mirrorDatabase.value.execSQL("UPDATE uploads SET ready=? WHERE stage=?", arrayOf<Any>(phase, stage.name))
+    }
+
+    private fun recoverUploads(tree: Uri) {
+        mirrorDatabase.value.rawQuery("SELECT stage,parent,name,mime,uri,previous,wanted,ready FROM uploads WHERE tree=?",
+            arrayOf(tree.toString())).use { cursor ->
+            while (cursor.moveToNext()) {
+                val file = File(context.getDir("uploads", Context.MODE_PRIVATE), cursor.getString(0))
+                val phase = cursor.getInt(7)
+                if (phase == UPLOAD_CLEANUP) removeStage(file)
+                else finishUpload(tree, Upload(file, cursor.getString(1), cursor.getString(2), cursor.getString(3),
+                    cursor.getString(4)?.let(Uri::parse), cursor.getString(5), cursor.getString(6)), phase)
             }
         }
-        val copied = MessageDigest.getInstance("SHA-256")
-        resolver.openOutputStream(uri, "rwt")?.use { output -> copy(java.security.DigestInputStream(input, copied), output) }
-            ?: throw IllegalArgumentException("Could not write '${file.name}'.")
-        check(copied.digest().contentEquals(localHash)) { "'${file.name}' changed during upload. The local version was kept; retry synchronization." }
-        rememberHash(uri, localHash)
+    }
+
+    private fun originalStage(stage: File) = File(stage.parentFile, "${stage.name}.original")
+
+    private fun saveStage(input: java.io.InputStream, stage: File, expected: String) {
+        stage.outputStream().use { output ->
+            val hash = MessageDigest.getInstance("SHA-256")
+            copy(java.security.DigestInputStream(input, hash), output)
+            check(hashLabel(hash.digest()) == expected) { "The file changed while preparing the upload." }
+            output.fd.sync()
         }
+    }
+
+    private fun removeStage(stage: File) {
+        for (part in listOf(stage, originalStage(stage))) {
+            check(!part.exists() || part.delete()) { "Could not clean up the finished upload." }
+        }
+        mirrorDatabase.value.execSQL("DELETE FROM uploads WHERE stage=?", arrayOf(stage.name))
+    }
+
+    private fun finishUpload(tree: Uri, upload: Upload, phase: Int): Uri {
+        val (stage, parent, name, mime, original, previous, wanted) = upload
+        val listing = entries(tree, parent)
+        val entry = listing.firstOrNull { it.name == name }
+        val uri = if (entry != null) {
+            DocumentsContract.buildDocumentUriUsingTree(tree, entry.id).also {
+                check(original == null || original == it) { "'$name' was replaced externally during upload. The staged version is preserved." }
+            }
+        } else {
+            check(original == null) { "The provider moved, renamed or omitted '$name' during upload. The staged version is preserved." }
+            // createDocument assigns the ID. If the process dies before it returns, only
+            // retry creation when the directory still has exactly the same document IDs.
+            val siblings = hashLabel(digest(org.json.JSONArray(listing.map(Entry::id).sorted()).toString().byteInputStream()))
+            if (phase == UPLOAD_CREATING) {
+                val unchanged = mirrorDatabase.value.rawQuery("SELECT siblings FROM uploads WHERE stage=?", arrayOf(stage.name)).use {
+                    it.moveToFirst() && it.getString(0) == siblings
+                }
+                check(unchanged) { "The provider changed the folder while creating '$name'. The staged version is preserved." }
+            }
+            mirrorDatabase.value.execSQL("UPDATE uploads SET ready=?,siblings=? WHERE stage=?", arrayOf<Any?>(UPLOAD_CREATING, siblings, stage.name))
+            DocumentsContract.createDocument(resolver, DocumentsContract.buildDocumentUriUsingTree(tree, parent), mime, name)
+                ?: error("Could not create '$name'.")
+        }
+        if (original == null) mirrorDatabase.value.execSQL("UPDATE uploads SET uri=? WHERE stage=?", arrayOf(uri.toString(), stage.name))
+        val actual = inspect(tree, DocumentsContract.getDocumentId(uri))
+        if (actual?.name != name || actual.mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+            if (entry == null && actual != null && actual.mime != DocumentsContract.Document.MIME_TYPE_DIR &&
+                resolver.openInputStream(uri)?.use { it.read() == -1 } == true && DocumentsContract.deleteDocument(resolver, uri)) {
+                setUploadPhase(stage, UPLOAD_CLEANUP)
+                removeStage(stage)
+            }
+            error("The provider cannot preserve the name '$name'. The local file is unchanged.")
+        }
+        fun readRemote() = resolver.openInputStream(uri)?.use { fingerprint(it) } ?: error("Could not read '$name'.")
+        fun matchesPrefix(file: File, length: Long, hash: ByteArray): Boolean {
+            val (count, prefix) = file.inputStream().use { fingerprint(it, length) }
+            return count == length && prefix.contentEquals(hash)
+        }
+        fun publish(file: File, hash: String): ByteArray {
+            check(file.inputStream().use { hashLabel(digest(it)) } == hash) { "The saved recovery copy of '$name' is damaged." }
+            file.inputStream().use { input ->
+                checkNotNull(resolver.openOutputStream(uri, "rwt")) { "Could not write '$name'." }.use { copy(input, it) }
+            }
+            return readRemote().second.also {
+                check(hashLabel(it) == hash) { "Could not verify '$name' after upload. Retry to finish saving." }
+            }
+        }
+        val (length, before) = readRemote()
+        var remote = before
+        if (hashLabel(remote) != wanted) {
+            val backup = originalStage(stage)
+            if (hashLabel(remote) != previous && !(previous == null && length == 0L)) {
+                check((phase == UPLOAD_WRITING || phase == UPLOAD_RESTORING) &&
+                    (matchesPrefix(stage, length, remote) || phase == UPLOAD_RESTORING && matchesPrefix(backup, length, remote))) {
+                    "'$name' changed externally during upload. Both versions are preserved."
+                }
+            }
+            setUploadPhase(stage, UPLOAD_WRITING)
+            try {
+                remote = publish(stage, wanted)
+            } catch (failure: Exception) {
+                if (previous != null) {
+                    // Restore an interrupted prefix while the provider is still accessible.
+                    // A repeated failure leaves both verified copies and the receipt on disk.
+                    try {
+                        val (size, hash) = readRemote()
+                        if (hashLabel(hash) != wanted && matchesPrefix(stage, size, hash)) {
+                            setUploadPhase(stage, UPLOAD_RESTORING)
+                            publish(backup, previous)
+                            setUploadPhase(stage, UPLOAD_STAGED)
+                        }
+                    } catch (restore: Exception) { failure.addSuppressed(restore) }
+                }
+                throw failure
+            }
+        }
+        rememberHash(uri, remote)
+        // Mark complete first so recovery can finish cleanup even if the process dies here.
+        setUploadPhase(stage, UPLOAD_CLEANUP)
+        removeStage(stage)
+        return uri
     }
 
     private fun copy(input: java.io.InputStream, output: java.io.OutputStream) {
@@ -630,16 +833,20 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         }
     }
 
-    private fun digest(input: java.io.InputStream): ByteArray {
+    private fun digest(input: java.io.InputStream) = fingerprint(input).second
+
+    private fun fingerprint(input: java.io.InputStream, limit: Long = Long.MAX_VALUE): Pair<Long, ByteArray> {
         val hash = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        while (true) {
+        var size = 0L
+        while (size < limit) {
             ensureOpen()
-            val length = input.read(buffer)
-            if (length < 0) break
-            hash.update(buffer, 0, length)
+            val count = input.read(buffer, 0, minOf(buffer.size.toLong(), limit - size).toInt())
+            if (count < 0) break
+            hash.update(buffer, 0, count)
+            size += count
         }
-        return hash.digest()
+        return size to hash.digest()
     }
 
     fun detach(owner: Int? = null) {
@@ -649,10 +856,7 @@ internal class ProjectFiles(context: Context) : AutoCloseable {
         contentObserver = null
         sync?.close()
         sync = null
-        synchronized(watchLock) {
-            observers.values.forEach(FileObserver::stopWatching)
-            observers.clear()
-        }
+        localChange = null
     }
     override fun close() {
         if (closing) return

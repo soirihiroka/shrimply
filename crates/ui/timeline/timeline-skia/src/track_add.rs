@@ -67,16 +67,17 @@ pub fn activate_track_add_checked_at(
     }
 
     let mut project_state = project.borrow().clone();
-    let Some((track_address, item)) =
-        shrimply_timeline_edit::prepare_track_add(&project_state, key, action, position, settings)?
+    let Some(item) = shrimply_timeline_edit::insert_track_add(
+        &mut project_state,
+        key,
+        action,
+        position,
+        settings,
+        None,
+    )?
     else {
         return Ok(TrackAddOutcome::Unchanged);
     };
-    let Some(item_address) = project_state.insert_item(&track_address, item) else {
-        return Ok(TrackAddOutcome::Unchanged);
-    };
-    let selected = selection_state::item_key(&project_state, &item_address)
-        .expect("inserted track item must have a root item key");
     let duration = project_state.duration();
     shrimply_project_document::project::commit_edit_checked(
         &project_state,
@@ -84,7 +85,7 @@ pub fn activate_track_add_checked_at(
     )?;
     *project.borrow_mut() = project_state;
 
-    selection_state::set_selected_items(selection_state, vec![selected], Some(selected));
+    selection_state::select_item_address(selection_state, &project.borrow(), item);
     player_state::refresh_project(
         player_state,
         ProjectChange {

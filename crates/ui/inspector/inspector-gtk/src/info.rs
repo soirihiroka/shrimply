@@ -36,11 +36,8 @@ pub(super) fn file_row(path: PathBuf, label: &str) -> adw::PreferencesGroup {
     group
 }
 
-pub(super) fn artwork(
-    data: impl AsRef<[u8]> + Send + 'static,
-    label: &str,
-) -> Option<adw::PreferencesGroup> {
-    let texture = gtk::gdk::Texture::from_bytes(&glib::Bytes::from_owned(data)).ok()?;
+pub(super) fn artwork(path: &std::path::Path, label: &str) -> Option<adw::PreferencesGroup> {
+    let texture = gtk::gdk::Texture::from_file(&gtk::gio::File::for_path(path)).ok()?;
     let group = adw::PreferencesGroup::builder()
         .title(tr!(label).as_ref())
         .build();

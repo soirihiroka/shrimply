@@ -24,13 +24,7 @@ pub(super) fn apply(
         prepared.staged.push(staged);
     }
     let mut source = sources.pop().expect("one replacement source was staged");
-    let kind = native::file_kind(&source.inspect).ok_or_else(|| {
-        format!(
-            "unsupported replacement source: {}",
-            source.inspect.display()
-        )
-    })?;
-    remux_source(&mut source, kind, request.link)?;
+    prepare_import_source(&mut source, request.link)?;
     let info = native::inspect(
         source.inspect,
         prepared.project.canvas_size,

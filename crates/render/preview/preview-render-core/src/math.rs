@@ -12,12 +12,7 @@ pub fn unmodified_video(
     };
     let parameters = layer.parameters;
     if !plan.external_layers.is_empty()
-        || !layer.effects.is_empty()
-        || !layer.transitions.is_empty()
-        || layer.motion_blur.is_some()
-        || layer.alpha_mask.is_some()
-        || layer.video_mask.is_some()
-        || layer.stabilization.is_some()
+        || layer.has_effects()
         || layer.morph_scene.is_some()
         || layer.render_size != (plan.width, plan.height)
         || layer.transform != Mat3::IDENTITY

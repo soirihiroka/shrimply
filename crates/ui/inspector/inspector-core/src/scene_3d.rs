@@ -1,4 +1,3 @@
-use ffmpeg_next as ffmpeg;
 use serde::Serialize;
 use shrimply_project_document::project::{Asset, ItemAddress, Project, Time};
 use shrimply_property_model::{Color, timeline_value::TimelineValue};
@@ -1194,7 +1193,7 @@ impl InspectorController {
         target: &InspectorTarget,
         path: &std::path::Path,
     ) -> Result<(), String> {
-        validate_environment(path)?;
+        shrimply_render_3d_core::load_environment(path).map_err(|error| error.to_string())?;
         let mut project = self.project.borrow_mut();
         let scene = scene_mut(&mut project, target)?;
         if scene.environment.file.as_deref() == Some(path)
@@ -1255,32 +1254,4 @@ fn refresh_scene(player: &shrimply_editor_state::player_state::SharedPlayerState
             ..Default::default()
         },
     );
-}
-
-fn validate_environment(path: &std::path::Path) -> Result<(), String> {
-    let mut input = ffmpeg::format::input(path).map_err(|error| error.to_string())?;
-    let stream = input
-        .streams()
-        .best(ffmpeg::media::Type::Video)
-        .ok_or_else(|| "image has no decodable video stream".to_string())?;
-    let stream_index = stream.index();
-    let mut decoder = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
-        .and_then(|context| context.decoder().video())
-        .map_err(|error| error.to_string())?;
-    let mut frame = ffmpeg::frame::Video::empty();
-    for (stream, packet) in input.packets() {
-        if stream.index() != stream_index {
-            continue;
-        }
-        decoder
-            .send_packet(&packet)
-            .map_err(|error| error.to_string())?;
-        if decoder.receive_frame(&mut frame).is_ok() {
-            return Ok(());
-        }
-    }
-    decoder.send_eof().map_err(|error| error.to_string())?;
-    decoder
-        .receive_frame(&mut frame)
-        .map_err(|error| format!("could not decode an image frame: {error}"))
 }

@@ -828,7 +828,7 @@ pub fn presentation(
     }
     if !matches!(
         item.content,
-        VideoItemContent::Media | VideoItemContent::Gif
+        VideoItemContent::Media | VideoItemContent::Gif | VideoItemContent::AnimatedImage
     ) {
         playback_items.push(playback::frame_rate(item));
     }
@@ -891,7 +891,7 @@ pub fn presentation(
         ),
         source_metadata: if matches!(
             item.content,
-            VideoItemContent::Media | VideoItemContent::Gif
+            VideoItemContent::Media | VideoItemContent::Gif | VideoItemContent::AnimatedImage
         ) {
             crate::info::SourceMetadata::Video(item.track_id)
         } else {

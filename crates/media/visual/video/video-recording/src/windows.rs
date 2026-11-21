@@ -1,10 +1,12 @@
-#![cfg(windows)]
+use crate::{
+    VideoRecordingEvent, remove_incomplete_recording,
+    writer::{BYTES_PER_PIXEL, CaptureFormat, VideoWriter, recording_paths, valid_fps},
+};
 
-use ffmpeg::{format::Pixel, software::scaling};
+use ffmpeg::format::Pixel;
 use ffmpeg_next as ffmpeg;
 use shrimply_math_core::Fraction;
-use shrimply_project_document::project::{self, Time};
-use std::fs;
+
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{
@@ -13,8 +15,7 @@ use std::sync::{
     mpsc,
 };
 use std::thread;
-use std::time::Instant;
-use uuid::Uuid;
+
 use windows::Foundation::TypedEventHandler;
 use windows::Graphics::Capture::{
     Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCapturePicker,
@@ -38,49 +39,15 @@ use windows::Win32::UI::Shell::IInitializeWithWindow;
 use windows::core::{IInspectable, Interface, Result as WindowsResult};
 use windows_future::{AsyncStatus, IAsyncOperation};
 
-const DEFAULT_FPS_NUMERATOR: u64 = 30;
-const DEFAULT_FPS_DENOMINATOR: u64 = 1;
-const BYTES_PER_PIXEL: usize = 4;
 const WGC_FRAME_POOL_SIZE: i32 = 2;
 const CAPTURE_WAIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 const HUNDRED_NANOSECONDS_TO_NANOSECONDS: i64 = 100;
-const NVENC_CONSTANT_QP: &str = "20";
-const NVENC_B_FRAMES: usize = 0;
-const NVENC_KEYFRAME_INTERVAL_SECONDS: u32 = 1;
-
 pub struct ScreenRecording {
     controls: mpsc::Sender<CaptureControl>,
-    events: mpsc::Receiver<ScreenRecordingEvent>,
+    events: mpsc::Receiver<VideoRecordingEvent>,
     stopped: AtomicBool,
     selection: Mutex<Option<Selection>>,
     _winrt: WinrtApartment,
-}
-
-pub enum ScreenRecordingEvent {
-    Ready { width: u32, height: u32 },
-    Cancelled,
-    Finished(Result<FinishedScreenRecording, String>),
-}
-
-pub struct FinishedScreenRecording {
-    path: Option<PathBuf>,
-    pub duration: Time,
-    pub width: u32,
-    pub height: u32,
-}
-
-impl FinishedScreenRecording {
-    pub fn into_path(mut self) -> PathBuf {
-        self.path.take().expect("recording file is owned")
-    }
-}
-
-impl Drop for FinishedScreenRecording {
-    fn drop(&mut self) {
-        if let Some(path) = self.path.take() {
-            remove_incomplete_recording(&path);
-        }
-    }
 }
 
 enum CaptureControl {
@@ -92,6 +59,7 @@ struct CapturedFrame {
     bytes: Vec<u8>,
     width: u32,
     height: u32,
+    stride: i32,
     timestamp: Option<i64>,
 }
 
@@ -100,7 +68,7 @@ struct Selection {
     fps: Fraction,
     controls: mpsc::Sender<CaptureControl>,
     control_rx: mpsc::Receiver<CaptureControl>,
-    events: mpsc::Sender<ScreenRecordingEvent>,
+    events: mpsc::Sender<VideoRecordingEvent>,
     final_path: PathBuf,
     temporary_path: PathBuf,
 }
@@ -111,36 +79,12 @@ struct Readback {
     staging: Option<(D3D11_TEXTURE2D_DESC, ID3D11Texture2D)>,
 }
 
-struct VideoWriter {
-    output: ffmpeg::format::context::Output,
-    encoder: ffmpeg::codec::encoder::video::Encoder,
-    scaler: scaling::Context,
-    input_frame: ffmpeg::frame::Video,
-    output_frame: ffmpeg::frame::Video,
-    input_width: u32,
-    input_height: u32,
-    width: u32,
-    height: u32,
-    stream_index: usize,
-    stream_time_base: ffmpeg::Rational,
-    fps: Fraction,
-    first_timestamp: Option<i64>,
-    fallback_started_at: Instant,
-    last_pts: Option<i64>,
-    final_path: PathBuf,
-    temporary_path: PathBuf,
-}
-
 impl ScreenRecording {
     pub fn start(fps: Fraction, native_window: usize) -> Result<Self, String> {
         if native_window == 0 {
             return Err("The Windows capture picker has no owner window".into());
         }
-        let directory = project::project_directory().join("media/recordings");
-        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-        let name = Uuid::new_v4().to_string();
-        let final_path = directory.join(format!("{name}.mp4"));
-        let temporary_path = directory.join(format!("{name}.mp4.part"));
+        let (final_path, temporary_path) = recording_paths()?;
         let (control_tx, control_rx) = mpsc::channel();
         let (event_tx, events) = mpsc::channel();
         let winrt = WinrtApartment::new()?;
@@ -176,7 +120,7 @@ impl ScreenRecording {
         }
     }
 
-    pub fn try_event(&self) -> Result<ScreenRecordingEvent, mpsc::TryRecvError> {
+    pub fn try_event(&self) -> Result<VideoRecordingEvent, mpsc::TryRecvError> {
         match self.events.try_recv() {
             Ok(event) => return Ok(event),
             Err(mpsc::TryRecvError::Empty) => {}
@@ -198,29 +142,29 @@ impl ScreenRecording {
                         thread::spawn(move || start_selected_capture(item, selection));
                         Err(mpsc::TryRecvError::Empty)
                     }
-                    Err(error) if picker_cancelled(&error) => Ok(ScreenRecordingEvent::Cancelled),
-                    Err(error) => Ok(ScreenRecordingEvent::Finished(Err(windows_error(error)))),
+                    Err(error) if picker_cancelled(&error) => Ok(VideoRecordingEvent::Cancelled),
+                    Err(error) => Ok(VideoRecordingEvent::Finished(Err(windows_error(error)))),
                 }
             }
             Ok(AsyncStatus::Canceled) => {
                 selection.take();
-                Ok(ScreenRecordingEvent::Cancelled)
+                Ok(VideoRecordingEvent::Cancelled)
             }
             Ok(AsyncStatus::Error) => {
                 let selection = selection.take().expect("capture selection exists");
                 match selection.operation.GetResults() {
-                    Err(error) if picker_cancelled(&error) => Ok(ScreenRecordingEvent::Cancelled),
-                    Err(error) => Ok(ScreenRecordingEvent::Finished(Err(windows_error(error)))),
-                    Ok(_) => Ok(ScreenRecordingEvent::Finished(Err(
+                    Err(error) if picker_cancelled(&error) => Ok(VideoRecordingEvent::Cancelled),
+                    Err(error) => Ok(VideoRecordingEvent::Finished(Err(windows_error(error)))),
+                    Ok(_) => Ok(VideoRecordingEvent::Finished(Err(
                         "Windows capture picker reported an error without an error result".into(),
                     ))),
                 }
             }
             Err(error) => {
                 selection.take();
-                Ok(ScreenRecordingEvent::Finished(Err(windows_error(error))))
+                Ok(VideoRecordingEvent::Finished(Err(windows_error(error))))
             }
-            Ok(status) => Ok(ScreenRecordingEvent::Finished(Err(format!(
+            Ok(status) => Ok(VideoRecordingEvent::Finished(Err(format!(
                 "Windows capture picker returned unknown status {}",
                 status.0
             )))),
@@ -248,7 +192,7 @@ fn start_selected_capture(item: GraphicsCaptureItem, selection: Selection) {
     let _winrt = match WinrtApartment::new() {
         Ok(apartment) => apartment,
         Err(error) => {
-            let _ = events.send(ScreenRecordingEvent::Finished(Err(error)));
+            let _ = events.send(VideoRecordingEvent::Finished(Err(error)));
             return;
         }
     };
@@ -263,7 +207,7 @@ fn start_selected_capture(item: GraphicsCaptureItem, selection: Selection) {
         temporary_path,
     ) {
         remove_incomplete_recording(&cleanup_path);
-        let _ = events.send(ScreenRecordingEvent::Finished(Err(error)));
+        let _ = events.send(VideoRecordingEvent::Finished(Err(error)));
     }
 }
 
@@ -272,7 +216,7 @@ fn record(
     fps: Fraction,
     controls: mpsc::Sender<CaptureControl>,
     control_rx: mpsc::Receiver<CaptureControl>,
-    events: mpsc::Sender<ScreenRecordingEvent>,
+    events: mpsc::Sender<VideoRecordingEvent>,
     final_path: PathBuf,
     temporary_path: PathBuf,
 ) -> Result<(), String> {
@@ -343,11 +287,14 @@ fn record(
         .map_err(windows_error)?;
     session.StartCapture().map_err(windows_error)?;
 
-    let mut writer = None;
+    let mut writer: Option<VideoWriter> = None;
     let recording_result = loop {
         match control_rx.try_recv() {
             Ok(CaptureControl::Stop) => {
-                break finish_recording(writer.take(), &temporary_path);
+                break writer
+                    .take()
+                    .ok_or_else(|| "Screen recording captured no video frames".to_string())
+                    .and_then(VideoWriter::finish);
             }
             Ok(CaptureControl::Failed(error)) => break Err(error),
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -357,10 +304,15 @@ fn record(
         }
         match frame_rx.recv_timeout(CAPTURE_WAIT_INTERVAL) {
             Ok(frame) => {
+                let input = CaptureFormat {
+                    width: frame.width,
+                    height: frame.height,
+                    pixel: Pixel::BGRA,
+                    alpha: None,
+                };
                 if writer.is_none() {
                     let value = match VideoWriter::new(
-                        frame.width,
-                        frame.height,
+                        input,
                         fps,
                         final_path.clone(),
                         temporary_path.clone(),
@@ -368,16 +320,16 @@ fn record(
                         Ok(value) => value,
                         Err(error) => break Err(error),
                     };
-                    let _ = events.send(ScreenRecordingEvent::Ready {
+                    let _ = events.send(VideoRecordingEvent::Ready {
                         width: value.width,
                         height: value.height,
                     });
                     writer = Some(value);
                 }
+                let writer = writer.as_mut().expect("video writer exists");
                 if let Err(error) = writer
-                    .as_mut()
-                    .expect("video writer exists")
-                    .write_frame(frame)
+                    .configure_input(input)
+                    .and_then(|()| writer.write_frame(&frame.bytes, frame.stride, frame.timestamp))
                 {
                     break Err(error);
                 }
@@ -396,21 +348,8 @@ fn record(
         drop(writer.take());
         remove_incomplete_recording(&temporary_path);
     }
-    let _ = events.send(ScreenRecordingEvent::Finished(recording_result));
+    let _ = events.send(VideoRecordingEvent::Finished(recording_result));
     Ok(())
-}
-
-fn finish_recording(
-    writer: Option<VideoWriter>,
-    temporary_path: &PathBuf,
-) -> Result<FinishedScreenRecording, String> {
-    match writer {
-        Some(writer) => writer.finish(),
-        None => {
-            remove_incomplete_recording(temporary_path);
-            Err("Screen recording captured no video frames".into())
-        }
-    }
 }
 
 fn create_device() -> Result<(ID3D11Device, ID3D11DeviceContext, IDirect3DDevice), String> {
@@ -558,262 +497,9 @@ fn read_frame_inner(
         bytes,
         width,
         height,
+        stride: i32::try_from(row_bytes).map_err(|_| E_ABORT)?,
         timestamp,
     })
-}
-
-impl VideoWriter {
-    fn new(
-        input_width: u32,
-        input_height: u32,
-        fps: Fraction,
-        final_path: PathBuf,
-        temporary_path: PathBuf,
-    ) -> Result<Self, String> {
-        let width = input_width & !1;
-        let height = input_height & !1;
-        if width == 0 || height == 0 {
-            return Err("Windows screen capture frame is too small".into());
-        }
-        let mut output =
-            ffmpeg::format::output_as(&temporary_path, "mp4").map_err(|error| error.to_string())?;
-        let global_header = output
-            .format()
-            .flags()
-            .contains(ffmpeg::format::Flags::GLOBAL_HEADER);
-        let (fps_numerator, fps_denominator) = fps_parts_i32(fps)?;
-        let time_base = ffmpeg::Rational(fps_denominator, fps_numerator);
-        let frame_rate = ffmpeg::Rational(fps_numerator, fps_denominator);
-        let encoder = open_hevc_encoder(width, height, time_base, frame_rate, global_header)?;
-        let stream_index = {
-            let mut stream = output
-                .add_stream_with(encoder.as_ref())
-                .map_err(|error| error.to_string())?;
-            stream.set_time_base(time_base);
-            stream.set_rate(frame_rate);
-            stream.set_avg_frame_rate(frame_rate);
-            stream.index()
-        };
-        output.write_header().map_err(|error| error.to_string())?;
-        let stream_time_base = output
-            .stream(stream_index)
-            .ok_or("MP4 video stream disappeared")?
-            .time_base();
-        let scaler = screen_scaler(input_width, input_height, width, height)?;
-        Ok(Self {
-            output,
-            encoder,
-            scaler,
-            input_frame: ffmpeg::frame::Video::new(Pixel::BGRA, input_width, input_height),
-            output_frame: ffmpeg::frame::Video::new(Pixel::YUV420P, width, height),
-            input_width,
-            input_height,
-            width,
-            height,
-            stream_index,
-            stream_time_base,
-            fps,
-            first_timestamp: None,
-            fallback_started_at: Instant::now(),
-            last_pts: None,
-            final_path,
-            temporary_path,
-        })
-    }
-
-    fn write_frame(&mut self, frame: CapturedFrame) -> Result<(), String> {
-        if frame.width != self.input_width || frame.height != self.input_height {
-            self.scaler = screen_scaler(frame.width, frame.height, self.width, self.height)?;
-            self.input_frame = ffmpeg::frame::Video::new(Pixel::BGRA, frame.width, frame.height);
-            self.input_width = frame.width;
-            self.input_height = frame.height;
-        }
-        let row_bytes = frame.width as usize * BYTES_PER_PIXEL;
-        let input_stride = self.input_frame.stride(0);
-        if frame.bytes.len() != row_bytes * frame.height as usize {
-            return Err("Windows screen capture returned an incomplete frame".into());
-        }
-        let input = self.input_frame.data_mut(0);
-        for row in 0..frame.height as usize {
-            input[row * input_stride..row * input_stride + row_bytes]
-                .copy_from_slice(&frame.bytes[row * row_bytes..(row + 1) * row_bytes]);
-        }
-        let elapsed_nanos = match frame.timestamp {
-            Some(timestamp) => {
-                let first = *self.first_timestamp.get_or_insert(timestamp);
-                timestamp.saturating_sub(first) as u64
-            }
-            None => self
-                .fallback_started_at
-                .elapsed()
-                .as_nanos()
-                .min(u128::from(u64::MAX)) as u64,
-        };
-        let pts = shrimply_math_core::frame_index(Time::from_nanos(elapsed_nanos), self.fps)
-            .ok_or("Invalid recording frame rate")?;
-        if self.last_pts.is_some_and(|last| pts <= last) {
-            return Ok(());
-        }
-        self.scaler
-            .run(&self.input_frame, &mut self.output_frame)
-            .map_err(|error| error.to_string())?;
-        self.output_frame.set_pts(Some(pts));
-        self.encoder
-            .send_frame(&self.output_frame)
-            .map_err(|error| error.to_string())?;
-        self.write_packets()?;
-        self.last_pts = Some(pts);
-        Ok(())
-    }
-
-    fn write_packets(&mut self) -> Result<(), String> {
-        loop {
-            let mut packet = ffmpeg::Packet::empty();
-            match self.encoder.receive_packet(&mut packet) {
-                Ok(()) => {
-                    packet.set_stream(self.stream_index);
-                    packet.rescale_ts(self.encoder.time_base(), self.stream_time_base);
-                    packet
-                        .write_interleaved(&mut self.output)
-                        .map_err(|error| error.to_string())?;
-                }
-                Err(ffmpeg::Error::Other { errno }) if errno == ffmpeg::error::EAGAIN => {
-                    return Ok(());
-                }
-                Err(ffmpeg::Error::Eof) => return Ok(()),
-                Err(error) => return Err(error.to_string()),
-            }
-        }
-    }
-
-    fn finish(mut self) -> Result<FinishedScreenRecording, String> {
-        let Some(last_pts) = self.last_pts else {
-            remove_incomplete_recording(&self.temporary_path);
-            return Err("Screen recording captured no video frames".into());
-        };
-        let elapsed = self
-            .fallback_started_at
-            .elapsed()
-            .as_nanos()
-            .min(u128::from(u64::MAX)) as u64;
-        let final_pts = shrimply_math_core::frame_index(Time::from_nanos(elapsed), self.fps)
-            .ok_or("Invalid recording frame rate")?
-            .max(last_pts);
-        if final_pts > last_pts {
-            self.output_frame.set_pts(Some(final_pts));
-            self.encoder
-                .send_frame(&self.output_frame)
-                .map_err(|error| error.to_string())?;
-            self.write_packets()?;
-        }
-        self.encoder.send_eof().map_err(|error| error.to_string())?;
-        self.write_packets()?;
-        self.output
-            .write_trailer()
-            .map_err(|error| error.to_string())?;
-        drop(self.output);
-        fs::rename(&self.temporary_path, &self.final_path).map_err(|error| error.to_string())?;
-        let numerator = project::fraction_numerator(self.fps);
-        let denominator = project::fraction_denominator(self.fps);
-        Ok(FinishedScreenRecording {
-            path: Some(self.final_path.clone()),
-            duration: Time::from_fraction(
-                final_pts.saturating_add(1).saturating_mul(denominator),
-                numerator,
-            ),
-            width: self.width,
-            height: self.height,
-        })
-    }
-}
-
-fn screen_scaler(
-    input_width: u32,
-    input_height: u32,
-    width: u32,
-    height: u32,
-) -> Result<scaling::Context, String> {
-    scaling::Context::get(
-        Pixel::BGRA,
-        input_width,
-        input_height,
-        Pixel::YUV420P,
-        width,
-        height,
-        scaling::Flags::BILINEAR,
-    )
-    .map_err(|error| error.to_string())
-}
-
-fn open_hevc_encoder(
-    width: u32,
-    height: u32,
-    time_base: ffmpeg::Rational,
-    frame_rate: ffmpeg::Rational,
-    global_header: bool,
-) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
-    let codec = ffmpeg::codec::encoder::find_by_name("hevc_nvenc")
-        .ok_or("FFmpeg encoder hevc_nvenc was not found")?;
-    let mut encoder = ffmpeg::codec::Context::new_with_codec(codec)
-        .encoder()
-        .video()
-        .map_err(|error| error.to_string())?;
-    encoder.set_width(width);
-    encoder.set_height(height);
-    encoder.set_format(Pixel::YUV420P);
-    encoder.set_time_base(time_base);
-    encoder.set_frame_rate(Some(frame_rate));
-    encoder.set_max_b_frames(NVENC_B_FRAMES);
-    encoder.set_gop(
-        ((u128::from(NVENC_KEYFRAME_INTERVAL_SECONDS) * frame_rate.0 as u128)
-            / frame_rate.1 as u128)
-            .max(1)
-            .min(u128::from(u32::MAX)) as u32,
-    );
-    if global_header {
-        unsafe {
-            (*encoder.as_mut_ptr()).flags |= ffmpeg::sys::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
-        }
-    }
-    let mut options = ffmpeg::Dictionary::new();
-    options.set("preset", "p3");
-    options.set("tune", "ll");
-    options.set("profile", "main");
-    options.set("rc", "constqp");
-    options.set("qp", NVENC_CONSTANT_QP);
-    options.set("bf", &NVENC_B_FRAMES.to_string());
-    options.set("spatial-aq", "1");
-    options.set("temporal-aq", "0");
-    options.set("zerolatency", "1");
-    options.set("delay", "0");
-    encoder
-        .open_as_with(codec, options)
-        .map_err(|error| format!("Could not open hevc_nvenc: {error}"))
-}
-
-fn fps_parts_i32(fps: Fraction) -> Result<(i32, i32), String> {
-    let numerator = project::fraction_numerator(fps);
-    let denominator = project::fraction_denominator(fps);
-    Ok((
-        i32::try_from(numerator).map_err(|_| "Recording frame-rate numerator is too large")?,
-        i32::try_from(denominator).map_err(|_| "Recording frame-rate denominator is too large")?,
-    ))
-}
-
-fn valid_fps(fps: Fraction) -> Fraction {
-    if project::fraction_numerator(fps) > 0 && project::fraction_denominator(fps) > 0 {
-        fps
-    } else {
-        Fraction::new_raw(DEFAULT_FPS_NUMERATOR, DEFAULT_FPS_DENOMINATOR)
-    }
-}
-
-fn remove_incomplete_recording(path: &PathBuf) {
-    if let Err(error) = fs::remove_file(path)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!(path = %path.display(), %error, "Could not remove abandoned screen recording");
-    }
 }
 
 fn windows_error(error: windows::core::Error) -> String {

@@ -14,7 +14,6 @@ pub struct Backend {
     maximum_temporal_decoders: usize,
     compositor: Option<Compositor>,
     surface: Option<Renderer>,
-    hardware: Option<Hardware>,
 }
 
 struct Hardware(*mut sys::AVBufferRef);
@@ -24,13 +23,48 @@ impl Drop for Hardware {
     }
 }
 
+pub mod recording;
+
+fn encoder_window(
+    encoder: &mut ffmpeg::codec::encoder::video::Video,
+) -> Result<NativeWindow, String> {
+    let mut hardware = Hardware(ptr::null_mut());
+    let mut options = ffmpeg::Dictionary::new();
+    options.set("create_window", "1");
+    let mut raw_options = unsafe { options.disown() };
+    let result = unsafe {
+        sys::av_hwdevice_ctx_create(
+            &mut hardware.0,
+            sys::AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC,
+            ptr::null(),
+            raw_options,
+            0,
+        )
+    };
+    unsafe { sys::av_dict_free(&mut raw_options) };
+    core::ffmpeg_check(result, "Create MediaCodec encoder surface")?;
+    let device = unsafe { &*(*hardware.0).data.cast::<sys::AVHWDeviceContext>() };
+    let native = unsafe { &*device.hwctx.cast::<sys::AVMediaCodecDeviceContext>() };
+    let window = std::ptr::NonNull::new(native.native_window.cast())
+        .ok_or("MediaCodec did not create an encoder input surface")?;
+    let window = unsafe { NativeWindow::clone_from_ptr(window) };
+    window
+        .set_buffers_geometry(encoder.width() as i32, encoder.height() as i32, None)
+        .map_err(|error| format!("Set encoder surface dimensions: {error}"))?;
+    // Move our sole device reference into the codec context. NativeWindow
+    // also owns a reference and can outlive the encoder during teardown.
+    unsafe {
+        (*encoder.as_mut_ptr()).hw_device_ctx = std::mem::replace(&mut hardware.0, ptr::null_mut())
+    };
+    Ok(window)
+}
+
 impl Backend {
     pub fn new(maximum_temporal_decoders: usize) -> Self {
         Self {
             maximum_temporal_decoders,
             compositor: None,
             surface: None,
-            hardware: None,
         }
     }
 
@@ -101,33 +135,6 @@ impl VideoBackend for Backend {
         settings: &ExportSettings,
         global_header: bool,
     ) -> Result<ffmpeg::codec::encoder::video::Encoder, String> {
-        let mut hardware = Hardware(ptr::null_mut());
-        let mut options = ffmpeg::Dictionary::new();
-        options.set("create_window", "1");
-        let mut raw_options = unsafe { options.disown() };
-        let result = unsafe {
-            sys::av_hwdevice_ctx_create(
-                &mut hardware.0,
-                sys::AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC,
-                ptr::null(),
-                raw_options,
-                0,
-            )
-        };
-        unsafe { sys::av_dict_free(&mut raw_options) };
-        core::ffmpeg_check(result, "Create MediaCodec encoder surface")?;
-        let device = unsafe { &*(*hardware.0).data.cast::<sys::AVHWDeviceContext>() };
-        let native = unsafe { &*device.hwctx.cast::<sys::AVMediaCodecDeviceContext>() };
-        let window = std::ptr::NonNull::new(native.native_window.cast())
-            .ok_or("MediaCodec did not create an encoder input surface")?;
-        let window = unsafe { NativeWindow::clone_from_ptr(window) };
-        window
-            .set_buffers_geometry(
-                project.canvas_size.width as i32,
-                project.canvas_size.height as i32,
-                None,
-            )
-            .map_err(|error| format!("Set encoder surface dimensions: {error}"))?;
         let name = self.encoder_label(settings.video_codec);
         let codec = ffmpeg::codec::encoder::find_by_name(name)
             .ok_or_else(|| format!("FFmpeg encoder {name} is unavailable"))?;
@@ -142,6 +149,7 @@ impl VideoBackend for Backend {
             Pixel::MEDIACODEC,
             global_header,
         )?;
+        let window = encoder_window(&mut encoder)?;
         unsafe {
             if settings.b_frames > 0 {
                 // Android otherwise defaults AVC to Baseline, which cannot
@@ -152,10 +160,6 @@ impl VideoBackend for Backend {
                 (*encoder.as_mut_ptr()).strict_std_compliance = sys::FF_COMPLIANCE_EXPERIMENTAL;
                 (*encoder.as_mut_ptr()).has_b_frames = i32::try_from(settings.b_frames)
                     .map_err(|_| "B-frame count exceeds the encoder range")?;
-            }
-            (*encoder.as_mut_ptr()).hw_device_ctx = sys::av_buffer_ref(hardware.0);
-            if (*encoder.as_ptr()).hw_device_ctx.is_null() {
-                return Err("Retain MediaCodec encoder device".into());
             }
         }
         let mut options = ffmpeg::Dictionary::new();
@@ -188,7 +192,6 @@ impl VideoBackend for Backend {
             project.canvas_size.width,
             project.canvas_size.height,
         ));
-        self.hardware = Some(hardware);
         Ok(encoder)
     }
 
@@ -280,7 +283,6 @@ impl VideoBackend for Backend {
 
     fn shutdown(&mut self) {
         self.surface.take();
-        self.hardware.take();
         self.compositor.take();
     }
 }

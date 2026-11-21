@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 
 use shrimply_decoder_pool::{DecoderActivityGuard, TemporalDecoder, TemporalDecoderPool};
@@ -643,8 +643,10 @@ impl Drop for PooledVideoDecoder {
     }
 }
 
+type SharedDecoders = TemporalDecoderPool<VideoSource, VideoDecoderOwner, PooledVideoDecoder>;
+
 pub struct VideoDecoderPool {
-    decoders: Arc<TemporalDecoderPool<VideoSource, VideoDecoderOwner, PooledVideoDecoder>>,
+    decoders: Arc<SharedDecoders>,
     consumer: u64,
 }
 
@@ -656,18 +658,20 @@ impl Default for VideoDecoderPool {
 
 impl VideoDecoderPool {
     pub fn new(maximum_decoders: usize) -> Self {
-        static DECODERS: OnceLock<
-            Arc<TemporalDecoderPool<VideoSource, VideoDecoderOwner, PooledVideoDecoder>>,
-        > = OnceLock::new();
-        let decoders = DECODERS
-            .get_or_init(|| {
-                Arc::new(TemporalDecoderPool::new(
-                    DEFAULT_VIDEO_DECODER_POOL_SIZE,
-                    VideoDecoderContext::default(),
-                ))
-            })
-            .clone();
-        decoders.set_maximum(maximum_decoders);
+        // The last consumer must join decoder retirement before the CUDA driver shuts down.
+        static DECODERS: Mutex<Weak<SharedDecoders>> = Mutex::new(Weak::new());
+        let mut shared = DECODERS.lock().expect("video decoder pool mutex poisoned");
+        let decoders = if let Some(decoders) = shared.upgrade() {
+            decoders.set_maximum(maximum_decoders);
+            decoders
+        } else {
+            let decoders = Arc::new(SharedDecoders::new(
+                maximum_decoders,
+                VideoDecoderContext::default(),
+            ));
+            *shared = Arc::downgrade(&decoders);
+            decoders
+        };
         Self {
             decoders,
             consumer: NEXT_TEMPORAL_CONSUMER_ID.fetch_add(1, Ordering::Relaxed),
@@ -833,7 +837,7 @@ impl Drop for VideoDecoderPool {
 }
 
 pub struct VideoDecoderHandle {
-    decoders: Arc<TemporalDecoderPool<VideoSource, VideoDecoderOwner, PooledVideoDecoder>>,
+    decoders: Arc<SharedDecoders>,
     source: VideoSource,
     owner: VideoDecoderOwner,
     frame_size: CanvasSize,

@@ -6,6 +6,7 @@
   cudaPackages,
   expat,
   fetchFromGitHub,
+  fetchurl,
   ffmpeg,
   fontconfig,
   freetype,
@@ -35,6 +36,7 @@
   pkg-config,
   poppler_gi,
   python3,
+  python314Packages,
   rhubarbSrc,
   rubberband,
   runCommand,
@@ -52,6 +54,22 @@
   zlib,
 }:
 let
+  worker = "crates/media/visual/manim/manim-bridge/python";
+  avSource = lib.findFirst (package: package.name == "av")
+    (throw "PyAV missing from the Manim worker lock") (lib.importTOML ../${worker}/uv.lock).package;
+  workerAv = python314Packages.buildPythonPackage {
+    pname = "av";
+    inherit (avSource) version;
+    src = fetchurl {
+      inherit (avSource.source) url;
+      sha256 = lib.removePrefix "sha256:" avSource.sdist.hash;
+    };
+    pyproject = true;
+    build-system = with python314Packages; [ setuptools cython ];
+    nativeBuildInputs = [ pkg-config ];
+    buildInputs = [ ffmpeg ];
+    pythonImportsCheck = [ "av" ];
+  };
   cudaStubs = lib.getOutput "stubs" cudaPackages.cuda_cudart;
   cudaToolkit = cudaPackages.cudatoolkit;
   skiaVersion = (
@@ -158,6 +176,7 @@ rustPlatform.buildRustPackage {
   CUDA_TOOLKIT_PATH = cudaToolkit;
   CLANGCC = "${clang}/bin/clang";
   CLANGCXX = "${clang}/bin/clang++";
+  SHRIMPLY_FFMPEG_PREFIX = ffmpeg;
   LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
   NIX_LDFLAGS = "-L${cudaStubs}/lib/stubs -L${shrimply-slang}/lib -lharfbuzz-subset -lwebpdemux -lwebpmux";
   PKG_CONFIG = "pkg-config";
@@ -216,7 +235,7 @@ rustPlatform.buildRustPackage {
     install -Dm644 dev.shrimply.Shrimply.desktop \
       "$out/share/applications/dev.shrimply.Shrimply.desktop"
 
-    sh packaging/linux/install-manim-worker.sh "$out"
+    sh packaging/linux/install-manim-worker.sh "$out" --wheel ${workerAv.dist}/av-*.whl
 
     runHook postInstall
   '';
@@ -229,7 +248,7 @@ rustPlatform.buildRustPackage {
           uv
         ]
       }
-      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ gcc.cc.lib zlib libglvnd vulkan-loader shrimply-oidn ]}:/run/opengl-driver/lib
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ ffmpeg gcc.cc.lib zlib libglvnd vulkan-loader shrimply-oidn ]}:/run/opengl-driver/lib
       --run 'export UV_PROJECT_ENVIRONMENT="''${UV_PROJECT_ENVIRONMENT:-''${XDG_CACHE_HOME:-$HOME/.cache}/shrimply/manim}"'
     )
   '';

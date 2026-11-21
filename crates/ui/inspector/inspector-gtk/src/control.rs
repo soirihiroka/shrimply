@@ -136,8 +136,8 @@ pub(super) fn add_control(
             section.add_wide_control(&group);
         }
         ControlKind::InfoArtwork => {
-            if let Some(bytes) = control.image_bytes
-                && let Some(group) = super::info::artwork(bytes, &control.label)
+            if let Some(artwork) = control.artwork
+                && let Some(group) = super::info::artwork(artwork.path(), &control.label)
             {
                 section.add_wide_control(&group);
             }

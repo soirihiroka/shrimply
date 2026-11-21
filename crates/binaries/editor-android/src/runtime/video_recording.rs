@@ -1,10 +1,7 @@
 //! Translate native screen-capture lifecycle to the shared timeline recording owner.
 use super::Runtime;
 use serde_json::{Value, json};
-use shrimply_math_core::{
-    Fraction, Time, fraction_denominator, fraction_numerator, fraction_scaled_integer,
-    time_from_frame,
-};
+use shrimply_math_core::{Fraction, Time, fraction_denominator, fraction_numerator};
 use shrimply_timeline_skia::recording::{
     FinishedVideoRecording, VideoRecordingCommand, VideoRecordingEvent,
 };
@@ -78,9 +75,7 @@ impl Runtime {
                         continue;
                     }
                     let result = (|| {
-                        let directory = shrimply_project_document::project::project_directory()
-                            .join("media/recordings");
-                        std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+                        let directory = shrimply_path_core::recording_directory()?;
                         let id = uuid::Uuid::new_v4().to_string();
                         Ok(Recording {
                             path: directory.join(format!(".incoming-{id}")),
@@ -139,19 +134,21 @@ impl Runtime {
     }
 
     pub(super) fn video_recording_snapshot(&self) -> Value {
-        self.video_recording.as_ref().map_or(Value::Null, |recording| json!({
-            "id":recording.id, "path":recording.path,
-            "state":if recording.stopping { "stop" } else { "start" },
-            "fps_numerator":fraction_numerator(recording.fps),
-            "fps_denominator":fraction_denominator(recording.fps),
-            "mime":"video/avc", "bitrate":SCREEN_RECORDING_BITRATE,
-            "b_frames":0,
-            "keyframe_seconds":SCREEN_RECORDING_KEYFRAME_SECONDS,
-            "repeat_frame_after_us":fraction_scaled_integer(time_from_frame(1, recording.fps).expect("valid recording frame rate").seconds, MICROSECONDS_PER_SECOND).max(1),
-            "notification_title":shrimply_i18n::text("Screen Recording"),
-            "notification_text":shrimply_i18n::text("Recording screen or application"),
-            "stop_label":shrimply_i18n::text("Stop"),
-        }))
+        self.video_recording
+            .as_ref()
+            .map_or(Value::Null, |recording| {
+                json!({
+                    "id":recording.id, "path":recording.path,
+                    "state":if recording.stopping { "stop" } else { "start" },
+                    "fps_numerator":fraction_numerator(recording.fps),
+                    "fps_denominator":fraction_denominator(recording.fps),
+                    "mime":"video/avc", "bitrate":SCREEN_RECORDING_BITRATE,
+                    "keyframe_seconds":SCREEN_RECORDING_KEYFRAME_SECONDS,
+                    "notification_title":shrimply_i18n::text("Screen Recording"),
+                    "notification_text":shrimply_i18n::text("Recording screen or application"),
+                    "stop_label":shrimply_i18n::text("Stop"),
+                })
+            })
     }
 
     pub(super) fn video_recording_event(&mut self, request: &Value) -> Result<Value, String> {
@@ -195,15 +192,11 @@ impl Runtime {
                     .to_owned())),
                 _ => {
                     let result = (|| {
-                        let last = request["last_timestamp_us"]
+                        let duration = request["duration_us"]
                             .as_i64()
-                            .filter(|value| *value >= 0)
-                            .ok_or("The screen recording has no frames")?;
-                        let duration = Time::from_fraction(last, MICROSECONDS_PER_SECOND)
-                            .saturating_add(
-                                time_from_frame(1, recording.fps)
-                                    .ok_or("Invalid recording frame rate")?,
-                            );
+                            .filter(|value| *value > 0)
+                            .map(|value| Time::from_fraction(value, MICROSECONDS_PER_SECOND))
+                            .ok_or("The screen recording has no duration")?;
                         let width = request["width"]
                             .as_u64()
                             .and_then(|value| u32::try_from(value).ok())

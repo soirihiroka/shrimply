@@ -958,6 +958,7 @@ fn video_source_kind(content: &VideoItemContent) -> &'static str {
         VideoItemContent::Media => "media",
         VideoItemContent::Image => "image",
         VideoItemContent::Gif => "gif",
+        VideoItemContent::AnimatedImage => "animated_image",
         VideoItemContent::Svg => "svg",
         VideoItemContent::Pdf(_) => "pdf",
         VideoItemContent::Manim(_) => "manim",

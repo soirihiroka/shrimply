@@ -39,11 +39,45 @@ DNF ?= sudo dnf
 INSTALL ?= install
 PKG_CONFIG ?= $(if $(filter Windows_NT,$(HOST_OS)),pkg-config,/usr/bin/pkg-config)
 PKG_CONFIG_PATH ?= /usr/lib64/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+ifeq ($(HOST_OS),Linux)
+LINUX_FFMPEG_CACHE := $(abspath $(CARGO_TARGET_DIR)/linux-ffmpeg)
+LINUX_FFMPEG_PREFIX = $(or $(SHRIMPLY_FFMPEG_PREFIX),$(LINUX_FFMPEG_CACHE)/install)
+# Use the resolved source-specific prefix so a gitlink update invalidates Rust bindings.
+FFMPEG_PREFIX = $(or $(realpath $(LINUX_FFMPEG_PREFIX)),$(LINUX_FFMPEG_PREFIX))
+MANIM_PYAV ?= --prefix "$(FFMPEG_PREFIX)"
+FFMPEG_RUNTIME_ENV = PATH="$(FFMPEG_PREFIX)/bin:$(CUDA_HOME)/bin:$(PATH)" LD_LIBRARY_PATH="$(FFMPEG_PREFIX)/lib:/run/host/usr/local/libclang-deps:$${LD_LIBRARY_PATH}"
+HOST_MEDIA_ENV = $(FFMPEG_RUNTIME_ENV) FFMPEG_DIR="$(FFMPEG_PREFIX)" SHRIMPLY_FFMPEG_PREFIX="$(FFMPEG_PREFIX)" \
+    PKG_CONFIG_PATH="$(FFMPEG_PREFIX)/lib/pkgconfig:$(PKG_CONFIG_PATH)" LIBRARY_PATH="$(FFMPEG_PREFIX)/lib:$${LIBRARY_PATH}"
+else ifeq ($(HOST_OS),Darwin)
+FFMPEG_PREFIX = $(APPKIT_FFMPEG)/install
+FFMPEG_RUNTIME_ENV = PATH="$(FFMPEG_PREFIX)/bin:$(PATH)" FFMPEG_DIR="$(FFMPEG_PREFIX)"
+HOST_MEDIA_ENV = $(FFMPEG_RUNTIME_ENV) PKG_CONFIG_PATH="$(APPKIT_FFMPEG)/install/lib/pkgconfig:$$PKG_CONFIG_PATH"
+else ifeq ($(HOST_OS),Windows_NT)
+FFMPEG_PREFIX = $(FFMPEG_DIR)
+FFMPEG_RUNTIME_ENV = FFMPEG_DIR="$(FFMPEG_PREFIX)" PATH="$(FFMPEG_PREFIX)/bin:$(PATH)"
+HOST_MEDIA_ENV = $(FFMPEG_RUNTIME_ENV) INCLUDE="$(FFMPEG_DIR)/include;$$INCLUDE" LIB="$(FFMPEG_DIR)/lib;$$LIB"
+endif
+# uv keys source wheels on package-specific build settings. Pass the prefix
+# explicitly so an installed wheel built against the system FFmpeg is replaced.
+PYAV_CONFIG = av:--global-option=--ffmpeg-dir=$(if $(word 2,$(FFMPEG_PREFIX)),'$(FFMPEG_PREFIX)',$(FFMPEG_PREFIX))
+ifneq ($(HOST_OS),Linux)
+# The macOS and Windows install paths are stable across native rebuilds.
+PYAV_REVISION = av:ffmpeg-revision=$(or $(shell git rev-parse :external/ffmpeg 2>/dev/null),$(file <external/ffmpeg/RELEASE))
+endif
+UV_BUILD_SETTINGS_ENV = SHRIMPLY_UV_CONFIG_SETTINGS_PACKAGE="$$(printf '%s\n' "$(PYAV_CONFIG)" "$(PYAV_REVISION)")"
+UV_MEDIA = $(HOST_MEDIA_ENV) uv run --config-settings-package "$(PYAV_CONFIG)" $(if $(PYAV_REVISION),--config-settings-package "$(PYAV_REVISION)")
 QT_QMAKE ?= $(if $(filter Windows_NT,$(HOST_OS)),qmake.exe,qmake6)
-BUILD_ENV = CUDA_HOME="$(CUDA_HOME)" CUDA_TOOLKIT_PATH="$(CUDA_TOOLKIT_PATH)" CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PKG_CONFIG="$(PKG_CONFIG)" PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)" OPTIX_ROOT="$(OPTIX_ROOT)"
+BUILD_ENV = CUDA_HOME="$(CUDA_HOME)" CUDA_TOOLKIT_PATH="$(CUDA_TOOLKIT_PATH)" CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PKG_CONFIG="$(PKG_CONFIG)" OPTIX_ROOT="$(OPTIX_ROOT)"
+ifeq ($(HOST_OS),Linux)
+BUILD_ENV += $(HOST_MEDIA_ENV)
+else
+BUILD_ENV += PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)"
 ifneq ($(HOST_OS),Windows_NT)
 BUILD_ENV += PATH="$(CUDA_HOME)/bin:$(PATH)"
 BUILD_ENV += LD_LIBRARY_PATH="/run/host/usr/local/libclang-deps:$${LD_LIBRARY_PATH}"
+endif
+endif
+ifneq ($(HOST_OS),Windows_NT)
 BUILD_ENV += BINDGEN_EXTRA_CLANG_ARGS="$(if $(wildcard /run/host/usr/lib/llvm-18/lib/clang/18/include),-isystem /run/host/usr/lib/llvm-18/lib/clang/18/include)"
 endif
 RUST_LIBDIR := $(shell $(RUSTC) --print target-libdir)
@@ -136,7 +170,21 @@ FEDORA_PACKAGES := \
 	openssl-devel \
 	pkgconf-pkg-config \
 	gobject-introspection-devel \
-	ffmpeg-devel \
+	patchelf \
+	nasm \
+	nv-codec-headers \
+	libva-devel \
+	libdrm-devel \
+	vulkan-headers \
+	spirv-headers-devel \
+	gnutls-devel \
+	opus-devel \
+	lame-devel \
+	libvorbis-devel \
+	libdav1d-devel \
+	x264-devel \
+	x265-devel \
+	fdk-aac-devel \
 	rubberband-devel \
 	alsa-lib-devel \
 	gtk4-devel \
@@ -152,6 +200,21 @@ FEDORA_PACKAGES := \
 	spirv-tools
 
 .PHONY: native-deps windows-ffmpeg windows-ffmpeg-verify windows-native-deps windows-build windows-dev windows-check windows-release windows-package qt-native-deps qt-desktop-file desktop-icon cuda-target-check cuda-artifacts dev dev-mac qt-build dev-qt dev-server docs docs-check run run-qt build release check intel-check components-check gtk-components-showcase qt-components-showcase server-python-check manim manim-python-check manim-parameter-check cargo-check fmt fmt-check lint test frame-rate-test video-lifecycle-test transparent-fill-frame-range-test transparent-fill-decoder-test transparent-fill-kernel-test transparent-fill-compositor-test transparent-fill-playback-test transparent-fill-e2e-fixture transparent-fill-e2e-test decode-ahead-benchmark paint-interpolation-test process-reporting-test crash-report clean deps-fedora deps-fedora-qt qt-release install install-qt uninstall uninstall-qt flatpak-gtk
+ifeq ($(HOST_OS),Linux)
+.PHONY: linux-ffmpeg
+linux-ffmpeg:
+ifeq ($(strip $(SHRIMPLY_FFMPEG_PREFIX)),)
+	uv run --no-project --python 3.13 python packaging/linux-ffmpeg.py "$(LINUX_FFMPEG_CACHE)"
+else
+	@test -f "$(FFMPEG_PREFIX)/include/libavcodec/avcodec.h" && test -f "$(FFMPEG_PREFIX)/lib/libavcodec.so" || { echo "Missing packaged FFmpeg under $(FFMPEG_PREFIX)" >&2; exit 1; }
+	@$(HOST_MEDIA_ENV) "$(FFMPEG_PREFIX)/bin/ffmpeg" -version | awk -v required="$$(cat external/ffmpeg/RELEASE)" 'NR == 1 { actual = $$3; sub(/^n/, "", actual) } END { if (actual != required || !required) { print "Expected project FFmpeg " required ", found " actual > "/dev/stderr"; exit 1 } }'
+endif
+native-deps dev-server install-manim-worker manim manim-python-check server-python-check sanim-check video-decoder-check android-host-check android-project-check android-project-bench video-decode-benchmark media-system-check: linux-ffmpeg
+else ifeq ($(HOST_OS),Darwin)
+dev-server manim manim-python-check server-python-check sanim-check: appkit-ffmpeg
+else ifeq ($(HOST_OS),Windows_NT)
+dev-server manim manim-python-check server-python-check sanim-check: windows-ffmpeg
+endif
 native-deps:
 	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
 	@$(PKG_CONFIG) --exists libpipewire-0.3 || { echo "Missing PipeWire development files (pkg-config: libpipewire-0.3)" >&2; exit 1; }
@@ -173,13 +236,7 @@ windows-native-deps: qt-native-deps
 	@test "$(HOST_OS)" = Windows_NT || { echo "Windows targets require native Windows" >&2; exit 1; }
 	@command -v cl.exe >/dev/null 2>&1 || { echo "Missing MSVC compiler (cl.exe)" >&2; exit 1; }
 	@command -v nvcc.exe >/dev/null 2>&1 || { echo "Missing CUDA compiler (nvcc.exe)" >&2; exit 1; }
-	@$(PKG_CONFIG) --exists libavcodec libavformat libavfilter libavdevice libswresample libswscale || { \
-		test -n "$(FFMPEG_DIR)" && \
-		test -f "$(FFMPEG_DIR)/include/libavutil/avutil.h" && \
-		test -f "$(FFMPEG_DIR)/lib/avutil.lib" && \
-		test -f "$(FFMPEG_DIR)/lib/avcodec.lib" && \
-		test -f "$(FFMPEG_DIR)/lib/avformat.lib" || \
-		{ echo "Missing FFmpeg development files (pkg-config metadata or FFMPEG_DIR with include/ and lib/)" >&2; exit 1; }; }
+	@powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging/windows/verify-ffmpeg.ps1 -FfmpegRoot "$(FFMPEG_DIR)" -DevelopmentFilesOnly
 	@$(PKG_CONFIG) --exists poppler-glib pango pangocairo rubberband || { echo "Missing vcpkg application libraries" >&2; exit 1; }
 
 qt-native-deps:
@@ -216,6 +273,7 @@ project-mime:
 uninstall-desktop-assets:
 	@set -e; if test ! -e "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.desktop" && \
 		test ! -e "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"; then \
+		rm -rf "$(DESTDIR)$(MANIM_WORKER_RESOURCE_DIR)" "$(DESTDIR)$(MANIM_SOURCE_RESOURCE_DIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg"; \
 		rm -f "$(DESTDIR)$(MIMEDIR)/packages/dev.shrimply.Shrimply-mime.xml" \
 			"$(DESTDIR)$(MIME_ICONDIR)/dev.shrimply.Shrimply-project.svg" \
 			"$(DESTDIR)$(ICONDIR)/dev.shrimply.Shrimply.svg"; \
@@ -229,7 +287,7 @@ uninstall-desktop-assets:
 dev: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) CARGO_TERM_COLOR=always $(CARGO) build -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
 	@started="$$(date --iso-8601=seconds)"; \
-	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(BIN_NAME) 2>&1 \
+	$(BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(BIN_NAME) 2>&1 \
 		| tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' > "$(DEV_LOG)"); \
 	status=$${PIPESTATUS[0]}; \
 	if [[ $$status -ne 0 ]]; then \
@@ -238,7 +296,12 @@ dev: native-deps cuda-artifacts
 	fi; \
 	exit $$status
 
-APPKIT_BUILD_ENV = RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@22)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@22)/lib"
+APPKIT_FFMPEG := $(abspath $(CARGO_TARGET_DIR)/macos-ffmpeg)
+.PHONY: appkit-ffmpeg
+appkit-ffmpeg:
+	MACOSX_DEPLOYMENT_TARGET=$(APPKIT_DEPLOYMENT_TARGET) uv run --no-project --python 3.13 python packaging/macos-ffmpeg.py "$(APPKIT_FFMPEG)"
+
+APPKIT_BUILD_ENV = $(HOST_MEDIA_ENV) RUSTFLAGS="-C prefer-dynamic -C link-arg=-Wl,-rpath,$(RUST_LIBDIR)" LIBRARY_PATH="$(APPKIT_FFMPEG)/install/lib:$$(brew --prefix)/lib" PKG_CONFIG="$$(brew --prefix pkgconf)/bin/pkg-config" CLANG_PATH="$$(brew --prefix llvm@22)/bin/clang" LIBCLANG_PATH="$$(brew --prefix llvm@22)/lib"
 
 .PHONY: appkit-icon appkit-build appkit-release appkit-check appkit-lint appkit-components-check appkit-components-showcase
 appkit-icon:
@@ -249,18 +312,19 @@ appkit-icon:
 		--output-partial-info-plist "$(APPKIT_ICON_DIR)/Info.plist" \
 		--output-format human-readable-text --warnings --notices
 
-appkit-build: appkit-icon
+appkit-build: appkit-ffmpeg appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "dev-mac requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) build -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
 	mkdir -p "$(APPKIT_APP)/Contents/MacOS" "$(APPKIT_APP)/Contents/Resources/licenses"
 	cp $(CARGO_TARGET_DIR)/debug/$(APPKIT_BIN_NAME) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
+	cp "$(APPKIT_FFMPEG)/install/bin/ffmpeg" "$(APPKIT_APP)/Contents/MacOS/shrimply-ffmpeg"
 	cp packaging/macos/Info.plist "$(APPKIT_APP)/Contents/Info.plist"
 	cp "$(APPKIT_ICON_DIR)/Assets.car" "$(APPKIT_ICON_DIR)/Shrimply.icns" "$(APPKIT_APP)/Contents/Resources/"
 	cp vendor/vision/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/OpenCV-Vision.txt"
 	cp crates/math/color/src/css/LICENSE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color.txt"
 	cp crates/math/color/src/css/NOTICE "$(APPKIT_APP)/Contents/Resources/licenses/GTK-Pango-Color-NOTICE.txt"
 
-appkit-release: appkit-icon
+appkit-release: appkit-ffmpeg appkit-icon
 	@test "$$(uname -s)" = Darwin || { echo "AppKit release requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) RUSTFLAGS="" CARGO_TERM_COLOR=always MACOSX_DEPLOYMENT_TARGET=$(APPKIT_DEPLOYMENT_TARGET) $(CARGO) build --release -p $(APPKIT_LAUNCHER_PACKAGE) -p $(APPKIT_EDITOR_PACKAGE) --bins
 
@@ -268,16 +332,16 @@ appkit-check: appkit-build
 	$(APPKIT_BUILD_ENV) $(CARGO) check -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets
 	$(MAKE) appkit-lint
 
-appkit-lint:
+appkit-lint: appkit-ffmpeg
 	@test "$$(uname -s)" = Darwin || { echo "AppKit lint requires macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) clippy -p $(APPKIT_EDITOR_PACKAGE) -p $(APPKIT_LAUNCHER_PACKAGE) -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets -- -D warnings
 
-appkit-components-check:
+appkit-components-check: appkit-ffmpeg
 	@test "$$(uname -s)" = Darwin || { echo "AppKit components require macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) check -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets
 	$(APPKIT_BUILD_ENV) $(CARGO) clippy -p $(FRAMEGRAPH_CORE_PACKAGE) -p $(APPKIT_COMPONENT_METAL_PACKAGE) -p $(APPKIT_COMPONENTS_PACKAGE) -p $(APPKIT_COMPONENTS_DEMO_PACKAGE) --all-targets -- -D warnings
 
-appkit-components-showcase:
+appkit-components-showcase: appkit-ffmpeg
 	@test "$$(uname -s)" = Darwin || { echo "AppKit components require macOS" >&2; exit 1; }
 	$(APPKIT_BUILD_ENV) $(CARGO) run -p $(APPKIT_COMPONENTS_DEMO_PACKAGE)
 
@@ -289,7 +353,7 @@ else
 endif
 
 dev-mac: appkit-build
-	RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
+	$(HOST_MEDIA_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
 
 qt-build: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
@@ -303,7 +367,7 @@ qt-desktop-file: desktop-icon project-mime
 
 dev-qt: qt-build
 	@started="$$(date --iso-8601=seconds)"; \
-	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME) 2>&1 \
+	$(BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME) 2>&1 \
 		| tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' > "$(QT_DEV_LOG)"); \
 	status=$${PIPESTATUS[0]}; \
 	if [[ $$status -ne 0 ]]; then \
@@ -313,7 +377,7 @@ dev-qt: qt-build
 	exit $$status
 
 dev-server:
-	uv run --project server --locked server/src/main.py
+	$(UV_MEDIA) --project server --locked server/src/main.py
 
 docs:
 	uv run --project docs --locked sphinx-build docs/source docs/build
@@ -324,7 +388,7 @@ docs-check:
 run: dev
 
 run-qt: qt-build
-	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME)
+	$(BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME)
 
 build: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) build -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
@@ -349,7 +413,7 @@ windows-build: windows-native-deps cuda-artifacts
 	$(BUILD_ENV) QMAKE="$(QT_QMAKE)" CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 
 windows-dev: windows-build
-	$(BUILD_ENV) RUST_LOG="$(RUST_LOG)" $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME).exe
+	$(BUILD_ENV) $(HOST_MEDIA_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG="$(RUST_LOG)" $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME).exe
 else
 windows-build windows-dev:
 	@echo "$@ requires Windows; current host: $(HOST_OS)" >&2
@@ -426,7 +490,7 @@ font-system-bench: native-deps
 
 .PHONY: sanim-check
 sanim-check:
-	$(MAKE) -C sanim check CARGO="$(CARGO)"
+	$(FFMPEG_RUNTIME_ENV) $(MAKE) -C sanim check CARGO="$(CARGO)"
 
 .PHONY: sanim-integration-check
 sanim-integration-check: native-deps
@@ -495,19 +559,19 @@ source-size-check:
 	if [ -n "$$oversized" ]; then printf 'Source files exceed $(SOURCE_LINE_LIMIT) lines:\n%s\n' "$$oversized"; exit 1; fi
 
 server-python-check:
-	cd server && uv run --locked pyrefly check
+	$(UV_MEDIA) --directory server --locked pyrefly check
 
 manim:
-	cd crates/media/visual/manim/manim-bridge/python && uv run --python 3.14 python -m shrimply_manim $(ARGS)
+	$(UV_MEDIA) --directory crates/media/visual/manim/manim-bridge/python --python 3.14 python -m shrimply_manim $(ARGS)
 
 manim-python-check:
-	uv run --python 3.14 --project crates/media/visual/manim/manim-bridge/python pyrefly check --python-version 3.14 --search-path external/manim crates/media/visual/manim/manim-bridge/python/shrimply_manim
+	$(UV_MEDIA) --python 3.14 --project crates/media/visual/manim/manim-bridge/python pyrefly check --python-version 3.14 --search-path external/manim crates/media/visual/manim/manim-bridge/python/shrimply_manim
 
 manim-visual-check: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-manim-wgpu --test visual_parity -- --ignored --nocapture
+	$(DEV_BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) $(CARGO) test -p shrimply-manim-wgpu --test visual_parity -- --ignored --nocapture
 
 manim-parameter-check: native-deps
-	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-manim-bridge --test two_pass_parameters -- --ignored --nocapture
+	$(DEV_BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) $(CARGO) test -p shrimply-manim-bridge --test two_pass_parameters -- --ignored --nocapture
 
 cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
@@ -637,10 +701,18 @@ deps-fedora:
 qt-release: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" --release -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE)
 
-install: release desktop-icon project-mime
+.PHONY: install-manim-worker
+install-manim-worker:
+	$(HOST_MEDIA_ENV) sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)" $(MANIM_PYAV)
+
+install: release desktop-icon project-mime install-manim-worker
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(EDITOR_BIN_NAME) "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
-	sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)"
+ifeq ($(HOST_OS),Linux)
+ifneq ($(FFMPEG_PREFIX),$(abspath $(DESTDIR)$(PREFIX)))
+	sh packaging/linux/install-ffmpeg.sh "$(FFMPEG_PREFIX)" "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg" "$(BIN_NAME)" "$(EDITOR_BIN_NAME)"
+endif
+endif
 	$(INSTALL) -Dm644 $(LIP_SYNC_MODEL) "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
@@ -668,9 +740,14 @@ flatpak-gtk:
 		"$(FLATPAK_GTK_IMAGE)"
 	@echo "Flatpak bundle: $(FLATPAK_BUNDLE)"
 
-install-qt: qt-release desktop-icon project-mime
+install-qt: qt-release desktop-icon project-mime install-manim-worker
 	$(INSTALL) -Dm755 $(QT_TARGET_DIR)/release/$(QT_BIN_NAME) "$(DESTDIR)$(QT_BINDIR)/$(QT_BIN_NAME)"
 	$(INSTALL) -Dm755 $(QT_TARGET_DIR)/release/$(QT_EDITOR_BIN_NAME) "$(DESTDIR)$(QT_BINDIR)/$(QT_EDITOR_BIN_NAME)"
+ifeq ($(HOST_OS),Linux)
+ifneq ($(FFMPEG_PREFIX),$(abspath $(DESTDIR)$(PREFIX)))
+	sh packaging/linux/install-ffmpeg.sh "$(FFMPEG_PREFIX)" "$(DESTDIR)$(QT_BINDIR)" "$(DESTDIR)$(PREFIX)/lib/shrimply/ffmpeg" "$(QT_BIN_NAME)" "$(QT_EDITOR_BIN_NAME)"
+endif
+endif
 	$(INSTALL) -Dm644 $(QT_TARGET_DIR)/release/res/lip-sync/pocketsphinx-ci.model "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)/pocketsphinx-ci.model"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	$(INSTALL) -Dm644 vendor/pocketsphinx/MODEL-LICENSE "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
@@ -686,9 +763,9 @@ install-qt: qt-release desktop-icon project-mime
 
 
 uninstall:
+	rm -f "$(DESTDIR)$(BINDIR)/shrimply-ffmpeg"
 	rm -f "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"
 	rm -f "$(DESTDIR)$(BINDIR)/$(EDITOR_BIN_NAME)"
-	rm -rf "$(DESTDIR)$(MANIM_WORKER_RESOURCE_DIR)" "$(DESTDIR)$(MANIM_SOURCE_RESOURCE_DIR)"
 	rm -rf "$(DESTDIR)$(LIP_SYNC_RESOURCE_DIR)"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-code.txt"
 	rm -f "$(DESTDIR)$(LIP_SYNC_LICENSE_DIR)/PocketSphinx-model.txt"
@@ -701,6 +778,7 @@ uninstall:
 	$(MAKE) uninstall-desktop-assets
 
 uninstall-qt:
+	rm -f "$(DESTDIR)$(QT_BINDIR)/shrimply-ffmpeg"
 	rm -f "$(DESTDIR)$(QT_BINDIR)/$(QT_BIN_NAME)"
 	rm -f "$(DESTDIR)$(QT_BINDIR)/$(QT_EDITOR_BIN_NAME)"
 	rm -f "$(DESTDIR)$(APPLICATIONSDIR)/dev.shrimply.Shrimply.Qt.desktop"

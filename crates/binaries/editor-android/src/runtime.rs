@@ -91,16 +91,17 @@ pub(crate) struct Runtime {
 impl Runtime {
     #[cfg(test)]
     pub fn new(wake: impl Fn() + Send + Sync + 'static) -> Result<Self, String> {
-        Self::with_lifecycle(wake, SharedLifecycle::default())
+        Self::with_lifecycle(wake, SharedLifecycle::default(), None)
     }
 
     pub fn with_lifecycle(
         wake: impl Fn() + Send + Sync + 'static,
         lifecycle: SharedLifecycle,
+        mirror_listener: Option<crate::project::MirrorListener>,
     ) -> Result<Self, String> {
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(wake);
         let notify = wake.clone();
-        let backend = ProjectBackend::new(move || notify())?;
+        let backend = ProjectBackend::new(move || notify(), mirror_listener)?;
         let status =
             serde_json::to_string(&backend.snapshot()?).map_err(|error| error.to_string())?;
         Ok(Self {
@@ -564,7 +565,7 @@ impl Runtime {
                 let previous_path = self.backend.path().map(std::path::Path::to_path_buf);
                 let previous_revision = self.backend.revision;
                 let result = if let Some(source) = source {
-                    self.backend.import_descriptor(request, source)
+                    self.backend.import_file(request, Some(source))
                 } else {
                     self.backend.dispatch(request)
                 };
@@ -665,7 +666,7 @@ impl Runtime {
                 self.audio_levels.take_peaks();
             }
             self.timeline = self.backend.shared_project().map(|project| {
-                let selection = shrimply_timeline_edit::selection_state::new();
+                let selection = self.backend.selection.clone();
                 let clipboard = shrimply_property_transfer::new_clipboard();
                 self.inspector = Some(
                     shrimply_inspector_core::InspectorController::new(
@@ -927,6 +928,15 @@ mod tests {
                 &json!({"op":"track_add","kind":"video","action":"Shape","duration_frames":90}),
             )
             .unwrap();
+        assert!(
+            runtime
+                .timeline
+                .as_ref()
+                .unwrap()
+                .focused_video_address()
+                .is_some(),
+            "adding a shape should focus it even when a comment was selected"
+        );
         runtime.request(&json!({"op":"seek","frame":30})).unwrap();
         let project = runtime.backend.shared_project().unwrap();
         let mut recorder = skia_safe::PictureRecorder::new();
@@ -1128,7 +1138,7 @@ mod tests {
             return;
         };
         let lifecycle = SharedLifecycle::default();
-        let mut runtime = Runtime::with_lifecycle(|| {}, lifecycle.clone()).unwrap();
+        let mut runtime = Runtime::with_lifecycle(|| {}, lifecycle.clone(), None).unwrap();
         runtime.request(&json!({"op":"create","path":root.join("lifecycle.shrimp"),"name":"Lifecycle","fps":"30"})).unwrap();
         runtime
             .request(

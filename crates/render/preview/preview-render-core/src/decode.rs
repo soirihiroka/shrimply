@@ -1,12 +1,16 @@
-use ffmpeg_next::{self as ffmpeg, frame, software, util::format::pixel::Pixel};
+use ffmpeg_next::{self as ffmpeg, util::format::pixel::Pixel};
 use shrimply_math_core::Time;
 use shrimply_preview_provider_skia::accuracy::CompositeAccuracy;
 use shrimply_project_document::project::Asset;
+#[cfg(windows)]
+use shrimply_video_decoder::RgbFrameConverter;
 use shrimply_video_decoder::{
     DecodeControl, DecodeMode, DecodeOutcome, DecodedVisual, DecoderBackend, VideoDecoderSession,
 };
 use shrimply_visual_frame::VideoFrame;
-use skia_safe::{AlphaType, ColorType, Data, Image, ImageInfo};
+use skia_safe::Image;
+#[cfg(windows)]
+use skia_safe::{AlphaType, ColorType, Data, ImageInfo};
 use std::{
     collections::VecDeque,
     sync::{Arc, atomic::AtomicU64},
@@ -57,7 +61,8 @@ struct CachedFrame {
 
 pub struct Decoder {
     session: VideoDecoderSession,
-    scaler: Option<software::scaling::Context>,
+    #[cfg(windows)]
+    scaler: RgbFrameConverter,
     current: Option<(DecodedVisual, DecodedImage)>,
     cancellation: DecodeControl,
     history: VecDeque<CachedFrame>,
@@ -80,7 +85,8 @@ impl Decoder {
         )?;
         Ok(Self {
             session,
-            scaler: None,
+            #[cfg(windows)]
+            scaler: RgbFrameConverter::new(Pixel::RGBA)?,
             current: None,
             cancellation,
             history: VecDeque::new(),
@@ -175,44 +181,26 @@ impl Decoder {
         Ok(Some((position, image)))
     }
 
+    #[cfg(not(windows))]
+    fn image_for_frame(&self, source: &Arc<VideoFrame>) -> Result<DecodedImage, String> {
+        if !matches!(
+            source.native().format(),
+            Pixel::VAAPI | Pixel::VIDEOTOOLBOX | Pixel::MEDIACODEC
+        ) {
+            return Err(format!(
+                "Expected a hardware compositor frame, received {:?}",
+                source.native().format()
+            ));
+        }
+        Ok(DecodedImage::Video(source.clone()))
+    }
+
+    #[cfg(windows)]
     fn image_for_frame(&mut self, source: &Arc<VideoFrame>) -> Result<DecodedImage, String> {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "android"))]
-        if matches!(source.native().format(), Pixel::VAAPI | Pixel::VIDEOTOOLBOX)
-            || cfg!(target_os = "android") && source.native().format() == Pixel::MEDIACODEC
-        {
-            return Ok(DecodedImage::Video(source.clone()));
-        }
-        // Raster consumers need a software image; hardware compositors never use this path.
-        let decoded = source.native();
-        let definition = software::scaling::context::Definition {
-            format: decoded.format(),
-            width: decoded.width(),
-            height: decoded.height(),
-        };
-        if self
-            .scaler
-            .as_ref()
-            .is_none_or(|scaler| *scaler.input() != definition)
-        {
-            self.scaler = Some(
-                software::scaling::Context::get(
-                    definition.format,
-                    definition.width,
-                    definition.height,
-                    Pixel::RGBA,
-                    definition.width,
-                    definition.height,
-                    software::scaling::Flags::BILINEAR,
-                )
-                .map_err(|e| e.to_string())?,
-            );
-        }
-        let mut rgba = frame::Video::empty();
-        self.scaler
-            .as_mut()
-            .expect("video scaler initialized")
-            .run(decoded, &mut rgba)
-            .map_err(|e| e.to_string())?;
+        let decoded = source
+            .download()?
+            .ok_or("Expected a hardware frame for readback")?;
+        let rgba = self.scaler.convert(&decoded)?;
         let row_bytes = rgba.width() as usize * RGBA_CHANNELS;
         let mut pixels = Vec::with_capacity(row_bytes * rgba.height() as usize);
         for row in rgba
@@ -234,46 +222,31 @@ impl Decoder {
     }
 }
 
-fn select_backend(parameters: &ffmpeg::codec::Parameters) -> Result<DecoderBackend, String> {
-    #[cfg(not(target_os = "android"))]
-    let codec = parameters.id();
+fn select_backend(_parameters: &ffmpeg::codec::Parameters) -> Result<DecoderBackend, String> {
     #[cfg(target_os = "android")]
     {
         // The native image pool must fit retained scrub frames and the session's
         // current/lookahead/decode frames. All seek and cache policy stays here.
         const DECODER_WORKING_FRAMES: usize = 4;
-        let native = unsafe { &*parameters.as_ptr() };
+        let native = unsafe { &*_parameters.as_ptr() };
         let width = u32::try_from(native.width).map_err(|_| "Invalid decoder width")?;
         let height = u32::try_from(native.height).map_err(|_| "Invalid decoder height")?;
-        return shrimply_render_vulkan::decoder_backend(
+        shrimply_render_vulkan::decoder_backend(
             width,
             height,
             (SCRUB_CACHE_FRAME_LIMIT + DECODER_WORKING_FRAMES) as u32,
-        );
+        )
     }
     #[cfg(target_os = "linux")]
-    if matches!(
-        codec,
-        ffmpeg::codec::Id::H264
-            | ffmpeg::codec::Id::HEVC
-            | ffmpeg::codec::Id::VP8
-            | ffmpeg::codec::Id::VP9
-            | ffmpeg::codec::Id::MPEG2VIDEO
-            | ffmpeg::codec::Id::MJPEG
-    ) {
-        return shrimply_render_vulkan::decoder_backend();
+    {
+        shrimply_render_vulkan::decoder_backend()
     }
     #[cfg(target_os = "macos")]
-    match DecoderBackend::videotoolbox() {
-        Ok(DecoderBackend::Hardware(device)) => return Ok(DecoderBackend::PreferHardware(device)),
-        Ok(_) => unreachable!("VideoToolbox must create a hardware device"),
-        Err(error) => {
-            tracing::info!(?codec, %error, "VideoToolbox unavailable; using software decoding")
-        }
-    }
-    #[cfg(not(target_os = "android"))]
     {
-        let _ = codec;
-        Ok(DecoderBackend::Software)
+        DecoderBackend::videotoolbox()
+    }
+    #[cfg(windows)]
+    {
+        DecoderBackend::hardware_for_readback(_parameters)
     }
 }

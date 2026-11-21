@@ -235,7 +235,7 @@ pub const OPTIONS: &[OptionDefinition] = &[
     OptionDefinition {
         name: "ffmpeg",
         kind: "string",
-        summary: "FFmpeg executable for video (default ffmpeg)",
+        summary: "Override the project FFmpeg executable for video",
     },
     OptionDefinition {
         name: "frame",

@@ -2,7 +2,8 @@
 param(
     [string]$VcpkgRoot = $env:VCPKG_ROOT,
     [string]$InstalledDir = $env:VCPKG_INSTALLED_DIR,
-    [string]$BinarySources = $env:VCPKG_BINARY_SOURCES
+    [string]$BinarySources = $env:VCPKG_BINARY_SOURCES,
+    [ValidateSet("ffmpeg", "runtime")] [string]$Manifest = "ffmpeg"
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,8 +14,8 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
 }
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
-$manifest = Join-Path $PSScriptRoot "vcpkg/ffmpeg"
-$configuration = Get-Content (Join-Path $manifest "vcpkg.json") -Raw | ConvertFrom-Json
+$manifestRoot = Join-Path $PSScriptRoot "vcpkg/$Manifest"
+$configuration = Get-Content (Join-Path $manifestRoot "vcpkg.json") -Raw | ConvertFrom-Json
 $revision = $configuration.'builtin-baseline'
 if (!$revision -or $revision -notmatch '^[0-9a-f]{40}$') {
     throw "The FFmpeg vcpkg manifest does not contain a pinned baseline"
@@ -61,23 +62,18 @@ $env:VCPKG_ROOT = $VcpkgRoot
 $env:VCPKGRS_DYNAMIC = "1"
 $env:VCPKG_BINARY_SOURCES = $BinarySources
 
+$overlay = Join-Path $root "target/windows-deps/ports"
+& uv.exe run --no-project --python 3.13 python (Join-Path $root "packaging/windows-ffmpeg.py") $VcpkgRoot $overlay
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $vcpkg install `
+    --overlay-ports $overlay `
     --triplet x64-windows `
-    --x-manifest-root $manifest `
+    --x-manifest-root $manifestRoot `
     --x-install-root $InstalledDir
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $ffmpegRoot = Join-Path $InstalledDir "x64-windows"
-foreach ($path in @(
-    "include/libavutil/avutil.h",
-    "lib/avutil.lib",
-    "lib/avcodec.lib",
-    "lib/avformat.lib"
-)) {
-    if (!(Test-Path (Join-Path $ffmpegRoot $path))) {
-        throw "Pinned FFmpeg installation is missing $path"
-    }
-}
+& (Join-Path $PSScriptRoot "verify-ffmpeg.ps1") -FfmpegRoot $ffmpegRoot -DevelopmentFilesOnly
 
 Write-Host "Pinned vcpkg revision: $revision"
 Write-Host "FFmpeg installation: $ffmpegRoot"

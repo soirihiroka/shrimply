@@ -56,15 +56,17 @@ Idle projects do not poll files.
 
 Android's document picker grants access to a project folder. The adapter mirrors
 that folder to app-private storage while preserving relative asset paths, and
-retains the document-provider grant across restarts. Provider changes and native
-saves are synchronized through event-driven, bounded, coalesced queues. Source
-fingerprints in Android's SQLite storage detect conflicting external/local changes
-before writing. Transfers stream bounded buffers; newer local edits remain
-recoverable in the working project. App-owned imports, mirror synchronization, flushes, and exports share one I/O
+retains the document-provider grant across restarts. Opening a recent project
+refreshes its mirror before the editor loads the document. Rust's recursive
+`notify` watcher reports local changes, and Android's `ContentObserver` reports
+provider changes. Only a complete provider listing can remove missing local files.
+Source fingerprints in Android's SQLite storage detect conflicting external/local changes
+before writing. A private upload journal retains verified originals and replacements.
+Failed writes attempt to restore the original. Reopening the folder or retrying a
+save runs recovery. App-owned imports, mirror synchronization, flushes, and exports share one I/O
 transaction lock, so a directory notification cannot publish a partially copied
 native import. Active writes finish before adapter shutdown.
-SAF provider output streams do not promise atomic writes against process death or
-other applications writing concurrently. **Export Project**
+**Export Project**
 exports the complete folder, including media, rather than a file with broken asset
 references. A different existing destination is never silently overwritten.
 

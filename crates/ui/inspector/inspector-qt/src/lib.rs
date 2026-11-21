@@ -630,37 +630,30 @@ fn trigger_video_control_action(
     with_controller(|controller| controller.trigger_video_control_action(target, action))
 }
 
-fn select_object_3d_model(target: &InspectorTarget, modifier_id: uuid::Uuid) -> Result<(), String> {
-    let Some(path) = shrimply_components_qt::file_picker::open(
-        "select-3d-object-model",
-        "Select 3D model",
-        "3D models (*.obj *.glb)",
-    ) else {
+fn select_control_file(
+    target: &InspectorTarget,
+    action: shrimply_inspector_core::InspectorControlAction,
+    selection: shrimply_inspector_core::file_selection::FileSelection,
+) -> Result<(), String> {
+    use shrimply_inspector_core::InspectorControlAction::*;
+    let label = match action {
+        SelectObject3dModel { .. } => "select-3d-object-model",
+        SelectScene3dEnvironment => "select-scene-3d-environment",
+        SelectPaintTexture { .. } => "select-paint-texture",
+        _ => selection.title,
+    };
+    let patterns = selection
+        .extensions
+        .iter()
+        .map(|ext| format!("*.{ext}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let filter = format!("{} ({patterns})", selection.title);
+    let Some(path) = shrimply_components_qt::file_picker::open(label, selection.title, &filter)
+    else {
         return Ok(());
     };
-    with_controller(|controller| controller.set_object_3d_model(target, modifier_id, &path))
-}
-
-fn select_scene_3d_environment(target: &InspectorTarget) -> Result<(), String> {
-    let Some(path) = shrimply_components_qt::file_picker::open(
-        "select-scene-3d-environment",
-        "Select environment image",
-        "Environment images (*.png *.jpg *.jpeg *.webp *.avif *.hdr *.exr)",
-    ) else {
-        return Ok(());
-    };
-    with_controller(|controller| controller.set_scene_3d_environment(target, &path))
-}
-
-fn select_paint_texture(target: &InspectorTarget, color_id: uuid::Uuid) -> Result<(), String> {
-    let Some(path) = shrimply_components_qt::file_picker::open(
-        "select-paint-texture",
-        "Select paint texture",
-        "Images (*.png *.jpg *.jpeg *.webp *.gif *.bmp *.tif *.tiff)",
-    ) else {
-        return Ok(());
-    };
-    with_controller(|controller| controller.set_paint_texture(target, color_id, &path))
+    with_controller(|controller| controller.set_control_file(target, action, &path))
 }
 
 fn video_stabilization_generating(target: &InspectorTarget) -> Option<bool> {

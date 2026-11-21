@@ -13,6 +13,7 @@ mod lifecycle;
 mod math;
 #[cfg(feature = "cuda")]
 mod pool;
+mod rgb;
 mod session;
 #[cfg(feature = "cuda")]
 mod track;
@@ -22,6 +23,7 @@ pub use backend::{DecoderBackend, HardwareDevice};
 pub use lifecycle::is_decoder_startup_pressure;
 #[cfg(feature = "cuda")]
 pub use pool::{DecodeRequest, PendingDecode, VideoDecoderHandle, VideoDecoderPool};
+pub use rgb::RgbFrameConverter;
 pub use session::{
     DecodeControl, DecodeControls, DecodeMode, DecodeOutcome, DecodedVisual, NextFrame,
     VideoDecoderSession,

@@ -1,3 +1,5 @@
+mod recording;
+
 use crate::runtime::{Runtime, SharedLifecycle};
 use jni::sys::{JNIEnv, jboolean, jfloat, jfloatArray, jint, jlong, jobject};
 use jni::{
@@ -134,7 +136,12 @@ fn publish_frame(targets: &RenderTargets, surface: usize, frame: Frame) {
 
 /// The canonical document, its history and Scene stay on one worker. Only Skia's
 /// immutable display list crosses to the Vulkan worker; no pixels cross the CPU.
-fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(&str)) {
+fn run_project(
+    worker: ProjectWorker,
+    benchmark: Option<bool>,
+    publish: impl Fn(&str),
+    mirror_listener: crate::project::MirrorListener,
+) {
     initialize_fonts();
     let ProjectWorker {
         receive,
@@ -152,6 +159,7 @@ fn run_project(worker: ProjectWorker, benchmark: Option<bool>, publish: impl Fn(
             let _ = wake.try_send(ProjectCommand::Wake);
         },
         lifecycle,
+        Some(mirror_listener),
     )
     .expect("initialize Android project services");
     if benchmark {
@@ -1202,6 +1210,7 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
     _this: JObject<'caller>,
     stress: jboolean,
     benchmark: jboolean,
+    files: JObject<'caller>,
     listener: JObject<'caller>,
 ) -> jlong {
     static PANIC_LOG: std::sync::Once = std::sync::Once::new();
@@ -1215,6 +1224,24 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
         .with_env(|env| -> jni::errors::Result<jlong> {
             let vm = env.get_java_vm()?;
             let listener = env.new_global_ref(listener)?;
+            let files = env.new_global_ref(files)?;
+            let storage_vm = env.get_java_vm()?;
+            let mirror_listener: crate::project::MirrorListener =
+                Arc::new(move |root, relative| {
+                    storage_vm
+                        .attach_current_thread(|env| -> jni::errors::Result<()> {
+                            let root = env.new_string(root)?;
+                            let relative = env.new_string(relative)?;
+                            env.call_method(
+                                &files,
+                                jni_str!("localChanged"),
+                                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
+                                &[(&root).into(), (&relative).into()],
+                            )?;
+                            Ok(())
+                        })
+                        .expect("notify Android project storage");
+                });
             let (project, project_receive) = mpsc::sync_channel(8);
             let targets = RenderTargets::default();
             let input = Arc::new(Mutex::new(crate::input::Queue::default()));
@@ -1252,6 +1279,7 @@ pub extern "system" fn Java_dev_shrimply_app_NativeTimeline_create<'caller>(
                                 })
                                 .expect("publish Android editor state");
                             },
+                            mirror_listener,
                         )
                     })
                     .expect("start project thread")

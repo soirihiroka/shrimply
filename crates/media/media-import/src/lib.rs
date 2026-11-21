@@ -6,7 +6,7 @@ pub use staging::{StagedSource, stage_source, stage_source_in};
 mod portable_tests;
 #[cfg(test)]
 mod sanim_tests;
-pub use av::{remux_mkv_to_mp4, remux_to_mp4};
+pub use av::{remux_to_mp4, video_dimensions};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -55,7 +55,9 @@ impl Processor<InspectionKey> for MediaInspector {
     ) -> Result<Self::Output, String> {
         if matches!(
             file_kind(&key.path),
-            Some(FileKind::Python | FileKind::Blender)
+            Some(FileKind::Visual(
+                VisualMediaKind::Manim | VisualMediaKind::Blender
+            ))
         ) {
             shrimply_trust_core::approve_import(vec![key.path.clone()])?;
         }
@@ -65,7 +67,7 @@ impl Processor<InspectionKey> for MediaInspector {
             .expect("media inspection cache lock poisoned")
             .get(&key)
             .filter(|info| {
-                file_kind(&key.path) != Some(FileKind::Sanim)
+                file_kind(&key.path) != Some(FileKind::Visual(VisualMediaKind::Sanim))
                     && info.snapshot.ensure_current().is_ok()
             })
             .cloned()
@@ -91,20 +93,7 @@ impl Processor<InspectionKey> for MediaInspector {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileKind {
-    Mp4,
-    Mov,
-    Mkv,
-    WebM,
-    Image,
-    Gif,
-    Svg,
-    Pdf,
-    Python,
-    Sanim,
-    Blender,
-    LayeredImage,
-    Obj,
-    Ply,
+    Visual(VisualMediaKind),
     Audio,
     Vtt,
 }
@@ -113,6 +102,7 @@ pub enum FileKind {
 pub enum VisualMediaKind {
     Video,
     Image,
+    AnimatedImage,
     Gif,
     Svg,
     Pdf,
@@ -191,69 +181,63 @@ pub fn request_inspection(
         .1
 }
 
-pub fn file_kind(path: &Path) -> Option<FileKind> {
+fn media_extension(path: &Path) -> Option<&str> {
     let extension = path.extension()?.to_str()?;
-    let extension = if extension.eq_ignore_ascii_case("part") {
-        Path::new(path.file_stem()?)
-            .extension()
-            .and_then(|extension| extension.to_str())?
+    if extension.eq_ignore_ascii_case("part") {
+        Path::new(path.file_stem()?).extension()?.to_str()
     } else {
-        extension
-    };
-    if extension.eq_ignore_ascii_case("mp4") {
-        Some(FileKind::Mp4)
-    } else if extension.eq_ignore_ascii_case("mov") {
-        Some(FileKind::Mov)
-    } else if extension.eq_ignore_ascii_case("mkv") {
-        Some(FileKind::Mkv)
-    } else if extension.eq_ignore_ascii_case("webm") {
-        Some(FileKind::WebM)
-    } else if image_extension(extension) {
-        Some(FileKind::Image)
-    } else if extension.eq_ignore_ascii_case("gif") {
-        Some(FileKind::Gif)
-    } else if extension.eq_ignore_ascii_case("svg") {
-        Some(FileKind::Svg)
-    } else if extension.eq_ignore_ascii_case("pdf") {
-        Some(FileKind::Pdf)
-    } else if extension.eq_ignore_ascii_case("py") {
-        Some(FileKind::Python)
-    } else if extension.eq_ignore_ascii_case("sanim") {
-        Some(FileKind::Sanim)
-    } else if extension.eq_ignore_ascii_case("blend") && shrimply_blender_core::SUPPORTED {
-        Some(FileKind::Blender)
-    } else if extension.eq_ignore_ascii_case("psd") || extension.eq_ignore_ascii_case("kra") {
-        Some(FileKind::LayeredImage)
-    } else if extension.eq_ignore_ascii_case("obj") || extension.eq_ignore_ascii_case("glb") {
-        Some(FileKind::Obj)
-    } else if extension.eq_ignore_ascii_case("ply") {
-        Some(FileKind::Ply)
-    } else if extension.eq_ignore_ascii_case("vtt") {
-        Some(FileKind::Vtt)
-    } else if audio_extension(extension) {
-        Some(FileKind::Audio)
-    } else {
-        None
+        Some(extension)
     }
 }
 
-pub fn direct_media_kind(kind: FileKind) -> bool {
-    matches!(
-        kind,
-        FileKind::Mp4
-            | FileKind::Mov
-            | FileKind::Image
-            | FileKind::Gif
-            | FileKind::Svg
-            | FileKind::Pdf
-            | FileKind::Python
-            | FileKind::Sanim
-            | FileKind::Blender
-            | FileKind::LayeredImage
-            | FileKind::Obj
-            | FileKind::Ply
-            | FileKind::Audio
-    )
+pub fn requires_mp4_remux(path: &Path) -> bool {
+    media_extension(path)
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("mkv") || ext.eq_ignore_ascii_case("webm"))
+}
+
+pub fn file_kind(path: &Path) -> Option<FileKind> {
+    use VisualMediaKind::*;
+    Some(match media_extension(path)?.to_ascii_lowercase().as_str() {
+        "mp4" | "mov" | "mkv" | "webm" => FileKind::Visual(Video),
+        "gif" => FileKind::Visual(Gif),
+        "svg" => FileKind::Visual(Svg),
+        "pdf" => FileKind::Visual(Pdf),
+        "py" => FileKind::Visual(Manim),
+        "sanim" => FileKind::Visual(Sanim),
+        "blend" if shrimply_blender_core::SUPPORTED => FileKind::Visual(Blender),
+        "psd" | "kra" => FileKind::Visual(LayeredImage),
+        "obj" | "glb" => FileKind::Visual(Obj),
+        "ply" => FileKind::Visual(Gaussian),
+        "vtt" => FileKind::Vtt,
+        "jpg" | "jpeg" | "png" | "webp" | "avif" | "heif" | "heic" | "jxl" | "tif" | "tiff"
+        | "bmp" => FileKind::Visual(Image),
+        "aac" | "aiff" | "aif" | "alac" | "flac" | "m4a" | "mp3" | "ogg" | "opus" | "wav" => {
+            FileKind::Audio
+        }
+        _ => return None,
+    })
+}
+
+/// File-backed pictures that an interchange document can reference without running a generator.
+pub fn image_kind(path: &Path) -> Option<VisualMediaKind> {
+    use VisualMediaKind::*;
+    match file_kind(path)? {
+        FileKind::Visual(kind @ (Image | Gif | Svg | Pdf | LayeredImage)) => Some(kind),
+        _ => None,
+    }
+}
+
+/// Keep the source type when an interchange document references an offline image.
+pub fn image_reference(
+    path: &Path,
+    canvas_size: CanvasSize,
+    duration: Time,
+) -> Option<(VideoItemContent, Result<UVec2, String>)> {
+    let kind = image_kind(path)?;
+    Some(match inspect(path.to_owned(), canvas_size, duration) {
+        Ok(info) => (video_content_for_import(&info), Ok(info.video_sizes[0])),
+        Err(error) => (kind.content(&[]), Err(error)),
+    })
 }
 
 pub fn inspect(
@@ -265,7 +249,7 @@ pub fn inspect(
     let snapshot = source.snapshot()?;
     let path = snapshot.path();
     let file_kind = file_kind(path).ok_or_else(|| "unsupported file type".to_string())?;
-    if file_kind == FileKind::Sanim {
+    if file_kind == FileKind::Visual(VisualMediaKind::Sanim) {
         let parent = path.parent().unwrap_or(Path::new("."));
         let entry = path
             .file_name()
@@ -340,9 +324,10 @@ pub fn inspect(
             caption_cues,
         });
     }
-    if matches!(file_kind, FileKind::Python | FileKind::Blender) {
+    if let FileKind::Visual(kind @ (VisualMediaKind::Manim | VisualMediaKind::Blender)) = file_kind
+    {
         shrimply_trust_core::require(path)?;
-        let duration = if file_kind == FileKind::Blender {
+        let duration = if kind == VisualMediaKind::Blender {
             Time {
                 seconds: shrimply_blender_core::file_duration(path)?,
             }
@@ -354,11 +339,7 @@ pub fn inspect(
             source,
             snapshot,
             duration,
-            visual_kind: Some(if file_kind == FileKind::Python {
-                VisualMediaKind::Manim
-            } else {
-                VisualMediaKind::Blender
-            }),
+            visual_kind: Some(kind),
             video_streams: 1,
             video_sizes: vec![UVec2::new(
                 canvas_size.width.max(1),
@@ -370,50 +351,65 @@ pub fn inspect(
             caption_cues: Vec::new(),
         });
     }
-    if matches!(file_kind, FileKind::Image | FileKind::Svg) {
-        if snapshot.len() > shrimply_drawing_skia::media::MAX_SOURCE_BYTES as u64 {
-            return Err("image source exceeds its byte budget".into());
-        }
-        let bytes = Arc::new(snapshot.read()?);
-        // Shared preparation also uses native platform codecs where Skia has none.
-        // Preserve desktop FFmpeg support without accepting metadata-only bitmaps.
-        let prepared = match shrimply_drawing_skia::media::prepare(bytes.clone()) {
-            Ok(prepared) => prepared,
-            Err(error)
-                if file_kind == FileKind::Image
-                    && skia_safe::Codec::from_data(skia_safe::Data::new_copy(&bytes)).is_none() =>
-            {
-                return av::inspect(source, snapshot, file_kind, default_visual_duration)
-                    .map_err(|fallback| format!("{error}; {fallback}"));
-            }
-            Err(error) => return Err(error),
-        };
-        let visual_kind = match (file_kind, prepared.kind()) {
-            (FileKind::Image, shrimply_drawing_skia::media::Kind::Bitmap) => VisualMediaKind::Image,
-            (FileKind::Svg, shrimply_drawing_skia::media::Kind::Svg) => VisualMediaKind::Svg,
-            _ => {
-                return Err(format!(
-                    "{} contents do not match its image type",
-                    path.display()
-                ));
-            }
-        };
-        let [width, height] = prepared.dimensions();
+    if let FileKind::Visual(
+        kind @ (VisualMediaKind::Image | VisualMediaKind::Svg | VisualMediaKind::Gif),
+    ) = file_kind
+    {
+        use shrimply_drawing_skia::media::{self, animation::Animation};
+        let bytes = snapshot.read_bounded(media::MAX_SOURCE_BYTES)?;
+        let (visual_kind, [width, height], duration, video_fps) =
+            if let Some(mut animation) = Animation::probe(&bytes)? {
+                let actual = if animation.is_gif() {
+                    VisualMediaKind::Gif
+                } else {
+                    VisualMediaKind::AnimatedImage
+                };
+                if !matches!(
+                    (kind, actual),
+                    (VisualMediaKind::Gif, VisualMediaKind::Gif)
+                        | (VisualMediaKind::Image, VisualMediaKind::AnimatedImage)
+                ) {
+                    return Err(format!(
+                        "{} contents do not match its image type",
+                        path.display()
+                    ));
+                }
+                animation.frame_at(Time::ZERO)?;
+                (
+                    actual,
+                    animation.dimensions(),
+                    animation.duration,
+                    Some(animation.average_frame_rate()),
+                )
+            } else {
+                let prepared = media::prepare(Arc::new(bytes))?;
+                if !matches!(
+                    (kind, prepared.kind()),
+                    (VisualMediaKind::Image, media::Kind::Bitmap)
+                        | (VisualMediaKind::Svg, media::Kind::Svg)
+                ) {
+                    return Err(format!(
+                        "{} contents do not match its image type",
+                        path.display()
+                    ));
+                }
+                (kind, prepared.dimensions(), default_visual_duration, None)
+            };
         snapshot.verify_current()?;
         return Ok(MediaInfo {
             source,
             snapshot,
-            duration: default_visual_duration,
+            duration,
             visual_kind: Some(visual_kind),
             video_streams: 1,
             video_sizes: vec![UVec2::new(width, height)],
-            video_fps: None,
+            video_fps,
             audio_streams: 0,
             layered_image_layers: Vec::new(),
             caption_cues: Vec::new(),
         });
     }
-    if file_kind == FileKind::Pdf {
+    if file_kind == FileKind::Visual(VisualMediaKind::Pdf) {
         let pages = shrimply_pdf::page_sizes(snapshot.read()?)?;
         let first = pages
             .first()
@@ -432,7 +428,7 @@ pub fn inspect(
             caption_cues: Vec::new(),
         });
     }
-    if file_kind == FileKind::LayeredImage {
+    if file_kind == FileKind::Visual(VisualMediaKind::LayeredImage) {
         let image = shrimply_layered_image_loader::load(source.clone())?;
         snapshot.ensure_current()?;
         let layered_image_layers = image
@@ -457,8 +453,11 @@ pub fn inspect(
             caption_cues: Vec::new(),
         });
     }
-    if matches!(file_kind, FileKind::Obj | FileKind::Ply) {
-        let visual_kind = if file_kind == FileKind::Ply {
+    if matches!(
+        file_kind,
+        FileKind::Visual(VisualMediaKind::Obj | VisualMediaKind::Gaussian)
+    ) {
+        let visual_kind = if file_kind == FileKind::Visual(VisualMediaKind::Gaussian) {
             shrimply_3dgs_core::RenderSession::load(&source)
                 .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
             VisualMediaKind::Gaussian
@@ -494,7 +493,7 @@ pub fn inspect(
         });
     }
 
-    av::inspect(source, snapshot, file_kind, default_visual_duration)
+    av::inspect(source, snapshot, file_kind)
 }
 
 pub fn apply_media_to_tracks(
@@ -785,22 +784,31 @@ fn apply_audio_to_tracks(
 }
 
 pub fn video_content_for_import(info: &MediaInfo) -> VideoItemContent {
-    match info.visual_kind.unwrap_or(VisualMediaKind::Video) {
-        VisualMediaKind::Video => VideoItemContent::Media,
-        VisualMediaKind::Image => VideoItemContent::Image,
-        VisualMediaKind::Gif => VideoItemContent::Gif,
-        VisualMediaKind::Svg => VideoItemContent::Svg,
-        VisualMediaKind::Pdf => VideoItemContent::Pdf(Box::default()),
-        VisualMediaKind::Manim => VideoItemContent::Manim(Box::default()),
-        VisualMediaKind::Sanim => VideoItemContent::Sanim(Box::default()),
-        VisualMediaKind::Blender => VideoItemContent::Blender(Box::default()),
-        VisualMediaKind::LayeredImage => {
-            VideoItemContent::LayeredImage(Box::new(LayeredImageItem {
-                layers: info.layered_image_layers.clone(),
-            }))
+    info.visual_kind
+        .unwrap_or(VisualMediaKind::Video)
+        .content(&info.layered_image_layers)
+}
+
+impl VisualMediaKind {
+    fn content(self, layers: &[LayerVisibility]) -> VideoItemContent {
+        match self {
+            VisualMediaKind::Video => VideoItemContent::Media,
+            VisualMediaKind::Image => VideoItemContent::Image,
+            VisualMediaKind::Gif => VideoItemContent::Gif,
+            VisualMediaKind::AnimatedImage => VideoItemContent::AnimatedImage,
+            VisualMediaKind::Svg => VideoItemContent::Svg,
+            VisualMediaKind::Pdf => VideoItemContent::Pdf(Box::default()),
+            VisualMediaKind::Manim => VideoItemContent::Manim(Box::default()),
+            VisualMediaKind::Sanim => VideoItemContent::Sanim(Box::default()),
+            VisualMediaKind::Blender => VideoItemContent::Blender(Box::default()),
+            VisualMediaKind::LayeredImage => {
+                VideoItemContent::LayeredImage(Box::new(LayeredImageItem {
+                    layers: layers.to_vec(),
+                }))
+            }
+            VisualMediaKind::Obj => VideoItemContent::Obj(Box::default()),
+            VisualMediaKind::Gaussian => VideoItemContent::Gaussian(Box::default()),
         }
-        VisualMediaKind::Obj => VideoItemContent::Obj(Box::default()),
-        VisualMediaKind::Gaussian => VideoItemContent::Gaussian(Box::default()),
     }
 }
 
@@ -819,7 +827,10 @@ pub fn modifiers_for_import(info: &MediaInfo) -> Vec<VisualModifier> {
 }
 
 pub fn repeat_strategy_for_import(info: &MediaInfo) -> RepeatStrategy {
-    if info.visual_kind == Some(VisualMediaKind::Gif) {
+    if matches!(
+        info.visual_kind,
+        Some(VisualMediaKind::Gif | VisualMediaKind::AnimatedImage)
+    ) {
         RepeatStrategy::Repeat
     } else {
         RepeatStrategy::Hold
@@ -946,21 +957,6 @@ fn parse_vtt_timestamp(value: &str) -> Option<Time> {
             .saturating_mul(1_000_000_000)
             .saturating_add(fraction_nanos),
     ))
-}
-
-fn audio_extension(extension: &str) -> bool {
-    [
-        "aac", "aiff", "aif", "alac", "flac", "m4a", "mp3", "ogg", "opus", "wav",
-    ]
-    .iter()
-    .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-}
-
-fn image_extension(extension: &str) -> bool {
-    matches!(
-        extension.to_ascii_lowercase().as_str(),
-        "jpg" | "jpeg" | "png" | "webp" | "avif"
-    )
 }
 
 pub struct OwnedFile {

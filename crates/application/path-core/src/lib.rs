@@ -126,6 +126,13 @@ pub fn project_directory() -> PathBuf {
         .to_path_buf()
 }
 
+pub fn recording_directory() -> Result<PathBuf, String> {
+    let directory = project_directory().join("media/recordings");
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("Could not create {}: {error}", directory.display()))?;
+    Ok(directory)
+}
+
 pub fn project_cache_directory() -> PathBuf {
     let project_directory = project_directory();
     let root = if project_directory

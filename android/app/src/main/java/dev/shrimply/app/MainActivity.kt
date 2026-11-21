@@ -38,8 +38,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.core.view.WindowCompat
 
 private class EditorModel(context: android.content.Context, stress: Boolean, benchmark: Boolean) : ViewModel() {
-    val timeline = TimelineSession(stress, benchmark)
     val projects = ProjectFiles(context.applicationContext)
+    val timeline = TimelineSession(stress, benchmark, projects)
     override fun onCleared() { timeline.close(); projects.close() }
 }
 

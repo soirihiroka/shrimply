@@ -1,8 +1,31 @@
 use std::{
     fs,
-    fs::OpenOptions,
     path::{Path, PathBuf},
 };
+
+/// Reserve a local name without replacing a previous import or remux.
+pub(super) fn create_unique(mut path: PathBuf) -> Result<(PathBuf, fs::File), String> {
+    loop {
+        match fs::File::create_new(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let mut unique = path.with_file_name(uuid::Uuid::new_v4().to_string());
+                // Keep the media extension when a downloaded file is named e.g. film.mkv.part.
+                if let Some(extension) = super::media_extension(&path) {
+                    unique.set_extension(extension);
+                }
+                if path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("part"))
+                {
+                    unique.add_extension("part");
+                }
+                path = unique;
+            }
+            Err(error) => return Err(format!("could not create {}: {error}", path.display())),
+        }
+    }
+}
 
 /// Project-owned media copied from a path or a native document descriptor.
 /// Callers retain existing project-local files and discard newly staged files
@@ -53,35 +76,30 @@ pub fn stage_source_in(
     let already_staged = canonical_source
         .as_ref()
         .is_some_and(|source| destination.canonicalize().ok().as_ref() == Some(source));
-    if !already_staged {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&destination)
-            .map_err(|error| {
-                format!(
-                    "could not create imported asset {}: {error}",
-                    destination.display()
-                )
-            })?;
-        let copied = source_file
-            .map(Ok)
-            .unwrap_or_else(|| fs::File::open(source))
-            .and_then(|mut source| std::io::copy(&mut source, &mut file))
-            .and_then(|_| file.sync_all());
-        if let Err(error) = copied {
-            drop(file);
-            fs::remove_file(&destination).map_err(|cleanup| {
-                format!(
-                    "could not save imported asset: {error}; could not remove {}: {cleanup}",
-                    destination.display()
-                )
-            })?;
-            return Err(format!("could not save imported asset: {error}"));
-        }
+    if already_staged {
+        return Ok(StagedSource {
+            path: destination,
+            created: false,
+        });
+    }
+    let (destination, mut file) = create_unique(destination)?;
+    let copied = source_file
+        .map(Ok)
+        .unwrap_or_else(|| fs::File::open(source))
+        .and_then(|mut source| std::io::copy(&mut source, &mut file))
+        .and_then(|_| file.sync_all());
+    if let Err(error) = copied {
+        drop(file);
+        fs::remove_file(&destination).map_err(|cleanup| {
+            format!(
+                "could not save imported asset: {error}; could not remove {}: {cleanup}",
+                destination.display()
+            )
+        })?;
+        return Err(format!("could not save imported asset: {error}"));
     }
     Ok(StagedSource {
         path: destination,
-        created: !already_staged,
+        created: true,
     })
 }

@@ -2,6 +2,7 @@ mod ass;
 mod comments;
 mod effects;
 mod math;
+mod streams;
 mod xml;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -14,9 +15,8 @@ use serde_json::Value;
 use shrimply_math_core::Fraction;
 use shrimply_project_document::{
     AudioGenerator, AudioItem, AudioSource, AudioSpeedMethod, AudioTrack, AudioWaveform,
-    Background, BackgroundGenerator, CanvasSize, CaptionTrack, Color, FoldedSequence,
-    LayerVisibility, LayeredImageItem, Project, SequenceReference, SolidColor, Time, VideoItem,
-    VideoItemContent, VisualTrack, WhiteNoise,
+    Background, BackgroundGenerator, CanvasSize, CaptionTrack, Color, FoldedSequence, Project,
+    SequenceReference, SolidColor, Time, VideoItem, VideoItemContent, VisualTrack, WhiteNoise,
 };
 use shrimply_property_model::timeline_value::{TimelineExpression, TimelineValue};
 use uuid::Uuid;
@@ -81,6 +81,7 @@ pub fn from_file(path: impl AsRef<Path>) -> Result<ImportResult, Box<dyn Error +
         canvas_size,
         index,
         warnings: BTreeSet::new(),
+        stream_catalogs: HashMap::new(),
     };
     let mut main = converter.convert_sequence(active)?;
 
@@ -130,6 +131,7 @@ struct ConvertedSequence {
 }
 
 struct Converter<'a> {
+    stream_catalogs: HashMap<PathBuf, Option<Vec<shrimply_media_info::demux::StreamKind>>>,
     root_dir: PathBuf,
     fps: Fraction,
     canvas_size: CanvasSize,
@@ -221,7 +223,9 @@ impl<'a> Converter<'a> {
                 "entry" => {
                     let duration = element_duration(node, self.fps)?;
                     let producer = self.entry_producer(node)?;
-                    items.push(self.video_item(node, producer, cursor, duration)?);
+                    if !streams::disabled(producer, "vstream", "video_index") {
+                        items.push(self.video_item(node, producer, cursor, duration)?);
+                    }
                     cursor += duration;
                 }
                 _ => {}
@@ -242,7 +246,9 @@ impl<'a> Converter<'a> {
                 "entry" => {
                     let duration = element_duration(node, self.fps)?;
                     let producer = self.entry_producer(node)?;
-                    items.extend(self.audio_item(node, producer, cursor, duration)?);
+                    if !streams::disabled(producer, "astream", "audio_index") {
+                        items.extend(self.audio_item(node, producer, cursor, duration)?);
+                    }
                     cursor += duration;
                 }
                 _ => {}
@@ -594,7 +600,12 @@ impl<'a> Converter<'a> {
         } else {
             None
         };
-        let video_index = producer.property("video_index").unwrap_or("0");
+        let (video_track_id, video_index, audio_track_id) =
+            if shrimply_media_import::image_kind(&path).is_some() {
+                (0, 0, 0)
+            } else {
+                streams::select(producer, &path, &mut self.stream_catalogs).map_err(invalid)?
+            };
         let rotation_degrees = if producer.property("autorotate") == Some("0")
             || producer.property("disable_exif") == Some("1")
         {
@@ -605,48 +616,50 @@ impl<'a> Converter<'a> {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0.0)
         };
-        let width = property_u32(producer, &["meta.media.width", "meta.media.0.codec.width"])
-            .unwrap_or(self.canvas_size.width);
-        let height = property_u32(
+        let producer_width = property_u32(
             producer,
-            &["meta.media.height", "meta.media.0.codec.height"],
+            &[
+                "meta.media.width",
+                &format!("meta.media.{video_index}.codec.width"),
+            ],
         )
-        .unwrap_or(self.canvas_size.height);
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let (width, height) = if extension == "pdf" {
-            let bytes = std::fs::read(&path).map_err(|error| invalid(error.to_string()))?;
-            let page = shrimply_pdf::page_sizes(bytes)
-                .map_err(invalid)?
-                .into_iter()
-                .next()
-                .expect("PDF inspection requires at least one page");
-            (page.width, page.height)
-        } else {
-            (width, height)
+        .filter(|&width| width > 0);
+        let producer_height = property_u32(
+            producer,
+            &[
+                "meta.media.height",
+                &format!("meta.media.{video_index}.codec.height"),
+            ],
+        )
+        .filter(|&height| height > 0);
+        let (visual, size) = match shrimply_media_import::image_reference(
+            &path,
+            self.canvas_size,
+            source_duration.unwrap_or(Time::ZERO),
+        ) {
+            Some((
+                content @ (VideoItemContent::Pdf(_) | VideoItemContent::LayeredImage(_)),
+                size,
+            )) => (content, Some(size.map_err(invalid)?)),
+            Some((content, size)) => (content, size.ok()),
+            None if producer_width.is_none() || producer_height.is_none() => (
+                VideoItemContent::Media,
+                shrimply_media_import::video_dimensions(&path, video_track_id),
+            ),
+            None => (VideoItemContent::Media, None),
         };
-        let visual = match extension.as_str() {
-            "png" | "jpg" | "jpeg" | "webp" | "bmp" | "tif" | "tiff" => VideoItemContent::Image,
-            "gif" => VideoItemContent::Gif,
-            "svg" => VideoItemContent::Svg,
-            "pdf" => VideoItemContent::Pdf(Box::default()),
-            "kra" | "psd" => {
-                let image = shrimply_layered_image_loader::load(&path)?;
-                let layers = image
-                    .layers
-                    .iter()
-                    .map(|layer| LayerVisibility {
-                        id: Uuid::new_v4(),
-                        path: layer.path.clone(),
-                        visibility: None,
-                    })
-                    .collect();
-                VideoItemContent::LayeredImage(Box::new(LayeredImageItem { layers }))
-            }
-            _ => VideoItemContent::Media,
+        // PDF producers use page geometry; other producers may override source dimensions.
+        let (width, height) = if let (VideoItemContent::Pdf(_), Some(size)) = (&visual, size) {
+            (size.x, size.y)
+        } else {
+            (
+                producer_width
+                    .or_else(|| size.map(|s| s.x))
+                    .unwrap_or(self.canvas_size.width),
+                producer_height
+                    .or_else(|| size.map(|s| s.y))
+                    .unwrap_or(self.canvas_size.height),
+            )
         };
         Ok(Source {
             path,
@@ -656,14 +669,8 @@ impl<'a> Converter<'a> {
             height,
             speed,
             pitch_preserved,
-            video_track_id: producer
-                .property("vstream")
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(0),
-            audio_track_id: producer
-                .property("astream")
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(0),
+            video_track_id,
+            audio_track_id,
             source_duration,
             reverse_origin_frame,
             rotation_degrees,

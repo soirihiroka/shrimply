@@ -11,7 +11,6 @@ use shrimply_asset::{Asset, AssetSnapshot};
 use shrimply_project_document::project::Time;
 use uuid::Uuid;
 
-const RECORDING_DIR: &str = "media/recordings";
 const CHANNELS: usize = 2;
 const OPUS_RATE: u32 = 48_000;
 const TTS_REFERENCE_RATE: u32 = 24_000;
@@ -100,13 +99,9 @@ impl MicRecording {
             return Err("Recording captured no audio".to_string());
         }
 
-        let directory = shrimply_project_document::project::project_directory().join(RECORDING_DIR);
-        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let directory = shrimply_path_core::recording_directory()?;
         let path = directory.join(format!("{}.opus", Uuid::new_v4()));
-        if let Err(error) = write_opus(&path, &samples, sample_rate) {
-            let _ = fs::remove_file(&path);
-            return Err(error);
-        }
+        publish_opus(&path, |staged| write_opus(staged, &samples, sample_rate))?;
         let frames = samples.len() / CHANNELS;
         let duration = Time::from_nanos(
             ((frames as u128 * 1_000_000_000_u128) / sample_rate as u128).min(u64::MAX as u128)
@@ -153,30 +148,40 @@ pub fn save_wav_as_opus(wav: &[u8], output_path: &Path) -> Result<Time, String> 
             output_path.display()
         ));
     }
-    let directory = output_path
-        .parent()
-        .ok_or_else(|| "generated audio destination has no parent directory".to_string())?;
-    fs::create_dir_all(directory)
-        .map_err(|error| format!("Could not create {}: {error}", directory.display()))?;
-    let id = Uuid::new_v4();
-    let wav_path = directory.join(format!(".{id}.wav"));
-    let encoded_path = directory.join(format!(".{id}.opus"));
-    fs::write(&wav_path, wav)
-        .map_err(|error| format!("Could not save generated audio: {error}"))?;
-    let converted = transcode_to_opus(&wav_path, &encoded_path).and_then(|duration| {
+    publish_opus(output_path, |staged| {
+        let wav_path = staged.with_extension("wav");
+        fs::write(&wav_path, wav)
+            .map_err(|error| format!("Could not save generated audio: {error}"))?;
+        let duration = transcode_to_opus(&wav_path, staged)?;
         if duration <= Time::ZERO {
             return Err("Generated file has no valid audio".to_string());
         }
-        fs::rename(&encoded_path, output_path)
-            .map_err(|error| format!("Could not finalize audio: {error}"))?;
         Ok(duration)
-    });
-    let _ = fs::remove_file(&wav_path);
-    if converted.is_err() {
-        let _ = fs::remove_file(&encoded_path);
-        let _ = fs::remove_file(output_path);
-    }
-    converted
+    })
+}
+
+/// Keep intermediates out of mirror scans and preserve the encoder's .opus muxer hint.
+fn publish_opus<T>(
+    path: &Path,
+    encode: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<T, String> {
+    let parent = path
+        .parent()
+        .ok_or("audio destination has no parent directory")?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Could not create {}: {error}", parent.display()))?;
+    let staging = tempfile::Builder::new()
+        .prefix(&format!(".incoming-{}", Uuid::new_v4()))
+        .rand_bytes(0)
+        .tempdir_in(parent)
+        .map_err(|error| format!("Could not stage audio: {error}"))?;
+    let encoded = staging.path().join("audio.opus");
+    let result = encode(&encoded)?;
+    tempfile::TempPath::try_from_path(encoded)
+        .map_err(|error| error.to_string())?
+        .persist_noclobber(path)
+        .map_err(|error| format!("Could not publish {}: {error}", path.display()))?;
+    Ok(result)
 }
 
 pub fn transcode_to_wav(input_path: &Path) -> Result<Vec<u8>, String> {
@@ -231,7 +236,7 @@ fn decode_stereo(
     maximum_samples: Option<usize>,
 ) -> Result<(Vec<f32>, u32), String> {
     ffmpeg::init().map_err(|error| error.to_string())?;
-    let mut input = format::input(input_path)
+    let mut input = shrimply_media_info::demux::open(input_path)
         .map_err(|error| format!("could not open {}: {error}", input_path.display()))?;
     let (stream_index, parameters) = {
         let stream = input

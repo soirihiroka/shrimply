@@ -2,7 +2,6 @@ package dev.shrimply.app
 
 import android.app.Activity
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.Looper
@@ -45,12 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.File
 import java.util.UUID
 
 /** Android consent, screenshot transport and pixel access; color interpretation stays in Rust. */
@@ -77,18 +72,13 @@ internal fun rememberScreenColorPicker(labels: JSONObject, onColor: (Int) -> Uni
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     val receive: (JSONObject) -> Unit = { event -> main.post {
         scope.launch {
-            ScreenRecordingService.acknowledge(event.getString("id"))
-            val config = pending
+            val image = ScreenRecordingService.acknowledge(event.getString("id"))
             pending = null
             show(true)
-            try {
-                if (event.getString("event") == "finished") bitmap = withContext(Dispatchers.IO) {
-                    checkNotNull(BitmapFactory.decodeFile(event.getString("path")))
-                }
-                else if (event.getString("event") == "failed") currentError(event.getString("error"))
-            } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { currentError(error.message ?: labels.getString("sample_error")) }
-            finally { config?.let { File(it.getString("path")).delete() } }
+            when (event.getString("event")) {
+                "finished" -> if (image != null) bitmap = image else currentError(labels.getString("sample_error"))
+                "failed" -> currentError(event.getString("error"))
+            }
         }
     } }
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -98,14 +88,12 @@ internal fun rememberScreenColorPicker(labels: JSONObject, onColor: (Int) -> Uni
         } else {
             pending = null
             show(true)
-            config?.let { File(it.getString("path")).delete() }
         }
     }
     DisposableEffect(owner) {
         onDispose {
             show(true)
             ScreenRecordingService.stopOwner(owner)
-            pending?.let { File(it.getString("path")).delete() }
         }
     }
     bitmap?.let { image ->
@@ -177,7 +165,6 @@ internal fun rememberScreenColorPicker(labels: JSONObject, onColor: (Int) -> Uni
         else if (pending == null && bitmap == null) {
             val bounds = activity.windowManager.maximumWindowMetrics.bounds
             val config = JSONObject().put("mode", "image").put("id", UUID.randomUUID().toString())
-                .put("path", File.createTempFile("color-sample-", ".png", context.cacheDir).absolutePath)
                 .put("screen_width", bounds.width()).put("screen_height", bounds.height())
                 .put("density_dpi", activity.resources.configuration.densityDpi)
                 .put("notification_title", labels.getString("notification_title"))
@@ -190,7 +177,6 @@ internal fun rememberScreenColorPicker(labels: JSONObject, onColor: (Int) -> Uni
             catch (error: Exception) {
                 pending = null
                 show(true)
-                File(config.getString("path")).delete()
                 currentError(error.message ?: labels.getString("sample_error"))
             }
         }

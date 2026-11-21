@@ -320,6 +320,7 @@ pub fn generated_item_keyframe_span(item: &VideoItem) -> Option<(Time, Time)> {
         VideoItemContent::Media
         | VideoItemContent::Image
         | VideoItemContent::Gif
+        | VideoItemContent::AnimatedImage
         | VideoItemContent::Svg
         | VideoItemContent::Pdf(_)
         | VideoItemContent::Manim(_)

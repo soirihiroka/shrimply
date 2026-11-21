@@ -7,7 +7,7 @@ use ffmpeg_next::{
 };
 use std::{collections::VecDeque, ptr};
 
-pub(super) struct Muxer {
+pub(crate) struct Muxer {
     output: ffmpeg::format::context::Output,
     video_index: usize,
     video_time_base: Option<ffmpeg::Rational>,

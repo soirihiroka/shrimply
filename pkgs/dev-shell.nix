@@ -87,6 +87,7 @@ mkShell {
   CUDA_HOME = cudaToolkit;
   CUDA_HOST_CXX = "g++";
   CUDA_TOOLKIT_PATH = cudaToolkit;
+  SHRIMPLY_FFMPEG_PREFIX = ffmpeg;
   LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
   NIX_CC_USE_RESPONSE_FILE = "1";
   NIX_LDFLAGS = "-L${cudaStubs}/lib/stubs -L${shrimply-slang}/lib";

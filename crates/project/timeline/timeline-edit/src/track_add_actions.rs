@@ -186,6 +186,26 @@ pub fn prepare_track_add(
     Ok(Some((track_address, item)))
 }
 
+/// Insert a generated item into a candidate document. Callers publish its selection
+/// only after their history transaction commits.
+pub fn insert_track_add(
+    project: &mut Project,
+    key: TrackKey,
+    action: TrackAddAction,
+    position: Time,
+    settings: TrackAddSettings<'_>,
+    comment: Option<&str>,
+) -> Result<Option<shrimply_project_document::ItemAddress>, String> {
+    let Some((track, mut item)) = prepare_track_add(project, key, action, position, settings)?
+    else {
+        return Ok(None);
+    };
+    if let (ProjectItem::Comment(item), Some(text)) = (&mut item, comment) {
+        text.clone_into(&mut item.text);
+    }
+    Ok(project.insert_item(&track, item))
+}
+
 fn track_span(items: impl Iterator<Item = (Time, Time)>, start: Time) -> (bool, Option<Time>) {
     let items = items.collect::<Vec<_>>();
     (

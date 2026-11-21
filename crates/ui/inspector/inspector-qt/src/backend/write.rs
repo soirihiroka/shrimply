@@ -77,17 +77,13 @@ impl qobject::InspectorBackend {
         if control.action.is_some() && !control.action_sensitive {
             return;
         }
-        let result = match control.action {
-            Some(shrimply_inspector_core::InspectorControlAction::SelectObject3dModel {
-                modifier_id,
-            }) => crate::select_object_3d_model(&target, modifier_id),
-            Some(shrimply_inspector_core::InspectorControlAction::SelectScene3dEnvironment) => {
-                crate::select_scene_3d_environment(&target)
-            }
-            Some(shrimply_inspector_core::InspectorControlAction::SelectPaintTexture {
-                color_id,
-            }) => crate::select_paint_texture(&target, color_id),
-            _ => crate::activate_control(&target, &control),
+        let result = if let Some((action, selection)) = control
+            .action
+            .and_then(|action| Some((action, action.file_selection()?)))
+        {
+            crate::select_control_file(&target, action, selection)
+        } else {
+            crate::activate_control(&target, &control)
         };
         let refresh_analysis = result.is_ok() && control.kind == ControlKind::Analysis;
         self.as_mut().finish(result);

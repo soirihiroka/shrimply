@@ -73,6 +73,7 @@ foreach ($name in $ffmpegDlls) {
 Copy-Item (Join-Path $vcpkgBin "*.dll") $stage
 
 if (!(Test-Path $ffmpeg)) { throw "Missing pinned FFmpeg executable: $ffmpeg" }
+Copy-Item $ffmpeg (Join-Path $stage "shrimply-ffmpeg.exe")
 $previousErrorActionPreference = $ErrorActionPreference
 try {
     $ErrorActionPreference = "Continue"
@@ -124,6 +125,8 @@ $project = $project -replace 'manimgl = \{ path = .*', "manimgl = { url = `"http
     $project,
     [Text.UTF8Encoding]::new($false)
 )
+& $uv run --no-project --python 3.14 python (Join-Path $root "packaging/bundle-pyav.py") $manimSource $manim --prefix $ffmpegRoot
+if ($LASTEXITCODE -ne 0) { throw "Could not build the bundled Manim PyAV wheel" }
 & $uv lock --python 3.14 --project $manim
 if ($LASTEXITCODE -ne 0) { throw "Could not lock bundled Manim environment" }
 

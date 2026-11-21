@@ -71,22 +71,20 @@ pub fn classify_external_text(text: String) -> ExternalText {
     url.map_or(ExternalText::Text(text), ExternalText::ImageUrl)
 }
 
-pub fn external_files_need_remux(paths: &[PathBuf]) -> Result<bool, String> {
+pub(super) fn validate_dropped_files(paths: &[PathBuf]) -> Result<(), String> {
     if paths.is_empty() {
         return Err("drop contains no files".into());
     }
-    let mut remux = false;
     for path in paths {
         match crate::import::file_kind(path) {
             None => return Err(format!("{} has an unsupported file type", path.display())),
             Some(crate::import::FileKind::Vtt) => {
                 return Err("VTT files must be imported through a caption track".into());
             }
-            Some(crate::import::FileKind::Mkv | crate::import::FileKind::WebM) => remux = true,
             Some(_) => {}
         }
     }
-    Ok(remux)
+    Ok(())
 }
 
 fn download_image(url: &str) -> Result<OwnedFile, String> {
@@ -128,6 +126,8 @@ fn image_extension_for_content_type(content_type: &str) -> Option<&'static str> 
         "image/gif" => Some("gif"),
         "image/webp" => Some("webp"),
         "image/avif" => Some("avif"),
+        "image/heic" | "image/heif" => Some("heif"),
+        "image/jxl" => Some("jxl"),
         "image/svg+xml" => Some("svg"),
         _ => None,
     }
@@ -146,6 +146,8 @@ fn image_extension_for_url(url: &str) -> Option<&'static str> {
         "gif" => Some("gif"),
         "webp" => Some("webp"),
         "avif" => Some("avif"),
+        "heic" | "heif" => Some("heif"),
+        "jxl" => Some("jxl"),
         "svg" => Some("svg"),
         _ => None,
     }
@@ -162,16 +164,11 @@ pub fn validate_clipboard_image_length(length: usize) -> Result<(), String> {
 }
 
 pub fn store_clipboard_visual_file(path: &Path) -> Result<Option<PathBuf>, String> {
-    let Some(kind) = crate::import::file_kind(path) else {
+    use crate::import::VisualMediaKind;
+    let Some(kind) = crate::import::image_kind(path) else {
         return Ok(None);
     };
-    if !matches!(
-        kind,
-        crate::import::FileKind::Image
-            | crate::import::FileKind::Gif
-            | crate::import::FileKind::Svg
-            | crate::import::FileKind::Pdf
-    ) {
+    if kind == VisualMediaKind::LayeredImage {
         return Ok(None);
     }
     let directory = project_directory().join(CLIPBOARD_MEDIA_DIR);
@@ -179,10 +176,7 @@ pub fn store_clipboard_visual_file(path: &Path) -> Result<Option<PathBuf>, Strin
         return Ok(Some(path.to_owned()));
     }
     let bytes = read_clipboard_file(path)?;
-    if matches!(
-        kind,
-        crate::import::FileKind::Image | crate::import::FileKind::Gif
-    ) {
+    if matches!(kind, VisualMediaKind::Image | VisualMediaKind::Gif) {
         return store_clipboard_raster(
             &bytes,
             path.extension().and_then(|extension| extension.to_str()),
@@ -231,6 +225,9 @@ fn store_clipboard_raster(bytes: &[u8], extension_hint: Option<&str>) -> Result<
         ImageType::Jpeg => "jpg",
         ImageType::Webp => "webp",
         ImageType::Gif => "gif",
+        ImageType::Jxl => "jxl",
+        ImageType::Heif(imagesize::Compression::Hevc) => "heic",
+        ImageType::Heif(imagesize::Compression::Av1) => "avif",
         ImageType::Heif(_)
             if extension_hint.is_some_and(|extension| extension.eq_ignore_ascii_case("avif")) =>
         {
@@ -267,7 +264,7 @@ pub struct TextPreview {
 
 impl crate::scene::Scene {
     pub fn update_external_files_preview(&mut self, paths: &[PathBuf], point: Vec2) -> bool {
-        if external_files_need_remux(paths).is_err() {
+        if validate_dropped_files(paths).is_err() {
             self.clear_drop_preview();
             return false;
         }

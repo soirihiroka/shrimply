@@ -8,12 +8,8 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
-import tarfile
-import tempfile
-import urllib.request
+from native_sources import ffmpeg_source, source
 
-FFMPEG_VERSION = "9.0.2"
-FFMPEG_SHA256 = "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
 OPUS_VERSION = "1.6.1"
 OPUS_SHA256 = "6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1"
 LAME_VERSION = "3.100"
@@ -43,29 +39,6 @@ ABIS = {
 }
 
 
-def source(cache, name, url, digest):
-    archive = cache / url.rsplit("/", 1)[1]
-    if not archive.exists():
-        temporary = archive.with_suffix(archive.suffix + ".part")
-        try:
-            with urllib.request.urlopen(url, timeout=60) as response, temporary.open("wb") as output:
-                shutil.copyfileobj(response, output)
-            temporary.replace(archive)
-        finally:
-            temporary.unlink(missing_ok=True)
-    with archive.open("rb") as stream:
-        actual = hashlib.file_digest(stream, "sha256").hexdigest()
-    if actual != digest:
-        raise RuntimeError(f"checksum mismatch for {archive.name}")
-    directory = cache / name
-    if not directory.exists():
-        with tempfile.TemporaryDirectory(prefix="extract-", dir=cache) as staging:
-            with tarfile.open(archive) as compressed:
-                compressed.extractall(staging, filter="data")
-            (Path(staging) / name).rename(directory)
-    return directory
-
-
 def build_rubberband(sources, root, prefix, compiler, toolchain, profile, ndk):
     identity = hashlib.sha256(Path(__file__).read_bytes() + (RUBBERBAND_SHA256 + profile).encode() + (ndk / "source.properties").read_bytes()).hexdigest()
     stamp = root / "rubberband.sha256"
@@ -80,18 +53,6 @@ def build_rubberband(sources, root, prefix, compiler, toolchain, profile, ndk):
     library.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([str(toolchain / "llvm-ar"), "rcs", str(library), str(output)], check=True)
     stamp.write_text(identity)
-
-
-def patch_source(directory, patch):
-    # The verified source cache is shared by ABIs; apply once under its own lock.
-    with (directory.parent / f".{directory.name}-patch.lock").open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        command = ["patch", "--batch", "--silent", "-p1", "--input", str(patch)]
-        if subprocess.run(command + ["--dry-run", "--forward"], cwd=directory, capture_output=True).returncode == 0:
-            subprocess.run(command + ["--forward"], cwd=directory, check=True)
-        else:
-            # A changed upstream source or partial patch is a hard failure.
-            subprocess.run(command + ["--dry-run", "--reverse"], cwd=directory, check=True)
 
 
 def cmake_build(args, root, name, directory, options, required_cache=None):
@@ -264,7 +225,7 @@ def main():
         hardware_patch = Path(__file__).resolve().with_name("ffmpeg-android-hardware.patch")
         encoder_patch = Path(__file__).resolve().with_name("ffmpeg-android-encoder.patch")
         qp_patch = Path(__file__).resolve().with_name("ffmpeg-android-qp.patch")
-        identity = hashlib.sha256(Path(__file__).read_bytes() + hardware_patch.read_bytes() + encoder_patch.read_bytes() + qp_patch.read_bytes() + (ndk / "source.properties").read_bytes()).hexdigest()
+        capture_patch = Path(__file__).resolve().with_name("ffmpeg-android-capture.patch")
         sources = cache / "sources"
         sources.mkdir(exist_ok=True)
         if args.text:
@@ -273,6 +234,8 @@ def main():
         if args.pdf:
             build_pdf(args, sources, root)
             return
+        ffmpeg = ffmpeg_source(sources, hardware_patch, encoder_patch, qp_patch, capture_patch)
+        identity = hashlib.sha256(Path(__file__).read_bytes() + ffmpeg.name.encode() + (ndk / "source.properties").read_bytes()).hexdigest()
         build_rubberband(sources, root, prefix, compiler, toolchain, args.profile, ndk)
         if stamp.exists() and stamp.read_text() == identity and all(
             (prefix / "lib" / name).is_file()
@@ -281,13 +244,11 @@ def main():
             print(f"Android media dependencies are current: {prefix}", flush=True)
             return
         opus = source(sources, f"opus-{OPUS_VERSION}", f"https://downloads.xiph.org/releases/opus/opus-{OPUS_VERSION}.tar.gz", OPUS_SHA256)
-        ffmpeg = source(sources, f"ffmpeg-{FFMPEG_VERSION}", f"https://ffmpeg.org/releases/ffmpeg-{FFMPEG_VERSION}.tar.xz", FFMPEG_SHA256)
-        patch_source(ffmpeg, hardware_patch)
-        patch_source(ffmpeg, encoder_patch)
-        patch_source(ffmpeg, qp_patch)
         cmake_build(args, root, "opus", opus, ["-DOPUS_BUILD_TESTING=OFF", "-DOPUS_BUILD_PROGRAMS=OFF"])
         build_audio_encoders(args, sources, root, compiler)
-        ffmpeg_build = root / "ffmpeg"
+        # FFmpeg keeps its first configure's src symlink. Reusing that tree
+        # across source patches can silently compile the previous source.
+        ffmpeg_build = root / ffmpeg.name
         ffmpeg_build.mkdir(exist_ok=True)
         environment = os.environ.copy()
         environment.update({

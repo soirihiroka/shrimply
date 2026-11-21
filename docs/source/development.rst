@@ -22,6 +22,7 @@ A source build needs about 70 GB free. The setup targets Fedora:
 
 .. code-block:: console
 
+   $ git submodule update --init --recursive
    $ make deps-fedora
    $ make dev
 
@@ -47,7 +48,8 @@ Nix development environment
 ---------------------------
 
 The flake provides Rust, the CUDA toolkit, Slang, and the native dependencies
-for the GTK and Qt apps on ``x86_64-linux``.
+for the GTK and Qt apps on ``x86_64-linux``. It requires Nix 2.27 or newer
+to include the FFmpeg submodule.
 
 .. code-block:: console
 
@@ -78,8 +80,9 @@ Intel GPU preview on Linux GTK
 Install Mesa's Intel Vulkan and OpenGL drivers and Intel's VA-API media driver.
 FFmpeg must include Vulkan, VA-API, and DRM support. GTK's OpenGL context must
 use the same Intel GPU as the Vulkan renderer.
-Use FFmpeg 8 or newer for its Vulkan scalar-layout support. The Flatpak build
-compiles FFmpeg 9.0.2 from source with Vulkan, VA-API, DRM, NVDEC, and NVENC.
+The native and packaged builds use the FFmpeg revision recorded in
+``external/ffmpeg``. On Linux it includes Vulkan, VA-API, DRM, NVDEC, and NVENC.
+``make linux-ffmpeg`` builds the local libraries and command-line tools.
 
 The GTK binary automatically keeps CUDA on machines with an available NVIDIA
 device and selects Intel otherwise. Choose a specific device in Preferences,

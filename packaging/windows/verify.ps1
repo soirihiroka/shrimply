@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+$ffmpegVersion = (Get-Content (Join-Path $PSScriptRoot "../../external/ffmpeg/RELEASE") -Raw).Trim()
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $archive = Join-Path $root "dist/shrimply-windows-x86_64.zip"
@@ -61,6 +62,11 @@ function Inspect-Imports([string]$directory) {
 }
 
 function Assert-FfmpegPackage([string]$directory) {
+    $cli = Join-Path $directory "shrimply-ffmpeg.exe"
+    $version = & $cli -version
+    if ($LASTEXITCODE -ne 0 -or $version[0] -notmatch "^ffmpeg version $([regex]::Escape($ffmpegVersion))(?:\s|$)") {
+        throw "Packaged FFmpeg executable does not report $ffmpegVersion"
+    }
     foreach ($name in $ffmpegDlls) {
         if (!(Test-Path (Join-Path $directory $name))) {
             throw "Packaged FFmpeg runtime is missing $name"
@@ -74,7 +80,7 @@ function Assert-FfmpegPackage([string]$directory) {
     }
     $configuration = Get-Content (Join-Path $licenses "ffmpeg-build-configuration.txt") -Raw
     foreach ($value in @(
-        "ffmpeg version 9.0.1",
+        "ffmpeg version $ffmpegVersion",
         "--enable-nonfree",
         "--enable-libfdk-aac",
         "--enable-libopus",
