@@ -11,7 +11,7 @@ Media
 .. |add| image:: ../../../assets/icons/plus-symbolic.svg
    :class: action-icon
    :alt: Add
-.. |import| image:: ../../../assets/icons/document-open-symbolic.svg
+.. |import| image:: ../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/document-open-symbolic.svg
    :class: action-icon
    :alt: Import
 .. |text| image:: ../../../assets/icons/draw-text-symbolic.svg
@@ -20,10 +20,10 @@ Media
 .. |shape| image:: ../../../assets/icons/shapes-large-symbolic.svg
    :class: action-icon
    :alt: Shape
-.. |paint| image:: ../../../assets/icons/applications-graphics-symbolic.svg
+.. |paint| image:: ../../../external/adwaita-icon-theme/Adwaita/symbolic/categories/applications-graphics-symbolic.svg
    :class: action-icon
    :alt: Paint
-.. |background| image:: ../../../assets/icons/preferences-desktop-wallpaper-symbolic.svg
+.. |background| image:: ../../../external/adwaita-icon-theme/Adwaita/symbolic/legacy/preferences-desktop-wallpaper-symbolic.svg
    :class: action-icon
    :alt: Background
 .. |scene-3d| image:: ../../../assets/icons/3d-object-symbolic.svg
@@ -32,7 +32,7 @@ Media
 .. |video-generation| image:: ../../../assets/icons/video-generation-symbolic.svg
    :class: action-icon
    :alt: Video Generation
-.. |text-to-speech| image:: ../../../assets/icons/font-x-generic-symbolic.svg
+.. |text-to-speech| image:: ../../../external/adwaita-icon-theme/Adwaita/symbolic/mimetypes/font-x-generic-symbolic.svg
    :class: action-icon
    :alt: Text to Speech
 .. |audio-generator| image:: ../../../assets/icons/sound-symbolic.svg

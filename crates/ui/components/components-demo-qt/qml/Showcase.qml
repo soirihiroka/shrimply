@@ -169,7 +169,7 @@ ApplicationWindow {
                             digits: 1
                             dragStep: 0.1
                             unitName: "°"
-                            prefixIconSource: "qrc:/qt/qml/dev/shrimply/components/icons/rotation.svg"
+                            prefixIconSource: "qrc:/qt/qml/dev/shrimply/components/icons/arrow3-up-symbolic.svg"
                             prefixIconRotates: true
                             onEdited: function(value) { rotationRow.editValue(value) }
                         }

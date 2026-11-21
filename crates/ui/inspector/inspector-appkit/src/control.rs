@@ -753,7 +753,7 @@ fn tooltip(control: &InspectorControl) -> Option<&str> {
 
 fn appkit_symbol(icon: &str) -> &'static str {
     match icon {
-        "rotation.svg" => "arrow.up",
+        "arrow3-up-symbolic" => "arrow.up",
         _ => panic!("unsupported AppKit inspector icon: {icon}"),
     }
 }

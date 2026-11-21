@@ -359,7 +359,7 @@ fn scalar_control(
         .value(display.to_string())
         .number(field.number())
         .width_characters(field.width_characters())
-        .rotating_icon("rotation.svg", 0.0)
+        .rotating_icon("arrow3-up-symbolic", 0.0)
         .layered(path, LayeredState::from(timeline))
         .timeline(timeline.id, scalar_graph(timeline, display as f32, runtime))
         .live_commit(TRANSFORM_LIVE_COMMIT)

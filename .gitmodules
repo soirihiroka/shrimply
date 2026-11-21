@@ -12,3 +12,7 @@
 	path = external/ffmpeg
 	url = https://github.com/FFmpeg/FFmpeg.git
 	shallow = true
+[submodule "external/adwaita-icon-theme"]
+	path = external/adwaita-icon-theme
+	url = https://github.com/GNOME/adwaita-icon-theme.git
+	shallow = true

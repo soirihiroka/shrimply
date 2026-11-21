@@ -38,7 +38,11 @@
       # The GitHub flake fetcher downloads an archive without any submodules.
       # Fetch that same project revision through Git to resolve its gitlinks.
       src =
-        if builtins.pathExists (self + "/external/ffmpeg/RELEASE") then self
+        if
+          builtins.pathExists (self + "/external/ffmpeg/RELEASE")
+          && builtins.pathExists (self + "/external/adwaita-icon-theme/index.theme")
+        then
+          self
         else if self.sourceInfo ? submodules || !(self ? rev) then
           throw "Initialize the project submodules with git submodule update --init --recursive."
         else builtins.fetchGit {

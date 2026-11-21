@@ -998,7 +998,7 @@ pub(super) fn modifier_scalar_control(
         )
         .live_commit("visual-modifier-value");
     if rotating {
-        control.rotating_icon("rotation.svg", 0.0)
+        control.rotating_icon("arrow3-up-symbolic", 0.0)
     } else {
         control
     }
@@ -1051,7 +1051,7 @@ pub(super) fn modifier_vector3_control(
         .live_commit("visual-modifier-vector");
     let control = if lock { control.lock() } else { control };
     if rotating {
-        control.rotating_icon("rotation.svg", 0.0)
+        control.rotating_icon("arrow3-up-symbolic", 0.0)
     } else {
         control
     }

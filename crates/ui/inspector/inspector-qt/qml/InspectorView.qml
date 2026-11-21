@@ -1324,7 +1324,10 @@ Item {
                                 widthCharacters: controlLoader.widthCharacters()
                                 prefixIconSource: controlLoader.prefixIcon().length > 0
                                     ? "qrc:/qt/qml/dev/shrimply/components/icons/"
-                                        + controlLoader.prefixIcon() : ""
+                                        + (controlLoader.prefixIcon().endsWith(".svg")
+                                            ? controlLoader.prefixIcon()
+                                            : controlLoader.prefixIcon() + ".svg")
+                                    : ""
                                 prefixIconRotates: controlLoader.prefixIconRotates()
                                 prefixIconRotationOffsetDegrees:
                                     controlLoader.prefixIconRotationOffset()

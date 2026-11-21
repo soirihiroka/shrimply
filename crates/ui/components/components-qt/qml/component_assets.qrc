@@ -1,43 +1,20 @@
 <RCC>
   <qresource prefix="/qt/qml/dev/shrimply/components/icons">
-    <!-- Exact Adwaita copies; keep the source SVG bytes unchanged.
-      icons/add-modifier.svg, icons/add.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/list-add-symbolic.svg
-      icons/clear.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/edit-clear-symbolic.svg
-      icons/copy.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/edit-copy-symbolic.svg
-      icons/disclosure.svg:
-        /usr/share/icons/Adwaita/symbolic/ui/pan-start-symbolic-rtl.svg
-      icons/next.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/go-previous-symbolic-rtl.svg
-      icons/object-select.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/object-select-symbolic.svg
-      icons/previous.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/go-next-symbolic-rtl.svg
-      icons/remove.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/list-remove-symbolic.svg
-      icons/reset.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/edit-undo-symbolic.svg
-      icons/screen-color.svg:
-        /usr/share/icons/Adwaita/symbolic/actions/color-select-symbolic.svg
-    -->
     <file alias="padlock.svg">../../../../../assets/icons/padlock2-symbolic.svg</file>
     <file alias="padlock-open.svg">../../../../../assets/icons/padlock2-open-symbolic.svg</file>
     <file alias="code.svg">../../../../../assets/icons/code-symbolic.svg</file>
     <file alias="keyframe.svg">../../../../../assets/icons/stopwatch-symbolic.svg</file>
-    <file alias="previous.svg">icons/previous.svg</file>
-    <file alias="next.svg">icons/next.svg</file>
-    <file alias="add.svg">icons/add.svg</file>
-    <file alias="remove.svg">icons/remove.svg</file>
-    <file alias="screen-color.svg">icons/screen-color.svg</file>
-    <file alias="object-select.svg">icons/object-select.svg</file>
-    <file alias="disclosure.svg">icons/disclosure.svg</file>
-    <file alias="reset.svg">icons/reset.svg</file>
-    <file alias="add-modifier.svg">icons/add-modifier.svg</file>
-    <file alias="copy.svg">icons/copy.svg</file>
-    <file alias="clear.svg">icons/clear.svg</file>
-    <file alias="rotation.svg">../../../../../assets/icons/arrow3-up-symbolic.svg</file>
+    <file alias="previous.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/go-next-symbolic-rtl.svg</file>
+    <file alias="next.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/go-previous-symbolic-rtl.svg</file>
+    <file alias="add.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/list-add-symbolic.svg</file>
+    <file alias="remove.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/list-remove-symbolic.svg</file>
+    <file alias="screen-color.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/color-select-symbolic.svg</file>
+    <file alias="object-select.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/object-select-symbolic.svg</file>
+    <file alias="disclosure.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/ui/pan-start-symbolic-rtl.svg</file>
+    <file alias="reset.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/edit-undo-symbolic.svg</file>
+    <file alias="add-modifier.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/list-add-symbolic.svg</file>
+    <file alias="copy.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/edit-copy-symbolic.svg</file>
+    <file alias="clear.svg">../../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/edit-clear-symbolic.svg</file>
     <file alias="arrow3-up-symbolic.svg">../../../../../assets/icons/arrow3-up-symbolic.svg</file>
     <file alias="blend-tool-symbolic.svg">../../../../../assets/icons/blend-tool-symbolic.svg</file>
     <file alias="info-outline-symbolic.svg">../../../../../assets/icons/info-outline-symbolic.svg</file>

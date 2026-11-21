@@ -229,7 +229,7 @@ fn appearance_card(text: &TextItem, default: &TextItem, runtime: InspectorRuntim
                 ..NumberSpec::default()
             },
         )
-        .rotating_icon("rotation.svg", 90.0),
+        .rotating_icon("arrow3-up-symbolic", 90.0),
     );
     section.add(number(
         "/content/shadow_width",

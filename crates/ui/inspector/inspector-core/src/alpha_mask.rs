@@ -375,7 +375,7 @@ fn scalar_control(
         .live_commit(SCALAR_COMMIT)
         .timeline_commits(SCALAR_COMMIT, SCALAR_COMMIT);
     if rotating {
-        control.rotating_icon("rotation.svg", 0.0)
+        control.rotating_icon("arrow3-up-symbolic", 0.0)
     } else {
         control
     }

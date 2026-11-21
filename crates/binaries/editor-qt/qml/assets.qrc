@@ -1,14 +1,14 @@
 <RCC>
   <qresource prefix="/qt/qml/dev/shrimply/editor">
     <file alias="shrimply.svg">../../../../assets/icons/dev.shrimply.Shrimply.svg</file>
-    <file alias="track-add-icons/document-open-symbolic.svg">../../../../assets/icons/document-open-symbolic.svg</file>
+    <file alias="track-add-icons/document-open-symbolic.svg">../../../../external/adwaita-icon-theme/Adwaita/symbolic/actions/document-open-symbolic.svg</file>
     <file alias="track-add-icons/draw-text-symbolic.svg">../../../../assets/icons/draw-text-symbolic.svg</file>
     <file alias="track-add-icons/shapes-large-symbolic.svg">../../../../assets/icons/shapes-large-symbolic.svg</file>
-    <file alias="track-add-icons/applications-graphics-symbolic.svg">../../../../assets/icons/applications-graphics-symbolic.svg</file>
-    <file alias="track-add-icons/preferences-desktop-wallpaper-symbolic.svg">../../../../assets/icons/preferences-desktop-wallpaper-symbolic.svg</file>
+    <file alias="track-add-icons/applications-graphics-symbolic.svg">../../../../external/adwaita-icon-theme/Adwaita/symbolic/categories/applications-graphics-symbolic.svg</file>
+    <file alias="track-add-icons/preferences-desktop-wallpaper-symbolic.svg">../../../../external/adwaita-icon-theme/Adwaita/symbolic/legacy/preferences-desktop-wallpaper-symbolic.svg</file>
     <file alias="track-add-icons/3d-object-symbolic.svg">../../../../assets/icons/3d-object-symbolic.svg</file>
     <file alias="track-add-icons/video-generation-symbolic.svg">../../../../assets/icons/video-generation-symbolic.svg</file>
-    <file alias="track-add-icons/font-x-generic-symbolic.svg">../../../../assets/icons/font-x-generic-symbolic.svg</file>
+    <file alias="track-add-icons/font-x-generic-symbolic.svg">../../../../external/adwaita-icon-theme/Adwaita/symbolic/mimetypes/font-x-generic-symbolic.svg</file>
     <file alias="track-add-icons/sound-symbolic.svg">../../../../assets/icons/sound-symbolic.svg</file>
   </qresource>
 </RCC>

@@ -14,8 +14,8 @@ AUTHOR: Microsoft
 
 ---
 
-COMPONENT: Adwaita Icon Theme (selected SVGs under assets/icons)
-SOURCE: https://gitlab.gnome.org/GNOME/adwaita-icon-theme
+COMPONENT: Adwaita Icon Theme (external/adwaita-icon-theme)
+SOURCE: https://github.com/GNOME/adwaita-icon-theme (mirror of https://gitlab.gnome.org/GNOME/adwaita-icon-theme)
 LICENSE: GNU LGPL v3 or Creative Commons Attribution-ShareAlike 3.0
 AUTHOR: GNOME Project
 
