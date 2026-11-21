@@ -9,7 +9,10 @@ pub const REPORT_ISSUE: (&str, &str) = (
 pub const LINKS: &[(&str, &str)] = &[
     WEBSITE,
     ("Documentation", "https://shrimply.pages.dev/"),
-    ("Discussion", "https://yapioca.com/thread/oxB4ibobSf-GU8BdisXgIg/"),
+    (
+        "Discussion",
+        "https://yapioca.com/thread/oxB4ibobSf-GU8BdisXgIg/",
+    ),
     REPORT_ISSUE,
 ];
 pub const CREDIT_SECTIONS: &[(&str, &[&str])] = &[
