@@ -8,8 +8,7 @@ machine.
 Run locally
 -----------
 
-The server needs Python 3.14. The Make target supplies the project's FFmpeg
-libraries when building and running PyAV. From the repository root:
+The server needs Python 3.14. From the repository root:
 
 .. code-block:: console
 
@@ -19,7 +18,7 @@ From the ``server`` directory:
 
 .. code-block:: console
 
-   $ make -C .. dev-server
+   $ uv run --locked src/main.py
 
 Models download the first time you use them. Leave the server running until
 the job finishes.
@@ -43,7 +42,7 @@ process when you want it gone.
 
 .. code-block:: console
 
-   $ SHRIMPLY_SERVER_SHARE=1 make -C .. dev-server
+   $ SHRIMPLY_SERVER_SHARE=1 uv run --locked src/main.py
 
 Containers
 ----------
@@ -65,8 +64,8 @@ Build either image from the repository root:
 
 .. code-block:: console
 
-   $ docker build --build-context project=. -t shrimply-server:cuda12.6 server
-   $ docker build --build-context project=. --build-arg CUDA_VERSION=13.0 -t shrimply-server:cuda13.0 server
+   $ docker build -t shrimply-server:cuda12.6 server
+   $ docker build --build-arg CUDA_VERSION=13.0 -t shrimply-server:cuda13.0 server
 
 Python dependencies are installed during the image build. Model downloads remain
 persistent in the Compose volumes. The CUDA 13.0 build also compiles PyCOLMAP;

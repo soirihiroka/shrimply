@@ -6,7 +6,6 @@
   cudaPackages,
   expat,
   fetchFromGitHub,
-  fetchurl,
   ffmpeg,
   fontconfig,
   freetype,
@@ -34,7 +33,6 @@
   pkg-config,
   poppler_gi,
   python3,
-  python314Packages,
   rhubarbSrc,
   rubberband,
   runCommand,
@@ -52,22 +50,6 @@
   zlib,
 }:
 let
-  worker = "crates/media/visual/manim/manim-bridge/python";
-  avSource = lib.findFirst (package: package.name == "av")
-    (throw "PyAV missing from the Manim worker lock") (lib.importTOML ../${worker}/uv.lock).package;
-  workerAv = python314Packages.buildPythonPackage {
-    pname = "av";
-    inherit (avSource) version;
-    src = fetchurl {
-      inherit (avSource.source) url;
-      sha256 = lib.removePrefix "sha256:" avSource.sdist.hash;
-    };
-    pyproject = true;
-    build-system = with python314Packages; [ setuptools cython ];
-    nativeBuildInputs = [ pkg-config ];
-    buildInputs = [ ffmpeg ];
-    pythonImportsCheck = [ "av" ];
-  };
   cudaStubs = lib.getOutput "stubs" cudaPackages.cuda_cudart;
   cudaToolkit = cudaPackages.cudatoolkit;
   skiaVersion = (
@@ -223,7 +205,7 @@ rustPlatform.buildRustPackage {
     install -Dm644 dev.shrimply.Shrimply.desktop \
       "$out/share/applications/dev.shrimply.Shrimply.desktop"
 
-    sh packaging/linux/install-manim-worker.sh "$out" --wheel ${workerAv.dist}/av-*.whl
+    sh packaging/linux/install-manim-worker.sh "$out"
 
     runHook postInstall
   '';

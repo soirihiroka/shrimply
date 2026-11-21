@@ -7,7 +7,6 @@ on:
     paths:
       - ".github/workflows/server.yml"
       - "server/**"
-      - "external/ffmpeg"
       - "!**/*.md"
       - "!**/*.rst"
       - "!**/docs/**"
@@ -41,9 +40,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check out the project FFmpeg
-        run: git submodule update --init --depth 1 external/ffmpeg
-
       - name: Timestamp prerelease
         run: echo "IMAGE_TAG=prerelease-$(date -u +%Y%m%dT%H%M%SZ)-cuda${CUDA_VERSION}" >> "${GITHUB_ENV}"
 
@@ -62,8 +58,6 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: server
-          build-contexts: |
-            project=.
           platforms: linux/amd64
           load: true
           tags: ${{ env.SERVER_IMAGE }}:${{ env.IMAGE_TAG }}
@@ -86,15 +80,13 @@ jobs:
               sleep 2
             done
           SH
-          docker exec -e EXPECTED_SHA="${GITHUB_SHA}" -e EXPECTED_FFMPEG="$(cat external/ffmpeg/RELEASE)" -e CUDA_VERSION -e PYTHONPATH=/app/src server-smoke \
+          docker exec -e EXPECTED_SHA="${GITHUB_SHA}" -e CUDA_VERSION -e PYTHONPATH=/app/src server-smoke \
             /app/.venv/bin/python -c '
-          import os, urllib.request, av, msgspec, torch, torchvision, torchaudio, pycolmap
+          import os, urllib.request, msgspec, torch, torchvision, torchaudio, pycolmap
           from api.tts import qwen
           from api.stt import worker as stt_worker
           from api.sam2 import worker as sam2_worker
           from diffusers import MiniMaxH3Transformer3DModel, WanPipeline
-          assert av.ffmpeg_version_info == os.environ["EXPECTED_FFMPEG"], av.ffmpeg_version_info
-          assert {"libx264", "libx265", "h264_nvenc", "libopus"} <= av.codecs_available
           assert pycolmap.has_cuda, "PyCOLMAP was built without CUDA"
           assert torch.version.cuda == os.environ["CUDA_VERSION"], torch.version.cuda
           with urllib.request.urlopen("http://127.0.0.1:8787/", timeout=3) as response:

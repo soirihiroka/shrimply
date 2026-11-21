@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
-import os
 import sys
 from collections.abc import Callable
 from fractions import Fraction
@@ -12,15 +11,6 @@ from shrimply_manim.worker_types import Message, ParameterOverrides
 
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# On Windows CPython resolves native extension dependencies through registered
-# DLL directories. Manim imports its native video module during initialization.
-if os.name == "nt":
-    bundled = Path(__file__).resolve().parents[3]
-    if (bundled / "uv.exe").is_file():
-        _dll_directory = os.add_dll_directory(bundled)
-    elif prefix := os.environ.get("FFMPEG_DIR"):
-        _dll_directory = os.add_dll_directory(Path(prefix) / "bin")
 
 print("Shrimply Manim worker: importing Manim", file=sys.stderr, flush=True)
 import numpy as np

@@ -44,7 +44,6 @@ LINUX_FFMPEG_CACHE := $(abspath $(CARGO_TARGET_DIR)/linux-ffmpeg)
 LINUX_FFMPEG_PREFIX = $(or $(SHRIMPLY_FFMPEG_PREFIX),$(LINUX_FFMPEG_CACHE)/install)
 # Use the resolved source-specific prefix so a gitlink update invalidates Rust bindings.
 FFMPEG_PREFIX = $(or $(realpath $(LINUX_FFMPEG_PREFIX)),$(LINUX_FFMPEG_PREFIX))
-MANIM_PYAV ?= --prefix "$(FFMPEG_PREFIX)"
 FFMPEG_RUNTIME_ENV = PATH="$(FFMPEG_PREFIX)/bin:$(CUDA_HOME)/bin:$(PATH)" LD_LIBRARY_PATH="$(FFMPEG_PREFIX)/lib:/run/host/usr/local/libclang-deps:$${LD_LIBRARY_PATH}"
 HOST_MEDIA_ENV = $(FFMPEG_RUNTIME_ENV) FFMPEG_DIR="$(FFMPEG_PREFIX)" SHRIMPLY_FFMPEG_PREFIX="$(FFMPEG_PREFIX)" \
     PKG_CONFIG_PATH="$(FFMPEG_PREFIX)/lib/pkgconfig:$(PKG_CONFIG_PATH)" LIBRARY_PATH="$(FFMPEG_PREFIX)/lib:$${LIBRARY_PATH}"
@@ -57,15 +56,6 @@ FFMPEG_PREFIX = $(FFMPEG_DIR)
 FFMPEG_RUNTIME_ENV = FFMPEG_DIR="$(FFMPEG_PREFIX)" PATH="$(FFMPEG_PREFIX)/bin:$(PATH)"
 HOST_MEDIA_ENV = $(FFMPEG_RUNTIME_ENV) INCLUDE="$(FFMPEG_DIR)/include;$$INCLUDE" LIB="$(FFMPEG_DIR)/lib;$$LIB"
 endif
-# uv keys source wheels on package-specific build settings. Pass the prefix
-# explicitly so an installed wheel built against the system FFmpeg is replaced.
-PYAV_CONFIG = av:--global-option=--ffmpeg-dir=$(if $(word 2,$(FFMPEG_PREFIX)),'$(FFMPEG_PREFIX)',$(FFMPEG_PREFIX))
-ifneq ($(HOST_OS),Linux)
-# The macOS and Windows install paths are stable across native rebuilds.
-PYAV_REVISION = av:ffmpeg-revision=$(or $(shell git rev-parse :external/ffmpeg 2>/dev/null),$(file <external/ffmpeg/RELEASE))
-endif
-UV_BUILD_SETTINGS_ENV = SHRIMPLY_UV_CONFIG_SETTINGS_PACKAGE="$$(printf '%s\n' "$(PYAV_CONFIG)" "$(PYAV_REVISION)")"
-UV_MEDIA = $(HOST_MEDIA_ENV) uv run --config-settings-package "$(PYAV_CONFIG)" $(if $(PYAV_REVISION),--config-settings-package "$(PYAV_REVISION)")
 QT_QMAKE ?= $(if $(filter Windows_NT,$(HOST_OS)),qmake.exe,qmake6)
 BUILD_ENV = CUDA_HOME="$(CUDA_HOME)" CUDA_TOOLKIT_PATH="$(CUDA_TOOLKIT_PATH)" CUDA_IMAGE_FORMAT=$(CUDA_IMAGE_FORMAT) CUDA_TARGET=$(CUDA_TARGET) CUDA_PTX_TARGET=$(CUDA_PTX_TARGET) CUDA_HOST_CXX=$(CUDA_HOST_CXX) CUDA_ALLOW_UNSUPPORTED_COMPILER=$(CUDA_ALLOW_UNSUPPORTED_COMPILER) PKG_CONFIG="$(PKG_CONFIG)" OPTIX_ROOT="$(OPTIX_ROOT)"
 ifeq ($(HOST_OS),Linux)
@@ -212,11 +202,11 @@ else
 	@test -f "$(FFMPEG_PREFIX)/include/libavcodec/avcodec.h" && test -f "$(FFMPEG_PREFIX)/lib/libavcodec.so" || { echo "Missing packaged FFmpeg under $(FFMPEG_PREFIX)" >&2; exit 1; }
 	@$(HOST_MEDIA_ENV) "$(FFMPEG_PREFIX)/bin/ffmpeg" -version | awk -v required="$$(cat external/ffmpeg/RELEASE)" 'NR == 1 { actual = $$3; sub(/^n/, "", actual) } END { if (actual != required || !required) { print "Expected project FFmpeg " required ", found " actual > "/dev/stderr"; exit 1 } }'
 endif
-native-deps dev-server install-manim-worker manim manim-python-check server-python-check sanim-check video-decoder-check android-host-check android-project-check android-project-bench video-decode-benchmark media-system-check: linux-ffmpeg
+native-deps sanim-check video-decoder-check android-host-check android-project-check android-project-bench video-decode-benchmark media-system-check: linux-ffmpeg
 else ifeq ($(HOST_OS),Darwin)
-dev-server manim manim-python-check server-python-check sanim-check: appkit-ffmpeg
+sanim-check: appkit-ffmpeg
 else ifeq ($(HOST_OS),Windows_NT)
-dev-server manim manim-python-check server-python-check sanim-check: windows-ffmpeg
+sanim-check: windows-ffmpeg
 endif
 native-deps:
 	@$(PKG_CONFIG) --exists rubberband || { echo "Missing Rubber Band development files (pkg-config: rubberband)" >&2; exit 1; }
@@ -290,7 +280,7 @@ uninstall-desktop-assets:
 dev: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) CARGO_TERM_COLOR=always $(CARGO) build -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
 	@started="$$(date --iso-8601=seconds)"; \
-	$(BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(BIN_NAME) 2>&1 \
+	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) target/debug/$(BIN_NAME) 2>&1 \
 		| tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' > "$(DEV_LOG)"); \
 	status=$${PIPESTATUS[0]}; \
 	if [[ $$status -ne 0 ]]; then \
@@ -356,7 +346,7 @@ else
 endif
 
 dev-mac: appkit-build
-	$(HOST_MEDIA_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
+	$(HOST_MEDIA_ENV) RUST_LOG=$(RUST_LOG) "$(APPKIT_APP)/Contents/MacOS/$(APPKIT_BIN_NAME)"
 
 qt-build: native-deps qt-native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
@@ -370,7 +360,7 @@ qt-desktop-file: desktop-icon project-mime
 
 dev-qt: qt-build
 	@started="$$(date --iso-8601=seconds)"; \
-	$(BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME) 2>&1 \
+	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME) 2>&1 \
 		| tee >(sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g' > "$(QT_DEV_LOG)"); \
 	status=$${PIPESTATUS[0]}; \
 	if [[ $$status -ne 0 ]]; then \
@@ -380,7 +370,7 @@ dev-qt: qt-build
 	exit $$status
 
 dev-server:
-	$(UV_MEDIA) --project server --locked server/src/main.py
+	uv run --project server --locked server/src/main.py
 
 docs:
 	uv run --project docs --locked sphinx-build docs/source docs/build
@@ -391,7 +381,7 @@ docs-check:
 run: dev
 
 run-qt: qt-build
-	$(BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME)
+	$(BUILD_ENV) RUST_LOG=$(RUST_LOG) $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME)
 
 build: native-deps cuda-artifacts
 	$(DEV_BUILD_ENV) $(CARGO) build -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
@@ -416,7 +406,7 @@ windows-build: windows-native-deps cuda-artifacts
 	$(BUILD_ENV) QMAKE="$(QT_QMAKE)" CARGO_TERM_COLOR=always $(CARGO) build --target-dir "$(QT_TARGET_DIR)" -p $(QT_EDITOR_PACKAGE) -p $(QT_LAUNCHER_PACKAGE) --bins
 
 windows-dev: windows-build
-	$(BUILD_ENV) $(HOST_MEDIA_ENV) $(UV_BUILD_SETTINGS_ENV) RUST_LOG="$(RUST_LOG)" $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME).exe
+	$(BUILD_ENV) $(HOST_MEDIA_ENV) RUST_LOG="$(RUST_LOG)" $(QT_TARGET_DIR)/debug/$(QT_BIN_NAME).exe
 else
 windows-build windows-dev:
 	@echo "$@ requires Windows; current host: $(HOST_OS)" >&2
@@ -562,19 +552,19 @@ source-size-check:
 	if [ -n "$$oversized" ]; then printf 'Source files exceed $(SOURCE_LINE_LIMIT) lines:\n%s\n' "$$oversized"; exit 1; fi
 
 server-python-check:
-	$(UV_MEDIA) --directory server --locked pyrefly check
+	uv run --directory server --locked pyrefly check
 
 manim:
-	$(UV_MEDIA) --directory crates/media/visual/manim/manim-bridge/python --python 3.14 python -m shrimply_manim $(ARGS)
+	uv run --directory crates/media/visual/manim/manim-bridge/python --python 3.14 python -m shrimply_manim $(ARGS)
 
 manim-python-check:
-	$(UV_MEDIA) --python 3.14 --project crates/media/visual/manim/manim-bridge/python pyrefly check --python-version 3.14 --search-path external/manim crates/media/visual/manim/manim-bridge/python/shrimply_manim
+	uv run --python 3.14 --project crates/media/visual/manim/manim-bridge/python pyrefly check --python-version 3.14 --search-path external/manim crates/media/visual/manim/manim-bridge/python/shrimply_manim
 
 manim-visual-check: native-deps
-	$(DEV_BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) $(CARGO) test -p shrimply-manim-wgpu --test visual_parity -- --ignored --nocapture
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-manim-wgpu --test visual_parity -- --ignored --nocapture
 
 manim-parameter-check: native-deps
-	$(DEV_BUILD_ENV) $(UV_BUILD_SETTINGS_ENV) $(CARGO) test -p shrimply-manim-bridge --test two_pass_parameters -- --ignored --nocapture
+	$(DEV_BUILD_ENV) $(CARGO) test -p shrimply-manim-bridge --test two_pass_parameters -- --ignored --nocapture
 
 cargo-check: native-deps qt-native-deps
 	$(DEV_BUILD_ENV) QMAKE=$(QT_QMAKE) $(CARGO) check -p $(EDITOR_PACKAGE) -p $(LAUNCHER_PACKAGE) --bins
@@ -706,7 +696,7 @@ qt-release: native-deps qt-native-deps cuda-artifacts
 
 .PHONY: install-manim-worker
 install-manim-worker:
-	$(HOST_MEDIA_ENV) sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)" $(MANIM_PYAV)
+	sh packaging/linux/install-manim-worker.sh "$(DESTDIR)$(PREFIX)"
 
 install: release desktop-icon project-mime install-manim-worker
 	$(INSTALL) -Dm755 $(CARGO_TARGET_DIR)/release/$(BIN_NAME) "$(DESTDIR)$(BINDIR)/$(BIN_NAME)"

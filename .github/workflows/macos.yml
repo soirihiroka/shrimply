@@ -10,7 +10,6 @@ on:
       - "packaging/macos/**"
       - "packaging/macos-ffmpeg.py"
       - "packaging/native_sources.py"
-      - "packaging/bundle-pyav.py"
       - ".cargo/**"
       - ".gitmodules"
       - "assets/**"
@@ -200,39 +199,25 @@ jobs:
           manim_revision="$(git -C external/manim rev-parse HEAD)"
           sed "s|^manimgl = .*|manimgl = { url = \"https://github.com/3b1b/manim/archive/${manim_revision}.tar.gz\" }|" \
             "${python_project}/pyproject.toml" > "${bundled_project}/pyproject.toml"
-          uv run --no-project --python 3.14 python packaging/bundle-pyav.py \
-            "${python_project}" "${bundled_project}" --prefix target/macos-ffmpeg/install
           uv lock --python 3.14 --project "${bundled_project}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" "${contents}/Info.plist"
 
           cp target/macos-icon/Assets.car target/macos-icon/Shrimply.icns "${contents}/Resources/"
 
-          # The application binaries and PyAV extensions load from different
-          # directories; each carries a relative path to the same Frameworks.
-          binaries=("${contents}/MacOS/shrimply" "${contents}/MacOS/shrimply-ffmpeg" "${contents}/MacOS/uv")
-          while IFS= read -r -d '' extension; do binaries+=("${extension}"); done \
-            < <(find "${bundled_project}/av" -name '*.so' -print0)
-          fix_files=()
-          for binary in "${binaries[@]}"; do fix_files+=(--fix-file "${binary}"); done
           bundle_log="${RUNNER_TEMP}/dylibbundler.log"
           if ! dylibbundler \
             --bundle-deps \
             --overwrite-dir \
-            "${fix_files[@]}" \
+            --fix-file "${contents}/MacOS/shrimply" \
+            --fix-file "${contents}/MacOS/shrimply-ffmpeg" \
+            --fix-file "${contents}/MacOS/uv" \
             --dest-dir "${contents}/Frameworks" \
-            --install-path '@rpath/' \
+            --install-path '@executable_path/../Frameworks/' \
             > "${bundle_log}" 2>&1; then
             tail -n 200 "${bundle_log}"
             exit 1
           fi
 
-          for binary in "${binaries[@]}"; do
-            relative="$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], os.path.dirname(sys.argv[2])))' "${contents}/Frameworks" "${binary}")"
-            rpath="@loader_path/${relative}"
-            if ! otool -l "${binary}" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }' | grep -Fx "${rpath}" >/dev/null; then
-              install_name_tool -add_rpath "${rpath}" "${binary}"
-            fi
-          done
           find "${contents}/MacOS" "${contents}/Frameworks" -type f -print0 \
             | while IFS= read -r -d '' binary; do
                 otool -l "${binary}" \
@@ -241,7 +226,6 @@ jobs:
                       install_name_tool -delete_rpath "${duplicate}" "${binary}" 2>> "${bundle_log}"
                     done
               done
-          find "${bundled_project}/av" -name '*.so' -exec codesign --force --sign - {} \;
           xattr -cr "${MACOS_APP}"
           codesign --force --deep --sign - "${MACOS_APP}"
 
@@ -267,13 +251,9 @@ jobs:
           test -s "${contents}/Resources/manim-worker/uv.lock"
           test ! -d "${contents}/Resources/manim-worker/.venv"
 
-          worker="${contents}/Resources/manim-worker"
-          PYTHONDONTWRITEBYTECODE=1 EXPECTED_FFMPEG="$(cat external/ffmpeg/RELEASE)" PYTHONPATH="${worker}" \
-            "${contents}/MacOS/uv" run --no-project --python 3.14 python -c \
-              'import av, os; assert av.ffmpeg_version_info == os.environ["EXPECTED_FFMPEG"], av.ffmpeg_version_info'
           dependencies="${RUNNER_TEMP}/macos-dependencies.txt"
-          { find "${contents}/MacOS" "${contents}/Frameworks" -type f -print0
-            find "${worker}/av" -name '*.so' -print0; } | xargs -0 otool -L > "${dependencies}"
+          find "${contents}/MacOS" "${contents}/Frameworks" -type f -print0 \
+            | xargs -0 otool -L > "${dependencies}"
           external_dependencies="$(awk '$1 ~ /^\// && $1 !~ /^\/System\/Library\// && $1 !~ /^\/usr\/lib\// { print $1 }' "${dependencies}")"
           if [[ -n "${external_dependencies}" ]]; then
             echo "Application bundle retains external dependencies:" >&2

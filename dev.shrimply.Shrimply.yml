@@ -187,7 +187,7 @@ modules:
         RUSTUP=/run/host/usr/local/cargo/bin/rustup
         CUDA_PTX_TARGET="${CUDA_PTX_TARGET}"
       - >-
-        make install PREFIX=/app MANIM_PYAV=
+        make install PREFIX=/app
         RUSTUP=/run/host/usr/local/cargo/bin/rustup
         CUDA_PTX_TARGET="${CUDA_PTX_TARGET}"
       # Compile Python extensions against the SDK, never on the user's machine.

@@ -57,7 +57,6 @@ override-dependencies = [
 environments = ["sys_platform == 'linux'"]
 
 [tool.uv.sources]
-av = { url = "https://files.pythonhosted.org/packages/source/a/av/av-19.0.2.tar.gz" }
 qwen-tts = { git = "https://github.com/QwenLM/Qwen3-TTS.git", rev = "022e286b98fbec7e1e916cb940cdf532cd9f488e" }
 salad = { git = "https://github.com/Dominic101/salad.git" }
 vggt = { git = "https://github.com/MIT-SPARK/VGGT_SPARK.git" }

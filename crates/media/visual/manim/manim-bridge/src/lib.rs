@@ -255,14 +255,8 @@ fn python_command(module: &str) -> Result<(Command, bool), String> {
     #[cfg(target_os = "linux")]
     let project = installed.unwrap_or(project);
     let mut command = Command::new(&executable);
-    command.arg("run");
-    if let Ok(settings) = std::env::var("SHRIMPLY_UV_CONFIG_SETTINGS_PACKAGE") {
-        for setting in settings.lines() {
-            command.arg("--config-settings-package").arg(setting);
-        }
-    }
     command
-        .args(["--python", "3.14", "--project"])
+        .args(["run", "--python", "3.14", "--project"])
         .arg(&project);
     let environment = std::env::var_os("UV_PROJECT_ENVIRONMENT")
         .map(PathBuf::from)

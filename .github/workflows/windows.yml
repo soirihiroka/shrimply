@@ -9,7 +9,6 @@ on:
       - "packaging/windows/**"
       - "packaging/windows-ffmpeg.py"
       - "packaging/native_sources.py"
-      - "packaging/bundle-pyav.py"
       - ".cargo/**"
       - ".gitmodules"
       - "assets/**"
