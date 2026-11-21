@@ -31,13 +31,13 @@ Platform support status:
 
 Shrimply is pre-alpha software (though we are getting closer to the first alpha release), which means you should expect:
 
+- Major changes in behavior
 - Slop
 - Undocumented footguns
 - Random performance regressions
-- Major changes in behavior
 - Random crashes and resource leaks
 
-If you noticed any performance/correctness issue, feel free to open [issues](https://github.com/soirihiroka/shrimply/issues).
+If you noticed any performance/correctness issue, please open [issues](https://github.com/soirihiroka/shrimply/issues).
 
 See the [documentation](https://shrimply.pages.dev) for more.
 
